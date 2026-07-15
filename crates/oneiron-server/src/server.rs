@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
-use oneiron::DreamerJobProgressProducer;
+use oneiron::DreamerAttemptProgressProducer;
 use oneiron::SyncEngineContext;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
@@ -42,8 +42,8 @@ pub struct SyncServer {
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
     pub(crate) ephemeral_store: EphemeralStore,
-    /// Producer state for Dreamer live job-progress rows on the ephemeral lane.
-    pub(crate) dreamer_progress: Mutex<DreamerJobProgressProducer>,
+    /// Producer state for Dreamer live attempt-progress rows on the ephemeral lane.
+    pub(crate) dreamer_progress: Mutex<DreamerAttemptProgressProducer>,
     /// Broadcast channel for fan-out to all connected clients.
     pub(crate) broadcast_tx: broadcast::Sender<BroadcastPayload>,
     /// Monotonic connection ID counter. 0 = reserved for bridge/local writes.
@@ -211,7 +211,7 @@ impl SyncServer {
             reassert_manager,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: Mutex::new(HashSet::new()),
-            dreamer_progress: Mutex::new(DreamerJobProgressProducer::new()),
+            dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
             config,
             mcp_registry,
         })

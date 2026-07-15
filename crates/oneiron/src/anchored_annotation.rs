@@ -365,7 +365,7 @@ pub struct AnnotationComment {
 /// The task-brief a thread assignment produces (OF-368 D4).
 ///
 /// The brief is a productivity `TASK` entity plus a `brief:`-prefixed
-/// correlation ref that downstream receipts/jobs project on (the B2 RS4
+/// correlation ref that downstream receipts/attempts project on (the B2 RS4
 /// brief-rooted projection). It carries the anchor payload, the thread text,
 /// and the `artifact@version` so the assigned agent has the full ask.
 #[derive(Debug, Clone, PartialEq, Eq)]

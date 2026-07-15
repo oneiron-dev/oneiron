@@ -1,7 +1,7 @@
 use super::*;
 use crate::Vault;
+use crate::attempt_queue::{ATTEMPT_RECORD_VERSION, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::entity_id::EntityId;
-use crate::job_queue::{EnqueueJob, EnqueueOutcome, JOB_RECORD_VERSION, JobQueue};
 use crate::receipt::MAX_RECEIPT_QUERY_SCAN;
 use crate::temporal::TimeRange;
 use std::collections::BTreeMap;
@@ -54,7 +54,7 @@ fn receipt_family_versions_require_a_storage_abi_bump() {
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
-        JOB_RECORD_VERSION,
+        ATTEMPT_RECORD_VERSION,
         PENDING_GATE_CONSENT_INDEX_STATE_VERSION,
         RECEIPT_FAMILY_INDEX_VERSION,
     ];
@@ -68,7 +68,7 @@ fn receipt_family_versions_require_a_storage_abi_bump() {
     ));
     for (axis, changed_versions) in [
         ("gate decision ledger", [1, 2, 1, 1]),
-        ("job record", [0, 3, 1, 1]),
+        ("attempt record", [0, 3, 1, 1]),
         ("pending consent index state", [0, 2, 2, 1]),
         ("receipt family index", [0, 2, 1, 2]),
     ] {
@@ -276,8 +276,8 @@ fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Resu
     };
 
     let vault = Vault::open(dir.path(), config.clone())?;
-    let queue = JobQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(EnqueueJob {
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
         kind: "legacy-receipt-family".to_owned(),
         payload: b"legacy".to_vec(),
         dedupe_key: None,
@@ -285,7 +285,7 @@ fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Resu
         now: 7,
     })?
     else {
-        panic!("expected a fresh legacy job");
+        panic!("expected a fresh legacy attempt");
     };
     vault.with_write_txn(|wtxn| {
         vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
@@ -299,7 +299,7 @@ fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Resu
             PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX,
             PENDING_GATE_CONSENT_HASH_INDEX_PREFIX,
             PENDING_GATE_CONSENT_INDEX_STATE_PREFIX,
-            JOB_RUN_INDEX_PREFIX,
+            ATTEMPT_RUN_INDEX_PREFIX,
         ] {
             let mut keys = Vec::new();
             for row in vault.store.vault_meta.prefix_iter(&*wtxn, prefix)? {
@@ -320,11 +320,11 @@ fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Resu
 
     let reopened = Vault::open(dir.path(), config)?;
     assert_eq!(
-        JobQueue::new(&reopened).list_run(run_id)?,
+        AttemptQueue::new(&reopened).list_run(run_id)?,
         vec![
-            JobQueue::new(&reopened)
-                .get(job.id)?
-                .expect("backfilled job")
+            AttemptQueue::new(&reopened)
+                .get(attempt.id)?
+                .expect("backfilled attempt")
         ]
     );
     assert_eq!(

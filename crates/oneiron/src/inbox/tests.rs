@@ -1,10 +1,12 @@
 use rmpv::Value;
 
 use super::*;
+use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::config::VaultConfig;
-use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome};
+use crate::dreamer_runner::{
+    DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+};
 use crate::edge::EdgeActorClass;
-use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobId};
 use crate::receipt::ReceiptQuery;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::{GateDecisionId, PendingGateConsentRecord};
@@ -43,7 +45,10 @@ fn dreamer_envelope(actor: EntityId, run_id: &str) -> WriteEnvelope {
         WriteActor::new(actor, EdgeActorClass::Agent),
         ClaimSource::Generated,
         WriteProvenance::new(Value::Map(vec![
-            (Value::from("runner"), Value::from(DREAMER_RUNNER_JOB_KIND)),
+            (
+                Value::from("runner"),
+                Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+            ),
             (Value::from("run_id"), Value::from(run_id)),
         ]))
         .expect("provenance"),
@@ -135,26 +140,25 @@ fn add_pending_row(
     })
 }
 
-fn enqueue_dreamer_job(
+fn enqueue_dreamer_attempt(
     vault: &Vault,
-    job_type: &str,
-    parent_job: Option<JobId>,
+    attempt_type: &str,
+    parent_attempt: Option<AttemptId>,
     input: Value,
     run_id: &str,
     now: u64,
-) -> Result<JobId> {
+) -> Result<AttemptId> {
     let runner = DreamerRunnerStore::new(vault);
-    match runner.enqueue(EnqueueDreamerJob {
-        job_type: job_type.to_owned(),
+    match runner.enqueue(EnqueueDreamerAttempt {
+        attempt_type: attempt_type.to_owned(),
         input,
-        parent_job,
+        parent_attempt,
         dedupe_key: None,
         run_id: Some(run_id.to_owned()),
         now,
     })? {
-        EnqueueDreamerJobOutcome::Enqueued(status) | EnqueueDreamerJobOutcome::Existing(status) => {
-            Ok(status.job.id)
-        }
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => Ok(status.attempt.id),
     }
 }
 
@@ -183,7 +187,7 @@ fn review_dial_defaults_to_exceptions_only_and_round_trips() -> Result<()> {
 fn inbox_group_key_is_the_run_tree_root_id() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let run_id = "run-antevon-week";
-    let root = enqueue_dreamer_job(
+    let root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
@@ -194,7 +198,7 @@ fn inbox_group_key_is_the_run_tree_root_id() -> Result<()> {
         run_id,
         10,
     )?;
-    let branch = enqueue_dreamer_job(
+    let branch = enqueue_dreamer_attempt(
         &vault,
         "entity-sweep",
         Some(root),
@@ -542,7 +546,7 @@ fn cross_run_same_claim_hash_dups_collapse_into_earliest_open_group() -> Result<
 #[test]
 fn indexed_explicit_group_matches_scan_for_raw_and_branch_root_aliases() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let root = enqueue_dreamer_job(
+    let root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
@@ -553,7 +557,7 @@ fn indexed_explicit_group_matches_scan_for_raw_and_branch_root_aliases() -> Resu
         "run-parent",
         10,
     )?;
-    let branch = enqueue_dreamer_job(
+    let branch = enqueue_dreamer_attempt(
         &vault,
         "entity-sweep",
         Some(root),
@@ -709,7 +713,7 @@ fn late_root_insertion_rekeys_pending_group_aliases() -> Result<()> {
     let claim_id = entity(0x61);
 
     // A generated proposal can be durable before its run root. The group
-    // sidecar must follow the root once that job is subsequently persisted.
+    // sidecar must follow the root once that attempt is subsequently persisted.
     write_dreamer_proposal(
         &vault,
         claim_id,
@@ -721,7 +725,7 @@ fn late_root_insertion_rekeys_pending_group_aliases() -> Result<()> {
         10,
         &[REASON_CEILING],
     )?;
-    let root = enqueue_dreamer_job(
+    let root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
@@ -1128,13 +1132,13 @@ fn many_item_runs_sub_cluster_by_entity() -> Result<()> {
 }
 
 #[test]
-fn run_root_ignores_non_dreamer_jobs_sharing_the_run_id() -> Result<()> {
+fn run_root_ignores_non_dreamer_attempts_sharing_the_run_id() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let run_id = "run-mixed";
-    // A non-Dreamer job with the same run id, created BEFORE the dreamer
+    // A non-Dreamer attempt with the same run id, created BEFORE the dreamer
     // root, must never be picked as the run-tree root.
-    let queue = JobQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(webhook) = queue.enqueue(EnqueueJob {
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(webhook) = queue.enqueue(EnqueueAttempt {
         kind: "webhook".to_owned(),
         payload: b"webhook payload".to_vec(),
         dedupe_key: None,
@@ -1144,7 +1148,7 @@ fn run_root_ignores_non_dreamer_jobs_sharing_the_run_id() -> Result<()> {
     else {
         panic!("expected fresh enqueue");
     };
-    let root = enqueue_dreamer_job(
+    let root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
@@ -1181,10 +1185,10 @@ fn run_root_ignores_non_dreamer_jobs_sharing_the_run_id() -> Result<()> {
 fn run_root_preserves_creation_order_when_a_run_has_multiple_roots() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let run_id = "run-multiple-roots";
-    // The job IDs follow enqueue order, but `list_run` has always selected
+    // The attempt IDs follow enqueue order, but `list_run` has always selected
     // roots in the persisted creation-time order.  Keep that distinction
     // visible so the run-id sidecar cannot accidentally choose by key order.
-    let later_root = enqueue_dreamer_job(
+    let later_root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
@@ -1192,7 +1196,7 @@ fn run_root_preserves_creation_order_when_a_run_has_multiple_roots() -> Result<(
         run_id,
         20,
     )?;
-    let earlier_root = enqueue_dreamer_job(
+    let earlier_root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
@@ -1230,7 +1234,7 @@ fn run_root_preserves_creation_order_when_a_run_has_multiple_roots() -> Result<(
 #[test]
 fn run_root_climbs_parent_links_for_branch_run_ids() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let root = enqueue_dreamer_job(
+    let root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
@@ -1238,7 +1242,7 @@ fn run_root_climbs_parent_links_for_branch_run_ids() -> Result<()> {
         "run-parent",
         10,
     )?;
-    let branch = enqueue_dreamer_job(
+    let branch = enqueue_dreamer_attempt(
         &vault,
         "entity-sweep",
         Some(root),

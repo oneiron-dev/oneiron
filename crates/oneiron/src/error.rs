@@ -224,8 +224,8 @@ pub enum ErrorKind {
     StructuralKindBandViolation,
     StructuralKindCollision,
     InvalidStructuralKindRegistration,
-    InvalidJobQueueRecord,
-    InvalidJobQueueTransition,
+    InvalidAttemptQueueRecord,
+    InvalidAttemptQueueTransition,
     EntityTypeImmutable,
     InvalidTimeRange,
     EdgeNotFound,
@@ -1011,14 +1011,14 @@ pub enum Error {
     /// Pack StructuralKind registration failed boundary vetting.
     #[error("invalid structural kind registration: {0}")]
     InvalidStructuralKindRegistration(&'static str),
-    /// A JobQueue input or persisted record failed structural validation.
-    #[error("invalid job queue record: {0}")]
-    InvalidJobQueueRecord(&'static str),
-    /// A JobQueue lifecycle operation was requested from a valid but
+    /// An AttemptQueue input or persisted record failed structural validation.
+    #[error("invalid attempt queue record: {0}")]
+    InvalidAttemptQueueRecord(&'static str),
+    /// An AttemptQueue lifecycle operation was requested from a valid but
     /// incompatible state. This is caller-visible transition rejection, not
     /// persisted-record corruption.
-    #[error("invalid job queue transition: action={action}, state={state}")]
-    InvalidJobQueueTransition {
+    #[error("invalid attempt queue transition: action={action}, state={state}")]
+    InvalidAttemptQueueTransition {
         action: &'static str,
         state: &'static str,
     },
@@ -1548,8 +1548,8 @@ impl Error {
             Self::InvalidStructuralKindRegistration(_) => {
                 ErrorKind::InvalidStructuralKindRegistration
             }
-            Self::InvalidJobQueueRecord(_) => ErrorKind::InvalidJobQueueRecord,
-            Self::InvalidJobQueueTransition { .. } => ErrorKind::InvalidJobQueueTransition,
+            Self::InvalidAttemptQueueRecord(_) => ErrorKind::InvalidAttemptQueueRecord,
+            Self::InvalidAttemptQueueTransition { .. } => ErrorKind::InvalidAttemptQueueTransition,
             Self::EntityTypeImmutable { .. } => ErrorKind::EntityTypeImmutable,
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,

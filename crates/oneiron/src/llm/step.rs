@@ -18,9 +18,10 @@ use std::time::{Duration, Instant};
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
-use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
+use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::dreamer_wake::{
     BudgetLegibilityEnvelope, DREAMER_HARD_CUT_PARK_OWNER, DREAMER_HARD_CUT_PARK_REASON,
     WakePassDeadline, current_legibility,
@@ -28,7 +29,6 @@ use crate::dreamer_wake::{
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::job_queue::JobId;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -102,8 +102,9 @@ const DREAMER_TRAP_BINDING_SCHEMA_VERSION: u64 = 1;
 const DREAMER_TRAP_BINDING_KEYS: [&str; 4] =
     ["schema_version", "job_id", "step_hash", "park_owner"];
 
+// Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code only.
 const KEY_SCHEMA_VERSION: &str = "schema_version";
-const KEY_JOB_ID: &str = "job_id";
+const KEY_ATTEMPT_ID: &str = "job_id";
 const KEY_STEP_HASH: &str = "step_hash";
 const KEY_PROGRESSION: &str = "progression";
 const KEY_MODEL_ID: &str = "model_id";
@@ -146,7 +147,7 @@ pub enum DurableStepError {
     #[error("durable step refused: wake pass is in its finalize window")]
     FinalizeRefused,
     /// The in-flight call lost the race against the wake-pass deadline: the
-    /// lease was aborted and the job parked at the hard cut (ONE-1305).
+    /// lease was aborted and the attempt parked at the hard cut (ONE-1305).
     #[error("durable step hard cut at the wake-pass deadline")]
     DeadlineHardCut,
 }
@@ -269,7 +270,7 @@ impl DreamerTrapState {
 #[derive(Clone)]
 pub struct DurableStepContext<'a> {
     pub vault: &'a Vault,
-    pub job_id: JobId,
+    pub attempt_id: AttemptId,
     pub run_id: Option<String>,
     pub envelope_actor: WriteActor,
     pub subject: EntityId,
@@ -282,9 +283,9 @@ pub struct DurableStepContext<'a> {
 
 impl DurableStepContext<'_> {
     /// The step clock in Unix SECONDS. Park rows store `parked_at` in seconds
-    /// (`park_job_with_progress` multiplies it by 1_000 for `updated_at_ms`),
+    /// (`park_attempt_with_progress` multiplies it by 1_000 for `updated_at_ms`),
     /// so the millisecond `now_ms` must be divided down before it reaches
-    /// `park_job` — otherwise `parked_at` lands ~1000x too large (#480-1).
+    /// `park_attempt` — otherwise `parked_at` lands ~1000x too large (#480-1).
     const fn now_s(&self) -> u64 {
         self.now_ms / 1_000
     }
@@ -329,7 +330,7 @@ pub async fn call_as_step(
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
 
-    if let Some(claim_id) = step_index_lookup(ctx.vault, ctx.job_id, &step_hash)? {
+    if let Some(claim_id) = step_index_lookup(ctx.vault, ctx.attempt_id, &step_hash)? {
         let body = ctx
             .vault
             .get_claim(&claim_id)?
@@ -343,7 +344,7 @@ pub async fn call_as_step(
         });
     }
 
-    if let Some(row) = step_state_read(ctx.vault, ctx.job_id, &step_hash)?
+    if let Some(row) = step_state_read(ctx.vault, ctx.attempt_id, &step_hash)?
         && matches!(
             row.progression,
             StepProgression::ResponseReceived | StepProgression::Logged
@@ -352,7 +353,7 @@ pub async fn call_as_step(
     {
         let response: LlmResponse = serde_json::from_slice(payload)?;
         log_terminal_step(ctx, &step_hash, &request, &response)?;
-        step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
+        step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
         return Ok(StepOutcome::Finished {
             response,
             memoized: true,
@@ -371,7 +372,7 @@ pub async fn call_as_step(
 
     step_state_write(
         ctx.vault,
-        ctx.job_id,
+        ctx.attempt_id,
         &step_hash,
         StepProgression::Started,
         None,
@@ -389,13 +390,13 @@ pub async fn call_as_step(
                 "durable step budget exhausted",
             )?;
             let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-            store.park_job(crate::dreamer_runner::ParkDreamerJob {
-                job_id: ctx.job_id,
+            store.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+                attempt_id: ctx.attempt_id,
                 reason: "durable step budget exhausted".to_owned(),
                 park_owner: trap_park_owner(&trap.trap_claim_id),
                 now: ctx.now_s(),
             })?;
-            step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
+            step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
             return Ok(StepOutcome::Trapped(trap));
         }
         Err(denied) => return Err(LlmError::from(denied).into()),
@@ -403,7 +404,7 @@ pub async fn call_as_step(
 
     // Mid-step preemption (ONE-1305, G1): inside a wake pass the in-flight
     // generate future races the deadline; on loss the lease aborts (actual
-    // spend settled) and the job parks at the hard cut.
+    // spend settled) and the attempt parks at the hard cut.
     let generated = match ctx.deadline {
         Some(deadline) => {
             match race_deadline(
@@ -416,13 +417,13 @@ pub async fn call_as_step(
                 DeadlineRace::DeadlineExpired => {
                     let _ = guard.abort(&admission.lease);
                     let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-                    store.park_job(crate::dreamer_runner::ParkDreamerJob {
-                        job_id: ctx.job_id,
+                    store.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+                        attempt_id: ctx.attempt_id,
                         reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
                         park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
                         now: ctx.now_s(),
                     })?;
-                    step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
+                    step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
                     return Err(DurableStepError::DeadlineHardCut);
                 }
             }
@@ -450,7 +451,7 @@ pub async fn call_as_step(
     let payload = serde_json::to_vec(&response)?;
     step_state_write(
         ctx.vault,
-        ctx.job_id,
+        ctx.attempt_id,
         &step_hash,
         StepProgression::ResponseReceived,
         Some(&payload),
@@ -460,7 +461,7 @@ pub async fn call_as_step(
     log_terminal_step(ctx, &step_hash, &request, &response)?;
 
     lease_settle.settle().map_err(LlmError::from)?;
-    step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
+    step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
 
     Ok(StepOutcome::Finished {
         response,
@@ -669,8 +670,8 @@ fn log_terminal_step(
     } else {
         None
     };
-    let existing_started_at =
-        step_state_read(ctx.vault, ctx.job_id, step_hash)?.map_or(ctx.now_ms, |row| row.started_at);
+    let existing_started_at = step_state_read(ctx.vault, ctx.attempt_id, step_hash)?
+        .map_or(ctx.now_ms, |row| row.started_at);
 
     ctx.vault
         .with_write_txn(|wtxn| {
@@ -690,7 +691,10 @@ fn log_terminal_step(
                         &encoded,
                     )
                     .apply(wtxn)?;
-                let run_ref = format!("dreamer-step:{}", bytes_to_hex_lower(ctx.job_id.as_bytes()));
+                let run_ref = format!(
+                    "dreamer-step:{}",
+                    bytes_to_hex_lower(ctx.attempt_id.as_bytes())
+                );
                 ctx.vault.append_blob_artifact_version_in_txn(
                     wtxn,
                     &artifact_id,
@@ -704,7 +708,7 @@ fn log_terminal_step(
             };
 
             let value = encode_step_claim_value(&EncodedStepClaim {
-                job_id: ctx.job_id,
+                attempt_id: ctx.attempt_id,
                 step_hash: *step_hash,
                 progression: StepProgression::Finished,
                 model_id: request.model.as_str().to_owned(),
@@ -732,7 +736,7 @@ fn log_terminal_step(
             step_state_put_in_txn(
                 ctx.vault,
                 wtxn,
-                ctx.job_id,
+                ctx.attempt_id,
                 step_hash,
                 &StepStateRow {
                     progression: StepProgression::Logged,
@@ -785,13 +789,16 @@ fn call_purpose_str(purpose: &CallPurpose) -> String {
 }
 
 fn dreamer_runtime_envelope(ctx: &DurableStepContext<'_>) -> Result<WriteEnvelope> {
-    let mut entries = vec![(Value::from("surface"), Value::from(DREAMER_RUNNER_JOB_KIND))];
+    let mut entries = vec![(
+        Value::from("surface"),
+        Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+    )];
     if let Some(run_id) = &ctx.run_id {
         entries.push((Value::from("run"), Value::from(run_id.as_str())));
     }
     entries.push((
         Value::from("job_id"),
-        Value::from(bytes_to_hex_lower(ctx.job_id.as_bytes())),
+        Value::from(bytes_to_hex_lower(ctx.attempt_id.as_bytes())),
     ));
     Ok(WriteEnvelope::new(
         ctx.envelope_actor,
@@ -802,7 +809,7 @@ fn dreamer_runtime_envelope(ctx: &DurableStepContext<'_>) -> Result<WriteEnvelop
 }
 
 struct EncodedStepClaim {
-    job_id: JobId,
+    attempt_id: AttemptId,
     step_hash: [u8; 32],
     progression: StepProgression,
     model_id: String,
@@ -822,8 +829,8 @@ fn encode_step_claim_value(claim: &EncodedStepClaim) -> Value {
             Value::from(DREAMER_STEP_VALUE_SCHEMA_VERSION),
         ),
         (
-            Value::from(KEY_JOB_ID),
-            Value::Binary(claim.job_id.as_bytes().to_vec()),
+            Value::from(KEY_ATTEMPT_ID),
+            Value::Binary(claim.attempt_id.as_bytes().to_vec()),
         ),
         (
             Value::from(KEY_STEP_HASH),
@@ -862,7 +869,7 @@ fn encode_step_claim_value(claim: &EncodedStepClaim) -> Value {
 }
 
 pub(crate) struct DecodedStepClaim {
-    pub(crate) job_id: JobId,
+    pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
     #[allow(dead_code)] // audit field; consumed by ONE-1344's provenance asserts
     pub(crate) progression: StepProgression,
@@ -888,7 +895,7 @@ pub(crate) struct DecodedStepClaim {
 pub(crate) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim> {
     let entries = expect_map(value, "dreamer step value must be a MessagePack map")?;
     let mut schema_version = None;
-    let mut job_id = None;
+    let mut attempt_id = None;
     let mut step_hash = None;
     let mut progression = None;
     let mut model_id = None;
@@ -917,7 +924,7 @@ pub(crate) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
                     "dreamer step value schema_version must be an integer",
                 )?);
             }
-            KEY_JOB_ID => job_id = Some(decode_job_id_value(value)?),
+            KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id_value(value)?),
             KEY_STEP_HASH => {
                 let hex = expect_string(value, "dreamer step value step_hash must be a string")?;
                 step_hash = Some(decode_hash_hex(&hex)?);
@@ -988,7 +995,7 @@ pub(crate) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
     }
 
     Ok(DecodedStepClaim {
-        job_id: job_id.ok_or(invalid_step("missing dreamer step value job_id"))?,
+        attempt_id: attempt_id.ok_or(invalid_step("missing dreamer step value job_id"))?,
         step_hash: step_hash.ok_or(invalid_step("missing dreamer step value step_hash"))?,
         progression: progression.ok_or(invalid_step("missing dreamer step value progression"))?,
         model_id: model_id.ok_or(invalid_step("missing dreamer step value model_id"))?,
@@ -1038,7 +1045,7 @@ pub(crate) fn index_dreamer_step_claim_for_put(
         return Ok(());
     };
 
-    let forward_key = step_index_key(decoded.job_id, &decoded.step_hash);
+    let forward_key = step_index_key(decoded.attempt_id, &decoded.step_hash);
     store
         .vault_meta
         .put(wtxn, &forward_key, claim_id.as_bytes())?;
@@ -1070,11 +1077,11 @@ pub(crate) fn deindex_dreamer_step_claim(
 
 fn step_index_lookup(
     vault: &Vault,
-    job_id: JobId,
+    attempt_id: AttemptId,
     step_hash: &[u8; 32],
 ) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    let key = step_index_key(job_id, step_hash);
+    let key = step_index_key(attempt_id, step_hash);
     let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
         return Ok(None);
     };
@@ -1084,11 +1091,11 @@ fn step_index_lookup(
     EntityId::from_bytes(bytes).map(Some)
 }
 
-fn step_index_key(job_id: JobId, step_hash: &[u8; 32]) -> Vec<u8> {
+fn step_index_key(attempt_id: AttemptId, step_hash: &[u8; 32]) -> Vec<u8> {
     let mut key =
         Vec::with_capacity(DREAMER_PRIVATE_STEP_INDEX_PREFIX.len() + 16 + step_hash.len());
     key.extend_from_slice(DREAMER_PRIVATE_STEP_INDEX_PREFIX);
-    key.extend_from_slice(job_id.as_bytes());
+    key.extend_from_slice(attempt_id.as_bytes());
     key.extend_from_slice(step_hash);
     key
 }
@@ -1111,30 +1118,30 @@ struct StepStateRow {
     response_payload: Option<Vec<u8>>,
 }
 
-fn step_state_key(job_id: JobId, step_hash: &[u8; 32]) -> Vec<u8> {
+fn step_state_key(attempt_id: AttemptId, step_hash: &[u8; 32]) -> Vec<u8> {
     let mut key =
         Vec::with_capacity(DREAMER_PRIVATE_STEP_STATE_PREFIX.len() + 16 + step_hash.len());
     key.extend_from_slice(DREAMER_PRIVATE_STEP_STATE_PREFIX);
-    key.extend_from_slice(job_id.as_bytes());
+    key.extend_from_slice(attempt_id.as_bytes());
     key.extend_from_slice(step_hash);
     key
 }
 
 fn step_state_write(
     vault: &Vault,
-    job_id: JobId,
+    attempt_id: AttemptId,
     step_hash: &[u8; 32],
     progression: StepProgression,
     response_payload: Option<&[u8]>,
     now_ms: u64,
 ) -> Result<()> {
     let started_at =
-        step_state_read(vault, job_id, step_hash)?.map_or(now_ms, |row| row.started_at);
+        step_state_read(vault, attempt_id, step_hash)?.map_or(now_ms, |row| row.started_at);
     let mut wtxn = vault.store.env.write_txn()?;
     step_state_put_in_txn(
         vault,
         &mut wtxn,
-        job_id,
+        attempt_id,
         step_hash,
         &StepStateRow {
             progression,
@@ -1150,7 +1157,7 @@ fn step_state_write(
 fn step_state_put_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    job_id: JobId,
+    attempt_id: AttemptId,
     step_hash: &[u8; 32],
     row: &StepStateRow,
 ) -> Result<()> {
@@ -1175,20 +1182,20 @@ fn step_state_put_in_txn(
     vault
         .store
         .vault_meta
-        .put(wtxn, &step_state_key(job_id, step_hash), &encoded)?;
+        .put(wtxn, &step_state_key(attempt_id, step_hash), &encoded)?;
     Ok(())
 }
 
 fn step_state_read(
     vault: &Vault,
-    job_id: JobId,
+    attempt_id: AttemptId,
     step_hash: &[u8; 32],
 ) -> Result<Option<StepStateRow>> {
     let rtxn = vault.store.env.read_txn()?;
     let Some(raw) = vault
         .store
         .vault_meta
-        .get(&rtxn, &step_state_key(job_id, step_hash))?
+        .get(&rtxn, &step_state_key(attempt_id, step_hash))?
     else {
         return Ok(None);
     };
@@ -1266,12 +1273,12 @@ fn step_state_read(
     }))
 }
 
-fn step_state_delete(vault: &Vault, job_id: JobId, step_hash: &[u8; 32]) -> Result<()> {
+fn step_state_delete(vault: &Vault, attempt_id: AttemptId, step_hash: &[u8; 32]) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     vault
         .store
         .vault_meta
-        .delete(&mut wtxn, &step_state_key(job_id, step_hash))?;
+        .delete(&mut wtxn, &step_state_key(attempt_id, step_hash))?;
     wtxn.commit()?;
     Ok(())
 }
@@ -1281,7 +1288,7 @@ fn step_state_delete(vault: &Vault, job_id: JobId, step_hash: &[u8; 32]) -> Resu
 // ---------------------------------------------------------------------------
 
 /// Park-owner token derived from a trap's `created` anchor claim id. The
-/// step layer parks trapped jobs under THIS token, records it in the trap's
+/// step layer parks trapped attempts under THIS token, records it in the trap's
 /// private binding row, and the consume path resumes with it — a parked row
 /// held by any other owner is refused fail-closed.
 #[must_use]
@@ -1293,10 +1300,10 @@ pub fn trap_park_owner(trap_claim_id: &EntityId) -> String {
 }
 
 /// Opens a trap for a suspended step: writes the `created` anchor claim AND
-/// the private trap-binding row (job id + step hash + park owner) in ONE
+/// the private trap-binding row (attempt id + step hash + park owner) in ONE
 /// wtxn. The binding row is the device-local ground truth the consume path
 /// validates against — it never syncs and cannot be forged through claims.
-/// The budget path in [`call_as_step`] parks the job right after; consent
+/// The budget path in [`call_as_step`] parks the attempt right after; consent
 /// waits arrive via [`trap_for_durable_wait`].
 pub fn open_trap(
     vault: &Vault,
@@ -1308,7 +1315,7 @@ pub fn open_trap(
     let claim_id = EntityId::now();
     let value = encode_trap_claim_value(&EncodedTrapClaim {
         kind,
-        job_id: ctx.job_id,
+        attempt_id: ctx.attempt_id,
         step_hash,
         state: DreamerTrapState::Created,
         at: ctx.now_ms,
@@ -1335,7 +1342,7 @@ pub fn open_trap(
             wtxn,
             &claim_id,
             &TrapBindingRow {
-                job_id: ctx.job_id,
+                attempt_id: ctx.attempt_id,
                 step_hash,
                 park_owner: trap_park_owner(&claim_id),
             },
@@ -1348,7 +1355,7 @@ pub fn open_trap(
     })
 }
 
-/// Maps a guest-facing durable wait raised inside a Dreamer job onto the
+/// Maps a guest-facing durable wait raised inside a Dreamer attempt onto the
 /// unified trap record kind: every wait flavor parks as a Consent trap.
 #[must_use]
 pub fn trap_for_durable_wait(
@@ -1402,19 +1409,19 @@ pub fn send_trap_signal(
 /// Fail-closed validation (ruling L8, uniform including the durable path):
 /// the head must be `sent`; the anchor must be THIS trap's `created` record
 /// (a record in any other state cannot anchor a consume); the binding —
-/// job id, step hash, and park owner — is re-derived from the PRIVATE row
+/// attempt id, step hash, and park owner — is re-derived from the PRIVATE row
 /// written when the trap opened on this device, never from caller-supplied
 /// fields or synced claims (forged → typed reject); the head's supersession
 /// lineage must chain back to the anchor through legal transitions (stale →
 /// typed reject). On success the `consumed` transition and the
 /// `resume_parked` un-park (owner-checked) commit in ONE wtxn (atomic
-/// consume+resume, design D4); the resumed job id is returned.
+/// consume+resume, design D4); the resumed attempt id is returned.
 pub fn consume_trap_signal(
     vault: &Vault,
     store: &crate::dreamer_runner::DreamerRunnerStore<'_>,
     trap: &TrapRef,
     now: u64,
-) -> Result<JobId> {
+) -> Result<AttemptId> {
     let (head_id, head) = trap_head(vault, &trap.trap_claim_id)?;
     if head.state != DreamerTrapState::Sent {
         return Err(invalid_trap("dreamer trap consume requires a sent signal"));
@@ -1434,8 +1441,10 @@ pub fn consume_trap_signal(
     {
         return Err(invalid_trap("dreamer trap signal hash mismatch"));
     }
-    if head.job_id != binding.job_id || anchor_decoded.job_id != binding.job_id {
-        return Err(invalid_trap("dreamer trap signal names a different job"));
+    if head.attempt_id != binding.attempt_id || anchor_decoded.attempt_id != binding.attempt_id {
+        return Err(invalid_trap(
+            "dreamer trap signal names a different attempt",
+        ));
     }
     require_lineage_chains_to_anchor(vault, &head_id, &trap.trap_claim_id)?;
 
@@ -1452,18 +1461,18 @@ pub fn consume_trap_signal(
         // Idempotent when no parked row exists (a consent trap raised before
         // any park, or a resume raced by the runner); a row parked by any
         // OTHER owner is refused inside resume_parked_in_txn.
-        store.resume_parked_in_txn(wtxn, binding.job_id, &binding.park_owner, now)?;
+        store.resume_parked_in_txn(wtxn, binding.attempt_id, &binding.park_owner, now)?;
         // Consumed is terminal — retire the private binding with the trap.
         trap_binding_delete_in_txn(vault, wtxn, &trap.trap_claim_id)?;
         Ok(())
     })?;
-    Ok(binding.job_id)
+    Ok(binding.attempt_id)
 }
 
 #[derive(Debug, Clone)]
 struct EncodedTrapClaim {
     kind: DreamerTrapKind,
-    job_id: JobId,
+    attempt_id: AttemptId,
     step_hash: [u8; 32],
     state: DreamerTrapState,
     at: u64,
@@ -1478,8 +1487,8 @@ fn encode_trap_claim_value(claim: &EncodedTrapClaim) -> Value {
         ),
         (Value::from(KEY_TRAP_KIND), Value::from(claim.kind.as_str())),
         (
-            Value::from(KEY_JOB_ID),
-            Value::Binary(claim.job_id.as_bytes().to_vec()),
+            Value::from(KEY_ATTEMPT_ID),
+            Value::Binary(claim.attempt_id.as_bytes().to_vec()),
         ),
         (
             Value::from(KEY_STEP_HASH),
@@ -1493,7 +1502,7 @@ fn encode_trap_claim_value(claim: &EncodedTrapClaim) -> Value {
 
 pub(crate) struct DecodedTrapClaim {
     pub(crate) kind: DreamerTrapKind,
-    pub(crate) job_id: JobId,
+    pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
     pub(crate) state: DreamerTrapState,
     #[allow(dead_code)]
@@ -1507,7 +1516,7 @@ pub(crate) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim>
     let entries = expect_map(value, "dreamer trap value must be a MessagePack map")?;
     let mut schema_version = None;
     let mut trap_kind = None;
-    let mut job_id = None;
+    let mut attempt_id = None;
     let mut step_hash = None;
     let mut state = None;
     let mut at = None;
@@ -1537,7 +1546,7 @@ pub(crate) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim>
                         .ok_or(invalid_trap("unknown dreamer trap value trap_kind"))?,
                 );
             }
-            KEY_JOB_ID => job_id = Some(decode_job_id_value(value)?),
+            KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id_value(value)?),
             KEY_STEP_HASH => {
                 let hex = expect_string(value, "dreamer trap value step_hash must be a string")?;
                 step_hash = Some(decode_hash_hex(&hex)?);
@@ -1575,7 +1584,7 @@ pub(crate) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim>
 
     Ok(DecodedTrapClaim {
         kind: trap_kind.ok_or(invalid_trap("missing dreamer trap value trap_kind"))?,
-        job_id: job_id.ok_or(invalid_trap("missing dreamer trap value job_id"))?,
+        attempt_id: attempt_id.ok_or(invalid_trap("missing dreamer trap value job_id"))?,
         step_hash: step_hash.ok_or(invalid_trap("missing dreamer trap value step_hash"))?,
         state: state.ok_or(invalid_trap("missing dreamer trap value state"))?,
         at: at.ok_or(invalid_trap("missing dreamer trap value at"))?,
@@ -1679,7 +1688,7 @@ fn append_trap_transition_in_txn(
     let claim_id = EntityId::now();
     let value = encode_trap_claim_value(&EncodedTrapClaim {
         kind: head.kind,
-        job_id: head.job_id,
+        attempt_id: head.attempt_id,
         step_hash: head.step_hash,
         state: next,
         at: now,
@@ -1752,9 +1761,9 @@ fn envelope_from_claim_body(body: &ClaimBody) -> Result<WriteEnvelope> {
 
 /// Device-local binding of one trap anchor to the suspended step: written by
 /// [`open_trap`] in the anchor's wtxn, read back at consume as the ONLY
-/// authority for the job id, step hash, and park owner.
+/// authority for the attempt id, step hash, and park owner.
 struct TrapBindingRow {
-    job_id: JobId,
+    attempt_id: AttemptId,
     step_hash: [u8; 32],
     park_owner: String,
 }
@@ -1778,8 +1787,8 @@ fn trap_binding_put_in_txn(
             Value::from(DREAMER_TRAP_BINDING_SCHEMA_VERSION),
         ),
         (
-            Value::from(KEY_JOB_ID),
-            Value::Binary(row.job_id.as_bytes().to_vec()),
+            Value::from(KEY_ATTEMPT_ID),
+            Value::Binary(row.attempt_id.as_bytes().to_vec()),
         ),
         (
             Value::from(KEY_STEP_HASH),
@@ -1814,7 +1823,7 @@ fn trap_binding_read(vault: &Vault, anchor: &EntityId) -> Result<Option<TrapBind
     let entries = expect_map(&value, "dreamer trap binding row must be a MessagePack map")?;
 
     let mut schema_version = None;
-    let mut job_id = None;
+    let mut attempt_id = None;
     let mut step_hash = None;
     let mut park_owner = None;
     let mut seen = [false; DREAMER_TRAP_BINDING_KEYS.len()];
@@ -1835,7 +1844,7 @@ fn trap_binding_read(vault: &Vault, anchor: &EntityId) -> Result<Option<TrapBind
                     "dreamer trap binding schema_version must be an integer",
                 )?);
             }
-            KEY_JOB_ID => job_id = Some(decode_job_id_value(value)?),
+            KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id_value(value)?),
             KEY_STEP_HASH => {
                 let Value::Binary(bytes) = value else {
                     return Err(invalid_trap(
@@ -1867,7 +1876,7 @@ fn trap_binding_read(vault: &Vault, anchor: &EntityId) -> Result<Option<TrapBind
     }
 
     Ok(Some(TrapBindingRow {
-        job_id: job_id.ok_or(invalid_trap("missing dreamer trap binding job_id"))?,
+        attempt_id: attempt_id.ok_or(invalid_trap("missing dreamer trap binding job_id"))?,
         step_hash: step_hash.ok_or(invalid_trap("missing dreamer trap binding step_hash"))?,
         park_owner: park_owner.ok_or(invalid_trap("missing dreamer trap binding park_owner"))?,
     }))
@@ -1923,11 +1932,11 @@ fn expect_string(value: &Value, context: &'static str) -> Result<String> {
         .ok_or(invalid_step(context))
 }
 
-fn decode_job_id_value(value: &Value) -> Result<JobId> {
+fn decode_attempt_id_value(value: &Value) -> Result<AttemptId> {
     let Value::Binary(bytes) = value else {
         return Err(invalid_step("dreamer step job_id must be binary"));
     };
-    JobId::from_bytes(bytes)
+    AttemptId::from_bytes(bytes)
 }
 
 fn decode_entity_id_value(value: &Value) -> Result<EntityId> {

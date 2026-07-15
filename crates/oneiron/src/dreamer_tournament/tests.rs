@@ -38,7 +38,7 @@ fn test_envelope(vault: &Vault) -> Result<(EntityId, EntityId, WriteEnvelope)> {
 fn candidate(
     subject: EntityId,
     candidate_ref: &str,
-    branch_job: JobId,
+    branch_attempt: AttemptId,
     claim_id: EntityId,
     claim_text: &str,
     strategy: &str,
@@ -46,7 +46,7 @@ fn candidate(
 ) -> Result<DreamerTournamentCandidate> {
     DreamerTournamentCandidate::new(
         candidate_ref,
-        branch_job,
+        branch_attempt,
         claim_id,
         ClaimCandidate::new(
             "pattern.sleep",
@@ -75,7 +75,7 @@ fn critique(
     CritiqueArtifact::new(
         artifact_id,
         "run-fixture",
-        candidate.branch_job,
+        candidate.branch_attempt,
         candidate.candidate_ref.clone(),
         lens,
         CritiqueProvenance::new(
@@ -176,10 +176,10 @@ fn author_fork(
 ) -> Result<DreamerTournamentAuthorFork> {
     DreamerTournamentAuthorFork::new(
         seed_ref,
-        JobId::now(),
+        AttemptId::now(),
         branches
             .iter()
-            .map(|candidate| candidate.branch_job)
+            .map(|candidate| candidate.branch_attempt)
             .collect(),
     )
 }
@@ -207,7 +207,7 @@ fn author_fork_must_match_first_round_sibling_branches() -> Result<()> {
     let left = candidate(
         subject,
         "fork-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Fork left claim.",
         "seed-a",
@@ -216,7 +216,7 @@ fn author_fork_must_match_first_round_sibling_branches() -> Result<()> {
     let right = candidate(
         subject,
         "fork-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Fork right claim.",
         "seed-b",
@@ -225,7 +225,7 @@ fn author_fork_must_match_first_round_sibling_branches() -> Result<()> {
     let stray = candidate(
         subject,
         "fork-stray",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Fork stray claim.",
         "seed-c",
@@ -265,7 +265,7 @@ fn fixture_corpus_tournament_writes_winner_through_normal_claim_path() -> Result
     let left = candidate(
         subject,
         "candidate-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Sleep gets lighter after late caffeine in the fixture corpus.",
         "seed-a",
@@ -274,7 +274,7 @@ fn fixture_corpus_tournament_writes_winner_through_normal_claim_path() -> Result
     let right = candidate(
         subject,
         "candidate-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Fixture evidence supports earlier caffeine cutoff improving sleep.",
         "seed-b",
@@ -326,7 +326,7 @@ fn blind_judging_context_omits_strategy_and_round_metadata() -> Result<()> {
     let left = candidate(
         subject,
         "candidate-alpha",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "The corpus supports an evening routine pattern.",
         "strategy-secret-alpha",
@@ -335,7 +335,7 @@ fn blind_judging_context_omits_strategy_and_round_metadata() -> Result<()> {
     let right = candidate(
         subject,
         "candidate-beta",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "The corpus supports a morning focus pattern.",
         "strategy-secret-beta",
@@ -384,7 +384,7 @@ fn discard_path_preserves_branch_evidence_and_critique_artifacts() -> Result<()>
     let rejected = candidate(
         subject,
         "candidate-rejected",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Ungrounded fixture generalization.",
         "seed-a",
@@ -393,13 +393,13 @@ fn discard_path_preserves_branch_evidence_and_critique_artifacts() -> Result<()>
     let survivor = candidate(
         subject,
         "candidate-survivor",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Grounded fixture generalization.",
         "seed-b",
         1,
     )?;
-    let rejected_branch_job = rejected.branch_job;
+    let rejected_branch_attempt = rejected.branch_attempt;
     let rejected_claim_id = rejected.claim_id;
     let fork = author_fork("author-seed-discard", &[&rejected, &survivor])?;
 
@@ -442,7 +442,7 @@ fn discard_path_preserves_branch_evidence_and_critique_artifacts() -> Result<()>
         evidence.candidate_ref == "candidate-rejected"
             && evidence.verdict == DreamerTournamentBranchVerdict::Discarded
     }));
-    let critiques = CritiqueArtifactStore::new(&vault).list_branch(rejected_branch_job)?;
+    let critiques = CritiqueArtifactStore::new(&vault).list_branch(rejected_branch_attempt)?;
     assert_eq!(critiques.len(), 4);
     assert!(
         critiques
@@ -461,7 +461,7 @@ fn k_cap_and_early_stop_behave() -> Result<()> {
     let round1_left = candidate(
         subject,
         "r1-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Round one left.",
         "seed-a",
@@ -470,7 +470,7 @@ fn k_cap_and_early_stop_behave() -> Result<()> {
     let round1_right = candidate(
         subject,
         "r1-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Round one right.",
         "seed-b",
@@ -479,7 +479,7 @@ fn k_cap_and_early_stop_behave() -> Result<()> {
     let round2_left = candidate(
         subject,
         "r2-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Round two left.",
         "seed-a",
@@ -488,7 +488,7 @@ fn k_cap_and_early_stop_behave() -> Result<()> {
     let round2_right = candidate(
         subject,
         "r2-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Round two right.",
         "seed-b",
@@ -497,7 +497,7 @@ fn k_cap_and_early_stop_behave() -> Result<()> {
     let should_not_write = candidate(
         subject,
         "r3-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Round three must not run.",
         "seed-a",
@@ -560,7 +560,7 @@ fn k_cap_and_early_stop_behave() -> Result<()> {
     let left = candidate(
         subject,
         "early-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Early stop left.",
         "seed-a",
@@ -569,7 +569,7 @@ fn k_cap_and_early_stop_behave() -> Result<()> {
     let right = candidate(
         subject,
         "early-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Early stop right.",
         "seed-b",
@@ -578,7 +578,7 @@ fn k_cap_and_early_stop_behave() -> Result<()> {
     let late = candidate(
         subject,
         "late",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Should not run after consensus.",
         "seed-a",
@@ -631,7 +631,7 @@ fn two_partial_survivors_use_lmx_weave_candidate() -> Result<()> {
     let left = candidate(
         subject,
         "partial-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Left partial claim.",
         "seed-a",
@@ -640,7 +640,7 @@ fn two_partial_survivors_use_lmx_weave_candidate() -> Result<()> {
     let left_refined = candidate(
         subject,
         "partial-left-refined",
-        left.branch_job,
+        left.branch_attempt,
         EntityId::now(),
         "Left refined claim.",
         "synthesis",
@@ -649,7 +649,7 @@ fn two_partial_survivors_use_lmx_weave_candidate() -> Result<()> {
     let right = candidate(
         subject,
         "partial-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Right partial claim.",
         "seed-b",
@@ -658,7 +658,7 @@ fn two_partial_survivors_use_lmx_weave_candidate() -> Result<()> {
     let right_refined = candidate(
         subject,
         "partial-right-refined",
-        right.branch_job,
+        right.branch_attempt,
         EntityId::now(),
         "Right refined claim.",
         "synthesis",
@@ -667,7 +667,7 @@ fn two_partial_survivors_use_lmx_weave_candidate() -> Result<()> {
     let weave = candidate(
         subject,
         "lmx-weave",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "LMX two-parent weave claim.",
         "lmx",
@@ -738,7 +738,7 @@ fn mc1_requires_four_unique_of366_lenses_and_artifact_ids() -> Result<()> {
     let candidate = candidate(
         subject,
         "lens-candidate",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Four lens claim.",
         "seed",
@@ -799,7 +799,7 @@ fn synthesis_verdict_must_match_triage() -> Result<()> {
     let left = candidate(
         subject,
         "synthesis-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Accepted synthesis claim.",
         "seed-a",
@@ -808,7 +808,7 @@ fn synthesis_verdict_must_match_triage() -> Result<()> {
     let right = candidate(
         subject,
         "synthesis-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Second synthesis claim.",
         "seed-b",
@@ -849,7 +849,7 @@ fn lmx_weave_must_name_exact_partial_survivor_parents() -> Result<()> {
     let left = candidate(
         subject,
         "parent-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Parent left.",
         "seed-a",
@@ -858,7 +858,7 @@ fn lmx_weave_must_name_exact_partial_survivor_parents() -> Result<()> {
     let left_refined = candidate(
         subject,
         "parent-left-refined",
-        left.branch_job,
+        left.branch_attempt,
         EntityId::now(),
         "Parent left refined.",
         "synthesis",
@@ -867,7 +867,7 @@ fn lmx_weave_must_name_exact_partial_survivor_parents() -> Result<()> {
     let right = candidate(
         subject,
         "parent-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Parent right.",
         "seed-b",
@@ -876,7 +876,7 @@ fn lmx_weave_must_name_exact_partial_survivor_parents() -> Result<()> {
     let right_refined = candidate(
         subject,
         "parent-right-refined",
-        right.branch_job,
+        right.branch_attempt,
         EntityId::now(),
         "Parent right refined.",
         "synthesis",
@@ -885,7 +885,7 @@ fn lmx_weave_must_name_exact_partial_survivor_parents() -> Result<()> {
     let wrong_parent = candidate(
         subject,
         "wrong-parent",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Wrong parent.",
         "synthesis",
@@ -894,7 +894,7 @@ fn lmx_weave_must_name_exact_partial_survivor_parents() -> Result<()> {
     let weave = candidate(
         subject,
         "bad-weave",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Bad weave.",
         "lmx",
@@ -952,11 +952,11 @@ fn evidence_key_keeps_same_candidate_ref_across_rounds() -> Result<()> {
     let (_actor, subject, envelope) = test_envelope(&vault)?;
     let catalog = LensCatalog::of366_seed()?;
     let shared_id = EntityId::now();
-    let shared_job = JobId::now();
+    let shared_attempt = AttemptId::now();
     let round1_shared = candidate(
         subject,
         "repeat-ref",
-        shared_job,
+        shared_attempt,
         shared_id,
         "Repeated round one claim.",
         "seed-a",
@@ -965,7 +965,7 @@ fn evidence_key_keeps_same_candidate_ref_across_rounds() -> Result<()> {
     let round1_other = candidate(
         subject,
         "round-one-other",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Round one other claim.",
         "seed-b",
@@ -974,7 +974,7 @@ fn evidence_key_keeps_same_candidate_ref_across_rounds() -> Result<()> {
     let round2_shared = candidate(
         subject,
         "repeat-ref",
-        shared_job,
+        shared_attempt,
         shared_id,
         "Repeated round two claim.",
         "seed-a",
@@ -1029,7 +1029,7 @@ fn late_error_does_not_leave_orphaned_critique_artifacts() -> Result<()> {
     let rejected = candidate(
         subject,
         "late-rejected",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Late rejected claim.",
         "seed-a",
@@ -1038,14 +1038,14 @@ fn late_error_does_not_leave_orphaned_critique_artifacts() -> Result<()> {
     let survivor = candidate(
         subject,
         "late-survivor",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Late survivor claim.",
         "seed-b",
         1,
     )?;
-    let rejected_job = rejected.branch_job;
-    let survivor_job = survivor.branch_job;
+    let rejected_attempt = rejected.branch_attempt;
+    let survivor_attempt = survivor.branch_attempt;
     let fork = author_fork("author-seed-late-error", &[&rejected, &survivor])?;
     let run = DreamerTournamentRun::new(
         "run-late-error",
@@ -1074,8 +1074,8 @@ fn late_error_does_not_leave_orphaned_critique_artifacts() -> Result<()> {
     )?;
     assert!(run_dreamer_claim_tournament(&vault, run).is_err());
     let store = CritiqueArtifactStore::new(&vault);
-    assert!(store.list_branch(rejected_job)?.is_empty());
-    assert!(store.list_branch(survivor_job)?.is_empty());
+    assert!(store.list_branch(rejected_attempt)?.is_empty());
+    assert!(store.list_branch(survivor_attempt)?.is_empty());
     Ok(())
 }
 
@@ -1088,7 +1088,7 @@ fn refined_winner_persists_exact_selected_candidate_with_reused_identity() -> Re
     let source = candidate(
         subject,
         "same-ref",
-        JobId::now(),
+        AttemptId::now(),
         shared_claim_id,
         "Original claim should not be persisted.",
         "seed-a",
@@ -1097,7 +1097,7 @@ fn refined_winner_persists_exact_selected_candidate_with_reused_identity() -> Re
     let refined = candidate(
         subject,
         "same-ref",
-        source.branch_job,
+        source.branch_attempt,
         shared_claim_id,
         "Refined claim is the selected winner.",
         "synthesis",
@@ -1106,7 +1106,7 @@ fn refined_winner_persists_exact_selected_candidate_with_reused_identity() -> Re
     let discarded = candidate(
         subject,
         "discarded-peer",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Discarded peer claim.",
         "seed-b",
@@ -1166,7 +1166,7 @@ fn candidate_round_mismatch_is_rejected_against_enclosing_round() -> Result<()> 
     let left = candidate(
         subject,
         "wrong-round-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Wrong round left.",
         "seed-a",
@@ -1175,7 +1175,7 @@ fn candidate_round_mismatch_is_rejected_against_enclosing_round() -> Result<()> 
     let right = candidate(
         subject,
         "wrong-round-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Wrong round right.",
         "seed-b",
@@ -1214,7 +1214,7 @@ fn duplicate_judge_ballots_are_rejected() -> Result<()> {
     let left = candidate(
         subject,
         "duplicate-judge-left",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Duplicate judge left.",
         "seed-a",
@@ -1223,7 +1223,7 @@ fn duplicate_judge_ballots_are_rejected() -> Result<()> {
     let right = candidate(
         subject,
         "duplicate-judge-right",
-        JobId::now(),
+        AttemptId::now(),
         EntityId::now(),
         "Duplicate judge right.",
         "seed-b",
@@ -1253,7 +1253,7 @@ fn judge_claim_must_match_persisted_candidate_claim_value() -> Result<()> {
     assert!(
         DreamerTournamentCandidate::new(
             "judge-drift",
-            JobId::now(),
+            AttemptId::now(),
             EntityId::now(),
             ClaimCandidate::new(
                 "pattern.sleep",

@@ -35,8 +35,8 @@ pub struct MaintenanceBuilder<'a> {
     do_recompute_hashes: bool,
     do_clear_text_index: bool,
     do_hard_erase_sweep: bool,
-    do_cleanup_job_queue: bool,
-    job_queue_lease_timeout_secs: u64,
+    do_cleanup_attempt_queue: bool,
+    attempt_queue_lease_timeout_secs: u64,
 }
 
 /// Aggregate counters for maintenance operations.
@@ -110,9 +110,9 @@ pub struct MaintenanceReport {
     /// `sweep_obligations_missing`; an unreadable receipt is a distinct
     /// signal from a dropped one and is never folded into it.
     pub sweep_obligations_undecodable: u64,
-    /// Job-queue lease cleanup counts. This is device-local runner-store
+    /// Attempt-queue lease cleanup counts. This is device-local runner-store
     /// state and carries only stable counters, never payloads or lease owners.
-    pub job_queue_cleanup: crate::job_queue::JobQueueCleanupReport,
+    pub attempt_queue_cleanup: crate::attempt_queue::AttemptQueueCleanupReport,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -127,8 +127,8 @@ impl<'a> MaintenanceBuilder<'a> {
             do_recompute_hashes: false,
             do_clear_text_index: false,
             do_hard_erase_sweep: false,
-            do_cleanup_job_queue: false,
-            job_queue_lease_timeout_secs: 0,
+            do_cleanup_attempt_queue: false,
+            attempt_queue_lease_timeout_secs: 0,
         }
     }
 
@@ -200,11 +200,11 @@ impl<'a> MaintenanceBuilder<'a> {
         self
     }
 
-    /// Returns expired job leases to the ready index for recovery by the
+    /// Returns expired attempt leases to the ready index for recovery by the
     /// normal atomic claim path. `run` fails closed if the timeout is zero.
-    pub fn cleanup_job_queue_leases(mut self, lease_timeout_secs: u64) -> Self {
-        self.do_cleanup_job_queue = true;
-        self.job_queue_lease_timeout_secs = lease_timeout_secs;
+    pub fn cleanup_attempt_queue_leases(mut self, lease_timeout_secs: u64) -> Self {
+        self.do_cleanup_attempt_queue = true;
+        self.attempt_queue_lease_timeout_secs = lease_timeout_secs;
         self
     }
 
@@ -259,13 +259,12 @@ impl<'a> MaintenanceBuilder<'a> {
             report.sweep_obligations_undecodable = run.obligations_undecodable;
         }
 
-        if self.do_cleanup_job_queue {
-            report.job_queue_cleanup = crate::job_queue::JobQueue::new(self.vault).cleanup_leases(
-                crate::job_queue::CleanupJobLeases {
+        if self.do_cleanup_attempt_queue {
+            report.attempt_queue_cleanup = crate::attempt_queue::AttemptQueue::new(self.vault)
+                .cleanup_leases(crate::attempt_queue::CleanupAttemptLeases {
                     now: crate::unix_seconds_now(),
-                    lease_timeout_secs: self.job_queue_lease_timeout_secs,
-                },
-            )?;
+                    lease_timeout_secs: self.attempt_queue_lease_timeout_secs,
+                })?;
         }
 
         Ok(report)

@@ -4,10 +4,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll, Waker};
 
+use crate::attempt_queue::{
+    AttemptInterventionKind, AttemptQueue, AttemptState, CleanupAttemptLeases, InterveneAttempt,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::config::VaultConfig;
-use crate::dreamer_runner::{DreamerHomeNodeCandidate, DreamerJobStatus};
-use crate::job_queue::{CleanupJobLeases, InterveneJob, JobInterventionKind, JobQueue, JobState};
+use crate::dreamer_runner::{DreamerAttemptStatus, DreamerHomeNodeCandidate};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::write_envelope::{WriteActor, WriteProvenance};
 use crate::{EdgeActorClass, EntityId, Vault};
@@ -18,7 +20,7 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
     let mut future = pin!(future);
-    // The pass self-wakes and pends once per job boundary (the ONE-1683
+    // The pass self-wakes and pends once per attempt boundary (the ONE-1683
     // shutdown-observability yield), so polling again immediately is
     // correct; the bound catches a future pending on anything else.
     for _ in 0..10_000 {
@@ -26,7 +28,7 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
             return output;
         }
     }
-    panic!("wake-pass future pending on something other than a job-boundary yield");
+    panic!("wake-pass future pending on something other than an attempt-boundary yield");
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -53,18 +55,21 @@ fn milestone_author(vault: &Vault, now: u64) -> Result<WakeMilestoneAuthor> {
     })
 }
 
-fn enqueue_micro(store: &DreamerRunnerStore<'_>, tag: &str, now: u64) -> Result<DreamerJobStatus> {
-    match store.enqueue_consolidation(EnqueueDreamerConsolidationJob {
+fn enqueue_micro(
+    store: &DreamerRunnerStore<'_>,
+    tag: &str,
+    now: u64,
+) -> Result<DreamerAttemptStatus> {
+    match store.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
         scope: DreamerConsolidationScope::Micro,
         input: Value::from(format!("input:{tag}")),
-        parent_job: None,
+        parent_attempt: None,
         dedupe_key: Some(tag.to_owned()),
         run_id: None,
         now,
     })? {
-        EnqueueDreamerJobOutcome::Enqueued(status) | EnqueueDreamerJobOutcome::Existing(status) => {
-            Ok(status)
-        }
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => Ok(status),
     }
 }
 
@@ -90,14 +95,14 @@ struct CompletingExecutor {
     executed: u32,
 }
 
-impl DreamerJobExecutor for CompletingExecutor {
+impl DreamerAttemptExecutor for CompletingExecutor {
     async fn execute(
         &mut self,
-        _job: &DreamerAdmittedJob,
-        _ctx: &mut WakeJobContext<'_>,
-    ) -> Result<DreamerJobExecution> {
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
         self.executed += 1;
-        Ok(DreamerJobExecution::Completed {
+        Ok(DreamerAttemptExecution::Completed {
             completed_units: self.completed_units,
         })
     }
@@ -108,23 +113,23 @@ struct ParkingExecutor {
     park_via_store_first: bool,
 }
 
-impl DreamerJobExecutor for ParkingExecutor {
+impl DreamerAttemptExecutor for ParkingExecutor {
     async fn execute(
         &mut self,
-        job: &DreamerAdmittedJob,
-        ctx: &mut WakeJobContext<'_>,
-    ) -> Result<DreamerJobExecution> {
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
         if self.park_via_store_first {
             // Simulates the step layer's trap flow: the step layer is the
             // one park-owner; the executor still surfaces Park.
-            DreamerRunnerStore::new(ctx.vault).park_job(ParkDreamerJob {
-                job_id: job.status.job.id,
+            DreamerRunnerStore::new(ctx.vault).park_attempt(ParkDreamerAttempt {
+                attempt_id: attempt.status.attempt.id,
                 reason: self.reason.clone(),
                 park_owner: "step-layer".to_owned(),
                 now: ctx.now_ms / 1_000,
             })?;
         }
-        Ok(DreamerJobExecution::Park {
+        Ok(DreamerAttemptExecution::Park {
             reason: self.reason.clone(),
         })
     }
@@ -135,7 +140,7 @@ fn wake_pass_drains_queue_until_empty() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let author = milestone_author(&vault, 5)?;
-    let jobs = [
+    let attempts = [
         enqueue_micro(&store, "a", 10)?,
         enqueue_micro(&store, "b", 11)?,
         enqueue_micro(&store, "c", 12)?,
@@ -161,19 +166,19 @@ fn wake_pass_drains_queue_until_empty() -> Result<()> {
     assert_eq!(report.stop, WakePassStop::QueueEmpty);
     assert_eq!(exec.executed, 3);
 
-    // Budget settled per job: 3 x 40 actual units spent, reservations gone.
+    // Budget settled per attempt: 3 x 40 actual units spent, reservations gone.
     let budget = store.budget("wake")?.expect("budget row");
     assert_eq!(budget.remaining_units, 10_000 - 3 * 40);
     assert_eq!(budget.reserved_units, 0);
 
-    // Done milestones are durable and readable back per job.
-    for job in &jobs {
+    // Done milestones are durable and readable back per attempt.
+    for attempt in &attempts {
         let milestone = store
-            .latest_durable_milestone(job.job.id)?
+            .latest_durable_milestone(attempt.attempt.id)?
             .expect("durable milestone");
         assert_eq!(milestone.kind, DreamerMilestoneKind::Done);
-        let status = store.status(job.job.id)?.expect("job status");
-        assert_eq!(status.job.state, JobState::Completed);
+        let status = store.status(attempt.attempt.id)?.expect("attempt status");
+        assert_eq!(status.attempt.state, AttemptState::Completed);
     }
     Ok(())
 }
@@ -196,7 +201,7 @@ fn wake_pass_stops_on_budget_exhausted() -> Result<()> {
     input.reserve_units = 100;
     let report = block_on_ready(driver.run_wake_pass(input, &mut exec, &WakeCancellation::new()))?;
 
-    // First job admits (reserve 100 of 150) and spends 100; the second
+    // First attempt admits (reserve 100 of 150) and spends 100; the second
     // reservation (100 > remaining 50) is denied.
     assert_eq!(report.admitted, 1);
     assert_eq!(report.completed, 1);
@@ -273,8 +278,12 @@ fn wake_pass_deadline_stops_admission() -> Result<()> {
     assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
     assert_eq!(report.admitted, 0);
     assert_eq!(exec.executed, 0);
-    let status = store.status(queued.job.id)?.expect("job status");
-    assert_eq!(status.job.state, JobState::Queued, "job never claimed");
+    let status = store.status(queued.attempt.id)?.expect("attempt status");
+    assert_eq!(
+        status.attempt.state,
+        AttemptState::Queued,
+        "attempt never claimed"
+    );
     Ok(())
 }
 
@@ -319,7 +328,9 @@ fn park_and_resume_roundtrip() -> Result<()> {
     assert_eq!(report.admitted, 1);
     assert_eq!(report.parked, 1);
     assert_eq!(report.completed, 0);
-    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
     assert_eq!(parked.reason, "await consent");
     // The reservation was refunded, not spent.
     let budget = store.budget("wake")?.expect("budget row");
@@ -329,19 +340,19 @@ fn park_and_resume_roundtrip() -> Result<()> {
     // Resume clears the parked row and is idempotent on re-call. The driver
     // parked under its lease owner, so resume must present the same token.
     let resumed = store
-        .resume_parked(queued.job.id, "wake-worker", 30)?
+        .resume_parked(queued.attempt.id, "wake-worker", 30)?
         .expect("resumed status");
-    assert_eq!(resumed.job.id, queued.job.id);
-    assert!(store.parked_job(queued.job.id)?.is_none());
+    assert_eq!(resumed.attempt.id, queued.attempt.id);
+    assert!(store.parked_attempt(queued.attempt.id)?.is_none());
     assert!(
         store
-            .resume_parked(queued.job.id, "wake-worker", 31)?
+            .resume_parked(queued.attempt.id, "wake-worker", 31)?
             .is_none()
     );
 
-    // Expire the stale lease so normal admission can re-claim the job.
-    let queue = JobQueue::new(&vault);
-    queue.cleanup_leases(CleanupJobLeases {
+    // Expire the stale lease so normal admission can re-claim the attempt.
+    let queue = AttemptQueue::new(&vault);
+    queue.cleanup_leases(CleanupAttemptLeases {
         now: 120,
         lease_timeout_secs: 10,
     })?;
@@ -359,8 +370,8 @@ fn park_and_resume_roundtrip() -> Result<()> {
     assert_eq!(report.admitted, 1);
     assert_eq!(report.completed, 1);
     assert_eq!(report.stop, WakePassStop::QueueEmpty);
-    let status = store.status(queued.job.id)?.expect("job status");
-    assert_eq!(status.job.state, JobState::Completed);
+    let status = store.status(queued.attempt.id)?.expect("attempt status");
+    assert_eq!(status.attempt.state, AttemptState::Completed);
     Ok(())
 }
 
@@ -384,23 +395,25 @@ fn park_owner_step_layer_respected() -> Result<()> {
     assert_eq!(report.parked, 1);
     // The step layer's park row survives untouched (one park-owner): the
     // driver never re-parks, so the original parked_at stamp is preserved.
-    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
     assert_eq!(parked.reason, "durable step budget exhausted");
     assert_eq!(parked.parked_at, 20);
     Ok(())
 }
 
 #[test]
-fn paused_job_not_admitted() -> Result<()> {
+fn paused_attempt_not_admitted() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let queued = enqueue_micro(&store, "paused", 10)?;
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
 
-    let queue = JobQueue::new(&vault);
-    queue.intervene(InterveneJob {
-        id: queued.job.id,
-        kind: JobInterventionKind::Pause,
+    let queue = AttemptQueue::new(&vault);
+    queue.intervene(InterveneAttempt {
+        id: queued.attempt.id,
+        kind: AttemptInterventionKind::Pause,
         actor: "operator".to_owned(),
         note: Some("hold".to_owned()),
         now: 15,
@@ -416,7 +429,7 @@ fn paused_job_not_admitted() -> Result<()> {
         &mut exec,
         &WakeCancellation::new(),
     ))?;
-    assert_eq!(report.admitted, 0, "paused job is skipped by admission");
+    assert_eq!(report.admitted, 0, "paused attempt is skipped by admission");
     assert_eq!(report.stop, WakePassStop::QueueEmpty);
     assert_eq!(exec.executed, 0);
     Ok(())
@@ -446,10 +459,10 @@ fn wake_trigger_default_scopes() {
 fn request_wake_enqueues_with_advisory_dedupe() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let payload = DreamerJobPayload {
-        job_type: String::new(), // enqueue derives job_type from the scope
+    let payload = DreamerAttemptPayload {
+        attempt_type: String::new(), // enqueue derives attempt_type from the scope
         input: Value::from("compaction summary"),
-        parent_job: None,
+        parent_attempt: None,
     };
 
     let first = request_wake(
@@ -461,7 +474,7 @@ fn request_wake_enqueues_with_advisory_dedupe() -> Result<()> {
         None,
         10,
     )?;
-    assert!(matches!(first, EnqueueDreamerJobOutcome::Enqueued(_)));
+    assert!(matches!(first, EnqueueDreamerAttemptOutcome::Enqueued(_)));
 
     // Advisory dedupe: re-requesting the same wake coalesces.
     let second = request_wake(
@@ -473,7 +486,7 @@ fn request_wake_enqueues_with_advisory_dedupe() -> Result<()> {
         None,
         11,
     )?;
-    assert!(matches!(second, EnqueueDreamerJobOutcome::Existing(_)));
+    assert!(matches!(second, EnqueueDreamerAttemptOutcome::Existing(_)));
     Ok(())
 }
 
@@ -487,7 +500,7 @@ fn injected_clock(start_ms: u64) -> (Arc<AtomicU64>, WakePassDeadline) {
     (elapsed, deadline)
 }
 
-/// Completes jobs while advancing the injected pass clock, simulating work
+/// Completes attempts while advancing the injected pass clock, simulating work
 /// that consumes wall time.
 struct ClockAdvancingExecutor {
     clock: Arc<AtomicU64>,
@@ -496,15 +509,15 @@ struct ClockAdvancingExecutor {
     executed: u32,
 }
 
-impl DreamerJobExecutor for ClockAdvancingExecutor {
+impl DreamerAttemptExecutor for ClockAdvancingExecutor {
     async fn execute(
         &mut self,
-        _job: &DreamerAdmittedJob,
-        _ctx: &mut WakeJobContext<'_>,
-    ) -> Result<DreamerJobExecution> {
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
         self.executed += 1;
         self.clock.fetch_add(self.advance_by_ms, Ordering::SeqCst);
-        Ok(DreamerJobExecution::Completed {
+        Ok(DreamerAttemptExecution::Completed {
             completed_units: self.completed_units,
         })
     }
@@ -518,7 +531,7 @@ fn wake_pass_never_exceeds_ceiling() -> Result<()> {
     let second = enqueue_micro(&store, "two", 11)?;
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
 
-    // The first job eats the whole ceiling; the pass must hard-stop without
+    // The first attempt eats the whole ceiling; the pass must hard-stop without
     // admitting the second.
     let (clock, deadline) = injected_clock(0);
     let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
@@ -538,8 +551,10 @@ fn wake_pass_never_exceeds_ceiling() -> Result<()> {
     assert_eq!(report.admitted, 1, "no admission past the ceiling");
     assert_eq!(report.completed, 1);
     assert_eq!(exec.executed, 1);
-    let status = store.status(second.job.id)?.expect("second job status");
-    assert_eq!(status.job.state, JobState::Queued, "never claimed");
+    let status = store
+        .status(second.attempt.id)?
+        .expect("second attempt status");
+    assert_eq!(status.attempt.state, AttemptState::Queued, "never claimed");
     Ok(())
 }
 
@@ -647,7 +662,7 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
         &mut exec,
         &WakeCancellation::new(),
     ))?;
-    assert_eq!(report.admitted, 0, "finalize admits no new jobs");
+    assert_eq!(report.admitted, 0, "finalize admits no new attempts");
     assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
     let lands: Vec<_> = driver
         .steering_signals()
@@ -670,7 +685,7 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     assert_eq!(envelope.finalize_by_ms, Some(10_000));
 
     // Segment 2 — hard cut through the ERROR path: the step layer parks the
-    // running job at the ceiling and its DeadlineHardCut error is propagated
+    // running attempt at the ceiling and its DeadlineHardCut error is propagated
     // by the executor (a host that does not map it to Park). The driver must
     // still run the whole release sequence — budget-reservation refund,
     // park/publish bookkeeping, and the CheckpointReached milestone — and
@@ -680,18 +695,18 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     struct HardCutExecutor {
         clock: Arc<AtomicU64>,
     }
-    impl DreamerJobExecutor for HardCutExecutor {
+    impl DreamerAttemptExecutor for HardCutExecutor {
         async fn execute(
             &mut self,
-            job: &DreamerAdmittedJob,
-            ctx: &mut WakeJobContext<'_>,
-        ) -> Result<DreamerJobExecution> {
+            attempt: &DreamerAdmittedAttempt,
+            ctx: &mut WakeAttemptContext<'_>,
+        ) -> Result<DreamerAttemptExecution> {
             // Simulates the ONE-1305 step-layer deadline race exactly: the
             // step layer parks at the ceiling under its hard-cut owner, then
             // the error (not Park) escapes the executor.
             self.clock.store(180_001, Ordering::SeqCst);
-            DreamerRunnerStore::new(ctx.vault).park_job(ParkDreamerJob {
-                job_id: job.status.job.id,
+            DreamerRunnerStore::new(ctx.vault).park_attempt(ParkDreamerAttempt {
+                attempt_id: attempt.status.attempt.id,
                 reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
                 park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
                 now: ctx.now_ms / 1_000,
@@ -713,13 +728,17 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     assert_eq!(report.admitted, 1);
     assert_eq!(report.parked, 1);
     assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
-    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
     assert_eq!(parked.reason, DREAMER_HARD_CUT_PARK_REASON);
     assert_eq!(parked.park_owner, DREAMER_HARD_CUT_PARK_OWNER);
 
     // Budget refund: the admission reservation was aborted, not leaked.
     assert!(
-        store.budget_reservation("wake", queued.job.id)?.is_none(),
+        store
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none(),
         "hard cut must refund the runner budget reservation"
     );
     let budget = store.budget("wake")?.expect("budget row");
@@ -728,20 +747,20 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
 
     // Checkpoint: the deadline-cut park left a durable resume point.
     let milestone = store
-        .latest_durable_milestone(queued.job.id)?
+        .latest_durable_milestone(queued.attempt.id)?
         .expect("durable milestone");
     assert_eq!(milestone.kind, DreamerMilestoneKind::CheckpointReached);
 
-    // Queue-lease cleanup: the cut job's stale lease is reclaimable through
-    // the normal path, so the job re-queues for the next pass.
-    let queue = JobQueue::new(&vault);
-    let cleaned = queue.cleanup_leases(CleanupJobLeases {
+    // Queue-lease cleanup: the cut attempt's stale lease is reclaimable through
+    // the normal path, so the attempt re-queues for the next pass.
+    let queue = AttemptQueue::new(&vault);
+    let cleaned = queue.cleanup_leases(CleanupAttemptLeases {
         now: 200,
         lease_timeout_secs: 10,
     })?;
     assert_eq!(cleaned.stale_requeued, 1, "hard-cut lease reclaimed");
-    let status = store.status(queued.job.id)?.expect("job status");
-    assert_eq!(status.job.state, JobState::Queued);
+    let status = store.status(queued.attempt.id)?.expect("attempt status");
+    assert_eq!(status.attempt.state, AttemptState::Queued);
     Ok(())
 }
 
@@ -827,27 +846,27 @@ fn monotonic_clock_immune_to_wall_jump() -> Result<()> {
     Ok(())
 }
 
-/// Fails every job with a non-deadline error (the ONE-1683 leak site: the
-/// job is NOT step-layer-parked and the deadline has NOT expired).
+/// Fails every attempt with a non-deadline error (the ONE-1683 leak site: the
+/// attempt is NOT step-layer-parked and the deadline has NOT expired).
 struct FailingExecutor;
 
-impl DreamerJobExecutor for FailingExecutor {
+impl DreamerAttemptExecutor for FailingExecutor {
     async fn execute(
         &mut self,
-        _job: &DreamerAdmittedJob,
-        _ctx: &mut WakeJobContext<'_>,
-    ) -> Result<DreamerJobExecution> {
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
         Err(crate::Error::InvariantViolation(
-            "executor exploded mid-job",
+            "executor exploded mid-attempt",
         ))
     }
 }
 
 #[test]
-fn executor_error_parks_job_and_refunds_reservation() -> Result<()> {
+fn executor_error_parks_attempt_and_refunds_reservation() -> Result<()> {
     // ONE-1683 H-S5/R2: a non-deadline executor error must park the admitted
-    // job and refund its budget reservation BEFORE the error propagates —
-    // the old path returned Err with the job stuck leased and the
+    // attempt and refund its budget reservation BEFORE the error propagates —
+    // the old path returned Err with the attempt stuck leased and the
     // reservation held.
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
@@ -863,8 +882,10 @@ fn executor_error_parks_job_and_refunds_reservation() -> Result<()> {
     ));
     assert!(result.is_err(), "a non-deadline error still propagates");
 
-    // The job row is parked under the error reason, not orphaned-leased.
-    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    // The attempt row is parked under the error reason, not orphaned-leased.
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
     assert!(
         parked
             .reason
@@ -876,17 +897,19 @@ fn executor_error_parks_job_and_refunds_reservation() -> Result<()> {
 
     // The budget reservation was refunded, not leaked.
     assert!(
-        store.budget_reservation("wake", queued.job.id)?.is_none(),
+        store
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none(),
         "the error path must abort the runner budget reservation"
     );
     let budget = store.budget("wake")?.expect("budget row");
     assert_eq!(budget.reserved_units, 0);
     assert_eq!(budget.remaining_units, 10_000);
 
-    // The parked job resumes through the normal path — nothing is stuck.
+    // The parked attempt resumes through the normal path — nothing is stuck.
     assert!(
         store
-            .resume_parked(queued.job.id, "wake-worker", 30)?
+            .resume_parked(queued.attempt.id, "wake-worker", 30)?
             .is_some()
     );
     Ok(())
@@ -917,37 +940,37 @@ fn cancel_before_pass_admits_nothing() -> Result<()> {
         "an already-cancelled pass admits nothing"
     );
     assert_eq!(exec.executed, 0);
-    let status = store.status(queued.job.id)?.expect("job status");
-    assert_eq!(status.job.state, JobState::Queued, "never claimed");
+    let status = store.status(queued.attempt.id)?.expect("attempt status");
+    assert_eq!(status.attempt.state, AttemptState::Queued, "never claimed");
     Ok(())
 }
 
-/// Completes its job normally but raises the cancellation flag while
+/// Completes its attempt normally but raises the cancellation flag while
 /// executing — simulating a supervisor shutdown landing mid-pass.
 struct CancellingExecutor {
     cancel: WakeCancellation,
     executed: u32,
 }
 
-impl DreamerJobExecutor for CancellingExecutor {
+impl DreamerAttemptExecutor for CancellingExecutor {
     async fn execute(
         &mut self,
-        _job: &DreamerAdmittedJob,
-        _ctx: &mut WakeJobContext<'_>,
-    ) -> Result<DreamerJobExecution> {
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
         self.executed += 1;
         self.cancel.cancel();
-        Ok(DreamerJobExecution::Completed {
+        Ok(DreamerAttemptExecution::Completed {
             completed_units: 40,
         })
     }
 }
 
 #[test]
-fn cancel_mid_pass_finishes_in_flight_job_then_stops() -> Result<()> {
-    // H-S5/R2: a cancel raised while a job is executing is honored only at
-    // the NEXT job boundary — the in-flight job runs to completion and
-    // settles (never aborted mid-write); the second job is never admitted.
+fn cancel_mid_pass_finishes_in_flight_attempt_then_stops() -> Result<()> {
+    // H-S5/R2: a cancel raised while an attempt is executing is honored only at
+    // the NEXT attempt boundary — the in-flight attempt runs to completion and
+    // settles (never aborted mid-write); the second attempt is never admitted.
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let first = enqueue_micro(&store, "in-flight", 10)?;
@@ -967,19 +990,26 @@ fn cancel_mid_pass_finishes_in_flight_job_then_stops() -> Result<()> {
     ))?;
     assert_eq!(report.stop, WakePassStop::Cancelled);
     assert_eq!(report.admitted, 1);
-    assert_eq!(report.completed, 1, "the in-flight job settles normally");
+    assert_eq!(
+        report.completed, 1,
+        "the in-flight attempt settles normally"
+    );
     assert_eq!(exec.executed, 1);
 
-    // Job 1 fully settled: spent, no reservation held.
-    let status = store.status(first.job.id)?.expect("first job status");
-    assert_eq!(status.job.state, JobState::Completed);
+    // Attempt 1 fully settled: spent, no reservation held.
+    let status = store
+        .status(first.attempt.id)?
+        .expect("first attempt status");
+    assert_eq!(status.attempt.state, AttemptState::Completed);
     let budget = store.budget("wake")?.expect("budget row");
     assert_eq!(budget.remaining_units, 10_000 - 40);
     assert_eq!(budget.reserved_units, 0);
 
-    // Job 2 untouched — ready for the next pass.
-    let status = store.status(second.job.id)?.expect("second job status");
-    assert_eq!(status.job.state, JobState::Queued, "never claimed");
+    // Attempt 2 untouched — ready for the next pass.
+    let status = store
+        .status(second.attempt.id)?
+        .expect("second attempt status");
+    assert_eq!(status.attempt.state, AttemptState::Queued, "never claimed");
     Ok(())
 }
 
@@ -998,17 +1028,17 @@ fn clamp_park_reason_is_utf8_boundary_safe() {
     assert_eq!(clamp_park_reason(exact.clone()), exact);
 }
 
-/// Fails every job with an error whose Display exceeds the store's park
+/// Fails every attempt with an error whose Display exceeds the store's park
 /// reason ceiling (the qodo ONE-1683 review finding: the unclamped reason
-/// used to fail park validation, leaving the admitted job leased).
+/// used to fail park validation, leaving the admitted attempt leased).
 struct OversizedErrorExecutor;
 
-impl DreamerJobExecutor for OversizedErrorExecutor {
+impl DreamerAttemptExecutor for OversizedErrorExecutor {
     async fn execute(
         &mut self,
-        _job: &DreamerAdmittedJob,
-        _ctx: &mut WakeJobContext<'_>,
-    ) -> Result<DreamerJobExecution> {
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
         Err(crate::Error::AnalyzerError(format!(
             "x{}",
             "語".repeat(400)
@@ -1039,8 +1069,10 @@ fn executor_error_with_oversized_display_still_parks() -> Result<()> {
         "the propagated error keeps its full Display"
     );
 
-    // The job is parked under the clamped reason, not orphaned-leased.
-    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    // The attempt is parked under the clamped reason, not orphaned-leased.
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
     assert!(
         parked
             .reason
@@ -1052,7 +1084,9 @@ fn executor_error_with_oversized_display_still_parks() -> Result<()> {
 
     // The budget reservation was refunded, not leaked.
     assert!(
-        store.budget_reservation("wake", queued.job.id)?.is_none(),
+        store
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none(),
         "the error path must abort the runner budget reservation"
     );
     let budget = store.budget("wake")?.expect("budget row");
@@ -1065,7 +1099,7 @@ fn executor_error_with_oversized_display_still_parks() -> Result<()> {
 fn oversized_executor_park_reason_is_clamped() -> Result<()> {
     // The ordinary Park arm gets the same clamp: an over-limit
     // executor-authored reason failing park validation would propagate
-    // after the refund but before the park, leaving the job leased.
+    // after the refund but before the park, leaving the attempt leased.
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let queued = enqueue_micro(&store, "long-park", 10)?;
@@ -1083,7 +1117,9 @@ fn oversized_executor_park_reason_is_clamped() -> Result<()> {
     ))?;
     assert_eq!(report.parked, 1);
     assert_eq!(report.stop, WakePassStop::QueueEmpty, "the pass continues");
-    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
     assert!(parked.reason.len() <= MAX_WAKE_PARK_REASON_BYTES);
     assert!(parked.reason.starts_with('x'));
     let budget = store.budget("wake")?.expect("budget row");
@@ -1091,25 +1127,25 @@ fn oversized_executor_park_reason_is_clamped() -> Result<()> {
     Ok(())
 }
 
-/// Panics on every job — the codex ONE-1683 P1 leak site: an unwind past
+/// Panics on every attempt — the codex ONE-1683 P1 leak site: an unwind past
 /// the driver used to skip the park/refund bookkeeping entirely, leaving
-/// the job leased and the reservation held.
+/// the attempt leased and the reservation held.
 struct PanickingExecutor;
 
-impl DreamerJobExecutor for PanickingExecutor {
+impl DreamerAttemptExecutor for PanickingExecutor {
     async fn execute(
         &mut self,
-        _job: &DreamerAdmittedJob,
-        _ctx: &mut WakeJobContext<'_>,
-    ) -> Result<DreamerJobExecution> {
-        panic!("executor exploded mid-job");
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        panic!("executor exploded mid-attempt");
     }
 }
 
 #[test]
-fn executor_panic_parks_job_and_refunds_reservation() -> Result<()> {
-    // A panic inside exec.execute is contained at the per-job boundary and
-    // routed through the executor-error arm: the admitted job is parked,
+fn executor_panic_parks_attempt_and_refunds_reservation() -> Result<()> {
+    // A panic inside exec.execute is contained at the per-attempt boundary and
+    // routed through the executor-error arm: the admitted attempt is parked,
     // its reservation refunded, and the pass returns Err instead of
     // unwinding past the driver with the lease still held.
     let (_dir, vault) = open_vault();
@@ -1129,7 +1165,9 @@ fn executor_panic_parks_job_and_refunds_reservation() -> Result<()> {
         "the contained panic surfaces as a pass error"
     );
 
-    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
     assert!(
         parked
             .reason
@@ -1143,26 +1181,28 @@ fn executor_panic_parks_job_and_refunds_reservation() -> Result<()> {
         parked.reason
     );
     assert!(
-        store.budget_reservation("wake", queued.job.id)?.is_none(),
+        store
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none(),
         "the panic path must abort the runner budget reservation"
     );
     let budget = store.budget("wake")?.expect("budget row");
     assert_eq!(budget.reserved_units, 0);
     assert_eq!(budget.remaining_units, 10_000);
 
-    // The parked job resumes through the normal path — nothing is stuck.
+    // The parked attempt resumes through the normal path — nothing is stuck.
     assert!(
         store
-            .resume_parked(queued.job.id, "wake-worker", 30)?
+            .resume_parked(queued.attempt.id, "wake-worker", 30)?
             .is_some()
     );
     Ok(())
 }
 
 #[test]
-fn pass_yields_at_each_job_boundary_for_cancellation() -> Result<()> {
-    // ONE-1683: run_wake_pass must yield once per job boundary so a
-    // supervisor's biased select! is re-polled between jobs — and can raise
+fn pass_yields_at_each_attempt_boundary_for_cancellation() -> Result<()> {
+    // ONE-1683: run_wake_pass must yield once per attempt boundary so a
+    // supervisor's biased select! is re-polled between attempts — and can raise
     // the cancellation flag in time — even when every executor completes
     // synchronously.
     let (_dir, vault) = open_vault();
@@ -1188,12 +1228,12 @@ fn pass_yields_at_each_job_boundary_for_cancellation() -> Result<()> {
     // The first poll parks on the loop-top yield BEFORE any admission.
     assert!(
         future.as_mut().poll(&mut cx).is_pending(),
-        "job-boundary yield"
+        "attempt-boundary yield"
     );
-    let status = store.status(queued.job.id)?.expect("job status");
+    let status = store.status(queued.attempt.id)?.expect("attempt status");
     assert_eq!(
-        status.job.state,
-        JobState::Queued,
+        status.attempt.state,
+        AttemptState::Queued,
         "nothing admitted before the yield"
     );
 

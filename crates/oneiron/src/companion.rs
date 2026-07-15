@@ -11,15 +11,16 @@ use rmpv::Value;
 use serde_json::Value as JsonValue;
 
 use crate::Vault;
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome, RetryAttempt,
+    RetryOutcome,
+};
 use crate::claim::{
     COMPANION_EXPRESSION_PROFESSIONAL, COMPANION_EXPRESSION_UNRESTRICTED,
     COMPANION_EXPRESSION_WARM, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource,
 };
 use crate::error::{Error, Result};
-use crate::job_queue::{
-    ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, EnqueueJob, EnqueueOutcome, FailJob,
-    FailOutcome, JobId, JobQueue, JobRecord, RetryJob, RetryOutcome,
-};
 
 use crate::batch::BatchOp;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -77,8 +78,8 @@ const RELATIONSHIP_REF_KEYS: [&str; 2] = ["source_ref", "target_ref"];
 const PROVENANCE_KEYS: [&str; 5] = ["actor_ref", "actor_class", "source", "approval", "value"];
 const LIFECYCLE_EVENT_KEYS: [&str; 2] = ["kind", "at"];
 
-/// Generic JobQueue kind used by all durable companion background tasks.
-pub const COMPANION_TASK_JOB_KIND: &str = "companion_task";
+/// Generic AttemptQueue kind used by all durable companion background tasks.
+pub const COMPANION_TASK_ATTEMPT_KIND: &str = "companion_task";
 /// Current companion task payload schema version.
 pub const COMPANION_TASK_PAYLOAD_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for companion task payloads.
@@ -1016,7 +1017,7 @@ pub struct EndCompanionRelationshipOutcome {
     pub already_ended: bool,
 }
 
-/// Typed payload stored on durable companion task job rows.
+/// Typed payload stored on durable companion task attempt rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanionTask {
     pub kind: CompanionTaskKind,
@@ -1042,14 +1043,14 @@ impl CompanionTask {
     }
 }
 
-/// Decoded companion task plus its backing durable JobQueue row.
+/// Decoded companion task plus its backing durable AttemptQueue row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanionTaskStatus {
-    pub job: JobRecord,
+    pub attempt: AttemptRecord,
     pub task: CompanionTask,
 }
 
-/// Input for enqueuing a companion task through the generic JobQueue.
+/// Input for enqueuing a companion task through the generic AttemptQueue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnqueueCompanionTask {
     pub task: CompanionTask,
@@ -1083,7 +1084,7 @@ pub enum ClaimCompanionTaskOutcome {
 /// Input for completing a leased companion task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteCompanionTask {
-    pub id: JobId,
+    pub id: AttemptId,
     pub lease_owner: String,
     pub attempt_count: u32,
     pub now: u64,
@@ -1100,7 +1101,7 @@ pub enum CompleteCompanionTaskOutcome {
 /// Input for terminally failing a leased companion task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailCompanionTask {
-    pub id: JobId,
+    pub id: AttemptId,
     pub lease_owner: String,
     pub attempt_count: u32,
     pub reason: String,
@@ -1118,7 +1119,7 @@ pub enum FailCompanionTaskOutcome {
 /// Input for requeuing a leased companion task after a retryable failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetryCompanionTask {
-    pub id: JobId,
+    pub id: AttemptId,
     pub lease_owner: String,
     pub attempt_count: u32,
     pub backoff_until: u64,
@@ -1133,9 +1134,9 @@ pub enum RetryCompanionTaskOutcome {
     Retried(CompanionTaskStatus),
 }
 
-/// Companion-specific facade over the generic durable JobQueue.
+/// Companion-specific facade over the generic durable AttemptQueue.
 pub struct CompanionQueue<'a> {
-    jobs: JobQueue<'a>,
+    attempts: AttemptQueue<'a>,
 }
 
 impl<'a> CompanionQueue<'a> {
@@ -1143,15 +1144,15 @@ impl<'a> CompanionQueue<'a> {
     #[must_use]
     pub fn new(vault: &'a Vault) -> Self {
         Self {
-            jobs: JobQueue::new(vault),
+            attempts: AttemptQueue::new(vault),
         }
     }
 
-    /// Enqueues a companion task as a generic durable job row.
+    /// Enqueues a companion task as a generic durable attempt row.
     pub fn enqueue(&self, input: EnqueueCompanionTask) -> Result<EnqueueCompanionTaskOutcome> {
         let payload = encode_companion_task_payload(&input.task)?;
-        let outcome = self.jobs.enqueue(EnqueueJob {
-            kind: COMPANION_TASK_JOB_KIND.to_owned(),
+        let outcome = self.attempts.enqueue(EnqueueAttempt {
+            kind: COMPANION_TASK_ATTEMPT_KIND.to_owned(),
             payload,
             dedupe_key: Some(input.task.dedupe_key()),
             run_id: input.run_id,
@@ -1167,12 +1168,12 @@ impl<'a> CompanionQueue<'a> {
         }
     }
 
-    /// Claims the oldest queued companion task without leasing unrelated jobs.
+    /// Claims the oldest queued companion task without leasing unrelated attempts.
     pub fn claim(&self, input: ClaimCompanionTask) -> Result<ClaimCompanionTaskOutcome> {
         loop {
-            match self.jobs.claim_kind(
-                COMPANION_TASK_JOB_KIND,
-                ClaimJob {
+            match self.attempts.claim_kind(
+                COMPANION_TASK_ATTEMPT_KIND,
+                ClaimAttempt {
                     lease_owner: input.lease_owner.clone(),
                     now: input.now,
                 },
@@ -1189,10 +1190,10 @@ impl<'a> CompanionQueue<'a> {
         }
     }
 
-    /// Completes a leased companion task through the generic JobQueue.
+    /// Completes a leased companion task through the generic AttemptQueue.
     pub fn complete(&self, input: CompleteCompanionTask) -> Result<CompleteCompanionTaskOutcome> {
-        self.ensure_companion_job_id(input.id)?;
-        let outcome = self.jobs.complete(CompleteJob {
+        self.ensure_companion_attempt_id(input.id)?;
+        let outcome = self.attempts.complete(CompleteAttempt {
             id: input.id,
             lease_owner: input.lease_owner,
             attempt_count: input.attempt_count,
@@ -1207,10 +1208,10 @@ impl<'a> CompanionQueue<'a> {
         }
     }
 
-    /// Terminally fails a leased companion task through the generic JobQueue.
+    /// Terminally fails a leased companion task through the generic AttemptQueue.
     pub fn fail(&self, input: FailCompanionTask) -> Result<FailCompanionTaskOutcome> {
-        self.ensure_companion_job_id(input.id)?;
-        let outcome = self.jobs.fail(FailJob {
+        self.ensure_companion_attempt_id(input.id)?;
+        let outcome = self.attempts.fail(FailAttempt {
             id: input.id,
             lease_owner: input.lease_owner,
             attempt_count: input.attempt_count,
@@ -1229,8 +1230,8 @@ impl<'a> CompanionQueue<'a> {
 
     /// Requeues a leased companion task after a retryable failure.
     pub fn retry(&self, input: RetryCompanionTask) -> Result<RetryCompanionTaskOutcome> {
-        self.ensure_companion_job_id(input.id)?;
-        let outcome = self.jobs.retry(RetryJob {
+        self.ensure_companion_attempt_id(input.id)?;
+        let outcome = self.attempts.retry(RetryAttempt {
             id: input.id,
             lease_owner: input.lease_owner,
             attempt_count: input.attempt_count,
@@ -1245,26 +1246,26 @@ impl<'a> CompanionQueue<'a> {
         }
     }
 
-    /// Reads and decodes companion task status by durable job id.
-    pub fn status(&self, id: JobId) -> Result<Option<CompanionTaskStatus>> {
-        self.jobs
+    /// Reads and decodes companion task status by durable attempt id.
+    pub fn status(&self, id: AttemptId) -> Result<Option<CompanionTaskStatus>> {
+        self.attempts
             .get(id)?
             .map(decode_companion_task_status)
             .transpose()
     }
 
-    fn ensure_companion_job_id(&self, id: JobId) -> Result<()> {
+    fn ensure_companion_attempt_id(&self, id: AttemptId) -> Result<()> {
         let _ = self.status(id)?;
         Ok(())
     }
 
     fn fail_undecodable_claimed_task(
         &self,
-        record: &JobRecord,
+        record: &AttemptRecord,
         lease_owner: &str,
         now: u64,
     ) -> Result<()> {
-        match self.jobs.fail(FailJob {
+        match self.attempts.fail(FailAttempt {
             id: record.id,
             lease_owner: lease_owner.to_owned(),
             attempt_count: record.attempt_count,
@@ -1312,12 +1313,15 @@ pub fn decode_companion_task_payload(bytes: &[u8]) -> Result<CompanionTask> {
     decode_companion_task_payload_value(&value)
 }
 
-fn decode_companion_task_status(record: JobRecord) -> Result<CompanionTaskStatus> {
-    if record.kind != COMPANION_TASK_JOB_KIND {
-        return Err(invalid_companion_task("job is not a companion task"));
+fn decode_companion_task_status(record: AttemptRecord) -> Result<CompanionTaskStatus> {
+    if record.kind != COMPANION_TASK_ATTEMPT_KIND {
+        return Err(invalid_companion_task("attempt is not a companion task"));
     }
     let task = decode_companion_task_payload(&record.payload)?;
-    Ok(CompanionTaskStatus { job: record, task })
+    Ok(CompanionTaskStatus {
+        attempt: record,
+        task,
+    })
 }
 
 fn decode_companion_task_payload_value(value: &Value) -> Result<CompanionTask> {
@@ -2040,7 +2044,7 @@ fn invalid_companion(reason: &'static str) -> Error {
 }
 
 fn invalid_companion_task(reason: &'static str) -> Error {
-    Error::InvalidJobQueueRecord(reason)
+    Error::InvalidAttemptQueueRecord(reason)
 }
 
 pub(crate) fn companion_record_id_for_key_in_txn(
@@ -2344,23 +2348,27 @@ impl Vault {
         } else {
             let task = CompanionTask::new(CompanionTaskKind::GoodbyeArtifact, ended.key())?;
             let payload = encode_companion_task_payload(&task)?;
-            let outcome = JobQueue::new(self).enqueue_in_txn(
+            let outcome = AttemptQueue::new(self).enqueue_in_txn(
                 &mut wtxn,
-                EnqueueJob {
-                    kind: COMPANION_TASK_JOB_KIND.to_owned(),
+                EnqueueAttempt {
+                    kind: COMPANION_TASK_ATTEMPT_KIND.to_owned(),
                     payload,
                     dedupe_key: Some(task.dedupe_key()),
                     run_id: input.run_id,
                     now: input.ended_at,
                 },
             )?;
-            let status = |job| CompanionTaskStatus {
-                job,
+            let status = |attempt| CompanionTaskStatus {
+                attempt,
                 task: task.clone(),
             };
             Some(match outcome {
-                EnqueueOutcome::Enqueued(job) => EnqueueCompanionTaskOutcome::Enqueued(status(job)),
-                EnqueueOutcome::Existing(job) => EnqueueCompanionTaskOutcome::Existing(status(job)),
+                EnqueueOutcome::Enqueued(attempt) => {
+                    EnqueueCompanionTaskOutcome::Enqueued(status(attempt))
+                }
+                EnqueueOutcome::Existing(attempt) => {
+                    EnqueueCompanionTaskOutcome::Existing(status(attempt))
+                }
             })
         };
 

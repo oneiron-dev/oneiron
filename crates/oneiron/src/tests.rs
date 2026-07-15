@@ -3584,11 +3584,11 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
     Ok(())
 }
 
-/// ONE-1206 fail-closed gate over adding the generic job queue DBs: v6 code
+/// ONE-1206 fail-closed gate over adding the generic attempt queue DBs: v6 code
 /// does not know `job_records`, `job_ready`, or `job_dedupe`, so v6 vaults
 /// must not open under ABI v7 without rebuild.
 #[test]
-fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
+fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<()> {
     assert_eq!(
         STORAGE_ABI_VERSION, 13,
         "ONE-1387 pins the current storage ABI at 13 for session-tagged CLAIM bodies",
@@ -3619,11 +3619,11 @@ fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
     Ok(())
 }
 
-/// ONE-1213 fail-closed gate over adding durable job queue terminal states:
+/// ONE-1213 fail-closed gate over adding durable attempt queue terminal states:
 /// v7 queue readers do not know `Completed`/`Failed` rows, so v7 vaults must
 /// not open under ABI v8 without rebuild.
 #[test]
-fn open_rejects_abi_v7_vault_after_job_queue_terminal_states() -> Result<()> {
+fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()> {
     assert_eq!(
         STORAGE_ABI_VERSION, 13,
         "ONE-1387 pins the current storage ABI at 13 for session-tagged CLAIM bodies",
@@ -5335,7 +5335,7 @@ fn open_rejects_rogue_manifest_database_name() -> Result<()> {
 }
 
 /// Consolidated from name-only clones (ONE-1145/ONE-1206): one core DB plus
-/// sync-era and job-queue DBs. Removing ANY required manifest name must fail
+/// sync-era and attempt-queue DBs. Removing ANY required manifest name must fail
 /// closed with the exact missing-name payload.
 #[test]
 fn open_rejects_missing_required_manifest_database_name() -> Result<()> {

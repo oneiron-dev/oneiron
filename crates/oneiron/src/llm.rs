@@ -476,7 +476,7 @@ impl LlmUsage {
     }
 }
 
-/// Absolute per-job input token totals, never retry deltas.
+/// Absolute per-attempt input token totals, never retry deltas.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LlmInputUsage {
     pub total: u64,
@@ -484,7 +484,7 @@ pub struct LlmInputUsage {
     pub cache_write: u64,
 }
 
-/// Absolute per-job output token totals, never retry deltas.
+/// Absolute per-attempt output token totals, never retry deltas.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LlmOutputUsage {
     pub total: u64,

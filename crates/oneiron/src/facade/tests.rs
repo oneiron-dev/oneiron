@@ -2708,8 +2708,8 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
 #[test]
 fn consolidation_queue_round_trip_with_facade_writeback() {
     use crate::dreamer_runner::{
-        AdmitDreamerConsolidationJob, AdmitDreamerJob, CompleteDreamerJob,
-        CompleteDreamerJobOutcome, DreamerAdmissionOutcome, DreamerClaimAuthoringAdmission,
+        AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt,
+        CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerClaimAuthoringAdmission,
         DreamerClaimAuthoringBatchTier, DreamerConsolidationAdmissionOutcome,
         DreamerConsolidationScope, DreamerRunnerStore,
     };
@@ -2720,8 +2720,8 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
     let facade = facade_for(&vault, actor);
 
     // Enqueue through the bridge verb; advisory dedupe coalesces re-enqueues.
-    let job = facade
-        .enqueue_consolidation(&ConsolidationJobInput {
+    let attempt = facade
+        .enqueue_consolidation(&ConsolidationAttemptInput {
             scope: "micro".to_owned(),
             input: serde_json::json!({"window": "w-1"}),
             run_id: Some("run-bridge-1".to_owned()),
@@ -2729,10 +2729,10 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
             now: Some(2000),
         })
         .expect("enqueue");
-    assert_eq!(job.state, "queued");
-    assert!(!job.existing);
+    assert_eq!(attempt.state, "queued");
+    assert!(!attempt.existing);
     let again = facade
-        .enqueue_consolidation(&ConsolidationJobInput {
+        .enqueue_consolidation(&ConsolidationAttemptInput {
             scope: "micro".to_owned(),
             input: serde_json::json!({"window": "w-1"}),
             run_id: Some("run-bridge-1".to_owned()),
@@ -2741,24 +2741,24 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
         })
         .expect("re-enqueue");
     assert!(again.existing, "advisory dedupe coalesces");
-    assert_eq!(again.job_ref, job.job_ref);
+    assert_eq!(again.job_ref, attempt.job_ref);
 
     // Poll model: queued → (admit engine-side) → leased → completed.
     let status = facade
-        .dreamer_job_status(&job.job_ref)
+        .dreamer_attempt_status(&attempt.job_ref)
         .expect("status")
-        .expect("job exists");
+        .expect("attempt exists");
     assert_eq!(status.state, "queued");
     assert_eq!(status.run_id.as_deref(), Some("run-bridge-1"));
 
     let store = DreamerRunnerStore::new(&vault);
     let admitted = store
-        .admit_next_consolidation(AdmitDreamerConsolidationJob {
+        .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: 7,
             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
             claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-            admission: AdmitDreamerJob {
+            admission: AdmitDreamerAttempt {
                 lease_owner: "bridge-test-worker".to_owned(),
                 now: 2002,
                 budget_id: "wake:micro".to_owned(),
@@ -2769,20 +2769,20 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
         })
         .expect("admit");
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
-        admitted_job,
+        admitted_attempt,
     )) = admitted
     else {
-        panic!("expected admitted consolidation job, got {admitted:?}");
+        panic!("expected admitted consolidation attempt, got {admitted:?}");
     };
     let leased = facade
-        .dreamer_job_status(&job.job_ref)
+        .dreamer_attempt_status(&attempt.job_ref)
         .expect("status")
-        .expect("job exists");
+        .expect("attempt exists");
     assert_eq!(leased.state, "leased");
     assert_eq!(leased.lease_owner.as_deref(), Some("bridge-test-worker"));
 
     // AC-5 (W3 non-contention): an interactive witness during the running
-    // consolidation succeeds without waiting on the job.
+    // consolidation succeeds without waiting on the attempt.
     facade
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0x53; 16]).unwrap().to_hex(),
@@ -2860,23 +2860,26 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
 
     // Complete the lease; the bridge polls the terminal state.
     let completed = store
-        .complete(CompleteDreamerJob {
-            id: admitted_job.status.job.id,
+        .complete(CompleteDreamerAttempt {
+            id: admitted_attempt.status.attempt.id,
             lease_owner: "bridge-test-worker".to_owned(),
-            attempt_count: admitted_job.status.job.attempt_count,
+            attempt_count: admitted_attempt.status.attempt.attempt_count,
             now: 2005,
         })
         .expect("complete");
-    assert!(matches!(completed, CompleteDreamerJobOutcome::Completed(_)));
+    assert!(matches!(
+        completed,
+        CompleteDreamerAttemptOutcome::Completed(_)
+    ));
     let done = facade
-        .dreamer_job_status(&job.job_ref)
+        .dreamer_attempt_status(&attempt.job_ref)
         .expect("status")
-        .expect("job exists");
+        .expect("attempt exists");
     assert_eq!(done.state, "completed");
 
     // Unknown scope fails closed.
     let err = facade
-        .enqueue_consolidation(&ConsolidationJobInput {
+        .enqueue_consolidation(&ConsolidationAttemptInput {
             scope: "giga".to_owned(),
             input: serde_json::json!({}),
             run_id: None,
@@ -2893,7 +2896,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
 fn enqueue_consolidation_requires_a_verified_actor() {
     let (_dir, vault) = open_vault();
     let enqueue = |facade: &MemoryFacade<'_>| {
-        facade.enqueue_consolidation(&ConsolidationJobInput {
+        facade.enqueue_consolidation(&ConsolidationAttemptInput {
             scope: "micro".to_owned(),
             input: serde_json::json!({"window": "w-g1"}),
             run_id: None,
@@ -2992,7 +2995,7 @@ fn seed_claims_force_proposed_with_per_element_receipts() {
 
 #[test]
 fn schedule_outbound_holds_gate_checks_and_dedupes() {
-    use crate::job_queue::JobQueue;
+    use crate::attempt_queue::AttemptQueue;
 
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x56);
@@ -3045,12 +3048,12 @@ fn schedule_outbound_holds_gate_checks_and_dedupes() {
         decisions_before,
         "no second gate decision on dedupe"
     );
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
     let scheduled: Vec<_> = queue
         .list()
-        .expect("list jobs")
+        .expect("list attempts")
         .into_iter()
-        .filter(|job| job.kind == BRIDGE_OUTBOUND_JOB_KIND)
+        .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
         .collect();
     assert_eq!(scheduled.len(), 1, "one durable schedule row");
 
@@ -3071,12 +3074,12 @@ fn missing_bound_outbound_actor_maps_to_forbidden() {
 }
 
 /// #484a regression: an unsupported channel is rejected BEFORE the durable
-/// enqueue, so it leaves no orphan job/dedupe entry and a retry (on a
+/// enqueue, so it leaves no orphan attempt/dedupe entry and a retry (on a
 /// supported channel, same idempotency key) is not wedged as an existing
 /// dedupe hit.
 #[test]
 fn schedule_outbound_unsupported_channel_leaves_no_orphan_and_allows_retry() {
-    use crate::job_queue::{JobQueue, JobState};
+    use crate::attempt_queue::{AttemptQueue, AttemptState};
 
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x60);
@@ -3102,16 +3105,18 @@ fn schedule_outbound_unsupported_channel_leaves_no_orphan_and_allows_retry() {
     assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
 
     // No live (non-cancelled) schedule row orphaned by the failed dispatch.
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
     let live: Vec<_> = queue
         .list()
-        .expect("list jobs")
+        .expect("list attempts")
         .into_iter()
-        .filter(|job| job.kind == BRIDGE_OUTBOUND_JOB_KIND && job.state != JobState::Cancelled)
+        .filter(|attempt| {
+            attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND && attempt.state != AttemptState::Cancelled
+        })
         .collect();
     assert!(
         live.is_empty(),
-        "unsupported channel must not leave a live outbound job"
+        "unsupported channel must not leave a live outbound attempt"
     );
 
     // A retry on a supported channel with the SAME idempotency key proceeds
@@ -3127,7 +3132,7 @@ fn schedule_outbound_unsupported_channel_leaves_no_orphan_and_allows_retry() {
 
 /// #484b regression: an idempotent retry recovers the ORIGINAL gate decision
 /// ref instead of an empty gate result. The first schedule persists its gate
-/// surface keyed by job id; the dedupe branch reads it back.
+/// surface keyed by attempt id; the dedupe branch reads it back.
 #[test]
 fn schedule_outbound_dedupe_recovers_original_gate_decision_ref() {
     let (_dir, vault) = open_vault();

@@ -8,13 +8,14 @@
 use super::*;
 use crate::VaultConfig;
 use crate::agent_def::{AgentCeiling, AgentScope};
+use crate::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
 use crate::claim::ClaimSubject;
 use crate::dreamer_runner::{
-    AdmitDreamerJob, DREAMER_MILESTONE_PREDICATE, DreamerAdmissionOutcome, DreamerMilestoneClaim,
-    DreamerMilestoneKind, decode_dreamer_job_payload, dreamer_milestone_value,
+    AdmitDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DreamerAdmissionOutcome,
+    DreamerMilestoneClaim, DreamerMilestoneKind, decode_dreamer_attempt_payload,
+    dreamer_milestone_value,
 };
 use crate::error::ErrorKind;
-use crate::job_queue::{CleanupJobLeases, JobQueue, JobState};
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -110,7 +111,7 @@ fn dispatch_custom(
 ) -> Result<AgentDispatchOutcome> {
     dispatcher.dispatch(DispatchAgent {
         target: AgentDispatchTarget::Custom(id),
-        parent_job: None,
+        parent_attempt: None,
         dedupe_key: dedupe_key.map(str::to_owned),
         run_id: None,
         now,
@@ -135,10 +136,10 @@ fn dispatch_custom_round_trips_snapshot() -> Result<()> {
     assert_eq!(status.input.definition, def);
 
     // The durable queue row carries the same payload.
-    let queue = JobQueue::new(&vault);
-    let record = queue.get(status.job.id)?.expect("queued dispatch row");
-    let payload = decode_dreamer_job_payload(&record.payload)?;
-    assert_eq!(payload.job_type, AGENT_DISPATCH_JOB_TYPE);
+    let queue = AttemptQueue::new(&vault);
+    let record = queue.get(status.attempt.id)?.expect("queued dispatch row");
+    let payload = decode_dreamer_attempt_payload(&record.payload)?;
+    assert_eq!(payload.attempt_type, AGENT_DISPATCH_ATTEMPT_TYPE);
     let decoded = decode_agent_dispatch_input(&payload.input)?;
     assert_eq!(decoded, status.input);
     assert_eq!(decoded.definition.skills, def.skills);
@@ -155,7 +156,7 @@ fn dispatch_system_preset() -> Result<()> {
     let dispatcher = AgentDispatcher::new(&vault);
     let AgentDispatchOutcome::Dispatched(status) = dispatcher.dispatch(DispatchAgent {
         target: AgentDispatchTarget::System(SystemAgentPreset::Scout),
-        parent_job: None,
+        parent_attempt: None,
         dedupe_key: None,
         run_id: None,
         now: 10,
@@ -218,7 +219,7 @@ fn dispatch_rejections() -> Result<()> {
     let err = dispatcher
         .dispatch(DispatchAgent {
             target: AgentDispatchTarget::System(SystemAgentPreset::Herald),
-            parent_job: None,
+            parent_attempt: None,
             dedupe_key: None,
             run_id: None,
             now: 10,
@@ -227,7 +228,7 @@ fn dispatch_rejections() -> Result<()> {
     assert!(matches!(err, Error::SystemAgentDisabled(_)));
 
     // Nothing was enqueued by any rejection.
-    assert!(JobQueue::new(&vault).list()?.is_empty());
+    assert!(AttemptQueue::new(&vault).list()?.is_empty());
     Ok(())
 }
 
@@ -250,10 +251,10 @@ fn dispatch_dedupe_existing() -> Result<()> {
     else {
         panic!("expected deduped dispatch");
     };
-    assert_eq!(second.job.id, first.job.id);
+    assert_eq!(second.attempt.id, first.attempt.id);
     assert_eq!(second.input, first.input);
     assert_eq!(
-        second.job.dedupe_key.as_deref(),
+        second.attempt.dedupe_key.as_deref(),
         Some("agent.dispatch:morning-run"),
         "the queue-level dedupe key is namespaced (M6)"
     );
@@ -369,9 +370,9 @@ fn snapshot_survives_definition_update() -> Result<()> {
     updated.skills = vec![crate::skill::SkillDependency::new("oneiron.skill.new")];
     vault.update_agent_definition(&def_id, &updated, t(2), 2)?;
 
-    let queue = JobQueue::new(&vault);
-    let record = queue.get(status.job.id)?.expect("queued dispatch row");
-    let payload = decode_dreamer_job_payload(&record.payload)?;
+    let queue = AttemptQueue::new(&vault);
+    let record = queue.get(status.attempt.id)?.expect("queued dispatch row");
+    let payload = decode_dreamer_attempt_payload(&record.payload)?;
     let snapshot = decode_agent_dispatch_input(&payload.input)?.definition;
     assert_eq!(snapshot, original, "composition is frozen at dispatch");
     assert_eq!(
@@ -398,25 +399,31 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     let def = custom_agent("1.0.0");
     vault.put_agent_definition(&def_id, &def, t(1), 1)?;
 
-    let (job_id, dispatch_input) = {
+    let (attempt_id, dispatch_input) = {
         let dispatcher = AgentDispatcher::new(&vault);
         let AgentDispatchOutcome::Dispatched(status) =
             dispatch_custom(&dispatcher, def_id, None, 10)?
         else {
             panic!("expected fresh dispatch");
         };
-        (status.job.id, status.input)
+        (status.attempt.id, status.input)
     };
 
     // The system/Dreamer bookkeeping envelope: a MACHINE actor, class System,
     // with the agent attribution carried in the provenance payload (B1 (a)).
     let dreamer_actor = test_id(0x2A);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
-    // The milestone subject is the job id itself (pinned); anchor an entity at
+    // The milestone subject is the attempt id itself (pinned); anchor an entity at
     // those bytes so the claim door's subject-existence check passes.
     // (`EntityId::from_bytes` takes the 16-byte array by value.)
-    let subject = EntityId::from_bytes(*job_id.as_bytes())?;
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"agent job anchor")?;
+    let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        t(1),
+        1,
+        b"agent attempt anchor",
+    )?;
     let milestone_envelope = WriteEnvelope::new(
         crate::write_envelope::WriteActor::new(dreamer_actor, EdgeActorClass::System),
         crate::claim::ClaimSource::Generated,
@@ -437,28 +444,29 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     // Admission co-commits the durable started milestone.
     {
         let runner = DreamerRunnerStore::new(&vault);
-        let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerJob {
-            lease_owner: "agent-worker".to_owned(),
-            now: 20,
-            budget_id: "wake".to_owned(),
-            budget_total_units: 10,
-            reserve_units: 2,
-            started_milestone: Some(DreamerMilestoneClaim {
-                claim_id: EntityId::now(),
-                subject,
-                kind: DreamerMilestoneKind::Started,
-                envelope: milestone_envelope.clone(),
-                occurred: t(20),
-                learned_at: 20,
-            }),
-        })?
+        let DreamerAdmissionOutcome::Admitted(admitted) =
+            runner.admit_next(AdmitDreamerAttempt {
+                lease_owner: "agent-worker".to_owned(),
+                now: 20,
+                budget_id: "wake".to_owned(),
+                budget_total_units: 10,
+                reserve_units: 2,
+                started_milestone: Some(DreamerMilestoneClaim {
+                    claim_id: EntityId::now(),
+                    subject,
+                    kind: DreamerMilestoneKind::Started,
+                    envelope: milestone_envelope.clone(),
+                    occurred: t(20),
+                    learned_at: 20,
+                }),
+            })?
         else {
             panic!("expected admission");
         };
-        assert_eq!(admitted.status.job.id, job_id);
+        assert_eq!(admitted.status.attempt.id, attempt_id);
         assert_eq!(
             runner
-                .latest_durable_milestone(job_id)?
+                .latest_durable_milestone(attempt_id)?
                 .expect("started milestone")
                 .kind,
             DreamerMilestoneKind::Started
@@ -468,7 +476,7 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     // Mid-run checkpoint: an ordinary gated claim under the same envelope.
     let checkpoint_id = EntityId::now();
     let checkpoint_value =
-        dreamer_milestone_value(job_id, DreamerMilestoneKind::CheckpointReached, 30);
+        dreamer_milestone_value(attempt_id, DreamerMilestoneKind::CheckpointReached, 30);
     vault
         .batch()
         .claim_candidate(
@@ -513,23 +521,27 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen vault");
     let runner = DreamerRunnerStore::new(&vault);
     let milestone = runner
-        .latest_durable_milestone(job_id)?
+        .latest_durable_milestone(attempt_id)?
         .expect("durable milestone after reopen");
     assert_eq!(milestone.kind, DreamerMilestoneKind::CheckpointReached);
-    assert_eq!(milestone.job_id, job_id);
+    assert_eq!(milestone.attempt_id, attempt_id);
 
-    // Lease expiry → cleanup → the job is claimable again with the same
+    // Lease expiry → cleanup → the attempt is claimable again with the same
     // frozen snapshot.
-    let report = JobQueue::new(&vault).cleanup_leases(CleanupJobLeases {
+    let report = AttemptQueue::new(&vault).cleanup_leases(CleanupAttemptLeases {
         now: 100,
         lease_timeout_secs: 10,
     })?;
     assert_eq!(report.stale_requeued, 1);
     assert_eq!(
-        runner.status(job_id)?.expect("requeued job").job.state,
-        JobState::Queued
+        runner
+            .status(attempt_id)?
+            .expect("requeued attempt")
+            .attempt
+            .state,
+        AttemptState::Queued
     );
-    let DreamerAdmissionOutcome::Admitted(second) = runner.admit_next(AdmitDreamerJob {
+    let DreamerAdmissionOutcome::Admitted(second) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "second-worker".to_owned(),
         now: 110,
         budget_id: "wake".to_owned(),
@@ -540,7 +552,7 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     else {
         panic!("expected re-admission after lease recovery");
     };
-    assert_eq!(second.status.job.id, job_id);
+    assert_eq!(second.status.attempt.id, attempt_id);
     assert_eq!(
         decode_agent_dispatch_input(&second.status.payload.input)?,
         dispatch_input,
@@ -616,7 +628,7 @@ fn dispatched_agent_runs_under_clamped_ceiling() -> Result<()> {
 }
 
 // Security hardening F4: milestone attribution is BOUND to the dispatched
-// job — the admission door stamps subject + agent attribution from the job's
+// attempt — the admission door stamps subject + agent attribution from the attempt's
 // own payload (caller-supplied values are overridden), and the durable index
 // refuses checkpoint claims whose stamped attribution names another agent.
 #[test]
@@ -632,13 +644,19 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     else {
         panic!("expected fresh dispatch");
     };
-    let job_id = status.job.id;
+    let attempt_id = status.attempt.id;
 
     let dreamer_actor = test_id(0x2B);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
-    let subject = EntityId::from_bytes(*job_id.as_bytes())?;
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"agent job anchor")?;
-    // A decoy subject the forging caller supplies instead of the job id.
+    let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        t(1),
+        1,
+        b"agent attempt anchor",
+    )?;
+    // A decoy subject the forging caller supplies instead of the attempt id.
     let decoy_subject = test_id(0x2C);
     vault.put_entity(&decoy_subject, ENTITY_TYPE_PERSON, t(1), 1, b"decoy")?;
 
@@ -656,7 +674,7 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     // and a decoy subject — both are overridden by the stamp.
     let started_claim_id = EntityId::now();
     let runner = DreamerRunnerStore::new(&vault);
-    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerJob {
+    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "agent-worker".to_owned(),
         now: 20,
         budget_id: "wake".to_owned(),
@@ -674,13 +692,13 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     else {
         panic!("expected admission");
     };
-    assert_eq!(admitted.status.job.id, job_id);
+    assert_eq!(admitted.status.attempt.id, attempt_id);
 
     let stored = vault.get_claim(&started_claim_id)?.expect("started claim");
     assert_eq!(
         stored.subject,
         ClaimSubject::Entity(subject),
-        "milestone subject is stamped to the job id, not the caller's decoy"
+        "milestone subject is stamped to the attempt id, not the caller's decoy"
     );
     let Some(Value::Map(evidence)) = stored.evidence else {
         panic!("started claim carries envelope evidence");
@@ -708,7 +726,7 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     );
     assert_eq!(
         runner
-            .latest_durable_milestone(job_id)?
+            .latest_durable_milestone(attempt_id)?
             .expect("started milestone indexed")
             .kind,
         DreamerMilestoneKind::Started
@@ -724,7 +742,7 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
             ClaimCandidate::new(
                 DREAMER_MILESTONE_PREDICATE,
                 ClaimSubject::Entity(subject),
-                dreamer_milestone_value(job_id, DreamerMilestoneKind::CheckpointReached, 30),
+                dreamer_milestone_value(attempt_id, DreamerMilestoneKind::CheckpointReached, 30),
                 1.0,
             ),
             &forged_envelope,
@@ -734,7 +752,7 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
         .commit()?;
     assert_eq!(
         runner
-            .latest_durable_milestone(job_id)?
+            .latest_durable_milestone(attempt_id)?
             .expect("milestone unchanged")
             .kind,
         DreamerMilestoneKind::Started,
@@ -762,7 +780,7 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
             ClaimCandidate::new(
                 DREAMER_MILESTONE_PREDICATE,
                 ClaimSubject::Entity(subject),
-                dreamer_milestone_value(job_id, DreamerMilestoneKind::CheckpointReached, 40),
+                dreamer_milestone_value(attempt_id, DreamerMilestoneKind::CheckpointReached, 40),
                 1.0,
             ),
             &bound_envelope,
@@ -772,7 +790,7 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
         .commit()?;
     assert_eq!(
         runner
-            .latest_durable_milestone(job_id)?
+            .latest_durable_milestone(attempt_id)?
             .expect("bound checkpoint indexed")
             .kind,
         DreamerMilestoneKind::CheckpointReached
@@ -800,7 +818,7 @@ fn write_milestone_claim(
     vault: &Vault,
     claim_id: &EntityId,
     subject: EntityId,
-    job_id: crate::job_queue::JobId,
+    attempt_id: crate::attempt_queue::AttemptId,
     kind: DreamerMilestoneKind,
     at: u64,
     envelope: &WriteEnvelope,
@@ -812,7 +830,7 @@ fn write_milestone_claim(
             ClaimCandidate::new(
                 DREAMER_MILESTONE_PREDICATE,
                 ClaimSubject::Entity(subject),
-                dreamer_milestone_value(job_id, kind, at),
+                dreamer_milestone_value(attempt_id, kind, at),
                 1.0,
             ),
             envelope,
@@ -846,13 +864,13 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     else {
         panic!("expected fresh dispatch");
     };
-    let job_id = status.job.id;
+    let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
     let dreamer_actor = test_id(0x2D);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
-    let subject = EntityId::from_bytes(*job_id.as_bytes())?;
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"job anchor")?;
+    let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
     let decoy_subject = test_id(0x2E);
     vault.put_entity(&decoy_subject, ENTITY_TYPE_PERSON, t(1), 1, b"decoy")?;
     // An Auto-ceiling agent actor, so an agent-envelope milestone still lands
@@ -875,14 +893,14 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
         &vault,
         &EntityId::now(),
         subject,
-        job_id,
+        attempt_id,
         DreamerMilestoneKind::Started,
         20,
         &bound,
     )?;
     assert_eq!(
         runner
-            .latest_durable_milestone(job_id)?
+            .latest_durable_milestone(attempt_id)?
             .expect("started")
             .kind,
         DreamerMilestoneKind::Started
@@ -905,7 +923,7 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
             &vault,
             &claim_id,
             subject,
-            job_id,
+            attempt_id,
             kind,
             at,
             &forged_attribution,
@@ -916,7 +934,7 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
         );
         assert_eq!(
             runner
-                .latest_durable_milestone(job_id)?
+                .latest_durable_milestone(attempt_id)?
                 .expect("milestone")
                 .kind,
             DreamerMilestoneKind::Started,
@@ -929,18 +947,18 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
         &vault,
         &EntityId::now(),
         decoy_subject,
-        job_id,
+        attempt_id,
         DreamerMilestoneKind::Done,
         40,
         &bound,
     )?;
     assert_eq!(
         runner
-            .latest_durable_milestone(job_id)?
+            .latest_durable_milestone(attempt_id)?
             .expect("milestone")
             .kind,
         DreamerMilestoneKind::Started,
-        "a milestone whose subject is not the job id must not index"
+        "a milestone whose subject is not the attempt id must not index"
     );
 
     // (c) Envelope-actor forgery: correct attribution and subject, but the
@@ -962,7 +980,7 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
         &vault,
         &agent_claim,
         subject,
-        job_id,
+        attempt_id,
         DreamerMilestoneKind::Done,
         50,
         &agent_envelope,
@@ -974,7 +992,7 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     );
     assert_eq!(
         runner
-            .latest_durable_milestone(job_id)?
+            .latest_durable_milestone(attempt_id)?
             .expect("milestone")
             .kind,
         DreamerMilestoneKind::Started,
@@ -986,14 +1004,14 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
         &vault,
         &EntityId::now(),
         subject,
-        job_id,
+        attempt_id,
         DreamerMilestoneKind::CheckpointReached,
         60,
         &bound,
     )?;
     assert_eq!(
         runner
-            .latest_durable_milestone(job_id)?
+            .latest_durable_milestone(attempt_id)?
             .expect("milestone")
             .kind,
         DreamerMilestoneKind::CheckpointReached
@@ -1016,13 +1034,13 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     else {
         panic!("expected fresh dispatch");
     };
-    let job_id = status.job.id;
+    let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
     let dreamer_actor = test_id(0x3A);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
-    let subject = EntityId::from_bytes(*job_id.as_bytes())?;
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"job anchor")?;
+    let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
 
     // Both claims are written BEFORE any read initializes the index, so the
     // backfill scan — not the put hook — is what must reject the forgery.
@@ -1030,7 +1048,7 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
         &vault,
         &EntityId::now(),
         subject,
-        job_id,
+        attempt_id,
         DreamerMilestoneKind::Started,
         20,
         &dreamer_envelope(dreamer_actor, &agent_id)?,
@@ -1039,7 +1057,7 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
         &vault,
         &EntityId::now(),
         subject,
-        job_id,
+        attempt_id,
         DreamerMilestoneKind::Done,
         30,
         &dreamer_envelope(dreamer_actor, "mallory.other.agent")?,
@@ -1049,7 +1067,7 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     let runner = DreamerRunnerStore::new(&vault);
     assert_eq!(
         runner
-            .latest_durable_milestone(job_id)?
+            .latest_durable_milestone(attempt_id)?
             .expect("milestone")
             .kind,
         DreamerMilestoneKind::Started,
@@ -1058,27 +1076,33 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     Ok(())
 }
 
-// Security hardening F4 round 2: a milestone claim naming a job with NO local
+// Security hardening F4 round 2: a milestone claim naming an attempt with NO local
 // queue row (the cross-device replay shape — queue rows are private per-device
 // runner state and never sync) fails closed: it commits, but never indexes.
 #[test]
-fn milestone_with_absent_job_row_does_not_index() -> Result<()> {
+fn milestone_with_absent_attempt_row_does_not_index() -> Result<()> {
     let (_dir, vault) = open_vault();
     put_policy_manifest(&vault, 0x12, vec![actor_ceiling_row("system", "auto")])?;
 
     let dreamer_actor = test_id(0x3B);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
-    // A job id that exists on some other device only.
-    let foreign_job = crate::job_queue::JobId::now();
-    let subject = EntityId::from_bytes(*foreign_job.as_bytes())?;
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"foreign job anchor")?;
+    // An attempt id that exists on some other device only.
+    let foreign_attempt = crate::attempt_queue::AttemptId::now();
+    let subject = EntityId::from_bytes(*foreign_attempt.as_bytes())?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        t(1),
+        1,
+        b"foreign attempt anchor",
+    )?;
 
     let claim_id = EntityId::now();
     write_milestone_claim(
         &vault,
         &claim_id,
         subject,
-        foreign_job,
+        foreign_attempt,
         DreamerMilestoneKind::Done,
         20,
         &dreamer_envelope(dreamer_actor, "eiri.agent.custom")?,
@@ -1090,9 +1114,9 @@ fn milestone_with_absent_job_row_does_not_index() -> Result<()> {
     );
     let runner = DreamerRunnerStore::new(&vault);
     assert_eq!(
-        runner.latest_durable_milestone(foreign_job)?,
+        runner.latest_durable_milestone(foreign_attempt)?,
         None,
-        "a milestone with no local job row must not decide this device's resume point"
+        "a milestone with no local attempt row must not decide this device's resume point"
     );
     Ok(())
 }
@@ -1114,20 +1138,20 @@ fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
     else {
         panic!("expected fresh dispatch");
     };
-    let job_id = status.job.id;
+    let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
     let dreamer_actor = test_id(0x3C);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
-    let subject = EntityId::from_bytes(*job_id.as_bytes())?;
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"job anchor")?;
+    let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
 
     // A fully bound milestone: it indexes while its MACHINE writer exists.
     write_milestone_claim(
         &vault,
         &EntityId::now(),
         subject,
-        job_id,
+        attempt_id,
         DreamerMilestoneKind::CheckpointReached,
         20,
         &dreamer_envelope(dreamer_actor, &agent_id)?,
@@ -1135,7 +1159,7 @@ fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
     let runner = DreamerRunnerStore::new(&vault);
     assert_eq!(
         runner
-            .latest_durable_milestone(job_id)?
+            .latest_durable_milestone(attempt_id)?
             .expect("milestone indexed while writer exists")
             .kind,
         DreamerMilestoneKind::CheckpointReached
@@ -1156,7 +1180,7 @@ fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
         Ok(())
     })?;
     assert_eq!(
-        runner.latest_durable_milestone(job_id)?,
+        runner.latest_durable_milestone(attempt_id)?,
         None,
         "a milestone whose writer entity no longer exists must not stay indexed"
     );

@@ -7,7 +7,9 @@ use std::task::{Context, Poll, Waker};
 use serde_json::json;
 
 use crate::config::VaultConfig;
-use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome};
+use crate::dreamer_runner::{
+    DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::{
     CallEnvelope, ContentPart, DeterministicFallback, FatalLlmError, FinishReason, LlmCapability,
@@ -46,7 +48,7 @@ fn occurred(at: u64) -> TimeRange {
 }
 
 struct StepFixture {
-    job_id: JobId,
+    attempt_id: AttemptId,
     actor: WriteActor,
     subject: EntityId,
 }
@@ -64,21 +66,20 @@ fn step_fixture(vault: &Vault, now: u64) -> Result<StepFixture> {
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(now), now, b"subject")?;
 
     let runner = DreamerRunnerStore::new(vault);
-    let status = match runner.enqueue(EnqueueDreamerJob {
-        job_type: "consolidation-step-test".to_owned(),
+    let status = match runner.enqueue(EnqueueDreamerAttempt {
+        attempt_type: "consolidation-step-test".to_owned(),
         input: rmpv::Value::from("input"),
-        parent_job: None,
+        parent_attempt: None,
         dedupe_key: None,
         run_id: Some("run-test".to_owned()),
         now,
     })? {
-        EnqueueDreamerJobOutcome::Enqueued(status) | EnqueueDreamerJobOutcome::Existing(status) => {
-            status
-        }
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status,
     };
 
     Ok(StepFixture {
-        job_id: status.job.id,
+        attempt_id: status.attempt.id,
         actor: WriteActor::new(actor_entity, EdgeActorClass::Agent),
         subject,
     })
@@ -87,7 +88,7 @@ fn step_fixture(vault: &Vault, now: u64) -> Result<StepFixture> {
 fn ctx<'a>(vault: &'a Vault, fixture: &StepFixture, now_ms: u64) -> DurableStepContext<'a> {
     DurableStepContext {
         vault,
-        job_id: fixture.job_id,
+        attempt_id: fixture.attempt_id,
         run_id: Some("run-test".to_owned()),
         envelope_actor: fixture.actor,
         subject: fixture.subject,
@@ -255,7 +256,7 @@ fn death_after_response_before_log_recovers_without_respend() -> Result<()> {
     // but before logging leaves it.
     step_state_write(
         &vault,
-        fixture.job_id,
+        fixture.attempt_id,
         &step_hash,
         StepProgression::ResponseReceived,
         Some(&payload),
@@ -281,8 +282,8 @@ fn death_after_response_before_log_recovers_without_respend() -> Result<()> {
     assert_eq!(guard.read().reserved_units, 0, "zero new leases");
 
     // The terminal claim + memo index landed; the private row is gone.
-    assert!(step_index_lookup(&vault, fixture.job_id, &step_hash)?.is_some());
-    assert!(step_state_read(&vault, fixture.job_id, &step_hash)?.is_none());
+    assert!(step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_some());
+    assert!(step_state_read(&vault, fixture.attempt_id, &step_hash)?.is_none());
     Ok(())
 }
 
@@ -290,7 +291,7 @@ fn death_after_response_before_log_recovers_without_respend() -> Result<()> {
 fn persistence_error_after_response_releases_lease() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fixture = step_fixture(&vault, 10)?;
-    // Same job/subject, but override the envelope actor with a deliberately
+    // Same attempt/subject, but override the envelope actor with a deliberately
     // absent entity so the terminal claim write inside `log_terminal_step`
     // fails AFTER the provider answered and the lease was reserved. Cloning the
     // helper ctx (rather than an inline literal) keeps this test compiling as
@@ -423,22 +424,24 @@ fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
     let decoded = decode_trap_claim_value(&body.value)?;
     assert_eq!(decoded.state, DreamerTrapState::Created);
     assert_eq!(decoded.kind, DreamerTrapKind::Budget);
-    assert_eq!(decoded.job_id, fixture.job_id);
+    assert_eq!(decoded.attempt_id, fixture.attempt_id);
     assert_eq!(decoded.step_hash, trap.step_hash);
 
-    // The job is parked UNDER THE TRAP'S OWNER TOKEN and the transition row
+    // The attempt is parked UNDER THE TRAP'S OWNER TOKEN and the transition row
     // is deleted.
     let runner = DreamerRunnerStore::new(&vault);
-    let parked = runner.parked_job(fixture.job_id)?.expect("job parked");
+    let parked = runner
+        .parked_attempt(fixture.attempt_id)?
+        .expect("attempt parked");
     assert_eq!(parked.park_owner, trap_park_owner(&trap.trap_claim_id));
-    // parked_at is stored in Unix SECONDS (park_job_with_progress rescales it
+    // parked_at is stored in Unix SECONDS (park_attempt_with_progress rescales it
     // *1_000 for updated_at_ms); the millisecond now_ms=10_000 must land as 10,
     // not 10_000 (#480-1).
     assert_eq!(
         parked.parked_at, 10,
         "budget-exhaustion park must store parked_at in seconds, not milliseconds"
     );
-    assert!(step_state_read(&vault, fixture.job_id, &trap.step_hash)?.is_none());
+    assert!(step_state_read(&vault, fixture.attempt_id, &trap.step_hash)?.is_none());
     Ok(())
 }
 
@@ -450,8 +453,8 @@ fn signal_before_wait_ordering() -> Result<()> {
     let step_hash = request_fixture().canonical_hash().expect("hash");
     let trap = open_trap(&vault, &ctx, DreamerTrapKind::Consent, step_hash, "consent")?;
     let runner = DreamerRunnerStore::new(&vault);
-    runner.park_job(crate::dreamer_runner::ParkDreamerJob {
-        job_id: fixture.job_id,
+    runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: fixture.attempt_id,
         reason: "consent".to_owned(),
         park_owner: trap_park_owner(&trap.trap_claim_id),
         now: 10_001,
@@ -469,12 +472,12 @@ fn signal_before_wait_ordering() -> Result<()> {
 
     // Consume validates, then commits the consumed transition AND the
     // un-park in one wtxn.
-    let job_id = consume_trap_signal(&vault, &runner, &trap, 10_004)?;
-    assert_eq!(job_id, fixture.job_id);
+    let attempt_id = consume_trap_signal(&vault, &runner, &trap, 10_004)?;
+    assert_eq!(attempt_id, fixture.attempt_id);
     let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
     assert_eq!(head.state, DreamerTrapState::Consumed);
     assert!(
-        runner.parked_job(fixture.job_id)?.is_none(),
+        runner.parked_attempt(fixture.attempt_id)?.is_none(),
         "consume+resume must clear the parked row atomically"
     );
     Ok(())
@@ -494,8 +497,8 @@ fn wait_before_signal_ordering() -> Result<()> {
         DreamerTrapState::Waiting
     );
     send_trap_signal(&vault, &trap.trap_claim_id, step_hash, 10_002)?;
-    let job_id = consume_trap_signal(&vault, &runner, &trap, 10_003)?;
-    assert_eq!(job_id, fixture.job_id);
+    let attempt_id = consume_trap_signal(&vault, &runner, &trap, 10_003)?;
+    assert_eq!(attempt_id, fixture.attempt_id);
     let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
     assert_eq!(head.state, DreamerTrapState::Consumed);
     Ok(())
@@ -509,8 +512,8 @@ fn forged_resume_signal_rejected() -> Result<()> {
     let step_hash = request_fixture().canonical_hash().expect("hash");
     let trap = open_trap(&vault, &ctx, DreamerTrapKind::Budget, step_hash, "budget")?;
     let runner = DreamerRunnerStore::new(&vault);
-    runner.park_job(crate::dreamer_runner::ParkDreamerJob {
-        job_id: fixture.job_id,
+    runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: fixture.attempt_id,
         reason: "budget".to_owned(),
         park_owner: trap_park_owner(&trap.trap_claim_id),
         now: 10_001,
@@ -530,7 +533,7 @@ fn forged_resume_signal_rejected() -> Result<()> {
     let forged_id = EntityId::now();
     let forged_value = encode_trap_claim_value(&EncodedTrapClaim {
         kind: DreamerTrapKind::Budget,
-        job_id: fixture.job_id,
+        attempt_id: fixture.attempt_id,
         step_hash: forged_hash,
         state: DreamerTrapState::Sent,
         at: 10_004,
@@ -559,12 +562,12 @@ fn forged_resume_signal_rejected() -> Result<()> {
 
     let error = consume_trap_signal(&vault, &runner, &trap, 10_005).expect_err("forged rejected");
     assert!(matches!(error, Error::InvalidClaimBody(_)));
-    // The trap is NOT consumed and the job stays parked.
+    // The trap is NOT consumed and the attempt stays parked.
     let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
     assert_ne!(head.state, DreamerTrapState::Consumed);
     assert!(
-        runner.parked_job(fixture.job_id)?.is_some(),
-        "job stays parked"
+        runner.parked_attempt(fixture.attempt_id)?.is_some(),
+        "attempt stays parked"
     );
     Ok(())
 }
@@ -611,11 +614,11 @@ fn own_anchor_sent_record_refused() -> Result<()> {
     let step_hash = request_fixture().canonical_hash().expect("hash");
     let runner = DreamerRunnerStore::new(&vault);
 
-    // The job is genuinely parked by its real trap, so a successful forgery
+    // The attempt is genuinely parked by its real trap, so a successful forgery
     // WOULD resume it.
     let real = open_trap(&vault, &ctx, DreamerTrapKind::Budget, step_hash, "budget")?;
-    runner.park_job(crate::dreamer_runner::ParkDreamerJob {
-        job_id: fixture.job_id,
+    runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: fixture.attempt_id,
         reason: "budget".to_owned(),
         park_owner: trap_park_owner(&real.trap_claim_id),
         now: 10_001,
@@ -627,7 +630,7 @@ fn own_anchor_sent_record_refused() -> Result<()> {
     let forged_id = EntityId::now();
     let forged_value = encode_trap_claim_value(&EncodedTrapClaim {
         kind: DreamerTrapKind::Budget,
-        job_id: fixture.job_id,
+        attempt_id: fixture.attempt_id,
         step_hash,
         state: DreamerTrapState::Sent,
         at: 10_002,
@@ -659,8 +662,8 @@ fn own_anchor_sent_record_refused() -> Result<()> {
         Error::InvalidClaimBody("dreamer trap anchor must be a created record")
     ));
     assert!(
-        runner.parked_job(fixture.job_id)?.is_some(),
-        "job stays parked"
+        runner.parked_attempt(fixture.attempt_id)?.is_some(),
+        "attempt stays parked"
     );
     Ok(())
 }
@@ -670,19 +673,19 @@ fn signal_naming_other_owners_job_refused() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
 
-    // Job J is parked under ITS OWN trap's park-owner token.
+    // Attempt J is parked under ITS OWN trap's park-owner token.
     let fixture_j = step_fixture(&vault, 10)?;
     let ctx_j = ctx(&vault, &fixture_j, 10_000);
     let hash_j = request_fixture().canonical_hash().expect("hash");
     let trap_j = open_trap(&vault, &ctx_j, DreamerTrapKind::Budget, hash_j, "budget j")?;
-    runner.park_job(crate::dreamer_runner::ParkDreamerJob {
-        job_id: fixture_j.job_id,
+    runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: fixture_j.attempt_id,
         reason: "budget j".to_owned(),
         park_owner: trap_park_owner(&trap_j.trap_claim_id),
         now: 10_001,
     })?;
 
-    // Trap K suspends a DIFFERENT job.
+    // Trap K suspends a DIFFERENT attempt.
     let fixture_k = step_fixture(&vault, 11)?;
     let ctx_k = ctx(&vault, &fixture_k, 10_010);
     let hash_k = [0x66_u8; 32];
@@ -695,19 +698,19 @@ fn signal_naming_other_owners_job_refused() -> Result<()> {
     )?;
     register_wait(&vault, &trap_k, 10_011)?;
 
-    // Forge a sent record on K's chain that names JOB J — another owner's
-    // parked job. The private binding says trap K belongs to job K, so the
+    // Forge a sent record on K's chain that names ATTEMPT J — another owner's
+    // parked attempt. The private binding says trap K belongs to attempt K, so the
     // consume must refuse instead of unparking J.
     let (head_id, _) = trap_head(&vault, &trap_k.trap_claim_id)?;
     let head_body = vault.get_claim(&head_id)?.expect("head body");
     let forged_id = EntityId::now();
     let forged_value = encode_trap_claim_value(&EncodedTrapClaim {
         kind: DreamerTrapKind::Consent,
-        job_id: fixture_j.job_id,
+        attempt_id: fixture_j.attempt_id,
         step_hash: hash_k,
         state: DreamerTrapState::Sent,
         at: 10_012,
-        note: "forged cross-job".to_owned(),
+        note: "forged cross-attempt".to_owned(),
     });
     let forged_candidate = ClaimCandidate::new(
         DREAMER_TRAP_PREDICATE,
@@ -731,14 +734,14 @@ fn signal_naming_other_owners_job_refused() -> Result<()> {
     })?;
 
     let error = consume_trap_signal(&vault, &runner, &trap_k, 10_013)
-        .expect_err("cross-job signal refused");
+        .expect_err("cross-attempt signal refused");
     assert!(matches!(
         error,
-        Error::InvalidClaimBody("dreamer trap signal names a different job")
+        Error::InvalidClaimBody("dreamer trap signal names a different attempt")
     ));
     assert!(
-        runner.parked_job(fixture_j.job_id)?.is_some(),
-        "job J stays parked"
+        runner.parked_attempt(fixture_j.attempt_id)?.is_some(),
+        "attempt J stays parked"
     );
     let (_, head) = trap_head(&vault, &trap_k.trap_claim_id)?;
     assert_ne!(head.state, DreamerTrapState::Consumed);
@@ -754,10 +757,10 @@ fn consume_refuses_when_parked_by_other_owner() -> Result<()> {
     let trap = open_trap(&vault, &ctx, DreamerTrapKind::Consent, step_hash, "consent")?;
     let runner = DreamerRunnerStore::new(&vault);
 
-    // The job is parked by SOMEONE ELSE (e.g. the wake driver), not by this
+    // The attempt is parked by SOMEONE ELSE (e.g. the wake driver), not by this
     // trap's recorded owner.
-    runner.park_job(crate::dreamer_runner::ParkDreamerJob {
-        job_id: fixture.job_id,
+    runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: fixture.attempt_id,
         reason: "driver park".to_owned(),
         park_owner: "wake-worker".to_owned(),
         now: 10_001,
@@ -767,13 +770,13 @@ fn consume_refuses_when_parked_by_other_owner() -> Result<()> {
 
     let error =
         consume_trap_signal(&vault, &runner, &trap, 10_004).expect_err("owner mismatch refused");
-    assert!(matches!(error, Error::InvalidJobQueueRecord(_)));
+    assert!(matches!(error, Error::InvalidAttemptQueueRecord(_)));
 
     // The whole consume wtxn rolled back: no consumed transition landed and
     // the other owner's parked row is intact.
     let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
     assert_ne!(head.state, DreamerTrapState::Consumed);
-    assert!(runner.parked_job(fixture.job_id)?.is_some());
+    assert!(runner.parked_attempt(fixture.attempt_id)?.is_some());
     Ok(())
 }
 
@@ -809,9 +812,9 @@ fn step_hash_stable_across_field_order() {
 
 #[test]
 fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
-    let job_id = JobId::from_bytes(&[0x11_u8; 16])?;
+    let attempt_id = AttemptId::from_bytes(&[0x11_u8; 16])?;
     let step_claim = EncodedStepClaim {
-        job_id,
+        attempt_id,
         step_hash: [0x22; 32],
         progression: StepProgression::Finished,
         model_id: "test/model@r1".to_owned(),
@@ -825,7 +828,7 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     };
     let value = encode_step_claim_value(&step_claim);
     let decoded = decode_step_claim_value(&value)?;
-    assert_eq!(decoded.job_id, job_id);
+    assert_eq!(decoded.attempt_id, attempt_id);
     assert_eq!(decoded.step_hash, [0x22; 32]);
     assert_eq!(decoded.progression, StepProgression::Finished);
     assert_eq!(decoded.model_id, "test/model@r1");
@@ -860,7 +863,7 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     // Trap value round-trip + unknown-key fail-closed.
     let trap_claim = EncodedTrapClaim {
         kind: DreamerTrapKind::Consent,
-        job_id,
+        attempt_id,
         step_hash: [0x55; 32],
         state: DreamerTrapState::Waiting,
         at: 10_001,
@@ -869,7 +872,7 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     let value = encode_trap_claim_value(&trap_claim);
     let decoded = decode_trap_claim_value(&value)?;
     assert_eq!(decoded.kind, DreamerTrapKind::Consent);
-    assert_eq!(decoded.job_id, job_id);
+    assert_eq!(decoded.attempt_id, attempt_id);
     assert_eq!(decoded.step_hash, [0x55; 32]);
     assert_eq!(decoded.state, DreamerTrapState::Waiting);
     assert_eq!(decoded.note, "note");
@@ -899,7 +902,8 @@ fn oversize_response_lands_in_blob_artifact() -> Result<()> {
         panic!("expected finished step");
     };
 
-    let claim_id = step_index_lookup(&vault, fixture.job_id, &step_hash)?.expect("memo index row");
+    let claim_id =
+        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.expect("memo index row");
     let body = vault.get_claim(&claim_id)?.expect("terminal claim");
     let decoded = decode_step_claim_value(&body.value)?;
     assert!(
@@ -1002,10 +1006,12 @@ fn deadline_race_aborts_hung_generate() -> Result<()> {
     assert_eq!(read.reserved_units, 0, "lease aborted with settled spend");
     assert_eq!(read.used_units, 0);
     let runner = DreamerRunnerStore::new(&vault);
-    let parked = runner.parked_job(fixture.job_id)?.expect("job parked");
+    let parked = runner
+        .parked_attempt(fixture.attempt_id)?
+        .expect("attempt parked");
     assert_eq!(parked.reason, crate::DREAMER_HARD_CUT_PARK_REASON);
     let step_hash = request_fixture().canonical_hash().expect("hash");
-    assert!(step_state_read(&vault, fixture.job_id, &step_hash)?.is_none());
+    assert!(step_state_read(&vault, fixture.attempt_id, &step_hash)?.is_none());
     Ok(())
 }
 
@@ -1067,14 +1073,16 @@ fn expired_deadline_never_records_finished() -> Result<()> {
 
     let step_hash = request_fixture().canonical_hash().expect("hash");
     assert!(
-        step_index_lookup(&vault, fixture.job_id, &step_hash)?.is_none(),
+        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_none(),
         "no terminal step claim for an expired call"
     );
     let read = guard.read();
     assert_eq!(read.reserved_units, 0, "lease aborted");
     assert_eq!(read.used_units, 0, "no spend recorded");
     let runner = DreamerRunnerStore::new(&vault);
-    let parked = runner.parked_job(fixture.job_id)?.expect("job parked");
+    let parked = runner
+        .parked_attempt(fixture.attempt_id)?
+        .expect("attempt parked");
     assert_eq!(parked.reason, crate::DREAMER_HARD_CUT_PARK_REASON);
     // The deadline hard-cut park must also store parked_at in Unix SECONDS:
     // now_ms=10_000 lands as 10, not 10_000 (#480-1).

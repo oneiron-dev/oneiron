@@ -33,7 +33,7 @@ fn critique(
     CritiqueArtifact::new(
         artifact_id,
         "run-a",
-        JobId::now(),
+        AttemptId::now(),
         "candidate-a",
         lens,
         provenance(),
@@ -228,7 +228,7 @@ fn critique_artifacts_persist_branch_local_and_not_as_claims() -> Result<()> {
     let (_dir, vault) = open_vault();
     let catalog = LensCatalog::of366_seed()?;
     let lens = catalog.lens("groundedness", "claim_authoring").unwrap();
-    let branch_job = JobId::now();
+    let branch_attempt = AttemptId::now();
     let mut artifact = critique(
         "groundedness_ok",
         lens,
@@ -236,17 +236,17 @@ fn critique_artifacts_persist_branch_local_and_not_as_claims() -> Result<()> {
         CritiqueSeverity::Info,
         Some(true),
     );
-    artifact.branch_job = branch_job;
+    artifact.branch_attempt = branch_attempt;
     let before_claims = vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?;
 
     let store = CritiqueArtifactStore::new(&vault);
     store.put(&artifact)?;
 
     assert_eq!(
-        store.get(branch_job, "groundedness_ok")?,
+        store.get(branch_attempt, "groundedness_ok")?,
         Some(artifact.clone())
     );
-    assert_eq!(store.list_branch(branch_job)?, vec![artifact]);
+    assert_eq!(store.list_branch(branch_attempt)?, vec![artifact]);
     assert_eq!(
         vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?,
         before_claims
@@ -259,7 +259,7 @@ fn out_of_scope_critique_artifacts_are_not_persisted() -> Result<()> {
     let (_dir, vault) = open_vault();
     let catalog = LensCatalog::of366_seed()?;
     let lens = catalog.lens("overreach", "claim_authoring").unwrap();
-    let branch_job = JobId::now();
+    let branch_attempt = AttemptId::now();
     let mut artifact = critique(
         "overreach_out_of_scope",
         lens,
@@ -267,14 +267,14 @@ fn out_of_scope_critique_artifacts_are_not_persisted() -> Result<()> {
         CritiqueSeverity::High,
         None,
     );
-    artifact.branch_job = branch_job;
+    artifact.branch_attempt = branch_attempt;
     artifact.out_of_scope = true;
 
     let store = CritiqueArtifactStore::new(&vault);
     store.put(&artifact)?;
 
-    assert_eq!(store.get(branch_job, "overreach_out_of_scope")?, None);
-    assert!(store.list_branch(branch_job)?.is_empty());
+    assert_eq!(store.get(branch_attempt, "overreach_out_of_scope")?, None);
+    assert!(store.list_branch(branch_attempt)?.is_empty());
     Ok(())
 }
 

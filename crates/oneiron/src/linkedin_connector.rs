@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Vault;
+use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::error::{Error, Result};
-use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobQueue};
 use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink};
 use crate::surface_event::{
     InboundSurfaceEventInput, InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt,
@@ -56,8 +56,8 @@ pub const LINKEDIN_CONNECT_CONSENT_BODY: &str = "LinkedIn does not officially su
 
 const LINKEDIN_SEAT_VERB_CATALOG: &[&str] = &[LINKEDIN_SEND_DM_VERB, LINKEDIN_CONNECT_REQUEST_VERB];
 
-/// Durable job kind used by the scheduled LinkedIn inbox poller.
-pub const LINKEDIN_INBOX_SYNC_JOB_KIND: &str = "linkedin_inbox_sync";
+/// Durable attempt kind used by the scheduled LinkedIn inbox poller.
+pub const LINKEDIN_INBOX_SYNC_ATTEMPT_KIND: &str = "linkedin_inbox_sync";
 
 /// Default initial lookback for timestamped LinkedIn messages.
 pub const DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS: u64 = 7 * 24 * 60 * 60;
@@ -691,7 +691,7 @@ pub struct LinkedInMcpConnectorAdapter {
     session_ref: Option<String>,
 }
 
-/// Config persisted in each scheduled LinkedIn inbox-sync job.
+/// Config persisted in each scheduled LinkedIn inbox-sync attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedInInboxSyncConfig {
     pub receiving_address_or_handle: String,
@@ -771,7 +771,7 @@ impl LinkedInInboxSyncConfig {
     }
 }
 
-/// One normalized LinkedIn conversation message selected by the inbox sync job.
+/// One normalized LinkedIn conversation message selected by the inbox sync attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkedInConversationMessage {
     pub thread_id: String,
@@ -895,8 +895,8 @@ impl LinkedInMcpConnectorAdapter {
         let payload = serde_json::to_vec(&config).map_err(|err| {
             Error::InvalidConfig(format!("LinkedIn inbox sync config did not encode: {err}"))
         })?;
-        JobQueue::new(vault).enqueue(EnqueueJob {
-            kind: LINKEDIN_INBOX_SYNC_JOB_KIND.to_owned(),
+        AttemptQueue::new(vault).enqueue(EnqueueAttempt {
+            kind: LINKEDIN_INBOX_SYNC_ATTEMPT_KIND.to_owned(),
             payload,
             dedupe_key: Some(linkedin_inbox_sync_dedupe_key(&config)),
             run_id: None,
@@ -1211,15 +1211,15 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
     }
 }
 
-/// Builds a runner from a scheduled job payload.
-pub fn linkedin_inbox_sync_runner_from_job<'a, T>(
+/// Builds a runner from a scheduled attempt payload.
+pub fn linkedin_inbox_sync_runner_from_attempt<'a, T>(
     vault: &'a Vault,
     payload: &[u8],
     transport: T,
 ) -> Result<LinkedInInboxSyncRunner<'a, T>> {
     let config: LinkedInInboxSyncConfig = serde_json::from_slice(payload).map_err(|err| {
         Error::InvalidConfig(format!(
-            "LinkedIn inbox sync job payload did not decode: {err}"
+            "LinkedIn inbox sync attempt payload did not decode: {err}"
         ))
     })?;
     config.validate()?;

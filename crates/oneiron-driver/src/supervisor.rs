@@ -11,7 +11,7 @@
 //!   mid-pass can never start a second pass (share the gate across
 //!   supervisors over one vault via [`WakeSupervisor::with_pass_gate`]).
 //! * Panic containment is layered: the ENGINE contains an `exec.execute`
-//!   panic at the job boundary (the job is parked, its reservation
+//!   panic at the attempt boundary (the attempt is parked, its reservation
 //!   refunded, and the pass fails cleanly), and a panic anywhere else in a
 //!   pass is caught HERE as the backstop — either way the supervisor
 //!   restarts with backoff, never crashes.
@@ -19,12 +19,12 @@
 //!   pass's [`WakeCancellation`] flag and KEEPS AWAITING the pass future —
 //!   it is never dropped mid-await, so an in-flight gated write or
 //!   off-record close is never aborted. The pass stops itself at its
-//!   job-boundary checkpoints, parking + refunding anything it had admitted.
+//!   attempt-boundary checkpoints, parking + refunding anything it had admitted.
 //! * Budget admission stays entirely INSIDE `run_wake_pass`: this crate
 //!   never calls `admit_next_consolidation` / `settle_budget` /
 //!   `abort_budget_reservation`.
-//! * No actor framework, no job-worker crate, no heartbeat: the loop only
-//!   ever wakes for a [`Tick`] (a job-queue deadline read or an
+//! * No actor framework, no attempt-worker crate, no heartbeat: the loop only
+//!   ever wakes for a [`Tick`] (an attempt-queue deadline read or an
 //!   authenticated push) — plus a bounded one-shot delay after a FAILED
 //!   pass, which defers consuming the next already-signalled tick rather
 //!   than generating wakeups of its own.
@@ -39,10 +39,10 @@ use std::time::Duration;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, ConsolidationExecutor, ConsolidationSink,
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
-    DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS, DreamerClaimAuthoringStrategy,
-    DreamerConsolidationScope, DreamerJobExecutor, DreamerRunnerStore, DreamerWakeDriver,
-    LlmBackend, ModelId, Result, RunWakePass, Vault, WakeCancellation, WakeMilestoneAuthor,
-    WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger, WriteActor,
+    DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy,
+    DreamerConsolidationScope, DreamerRunnerStore, DreamerWakeDriver, LlmBackend, ModelId, Result,
+    RunWakePass, Vault, WakeCancellation, WakeMilestoneAuthor, WakePassDeadline, WakePassReport,
+    WakePassStop, WakeTrigger, WriteActor,
 };
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 use tokio::sync::{Semaphore, watch};
@@ -116,8 +116,8 @@ const PASS_BUDGET_INDEX_SCAN_BOUND: u64 = 65_536;
 /// real-store validation test below, so drift breaks the build here.
 const MAX_RUNNER_BUDGET_ID_LEN: usize = 128;
 
-/// Mirror of `job_queue`'s private `MAX_LEASE_OWNER_LEN` (admission stamps
-/// `lease_owner` through the runner into the job queue, which rejects empty
+/// Mirror of `attempt_queue`'s private `MAX_LEASE_OWNER_LEN` (admission stamps
+/// `lease_owner` through the runner into the attempt queue, which rejects empty
 /// and over-long owners before mutating rows). Pinned by a real-queue
 /// validation test below.
 const MAX_RUNNER_LEASE_OWNER_LEN: usize = 128;
@@ -160,7 +160,7 @@ pub struct WakeSupervisorConfig {
     pub local_node_id: u64,
     /// Total budget units granted to each pass.
     pub budget_total_units: u64,
-    /// Units reserved per admitted child job.
+    /// Units reserved per admitted child attempt.
     pub reserve_units: u64,
     /// Per-pass wall-clock ceiling in milliseconds. Must exceed
     /// [`DREAMER_GRACEFUL_WRAP_WINDOW_MS`] so a pass is not born already
@@ -205,12 +205,12 @@ impl WakeSupervisorConfig {
     ///   exceed the runner store's budget-id ceiling (startup scan would
     ///   treat validation errors as "occupied" and spin);
     /// * `local_node_id == 0` (admission rejects zero before mutating any
-    ///   job row, so every pass would empty-fail under HybridTick);
+    ///   attempt row, so every pass would empty-fail under HybridTick);
     /// * `pass_ceiling_ms <= DREAMER_GRACEFUL_WRAP_WINDOW_MS` (the pass is
     ///   born already in the finalize/hard-cut window and never admits);
     /// * `reserve_units == 0` (runner admission rejects zero reserve before
     ///   mutating rows — every pass would surface as Failed);
-    /// * empty or over-long [`Self::lease_owner`] (job-queue lease-owner
+    /// * empty or over-long [`Self::lease_owner`] (attempt-queue lease-owner
     ///   ceiling is [`MAX_RUNNER_LEASE_OWNER_LEN`]; empty/over-long fails
     ///   admission the same way).
     pub fn validate(&self) -> Result<()> {
@@ -225,7 +225,7 @@ impl WakeSupervisorConfig {
         if self.local_node_id == 0 {
             return Err(oneiron::Error::InvalidConfig(
                 "wake supervisor local_node_id must be nonzero \
-                 (admission rejects zero before mutating any job)"
+                 (admission rejects zero before mutating any attempt)"
                     .into(),
             ));
         }
@@ -240,21 +240,21 @@ impl WakeSupervisorConfig {
         if self.reserve_units == 0 {
             return Err(oneiron::Error::InvalidConfig(
                 "wake supervisor reserve_units must be > 0 \
-                 (admission rejects zero reserve before mutating any job)"
+                 (admission rejects zero reserve before mutating any attempt)"
                     .into(),
             ));
         }
         if self.lease_owner.is_empty() {
             return Err(oneiron::Error::InvalidConfig(
                 "wake supervisor lease_owner must be non-empty \
-                 (admission rejects empty lease owners before mutating any job)"
+                 (admission rejects empty lease owners before mutating any attempt)"
                     .into(),
             ));
         }
         if self.lease_owner.len() > MAX_RUNNER_LEASE_OWNER_LEN {
             return Err(oneiron::Error::InvalidConfig(format!(
                 "wake supervisor lease_owner is {} bytes; max {} \
-                 (job-queue lease-owner ceiling)",
+                 (attempt-queue lease-owner ceiling)",
                 self.lease_owner.len(),
                 MAX_RUNNER_LEASE_OWNER_LEN
             )));
@@ -266,7 +266,7 @@ impl WakeSupervisorConfig {
 /// Requests a graceful supervisor stop. Cooperative ONLY (H-S5/R2): between
 /// passes the loop exits immediately; mid-pass the running pass's
 /// [`WakeCancellation`] flag is raised and the pass is awaited to its own
-/// job-boundary stop — never aborted.
+/// attempt-boundary stop — never aborted.
 #[derive(Debug, Clone)]
 pub struct ShutdownHandle {
     tx: watch::Sender<bool>,
@@ -299,11 +299,11 @@ impl ShutdownListener {
     }
 }
 
-/// Builds the per-pass job executor. Generic-associated so executors may
+/// Builds the per-pass attempt executor. Generic-associated so executors may
 /// borrow factory-owned state (the backend constructed at startup, the
 /// promotion sink) and per-pass state (the fresh [`BudgetGuard`]).
 pub trait PassExecutorFactory {
-    type Exec<'p>: DreamerJobExecutor
+    type Exec<'p>: DreamerAttemptExecutor
     where
         Self: 'p;
 
@@ -389,8 +389,8 @@ pub struct WakeSupervisorReport {
     pub passes_completed: u64,
     pub passes_failed: u64,
     pub passes_panicked: u64,
-    pub jobs_completed: u64,
-    pub jobs_parked: u64,
+    pub attempts_completed: u64,
+    pub attempts_parked: u64,
 }
 
 enum PassOutcome {
@@ -399,7 +399,7 @@ enum PassOutcome {
     /// The consumed tick is re-driven after backoff (same family as
     /// pre-admission failure / panic / zero-progress).
     Failed(oneiron::Error),
-    /// Factory/`run_one_pass` setup failed before any job could be admitted.
+    /// Factory/`run_one_pass` setup failed before any attempt could be admitted.
     /// Re-drives the consumed tick after backoff and **keeps** `pass_index`
     /// (no durable budget row was written). Orthogonal to redrive: only this
     /// arm preserves the index; Failed/Panicked/Completed still advance.
@@ -572,8 +572,8 @@ where
                 PassOutcome::Completed(pass) => {
                     pass_index = pass_index.saturating_add(1);
                     report.passes_completed += 1;
-                    report.jobs_completed += u64::from(pass.completed);
-                    report.jobs_parked += u64::from(pass.parked);
+                    report.attempts_completed += u64::from(pass.completed);
+                    report.attempts_parked += u64::from(pass.parked);
                     // Zero-progress BudgetExhausted / DeadlineHardCut
                     // (admitted == 0): HybridTick re-surfaces the same due
                     // deadline immediately; PushTick-only has already
@@ -596,7 +596,7 @@ where
                     }
                 }
                 PassOutcome::Failed(error) => {
-                    // In-pass failure may have admitted/parked some jobs;
+                    // In-pass failure may have admitted/parked some attempts;
                     // the same consumed wake can still represent remaining
                     // backlog → redrive after backoff (idempotent for Hybrid).
                     pass_index = pass_index.saturating_add(1);
@@ -608,7 +608,7 @@ where
                     redrive_tick = Some(tick);
                 }
                 PassOutcome::PreAdmissionFailed(error) => {
-                    // No job row mutated and no durable budget row written —
+                    // No attempt row mutated and no durable budget row written —
                     // keep pass_index; redrive after backoff.
                     report.passes_failed += 1;
                     tracing::error!(
@@ -692,7 +692,7 @@ async fn run_pass_supervised<F: PassExecutorFactory>(
     }
 }
 
-/// Distinguishes setup failures (no job admitted) from in-pass failures so
+/// Distinguishes setup failures (no attempt admitted) from in-pass failures so
 /// the supervisor can re-drive a consumed push tick after backoff.
 enum PassRunError {
     PreAdmission(oneiron::Error),
@@ -863,7 +863,7 @@ fn binary_search_first_free_pass_budget(
 /// admission/settle stays entirely inside the engine call — this function
 /// never touches the runner store.
 ///
-/// Factory errors surface as [`PassRunError::PreAdmission`] (no job row
+/// Factory errors surface as [`PassRunError::PreAdmission`] (no attempt row
 /// mutated); errors from `run_wake_pass` as [`PassRunError::Failed`].
 async fn run_one_pass<F: PassExecutorFactory>(
     vault: &Vault,
@@ -967,12 +967,12 @@ mod tests {
 
     use super::*;
     use crate::tick::{PushTick, WakeSignal};
-    use oneiron::job_queue::{JobId, JobState};
+    use oneiron::attempt_queue::{AttemptId, AttemptState};
     use oneiron::{
-        DREAMER_EXECUTOR_ERROR_PARK_REASON, DREAMER_GRACEFUL_WRAP_WINDOW_MS, DreamerAdmittedJob,
-        DreamerBudgetReserveOutcome, DreamerJobExecution, DreamerRunnerStore,
-        EnqueueDreamerConsolidationJob, EnqueueDreamerJobOutcome, ReserveDreamerBudget,
-        VaultConfig, WakeJobContext,
+        DREAMER_EXECUTOR_ERROR_PARK_REASON, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
+        DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerBudgetReserveOutcome,
+        DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+        ReserveDreamerBudget, VaultConfig, WakeAttemptContext,
     };
 
     /// Seeds a durable budget row at `budget_id` (init-if-absent via reserve).
@@ -981,7 +981,7 @@ mod tests {
         match store
             .reserve_budget(ReserveDreamerBudget {
                 budget_id: budget_id.to_owned(),
-                child_job: JobId::now(),
+                child_attempt: AttemptId::now(),
                 budget_total_units: 1,
                 reserve_units: 1,
                 now: 1,
@@ -1005,20 +1005,20 @@ mod tests {
         (dir, vault)
     }
 
-    fn enqueue_micro(vault: &Vault, tag: &str, now: u64) -> JobId {
+    fn enqueue_micro(vault: &Vault, tag: &str, now: u64) -> AttemptId {
         match DreamerRunnerStore::new(vault)
-            .enqueue_consolidation(EnqueueDreamerConsolidationJob {
+            .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
                 scope: DreamerConsolidationScope::Micro,
                 input: rmpv::Value::from(tag),
-                parent_job: None,
+                parent_attempt: None,
                 dedupe_key: Some(tag.to_owned()),
                 run_id: None,
                 now,
             })
             .expect("enqueue")
         {
-            EnqueueDreamerJobOutcome::Enqueued(status)
-            | EnqueueDreamerJobOutcome::Existing(status) => status.job.id,
+            EnqueueDreamerAttemptOutcome::Enqueued(status)
+            | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
             other => panic!("unexpected enqueue outcome: {other:?}"),
         }
     }
@@ -1048,14 +1048,14 @@ mod tests {
         completed_units: u64,
     }
 
-    impl DreamerJobExecutor for TestExec {
+    impl DreamerAttemptExecutor for TestExec {
         async fn execute(
             &mut self,
-            _job: &DreamerAdmittedJob,
-            _ctx: &mut WakeJobContext<'_>,
-        ) -> Result<DreamerJobExecution> {
+            _attempt: &DreamerAdmittedAttempt,
+            _ctx: &mut WakeAttemptContext<'_>,
+        ) -> Result<DreamerAttemptExecution> {
             assert!(!self.panic_now, "scripted executor panic");
-            Ok(DreamerJobExecution::Completed {
+            Ok(DreamerAttemptExecution::Completed {
                 completed_units: self.completed_units,
             })
         }
@@ -1123,7 +1123,7 @@ mod tests {
         let report = supervisor.run().await;
 
         assert_eq!(report.passes_completed, 1);
-        assert_eq!(report.jobs_completed, 1);
+        assert_eq!(report.attempts_completed, 1);
         assert_eq!(report.passes_panicked, 0);
         assert_eq!(report.passes_failed, 0);
 
@@ -1138,12 +1138,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn panicking_executor_parks_job_and_supervisor_continues() {
+    async fn panicking_executor_parks_attempt_and_supervisor_continues() {
         // ONE-1683: an executor panic after admission used to unwind past
         // the driver's park/refund code — the supervisor's catch converted
         // it to Panicked by resolving before that bookkeeping ran, leaving
-        // the job leased and the reservation held until external cleanup.
-        // The engine now contains the panic at the job boundary: the job is
+        // the attempt leased and the reservation held until external cleanup.
+        // The engine now contains the panic at the attempt boundary: the attempt is
         // parked, the reservation refunded, and the pass surfaces as a
         // FAILED pass the supervisor backs off from and re-drives (same
         // consumed wake drains remaining backlog without a second push).
@@ -1155,7 +1155,7 @@ mod tests {
             trigger: WakeTrigger::Compaction,
             scope: DreamerConsolidationScope::Micro,
         });
-        // Single wake: Failed redrives; job 2 completes on the redrive.
+        // Single wake: Failed redrives; attempt 2 completes on the redrive.
         let ticks = ScriptedTicks { ticks: vec![wake] };
         let factory = TestExecFactory {
             panics_left: 1,
@@ -1180,13 +1180,13 @@ mod tests {
             report.passes_completed, 1,
             "redrive after backoff ran the completing pass"
         );
-        assert_eq!(report.jobs_completed, 1);
+        assert_eq!(report.attempts_completed, 1);
 
-        // The panicked job is parked under the executor-error reason, its
-        // reservation refunded; the second job settled normally.
+        // The panicked attempt is parked under the executor-error reason, its
+        // reservation refunded; the second attempt settled normally.
         let store = DreamerRunnerStore::new(&vault);
         let parked = store
-            .parked_job(first)
+            .parked_attempt(first)
             .expect("parked read")
             .expect("parked row");
         assert!(
@@ -1210,11 +1210,11 @@ mod tests {
         assert_eq!(budget.reserved_units, 0, "no reservation leaked");
         assert_eq!(budget.remaining_units, 10_000 - 40);
         let status = store.status(second).expect("status read").expect("status");
-        assert_eq!(status.job.state, JobState::Completed);
+        assert_eq!(status.attempt.state, AttemptState::Completed);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn pass_panic_outside_the_job_boundary_restarts_with_backoff() {
+    async fn pass_panic_outside_the_attempt_boundary_restarts_with_backoff() {
         // The supervisor-level catch stays as the backstop for panics the
         // engine cannot contain — anywhere outside exec.execute, here the
         // executor factory. Nothing is leased at that point; Panicked
@@ -1246,25 +1246,25 @@ mod tests {
             report.passes_completed, 1,
             "redrive after backoff ran the completing pass"
         );
-        assert_eq!(report.jobs_completed, 1);
+        assert_eq!(report.attempts_completed, 1);
     }
 
-    /// Completes jobs synchronously and requests supervisor shutdown from
-    /// inside the first execution — without a job-boundary yield the whole
+    /// Completes attempts synchronously and requests supervisor shutdown from
+    /// inside the first execution — without an attempt-boundary yield the whole
     /// backlog would drain in a single poll before the biased select! ever
     /// saw the request.
     struct ShutdownRequestingExec {
         handle: ShutdownHandle,
     }
 
-    impl DreamerJobExecutor for ShutdownRequestingExec {
+    impl DreamerAttemptExecutor for ShutdownRequestingExec {
         async fn execute(
             &mut self,
-            _job: &DreamerAdmittedJob,
-            _ctx: &mut WakeJobContext<'_>,
-        ) -> Result<DreamerJobExecution> {
+            _attempt: &DreamerAdmittedAttempt,
+            _ctx: &mut WakeAttemptContext<'_>,
+        ) -> Result<DreamerAttemptExecution> {
             self.handle.shutdown();
-            Ok(DreamerJobExecution::Completed {
+            Ok(DreamerAttemptExecution::Completed {
                 completed_units: 40,
             })
         }
@@ -1289,10 +1289,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_during_synchronous_pass_stops_at_the_next_job_boundary() {
-        // ONE-1683: run_wake_pass yields once per job boundary, so a
+    async fn shutdown_during_synchronous_pass_stops_at_the_next_attempt_boundary() {
+        // ONE-1683: run_wake_pass yields once per attempt boundary, so a
         // shutdown requested while a synchronously-completing pass is
-        // running raises the cancellation flag after the in-flight job —
+        // running raises the cancellation flag after the in-flight attempt —
         // the pass stops cooperatively instead of draining the whole queue.
         let (_dir, vault) = open_vault();
         enqueue_micro(&vault, "first", 10);
@@ -1316,15 +1316,15 @@ mod tests {
 
         assert_eq!(report.passes_completed, 1);
         assert_eq!(
-            report.jobs_completed, 1,
-            "the pass stopped at the first job boundary after the request"
+            report.attempts_completed, 1,
+            "the pass stopped at the first attempt boundary after the request"
         );
 
         // The rest of the queue is untouched, ready for the next run.
         let store = DreamerRunnerStore::new(&vault);
         for id in [second, third] {
             let status = store.status(id).expect("status read").expect("status");
-            assert_eq!(status.job.state, JobState::Queued, "never claimed");
+            assert_eq!(status.attempt.state, AttemptState::Queued, "never claimed");
         }
     }
 
@@ -1346,7 +1346,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn second_pass_runs_jobs_after_first_pass_budget_exhausts() {
+    async fn second_pass_runs_attempts_after_first_pass_budget_exhausts() {
         // P1 (codex): a static config.budget_id was shared across passes, so
         // DreamerRunnerStore's init-if-absent left pass 2 stuck on a spent
         // row. Per-pass durable ids (`{base}:p{n}`) give each pass a fresh
@@ -1360,8 +1360,8 @@ mod tests {
             scope: DreamerConsolidationScope::Micro,
         });
         let ticks = ScriptedTicks {
-            // Two passes: first exhausts after one job; second must still
-            // be able to admit the remaining job.
+            // Two passes: first exhausts after one attempt; second must still
+            // be able to admit the remaining attempt.
             ticks: vec![wake, wake],
         };
         let factory = TestExecFactory {
@@ -1385,7 +1385,7 @@ mod tests {
             "both passes complete (first BudgetExhausted, second drains)"
         );
         assert_eq!(
-            report.jobs_completed, 2,
+            report.attempts_completed, 2,
             "second pass must admit under a fresh durable budget row"
         );
         assert_eq!(report.passes_failed, 0);
@@ -1397,7 +1397,11 @@ mod tests {
             (second, "driver-budget:p1", 100u64),
         ] {
             let status = store.status(id).expect("status read").expect("status");
-            assert_eq!(status.job.state, JobState::Completed, "job under {pass_id}");
+            assert_eq!(
+                status.attempt.state,
+                AttemptState::Completed,
+                "attempt under {pass_id}"
+            );
             let budget = store
                 .budget(pass_id)
                 .expect("budget read")
@@ -1425,14 +1429,14 @@ mod tests {
         // drain; zero-progress BudgetExhausted backs off so a permanently
         // un-admittable grant cannot hot-loop either.
         let (_dir, vault) = open_vault();
-        let job_a = enqueue_micro(&vault, "due-a", 10);
-        let job_b = enqueue_micro(&vault, "due-b", 11);
+        let attempt_a = enqueue_micro(&vault, "due-a", 10);
+        let attempt_b = enqueue_micro(&vault, "due-b", 11);
 
-        // Jobs are due at created_at * 1000 ms; clock is far past that so
+        // Attempts are due at created_at * 1000 ms; clock is far past that so
         // HybridTick short-circuits to Deadline every cycle until empty.
         let now_ms: crate::tick::NowMillis = Arc::new(|| 1_000_000);
         let timer = crate::TimerTick::with_clock(
-            crate::JobQueueDeadlines::new(&vault, 1),
+            crate::AttemptQueueDeadlines::new(&vault, 1),
             Arc::clone(&now_ms),
         );
         let (push, wake, hint) = PushTick::channel();
@@ -1467,19 +1471,23 @@ mod tests {
             .expect("supervisor must not busy-loop on due HybridTick redelivery");
 
         assert_eq!(
-            report.jobs_completed, 2,
+            report.attempts_completed, 2,
             "due work must drain across per-pass budgets"
         );
-        // Exactly two productive passes (one job each under the 150-unit
+        // Exactly two productive passes (one attempt each under the 150-unit
         // grant) — not an unbounded series of empty BudgetExhausted polls.
         assert_eq!(report.passes_completed, 2);
         assert_eq!(report.passes_failed, 0);
         assert_eq!(report.passes_panicked, 0);
 
         let store = DreamerRunnerStore::new(&vault);
-        for id in [job_a, job_b] {
+        for id in [attempt_a, attempt_b] {
             let status = store.status(id).expect("status read").expect("status");
-            assert_eq!(status.job.state, JobState::Completed, "queue fully drained");
+            assert_eq!(
+                status.attempt.state,
+                AttemptState::Completed,
+                "queue fully drained"
+            );
         }
     }
 
@@ -1526,16 +1534,16 @@ mod tests {
             "multiple empty redrives before shutdown, got {}",
             report.passes_completed
         );
-        assert_eq!(report.jobs_completed, 0, "nothing was admittable");
+        assert_eq!(report.attempts_completed, 0, "nothing was admittable");
         assert_eq!(report.passes_failed, 0);
         assert_eq!(report.passes_panicked, 0);
-        // Job remains queued — BudgetExhausted before reserve does not
+        // Attempt remains queued — BudgetExhausted before reserve does not
         // claim or park, so the due work is still waiting for a usable grant.
         let status = DreamerRunnerStore::new(&vault)
             .status(stuck)
             .expect("status read")
             .expect("status");
-        assert_eq!(status.job.state, JobState::Queued);
+        assert_eq!(status.attempt.state, AttemptState::Queued);
     }
 
     #[test]
@@ -1635,7 +1643,7 @@ mod tests {
             .run()
             .await;
         assert_eq!(report.passes_completed, 2);
-        assert_eq!(report.jobs_completed, 2);
+        assert_eq!(report.attempts_completed, 2);
 
         let store = DreamerRunnerStore::new(&vault);
         assert!(
@@ -1652,11 +1660,11 @@ mod tests {
         );
         for id in [first, second] {
             let status = store.status(id).expect("status").expect("row");
-            assert_eq!(status.job.state, JobState::Completed);
+            assert_eq!(status.attempt.state, AttemptState::Completed);
         }
 
         // Simulated restart: new supervisor instance, same base budget_id,
-        // one queued job — must mint :p2 (not walk :p0/:p1 spent rows).
+        // one queued attempt — must mint :p2 (not walk :p0/:p1 spent rows).
         let third = enqueue_micro(&vault, "restart-p2", 12);
         let ticks = ScriptedTicks { ticks: vec![wake] };
         let factory = TestExecFactory {
@@ -1665,7 +1673,7 @@ mod tests {
             factory_errors_left: 0,
             completed_units: 40,
         };
-        // Fresh grant large enough for one job under the restarted pass.
+        // Fresh grant large enough for one attempt under the restarted pass.
         let mut restart_config = config;
         restart_config.budget_total_units = 10_000;
         let report = WakeSupervisor::new(&vault, ticks, factory, restart_config)
@@ -1674,14 +1682,14 @@ mod tests {
 
         assert_eq!(report.passes_completed, 1);
         assert_eq!(
-            report.jobs_completed, 1,
+            report.attempts_completed, 1,
             "restarted supervisor must drain under a fresh :p2 row"
         );
         assert_eq!(report.passes_failed, 0);
         assert_eq!(report.passes_panicked, 0);
 
         let status = store.status(third).expect("status").expect("row");
-        assert_eq!(status.job.state, JobState::Completed);
+        assert_eq!(status.attempt.state, AttemptState::Completed);
         let budget = store
             .budget("driver-budget:p2")
             .expect("p2 read")
@@ -1873,23 +1881,23 @@ mod tests {
             "multiple empty hard-cut redrives before shutdown, got {}",
             report.passes_completed
         );
-        assert_eq!(report.jobs_completed, 0, "hard-cut before admission");
+        assert_eq!(report.attempts_completed, 0, "hard-cut before admission");
         assert_eq!(report.passes_failed, 0);
         assert_eq!(report.passes_panicked, 0);
         let status = DreamerRunnerStore::new(&vault)
             .status(stuck)
             .expect("status read")
             .expect("status");
-        assert_eq!(status.job.state, JobState::Queued);
+        assert_eq!(status.attempt.state, AttemptState::Queued);
     }
 
     #[tokio::test(start_paused = true)]
     async fn pre_admission_factory_error_redrives_push_tick_after_backoff() {
         // PushTick-only: one wake is drained, factory returns Err before
         // admission, then succeeds. Without re-drive the wake is lost and
-        // the job stays queued forever.
+        // the attempt stays queued forever.
         let (_dir, vault) = open_vault();
-        let job = enqueue_micro(&vault, "redrive-after-factory-err", 10);
+        let attempt = enqueue_micro(&vault, "redrive-after-factory-err", 10);
 
         let (push, wake, hint) = PushTick::channel();
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
@@ -1922,16 +1930,16 @@ mod tests {
             "re-driven tick must run a successful pass"
         );
         assert_eq!(
-            report.jobs_completed, 1,
-            "job admitted on the re-driven tick"
+            report.attempts_completed, 1,
+            "attempt admitted on the re-driven tick"
         );
         assert_eq!(report.passes_panicked, 0);
 
         let status = DreamerRunnerStore::new(&vault)
-            .status(job)
+            .status(attempt)
             .expect("status read")
             .expect("status");
-        assert_eq!(status.job.state, JobState::Completed);
+        assert_eq!(status.attempt.state, AttemptState::Completed);
         // Pre-admission failure must not burn a durable budget row: success
         // lands on :p0 (pass_index kept across the re-drive).
         let budget = DreamerRunnerStore::new(&vault)
@@ -1983,7 +1991,7 @@ mod tests {
             "at least one pre-admission failure before shutdown"
         );
         assert_eq!(report.passes_completed, 0);
-        assert_eq!(report.jobs_completed, 0);
+        assert_eq!(report.attempts_completed, 0);
     }
 
     #[test]
@@ -2082,23 +2090,23 @@ mod tests {
         );
     }
 
-    /// Pins the mirrored lease-owner ceiling against the real job queue:
+    /// Pins the mirrored lease-owner ceiling against the real attempt queue:
     /// a claim with an owner of `MAX_RUNNER_LEASE_OWNER_LEN` must be
     /// accepted at the validation boundary, and one byte more must fail.
     #[test]
-    fn widest_lease_owner_fits_job_queue_ceiling() {
-        use oneiron::DREAMER_CONSOLIDATION_MICRO_JOB_KIND;
-        use oneiron::job_queue::{ClaimJob, ClaimOutcome, JobQueue};
+    fn widest_lease_owner_fits_attempt_queue_ceiling() {
+        use oneiron::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND;
+        use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
 
         let (_dir, vault) = open_vault();
         enqueue_micro(&vault, "lease-owner-ceiling", 10);
-        let queue = JobQueue::new(&vault);
+        let queue = AttemptQueue::new(&vault);
 
         let ok_owner = "o".repeat(MAX_RUNNER_LEASE_OWNER_LEN);
         let claimed = queue
             .claim_kind(
-                DREAMER_CONSOLIDATION_MICRO_JOB_KIND,
-                ClaimJob {
+                DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
+                ClaimAttempt {
                     lease_owner: ok_owner,
                     now: 20,
                 },
@@ -2109,20 +2117,20 @@ mod tests {
             "max-length lease_owner must be admissible"
         );
 
-        // Overlong fails validation before scanning — no need for another job.
+        // Overlong fails validation before scanning — no need for another attempt.
         let over = "o".repeat(MAX_RUNNER_LEASE_OWNER_LEN + 1);
         let err = queue
             .claim_kind(
-                DREAMER_CONSOLIDATION_MICRO_JOB_KIND,
-                ClaimJob {
+                DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
+                ClaimAttempt {
                     lease_owner: over,
                     now: 21,
                 },
             )
-            .expect_err("overlong lease_owner must fail job-queue validation");
+            .expect_err("overlong lease_owner must fail attempt-queue validation");
         assert!(
-            matches!(err, oneiron::Error::InvalidJobQueueRecord(_)),
-            "expected InvalidJobQueueRecord, got {err:?}"
+            matches!(err, oneiron::Error::InvalidAttemptQueueRecord(_)),
+            "expected InvalidAttemptQueueRecord, got {err:?}"
         );
     }
 
@@ -2130,9 +2138,9 @@ mod tests {
     async fn setup_panic_before_admission_redrives_push_tick() {
         // P2 (codex r6 / 3585850170): factory panic before admission on a
         // PushTick-only supervisor. Single wake, panics once → redrive after
-        // backoff completes the job (no second push).
+        // backoff completes the attempt (no second push).
         let (_dir, vault) = open_vault();
-        let job = enqueue_micro(&vault, "factory-panic-redrive", 10);
+        let attempt = enqueue_micro(&vault, "factory-panic-redrive", 10);
 
         let (push, wake, hint) = PushTick::channel();
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
@@ -2159,21 +2167,21 @@ mod tests {
             report.passes_completed, 1,
             "redrive after backoff must complete a pass"
         );
-        assert_eq!(report.jobs_completed, 1);
+        assert_eq!(report.attempts_completed, 1);
         assert_eq!(report.passes_failed, 0);
 
         let status = DreamerRunnerStore::new(&vault)
-            .status(job)
+            .status(attempt)
             .expect("status read")
             .expect("status");
-        assert_eq!(status.job.state, JobState::Completed);
+        assert_eq!(status.attempt.state, AttemptState::Completed);
     }
 
     #[tokio::test(start_paused = true)]
     async fn in_pass_failure_with_backlog_redrives_without_second_push() {
-        // P2 (codex r6 / 3585850187): single wake, two queued jobs; first
-        // pass fails after admitting job 1 (executor panic → park+Failed).
-        // Redrive drains job 2 without a second push.
+        // P2 (codex r6 / 3585850187): single wake, two queued attempts; first
+        // pass fails after admitting attempt 1 (executor panic → park+Failed).
+        // Redrive drains attempt 2 without a second push.
         let (_dir, vault) = open_vault();
         let first = enqueue_micro(&vault, "fail-after-admit-1", 10);
         let second = enqueue_micro(&vault, "fail-after-admit-2", 11);
@@ -2203,26 +2211,29 @@ mod tests {
             report.passes_completed, 1,
             "redrive completes the backlog pass"
         );
-        assert_eq!(report.jobs_completed, 1, "job 2 completed on redrive");
+        assert_eq!(
+            report.attempts_completed, 1,
+            "attempt 2 completed on redrive"
+        );
         assert_eq!(report.passes_panicked, 0);
 
         let store = DreamerRunnerStore::new(&vault);
         let parked = store
-            .parked_job(first)
+            .parked_attempt(first)
             .expect("parked read")
-            .expect("job 1 parked");
+            .expect("attempt 1 parked");
         assert!(
             parked
                 .reason
                 .starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
-            "job 1 park reason: {}",
+            "attempt 1 park reason: {}",
             parked.reason
         );
         let status = store
             .status(second)
             .expect("status read")
-            .expect("job 2 status");
-        assert_eq!(status.job.state, JobState::Completed);
+            .expect("attempt 2 status");
+        assert_eq!(status.attempt.state, AttemptState::Completed);
     }
 
     #[tokio::test(start_paused = true)]
@@ -2233,9 +2244,9 @@ mod tests {
         //
         // Ceiling WRAP+50 → finalize opens at 50ms. First factory call sleeps
         // 60ms (past finalize); redrive call does not sleep so the pass has
-        // ~50ms of wall budget — enough to admit one scripted job.
+        // ~50ms of wall budget — enough to admit one scripted attempt.
         let (_dir, vault) = open_vault();
-        let job = enqueue_micro(&vault, "empty-then-complete", 10);
+        let attempt = enqueue_micro(&vault, "empty-then-complete", 10);
 
         let (push, wake, hint) = PushTick::channel();
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
@@ -2261,14 +2272,14 @@ mod tests {
             report.passes_completed, 2,
             "one empty hard-cut + one productive redrive"
         );
-        assert_eq!(report.jobs_completed, 1);
+        assert_eq!(report.attempts_completed, 1);
         assert_eq!(report.passes_failed, 0);
         assert_eq!(report.passes_panicked, 0);
 
         let status = DreamerRunnerStore::new(&vault)
-            .status(job)
+            .status(attempt)
             .expect("status read")
             .expect("status");
-        assert_eq!(status.job.state, JobState::Completed);
+        assert_eq!(status.attempt.state, AttemptState::Completed);
     }
 }

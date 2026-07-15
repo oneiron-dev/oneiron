@@ -7,6 +7,7 @@ pub mod agent_dispatch;
 pub mod analyzer;
 pub mod anchored_annotation;
 pub mod artifact_hosting;
+pub mod attempt_queue;
 pub mod authority;
 pub mod batch;
 pub mod blob_artifact;
@@ -59,7 +60,6 @@ pub mod identity_reputation;
 pub mod inbox;
 pub mod ingest;
 pub mod interlocutor;
-pub mod job_queue;
 pub mod lens;
 pub(crate) mod limits;
 pub mod linkedin_connector;
@@ -119,7 +119,7 @@ pub use crate::agent_def::{
     encode_agent_definition,
 };
 pub use crate::agent_dispatch::{
-    AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_JOB_TYPE,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput, AgentDispatchOutcome,
     AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, DispatchAgent, agent_dispatch_actor,
     agent_dispatch_payload_agent_id, decode_agent_dispatch_input, encode_agent_dispatch_input,
@@ -140,6 +140,14 @@ pub use crate::artifact_hosting::{
     ArtifactPointerChannel, ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest,
     ArtifactPublishVerbStatus, ArtifactServedFile, ArtifactSnapshotRef, ArtifactSnapshotSelector,
     artifact_hex, parse_codebase_fork_hash_hex,
+};
+pub use crate::attempt_queue::{
+    AttemptEvent, AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue,
+    AttemptQueueCleanupMetricsSnapshot, AttemptQueueCleanupReport, AttemptQueueRetryReason,
+    AttemptQueueRetryReasonCount, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
+    CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
+    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, RetryAttempt, RetryOutcome,
+    attempt_queue_cleanup_metrics_snapshot,
 };
 pub use crate::authority::{
     AUTHORITY_FORK_ALARM_KIND, AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN,
@@ -259,17 +267,17 @@ pub use crate::codebase::{
     RepoIngestResult, RepoRef, decode_codebase_snapshot, encode_codebase_snapshot,
 };
 pub use crate::companion::{
-    COMPANION_TASK_JOB_KIND, COMPANION_TASK_PAYLOAD_KEYS, COMPANION_TASK_PAYLOAD_SCHEMA_VERSION,
-    ClaimCompanionTask, ClaimCompanionTaskOutcome, CompanionExportClassification,
-    CompanionExpression, CompanionExpressionRegister, CompanionProvenance, CompanionQueue,
-    CompanionRecord, CompanionRecordKey, CompanionRecordKind, CompanionRegister, CompanionScope,
-    CompanionScopeResolution, CompanionScopeResolutionSource, CompanionSubject, CompanionTask,
-    CompanionTaskKind, CompanionTaskStatus, CompleteCompanionTask, CompleteCompanionTaskOutcome,
-    ENTITY_TYPE_COMPANION_REGISTER, EndCompanionRelationship, EndCompanionRelationshipOutcome,
-    EnqueueCompanionTask, EnqueueCompanionTaskOutcome, FailCompanionTask, FailCompanionTaskOutcome,
-    RetryCompanionTask, RetryCompanionTaskOutcome, companion_value_from_json,
-    companion_value_to_json, decode_companion_record_body, decode_companion_task_payload,
-    encode_companion_record_body, encode_companion_task_payload,
+    COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS,
+    COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ClaimCompanionTask, ClaimCompanionTaskOutcome,
+    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
+    CompanionProvenance, CompanionQueue, CompanionRecord, CompanionRecordKey, CompanionRecordKind,
+    CompanionRegister, CompanionScope, CompanionScopeResolution, CompanionScopeResolutionSource,
+    CompanionSubject, CompanionTask, CompanionTaskKind, CompanionTaskStatus, CompleteCompanionTask,
+    CompleteCompanionTaskOutcome, ENTITY_TYPE_COMPANION_REGISTER, EndCompanionRelationship,
+    EndCompanionRelationshipOutcome, EnqueueCompanionTask, EnqueueCompanionTaskOutcome,
+    FailCompanionTask, FailCompanionTaskOutcome, RetryCompanionTask, RetryCompanionTaskOutcome,
+    companion_value_from_json, companion_value_to_json, decode_companion_record_body,
+    decode_companion_task_payload, encode_companion_record_body, encode_companion_task_payload,
 };
 pub use crate::config::{
     Bm25RankProfile, HnswConfig, TextAnalyzerConfig, TextIndexOptions, VaultConfig,
@@ -336,11 +344,11 @@ pub use crate::dreamer_consolidation::{
     ConsolidationBucketPlan, ConsolidationCursor, ConsolidationExecutor, ConsolidationPartitionKey,
     ConsolidationPartitionPlan, ConsolidationSink, ConsolidationWatermark,
     DREAMER_BUCKET_HASH_DOMAIN, DREAMER_EVIDENCE_HASH_DOMAIN, DREAMER_GAP_DECAY_MS,
-    DREAMER_GAP_HASH_DOMAIN, DREAMER_GAP_SCAN_JOB_TYPE, GapQueueDelta, PriorHead,
+    DREAMER_GAP_HASH_DOMAIN, DREAMER_GAP_SCAN_ATTEMPT_TYPE, GapQueueDelta, PriorHead,
     PromotionCandidate, ReflectionGap, ReflectionGapKind, SwarmChildReturn, SwarmEvidenceRef,
     TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY, WorkingSetTurn, advance_watermark,
     collapse_sibling_evidence, corroboration_count, decode_partition_payload, detect_conflicts,
-    enqueue_partition_jobs, entity_ref_from_value, evidence_trust_meet, gap_hash,
+    enqueue_partition_attempts, entity_ref_from_value, evidence_trust_meet, gap_hash,
     plan_candidate_buckets, plan_partitions, read_cursor, read_watermark, scan_dirty_turns,
     scan_reflection_gaps, swarm_evidence_content_hash, turn_trust_class, upsert_gap_queue,
     validate_child_read_pin, write_cursor,
@@ -349,36 +357,37 @@ pub use crate::dreamer_promotion::{
     DreamerRunContext, PromotionOutcome, PromotionWriterSink, promote_consolidated_claims,
 };
 pub use crate::dreamer_runner::{
-    AbortDreamerBudgetReservation, AdmitDreamerConsolidationJob, AdmitDreamerJob,
-    CompleteDreamerJob, CompleteDreamerJobOutcome, DEFAULT_DREAMER_CHILD_RESERVE_UNITS,
+    AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt,
+    CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DEFAULT_DREAMER_CHILD_RESERVE_UNITS,
     DEFAULT_DREAMER_TOURNAMENT_DEPTH_K, DEFAULT_DREAMER_TOURNAMENT_FANOUT_M,
-    DREAMER_CONSOLIDATION_MACRO_JOB_KIND, DREAMER_CONSOLIDATION_MESO_JOB_KIND,
-    DREAMER_CONSOLIDATION_MICRO_JOB_KIND, DREAMER_HOME_NODE_DESIGNATION_KEYS,
-    DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION, DREAMER_JOB_PAYLOAD_KEYS,
-    DREAMER_JOB_PAYLOAD_SCHEMA_VERSION, DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_KEYS,
-    DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DREAMER_RUNNER_JOB_KIND, DreamerAdmissionOutcome,
-    DreamerAdmittedJob, DreamerBudgetRecord, DreamerBudgetReservation, DreamerBudgetReserveOutcome,
-    DreamerBudgetSettlement, DreamerBudgetSettlementOutcome, DreamerClaimAuthoringAdmission,
-    DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringBudgetTrap,
-    DreamerClaimAuthoringGateDecision, DreamerClaimAuthoringSchedule,
-    DreamerClaimAuthoringSinglePassReason, DreamerClaimAuthoringStrategy,
-    DreamerClaimEvidenceState, DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope,
-    DreamerDurableMilestone, DreamerHomeNodeCandidate, DreamerHomeNodeClass,
-    DreamerHomeNodeDesignation, DreamerJobPayload, DreamerJobProgressState, DreamerJobStatus,
-    DreamerMilestoneClaim, DreamerMilestoneKind, DreamerParkedJobRecord, DreamerReservedBudget,
-    DreamerRunTreeRecord, DreamerRunnerStore, DreamerTournamentAdmission,
-    DreamerTournamentAdmissionGrant, DreamerTournamentBudgetAxes, DreamerTournamentClaim,
-    DreamerTurnRole, DreamerWakeBudgetConfig, EnqueueDreamerConsolidationJob, EnqueueDreamerJob,
-    EnqueueDreamerJobOutcome, FailDreamerJob, FailDreamerJobOutcome, ParkDreamerJob,
-    ReserveDreamerBudget, SettleDreamerBudget, decode_dreamer_job_payload,
-    dreamer_extraction_role_admissible, dreamer_turn_role, encode_dreamer_job_payload,
+    DREAMER_ATTEMPT_PAYLOAD_KEYS, DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION,
+    DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
+    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_HOME_NODE_DESIGNATION_KEYS,
+    DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION, DREAMER_MILESTONE_PREDICATE,
+    DREAMER_MILESTONE_VALUE_KEYS, DREAMER_MILESTONE_VALUE_SCHEMA_VERSION,
+    DREAMER_RUNNER_ATTEMPT_KIND, DreamerAdmissionOutcome, DreamerAdmittedAttempt,
+    DreamerAttemptPayload, DreamerAttemptProgressState, DreamerAttemptStatus, DreamerBudgetRecord,
+    DreamerBudgetReservation, DreamerBudgetReserveOutcome, DreamerBudgetSettlement,
+    DreamerBudgetSettlementOutcome, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
+    DreamerClaimAuthoringBudgetTrap, DreamerClaimAuthoringGateDecision,
+    DreamerClaimAuthoringSchedule, DreamerClaimAuthoringSinglePassReason,
+    DreamerClaimAuthoringStrategy, DreamerClaimEvidenceState, DreamerConsolidationAdmissionOutcome,
+    DreamerConsolidationScope, DreamerDurableMilestone, DreamerHomeNodeCandidate,
+    DreamerHomeNodeClass, DreamerHomeNodeDesignation, DreamerMilestoneClaim, DreamerMilestoneKind,
+    DreamerParkedAttemptRecord, DreamerReservedBudget, DreamerRunTreeRecord, DreamerRunnerStore,
+    DreamerTournamentAdmission, DreamerTournamentAdmissionGrant, DreamerTournamentBudgetAxes,
+    DreamerTournamentClaim, DreamerTurnRole, DreamerWakeBudgetConfig, EnqueueDreamerAttempt,
+    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt, FailDreamerAttempt,
+    FailDreamerAttemptOutcome, ParkDreamerAttempt, ReserveDreamerBudget, SettleDreamerBudget,
+    decode_dreamer_attempt_payload, dreamer_extraction_role_admissible, dreamer_turn_role,
+    encode_dreamer_attempt_payload,
 };
 #[cfg(feature = "sync")]
 pub use crate::dreamer_runner::{
-    DREAMER_JOB_PROGRESS_KEY_PREFIX, DREAMER_JOB_PROGRESS_TERMINAL_RETENTION_MS,
-    DREAMER_JOB_PROGRESS_THROTTLE_MS, DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION,
-    DreamerJobProgressProducer, DreamerJobProgressSnapshot, DreamerJobProgressSource,
-    DreamerJobProgressUpdate, DreamerProgressed, dreamer_job_progress_key,
+    DREAMER_ATTEMPT_PROGRESS_KEY_PREFIX, DREAMER_ATTEMPT_PROGRESS_TERMINAL_RETENTION_MS,
+    DREAMER_ATTEMPT_PROGRESS_THROTTLE_MS, DREAMER_ATTEMPT_PROGRESS_VALUE_SCHEMA_VERSION,
+    DreamerAttemptProgressProducer, DreamerAttemptProgressSnapshot, DreamerAttemptProgressSource,
+    DreamerAttemptProgressUpdate, DreamerProgressed, dreamer_attempt_progress_key,
 };
 pub use crate::dreamer_tournament::{
     DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION, DREAMER_TOURNAMENT_MAX_FANOUT_M,
@@ -396,10 +405,10 @@ pub use crate::dreamer_wake::WakeProgressLane;
 pub use crate::dreamer_wake::{
     BudgetLegibilityEnvelope, DREAMER_CANCELLED_PARK_REASON, DREAMER_EXECUTOR_ERROR_PARK_REASON,
     DREAMER_GRACEFUL_WRAP_WINDOW_MS, DREAMER_HARD_CUT_PARK_OWNER, DREAMER_HARD_CUT_PARK_REASON,
-    DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS, DREAMER_WRAP_UP_NOTICE_PERCENT, DreamerJobExecution,
-    DreamerJobExecutor, DreamerWakeDriver, RunWakePass, WakeCancellation, WakeJobContext,
-    WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger,
-    current_legibility, legibility_envelope, request_wake,
+    DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS, DREAMER_WRAP_UP_NOTICE_PERCENT,
+    DreamerAttemptExecution, DreamerAttemptExecutor, DreamerWakeDriver, RunWakePass,
+    WakeAttemptContext, WakeCancellation, WakeMilestoneAuthor, WakePassDeadline, WakePassReport,
+    WakePassStop, WakeTrigger, current_legibility, legibility_envelope, request_wake,
 };
 pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
@@ -448,15 +457,15 @@ pub use crate::extraction_eval::{
     of360_gold_subset_json, of360_metric_definitions, of360_metric_definitions_json,
 };
 pub use crate::facade::{
-    AdmitImportedClaimInput, BRIDGE_OUTBOUND_JOB_KIND, BlobArtifactInput, BlobVersionView,
+    AdmitImportedClaimInput, BRIDGE_OUTBOUND_ATTEMPT_KIND, BlobArtifactInput, BlobVersionView,
     ClaimInput, ClaimListFilter, ClaimView, CommitReceipt, CompanionRecordInput,
-    ConsolidationJobInput, DeleteReceipt, DreamerJobRef, DreamerJobView, Effort, EntityRefReceipt,
-    EntityView, FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN, FACADE_CODE_INTERNAL,
-    FACADE_CODE_INVALID_STATE, FACADE_CODE_LEASE_REQUIRED, FACADE_CODE_NOT_FOUND, FacadeError,
-    FacadeReceipt, FacadeResult, HabitCheckinInput, LexicalHit, MEMORY_PACK_VERSION,
-    MULTI_CARDINALITY_PREDICATES, MemoryFacade, MemoryItem, MemoryPack, MemoryProvenance,
-    NeighborHit, NeighborOpts, OutboundDraftInput, OutboundIntentReceipt, PendingWrite,
-    RecallScope, RetrievalMeta, SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec,
+    ConsolidationAttemptInput, DeleteReceipt, DreamerAttemptRef, DreamerAttemptView, Effort,
+    EntityRefReceipt, EntityView, FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN,
+    FACADE_CODE_INTERNAL, FACADE_CODE_INVALID_STATE, FACADE_CODE_LEASE_REQUIRED,
+    FACADE_CODE_NOT_FOUND, FacadeError, FacadeReceipt, FacadeResult, HabitCheckinInput, LexicalHit,
+    MEMORY_PACK_VERSION, MULTI_CARDINALITY_PREDICATES, MemoryFacade, MemoryItem, MemoryPack,
+    MemoryProvenance, NeighborHit, NeighborOpts, OutboundDraftInput, OutboundIntentReceipt,
+    PendingWrite, RecallScope, RetrievalMeta, SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec,
     StructuralPutInput, TextIndexField, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
     parse_actor_key, resolve_entity_ref,
 };
@@ -512,13 +521,6 @@ pub use crate::interlocutor::{
     Interlocutor, InterlocutorClass, InterlocutorPartyInput, InterlocutorResolutionInput,
     InterlocutorSet, InterlocutorStamp, PresenceEvidence, validate_interlocutor_stamp_value,
 };
-pub use crate::job_queue::{
-    ClaimJob, ClaimOutcome, CleanupJobLeases, CompleteJob, CompleteOutcome, EnqueueJob,
-    EnqueueOutcome, FailJob, FailOutcome, InterveneJob, InterveneOutcome, JobEvent, JobId,
-    JobInterventionEffect, JobInterventionKind, JobQueue, JobQueueCleanupMetricsSnapshot,
-    JobQueueCleanupReport, JobQueueRetryReason, JobQueueRetryReasonCount, JobRecord, JobState,
-    RetryJob, RetryOutcome, job_queue_cleanup_metrics_snapshot,
-};
 pub use crate::lens::{
     AnswerSheetAtom, AsofScrubberAtom, ButtonControl, ClaimLineAtom, CollectionAtom, FiniteF64,
     GENERATED_LENS_ATOM_KINDS, GENERATED_UI_SEGMENT_CONTENT_TYPE, GENERATED_UI_WIRE_VERSION,
@@ -542,7 +544,7 @@ pub use crate::linkedin_connector::{
     DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS, LINKEDIN_CHANNEL, LINKEDIN_CONNECT_CONSENT_BODY,
     LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
     LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS, LINKEDIN_DEFAULT_DAILY_DM_CAP,
-    LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP, LINKEDIN_INBOX_SYNC_JOB_KIND,
+    LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP, LINKEDIN_INBOX_SYNC_ATTEMPT_KIND,
     LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL, LINKEDIN_MCP_CONNECTOR_KEY,
     LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB, LinkedInAccountRiskLimits,
     LinkedInConsentScreenCopy, LinkedInConversationMessage, LinkedInConversationMessageEvent,
@@ -555,7 +557,7 @@ pub use crate::linkedin_connector::{
     LinkedInSeatDispatchState, LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision,
     LinkedInSeatSandboxPolicy, LinkedInSelectorDriver, LinkedInVerifiedSendPlan,
     linkedin_connect_consent_screen_copy, linkedin_inbox_sync_provenance_rows,
-    linkedin_inbox_sync_runner_from_job, run_linkedin_kill_switch,
+    linkedin_inbox_sync_runner_from_attempt, run_linkedin_kill_switch,
 };
 pub use crate::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,

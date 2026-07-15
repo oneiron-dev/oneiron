@@ -14,6 +14,13 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
+#[cfg(feature = "sync")]
+use crate::attempt_queue::AttemptState;
+use crate::attempt_queue::{
+    AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
+    ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
+    FailAttempt, FailOutcome, InterveneAttempt,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::claim::{ClaimBody, ClaimSubject};
@@ -22,13 +29,6 @@ use crate::entity_id::bytes_to_hex_lower;
 #[cfg(feature = "sync")]
 use crate::error::SyncEngineContext;
 use crate::error::{Error, Result};
-#[cfg(feature = "sync")]
-use crate::job_queue::JobState;
-use crate::job_queue::{
-    ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, EnqueueJob, EnqueueOutcome, FailJob,
-    FailOutcome, InterveneJob, JobId, JobInterventionEffect, JobInterventionKind, JobQueue,
-    JobRecord,
-};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
 use crate::store::Store;
 #[cfg(feature = "sync")]
@@ -37,14 +37,14 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 
-/// Generic [`JobQueue`] kind used by Dreamer runner jobs.
-pub const DREAMER_RUNNER_JOB_KIND: &str = "dreamer";
-/// Current pinned Dreamer job payload schema version.
-pub const DREAMER_JOB_PAYLOAD_SCHEMA_VERSION: u64 = 1;
-/// Pinned on-disk MessagePack key set for Dreamer job payloads.
-pub const DREAMER_JOB_PAYLOAD_KEYS: [&str; 4] =
+/// Generic [`AttemptQueue`] kind used by Dreamer runner attempts.
+pub const DREAMER_RUNNER_ATTEMPT_KIND: &str = "dreamer";
+/// Current pinned Dreamer attempt payload schema version.
+pub const DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION: u64 = 1;
+/// Pinned on-disk MessagePack key set for Dreamer attempt payloads.
+pub const DREAMER_ATTEMPT_PAYLOAD_KEYS: [&str; 4] =
     ["schema_version", "job_type", "input", "parent_job"];
-/// Claim predicate used for durable Dreamer job milestones.
+/// Claim predicate used for durable Dreamer attempt milestones.
 pub const DREAMER_MILESTONE_PREDICATE: &str = "dreamer.job_milestone";
 /// Current pinned Dreamer milestone claim value schema version.
 pub const DREAMER_MILESTONE_VALUE_SCHEMA_VERSION: u64 = 1;
@@ -55,41 +55,42 @@ const DREAMER_MILESTONE_INDEX_CLAIM_PREFIX: &[u8] = b"dreamer.milestone_index.v1
 const DREAMER_MILESTONE_INDEX_BACKFILLED_KEY: &[u8] = b"dreamer.milestone_index.v1.backfilled";
 const DREAMER_MILESTONE_INDEX_CANDIDATE_KEY_LEN: usize =
     DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX.len() + 16 + 8 + 8 + 16;
-/// Flat ephemeral key prefix for live Dreamer job progress.
+/// Flat ephemeral key prefix for live Dreamer attempt progress.
 #[cfg(feature = "sync")]
-pub const DREAMER_JOB_PROGRESS_KEY_PREFIX: &str = "job:";
-/// Current schema version for live Dreamer job progress ephemeral values.
+pub const DREAMER_ATTEMPT_PROGRESS_KEY_PREFIX: &str = "job:";
+/// Current schema version for live Dreamer attempt progress ephemeral values.
 #[cfg(feature = "sync")]
-pub const DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION: i64 = 1;
-/// Default per-job live progress throttle: at most one update per second.
+pub const DREAMER_ATTEMPT_PROGRESS_VALUE_SCHEMA_VERSION: i64 = 1;
+/// Default per-attempt live progress throttle: at most one update per second.
 #[cfg(feature = "sync")]
-pub const DREAMER_JOB_PROGRESS_THROTTLE_MS: u64 = 1_000;
+pub const DREAMER_ATTEMPT_PROGRESS_THROTTLE_MS: u64 = 1_000;
 /// Default in-process terminal-stop retention, matching the sync lane TTL.
 #[cfg(feature = "sync")]
-pub const DREAMER_JOB_PROGRESS_TERMINAL_RETENTION_MS: u64 = 30_000;
+pub const DREAMER_ATTEMPT_PROGRESS_TERMINAL_RETENTION_MS: u64 = 30_000;
 /// Default fan-out reservation for one Dreamer child, in token-like units.
 pub const DEFAULT_DREAMER_CHILD_RESERVE_UNITS: u64 = 8_000;
 /// Default OF-366 tournament candidate fan-out.
 pub const DEFAULT_DREAMER_TOURNAMENT_FANOUT_M: u16 = 2;
 /// Default OF-366 tournament refinement depth.
 pub const DEFAULT_DREAMER_TOURNAMENT_DEPTH_K: u16 = 2;
-/// MICRO consolidation queue kind. Private per-device job rows only.
-pub const DREAMER_CONSOLIDATION_MICRO_JOB_KIND: &str = "dreamer.consolidation.micro";
-/// MESO consolidation queue kind. Private per-device job rows only.
-pub const DREAMER_CONSOLIDATION_MESO_JOB_KIND: &str = "dreamer.consolidation.meso";
+/// MICRO consolidation queue kind. Private per-device attempt rows only.
+pub const DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND: &str = "dreamer.consolidation.micro";
+/// MESO consolidation queue kind. Private per-device attempt rows only.
+pub const DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND: &str = "dreamer.consolidation.meso";
 /// MACRO consolidation queue kind. Admission is restricted to the elected home node.
-pub const DREAMER_CONSOLIDATION_MACRO_JOB_KIND: &str = "dreamer.consolidation.macro";
+pub const DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND: &str = "dreamer.consolidation.macro";
 /// Current pinned home-node designation schema version.
 pub const DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for the private home-node designation.
 pub const DREAMER_HOME_NODE_DESIGNATION_KEYS: [&str; 4] =
     ["schema_version", "node_id", "class", "elected_at"];
 
+// Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code only.
 const KEY_SCHEMA_VERSION: &str = "schema_version";
-const KEY_JOB_TYPE: &str = "job_type";
+const KEY_ATTEMPT_TYPE: &str = "job_type";
 const KEY_INPUT: &str = "input";
-const KEY_PARENT_JOB: &str = "parent_job";
-const KEY_JOB_ID: &str = "job_id";
+const KEY_PARENT_ATTEMPT: &str = "parent_job";
+const KEY_ATTEMPT_ID: &str = "job_id";
 const KEY_MILESTONE: &str = "milestone";
 const KEY_AT: &str = "at";
 const KEY_BUDGET_ID: &str = "budget_id";
@@ -113,9 +114,9 @@ const KEY_COMPLETED_UNITS: &str = "completed_units";
 #[cfg(feature = "sync")]
 const KEY_UPDATED_AT_MS: &str = "updated_at_ms";
 #[cfg(feature = "sync")]
-const DREAMER_JOB_PROGRESS_VALUE_KEYS: [&str; 7] = [
+const DREAMER_ATTEMPT_PROGRESS_VALUE_KEYS: [&str; 7] = [
     KEY_SCHEMA_VERSION,
-    KEY_JOB_ID,
+    KEY_ATTEMPT_ID,
     KEY_STATE,
     KEY_MESSAGE,
     KEY_COMPLETED_UNITS,
@@ -138,20 +139,20 @@ const DREAMER_BUDGET_KEYS: [&str; 6] = [
 const DREAMER_BUDGET_RESERVATION_KEYS: [&str; 6] = [
     KEY_SCHEMA_VERSION,
     KEY_BUDGET_ID,
-    KEY_JOB_ID,
+    KEY_ATTEMPT_ID,
     KEY_RESERVED_UNITS,
     KEY_CREATED_AT,
     KEY_UPDATED_AT,
 ];
 const DREAMER_RUN_TREE_KEYS: [&str; 4] = [
     KEY_SCHEMA_VERSION,
-    KEY_JOB_ID,
-    KEY_PARENT_JOB,
+    KEY_ATTEMPT_ID,
+    KEY_PARENT_ATTEMPT,
     KEY_CREATED_AT,
 ];
 const DREAMER_PARKED_KEYS: [&str; 5] = [
     KEY_SCHEMA_VERSION,
-    KEY_JOB_ID,
+    KEY_ATTEMPT_ID,
     KEY_REASON,
     KEY_PARK_OWNER,
     KEY_PARKED_AT,
@@ -161,7 +162,7 @@ const DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX: &[u8] = b"dreamer:budget_reserv
 const DREAMER_PRIVATE_RUN_TREE_PREFIX: &[u8] = b"dreamer:run_tree:";
 const DREAMER_PRIVATE_PARKED_PREFIX: &[u8] = b"dreamer:parked:";
 const DREAMER_PRIVATE_HOME_NODE_KEY: &[u8] = b"dreamer:home_node_macro:v1";
-const MAX_DREAMER_JOB_TYPE_LEN: usize = 128;
+const MAX_DREAMER_ATTEMPT_TYPE_LEN: usize = 128;
 const MAX_DREAMER_BUDGET_ID_LEN: usize = 128;
 const MAX_DREAMER_PARK_REASON_LEN: usize = 512;
 const MAX_DREAMER_PARK_OWNER_LEN: usize = 128;
@@ -172,11 +173,11 @@ const DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR: &str = "dreamer-budget-trap";
 const DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE: &str =
     "BudgetTrap: tournament claim authoring suspended for budget approval";
 
-/// Coarse Dreamer job progress state for live ephemeral rows and durable
+/// Coarse Dreamer attempt progress state for live ephemeral rows and durable
 /// milestone fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum DreamerJobProgressState {
+pub enum DreamerAttemptProgressState {
     Created,
     Started,
     Running,
@@ -186,7 +187,7 @@ pub enum DreamerJobProgressState {
     Failed,
 }
 
-impl DreamerJobProgressState {
+impl DreamerAttemptProgressState {
     /// Stable string stored in `job:{job_id}` ephemeral values.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -223,7 +224,7 @@ impl DreamerJobProgressState {
     }
 }
 
-impl From<DreamerMilestoneKind> for DreamerJobProgressState {
+impl From<DreamerMilestoneKind> for DreamerAttemptProgressState {
     fn from(kind: DreamerMilestoneKind) -> Self {
         match kind {
             DreamerMilestoneKind::Created => Self::Created,
@@ -239,7 +240,7 @@ impl From<DreamerMilestoneKind> for DreamerJobProgressState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DreamerDurableMilestone {
     pub claim_id: EntityId,
-    pub job_id: JobId,
+    pub attempt_id: AttemptId,
     pub kind: DreamerMilestoneKind,
     pub at: u64,
     pub learned_at: u64,
@@ -248,9 +249,9 @@ pub struct DreamerDurableMilestone {
 /// Live Dreamer progress update to publish into the ephemeral keyspace.
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DreamerJobProgressUpdate {
-    pub job_id: JobId,
-    pub state: DreamerJobProgressState,
+pub struct DreamerAttemptProgressUpdate {
+    pub attempt_id: AttemptId,
+    pub state: DreamerAttemptProgressState,
     pub message: Option<String>,
     pub completed_units: u64,
     pub total_units: Option<u64>,
@@ -260,7 +261,7 @@ pub struct DreamerJobProgressUpdate {
 /// Source used for a progress snapshot returned to a consumer.
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DreamerJobProgressSource {
+pub enum DreamerAttemptProgressSource {
     Ephemeral,
     DurableMilestone,
 }
@@ -269,10 +270,10 @@ pub enum DreamerJobProgressSource {
 /// fallback otherwise.
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DreamerJobProgressSnapshot {
-    pub job_id: JobId,
-    pub state: DreamerJobProgressState,
-    pub source: DreamerJobProgressSource,
+pub struct DreamerAttemptProgressSnapshot {
+    pub attempt_id: AttemptId,
+    pub state: DreamerAttemptProgressState,
+    pub source: DreamerAttemptProgressSource,
     pub message: Option<String>,
     pub completed_units: u64,
     pub total_units: Option<u64>,
@@ -286,14 +287,14 @@ pub struct DreamerJobProgressSnapshot {
 /// provided [`EphemeralStore`].
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone)]
-pub struct DreamerJobProgressProducer {
+pub struct DreamerAttemptProgressProducer {
     throttle_ms: u64,
     terminal_retention_ms: u64,
-    last_emitted_at_ms: HashMap<JobId, u64>,
-    terminal_at_ms: HashMap<JobId, u64>,
+    last_emitted_at_ms: HashMap<AttemptId, u64>,
+    terminal_at_ms: HashMap<AttemptId, u64>,
 }
 
-/// Consolidation job-table lane.
+/// Consolidation attempt-table lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DreamerConsolidationScope {
@@ -313,13 +314,13 @@ impl DreamerConsolidationScope {
         }
     }
 
-    /// Private job-table kind for this consolidation lane.
+    /// Private attempt-table kind for this consolidation lane.
     #[must_use]
-    pub const fn job_kind(self) -> &'static str {
+    pub const fn attempt_kind(self) -> &'static str {
         match self {
-            Self::Micro => DREAMER_CONSOLIDATION_MICRO_JOB_KIND,
-            Self::Meso => DREAMER_CONSOLIDATION_MESO_JOB_KIND,
-            Self::Macro => DREAMER_CONSOLIDATION_MACRO_JOB_KIND,
+            Self::Micro => DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
+            Self::Meso => DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
+            Self::Macro => DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
         }
     }
 }
@@ -644,13 +645,13 @@ pub enum DreamerClaimAuthoringGateDecision {
 /// BudgetTrap result for tournament admission depletion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DreamerClaimAuthoringBudgetTrap {
-    pub job_id: JobId,
+    pub attempt_id: AttemptId,
     pub budget_id: String,
     pub budget: DreamerBudgetRecord,
     pub required_units: u64,
     pub fanout_m: u16,
     pub depth_k: u16,
-    pub intervention_effect: JobInterventionEffect,
+    pub intervention_effect: AttemptInterventionEffect,
 }
 
 /// Candidate node signals for home-node MACRO election.
@@ -765,10 +766,10 @@ pub struct DreamerHomeNodeDesignation {
 
 /// Input for enqueueing MICRO/MESO/MACRO consolidation on the advisory floor.
 #[derive(Debug, Clone, PartialEq)]
-pub struct EnqueueDreamerConsolidationJob {
+pub struct EnqueueDreamerConsolidationAttempt {
     pub scope: DreamerConsolidationScope,
     pub input: Value,
-    pub parent_job: Option<JobId>,
+    pub parent_attempt: Option<AttemptId>,
     /// Optional advisory dedupe key. This is a local cost/policy coalescer,
     /// not a correctness lock.
     pub dedupe_key: Option<String>,
@@ -778,12 +779,12 @@ pub struct EnqueueDreamerConsolidationJob {
 
 /// Input for home-aware consolidation admission.
 #[derive(Debug, Clone, PartialEq)]
-pub struct AdmitDreamerConsolidationJob {
+pub struct AdmitDreamerConsolidationAttempt {
     pub scope: DreamerConsolidationScope,
     pub local_node_id: u64,
     pub claim_authoring_tier: DreamerClaimAuthoringBatchTier,
     pub claim_authoring: DreamerClaimAuthoringAdmission,
-    pub admission: AdmitDreamerJob,
+    pub admission: AdmitDreamerAttempt,
 }
 
 /// Home-aware consolidation admission result.
@@ -798,76 +799,76 @@ pub enum DreamerConsolidationAdmissionOutcome {
 
 struct DreamerKindAdmissionResult {
     outcome: DreamerAdmissionOutcome,
-    budget_exhausted_candidate: Option<JobId>,
+    budget_exhausted_candidate: Option<AttemptId>,
 }
 
-/// Typed Dreamer job payload stored in the generic queue row.
+/// Typed Dreamer attempt payload stored in the generic queue row.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DreamerJobPayload {
-    pub job_type: String,
+pub struct DreamerAttemptPayload {
+    pub attempt_type: String,
     pub input: Value,
-    pub parent_job: Option<JobId>,
+    pub parent_attempt: Option<AttemptId>,
 }
 
-/// Input for enqueueing a Dreamer job into the private runner queue.
+/// Input for enqueueing a Dreamer attempt into the private runner queue.
 #[derive(Debug, Clone, PartialEq)]
-pub struct EnqueueDreamerJob {
-    pub job_type: String,
+pub struct EnqueueDreamerAttempt {
+    pub attempt_type: String,
     pub input: Value,
-    pub parent_job: Option<JobId>,
+    pub parent_attempt: Option<AttemptId>,
     pub dedupe_key: Option<String>,
     pub run_id: Option<String>,
     pub now: u64,
 }
 
-/// Decoded Dreamer job plus its backing generic queue row.
+/// Decoded Dreamer attempt plus its backing generic queue row.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DreamerJobStatus {
-    pub job: JobRecord,
-    pub payload: DreamerJobPayload,
+pub struct DreamerAttemptStatus {
+    pub attempt: AttemptRecord,
+    pub payload: DreamerAttemptPayload,
 }
 
-/// Typed enqueue outcome for Dreamer jobs.
+/// Typed enqueue outcome for Dreamer attempts.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum EnqueueDreamerJobOutcome {
-    Enqueued(DreamerJobStatus),
-    Existing(DreamerJobStatus),
+pub enum EnqueueDreamerAttemptOutcome {
+    Enqueued(DreamerAttemptStatus),
+    Existing(DreamerAttemptStatus),
 }
 
-/// Input for completing a leased Dreamer job.
+/// Input for completing a leased Dreamer attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompleteDreamerJob {
-    pub id: JobId,
+pub struct CompleteDreamerAttempt {
+    pub id: AttemptId,
     pub lease_owner: String,
     pub attempt_count: u32,
     pub now: u64,
 }
 
-/// Typed complete outcome for a Dreamer job.
+/// Typed complete outcome for a Dreamer attempt.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum CompleteDreamerJobOutcome {
-    Completed(DreamerJobStatus),
-    AlreadyCompleted(DreamerJobStatus),
+pub enum CompleteDreamerAttemptOutcome {
+    Completed(DreamerAttemptStatus),
+    AlreadyCompleted(DreamerAttemptStatus),
 }
 
-/// Input for failing a leased Dreamer job terminally.
+/// Input for failing a leased Dreamer attempt terminally.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FailDreamerJob {
-    pub id: JobId,
+pub struct FailDreamerAttempt {
+    pub id: AttemptId,
     pub lease_owner: String,
     pub attempt_count: u32,
     pub reason: String,
     pub now: u64,
 }
 
-/// Typed fail outcome for a Dreamer job.
+/// Typed fail outcome for a Dreamer attempt.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum FailDreamerJobOutcome {
-    Failed(DreamerJobStatus),
-    AlreadyFailed(DreamerJobStatus),
+pub enum FailDreamerAttemptOutcome {
+    Failed(DreamerAttemptStatus),
+    AlreadyFailed(DreamerAttemptStatus),
 }
 
 /// Runner transition outcome plus an optional encoded ephemeral frame.
@@ -928,7 +929,7 @@ pub struct DreamerMilestoneClaim {
 }
 
 #[cfg(feature = "sync")]
-impl DreamerJobProgressUpdate {
+impl DreamerAttemptProgressUpdate {
     fn validate(&self) -> std::result::Result<(), TransportError> {
         if let Some(total) = self.total_units
             && self.completed_units > total
@@ -951,12 +952,12 @@ impl DreamerJobProgressUpdate {
 }
 
 #[cfg(feature = "sync")]
-impl DreamerJobProgressSnapshot {
-    fn from_live_update(update: &DreamerJobProgressUpdate) -> Self {
+impl DreamerAttemptProgressSnapshot {
+    fn from_live_update(update: &DreamerAttemptProgressUpdate) -> Self {
         Self {
-            job_id: update.job_id,
+            attempt_id: update.attempt_id,
             state: update.state,
-            source: DreamerJobProgressSource::Ephemeral,
+            source: DreamerAttemptProgressSource::Ephemeral,
             message: update.message.clone(),
             completed_units: update.completed_units,
             total_units: update.total_units,
@@ -966,9 +967,9 @@ impl DreamerJobProgressSnapshot {
 
     fn from_milestone(milestone: DreamerDurableMilestone) -> Self {
         Self {
-            job_id: milestone.job_id,
+            attempt_id: milestone.attempt_id,
             state: milestone.kind.into(),
-            source: DreamerJobProgressSource::DurableMilestone,
+            source: DreamerAttemptProgressSource::DurableMilestone,
             message: None,
             completed_units: 0,
             total_units: None,
@@ -978,18 +979,18 @@ impl DreamerJobProgressSnapshot {
 }
 
 #[cfg(feature = "sync")]
-impl Default for DreamerJobProgressProducer {
+impl Default for DreamerAttemptProgressProducer {
     fn default() -> Self {
         Self::with_limits(
-            DREAMER_JOB_PROGRESS_THROTTLE_MS,
-            DREAMER_JOB_PROGRESS_TERMINAL_RETENTION_MS,
+            DREAMER_ATTEMPT_PROGRESS_THROTTLE_MS,
+            DREAMER_ATTEMPT_PROGRESS_TERMINAL_RETENTION_MS,
         )
         .expect("default dreamer progress limits are valid")
     }
 }
 
 #[cfg(feature = "sync")]
-impl DreamerJobProgressProducer {
+impl DreamerAttemptProgressProducer {
     /// Creates a producer with the contract-pinned 1Hz throttle.
     #[must_use]
     pub fn new() -> Self {
@@ -997,7 +998,7 @@ impl DreamerJobProgressProducer {
     }
 
     /// Creates a producer with explicit limits. `terminal_retention_ms` should
-    /// match the [`EphemeralStore`] timeout so stopped jobs cannot resume
+    /// match the [`EphemeralStore`] timeout so stopped attempts cannot resume
     /// ticking before their last live row ages out.
     pub fn with_limits(throttle_ms: u64, terminal_retention_ms: u64) -> Result<Self> {
         if throttle_ms == 0 {
@@ -1018,50 +1019,50 @@ impl DreamerJobProgressProducer {
         })
     }
 
-    /// Publishes one live progress update if it passes the per-job throttle.
+    /// Publishes one live progress update if it passes the per-attempt throttle.
     ///
     /// Terminal `Done`/`Failed` updates overwrite the mutable live row with a
     /// terminal state, then stop any further live production until TTL ageout.
     pub fn publish(
         &mut self,
         store: &EphemeralStore,
-        update: DreamerJobProgressUpdate,
+        update: DreamerAttemptProgressUpdate,
     ) -> std::result::Result<Option<Vec<u8>>, TransportError> {
         update.validate()?;
         self.retain_terminal_stops(update.updated_at_ms);
 
         if update.state.is_terminal() {
-            let key = dreamer_job_progress_key(update.job_id);
-            let value = encode_job_progress_value(&update)?;
+            let key = dreamer_attempt_progress_key(update.attempt_id);
+            let value = encode_attempt_progress_value(&update)?;
             store.set(&key, value);
-            self.mark_terminal(update.job_id, update.updated_at_ms);
+            self.mark_terminal(update.attempt_id, update.updated_at_ms);
             return encode_ephemeral(&store.encode(&key))
                 .into_result()
                 .map(Some);
         }
-        if self.terminal_at_ms.contains_key(&update.job_id) {
+        if self.terminal_at_ms.contains_key(&update.attempt_id) {
             return Ok(None);
         }
-        if let Some(last) = self.last_emitted_at_ms.get(&update.job_id)
+        if let Some(last) = self.last_emitted_at_ms.get(&update.attempt_id)
             && update.updated_at_ms.saturating_sub(*last) < self.throttle_ms
         {
             return Ok(None);
         }
 
-        let key = dreamer_job_progress_key(update.job_id);
-        let value = encode_job_progress_value(&update)?;
+        let key = dreamer_attempt_progress_key(update.attempt_id);
+        let value = encode_attempt_progress_value(&update)?;
         store.set(&key, value);
         self.last_emitted_at_ms
-            .insert(update.job_id, update.updated_at_ms);
+            .insert(update.attempt_id, update.updated_at_ms);
         encode_ephemeral(&store.encode(&key))
             .into_result()
             .map(Some)
     }
 
-    /// Marks a job terminal without producing a live progress frame.
-    pub fn mark_terminal(&mut self, job_id: JobId, now_ms: u64) {
-        self.last_emitted_at_ms.remove(&job_id);
-        self.terminal_at_ms.insert(job_id, now_ms);
+    /// Marks an attempt terminal without producing a live progress frame.
+    pub fn mark_terminal(&mut self, attempt_id: AttemptId, now_ms: u64) {
+        self.last_emitted_at_ms.remove(&attempt_id);
+        self.terminal_at_ms.insert(attempt_id, now_ms);
     }
 
     /// Runs the Rust-side `EphemeralStore` TTL pass and prunes old terminal
@@ -1118,17 +1119,17 @@ impl DreamerWakeBudgetConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DreamerBudgetReservation {
     pub budget_id: String,
-    pub job_id: JobId,
+    pub attempt_id: AttemptId,
     pub reserved_units: u64,
     pub created_at: u64,
     pub updated_at: u64,
 }
 
-/// Explicit reserve input for callers that already have a child job id.
+/// Explicit reserve input for callers that already have a child attempt id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReserveDreamerBudget {
     pub budget_id: String,
-    pub child_job: JobId,
+    pub child_attempt: AttemptId,
     /// Initial local budget total when no private row exists yet. Existing
     /// rows keep their stored total.
     pub budget_total_units: u64,
@@ -1156,7 +1157,7 @@ pub struct DreamerReservedBudget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettleDreamerBudget {
     pub budget_id: String,
-    pub child_job: JobId,
+    pub child_attempt: AttemptId,
     pub actual_units: u64,
     pub now: u64,
 }
@@ -1165,7 +1166,7 @@ pub struct SettleDreamerBudget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbortDreamerBudgetReservation {
     pub budget_id: String,
-    pub child_job: JobId,
+    pub child_attempt: AttemptId,
     pub now: u64,
 }
 
@@ -1189,7 +1190,7 @@ pub struct DreamerBudgetSettlement {
 
 /// Input for the atomic Dreamer admission step.
 #[derive(Debug, Clone, PartialEq)]
-pub struct AdmitDreamerJob {
+pub struct AdmitDreamerAttempt {
     pub lease_owner: String,
     pub now: u64,
     pub budget_id: String,
@@ -1208,41 +1209,41 @@ pub struct AdmitDreamerJob {
 pub enum DreamerAdmissionOutcome {
     Empty,
     BudgetExhausted(DreamerBudgetRecord),
-    Admitted(Box<DreamerAdmittedJob>),
+    Admitted(Box<DreamerAdmittedAttempt>),
 }
 
-/// A leased Dreamer job plus the private budget row after admission.
+/// A leased Dreamer attempt plus the private budget row after admission.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DreamerAdmittedJob {
-    pub status: DreamerJobStatus,
+pub struct DreamerAdmittedAttempt {
+    pub status: DreamerAttemptStatus,
     pub budget: DreamerBudgetRecord,
     pub reservation: DreamerBudgetReservation,
 }
 
-/// Private run-tree row keyed by job id.
+/// Private run-tree row keyed by attempt id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DreamerRunTreeRecord {
-    pub job_id: JobId,
-    pub parent_job: Option<JobId>,
+    pub attempt_id: AttemptId,
+    pub parent_attempt: Option<AttemptId>,
     pub created_at: u64,
 }
 
-/// Input for parking a Dreamer job in local runner state.
+/// Input for parking a Dreamer attempt in local runner state.
 ///
 /// `park_owner` is the parker's ownership token: only the owner recorded on
-/// the row may overwrite it or resume the job (fail-closed on mismatch).
+/// the row may overwrite it or resume the attempt (fail-closed on mismatch).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParkDreamerJob {
-    pub job_id: JobId,
+pub struct ParkDreamerAttempt {
+    pub attempt_id: AttemptId,
     pub reason: String,
     pub park_owner: String,
     pub now: u64,
 }
 
-/// Private parked-job row keyed by job id.
+/// Private parked-attempt row keyed by attempt id.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DreamerParkedJobRecord {
-    pub job_id: JobId,
+pub struct DreamerParkedAttemptRecord {
+    pub attempt_id: AttemptId,
     pub reason: String,
     pub park_owner: String,
     pub parked_at: u64,
@@ -1251,7 +1252,7 @@ pub struct DreamerParkedJobRecord {
 /// Private Dreamer runner store over an already-open vault.
 pub struct DreamerRunnerStore<'a> {
     vault: &'a Vault,
-    jobs: JobQueue<'a>,
+    attempts: AttemptQueue<'a>,
 }
 
 impl<'a> DreamerRunnerStore<'a> {
@@ -1260,7 +1261,7 @@ impl<'a> DreamerRunnerStore<'a> {
     pub fn new(vault: &'a Vault) -> Self {
         Self {
             vault,
-            jobs: JobQueue::new(vault),
+            attempts: AttemptQueue::new(vault),
         }
     }
 
@@ -1323,22 +1324,22 @@ impl<'a> DreamerRunnerStore<'a> {
         decode_home_node_designation(raw).map(Some)
     }
 
-    /// Enqueues a Dreamer job and records its private run-tree parent row in
+    /// Enqueues a Dreamer attempt and records its private run-tree parent row in
     /// the same LMDB write transaction.
-    pub fn enqueue(&self, input: EnqueueDreamerJob) -> Result<EnqueueDreamerJobOutcome> {
-        validate_job_type(&input.job_type)?;
-        let payload = DreamerJobPayload {
-            job_type: input.job_type,
+    pub fn enqueue(&self, input: EnqueueDreamerAttempt) -> Result<EnqueueDreamerAttemptOutcome> {
+        validate_attempt_type(&input.attempt_type)?;
+        let payload = DreamerAttemptPayload {
+            attempt_type: input.attempt_type,
             input: input.input,
-            parent_job: input.parent_job,
+            parent_attempt: input.parent_attempt,
         };
-        let encoded_payload = encode_dreamer_job_payload(&payload)?;
+        let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let outcome = self.jobs.enqueue_in_txn(
+        let outcome = self.attempts.enqueue_in_txn(
             &mut wtxn,
-            EnqueueJob {
-                kind: DREAMER_RUNNER_JOB_KIND.to_owned(),
+            EnqueueAttempt {
+                kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
                 payload: encoded_payload,
                 dedupe_key: input.dedupe_key,
                 run_id: input.run_id,
@@ -1352,59 +1353,59 @@ impl<'a> DreamerRunnerStore<'a> {
                     self.vault,
                     &mut wtxn,
                     &DreamerRunTreeRecord {
-                        job_id: record.id,
-                        parent_job: payload.parent_job,
+                        attempt_id: record.id,
+                        parent_attempt: payload.parent_attempt,
                         created_at: record.created_at,
                     },
                 )?;
-                (true, decode_dreamer_job_status(record)?)
+                (true, decode_dreamer_attempt_status(record)?)
             }
             EnqueueOutcome::Existing(record) => {
                 ensure_run_tree_record_in_txn(self.vault, &mut wtxn, &record)?;
-                (false, decode_dreamer_job_status(record)?)
+                (false, decode_dreamer_attempt_status(record)?)
             }
         };
         wtxn.commit()?;
 
         if was_enqueued {
-            Ok(EnqueueDreamerJobOutcome::Enqueued(status))
+            Ok(EnqueueDreamerAttemptOutcome::Enqueued(status))
         } else {
-            Ok(EnqueueDreamerJobOutcome::Existing(status))
+            Ok(EnqueueDreamerAttemptOutcome::Existing(status))
         }
     }
 
-    /// Enqueues a local consolidation job on the advisory job-table floor.
+    /// Enqueues a local consolidation attempt on the advisory attempt-table floor.
     ///
     /// MICRO and MESO remain per-device because these queue rows are private
     /// runner state. MACRO uses the same advisory dedupe mechanics, but
     /// admission is restricted by [`Self::admit_next_consolidation`].
     pub fn enqueue_consolidation(
         &self,
-        input: EnqueueDreamerConsolidationJob,
-    ) -> Result<EnqueueDreamerJobOutcome> {
+        input: EnqueueDreamerConsolidationAttempt,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_consolidation_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         Ok(outcome)
     }
 
-    /// Enqueues a consolidation job in a caller-owned write transaction.
+    /// Enqueues a consolidation attempt in a caller-owned write transaction.
     pub(crate) fn enqueue_consolidation_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        input: EnqueueDreamerConsolidationJob,
-    ) -> Result<EnqueueDreamerJobOutcome> {
-        let payload = DreamerJobPayload {
-            job_type: input.scope.as_str().to_owned(),
+        input: EnqueueDreamerConsolidationAttempt,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let payload = DreamerAttemptPayload {
+            attempt_type: input.scope.as_str().to_owned(),
             input: input.input,
-            parent_job: input.parent_job,
+            parent_attempt: input.parent_attempt,
         };
-        let encoded_payload = encode_dreamer_job_payload(&payload)?;
+        let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
-        let outcome = self.jobs.enqueue_in_txn(
+        let outcome = self.attempts.enqueue_in_txn(
             wtxn,
-            EnqueueJob {
-                kind: input.scope.job_kind().to_owned(),
+            EnqueueAttempt {
+                kind: input.scope.attempt_kind().to_owned(),
                 payload: encoded_payload,
                 dedupe_key: input.dedupe_key,
                 run_id: input.run_id,
@@ -1418,46 +1419,51 @@ impl<'a> DreamerRunnerStore<'a> {
                     self.vault,
                     wtxn,
                     &DreamerRunTreeRecord {
-                        job_id: record.id,
-                        parent_job: payload.parent_job,
+                        attempt_id: record.id,
+                        parent_attempt: payload.parent_attempt,
                         created_at: record.created_at,
                     },
                 )?;
-                (true, decode_dreamer_job_status(record)?)
+                (true, decode_dreamer_attempt_status(record)?)
             }
             EnqueueOutcome::Existing(record) => {
                 ensure_run_tree_record_in_txn(self.vault, wtxn, &record)?;
-                (false, decode_dreamer_job_status(record)?)
+                (false, decode_dreamer_attempt_status(record)?)
             }
         };
 
         if was_enqueued {
-            Ok(EnqueueDreamerJobOutcome::Enqueued(status))
+            Ok(EnqueueDreamerAttemptOutcome::Enqueued(status))
         } else {
-            Ok(EnqueueDreamerJobOutcome::Existing(status))
+            Ok(EnqueueDreamerAttemptOutcome::Existing(status))
         }
     }
 
-    /// Publishes a live progress update for an existing Dreamer job.
+    /// Publishes a live progress update for an existing Dreamer attempt.
     ///
     /// This is the runner seam used by execution loops for in-flight ticks;
-    /// the producer enforces per-job throttling and terminal-stop behavior.
+    /// the producer enforces per-attempt throttling and terminal-stop behavior.
     #[cfg(feature = "sync")]
     pub fn publish_progress(
         &self,
-        producer: &mut DreamerJobProgressProducer,
+        producer: &mut DreamerAttemptProgressProducer,
         ephemeral: &EphemeralStore,
-        update: DreamerJobProgressUpdate,
+        update: DreamerAttemptProgressUpdate,
     ) -> Result<Option<Vec<u8>>> {
-        let status = self.status(update.job_id)?.ok_or(invalid_dreamer_runner(
-            "dreamer progress job must exist before publish",
-        ))?;
-        match (status.job.state, update.state) {
-            (JobState::Completed, DreamerJobProgressState::Done)
-            | (JobState::Failed, DreamerJobProgressState::Failed)
-            | (JobState::Queued | JobState::Leased, _) => {}
+        let status = self
+            .status(update.attempt_id)?
+            .ok_or(invalid_dreamer_runner(
+                "dreamer progress attempt must exist before publish",
+            ))?;
+        match (status.attempt.state, update.state) {
+            (AttemptState::Completed, DreamerAttemptProgressState::Done)
+            | (AttemptState::Failed, DreamerAttemptProgressState::Failed)
+            | (AttemptState::Queued | AttemptState::Leased, _) => {}
             (
-                JobState::Paused | JobState::Completed | JobState::Failed | JobState::Cancelled,
+                AttemptState::Paused
+                | AttemptState::Completed
+                | AttemptState::Failed
+                | AttemptState::Cancelled,
                 _,
             ) => {
                 return Ok(None);
@@ -1468,14 +1474,14 @@ impl<'a> DreamerRunnerStore<'a> {
             .map_err(dreamer_progress_error)
     }
 
-    /// Atomically admits the next queued Dreamer job.
+    /// Atomically admits the next queued Dreamer attempt.
     ///
     /// A successful admission leases one queue row, mutates the private budget
     /// counter, and optionally writes a durable started milestone claim before
     /// committing. Budget denial commits only queue scan repairs, leaving the
-    /// job queued and the budget row unchanged.
-    pub fn admit_next(&self, input: AdmitDreamerJob) -> Result<DreamerAdmissionOutcome> {
-        self.admit_next_kind(DREAMER_RUNNER_JOB_KIND, input)
+    /// attempt queued and the budget row unchanged.
+    pub fn admit_next(&self, input: AdmitDreamerAttempt) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_RUNNER_ATTEMPT_KIND, input)
     }
 
     /// Home-aware consolidation admission.
@@ -1484,7 +1490,7 @@ impl<'a> DreamerRunnerStore<'a> {
     /// caller's local node id to match the persisted home-node designation.
     pub fn admit_next_consolidation(
         &self,
-        mut input: AdmitDreamerConsolidationJob,
+        mut input: AdmitDreamerConsolidationAttempt,
     ) -> Result<DreamerConsolidationAdmissionOutcome> {
         let claim_authoring_decision = input
             .claim_authoring
@@ -1528,20 +1534,20 @@ impl<'a> DreamerRunnerStore<'a> {
         let budget_trap_budget_id = input.admission.budget_id.clone();
         let budget_trap_now = input.admission.now;
         let result =
-            self.admit_next_kind_in_txn(&mut wtxn, input.scope.job_kind(), input.admission)?;
+            self.admit_next_kind_in_txn(&mut wtxn, input.scope.attempt_kind(), input.admission)?;
         match (tournament_grant, result.outcome) {
             (Some(grant), DreamerAdmissionOutcome::BudgetExhausted(budget)) => {
-                let Some(job_id) = result.budget_exhausted_candidate else {
+                let Some(attempt_id) = result.budget_exhausted_candidate else {
                     wtxn.commit()?;
                     return Ok(DreamerConsolidationAdmissionOutcome::Admission(
                         DreamerAdmissionOutcome::BudgetExhausted(budget),
                     ));
                 };
-                let intervention = self.jobs.intervene_in_txn(
+                let intervention = self.attempts.intervene_in_txn(
                     &mut wtxn,
-                    InterveneJob {
-                        id: job_id,
-                        kind: JobInterventionKind::Pause,
+                    InterveneAttempt {
+                        id: attempt_id,
+                        kind: AttemptInterventionKind::Pause,
                         actor: DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR.to_owned(),
                         note: Some(DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE.to_owned()),
                         now: budget_trap_now,
@@ -1551,7 +1557,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 Ok(
                     DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(
                         DreamerClaimAuthoringBudgetTrap {
-                            job_id,
+                            attempt_id,
                             budget_id: budget_trap_budget_id,
                             budget,
                             required_units: grant.reserve_units,
@@ -1572,7 +1578,7 @@ impl<'a> DreamerRunnerStore<'a> {
     fn admit_next_kind(
         &self,
         queue_kind: &str,
-        input: AdmitDreamerJob,
+        input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         validate_admission_input(&input)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
@@ -1585,10 +1591,10 @@ impl<'a> DreamerRunnerStore<'a> {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         queue_kind: &str,
-        input: AdmitDreamerJob,
+        input: AdmitDreamerAttempt,
     ) -> Result<DreamerKindAdmissionResult> {
-        let Some(candidate_job_id) = self
-            .jobs
+        let Some(candidate_attempt_id) = self
+            .attempts
             .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
         else {
             return Ok(DreamerKindAdmissionResult {
@@ -1604,8 +1610,12 @@ impl<'a> DreamerRunnerStore<'a> {
             input.budget_total_units,
             input.now,
         )?;
-        let existing_reservation =
-            read_budget_reservation_in_txn(self.vault, wtxn, &input.budget_id, candidate_job_id)?;
+        let existing_reservation = read_budget_reservation_in_txn(
+            self.vault,
+            wtxn,
+            &input.budget_id,
+            candidate_attempt_id,
+        )?;
         if let Some(reservation) = existing_reservation.as_ref() {
             if reservation.reserved_units > budget.reserved_units {
                 return Err(invalid_dreamer_runner(
@@ -1622,34 +1632,34 @@ impl<'a> DreamerRunnerStore<'a> {
                 if additional_units > budget.remaining_units {
                     return Ok(DreamerKindAdmissionResult {
                         outcome: DreamerAdmissionOutcome::BudgetExhausted(budget),
-                        budget_exhausted_candidate: Some(candidate_job_id),
+                        budget_exhausted_candidate: Some(candidate_attempt_id),
                     });
                 }
             }
         } else if input.reserve_units > budget.remaining_units {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::BudgetExhausted(budget),
-                budget_exhausted_candidate: Some(candidate_job_id),
+                budget_exhausted_candidate: Some(candidate_attempt_id),
             });
         }
 
-        let claim = self.jobs.claim_kind_in_txn(
+        let claim = self.attempts.claim_kind_in_txn(
             wtxn,
             queue_kind,
-            ClaimJob {
+            ClaimAttempt {
                 lease_owner: input.lease_owner,
                 now: input.now,
             },
         )?;
-        let ClaimOutcome::Claimed(job) = claim else {
+        let ClaimOutcome::Claimed(attempt) = claim else {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::Empty,
                 budget_exhausted_candidate: None,
             });
         };
-        if job.id != candidate_job_id {
+        if attempt.id != candidate_attempt_id {
             return Err(invalid_dreamer_runner(
-                "dreamer admission claimed unexpected ready job",
+                "dreamer admission claimed unexpected ready attempt",
             ));
         }
 
@@ -1669,7 +1679,7 @@ impl<'a> DreamerRunnerStore<'a> {
         } else {
             let reservation = DreamerBudgetReservation {
                 budget_id: input.budget_id,
-                job_id: job.id,
+                attempt_id: attempt.id,
                 reserved_units: input.reserve_units,
                 created_at: input.now,
                 updated_at: input.now,
@@ -1679,13 +1689,13 @@ impl<'a> DreamerRunnerStore<'a> {
         };
 
         if let Some(milestone) = input.started_milestone {
-            apply_milestone_claim_in_txn(self.vault, wtxn, &job, milestone)?;
+            apply_milestone_claim_in_txn(self.vault, wtxn, &attempt, milestone)?;
         }
 
-        let status = decode_dreamer_job_status(job)?;
+        let status = decode_dreamer_attempt_status(attempt)?;
 
         Ok(DreamerKindAdmissionResult {
-            outcome: DreamerAdmissionOutcome::Admitted(Box::new(DreamerAdmittedJob {
+            outcome: DreamerAdmissionOutcome::Admitted(Box::new(DreamerAdmittedAttempt {
                 status,
                 budget,
                 reservation,
@@ -1694,12 +1704,12 @@ impl<'a> DreamerRunnerStore<'a> {
         })
     }
 
-    /// Admits the next Dreamer job and emits its initial live progress row.
+    /// Admits the next Dreamer attempt and emits its initial live progress row.
     #[cfg(feature = "sync")]
     pub fn admit_next_with_progress(
         &self,
-        input: AdmitDreamerJob,
-        producer: &mut DreamerJobProgressProducer,
+        input: AdmitDreamerAttempt,
+        producer: &mut DreamerAttemptProgressProducer,
         ephemeral: &EphemeralStore,
     ) -> Result<DreamerProgressed<DreamerAdmissionOutcome>> {
         let now_ms = input.now.saturating_mul(1_000);
@@ -1709,9 +1719,9 @@ impl<'a> DreamerRunnerStore<'a> {
             self.publish_progress(
                 producer,
                 ephemeral,
-                DreamerJobProgressUpdate {
-                    job_id: admitted.status.job.id,
-                    state: DreamerJobProgressState::Started,
+                DreamerAttemptProgressUpdate {
+                    attempt_id: admitted.status.attempt.id,
+                    state: DreamerAttemptProgressState::Started,
                     message: None,
                     completed_units: 0,
                     total_units: Some(reservation.reserved_units),
@@ -1724,7 +1734,7 @@ impl<'a> DreamerRunnerStore<'a> {
         Ok(DreamerProgressed { outcome, frame })
     }
 
-    /// Reserves wake-budget units for a known child job.
+    /// Reserves wake-budget units for a known child attempt.
     ///
     /// `admit_next` is the normal spawn path because it co-commits queue
     /// leasing and reservation. This method exists for runner call sites that
@@ -1739,9 +1749,12 @@ impl<'a> DreamerRunnerStore<'a> {
         }
 
         let mut wtxn = self.vault.store.env.write_txn()?;
-        if let Some(reservation) =
-            read_budget_reservation_in_txn(self.vault, &wtxn, &input.budget_id, input.child_job)?
-        {
+        if let Some(reservation) = read_budget_reservation_in_txn(
+            self.vault,
+            &wtxn,
+            &input.budget_id,
+            input.child_attempt,
+        )? {
             return Ok(DreamerBudgetReserveOutcome::AlreadyReserved(reservation));
         }
 
@@ -1759,7 +1772,7 @@ impl<'a> DreamerRunnerStore<'a> {
 
         let reservation = DreamerBudgetReservation {
             budget_id: input.budget_id,
-            job_id: input.child_job,
+            attempt_id: input.child_attempt,
             reserved_units: input.reserve_units,
             created_at: input.now,
             updated_at: input.now,
@@ -1783,9 +1796,13 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<DreamerBudgetSettlementOutcome> {
         validate_budget_id(&input.budget_id)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let reservation_key = budget_reservation_key(&input.budget_id, input.child_job)?;
-        let Some(reservation) =
-            read_budget_reservation_in_txn(self.vault, &wtxn, &input.budget_id, input.child_job)?
+        let reservation_key = budget_reservation_key(&input.budget_id, input.child_attempt)?;
+        let Some(reservation) = read_budget_reservation_in_txn(
+            self.vault,
+            &wtxn,
+            &input.budget_id,
+            input.child_attempt,
+        )?
         else {
             return Ok(DreamerBudgetSettlementOutcome::NoReservation);
         };
@@ -1821,111 +1838,113 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<DreamerBudgetSettlementOutcome> {
         self.settle_budget(SettleDreamerBudget {
             budget_id: input.budget_id,
-            child_job: input.child_job,
+            child_attempt: input.child_attempt,
             actual_units: 0,
             now: input.now,
         })
     }
 
-    /// Marks a leased Dreamer job complete through the generic queue.
-    pub fn complete(&self, input: CompleteDreamerJob) -> Result<CompleteDreamerJobOutcome> {
+    /// Marks a leased Dreamer attempt complete through the generic queue.
+    pub fn complete(&self, input: CompleteDreamerAttempt) -> Result<CompleteDreamerAttemptOutcome> {
         self.ensure_terminal_transition_target(input.id)?;
-        match self.jobs.complete(CompleteJob {
+        match self.attempts.complete(CompleteAttempt {
             id: input.id,
             lease_owner: input.lease_owner,
             attempt_count: input.attempt_count,
             now: input.now,
         })? {
-            CompleteOutcome::Completed(record) => Ok(CompleteDreamerJobOutcome::Completed(
-                decode_dreamer_job_status(record)?,
+            CompleteOutcome::Completed(record) => Ok(CompleteDreamerAttemptOutcome::Completed(
+                decode_dreamer_attempt_status(record)?,
             )),
-            CompleteOutcome::AlreadyCompleted(record) => Ok(
-                CompleteDreamerJobOutcome::AlreadyCompleted(decode_dreamer_job_status(record)?),
-            ),
+            CompleteOutcome::AlreadyCompleted(record) => {
+                Ok(CompleteDreamerAttemptOutcome::AlreadyCompleted(
+                    decode_dreamer_attempt_status(record)?,
+                ))
+            }
         }
     }
 
-    /// Marks a leased Dreamer job complete and stops live progress production.
+    /// Marks a leased Dreamer attempt complete and stops live progress production.
     #[cfg(feature = "sync")]
     pub fn complete_with_progress(
         &self,
-        input: CompleteDreamerJob,
-        producer: &mut DreamerJobProgressProducer,
+        input: CompleteDreamerAttempt,
+        producer: &mut DreamerAttemptProgressProducer,
         ephemeral: &EphemeralStore,
-    ) -> Result<DreamerProgressed<CompleteDreamerJobOutcome>> {
+    ) -> Result<DreamerProgressed<CompleteDreamerAttemptOutcome>> {
         let outcome = self.complete(input)?;
         let status = complete_outcome_status(&outcome);
         let frame = self.publish_progress(
             producer,
             ephemeral,
-            DreamerJobProgressUpdate {
-                job_id: status.job.id,
-                state: DreamerJobProgressState::Done,
+            DreamerAttemptProgressUpdate {
+                attempt_id: status.attempt.id,
+                state: DreamerAttemptProgressState::Done,
                 message: None,
                 completed_units: 0,
                 total_units: None,
-                updated_at_ms: status.job.updated_at.saturating_mul(1_000),
+                updated_at_ms: status.attempt.updated_at.saturating_mul(1_000),
             },
         )?;
         Ok(DreamerProgressed { outcome, frame })
     }
 
-    /// Marks a leased Dreamer job terminally failed through the generic queue.
-    pub fn fail(&self, input: FailDreamerJob) -> Result<FailDreamerJobOutcome> {
+    /// Marks a leased Dreamer attempt terminally failed through the generic queue.
+    pub fn fail(&self, input: FailDreamerAttempt) -> Result<FailDreamerAttemptOutcome> {
         self.ensure_terminal_transition_target(input.id)?;
-        match self.jobs.fail(FailJob {
+        match self.attempts.fail(FailAttempt {
             id: input.id,
             lease_owner: input.lease_owner,
             attempt_count: input.attempt_count,
             reason: input.reason,
             now: input.now,
         })? {
-            FailOutcome::Failed(record) => Ok(FailDreamerJobOutcome::Failed(
-                decode_dreamer_job_status(record)?,
+            FailOutcome::Failed(record) => Ok(FailDreamerAttemptOutcome::Failed(
+                decode_dreamer_attempt_status(record)?,
             )),
-            FailOutcome::AlreadyFailed(record) => Ok(FailDreamerJobOutcome::AlreadyFailed(
-                decode_dreamer_job_status(record)?,
+            FailOutcome::AlreadyFailed(record) => Ok(FailDreamerAttemptOutcome::AlreadyFailed(
+                decode_dreamer_attempt_status(record)?,
             )),
         }
     }
 
-    /// Marks a leased Dreamer job failed and stops live progress production.
+    /// Marks a leased Dreamer attempt failed and stops live progress production.
     #[cfg(feature = "sync")]
     pub fn fail_with_progress(
         &self,
-        input: FailDreamerJob,
-        producer: &mut DreamerJobProgressProducer,
+        input: FailDreamerAttempt,
+        producer: &mut DreamerAttemptProgressProducer,
         ephemeral: &EphemeralStore,
-    ) -> Result<DreamerProgressed<FailDreamerJobOutcome>> {
+    ) -> Result<DreamerProgressed<FailDreamerAttemptOutcome>> {
         let outcome = self.fail(input)?;
         let status = fail_outcome_status(&outcome);
         let frame = self.publish_progress(
             producer,
             ephemeral,
-            DreamerJobProgressUpdate {
-                job_id: status.job.id,
-                state: DreamerJobProgressState::Failed,
-                message: bounded_progress_message(status.job.last_error.as_deref()),
+            DreamerAttemptProgressUpdate {
+                attempt_id: status.attempt.id,
+                state: DreamerAttemptProgressState::Failed,
+                message: bounded_progress_message(status.attempt.last_error.as_deref()),
                 completed_units: 0,
                 total_units: None,
-                updated_at_ms: status.job.updated_at.saturating_mul(1_000),
+                updated_at_ms: status.attempt.updated_at.saturating_mul(1_000),
             },
         )?;
         Ok(DreamerProgressed { outcome, frame })
     }
 
-    fn ensure_terminal_transition_target(&self, id: JobId) -> Result<()> {
-        let record = self.jobs.get(id)?.ok_or(invalid_dreamer_runner(
-            "dreamer terminal transition job must exist",
+    fn ensure_terminal_transition_target(&self, id: AttemptId) -> Result<()> {
+        let record = self.attempts.get(id)?.ok_or(invalid_dreamer_runner(
+            "dreamer terminal transition attempt must exist",
         ))?;
-        decode_dreamer_job_status(record).map(|_| ())
+        decode_dreamer_attempt_status(record).map(|_| ())
     }
 
-    /// Reads one Dreamer job by queue id.
-    pub fn status(&self, id: JobId) -> Result<Option<DreamerJobStatus>> {
-        self.jobs
+    /// Reads one Dreamer attempt by queue id.
+    pub fn status(&self, id: AttemptId) -> Result<Option<DreamerAttemptStatus>> {
+        self.attempts
             .get(id)?
-            .map(decode_dreamer_job_status)
+            .map(decode_dreamer_attempt_status)
             .transpose()
     }
 
@@ -1950,11 +1969,11 @@ impl<'a> DreamerRunnerStore<'a> {
     pub fn budget_reservation(
         &self,
         budget_id: &str,
-        child_job: JobId,
+        child_attempt: AttemptId,
     ) -> Result<Option<DreamerBudgetReservation>> {
         validate_budget_id(budget_id)?;
         let rtxn = self.vault.store.env.read_txn()?;
-        let key = budget_reservation_key(budget_id, child_job)?;
+        let key = budget_reservation_key(budget_id, child_attempt)?;
         let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
         };
@@ -1962,35 +1981,35 @@ impl<'a> DreamerRunnerStore<'a> {
     }
 
     /// Reads a private Dreamer run-tree row.
-    pub fn run_tree(&self, job_id: JobId) -> Result<Option<DreamerRunTreeRecord>> {
+    pub fn run_tree(&self, attempt_id: AttemptId) -> Result<Option<DreamerRunTreeRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let key = run_tree_key(job_id);
+        let key = run_tree_key(attempt_id);
         let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
         };
         decode_run_tree_record(raw).map(Some)
     }
 
-    /// Parks a Dreamer job in private runner state without changing the
+    /// Parks a Dreamer attempt in private runner state without changing the
     /// generic queue row.
     ///
     /// A row already parked by a DIFFERENT owner is never overwritten
     /// (fail-closed error); the same owner may re-park to refresh the row.
-    pub fn park_job(&self, input: ParkDreamerJob) -> Result<DreamerParkedJobRecord> {
+    pub fn park_attempt(&self, input: ParkDreamerAttempt) -> Result<DreamerParkedAttemptRecord> {
         validate_park_reason(&input.reason)?;
         validate_park_owner(&input.park_owner)?;
-        if self.status(input.job_id)?.is_none() {
-            return Err(invalid_dreamer_runner("dreamer parked job must exist"));
+        if self.status(input.attempt_id)?.is_none() {
+            return Err(invalid_dreamer_runner("dreamer parked attempt must exist"));
         }
 
-        let record = DreamerParkedJobRecord {
-            job_id: input.job_id,
+        let record = DreamerParkedAttemptRecord {
+            attempt_id: input.attempt_id,
             reason: input.reason,
             park_owner: input.park_owner,
             parked_at: input.now,
         };
         let encoded = encode_parked_record(&record)?;
-        let key = parked_key(record.job_id);
+        let key = parked_key(record.attempt_id);
         let mut wtxn = self.vault.store.env.write_txn()?;
         let existing = self
             .vault
@@ -2011,21 +2030,21 @@ impl<'a> DreamerRunnerStore<'a> {
         Ok(record)
     }
 
-    /// Parks a Dreamer job and emits a live parked progress row.
+    /// Parks a Dreamer attempt and emits a live parked progress row.
     #[cfg(feature = "sync")]
-    pub fn park_job_with_progress(
+    pub fn park_attempt_with_progress(
         &self,
-        input: ParkDreamerJob,
-        producer: &mut DreamerJobProgressProducer,
+        input: ParkDreamerAttempt,
+        producer: &mut DreamerAttemptProgressProducer,
         ephemeral: &EphemeralStore,
-    ) -> Result<DreamerProgressed<DreamerParkedJobRecord>> {
-        let record = self.park_job(input)?;
+    ) -> Result<DreamerProgressed<DreamerParkedAttemptRecord>> {
+        let record = self.park_attempt(input)?;
         let frame = self.publish_progress(
             producer,
             ephemeral,
-            DreamerJobProgressUpdate {
-                job_id: record.job_id,
-                state: DreamerJobProgressState::Parked,
+            DreamerAttemptProgressUpdate {
+                attempt_id: record.attempt_id,
+                state: DreamerAttemptProgressState::Parked,
                 message: Some(record.reason.clone()),
                 completed_units: 0,
                 total_units: None,
@@ -2038,10 +2057,10 @@ impl<'a> DreamerRunnerStore<'a> {
         })
     }
 
-    /// Clears a parked-job row so the job becomes admissible again through
+    /// Clears a parked-attempt row so the attempt becomes admissible again through
     /// the normal admission path (ONE-1288).
     ///
-    /// Returns the job status when a parked row was cleared. A job with NO
+    /// Returns the attempt status when a parked row was cleared. An attempt with NO
     /// parked row is an idempotent no-op: `Ok(None)`, nothing mutated
     /// (pinned). A row parked by a DIFFERENT owner than `park_owner` is a
     /// fail-closed error, nothing deleted. `now` is accepted for symmetry
@@ -2049,12 +2068,12 @@ impl<'a> DreamerRunnerStore<'a> {
     /// re-admission re-leases it.
     pub fn resume_parked(
         &self,
-        job_id: JobId,
+        attempt_id: AttemptId,
         park_owner: &str,
         now: u64,
-    ) -> Result<Option<DreamerJobStatus>> {
+    ) -> Result<Option<DreamerAttemptStatus>> {
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let resumed = self.resume_parked_in_txn(&mut wtxn, job_id, park_owner, now)?;
+        let resumed = self.resume_parked_in_txn(&mut wtxn, attempt_id, park_owner, now)?;
         wtxn.commit()?;
         Ok(resumed)
     }
@@ -2065,11 +2084,11 @@ impl<'a> DreamerRunnerStore<'a> {
     pub(crate) fn resume_parked_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        job_id: JobId,
+        attempt_id: AttemptId,
         park_owner: &str,
         _now: u64,
-    ) -> Result<Option<DreamerJobStatus>> {
-        let key = parked_key(job_id);
+    ) -> Result<Option<DreamerAttemptStatus>> {
+        let key = parked_key(attempt_id);
         let Some(raw) = self.vault.store.vault_meta.get(wtxn, &key)? else {
             return Ok(None);
         };
@@ -2080,29 +2099,32 @@ impl<'a> DreamerRunnerStore<'a> {
             ));
         }
         let status = self
-            .status(job_id)?
-            .ok_or(invalid_dreamer_runner("dreamer resumed job must exist"))?;
+            .status(attempt_id)?
+            .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
         self.vault.store.vault_meta.delete(wtxn, &key)?;
         Ok(Some(status))
     }
 
-    /// Reads a private parked-job row.
-    pub fn parked_job(&self, job_id: JobId) -> Result<Option<DreamerParkedJobRecord>> {
+    /// Reads a private parked-attempt row.
+    pub fn parked_attempt(
+        &self,
+        attempt_id: AttemptId,
+    ) -> Result<Option<DreamerParkedAttemptRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let key = parked_key(job_id);
+        let key = parked_key(attempt_id);
         let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
         };
         decode_parked_record(raw).map(Some)
     }
 
-    /// Returns the latest active/approved durable milestone for `job_id`.
+    /// Returns the latest active/approved durable milestone for `attempt_id`.
     ///
     /// This is the coarse fallback surface for consumers that cannot reach the
     /// executing device's live ephemeral row.
     pub fn latest_durable_milestone(
         &self,
-        job_id: JobId,
+        attempt_id: AttemptId,
     ) -> Result<Option<DreamerDurableMilestone>> {
         let rtxn = self.vault.store.env.read_txn()?;
         if self
@@ -2112,7 +2134,7 @@ impl<'a> DreamerRunnerStore<'a> {
             .get(&rtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY)?
             .is_some()
         {
-            return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, job_id);
+            return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, attempt_id);
         }
         drop(rtxn);
 
@@ -2126,9 +2148,9 @@ impl<'a> DreamerRunnerStore<'a> {
         {
             drop(wtxn);
             let rtxn = self.vault.store.env.read_txn()?;
-            return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, job_id);
+            return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, attempt_id);
         }
-        let latest = backfill_dreamer_milestone_index(&self.vault.store, &mut wtxn, job_id)?;
+        let latest = backfill_dreamer_milestone_index(&self.vault.store, &mut wtxn, attempt_id)?;
         wtxn.commit()?;
         Ok(latest)
     }
@@ -2139,53 +2161,57 @@ impl<'a> DreamerRunnerStore<'a> {
     pub fn progress_snapshot(
         &self,
         ephemeral: &EphemeralStore,
-        job_id: JobId,
-    ) -> Result<Option<DreamerJobProgressSnapshot>> {
-        if let Some(value) = ephemeral.get(&dreamer_job_progress_key(job_id))
-            && let Ok(update) = decode_job_progress_value(&value, job_id)
+        attempt_id: AttemptId,
+    ) -> Result<Option<DreamerAttemptProgressSnapshot>> {
+        if let Some(value) = ephemeral.get(&dreamer_attempt_progress_key(attempt_id))
+            && let Ok(update) = decode_attempt_progress_value(&value, attempt_id)
         {
-            return Ok(Some(DreamerJobProgressSnapshot::from_live_update(&update)));
+            return Ok(Some(DreamerAttemptProgressSnapshot::from_live_update(
+                &update,
+            )));
         }
 
-        self.latest_durable_milestone(job_id)
-            .map(|milestone| milestone.map(DreamerJobProgressSnapshot::from_milestone))
+        self.latest_durable_milestone(attempt_id)
+            .map(|milestone| milestone.map(DreamerAttemptProgressSnapshot::from_milestone))
     }
 }
 
-/// Encodes a Dreamer job payload in canonical MessagePack field order.
-pub fn encode_dreamer_job_payload(payload: &DreamerJobPayload) -> Result<Vec<u8>> {
-    validate_job_type(&payload.job_type)?;
+/// Encodes a Dreamer attempt payload in canonical MessagePack field order.
+pub fn encode_dreamer_attempt_payload(payload: &DreamerAttemptPayload) -> Result<Vec<u8>> {
+    validate_attempt_type(&payload.attempt_type)?;
     let value = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
-            Value::from(DREAMER_JOB_PAYLOAD_SCHEMA_VERSION),
+            Value::from(DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION),
         ),
         (
-            Value::from(KEY_JOB_TYPE),
-            Value::from(payload.job_type.as_str()),
+            Value::from(KEY_ATTEMPT_TYPE),
+            Value::from(payload.attempt_type.as_str()),
         ),
         (Value::from(KEY_INPUT), payload.input.clone()),
         (
-            Value::from(KEY_PARENT_JOB),
-            encode_optional_job_id(payload.parent_job),
+            Value::from(KEY_PARENT_ATTEMPT),
+            encode_optional_attempt_id(payload.parent_attempt),
         ),
     ]);
-    encode_value(&value, "dreamer job payload MessagePack encode failed")
+    encode_value(&value, "dreamer attempt payload MessagePack encode failed")
 }
 
-/// Decodes and validates a Dreamer job payload.
-pub fn decode_dreamer_job_payload(bytes: &[u8]) -> Result<DreamerJobPayload> {
+/// Decodes and validates a Dreamer attempt payload.
+pub fn decode_dreamer_attempt_payload(bytes: &[u8]) -> Result<DreamerAttemptPayload> {
     let value = decode_value(bytes)?;
-    decode_dreamer_job_payload_value(&value)
+    decode_dreamer_attempt_payload_value(&value)
 }
 
-fn decode_dreamer_job_status(record: JobRecord) -> Result<DreamerJobStatus> {
+fn decode_dreamer_attempt_status(record: AttemptRecord) -> Result<DreamerAttemptStatus> {
     if !is_dreamer_queue_kind(&record.kind) {
-        return Err(invalid_dreamer_runner("job is not a Dreamer runner job"));
+        return Err(invalid_dreamer_runner(
+            "attempt is not a Dreamer runner attempt",
+        ));
     }
-    let payload = decode_dreamer_job_payload(&record.payload)?;
-    Ok(DreamerJobStatus {
-        job: record,
+    let payload = decode_dreamer_attempt_payload(&record.payload)?;
+    Ok(DreamerAttemptStatus {
+        attempt: record,
         payload,
     })
 }
@@ -2196,19 +2222,18 @@ fn dreamer_progress_error(error: TransportError) -> Error {
 }
 
 #[cfg(feature = "sync")]
-fn complete_outcome_status(outcome: &CompleteDreamerJobOutcome) -> &DreamerJobStatus {
+fn complete_outcome_status(outcome: &CompleteDreamerAttemptOutcome) -> &DreamerAttemptStatus {
     match outcome {
-        CompleteDreamerJobOutcome::Completed(status)
-        | CompleteDreamerJobOutcome::AlreadyCompleted(status) => status,
+        CompleteDreamerAttemptOutcome::Completed(status)
+        | CompleteDreamerAttemptOutcome::AlreadyCompleted(status) => status,
     }
 }
 
 #[cfg(feature = "sync")]
-fn fail_outcome_status(outcome: &FailDreamerJobOutcome) -> &DreamerJobStatus {
+fn fail_outcome_status(outcome: &FailDreamerAttemptOutcome) -> &DreamerAttemptStatus {
     match outcome {
-        FailDreamerJobOutcome::Failed(status) | FailDreamerJobOutcome::AlreadyFailed(status) => {
-            status
-        }
+        FailDreamerAttemptOutcome::Failed(status)
+        | FailDreamerAttemptOutcome::AlreadyFailed(status) => status,
     }
 }
 
@@ -2231,10 +2256,10 @@ fn bounded_progress_message(message: Option<&str>) -> Option<String> {
 }
 
 fn is_dreamer_queue_kind(kind: &str) -> bool {
-    kind == DREAMER_RUNNER_JOB_KIND
-        || kind == DREAMER_CONSOLIDATION_MICRO_JOB_KIND
-        || kind == DREAMER_CONSOLIDATION_MESO_JOB_KIND
-        || kind == DREAMER_CONSOLIDATION_MACRO_JOB_KIND
+    kind == DREAMER_RUNNER_ATTEMPT_KIND
+        || kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
+        || kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
+        || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
 }
 
 fn home_node_designation_in_txn(
@@ -2372,75 +2397,78 @@ fn decode_home_node_designation(bytes: &[u8]) -> Result<DreamerHomeNodeDesignati
     Ok(record)
 }
 
-fn decode_dreamer_job_payload_value(value: &Value) -> Result<DreamerJobPayload> {
-    let entries = expect_map(value, "dreamer job payload must be a MessagePack map")?;
+fn decode_dreamer_attempt_payload_value(value: &Value) -> Result<DreamerAttemptPayload> {
+    let entries = expect_map(value, "dreamer attempt payload must be a MessagePack map")?;
     let mut schema_version = None;
-    let mut job_type = None;
+    let mut attempt_type = None;
     let mut input = None;
-    let mut parent_job = None;
-    let mut seen = [false; DREAMER_JOB_PAYLOAD_KEYS.len()];
+    let mut parent_attempt = None;
+    let mut seen = [false; DREAMER_ATTEMPT_PAYLOAD_KEYS.len()];
 
     for (key, value) in entries {
-        let key = expect_key(key, "dreamer job payload keys must be strings")?;
-        let index = pinned_key_index(key, &DREAMER_JOB_PAYLOAD_KEYS).ok_or(
-            invalid_dreamer_runner("dreamer job payload key is not pinned"),
+        let key = expect_key(key, "dreamer attempt payload keys must be strings")?;
+        let index = pinned_key_index(key, &DREAMER_ATTEMPT_PAYLOAD_KEYS).ok_or(
+            invalid_dreamer_runner("dreamer attempt payload key is not pinned"),
         )?;
         if seen[index] {
-            return Err(invalid_dreamer_runner("duplicate dreamer job payload key"));
+            return Err(invalid_dreamer_runner(
+                "duplicate dreamer attempt payload key",
+            ));
         }
         seen[index] = true;
 
-        match DREAMER_JOB_PAYLOAD_KEYS[index] {
+        match DREAMER_ATTEMPT_PAYLOAD_KEYS[index] {
             KEY_SCHEMA_VERSION => {
                 schema_version = Some(expect_u64(
                     value,
-                    "dreamer job payload schema_version must be an integer",
+                    "dreamer attempt payload schema_version must be an integer",
                 )?);
             }
-            KEY_JOB_TYPE => {
+            KEY_ATTEMPT_TYPE => {
                 let parsed = expect_string(value, "dreamer job_type must be a string")?;
-                validate_job_type(&parsed)?;
-                job_type = Some(parsed);
+                validate_attempt_type(&parsed)?;
+                attempt_type = Some(parsed);
             }
             KEY_INPUT => input = Some(value.clone()),
-            KEY_PARENT_JOB => parent_job = Some(decode_optional_job_id(value)?),
-            _ => unreachable!("index resolved from DREAMER_JOB_PAYLOAD_KEYS"),
+            KEY_PARENT_ATTEMPT => parent_attempt = Some(decode_optional_attempt_id(value)?),
+            _ => unreachable!("index resolved from DREAMER_ATTEMPT_PAYLOAD_KEYS"),
         }
     }
 
     let schema_version = schema_version.ok_or(invalid_dreamer_runner(
-        "missing dreamer job payload schema_version",
+        "missing dreamer attempt payload schema_version",
     ))?;
-    if schema_version != DREAMER_JOB_PAYLOAD_SCHEMA_VERSION {
+    if schema_version != DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION {
         return Err(invalid_dreamer_runner(
-            "unsupported dreamer job payload schema_version",
+            "unsupported dreamer attempt payload schema_version",
         ));
     }
 
-    Ok(DreamerJobPayload {
-        job_type: job_type.ok_or(invalid_dreamer_runner("missing dreamer job_type"))?,
-        input: input.ok_or(invalid_dreamer_runner("missing dreamer job input"))?,
-        parent_job: parent_job.ok_or(invalid_dreamer_runner("missing dreamer parent_job"))?,
+    Ok(DreamerAttemptPayload {
+        attempt_type: attempt_type.ok_or(invalid_dreamer_runner("missing dreamer job_type"))?,
+        input: input.ok_or(invalid_dreamer_runner("missing dreamer attempt input"))?,
+        parent_attempt: parent_attempt
+            .ok_or(invalid_dreamer_runner("missing dreamer parent_job"))?,
     })
 }
 
 fn ensure_run_tree_record_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    record: &JobRecord,
+    record: &AttemptRecord,
 ) -> Result<()> {
     let key = run_tree_key(record.id);
     if vault.store.vault_meta.get(&*wtxn, &key)?.is_some() {
         return Ok(());
     }
-    let status = decode_dreamer_job_status(record.clone())?;
+    let status = decode_dreamer_attempt_status(record.clone())?;
     put_run_tree_record_in_txn(
         vault,
         wtxn,
         &DreamerRunTreeRecord {
-            job_id: status.job.id,
-            parent_job: status.payload.parent_job,
-            created_at: status.job.created_at,
+            attempt_id: status.attempt.id,
+            parent_attempt: status.payload.parent_attempt,
+            created_at: status.attempt.created_at,
         },
     )
 }
@@ -2451,7 +2479,7 @@ fn put_run_tree_record_in_txn(
     record: &DreamerRunTreeRecord,
 ) -> Result<()> {
     let encoded = encode_run_tree_record(record)?;
-    let key = run_tree_key(record.job_id);
+    let key = run_tree_key(record.attempt_id);
     vault.store.vault_meta.put(wtxn, &key, &encoded)?;
     Ok(())
 }
@@ -2495,14 +2523,14 @@ fn read_budget_reservation_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
     budget_id: &str,
-    child_job: JobId,
+    child_attempt: AttemptId,
 ) -> Result<Option<DreamerBudgetReservation>> {
-    let reservation_key = budget_reservation_key(budget_id, child_job)?;
+    let reservation_key = budget_reservation_key(budget_id, child_attempt)?;
     let Some(raw) = vault.store.vault_meta.get(txn, &reservation_key)? else {
         return Ok(None);
     };
     let reservation = decode_budget_reservation(raw)?;
-    if reservation.budget_id != budget_id || reservation.job_id != child_job {
+    if reservation.budget_id != budget_id || reservation.attempt_id != child_attempt {
         return Err(invalid_dreamer_runner(
             "dreamer budget reservation key/body mismatch",
         ));
@@ -2522,7 +2550,7 @@ fn reserve_budget_for_child_in_txn(
             "dreamer budget reservation targets a different counter",
         ));
     }
-    let reservation_key = budget_reservation_key(&reservation.budget_id, reservation.job_id)?;
+    let reservation_key = budget_reservation_key(&reservation.budget_id, reservation.attempt_id)?;
     if vault
         .store
         .vault_meta
@@ -2596,7 +2624,7 @@ fn top_up_budget_reservation_in_txn(
     validate_budget_record(budget)?;
 
     put_budget_record_in_txn(vault, wtxn, budget)?;
-    let reservation_key = budget_reservation_key(&reservation.budget_id, reservation.job_id)?;
+    let reservation_key = budget_reservation_key(&reservation.budget_id, reservation.attempt_id)?;
     let encoded = encode_budget_reservation(&reservation)?;
     vault
         .store
@@ -2652,11 +2680,11 @@ fn settle_budget_for_child(
 fn apply_milestone_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    job: &JobRecord,
+    attempt: &AttemptRecord,
     milestone: DreamerMilestoneClaim,
 ) -> Result<()> {
-    let milestone = stamp_agent_dispatch_milestone(job, milestone)?;
-    let value = dreamer_milestone_value(job.id, milestone.kind, milestone.occurred.start);
+    let milestone = stamp_agent_dispatch_milestone(attempt, milestone)?;
+    let value = dreamer_milestone_value(attempt.id, milestone.kind, milestone.occurred.start);
     let candidate = ClaimCandidate::new(
         DREAMER_MILESTONE_PREDICATE,
         ClaimSubject::Entity(milestone.subject),
@@ -2675,25 +2703,25 @@ fn apply_milestone_claim_in_txn(
         .apply(wtxn)
 }
 
-/// Milestones co-committed for an agent-dispatch job carry AUTHORITATIVE
-/// attribution: the subject is stamped to the job id and the envelope
+/// Milestones co-committed for an agent-dispatch attempt carry AUTHORITATIVE
+/// attribution: the subject is stamped to the attempt id and the envelope
 /// provenance's agent key is stamped from the dispatched payload's own
 /// `agent_id`, never trusted from the caller — an admission milestone can
-/// therefore not attribute another agent. Non-agent jobs pass through
+/// therefore not attribute another agent. Non-agent attempts pass through
 /// unchanged.
 fn stamp_agent_dispatch_milestone(
-    job: &JobRecord,
+    attempt: &AttemptRecord,
     milestone: DreamerMilestoneClaim,
 ) -> Result<DreamerMilestoneClaim> {
-    if job.kind != DREAMER_RUNNER_JOB_KIND {
+    if attempt.kind != DREAMER_RUNNER_ATTEMPT_KIND {
         return Ok(milestone);
     }
-    let Ok(payload) = decode_dreamer_job_payload(&job.payload) else {
+    let Ok(payload) = decode_dreamer_attempt_payload(&attempt.payload) else {
         // A payload that fails the dreamer envelope decode errors moments
         // later in status decoding; the milestone stamp is not the door.
         return Ok(milestone);
     };
-    if payload.job_type != crate::agent_dispatch::AGENT_DISPATCH_JOB_TYPE {
+    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
         return Ok(milestone);
     }
     let Some(agent_id) = crate::agent_dispatch::agent_dispatch_payload_agent_id(&payload) else {
@@ -2701,8 +2729,8 @@ fn stamp_agent_dispatch_milestone(
             "agent dispatch payload is unattributable; refusing milestone claim",
         ));
     };
-    let subject = EntityId::from_bytes(*job.id.as_bytes()).map_err(|_| {
-        invalid_dreamer_runner("agent dispatch job id is not usable as a milestone subject")
+    let subject = EntityId::from_bytes(*attempt.id.as_bytes()).map_err(|_| {
+        invalid_dreamer_runner("agent dispatch attempt id is not usable as a milestone subject")
     })?;
     let mut entries = match milestone.envelope.provenance().value() {
         Value::Map(entries) => entries
@@ -2745,11 +2773,11 @@ pub(crate) fn index_dreamer_milestone_claim_for_put(
     };
 
     // A milestone becomes durable-index visible only when it is BOUND to the
-    // job it names — for EVERY milestone kind. A forged claim stays an
+    // attempt it names — for EVERY milestone kind. A forged claim stays an
     // ordinary claim but never enters `latest_durable_milestone` (tolerant
     // skip, never a write error: replicated replay must not fail a peer's
     // write on local queue state).
-    if !dreamer_milestone_attribution_is_bound(store, wtxn, milestone.job_id, body) {
+    if !dreamer_milestone_attribution_is_bound(store, wtxn, milestone.attempt_id, body) {
         return Ok(());
     }
 
@@ -2772,79 +2800,79 @@ pub(crate) fn index_dreamer_milestone_claim_for_put(
 ///   device's resume point. `latest_durable_milestone` is only meaningful on
 ///   the device holding the row, so nothing legitimate is lost;
 /// * unreadable/undecodable local row or payload → NOT bound (fail closed);
-/// * non-dreamer or non-agent-dispatch job → bound (today's semantics for
+/// * non-dreamer or non-agent-dispatch attempt → bound (today's semantics for
 ///   milestones that carry no agent attribution);
-/// * agent-dispatch job → bound only when ALL THREE bindings hold:
-///   the claim's subject is the job id, its write envelope is a SYSTEM
+/// * agent-dispatch attempt → bound only when ALL THREE bindings hold:
+///   the claim's subject is the attempt id, its write envelope is a SYSTEM
 ///   (Dreamer bookkeeping) envelope, and its stamped attribution equals the
 ///   dispatched payload's `agent_id`.
 fn dreamer_milestone_attribution_is_bound(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    job_id: JobId,
+    attempt_id: AttemptId,
     body: &ClaimBody,
 ) -> bool {
-    let job_hex = bytes_to_hex_lower(job_id.as_bytes());
-    let raw = match store.job_records.get(txn, job_id.as_bytes()) {
+    let attempt_hex = bytes_to_hex_lower(attempt_id.as_bytes());
+    let raw = match store.attempt_records.get(txn, attempt_id.as_bytes()) {
         Ok(Some(raw)) => raw,
         Ok(None) => {
             tracing::warn!(
-                job_id = %job_hex,
-                "milestone names a job with no local queue row; \
+                attempt_id = %attempt_hex,
+                "milestone names an attempt with no local queue row; \
                  refusing durable index entry",
             );
             return false;
         }
         Err(error) => {
             tracing::warn!(
-                job_id = %job_hex,
+                attempt_id = %attempt_hex,
                 %error,
-                "milestone job row read failed; refusing durable index entry",
+                "milestone attempt row read failed; refusing durable index entry",
             );
             return false;
         }
     };
-    // Job rows are one version byte + an rmp_serde body (job_queue.rs); a
+    // Attempt rows are one version byte + an rmp_serde body (attempt_queue.rs); a
     // record this module cannot decode cannot be bound — fail closed.
     let Some((_version, record_body)) = raw.split_first() else {
         return false;
     };
-    let Ok(record) = rmp_serde::from_slice::<JobRecord>(record_body) else {
+    let Ok(record) = rmp_serde::from_slice::<AttemptRecord>(record_body) else {
         tracing::warn!(
-            job_id = %job_hex,
-            "milestone job row failed to decode; refusing durable index entry",
+            attempt_id = %attempt_hex,
+            "milestone attempt row failed to decode; refusing durable index entry",
         );
         return false;
     };
-    if record.kind != DREAMER_RUNNER_JOB_KIND {
+    if record.kind != DREAMER_RUNNER_ATTEMPT_KIND {
         return true;
     }
-    let Ok(payload) = decode_dreamer_job_payload(&record.payload) else {
+    let Ok(payload) = decode_dreamer_attempt_payload(&record.payload) else {
         tracing::warn!(
-            job_id = %job_hex,
-            "milestone job payload failed to decode; refusing durable index entry",
+            attempt_id = %attempt_hex,
+            "milestone attempt payload failed to decode; refusing durable index entry",
         );
         return false;
     };
-    if payload.job_type != crate::agent_dispatch::AGENT_DISPATCH_JOB_TYPE {
+    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
         return true;
     }
     let Some(expected) = crate::agent_dispatch::agent_dispatch_payload_agent_id(&payload) else {
         tracing::warn!(
-            job_id = %job_hex,
+            attempt_id = %attempt_hex,
             "agent dispatch payload is unattributable; refusing durable index entry",
         );
         return false;
     };
 
-    // (1) Subject binding: the milestone must be about THIS job.
-    let Ok(expected_subject) = EntityId::from_bytes(*job_id.as_bytes()) else {
+    // (1) Subject binding: the milestone must be about THIS attempt.
+    let Ok(expected_subject) = EntityId::from_bytes(*attempt_id.as_bytes()) else {
         return false;
     };
     if body.subject != ClaimSubject::Entity(expected_subject) {
         tracing::warn!(
-            job_id = %job_hex,
-            "milestone subject is not the dispatched job id; \
+            attempt_id = %attempt_hex,
+            "milestone subject is not the dispatched attempt id; \
              refusing durable index entry",
         );
         return false;
@@ -2864,7 +2892,7 @@ fn dreamer_milestone_attribution_is_bound(
         Ok(Some(kind)) if kind == ENTITY_TYPE_MACHINE => {}
         other => {
             tracing::warn!(
-                job_id = %job_hex,
+                attempt_id = %attempt_hex,
                 ?other,
                 "milestone writer does not resolve to a stored MACHINE (system) \
                  actor; refusing durable index entry",
@@ -2878,7 +2906,7 @@ fn dreamer_milestone_attribution_is_bound(
         Some(claimed) if claimed == expected => true,
         claimed => {
             tracing::warn!(
-                job_id = %job_hex,
+                attempt_id = %attempt_hex,
                 expected,
                 ?claimed,
                 "milestone attribution does not match the dispatched agent; \
@@ -2969,13 +2997,13 @@ pub(crate) fn deindex_dreamer_milestone_claim(
 fn latest_indexed_dreamer_milestone(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
-    job_id: JobId,
+    attempt_id: AttemptId,
 ) -> Result<Option<DreamerDurableMilestone>> {
-    let prefix = dreamer_milestone_candidate_prefix(job_id);
+    let prefix = dreamer_milestone_candidate_prefix(attempt_id);
     let mut latest: Option<DreamerDurableMilestone> = None;
     for row in store.vault_meta.prefix_iter(rtxn, &prefix)? {
         let (key, _value) = row?;
-        let Some(milestone) = indexed_dreamer_milestone_if_current(store, rtxn, key, job_id)?
+        let Some(milestone) = indexed_dreamer_milestone_if_current(store, rtxn, key, attempt_id)?
         else {
             continue;
         };
@@ -2988,12 +3016,13 @@ fn indexed_dreamer_milestone_if_current(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     key: &[u8],
-    expected_job_id: JobId,
+    expected_attempt_id: AttemptId,
 ) -> Result<Option<DreamerDurableMilestone>> {
-    let Ok((job_id, at, learned_at, claim_id)) = decode_dreamer_milestone_candidate_key(key) else {
+    let Ok((attempt_id, at, learned_at, claim_id)) = decode_dreamer_milestone_candidate_key(key)
+    else {
         return Ok(None);
     };
-    if job_id != expected_job_id {
+    if attempt_id != expected_attempt_id {
         return Ok(None);
     }
     let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
@@ -3012,7 +3041,7 @@ fn indexed_dreamer_milestone_if_current(
     else {
         return Ok(None);
     };
-    if milestone.job_id == job_id
+    if milestone.attempt_id == attempt_id
         && milestone.at == at
         && milestone.learned_at == learned_at
         && milestone.claim_id == claim_id
@@ -3026,7 +3055,7 @@ fn indexed_dreamer_milestone_if_current(
 fn backfill_dreamer_milestone_index(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
-    job_id: JobId,
+    attempt_id: AttemptId,
 ) -> Result<Option<DreamerDurableMilestone>> {
     let mut milestones = Vec::new();
     for row in store.entities.iter(&*wtxn)? {
@@ -3052,7 +3081,7 @@ fn backfill_dreamer_milestone_index(
         // hook, so it runs the SAME binding check — otherwise a forged
         // milestone written before the index existed would be admitted by
         // the rebuild.
-        if !dreamer_milestone_attribution_is_bound(store, &*wtxn, milestone.job_id, &body) {
+        if !dreamer_milestone_attribution_is_bound(store, &*wtxn, milestone.attempt_id, &body) {
             continue;
         }
         milestones.push(milestone);
@@ -3067,7 +3096,7 @@ fn backfill_dreamer_milestone_index(
             &dreamer_milestone_claim_key(&milestone.claim_id),
             &candidate_key,
         )?;
-        if milestone.job_id == job_id
+        if milestone.attempt_id == attempt_id
             && latest.as_ref().is_none_or(|current| {
                 (milestone.at, milestone.learned_at, milestone.claim_id)
                     > (current.at, current.learned_at, current.claim_id)
@@ -3094,27 +3123,27 @@ fn dreamer_milestone_from_claim_body(
     {
         return None;
     }
-    let Ok((job_id, kind, at)) = decode_milestone_value(&body.value) else {
+    let Ok((attempt_id, kind, at)) = decode_milestone_value(&body.value) else {
         return None;
     };
     Some(DreamerDurableMilestone {
         claim_id: *claim_id,
-        job_id,
+        attempt_id,
         kind,
         at,
         learned_at,
     })
 }
 
-fn dreamer_milestone_candidate_prefix(job_id: JobId) -> Vec<u8> {
+fn dreamer_milestone_candidate_prefix(attempt_id: AttemptId) -> Vec<u8> {
     let mut key = Vec::with_capacity(DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX.len() + 16);
     key.extend_from_slice(DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX);
-    key.extend_from_slice(job_id.as_bytes());
+    key.extend_from_slice(attempt_id.as_bytes());
     key
 }
 
 fn dreamer_milestone_candidate_key(milestone: &DreamerDurableMilestone) -> Vec<u8> {
-    let mut key = dreamer_milestone_candidate_prefix(milestone.job_id);
+    let mut key = dreamer_milestone_candidate_prefix(milestone.attempt_id);
     key.extend_from_slice(&milestone.at.to_be_bytes());
     key.extend_from_slice(&milestone.learned_at.to_be_bytes());
     key.extend_from_slice(milestone.claim_id.as_bytes());
@@ -3128,14 +3157,14 @@ fn dreamer_milestone_claim_key(claim_id: &EntityId) -> Vec<u8> {
     key
 }
 
-fn decode_dreamer_milestone_candidate_key(key: &[u8]) -> Result<(JobId, u64, u64, EntityId)> {
+fn decode_dreamer_milestone_candidate_key(key: &[u8]) -> Result<(AttemptId, u64, u64, EntityId)> {
     if key.len() != DREAMER_MILESTONE_INDEX_CANDIDATE_KEY_LEN
         || !key.starts_with(DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX)
     {
         return Err(Error::CorruptedIndex("dreamer milestone index key"));
     }
     let mut cursor = DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX.len();
-    let job_id = JobId::from_bytes(&key[cursor..cursor + 16])?;
+    let attempt_id = AttemptId::from_bytes(&key[cursor..cursor + 16])?;
     cursor += 16;
     let at = u64::from_be_bytes(
         key[cursor..cursor + 8]
@@ -3154,29 +3183,33 @@ fn decode_dreamer_milestone_candidate_key(key: &[u8]) -> Result<(JobId, u64, u64
             .try_into()
             .map_err(|_| Error::CorruptedIndex("dreamer milestone index key"))?,
     )?;
-    Ok((job_id, at, learned_at, claim_id))
+    Ok((attempt_id, at, learned_at, claim_id))
 }
 
 /// The ONE home of the pinned `dreamer.job_milestone` claim-value shape
 /// (`["schema_version","job_id","milestone","at"]`). Public so the agent
 /// dispatch layer (and the DREAM execution loop) build milestone values here
 /// instead of re-encoding the shape.
-pub fn dreamer_milestone_value(job_id: JobId, kind: DreamerMilestoneKind, at: u64) -> Value {
+pub fn dreamer_milestone_value(
+    attempt_id: AttemptId,
+    kind: DreamerMilestoneKind,
+    at: u64,
+) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(DREAMER_MILESTONE_VALUE_SCHEMA_VERSION),
         ),
-        (Value::from(KEY_JOB_ID), encode_job_id(job_id)),
+        (Value::from(KEY_ATTEMPT_ID), encode_attempt_id(attempt_id)),
         (Value::from(KEY_MILESTONE), Value::from(kind.as_str())),
         (Value::from(KEY_AT), Value::from(at)),
     ])
 }
 
-fn decode_milestone_value(value: &Value) -> Result<(JobId, DreamerMilestoneKind, u64)> {
+fn decode_milestone_value(value: &Value) -> Result<(AttemptId, DreamerMilestoneKind, u64)> {
     let entries = expect_map(value, "dreamer milestone value must be a MessagePack map")?;
     let mut schema_version = None;
-    let mut job_id = None;
+    let mut attempt_id = None;
     let mut milestone = None;
     let mut at = None;
     let mut seen = [false; DREAMER_MILESTONE_VALUE_KEYS.len()];
@@ -3200,7 +3233,7 @@ fn decode_milestone_value(value: &Value) -> Result<(JobId, DreamerMilestoneKind,
                     "dreamer milestone value schema_version must be an integer",
                 )?);
             }
-            KEY_JOB_ID => job_id = Some(decode_job_id(value)?),
+            KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id(value)?),
             KEY_MILESTONE => {
                 let parsed =
                     expect_string(value, "dreamer milestone value milestone must be a string")?;
@@ -3228,7 +3261,7 @@ fn decode_milestone_value(value: &Value) -> Result<(JobId, DreamerMilestoneKind,
     }
 
     Ok((
-        job_id.ok_or(invalid_dreamer_runner(
+        attempt_id.ok_or(invalid_dreamer_runner(
             "missing dreamer milestone value job_id",
         ))?,
         milestone.ok_or(invalid_dreamer_runner(
@@ -3240,29 +3273,29 @@ fn decode_milestone_value(value: &Value) -> Result<(JobId, DreamerMilestoneKind,
 
 #[cfg(feature = "sync")]
 #[must_use]
-pub fn dreamer_job_progress_key(job_id: JobId) -> String {
-    let mut key = String::with_capacity(DREAMER_JOB_PROGRESS_KEY_PREFIX.len() + 32);
-    key.push_str(DREAMER_JOB_PROGRESS_KEY_PREFIX);
-    for byte in job_id.as_bytes() {
+pub fn dreamer_attempt_progress_key(attempt_id: AttemptId) -> String {
+    let mut key = String::with_capacity(DREAMER_ATTEMPT_PROGRESS_KEY_PREFIX.len() + 32);
+    key.push_str(DREAMER_ATTEMPT_PROGRESS_KEY_PREFIX);
+    for byte in attempt_id.as_bytes() {
         write!(&mut key, "{byte:02x}").expect("writing to String cannot fail");
     }
     key
 }
 
 #[cfg(feature = "sync")]
-fn encode_job_progress_value(
-    update: &DreamerJobProgressUpdate,
+fn encode_attempt_progress_value(
+    update: &DreamerAttemptProgressUpdate,
 ) -> std::result::Result<LoroValue, TransportError> {
     update.validate()?;
     Ok(LoroValue::Map(
         vec![
             (
                 KEY_SCHEMA_VERSION.to_owned(),
-                LoroValue::I64(DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION),
+                LoroValue::I64(DREAMER_ATTEMPT_PROGRESS_VALUE_SCHEMA_VERSION),
             ),
             (
-                KEY_JOB_ID.to_owned(),
-                LoroValue::String(dreamer_job_id_hex(update.job_id).into()),
+                KEY_ATTEMPT_ID.to_owned(),
+                LoroValue::String(dreamer_attempt_id_hex(update.attempt_id).into()),
             ),
             (
                 KEY_STATE.to_owned(),
@@ -3297,10 +3330,10 @@ fn encode_job_progress_value(
 }
 
 #[cfg(feature = "sync")]
-fn decode_job_progress_value(
+fn decode_attempt_progress_value(
     value: &LoroValue,
-    expected_job_id: JobId,
-) -> std::result::Result<DreamerJobProgressUpdate, TransportError> {
+    expected_attempt_id: AttemptId,
+) -> std::result::Result<DreamerAttemptProgressUpdate, TransportError> {
     let LoroValue::Map(entries) = value else {
         return Err(TransportError::InvalidPayload(
             "dreamer progress value must be a map",
@@ -3308,7 +3341,7 @@ fn decode_job_progress_value(
     };
     if entries
         .keys()
-        .any(|key| !DREAMER_JOB_PROGRESS_VALUE_KEYS.contains(&key.as_str()))
+        .any(|key| !DREAMER_ATTEMPT_PROGRESS_VALUE_KEYS.contains(&key.as_str()))
     {
         return Err(TransportError::InvalidPayload(
             "dreamer progress value key is not pinned",
@@ -3316,21 +3349,21 @@ fn decode_job_progress_value(
     }
 
     let schema_version = expect_loro_i64(entries.get(KEY_SCHEMA_VERSION), KEY_SCHEMA_VERSION)?;
-    if schema_version != DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION {
+    if schema_version != DREAMER_ATTEMPT_PROGRESS_VALUE_SCHEMA_VERSION {
         return Err(TransportError::InvalidPayload(
             "unsupported dreamer progress schema_version",
         ));
     }
 
-    let job_id = expect_loro_string(entries.get(KEY_JOB_ID), KEY_JOB_ID)?;
-    if job_id != dreamer_job_id_hex(expected_job_id) {
+    let attempt_id = expect_loro_string(entries.get(KEY_ATTEMPT_ID), KEY_ATTEMPT_ID)?;
+    if attempt_id != dreamer_attempt_id_hex(expected_attempt_id) {
         return Err(TransportError::InvalidPayload(
             "dreamer progress job_id mismatch",
         ));
     }
 
     let state =
-        DreamerJobProgressState::parse(expect_loro_string(entries.get(KEY_STATE), KEY_STATE)?)
+        DreamerAttemptProgressState::parse(expect_loro_string(entries.get(KEY_STATE), KEY_STATE)?)
             .ok_or(TransportError::InvalidPayload(
                 "unknown dreamer progress state",
             ))?;
@@ -3354,8 +3387,8 @@ fn decode_job_progress_value(
         KEY_UPDATED_AT_MS,
     )?)?;
 
-    let update = DreamerJobProgressUpdate {
-        job_id: expected_job_id,
+    let update = DreamerAttemptProgressUpdate {
+        attempt_id: expected_attempt_id,
         state,
         message,
         completed_units,
@@ -3367,9 +3400,9 @@ fn decode_job_progress_value(
 }
 
 #[cfg(feature = "sync")]
-fn dreamer_job_id_hex(job_id: JobId) -> String {
+fn dreamer_attempt_id_hex(attempt_id: AttemptId) -> String {
     let mut out = String::with_capacity(32);
-    for byte in job_id.as_bytes() {
+    for byte in attempt_id.as_bytes() {
         write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
     }
     out
@@ -3525,7 +3558,10 @@ fn encode_budget_reservation(record: &DreamerBudgetReservation) -> Result<Vec<u8
             Value::from(KEY_BUDGET_ID),
             Value::from(record.budget_id.as_str()),
         ),
-        (Value::from(KEY_JOB_ID), encode_job_id(record.job_id)),
+        (
+            Value::from(KEY_ATTEMPT_ID),
+            encode_attempt_id(record.attempt_id),
+        ),
         (
             Value::from(KEY_RESERVED_UNITS),
             Value::from(record.reserved_units),
@@ -3547,7 +3583,7 @@ fn decode_budget_reservation(bytes: &[u8]) -> Result<DreamerBudgetReservation> {
     )?;
     let mut schema_version = None;
     let mut budget_id = None;
-    let mut job_id = None;
+    let mut attempt_id = None;
     let mut reserved_units = None;
     let mut created_at = None;
     let mut updated_at = None;
@@ -3577,8 +3613,8 @@ fn decode_budget_reservation(bytes: &[u8]) -> Result<DreamerBudgetReservation> {
                 validate_budget_id(&parsed)?;
                 budget_id = Some(parsed);
             }
-            KEY_JOB_ID => {
-                job_id = Some(decode_job_id(value)?);
+            KEY_ATTEMPT_ID => {
+                attempt_id = Some(decode_attempt_id(value)?);
             }
             KEY_RESERVED_UNITS => {
                 reserved_units = Some(expect_u64(
@@ -3607,7 +3643,7 @@ fn decode_budget_reservation(bytes: &[u8]) -> Result<DreamerBudgetReservation> {
 
     let record = DreamerBudgetReservation {
         budget_id: budget_id.ok_or(invalid_dreamer_runner("missing dreamer budget_id"))?,
-        job_id: job_id.ok_or(invalid_dreamer_runner("missing dreamer job_id"))?,
+        attempt_id: attempt_id.ok_or(invalid_dreamer_runner("missing dreamer job_id"))?,
         reserved_units: reserved_units
             .ok_or(invalid_dreamer_runner("missing dreamer reserved_units"))?,
         created_at: created_at.ok_or(invalid_dreamer_runner("missing dreamer created_at"))?,
@@ -3623,10 +3659,13 @@ fn encode_run_tree_record(record: &DreamerRunTreeRecord) -> Result<Vec<u8>> {
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(DREAMER_RUN_TREE_SCHEMA_VERSION),
         ),
-        (Value::from(KEY_JOB_ID), encode_job_id(record.job_id)),
         (
-            Value::from(KEY_PARENT_JOB),
-            encode_optional_job_id(record.parent_job),
+            Value::from(KEY_ATTEMPT_ID),
+            encode_attempt_id(record.attempt_id),
+        ),
+        (
+            Value::from(KEY_PARENT_ATTEMPT),
+            encode_optional_attempt_id(record.parent_attempt),
         ),
         (Value::from(KEY_CREATED_AT), Value::from(record.created_at)),
     ]);
@@ -3637,8 +3676,8 @@ fn decode_run_tree_record(bytes: &[u8]) -> Result<DreamerRunTreeRecord> {
     let value = decode_value(bytes)?;
     let entries = expect_map(&value, "dreamer run-tree row must be a MessagePack map")?;
     let mut schema_version = None;
-    let mut job_id = None;
-    let mut parent_job = None;
+    let mut attempt_id = None;
+    let mut parent_attempt = None;
     let mut created_at = None;
     let mut seen = [false; DREAMER_RUN_TREE_KEYS.len()];
 
@@ -3658,8 +3697,8 @@ fn decode_run_tree_record(bytes: &[u8]) -> Result<DreamerRunTreeRecord> {
                     "dreamer run-tree schema_version must be an integer",
                 )?);
             }
-            KEY_JOB_ID => job_id = Some(decode_job_id(value)?),
-            KEY_PARENT_JOB => parent_job = Some(decode_optional_job_id(value)?),
+            KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id(value)?),
+            KEY_PARENT_ATTEMPT => parent_attempt = Some(decode_optional_attempt_id(value)?),
             KEY_CREATED_AT => {
                 created_at = Some(expect_u64(
                     value,
@@ -3680,8 +3719,8 @@ fn decode_run_tree_record(bytes: &[u8]) -> Result<DreamerRunTreeRecord> {
     }
 
     Ok(DreamerRunTreeRecord {
-        job_id: job_id.ok_or(invalid_dreamer_runner("missing dreamer run-tree job_id"))?,
-        parent_job: parent_job.ok_or(invalid_dreamer_runner(
+        attempt_id: attempt_id.ok_or(invalid_dreamer_runner("missing dreamer run-tree job_id"))?,
+        parent_attempt: parent_attempt.ok_or(invalid_dreamer_runner(
             "missing dreamer run-tree parent_job",
         ))?,
         created_at: created_at.ok_or(invalid_dreamer_runner(
@@ -3690,7 +3729,7 @@ fn decode_run_tree_record(bytes: &[u8]) -> Result<DreamerRunTreeRecord> {
     })
 }
 
-fn encode_parked_record(record: &DreamerParkedJobRecord) -> Result<Vec<u8>> {
+fn encode_parked_record(record: &DreamerParkedAttemptRecord) -> Result<Vec<u8>> {
     validate_park_reason(&record.reason)?;
     validate_park_owner(&record.park_owner)?;
     let value = Value::Map(vec![
@@ -3698,7 +3737,10 @@ fn encode_parked_record(record: &DreamerParkedJobRecord) -> Result<Vec<u8>> {
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(DREAMER_PARKED_SCHEMA_VERSION),
         ),
-        (Value::from(KEY_JOB_ID), encode_job_id(record.job_id)),
+        (
+            Value::from(KEY_ATTEMPT_ID),
+            encode_attempt_id(record.attempt_id),
+        ),
         (Value::from(KEY_REASON), Value::from(record.reason.as_str())),
         (
             Value::from(KEY_PARK_OWNER),
@@ -3709,11 +3751,11 @@ fn encode_parked_record(record: &DreamerParkedJobRecord) -> Result<Vec<u8>> {
     encode_value(&value, "dreamer parked row MessagePack encode failed")
 }
 
-fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedJobRecord> {
+fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedAttemptRecord> {
     let value = decode_value(bytes)?;
     let entries = expect_map(&value, "dreamer parked row must be a MessagePack map")?;
     let mut schema_version = None;
-    let mut job_id = None;
+    let mut attempt_id = None;
     let mut reason = None;
     let mut park_owner = None;
     let mut parked_at = None;
@@ -3736,7 +3778,7 @@ fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedJobRecord> {
                     "dreamer parked row schema_version must be an integer",
                 )?);
             }
-            KEY_JOB_ID => job_id = Some(decode_job_id(value)?),
+            KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id(value)?),
             KEY_REASON => {
                 let parsed = expect_string(value, "dreamer parked reason must be a string")?;
                 validate_park_reason(&parsed)?;
@@ -3763,8 +3805,8 @@ fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedJobRecord> {
         ));
     }
 
-    Ok(DreamerParkedJobRecord {
-        job_id: job_id.ok_or(invalid_dreamer_runner("missing dreamer parked job_id"))?,
+    Ok(DreamerParkedAttemptRecord {
+        attempt_id: attempt_id.ok_or(invalid_dreamer_runner("missing dreamer parked job_id"))?,
         reason: reason.ok_or(invalid_dreamer_runner("missing dreamer parked reason"))?,
         park_owner: park_owner
             .ok_or(invalid_dreamer_runner("missing dreamer parked park_owner"))?,
@@ -3790,26 +3832,26 @@ fn decode_value(bytes: &[u8]) -> Result<Value> {
     Ok(value)
 }
 
-fn encode_job_id(job_id: JobId) -> Value {
-    Value::Binary(job_id.as_bytes().to_vec())
+fn encode_attempt_id(attempt_id: AttemptId) -> Value {
+    Value::Binary(attempt_id.as_bytes().to_vec())
 }
 
-fn decode_job_id(value: &Value) -> Result<JobId> {
+fn decode_attempt_id(value: &Value) -> Result<AttemptId> {
     let Value::Binary(bytes) = value else {
-        return Err(invalid_dreamer_runner("dreamer job id must be binary"));
+        return Err(invalid_dreamer_runner("dreamer attempt id must be binary"));
     };
-    JobId::from_bytes(bytes)
+    AttemptId::from_bytes(bytes)
 }
 
-fn encode_optional_job_id(job_id: Option<JobId>) -> Value {
-    job_id.map_or(Value::Nil, encode_job_id)
+fn encode_optional_attempt_id(attempt_id: Option<AttemptId>) -> Value {
+    attempt_id.map_or(Value::Nil, encode_attempt_id)
 }
 
-fn decode_optional_job_id(value: &Value) -> Result<Option<JobId>> {
+fn decode_optional_attempt_id(value: &Value) -> Result<Option<AttemptId>> {
     if matches!(value, Value::Nil) {
         return Ok(None);
     }
-    decode_job_id(value).map(Some)
+    decode_attempt_id(value).map(Some)
 }
 
 fn expect_map<'a>(value: &'a Value, reason: &'static str) -> Result<&'a [(Value, Value)]> {
@@ -3846,7 +3888,7 @@ fn budget_key(budget_id: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn budget_reservation_key(budget_id: &str, job_id: JobId) -> Result<Vec<u8>> {
+fn budget_reservation_key(budget_id: &str, attempt_id: AttemptId) -> Result<Vec<u8>> {
     validate_budget_id(budget_id)?;
     let budget_id_len = u16::try_from(budget_id.len())
         .map_err(|_| invalid_dreamer_runner("dreamer budget_id exceeds 128 bytes"))?;
@@ -3856,29 +3898,29 @@ fn budget_reservation_key(budget_id: &str, job_id: JobId) -> Result<Vec<u8>> {
     out.extend_from_slice(DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX);
     out.extend_from_slice(&budget_id_len.to_be_bytes());
     out.extend_from_slice(budget_id.as_bytes());
-    out.extend_from_slice(job_id.as_bytes());
+    out.extend_from_slice(attempt_id.as_bytes());
     Ok(out)
 }
 
-fn run_tree_key(job_id: JobId) -> Vec<u8> {
+fn run_tree_key(attempt_id: AttemptId) -> Vec<u8> {
     let mut out = Vec::with_capacity(DREAMER_PRIVATE_RUN_TREE_PREFIX.len() + 16);
     out.extend_from_slice(DREAMER_PRIVATE_RUN_TREE_PREFIX);
-    out.extend_from_slice(job_id.as_bytes());
+    out.extend_from_slice(attempt_id.as_bytes());
     out
 }
 
-fn parked_key(job_id: JobId) -> Vec<u8> {
+fn parked_key(attempt_id: AttemptId) -> Vec<u8> {
     let mut out = Vec::with_capacity(DREAMER_PRIVATE_PARKED_PREFIX.len() + 16);
     out.extend_from_slice(DREAMER_PRIVATE_PARKED_PREFIX);
-    out.extend_from_slice(job_id.as_bytes());
+    out.extend_from_slice(attempt_id.as_bytes());
     out
 }
 
-fn validate_job_type(job_type: &str) -> Result<()> {
-    if job_type.is_empty() {
+fn validate_attempt_type(attempt_type: &str) -> Result<()> {
+    if attempt_type.is_empty() {
         return Err(invalid_dreamer_runner("dreamer job_type must not be empty"));
     }
-    if job_type.len() > MAX_DREAMER_JOB_TYPE_LEN {
+    if attempt_type.len() > MAX_DREAMER_ATTEMPT_TYPE_LEN {
         return Err(invalid_dreamer_runner("dreamer job_type exceeds 128 bytes"));
     }
     Ok(())
@@ -3926,7 +3968,7 @@ fn validate_park_owner(park_owner: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_admission_input(input: &AdmitDreamerJob) -> Result<()> {
+fn validate_admission_input(input: &AdmitDreamerAttempt) -> Result<()> {
     validate_budget_id(&input.budget_id)?;
     if input.reserve_units == 0 {
         return Err(invalid_dreamer_runner(
@@ -4002,7 +4044,7 @@ fn validate_home_node_designation(record: &DreamerHomeNodeDesignation) -> Result
 }
 
 const fn invalid_dreamer_runner(reason: &'static str) -> Error {
-    Error::InvalidJobQueueRecord(reason)
+    Error::InvalidAttemptQueueRecord(reason)
 }
 
 #[cfg(test)]

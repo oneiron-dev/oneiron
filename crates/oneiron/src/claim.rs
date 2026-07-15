@@ -1712,7 +1712,7 @@ fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Result<()> {
     // flows through this one call with zero edits.
     let record = crate::provenance::decode_edge_provenance_body(&body.value)?;
     // Presence-only probe for the value-record `actor_class` key: VALIDITY
-    // of the key's value is the shared decoder's job above (and a body
+    // of the key's value is the shared decoder's responsibility above (and a body
     // key outside the pinned vocabulary was already rejected there), so
     // this never duplicates shape logic.
     let value_has_actor_class = matches!(

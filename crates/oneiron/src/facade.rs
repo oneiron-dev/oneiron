@@ -24,6 +24,10 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::attempt_queue::{
+    AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, EnqueueAttempt,
+    EnqueueOutcome, InterveneAttempt,
+};
 use crate::batch::{
     ApplyOpsGateMode, BatchOp, apply_ops, apply_ops_with_gate_mode, parse_short_id_value,
 };
@@ -38,8 +42,8 @@ use crate::companion::{
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::deletion::{DeleteReason, DeletionGateContext};
 use crate::dreamer_runner::{
-    DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerConsolidationJob,
-    EnqueueDreamerJobOutcome,
+    DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt,
 };
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
@@ -48,10 +52,6 @@ use crate::habit::TaskRole;
 use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
     NormalizedIngestClaim, admit_imported_evidence_claim,
-};
-use crate::job_queue::{
-    EnqueueJob, EnqueueOutcome, InterveneJob, JobId, JobInterventionKind, JobQueue, JobRecord,
-    JobState,
 };
 use crate::llm::BudgetLease;
 use crate::outbound::{
@@ -101,9 +101,9 @@ const SNIPPET_MAX_CHARS: usize = 160;
 /// Bounded claim scan behind scope-honesty world enumeration.
 const SCOPE_HONESTY_SCAN_CAP: usize = 512;
 const RECALL_TOKEN_BUDGET: usize = 4000;
-/// Job-queue kind for bridge-scheduled outbound intents (facade-level
+/// Attempt-queue kind for bridge-scheduled outbound intents (facade-level
 /// idempotency rides the queue's kind-scoped dedupe index).
-pub const BRIDGE_OUTBOUND_JOB_KIND: &str = "bridge.outbound.schedule";
+pub const BRIDGE_OUTBOUND_ATTEMPT_KIND: &str = "bridge.outbound.schedule";
 
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
@@ -749,7 +749,7 @@ pub struct MemoryProvenance {
     /// This revision plus superseded ancestors (32-hex ids).
     pub source_revision_ids: Vec<String>,
     /// Evidence TURN ids. Populated structurally for MESSAGE items; claim
-    /// evidence stamping is the extraction pipeline's later job.
+    /// evidence stamping is the extraction pipeline's later responsibility.
     pub evidence_turn_ids: Vec<String>,
 }
 
@@ -818,10 +818,10 @@ pub struct MemoryPack {
 
 /// One Dreamer consolidation enqueue (BRIDGE-03).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConsolidationJobInput {
+pub struct ConsolidationAttemptInput {
     /// Consolidation scope: `micro` | `meso` | `macro`.
     pub scope: String,
-    /// Opaque job input (stored as MessagePack in the queue payload).
+    /// Opaque attempt input (stored as MessagePack in the queue payload).
     pub input: serde_json::Value,
     /// Optional run correlation id.
     pub run_id: Option<String>,
@@ -831,25 +831,25 @@ pub struct ConsolidationJobInput {
     pub now: Option<u64>,
 }
 
-/// Reference to one queued Dreamer job.
+/// Reference to one queued Dreamer attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DreamerJobRef {
-    /// 32-hex job id (poll via [`MemoryFacade::dreamer_job_status`]).
+pub struct DreamerAttemptRef {
+    /// 32-hex attempt id (poll via [`MemoryFacade::dreamer_attempt_status`]).
     pub job_ref: String,
     /// Queue state at enqueue time.
     pub state: String,
-    /// True when the advisory dedupe key coalesced onto an existing job.
+    /// True when the advisory dedupe key coalesced onto an existing attempt.
     pub existing: bool,
 }
 
-/// Poll-model view of one Dreamer job (W2: long work returns job ids).
+/// Poll-model view of one Dreamer attempt (W2: long work returns attempt ids).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DreamerJobView {
-    /// 32-hex job id.
+pub struct DreamerAttemptView {
+    /// 32-hex attempt id.
     pub job_ref: String,
     /// `queued` | `leased` | `paused` | `completed` | `failed` | `cancelled`.
     pub state: String,
-    /// Queue job kind.
+    /// Queue attempt kind.
     pub kind: String,
     /// Worker label holding the lease, if leased.
     pub lease_owner: Option<String>,
@@ -889,7 +889,7 @@ pub struct OutboundDraftInput {
     pub trigger: String,
     /// What fired the trigger (commitment/session/queue ref).
     pub trigger_ref: String,
-    /// Owning job/brief ref, if any.
+    /// Owning attempt/brief ref, if any.
     pub job_ref: Option<String>,
     /// Unix seconds; `None` ⇒ now.
     pub occurred_at: Option<u64>,
@@ -898,7 +898,7 @@ pub struct OutboundDraftInput {
 /// Receipt for one scheduled outbound intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutboundIntentReceipt {
-    /// Stable intent ref (`intent:<job-hex>`).
+    /// Stable intent ref (`intent:<attempt-hex>`).
     pub intent_ref: String,
     /// Dispatch outcome (`held` expected on this schedule-only surface;
     /// `suppressed` on gate denial; `already_scheduled` on dedupe).
@@ -916,8 +916,8 @@ pub struct OutboundIntentReceipt {
     pub deduped: bool,
 }
 
-/// Internal side-index record: the gate surface a scheduled outbound job's
-/// first dispatch produced, persisted by job id so an idempotent replay
+/// Internal side-index record: the gate surface a scheduled outbound attempt's
+/// first dispatch produced, persisted by attempt id so an idempotent replay
 /// (`EnqueueOutcome::Existing`) can re-surface the original decision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OutboundGateBinding {
@@ -2354,13 +2354,13 @@ impl MemoryFacade<'_> {
 
     // ── BRIDGE-03: Dreamer + seed + outbound wiring ─────────────────────
 
-    /// Enqueues one Dreamer consolidation job (expose, don't rebuild: the
-    /// queue verbs and leases stay engine-side; long work returns a job
+    /// Enqueues one Dreamer consolidation attempt (expose, don't rebuild: the
+    /// queue verbs and leases stay engine-side; long work returns an attempt
     /// ref to poll, W2).
     pub fn enqueue_consolidation(
         &self,
-        input: &ConsolidationJobInput,
-    ) -> FacadeResult<DreamerJobRef> {
+        input: &ConsolidationAttemptInput,
+    ) -> FacadeResult<DreamerAttemptRef> {
         let scope = match input.scope.as_str() {
             "micro" => DreamerConsolidationScope::Micro,
             "meso" => DreamerConsolidationScope::Meso,
@@ -2377,10 +2377,10 @@ impl MemoryFacade<'_> {
             store
                 .enqueue_consolidation_in_txn(
                     wtxn,
-                    EnqueueDreamerConsolidationJob {
+                    EnqueueDreamerConsolidationAttempt {
                         scope,
                         input: json_to_rmpv(&input.input),
-                        parent_job: None,
+                        parent_attempt: None,
                         dedupe_key: input.dedupe_key.clone(),
                         run_id: input.run_id.clone(),
                         now: input.now.unwrap_or_else(crate::unix_seconds_now),
@@ -2389,24 +2389,27 @@ impl MemoryFacade<'_> {
                 .map_err(FacadeError::from)
         })?;
         let (status, existing) = match outcome {
-            EnqueueDreamerJobOutcome::Enqueued(status) => (status, false),
-            EnqueueDreamerJobOutcome::Existing(status) => (status, true),
+            EnqueueDreamerAttemptOutcome::Enqueued(status) => (status, false),
+            EnqueueDreamerAttemptOutcome::Existing(status) => (status, true),
         };
-        Ok(DreamerJobRef {
-            job_ref: hex_string(status.job.id.as_bytes()),
-            state: job_state_str(status.job.state).to_owned(),
+        Ok(DreamerAttemptRef {
+            job_ref: hex_string(status.attempt.id.as_bytes()),
+            state: attempt_state_str(status.attempt.state).to_owned(),
             existing,
         })
     }
 
-    /// Polls one Dreamer job's status (poll model, no FFI await).
-    pub fn dreamer_job_status(&self, job_ref: &str) -> FacadeResult<Option<DreamerJobView>> {
+    /// Polls one Dreamer attempt's status (poll model, no FFI await).
+    pub fn dreamer_attempt_status(
+        &self,
+        job_ref: &str,
+    ) -> FacadeResult<Option<DreamerAttemptView>> {
         let id = parse_job_ref(job_ref)?;
         let store = DreamerRunnerStore::new(self.vault);
         let Some(status) = store.status(id).map_err(FacadeError::from)? else {
             return Ok(None);
         };
-        Ok(Some(job_view_from_record(&status.job)))
+        Ok(Some(attempt_view_from_record(&status.attempt)))
     }
 
     /// Seed-write entry point (EF-301 consumer): every element is FORCED
@@ -2418,7 +2421,7 @@ impl MemoryFacade<'_> {
 
     /// Schedules one outbound intent through the OF-327 chokepoint. The
     /// bridge never delivers: the intent is durably enqueued (facade-level
-    /// idempotency over the generic job queue's dedupe index) and then
+    /// idempotency over the generic attempt queue's dedupe index) and then
     /// gate-checked via `dispatch_outbound_intent` under a `Hold` window,
     /// so the gate decision persists as the queryable receipt while no
     /// channel adapter is ever invoked from this surface.
@@ -2447,8 +2450,8 @@ impl MemoryFacade<'_> {
 
         // Pre-validate the channel/verb capability BEFORE the durable enqueue.
         // dispatch_outbound_intent resolves the verb contract only AFTER we
-        // have committed the job row + kind-scoped dedupe index, so an
-        // unsupported pair would otherwise leave an orphan job that wedges
+        // have committed the attempt row + kind-scoped dedupe index, so an
+        // unsupported pair would otherwise leave an orphan attempt that wedges
         // every idempotent retry on EnqueueOutcome::Existing (#484a).
         outbound_verb_contract(&draft.channel, &draft.verb).map_err(|capability| {
             FacadeError::bad_request_with(
@@ -2458,16 +2461,16 @@ impl MemoryFacade<'_> {
         })?;
 
         // Durable idempotency: the dispatch chokepoint performs no dedupe,
-        // so the schedule rides the job queue's kind-scoped dedupe index.
-        let queue = JobQueue::new(self.vault);
+        // so the schedule rides the attempt queue's kind-scoped dedupe index.
+        let queue = AttemptQueue::new(self.vault);
         let payload = serde_json::to_vec(draft)
             .map_err(|_| FacadeError::bad_request("outbound draft is not serializable"))?;
         let outcome = self.with_verified_actor_write_txn(|wtxn| {
             queue
                 .enqueue_in_txn(
                     wtxn,
-                    EnqueueJob {
-                        kind: BRIDGE_OUTBOUND_JOB_KIND.to_owned(),
+                    EnqueueAttempt {
+                        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
                         payload,
                         dedupe_key: draft.idempotency_key.clone(),
                         run_id: draft.job_ref.clone(),
@@ -2476,15 +2479,15 @@ impl MemoryFacade<'_> {
                 )
                 .map_err(FacadeError::from)
         })?;
-        let job = match outcome {
-            EnqueueOutcome::Enqueued(job) => job,
-            EnqueueOutcome::Existing(job) => {
+        let attempt = match outcome {
+            EnqueueOutcome::Enqueued(attempt) => attempt,
+            EnqueueOutcome::Existing(attempt) => {
                 // Re-surface the ORIGINAL gate decision the first dispatch
-                // persisted, keyed by job id, so an idempotent retry recovers
+                // persisted, keyed by attempt id, so an idempotent retry recovers
                 // gate_decision_ref instead of an empty gate result (#484b).
-                let binding = self.outbound_gate_binding(job.id);
+                let binding = self.outbound_gate_binding(attempt.id);
                 return Ok(OutboundIntentReceipt {
-                    intent_ref: outbound_intent_ref(job.id),
+                    intent_ref: outbound_intent_ref(attempt.id),
                     outcome: "already_scheduled".to_owned(),
                     gate_outcome: binding.as_ref().map(|b| b.gate_outcome.clone()),
                     gate_decision_ref: binding.as_ref().and_then(|b| b.gate_decision_ref.clone()),
@@ -2493,7 +2496,7 @@ impl MemoryFacade<'_> {
                 });
             }
         };
-        let intent_ref = outbound_intent_ref(job.id);
+        let intent_ref = outbound_intent_ref(attempt.id);
 
         let mut intent_draft = OutboundIntentDraft::new(
             self.actor.to_hex(),
@@ -2544,9 +2547,9 @@ impl MemoryFacade<'_> {
                 // clears the ready + dedupe entries so a clean retry can
                 // re-enqueue instead of wedging on EnqueueOutcome::Existing
                 // with no gate decision, forever (#484a).
-                let _ = queue.intervene(InterveneJob {
-                    id: job.id,
-                    kind: JobInterventionKind::Cancel,
+                let _ = queue.intervene(InterveneAttempt {
+                    id: attempt.id,
+                    kind: AttemptInterventionKind::Cancel,
                     actor: self.actor.to_hex(),
                     note: Some("outbound dispatch failed before gate decision".to_owned()),
                     now,
@@ -2554,11 +2557,11 @@ impl MemoryFacade<'_> {
                 return Err(facade_error_from_outbound_dispatch(err));
             }
         };
-        // Persist the gate surface keyed by job id so an idempotent replay
+        // Persist the gate surface keyed by attempt id so an idempotent replay
         // recovers this decision (best-effort; a missing binding degrades a
         // replay to no gate fields, never a wrong decision) (#484b).
         self.persist_outbound_gate_binding(
-            job.id,
+            attempt.id,
             &result.gate_outcome,
             result.gate_decision_id.as_deref(),
             &result.gate_reason_codes,
@@ -2573,10 +2576,10 @@ impl MemoryFacade<'_> {
         })
     }
 
-    /// Persists the gate surface of a scheduled outbound job (best-effort).
+    /// Persists the gate surface of a scheduled outbound attempt (best-effort).
     fn persist_outbound_gate_binding(
         &self,
-        job_id: JobId,
+        attempt_id: AttemptId,
         gate_outcome: &str,
         gate_decision_ref: Option<&str>,
         gate_reason_codes: &[String],
@@ -2590,15 +2593,15 @@ impl MemoryFacade<'_> {
             let _ = self
                 .vault
                 .store
-                .put_outbound_gate_binding(job_id.as_bytes(), &encoded);
+                .put_outbound_gate_binding(attempt_id.as_bytes(), &encoded);
         }
     }
 
-    /// Reads the persisted gate surface of a scheduled outbound job, if any.
-    fn outbound_gate_binding(&self, job_id: JobId) -> Option<OutboundGateBinding> {
+    /// Reads the persisted gate surface of a scheduled outbound attempt, if any.
+    fn outbound_gate_binding(&self, attempt_id: AttemptId) -> Option<OutboundGateBinding> {
         self.vault
             .store
-            .outbound_gate_binding(job_id.as_bytes())
+            .outbound_gate_binding(attempt_id.as_bytes())
             .ok()
             .flatten()
             .and_then(|raw| serde_json::from_slice(&raw).ok())
@@ -3192,51 +3195,52 @@ impl OutboundExecutionSink for ScheduleOnlySink {
     }
 }
 
-fn outbound_intent_ref(job_id: JobId) -> String {
-    format!("intent:{}", hex_string(job_id.as_bytes()))
+fn outbound_intent_ref(attempt_id: AttemptId) -> String {
+    format!("intent:{}", hex_string(attempt_id.as_bytes()))
 }
 
-fn parse_job_ref(job_ref: &str) -> FacadeResult<JobId> {
+fn parse_job_ref(job_ref: &str) -> FacadeResult<AttemptId> {
     let reference = job_ref
         .trim()
         .strip_prefix("job:")
         .unwrap_or_else(|| job_ref.trim());
     if reference.len() != 32 || !reference.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(FacadeError::bad_request(format!(
-            "job ref {job_ref:?} is not a 32-hex job id"
+            "attempt ref {job_ref:?} is not a 32-hex attempt id"
         )));
     }
     let mut bytes = [0_u8; 16];
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&reference[index * 2..index * 2 + 2], 16)
-            .map_err(|_| FacadeError::bad_request(format!("job ref {job_ref:?} is not hex")))?;
+            .map_err(|_| FacadeError::bad_request(format!("attempt ref {job_ref:?} is not hex")))?;
     }
-    JobId::from_bytes(&bytes)
-        .map_err(|_| FacadeError::bad_request(format!("job ref {job_ref:?} is not a job id")))
+    AttemptId::from_bytes(&bytes).map_err(|_| {
+        FacadeError::bad_request(format!("attempt ref {job_ref:?} is not an attempt id"))
+    })
 }
 
-const fn job_state_str(state: JobState) -> &'static str {
+const fn attempt_state_str(state: AttemptState) -> &'static str {
     match state {
-        JobState::Queued => "queued",
-        JobState::Leased => "leased",
-        JobState::Paused => "paused",
-        JobState::Completed => "completed",
-        JobState::Failed => "failed",
-        JobState::Cancelled => "cancelled",
+        AttemptState::Queued => "queued",
+        AttemptState::Leased => "leased",
+        AttemptState::Paused => "paused",
+        AttemptState::Completed => "completed",
+        AttemptState::Failed => "failed",
+        AttemptState::Cancelled => "cancelled",
     }
 }
 
-fn job_view_from_record(job: &JobRecord) -> DreamerJobView {
-    DreamerJobView {
-        job_ref: hex_string(job.id.as_bytes()),
-        state: job_state_str(job.state).to_owned(),
-        kind: job.kind.clone(),
-        lease_owner: job.lease_owner.clone(),
-        attempt_count: job.attempt_count,
-        run_id: job.run_id.clone(),
-        last_error: job.last_error.clone(),
-        created_at: job.created_at,
-        updated_at: job.updated_at,
+fn attempt_view_from_record(attempt: &AttemptRecord) -> DreamerAttemptView {
+    DreamerAttemptView {
+        job_ref: hex_string(attempt.id.as_bytes()),
+        state: attempt_state_str(attempt.state).to_owned(),
+        kind: attempt.kind.clone(),
+        lease_owner: attempt.lease_owner.clone(),
+        attempt_count: attempt.attempt_count,
+        run_id: attempt.run_id.clone(),
+        last_error: attempt.last_error.clone(),
+        created_at: attempt.created_at,
+        updated_at: attempt.updated_at,
     }
 }
 

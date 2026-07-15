@@ -213,7 +213,8 @@ pub fn encode_legacy_full_window_protocol_hello() -> Vec<u8> {
 ///
 /// Returns the peer's protocol version byte. Rejects anything that is not
 /// exactly `[TAG_PROTOCOL_HELLO, version]` — version comparison is the
-/// caller's job (the decoder must surface a mismatched version, not hide it).
+/// caller's responsibility (the decoder must surface a mismatched version,
+/// not hide it).
 pub fn decode_protocol_hello(frame: &[u8]) -> Result<u8, TransportError> {
     if frame.len() != 2 {
         return Err(TransportError::InvalidPayload(
@@ -244,7 +245,7 @@ pub fn encode_lease_request(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64
 ///
 /// Exhaustive length validation: exactly 104 bytes (8 + 32 + 64), no
 /// trailing bytes. Returns `(client_id, pubkey, pop_sig)` — signature
-/// verification is the caller's job (the server registrar).
+/// verification is the caller's responsibility (the server registrar).
 pub fn decode_lease_request(data: &[u8]) -> Result<(u64, [u8; 32], [u8; 64]), TransportError> {
     if data.len() != LEASE_REQUEST_FRAME_LEN - 1 {
         return Err(TransportError::InvalidPayload(

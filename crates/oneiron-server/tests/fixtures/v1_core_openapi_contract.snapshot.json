@@ -4558,7 +4558,7 @@
         "requestSchema": null,
         "responses": {
           "200": {
-            "description": "Runtime job queue rendered as a deterministic run tree.",
+            "description": "Runtime attempt queue rendered as a deterministic run tree.",
             "schema": {
               "$ref": "#/components/schemas/CoreRunTreeResponse"
             }
@@ -4607,7 +4607,7 @@
         },
         "responses": {
           "200": {
-            "description": "Intervention applied idempotently and recorded on the backing job row.",
+            "description": "Intervention applied idempotently and recorded on the backing attempt row.",
             "schema": {
               "$ref": "#/components/schemas/CoreRunTreeInterventionResponse"
             }
@@ -4663,7 +4663,7 @@
         "requestSchema": null,
         "responses": {
           "200": {
-            "description": "Runtime job queue rendered as a deterministic run tree.",
+            "description": "Runtime attempt queue rendered as a deterministic run tree.",
             "schema": {
               "$ref": "#/components/schemas/CoreRunTreeResponse"
             }

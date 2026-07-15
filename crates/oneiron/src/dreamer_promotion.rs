@@ -9,20 +9,20 @@
 //! surviving evidence into the candidate, applies the GATE-05 taint rules
 //! including the E1 supersession taint fold (a tainted head superseded by a
 //! clean candidate keeps its taint — no laundering), and verifies every
-//! landed claim by re-read before the caller may complete the job (Hermes
+//! landed claim by re-read before the caller may complete the attempt (Hermes
 //! gate 9c). A future import-promotion flow consumes THIS writer.
 
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::claim::{
     CLAIM_SCOPE_EVIDENCE_TAINT_KEY, ClaimApprovalStatus, ClaimSource, claim_evidence_admissible,
     claim_evidence_taint,
 };
-use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
+use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
-use crate::job_queue::JobId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -35,7 +35,7 @@ pub use crate::dreamer_consolidation::PromotionCandidate;
 #[derive(Debug, Clone)]
 pub struct DreamerRunContext {
     pub run_id: String,
-    pub job_id: JobId,
+    pub attempt_id: AttemptId,
     /// The dreamer agent actor (`EdgeActorClass::Agent`).
     pub agent_actor: WriteActor,
     pub now_ms: u64,
@@ -55,9 +55,9 @@ pub struct PromotionOutcome {
 /// Promotes consolidated candidates as vault claims through the gate
 /// chokepoint — one candidate per write txn, in input order.
 ///
-/// Caller contract (Hermes gate 9c): the job may be `complete()`d ONLY
+/// Caller contract (Hermes gate 9c): the attempt may be `complete()`d ONLY
 /// when `rejected` is empty — a landed-verification mismatch fails the
-/// job, never acks. Milestones are the caller's (CheckpointReached before
+/// attempt, never acks. Milestones are the caller's (CheckpointReached before
 /// the pass, Done/Failed after); this writer emits none.
 pub fn promote_consolidated_claims(
     vault: &Vault,
@@ -114,11 +114,14 @@ fn promote_one(
     // 2. Envelope — constructed HERE; callers cannot pass one. Provenance
     // is exactly the shape dreamer_run_id_from_provenance parses.
     let provenance = Value::Map(vec![
-        (Value::from("surface"), Value::from(DREAMER_RUNNER_JOB_KIND)),
+        (
+            Value::from("surface"),
+            Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+        ),
         (Value::from("run"), Value::from(run.run_id.as_str())),
         (
             Value::from("job_id"),
-            Value::from(bytes_to_hex_lower(run.job_id.as_bytes())),
+            Value::from(bytes_to_hex_lower(run.attempt_id.as_bytes())),
         ),
     ]);
     let envelope = WriteEnvelope::new(
@@ -185,7 +188,7 @@ fn promote_one(
     }
 
     // 5. Landed verification (Hermes gate 9c): re-read and match, else the
-    // candidate is rejected and the caller must not complete the job.
+    // candidate is rejected and the caller must not complete the attempt.
     verify_landed(vault, &candidate.claim_id, &probe_body.predicate)
 }
 
@@ -269,7 +272,7 @@ fn scope_with_taint(existing: Option<Value>, taint: ClaimSource) -> Value {
 /// [`crate::dreamer_consolidation::ConsolidationSink`] adapter: routes the
 /// consolidation executor's surviving candidates through THIS writer — the
 /// one promotion door. Accumulates per-bucket outcomes; the caller checks
-/// `outcome.rejected` before completing the job (Hermes gate 9c).
+/// `outcome.rejected` before completing the attempt (Hermes gate 9c).
 pub struct PromotionWriterSink<'a> {
     pub vault: &'a Vault,
     pub run: DreamerRunContext,

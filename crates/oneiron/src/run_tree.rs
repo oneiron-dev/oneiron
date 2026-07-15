@@ -1,6 +1,6 @@
-//! Run tree projection and control adapter over generic JobQueue rows.
+//! Run tree projection and control adapter over generic AttemptQueue rows.
 //!
-//! Lifecycle transitions stay in [`JobQueue`]. This module renders queue rows
+//! Lifecycle transitions stay in [`AttemptQueue`]. This module renders queue rows
 //! and their lifecycle/operator events into a deterministic tree surface.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -8,13 +8,14 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_dispatch::{AGENT_DISPATCH_JOB_TYPE, decode_agent_dispatch_input};
-use crate::dreamer_runner::{DREAMER_RUNNER_JOB_KIND, decode_dreamer_job_payload};
+use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
+use crate::attempt_queue::{
+    AttemptEvent, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState,
+    attempt_record_order,
+};
+use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::job_queue::{
-    JobEvent, JobInterventionKind, JobQueue, JobRecord, JobState, job_record_order,
-};
 
 /// Renderable run tree for dashboard/read APIs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,14 +24,15 @@ pub struct RunTree {
     pub repairs: Vec<RunTreeRepair>,
 }
 
-/// One renderable job node.
+/// One renderable attempt node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunTreeNode {
-    pub job_id: String,
+    #[serde(rename = "job_id")] // wire key pinned pre-rename (ONE-1714)
+    pub attempt_id: String,
     pub run_id: Option<String>,
     pub parent_id: Option<String>,
     pub worker_kind: String,
-    /// The dispatched agent's label for `agent.dispatch` jobs (decoded from
+    /// The dispatched agent's label for `agent.dispatch` attempts (decoded from
     /// the payload snapshot; tolerant — a malformed inner input renders as
     /// `None`). Additive and elided when absent, so serialized trees stay
     /// wire-compatible in both directions.
@@ -97,18 +99,20 @@ pub enum RunTreeEventKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunTreeRepair {
     MissingParent {
-        job_id: String,
+        #[serde(rename = "job_id")] // wire key pinned pre-rename (ONE-1714)
+        attempt_id: String,
         missing_parent_id: String,
     },
     ParentCycle {
-        job_id: String,
+        #[serde(rename = "job_id")] // wire key pinned pre-rename (ONE-1714)
+        attempt_id: String,
         parent_id: String,
     },
 }
 
-/// Read adapter over the runtime job queue.
+/// Read adapter over the runtime attempt queue.
 pub struct RunTreeAdapter<'a> {
-    queue: JobQueue<'a>,
+    queue: AttemptQueue<'a>,
 }
 
 impl<'a> RunTreeAdapter<'a> {
@@ -116,11 +120,11 @@ impl<'a> RunTreeAdapter<'a> {
     #[must_use]
     pub fn new(vault: &'a Vault) -> Self {
         Self {
-            queue: JobQueue::new(vault),
+            queue: AttemptQueue::new(vault),
         }
     }
 
-    /// Renders all persisted job rows into deterministic roots and children.
+    /// Renders all persisted attempt rows into deterministic roots and children.
     pub fn read(&self) -> Result<RunTree> {
         render_run_tree_presorted(self.queue.list()?)
     }
@@ -133,13 +137,13 @@ impl<'a> RunTreeAdapter<'a> {
 }
 
 /// Renders queue rows into a deterministic tree without mutating storage.
-pub fn render_run_tree(mut records: Vec<JobRecord>) -> Result<RunTree> {
-    records.sort_by(job_record_order);
+pub fn render_run_tree(mut records: Vec<AttemptRecord>) -> Result<RunTree> {
+    records.sort_by(attempt_record_order);
     render_run_tree_presorted(records)
 }
 
-fn render_run_tree_presorted(records: Vec<JobRecord>) -> Result<RunTree> {
-    let present: BTreeSet<String> = records.iter().map(job_id_hex).collect();
+fn render_run_tree_presorted(records: Vec<AttemptRecord>) -> Result<RunTree> {
+    let present: BTreeSet<String> = records.iter().map(attempt_id_hex).collect();
     let mut repairs = Vec::new();
     let mut roots = Vec::new();
     let mut children_by_parent: BTreeMap<String, Vec<FlatRunTreeNode>> = BTreeMap::new();
@@ -147,9 +151,9 @@ fn render_run_tree_presorted(records: Vec<JobRecord>) -> Result<RunTree> {
     for record in records {
         let flat = flat_node(record)?;
         match flat.node.parent_id.as_deref() {
-            Some(parent_id) if parent_id == flat.node.job_id => {
+            Some(parent_id) if parent_id == flat.node.attempt_id => {
                 repairs.push(RunTreeRepair::ParentCycle {
-                    job_id: flat.node.job_id.clone(),
+                    attempt_id: flat.node.attempt_id.clone(),
                     parent_id: parent_id.to_owned(),
                 });
                 roots.push(flat);
@@ -162,7 +166,7 @@ fn render_run_tree_presorted(records: Vec<JobRecord>) -> Result<RunTree> {
             }
             Some(parent_id) => {
                 repairs.push(RunTreeRepair::MissingParent {
-                    job_id: flat.node.job_id.clone(),
+                    attempt_id: flat.node.attempt_id.clone(),
                     missing_parent_id: parent_id.to_owned(),
                 });
                 roots.push(flat);
@@ -207,10 +211,10 @@ struct FlatRunTreeNode {
 
 const RUN_TREE_RUNTIME_ACTOR: &str = "runtime";
 
-fn flat_node(mut record: JobRecord) -> Result<FlatRunTreeNode> {
-    let metadata = job_metadata(&record)?;
+fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
+    let metadata = attempt_metadata(&record)?;
     let state = record.state;
-    let job_id = job_id_hex(&record);
+    let attempt_id = attempt_id_hex(&record);
     let events = run_tree_events(
         record.created_at,
         record.updated_at,
@@ -220,7 +224,7 @@ fn flat_node(mut record: JobRecord) -> Result<FlatRunTreeNode> {
         state,
     )?;
     let node = RunTreeNode {
-        job_id,
+        attempt_id,
         run_id: record.run_id,
         parent_id: metadata.parent_id,
         worker_kind: metadata.worker_kind,
@@ -231,12 +235,12 @@ fn flat_node(mut record: JobRecord) -> Result<FlatRunTreeNode> {
             updated_at: record.updated_at,
         },
         failure: match state {
-            JobState::Failed => record.last_error.map(|reason| RunTreeFailure { reason }),
-            JobState::Queued
-            | JobState::Leased
-            | JobState::Paused
-            | JobState::Completed
-            | JobState::Cancelled => None,
+            AttemptState::Failed => record.last_error.map(|reason| RunTreeFailure { reason }),
+            AttemptState::Queued
+            | AttemptState::Leased
+            | AttemptState::Paused
+            | AttemptState::Completed
+            | AttemptState::Cancelled => None,
         },
         events,
         children: Vec::new(),
@@ -255,21 +259,21 @@ fn attach_children(
     repairs: &mut Vec<RunTreeRepair>,
     path: &mut Vec<String>,
 ) -> RunTreeNode {
-    let job_id = flat.node.job_id.clone();
-    if !emitted.insert(job_id.clone()) {
+    let attempt_id = flat.node.attempt_id.clone();
+    if !emitted.insert(attempt_id.clone()) {
         return flat.node;
     }
 
-    path.push(job_id.clone());
+    path.push(attempt_id.clone());
     let mut node = flat.node;
-    let children = children_by_parent.remove(&job_id).unwrap_or_default();
+    let children = children_by_parent.remove(&attempt_id).unwrap_or_default();
     node.children = children
         .into_iter()
         .filter_map(|child| {
-            if path.contains(&child.node.job_id) {
+            if path.contains(&child.node.attempt_id) {
                 repairs.push(RunTreeRepair::ParentCycle {
-                    job_id: child.node.job_id,
-                    parent_id: job_id.clone(),
+                    attempt_id: child.node.attempt_id,
+                    parent_id: attempt_id.clone(),
                 });
                 return None;
             }
@@ -293,51 +297,51 @@ fn next_remaining_node(
     children_by_parent
         .values()
         .flat_map(|nodes| nodes.iter())
-        .filter(|node| !emitted.contains(&node.node.job_id))
+        .filter(|node| !emitted.contains(&node.node.attempt_id))
         .min_by(|left, right| {
             left.created_at
                 .cmp(&right.created_at)
-                .then_with(|| left.node.job_id.cmp(&right.node.job_id))
+                .then_with(|| left.node.attempt_id.cmp(&right.node.attempt_id))
         })
         .cloned()
 }
 
-struct JobMetadata {
+struct AttemptMetadata {
     parent_id: Option<String>,
     worker_kind: String,
     agent_id: Option<String>,
 }
 
-fn job_metadata(record: &JobRecord) -> Result<JobMetadata> {
-    if record.kind == DREAMER_RUNNER_JOB_KIND {
-        let payload = decode_dreamer_job_payload(&record.payload)?;
+fn attempt_metadata(record: &AttemptRecord) -> Result<AttemptMetadata> {
+    if record.kind == DREAMER_RUNNER_ATTEMPT_KIND {
+        let payload = decode_dreamer_attempt_payload(&record.payload)?;
         // Tolerant read: the payload envelope already decoded, so a malformed
         // inner agent-dispatch input must not kill the whole tree render —
         // the node degrades to `agent_id: None`.
-        let agent_id = if payload.job_type == AGENT_DISPATCH_JOB_TYPE {
+        let agent_id = if payload.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE {
             decode_agent_dispatch_input(&payload.input)
                 .ok()
                 .map(|input| input.definition.agent_id)
         } else {
             None
         };
-        return Ok(JobMetadata {
+        return Ok(AttemptMetadata {
             parent_id: payload
-                .parent_job
+                .parent_attempt
                 .map(|parent| bytes_to_hex_lower(parent.as_bytes())),
-            worker_kind: payload.job_type,
+            worker_kind: payload.attempt_type,
             agent_id,
         });
     }
 
-    Ok(JobMetadata {
+    Ok(AttemptMetadata {
         parent_id: None,
         worker_kind: record.kind.clone(),
         agent_id: None,
     })
 }
 
-fn job_id_hex(record: &JobRecord) -> String {
+fn attempt_id_hex(record: &AttemptRecord) -> String {
     bytes_to_hex_lower(record.id.as_bytes())
 }
 
@@ -346,8 +350,8 @@ fn run_tree_events(
     updated_at: u64,
     attempt_count: u32,
     claimed_at: Option<u64>,
-    stored_events: Vec<JobEvent>,
-    state: JobState,
+    stored_events: Vec<AttemptEvent>,
+    state: AttemptState,
 ) -> Result<Vec<RunTreeEvent>> {
     let has_claim = attempt_count > 0;
     let mut events = Vec::with_capacity(stored_events.len() + 2 + usize::from(has_claim));
@@ -382,7 +386,7 @@ fn run_tree_events(
     Ok(events)
 }
 
-fn operator_event(event: JobEvent, sequence_offset: u64) -> Result<RunTreeEvent> {
+fn operator_event(event: AttemptEvent, sequence_offset: u64) -> Result<RunTreeEvent> {
     Ok(RunTreeEvent {
         sequence: event
             .sequence
@@ -405,37 +409,37 @@ fn lifecycle_event(sequence: u64, at: u64, kind: RunTreeEventKind) -> RunTreeEve
     }
 }
 
-fn status_event_kind(state: JobState) -> Option<RunTreeEventKind> {
+fn status_event_kind(state: AttemptState) -> Option<RunTreeEventKind> {
     match state {
-        JobState::Queued => None,
-        JobState::Leased => Some(RunTreeEventKind::Claimed),
-        JobState::Paused => Some(RunTreeEventKind::Paused),
-        JobState::Completed => Some(RunTreeEventKind::Completed),
-        JobState::Failed => Some(RunTreeEventKind::Failed),
-        JobState::Cancelled => Some(RunTreeEventKind::Cancelled),
+        AttemptState::Queued => None,
+        AttemptState::Leased => Some(RunTreeEventKind::Claimed),
+        AttemptState::Paused => Some(RunTreeEventKind::Paused),
+        AttemptState::Completed => Some(RunTreeEventKind::Completed),
+        AttemptState::Failed => Some(RunTreeEventKind::Failed),
+        AttemptState::Cancelled => Some(RunTreeEventKind::Cancelled),
     }
 }
 
-impl From<JobState> for RunTreeStatus {
-    fn from(state: JobState) -> Self {
+impl From<AttemptState> for RunTreeStatus {
+    fn from(state: AttemptState) -> Self {
         match state {
-            JobState::Queued => Self::Queued,
-            JobState::Leased => Self::Running,
-            JobState::Paused => Self::Paused,
-            JobState::Completed => Self::Completed,
-            JobState::Failed => Self::Failed,
-            JobState::Cancelled => Self::Cancelled,
+            AttemptState::Queued => Self::Queued,
+            AttemptState::Leased => Self::Running,
+            AttemptState::Paused => Self::Paused,
+            AttemptState::Completed => Self::Completed,
+            AttemptState::Failed => Self::Failed,
+            AttemptState::Cancelled => Self::Cancelled,
         }
     }
 }
 
-impl From<JobInterventionKind> for RunTreeEventKind {
-    fn from(kind: JobInterventionKind) -> Self {
+impl From<AttemptInterventionKind> for RunTreeEventKind {
+    fn from(kind: AttemptInterventionKind) -> Self {
         match kind {
-            JobInterventionKind::Interrupt => Self::Interrupted,
-            JobInterventionKind::Pause => Self::Paused,
-            JobInterventionKind::Resume => Self::Resumed,
-            JobInterventionKind::Cancel => Self::Cancelled,
+            AttemptInterventionKind::Interrupt => Self::Interrupted,
+            AttemptInterventionKind::Pause => Self::Paused,
+            AttemptInterventionKind::Resume => Self::Resumed,
+            AttemptInterventionKind::Cancel => Self::Cancelled,
         }
     }
 }

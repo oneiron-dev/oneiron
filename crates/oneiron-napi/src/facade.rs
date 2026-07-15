@@ -18,7 +18,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use napi_derive::napi;
 use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, ClaimInput, ClaimListFilter, CompanionRecordInput,
-    ConsolidationJobInput, Effort, EntityId, FacadeError, HabitCheckinInput, MemoryFacade,
+    ConsolidationAttemptInput, Effort, EntityId, FacadeError, HabitCheckinInput, MemoryFacade,
     NeighborOpts, OutboundDraftInput, RecallScope, SafeDeleteReason, StructuralEdgeSpec,
     StructuralPutInput, TextIndexField, Vault, VaultConfig, WitnessAuthor, WitnessMessage,
     WitnessTurn, parse_actor_key,
@@ -1360,7 +1360,7 @@ impl ActorScopedVault {
         &self,
         input: NapiConsolidationJobInput,
     ) -> napi::Result<NapiDreamerJobRef> {
-        let engine_input = ConsolidationJobInput {
+        let engine_input = ConsolidationAttemptInput {
             scope: input.scope,
             input: input.input,
             run_id: input.run_id,
@@ -1383,7 +1383,7 @@ impl ActorScopedVault {
     pub fn dreamer_job_status(&self, job_ref: String) -> napi::Result<Option<NapiDreamerJobView>> {
         let view = self
             .facade()?
-            .dreamer_job_status(&job_ref)
+            .dreamer_attempt_status(&job_ref)
             .map_err(|e| facade_error(&e))?;
         view.map(|view| {
             Ok(NapiDreamerJobView {

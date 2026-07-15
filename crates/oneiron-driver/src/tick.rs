@@ -4,7 +4,7 @@
 //! ARCH-0046): there is no periodic heartbeat or poll timer anywhere in
 //! this module. Every wakeup traces to exactly one of two causes —
 //!
-//! * a **commitment deadline read from the job queue** ([`TimerTick`]
+//! * a **commitment deadline read from the attempt queue** ([`TimerTick`]
 //!   sleeps until the concrete next deadline, re-read once per cycle), or
 //! * an **authenticated push** ([`PushTick`], a bounded coalescing mailbox
 //!   whose producer handles are TYPED by role: a [`HintPusher`] is
@@ -14,7 +14,7 @@
 //! and a push are ready in the same poll, the deadline wins. Push bursts
 //! coalesce (capacity 1 per signal class) into one follow-up pass, while a
 //! missed deadline can never be dropped — deadlines are never buffered
-//! here, they are re-read from the job queue on every cycle, so a deadline
+//! here, they are re-read from the attempt queue on every cycle, so a deadline
 //! that lost one race simply re-surfaces on the next call.
 
 use std::fmt;
@@ -22,10 +22,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use oneiron::job_queue::{JobQueue, JobState};
+use oneiron::attempt_queue::{AttemptQueue, AttemptState};
 use oneiron::{
-    DREAMER_CONSOLIDATION_MACRO_JOB_KIND, DREAMER_CONSOLIDATION_MESO_JOB_KIND,
-    DREAMER_CONSOLIDATION_MICRO_JOB_KIND, DreamerConsolidationScope, DreamerRunnerStore, Vault,
+    DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
+    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DreamerConsolidationScope, DreamerRunnerStore, Vault,
     WakeTrigger,
 };
 use tokio::sync::Notify;
@@ -44,7 +44,7 @@ fn system_now_ms() -> u64 {
 /// One wakeup for the supervisor. Every tick names its concrete cause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tick {
-    /// A commitment deadline read from the job queue came due.
+    /// A commitment deadline read from the attempt queue came due.
     Deadline(CommitmentDeadline),
     /// An authenticated wake-class push: carries pass-shaping authority.
     Wake(WakeSignal),
@@ -54,12 +54,12 @@ pub enum Tick {
     Hint(HintSignal),
 }
 
-/// A commitment deadline surfaced from the durable job queue.
+/// A commitment deadline surfaced from the durable attempt queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitmentDeadline {
     /// When the commitment comes due (unix epoch, milliseconds).
     pub due_at_ms: u64,
-    /// Which consolidation lane the due job belongs to.
+    /// Which consolidation lane the due attempt belongs to.
     pub scope: DreamerConsolidationScope,
 }
 
@@ -106,13 +106,13 @@ pub trait DeadlineSource {
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>>;
 }
 
-/// [`DeadlineSource`] over the vault's advisory job table: the earliest due
-/// queued Dreamer consolidation job THIS NODE could admit. A queued job
-/// with no retry backoff is due at its enqueue stamp; a backoff-delayed job
-/// is due when the backoff clears. Job stamps are stored in seconds and
+/// [`DeadlineSource`] over the vault's advisory attempt table: the earliest due
+/// queued Dreamer consolidation attempt THIS NODE could admit. A queued attempt
+/// with no retry backoff is due at its enqueue stamp; a backoff-delayed attempt
+/// is due when the backoff clears. Attempt stamps are stored in seconds and
 /// surfaced here in milliseconds.
 ///
-/// MACRO jobs are gated at admission by the full local-admissibility
+/// MACRO attempts are gated at admission by the full local-admissibility
 /// predicate (`admit_next_consolidation`): `local_node_id` must match both
 /// the vault's stable client identity (`load_or_mint_client_id` via
 /// [`DreamerRunnerStore::local_home_node_candidate`]) and the elected home
@@ -121,12 +121,12 @@ pub trait DeadlineSource {
 /// busy-spins the supervisor on the same overdue deadline, starving push
 /// lanes. Both checks are re-read every cycle; an unreadable vault identity
 /// is treated as not-admissible (macro suppressed, other lanes still flow).
-pub struct JobQueueDeadlines<'v> {
+pub struct AttemptQueueDeadlines<'v> {
     vault: &'v Vault,
     local_node_id: u64,
 }
 
-impl<'v> JobQueueDeadlines<'v> {
+impl<'v> AttemptQueueDeadlines<'v> {
     /// `local_node_id` is the same node identity the host passes to
     /// admission (`WakeSupervisorConfig::local_node_id`).
     #[must_use]
@@ -165,22 +165,22 @@ impl<'v> JobQueueDeadlines<'v> {
     }
 }
 
-impl DeadlineSource for JobQueueDeadlines<'_> {
+impl DeadlineSource for AttemptQueueDeadlines<'_> {
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
-        let queue = JobQueue::new(self.vault);
+        let queue = AttemptQueue::new(self.vault);
         let macro_admissible = self.macro_locally_admissible()?;
         let mut next: Option<CommitmentDeadline> = None;
-        for job in queue.list()? {
-            if job.state != JobState::Queued {
+        for attempt in queue.list()? {
+            if attempt.state != AttemptState::Queued {
                 continue;
             }
-            let Some(scope) = scope_for_job_kind(&job.kind) else {
+            let Some(scope) = scope_for_attempt_kind(&attempt.kind) else {
                 continue;
             };
             if scope == DreamerConsolidationScope::Macro && !macro_admissible {
                 continue;
             }
-            let due_secs = job.backoff_until.unwrap_or(job.created_at);
+            let due_secs = attempt.backoff_until.unwrap_or(attempt.created_at);
             let due_at_ms = due_secs.saturating_mul(1_000);
             if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
                 next = Some(CommitmentDeadline { due_at_ms, scope });
@@ -190,12 +190,12 @@ impl DeadlineSource for JobQueueDeadlines<'_> {
     }
 }
 
-fn scope_for_job_kind(kind: &str) -> Option<DreamerConsolidationScope> {
-    if kind == DREAMER_CONSOLIDATION_MICRO_JOB_KIND {
+fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
+    if kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Micro)
-    } else if kind == DREAMER_CONSOLIDATION_MESO_JOB_KIND {
+    } else if kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Meso)
-    } else if kind == DREAMER_CONSOLIDATION_MACRO_JOB_KIND {
+    } else if kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Macro)
     } else {
         None
@@ -533,7 +533,7 @@ impl Drop for HintPusher {
 /// an already-due deadline short-circuits before the push lane is even
 /// looked at, and when both lanes become ready in the same poll the biased
 /// select picks the deadline branch. Nothing is buffered on the timer side
-/// — the next deadline is re-read from the job queue on every cycle, so a
+/// — the next deadline is re-read from the attempt queue on every cycle, so a
 /// deadline that lost one race re-surfaces on the next call and can never
 /// be dropped by push coalescing (H-S4).
 pub struct HybridTick<D> {
@@ -588,7 +588,7 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
 mod tests {
     use std::pin::pin;
 
-    use oneiron::{DreamerHomeNodeCandidate, EnqueueDreamerConsolidationJob, VaultConfig};
+    use oneiron::{DreamerHomeNodeCandidate, EnqueueDreamerConsolidationAttempt, VaultConfig};
 
     use super::*;
 
@@ -828,10 +828,10 @@ mod tests {
 
     fn enqueue(vault: &Vault, scope: DreamerConsolidationScope, tag: &str, now: u64) {
         DreamerRunnerStore::new(vault)
-            .enqueue_consolidation(EnqueueDreamerConsolidationJob {
+            .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
                 scope,
                 input: rmpv::Value::from(tag),
-                parent_job: None,
+                parent_attempt: None,
                 dedupe_key: Some(tag.to_owned()),
                 run_id: None,
                 now,
@@ -864,15 +864,20 @@ mod tests {
     }
 
     #[test]
-    fn job_queue_deadlines_hide_macro_until_local_home_election() {
+    fn attempt_queue_deadlines_hide_macro_until_local_home_election() {
         let (_dir, vault) = open_vault();
         let local = vault_client_node_id(&vault);
-        enqueue(&vault, DreamerConsolidationScope::Macro, "macro-job", 10);
+        enqueue(
+            &vault,
+            DreamerConsolidationScope::Macro,
+            "macro-attempt",
+            10,
+        );
 
         // No home node elected: macro admission would refuse (NoHomeNode)
         // without mutating the row, so the overdue deadline must not
         // surface and re-tick forever.
-        let mut source = JobQueueDeadlines::new(&vault, local);
+        let mut source = AttemptQueueDeadlines::new(&vault, local);
         assert_eq!(source.next_deadline().expect("read"), None);
 
         // Local vault identity elected home: both admission checks pass and
@@ -888,18 +893,28 @@ mod tests {
     }
 
     #[test]
-    fn job_queue_deadlines_on_foreign_home_skip_macro_but_keep_other_lanes() {
+    fn attempt_queue_deadlines_on_foreign_home_skip_macro_but_keep_other_lanes() {
         let (_dir, vault) = open_vault();
         let local = vault_client_node_id(&vault);
         let foreign = local.wrapping_add(1).max(1);
-        enqueue(&vault, DreamerConsolidationScope::Macro, "macro-job", 10);
-        enqueue(&vault, DreamerConsolidationScope::Micro, "micro-job", 20);
+        enqueue(
+            &vault,
+            DreamerConsolidationScope::Macro,
+            "macro-attempt",
+            10,
+        );
+        enqueue(
+            &vault,
+            DreamerConsolidationScope::Micro,
+            "micro-attempt",
+            20,
+        );
         elect_home(&vault, foreign, 25);
 
         // Local node is not the elected home: the earlier macro deadline is
         // filtered (admission would refuse NotHomeNode without progress)
         // while the micro lane keeps flowing — no spin, no starvation.
-        let mut source = JobQueueDeadlines::new(&vault, local);
+        let mut source = AttemptQueueDeadlines::new(&vault, local);
         assert_eq!(
             source.next_deadline().expect("read"),
             Some(CommitmentDeadline {
@@ -910,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn job_queue_deadlines_skip_macro_when_designation_matches_but_vault_identity_differs() {
+    fn attempt_queue_deadlines_skip_macro_when_designation_matches_but_vault_identity_differs() {
         // P2 (codex r4): a host can pass local_node_id equal to a (stale/
         // copied) home designation that is NOT this vault's stable client
         // id. Admission errors with identity-mismatch without mutating the
@@ -924,7 +939,7 @@ mod tests {
         // Designation equals the spoofed local_node_id, not vault identity.
         elect_home(&vault, spoofed, 20);
 
-        let mut source = JobQueueDeadlines::new(&vault, spoofed);
+        let mut source = AttemptQueueDeadlines::new(&vault, spoofed);
         assert_eq!(
             source.next_deadline().expect("read"),
             Some(CommitmentDeadline {
@@ -936,7 +951,7 @@ mod tests {
 
         // Both match (honest local = vault id = designation): macro surfaces.
         elect_home(&vault, vault_id, 40);
-        let mut honest = JobQueueDeadlines::new(&vault, vault_id);
+        let mut honest = AttemptQueueDeadlines::new(&vault, vault_id);
         assert_eq!(
             honest.next_deadline().expect("read"),
             Some(CommitmentDeadline {

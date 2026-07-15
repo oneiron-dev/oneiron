@@ -11,13 +11,13 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::critic::{
     CriticReliability, CritiqueArtifact, CritiqueTriage, CritiqueVerdict, LensCatalog,
     triage_critiques,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::job_queue::JobId;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
@@ -69,7 +69,7 @@ impl DreamerTournamentJudgeClaim {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DreamerTournamentCandidate {
     pub candidate_ref: String,
-    pub branch_job: JobId,
+    pub branch_attempt: AttemptId,
     pub claim_id: EntityId,
     pub claim: ClaimCandidate,
     pub judge_claim: DreamerTournamentJudgeClaim,
@@ -81,7 +81,7 @@ impl DreamerTournamentCandidate {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         candidate_ref: impl Into<String>,
-        branch_job: JobId,
+        branch_attempt: AttemptId,
         claim_id: EntityId,
         claim: ClaimCandidate,
         judge_claim: DreamerTournamentJudgeClaim,
@@ -90,7 +90,7 @@ impl DreamerTournamentCandidate {
     ) -> Result<Self> {
         let candidate = Self {
             candidate_ref: candidate_ref.into(),
-            branch_job,
+            branch_attempt,
             claim_id,
             claim,
             judge_claim,
@@ -105,7 +105,8 @@ impl DreamerTournamentCandidate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DreamerTournamentCandidateIdentity {
     pub candidate_ref: String,
-    pub branch_job: JobId,
+    #[serde(rename = "branch_job")] // storage key pinned pre-rename (ONE-1714)
+    pub branch_attempt: AttemptId,
     pub claim_id: String,
     pub round: u16,
 }
@@ -115,7 +116,7 @@ impl DreamerTournamentCandidateIdentity {
     pub fn from_candidate(candidate: &DreamerTournamentCandidate) -> Self {
         Self {
             candidate_ref: candidate.candidate_ref.clone(),
-            branch_job: candidate.branch_job,
+            branch_attempt: candidate.branch_attempt,
             claim_id: candidate.claim_id.to_hex(),
             round: candidate.round,
         }
@@ -125,20 +126,20 @@ impl DreamerTournamentCandidateIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DreamerTournamentAuthorFork {
     pub seed_ref: String,
-    pub author_job: JobId,
-    pub sibling_branch_jobs: Vec<JobId>,
+    pub author_attempt: AttemptId,
+    pub sibling_branch_attempts: Vec<AttemptId>,
 }
 
 impl DreamerTournamentAuthorFork {
     pub fn new(
         seed_ref: impl Into<String>,
-        author_job: JobId,
-        sibling_branch_jobs: Vec<JobId>,
+        author_attempt: AttemptId,
+        sibling_branch_attempts: Vec<AttemptId>,
     ) -> Result<Self> {
         let fork = Self {
             seed_ref: seed_ref.into(),
-            author_job,
-            sibling_branch_jobs,
+            author_attempt,
+            sibling_branch_attempts,
         };
         validate_author_fork(&fork)?;
         Ok(fork)
@@ -157,7 +158,7 @@ pub enum DreamerTournamentSynthesisVerdict {
 pub struct DreamerTournamentSynthesisArtifact {
     pub artifact_id: String,
     pub source_candidate_ref: String,
-    pub branch_job: JobId,
+    pub branch_attempt: AttemptId,
     pub round: u16,
     pub verdict: DreamerTournamentSynthesisVerdict,
     pub refined: Option<DreamerTournamentCandidate>,
@@ -171,7 +172,7 @@ impl DreamerTournamentSynthesisArtifact {
         Self::new(
             artifact_id,
             source.candidate_ref.clone(),
-            source.branch_job,
+            source.branch_attempt,
             source.round,
             DreamerTournamentSynthesisVerdict::Survivor,
             None,
@@ -185,7 +186,7 @@ impl DreamerTournamentSynthesisArtifact {
         Self::new(
             artifact_id,
             source.candidate_ref.clone(),
-            source.branch_job,
+            source.branch_attempt,
             source.round,
             DreamerTournamentSynthesisVerdict::Discarded,
             None,
@@ -200,7 +201,7 @@ impl DreamerTournamentSynthesisArtifact {
         Self::new(
             artifact_id,
             source.candidate_ref.clone(),
-            source.branch_job,
+            source.branch_attempt,
             source.round,
             DreamerTournamentSynthesisVerdict::Refined,
             Some(refined),
@@ -210,7 +211,7 @@ impl DreamerTournamentSynthesisArtifact {
     fn new(
         artifact_id: impl Into<String>,
         source_candidate_ref: impl Into<String>,
-        branch_job: JobId,
+        branch_attempt: AttemptId,
         round: u16,
         verdict: DreamerTournamentSynthesisVerdict,
         refined: Option<DreamerTournamentCandidate>,
@@ -218,7 +219,7 @@ impl DreamerTournamentSynthesisArtifact {
         let artifact = Self {
             artifact_id: artifact_id.into(),
             source_candidate_ref: source_candidate_ref.into(),
-            branch_job,
+            branch_attempt,
             round,
             verdict,
             refined,
@@ -376,7 +377,8 @@ pub struct DreamerTournamentBranchEvidence {
     pub schema_version: u64,
     pub run_id: String,
     pub candidate_ref: String,
-    pub branch_job: JobId,
+    #[serde(rename = "branch_job")] // storage key pinned pre-rename (ONE-1714)
+    pub branch_attempt: AttemptId,
     pub claim_id: String,
     pub round: u16,
     pub verdict: DreamerTournamentBranchVerdict,
@@ -401,7 +403,7 @@ pub struct DreamerTournamentBlindJudgeContext {
 pub struct DreamerTournamentWinner {
     pub claim_id: EntityId,
     pub candidate_ref: String,
-    pub branch_job: JobId,
+    pub branch_attempt: AttemptId,
     pub score: u64,
 }
 
@@ -466,7 +468,7 @@ impl<'a> DreamerTournamentEvidenceStore<'a> {
         validate_evidence(evidence)?;
         let key = tournament_evidence_key(
             &evidence.run_id,
-            evidence.branch_job,
+            evidence.branch_attempt,
             evidence.round,
             evidence.verdict,
             &evidence.candidate_ref,
@@ -611,7 +613,7 @@ pub fn run_dreamer_claim_tournament(
         latest_winner = Some(DreamerTournamentWinner {
             claim_id: winner.claim_id,
             candidate_ref: winner.candidate_ref.clone(),
-            branch_job: winner.branch_job,
+            branch_attempt: winner.branch_attempt,
             score: winner_rank.score,
         });
         latest_winner_candidate = Some(winner.clone());
@@ -676,7 +678,7 @@ fn tournament_evidence(
         schema_version: DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION,
         run_id: run_id.to_owned(),
         candidate_ref: candidate.candidate_ref.clone(),
-        branch_job: candidate.branch_job,
+        branch_attempt: candidate.branch_attempt,
         claim_id: candidate.claim_id.to_hex(),
         round: candidate.round,
         verdict,
@@ -699,7 +701,7 @@ fn tournament_weave_evidence(
         schema_version: DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION,
         run_id: run_id.to_owned(),
         candidate_ref: weave.candidate.candidate_ref.clone(),
-        branch_job: weave.candidate.branch_job,
+        branch_attempt: weave.candidate.branch_attempt,
         claim_id: weave.candidate.claim_id.to_hex(),
         round: weave.candidate.round,
         verdict: DreamerTournamentBranchVerdict::Weaved,
@@ -824,17 +826,19 @@ fn validate_author_fork(fork: &DreamerTournamentAuthorFork) -> Result<()> {
         "tournament author seed ref",
     )?;
     if !(DREAMER_TOURNAMENT_MIN_FANOUT_M as usize..=DREAMER_TOURNAMENT_MAX_FANOUT_M as usize)
-        .contains(&fork.sibling_branch_jobs.len())
+        .contains(&fork.sibling_branch_attempts.len())
     {
         return Err(invalid_tournament(
             "tournament author fork must produce 2 or 3 sibling branches",
         ));
     }
-    let mut branch_jobs = BTreeSet::new();
-    for branch_job in &fork.sibling_branch_jobs {
-        if *branch_job == fork.author_job || !branch_jobs.insert(*branch_job.as_bytes()) {
+    let mut branch_attempts = BTreeSet::new();
+    for branch_attempt in &fork.sibling_branch_attempts {
+        if *branch_attempt == fork.author_attempt
+            || !branch_attempts.insert(*branch_attempt.as_bytes())
+        {
             return Err(invalid_tournament(
-                "tournament author fork branch jobs must be unique siblings",
+                "tournament author fork branch attempts must be unique siblings",
             ));
         }
     }
@@ -842,23 +846,23 @@ fn validate_author_fork(fork: &DreamerTournamentAuthorFork) -> Result<()> {
 }
 
 fn validate_author_fork_outputs(run: &DreamerTournamentRun) -> Result<()> {
-    if run.author_fork.sibling_branch_jobs.len() != usize::from(run.fanout_m) {
+    if run.author_fork.sibling_branch_attempts.len() != usize::from(run.fanout_m) {
         return Err(invalid_tournament(
             "tournament fanout_m must match author fork sibling count",
         ));
     }
-    let fork_jobs = run
+    let fork_attempts = run
         .author_fork
-        .sibling_branch_jobs
+        .sibling_branch_attempts
         .iter()
-        .map(|branch_job| *branch_job.as_bytes())
+        .map(|branch_attempt| *branch_attempt.as_bytes())
         .collect::<BTreeSet<_>>();
-    let round_jobs = run.rounds[0]
+    let round_attempts = run.rounds[0]
         .branches
         .iter()
-        .map(|branch| *branch.author.branch_job.as_bytes())
+        .map(|branch| *branch.author.branch_attempt.as_bytes())
         .collect::<BTreeSet<_>>();
-    if fork_jobs != round_jobs {
+    if fork_attempts != round_attempts {
         return Err(invalid_tournament(
             "first tournament round branches must match author fork siblings",
         ));
@@ -940,7 +944,7 @@ fn validate_branch(branch: &DreamerTournamentBranch) -> Result<()> {
         ));
     }
     validate_synthesis(&branch.synthesis)?;
-    if branch.synthesis.branch_job != branch.author.branch_job
+    if branch.synthesis.branch_attempt != branch.author.branch_attempt
         || branch.synthesis.source_candidate_ref != branch.author.candidate_ref
         || branch.synthesis.round != branch.author.round
     {
@@ -951,9 +955,9 @@ fn validate_branch(branch: &DreamerTournamentBranch) -> Result<()> {
     let mut artifact_ids = BTreeSet::new();
     let mut lenses = BTreeSet::new();
     for critique in &branch.critiques {
-        if critique.branch_job != branch.author.branch_job {
+        if critique.branch_attempt != branch.author.branch_attempt {
             return Err(invalid_tournament(
-                "tournament critique branch_job must match author branch",
+                "tournament critique branch_attempt must match author branch",
             ));
         }
         if critique.candidate_ref != branch.author.candidate_ref {
@@ -992,7 +996,7 @@ fn validate_branch(branch: &DreamerTournamentBranch) -> Result<()> {
     }
     if let Some(refined) = &branch.synthesis.refined {
         validate_candidate(refined)?;
-        if refined.branch_job != branch.author.branch_job {
+        if refined.branch_attempt != branch.author.branch_attempt {
             return Err(invalid_tournament(
                 "refined tournament candidate must stay on its source branch",
             ));
@@ -1028,7 +1032,9 @@ fn validate_synthesis(synthesis: &DreamerTournamentSynthesisArtifact) -> Result<
                 invalid_tournament("refined synthesis verdict requires a refined candidate")
             })?;
             validate_candidate(refined)?;
-            if refined.branch_job != synthesis.branch_job || refined.round != synthesis.round {
+            if refined.branch_attempt != synthesis.branch_attempt
+                || refined.round != synthesis.round
+            {
                 return Err(invalid_tournament(
                     "refined synthesis candidate must match synthesis branch and round",
                 ));
@@ -1061,7 +1067,10 @@ fn validate_weave_artifact(weave: &DreamerTournamentWeaveArtifact) -> Result<()>
     let mut parent_refs = BTreeSet::new();
     for parent in &weave.parents {
         validate_candidate_identity(parent)?;
-        if !parent_refs.insert((*parent.branch_job.as_bytes(), parent.candidate_ref.as_str())) {
+        if !parent_refs.insert((
+            *parent.branch_attempt.as_bytes(),
+            parent.candidate_ref.as_str(),
+        )) {
             return Err(invalid_tournament(
                 "LMX weave parent candidates must be distinct",
             ));
@@ -1102,7 +1111,7 @@ fn candidate_identity_key(
     identity: &DreamerTournamentCandidateIdentity,
 ) -> ([u8; 16], String, String, u16) {
     (
-        *identity.branch_job.as_bytes(),
+        *identity.branch_attempt.as_bytes(),
         identity.candidate_ref.clone(),
         identity.claim_id.clone(),
         identity.round,
@@ -1297,7 +1306,7 @@ fn tournament_evidence_run_prefix(run_id: &str) -> Result<Vec<u8>> {
 
 fn tournament_evidence_key(
     run_id: &str,
-    branch_job: JobId,
+    branch_attempt: AttemptId,
     round: u16,
     verdict: DreamerTournamentBranchVerdict,
     candidate_ref: &str,
@@ -1310,7 +1319,7 @@ fn tournament_evidence_key(
     let candidate_ref_len = u16::try_from(candidate_ref.len())
         .map_err(|_| invalid_tournament("tournament candidate ref exceeds limit"))?;
     let mut key = tournament_evidence_run_prefix(run_id)?;
-    key.extend_from_slice(branch_job.as_bytes());
+    key.extend_from_slice(branch_attempt.as_bytes());
     key.extend_from_slice(&round.to_be_bytes());
     key.push(verdict_key_byte(verdict));
     key.extend_from_slice(&candidate_ref_len.to_be_bytes());
@@ -1335,14 +1344,14 @@ fn put_critique_artifact_in_txn(
     if artifact.out_of_scope {
         return Ok(());
     }
-    let key = critique_artifact_key(artifact.branch_job, &artifact.artifact_id)?;
+    let key = critique_artifact_key(artifact.branch_attempt, &artifact.artifact_id)?;
     let encoded = rmp_serde::to_vec_named(artifact)
         .map_err(|_| invalid_tournament("critique artifact MessagePack encode failed"))?;
     vault.store.vault_meta.put(wtxn, &key, &encoded)?;
     Ok(())
 }
 
-fn critique_artifact_key(branch_job: JobId, artifact_id: &str) -> Result<Vec<u8>> {
+fn critique_artifact_key(branch_attempt: AttemptId, artifact_id: &str) -> Result<Vec<u8>> {
     validate_identifier(
         artifact_id,
         MAX_TOURNAMENT_ARTIFACT_ID_BYTES,
@@ -1353,7 +1362,7 @@ fn critique_artifact_key(branch_job: JobId, artifact_id: &str) -> Result<Vec<u8>
     let mut key =
         Vec::with_capacity(CRITIQUE_PRIVATE_ARTIFACT_PREFIX.len() + 16 + 2 + artifact_id.len());
     key.extend_from_slice(CRITIQUE_PRIVATE_ARTIFACT_PREFIX);
-    key.extend_from_slice(branch_job.as_bytes());
+    key.extend_from_slice(branch_attempt.as_bytes());
     key.extend_from_slice(&artifact_id_len.to_be_bytes());
     key.extend_from_slice(artifact_id.as_bytes());
     Ok(key)
@@ -1367,7 +1376,7 @@ fn decode_tournament_evidence(raw: &[u8]) -> Result<DreamerTournamentBranchEvide
 }
 
 fn invalid_tournament(reason: &'static str) -> Error {
-    Error::InvalidJobQueueRecord(reason)
+    Error::InvalidAttemptQueueRecord(reason)
 }
 
 #[cfg(test)]
