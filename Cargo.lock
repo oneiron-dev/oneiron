@@ -3192,6 +3192,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-driver"
+version = "0.1.0"
+dependencies = [
+ "oneiron",
+ "oneiron-llm-local",
+ "rmpv",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "oneiron-ffi"
 version = "0.1.0"
 dependencies = [

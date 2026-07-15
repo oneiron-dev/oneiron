@@ -146,6 +146,7 @@ fn wake_pass_drains_queue_until_empty() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
 
     assert_eq!(report.admitted, 3);
@@ -188,7 +189,8 @@ fn wake_pass_stops_on_budget_exhausted() -> Result<()> {
     let mut input = run_input(DreamerConsolidationScope::Micro, node_id, 20);
     input.budget_total_units = 150;
     input.reserve_units = 100;
-    let report = block_on_ready(driver.run_wake_pass(input, &mut exec))?;
+    let report =
+        block_on_ready(driver.run_wake_pass(input, &mut exec, &WakeCancellation::new()))?;
 
     // First job admits (reserve 100 of 150) and spends 100; the second
     // reservation (100 > remaining 50) is denied.
@@ -217,6 +219,7 @@ fn wake_pass_macro_requires_home_node() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Macro, node_id, 20),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.stop, WakePassStop::NoHomeNode);
     assert_eq!(report.admitted, 0);
@@ -237,6 +240,7 @@ fn wake_pass_macro_requires_home_node() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Macro, node_id, 40),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.stop, WakePassStop::NotHomeNode);
     assert_eq!(report.admitted, 0);
@@ -260,6 +264,7 @@ fn wake_pass_deadline_stops_admission() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
     assert_eq!(report.admitted, 0);
@@ -305,6 +310,7 @@ fn park_and_resume_roundtrip() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut parker,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.admitted, 1);
     assert_eq!(report.parked, 1);
@@ -344,6 +350,7 @@ fn park_and_resume_roundtrip() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 130),
         &mut completer,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.admitted, 1);
     assert_eq!(report.completed, 1);
@@ -368,6 +375,7 @@ fn park_owner_step_layer_respected() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut parker,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.parked, 1);
     // The step layer's park row survives untouched (one park-owner): the
@@ -402,6 +410,7 @@ fn paused_job_not_admitted() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.admitted, 0, "paused job is skipped by admission");
     assert_eq!(report.stop, WakePassStop::QueueEmpty);
@@ -518,6 +527,7 @@ fn wake_pass_never_exceeds_ceiling() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
 
     assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
@@ -559,6 +569,7 @@ fn wrap_notice_fires_exactly_once_counter_first() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.completed, 2, "notice does not stop the pass");
 
@@ -598,6 +609,7 @@ fn wrap_notice_fires_exactly_once_clock_first() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.completed, 2);
 
@@ -629,6 +641,7 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(report.admitted, 0, "finalize admits no new jobs");
     assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
@@ -690,6 +703,7 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 30),
         &mut exec,
+        &WakeCancellation::new(),
     ))
     .expect("hard-cut pass reports instead of erroring");
     assert_eq!(report.admitted, 1);
@@ -742,6 +756,7 @@ fn reused_driver_fires_wrap_notice_each_pass() -> Result<()> {
     block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 20),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     assert_eq!(
         driver.steering_signals().len(),
@@ -755,6 +770,7 @@ fn reused_driver_fires_wrap_notice_each_pass() -> Result<()> {
     block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 30),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     assert!(
         driver.steering_signals().is_empty(),
@@ -767,6 +783,7 @@ fn reused_driver_fires_wrap_notice_each_pass() -> Result<()> {
     block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 40),
         &mut exec,
+        &WakeCancellation::new(),
     ))?;
     let plans: Vec<_> = driver
         .steering_signals()
@@ -795,7 +812,8 @@ fn monotonic_clock_immune_to_wall_jump() -> Result<()> {
     };
     let mut input = run_input(DreamerConsolidationScope::Micro, node_id, 20);
     input.now = 9_999_999_999; // wall clock jumped far forward
-    let report = block_on_ready(driver.run_wake_pass(input, &mut exec))?;
+    let report =
+        block_on_ready(driver.run_wake_pass(input, &mut exec, &WakeCancellation::new()))?;
     assert_eq!(report.completed, 1);
     assert_eq!(report.stop, WakePassStop::QueueEmpty);
     assert_eq!(
@@ -803,5 +821,154 @@ fn monotonic_clock_immune_to_wall_jump() -> Result<()> {
         179_000,
         "wall input never moves the monotonic deadline"
     );
+    Ok(())
+}
+
+/// Fails every job with a non-deadline error (the ONE-1683 leak site: the
+/// job is NOT step-layer-parked and the deadline has NOT expired).
+struct FailingExecutor;
+
+impl DreamerJobExecutor for FailingExecutor {
+    async fn execute(
+        &mut self,
+        _job: &DreamerAdmittedJob,
+        _ctx: &mut WakeJobContext<'_>,
+    ) -> Result<DreamerJobExecution> {
+        Err(crate::Error::InvariantViolation("executor exploded mid-job"))
+    }
+}
+
+#[test]
+fn executor_error_parks_job_and_refunds_reservation() -> Result<()> {
+    // ONE-1683 H-S5/R2: a non-deadline executor error must park the admitted
+    // job and refund its budget reservation BEFORE the error propagates —
+    // the old path returned Err with the job stuck leased and the
+    // reservation held.
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "erroring", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let mut exec = FailingExecutor;
+    let result = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+        &WakeCancellation::new(),
+    ));
+    assert!(result.is_err(), "a non-deadline error still propagates");
+
+    // The job row is parked under the error reason, not orphaned-leased.
+    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    assert!(
+        parked.reason.starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
+        "park reason carries the executor error class: {}",
+        parked.reason
+    );
+    assert_eq!(parked.park_owner, "wake-worker");
+
+    // The budget reservation was refunded, not leaked.
+    assert!(
+        store.budget_reservation("wake", queued.job.id)?.is_none(),
+        "the error path must abort the runner budget reservation"
+    );
+    let budget = store.budget("wake")?.expect("budget row");
+    assert_eq!(budget.reserved_units, 0);
+    assert_eq!(budget.remaining_units, 10_000);
+
+    // The parked job resumes through the normal path — nothing is stuck.
+    assert!(
+        store
+            .resume_parked(queued.job.id, "wake-worker", 30)?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn cancel_before_pass_admits_nothing() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "never-admitted", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let cancel = WakeCancellation::new();
+    cancel.cancel();
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let mut exec = CompletingExecutor {
+        completed_units: 10,
+        executed: 0,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+        &cancel,
+    ))?;
+    assert_eq!(report.stop, WakePassStop::Cancelled);
+    assert_eq!(report.admitted, 0, "an already-cancelled pass admits nothing");
+    assert_eq!(exec.executed, 0);
+    let status = store.status(queued.job.id)?.expect("job status");
+    assert_eq!(status.job.state, JobState::Queued, "never claimed");
+    Ok(())
+}
+
+/// Completes its job normally but raises the cancellation flag while
+/// executing — simulating a supervisor shutdown landing mid-pass.
+struct CancellingExecutor {
+    cancel: WakeCancellation,
+    executed: u32,
+}
+
+impl DreamerJobExecutor for CancellingExecutor {
+    async fn execute(
+        &mut self,
+        _job: &DreamerAdmittedJob,
+        _ctx: &mut WakeJobContext<'_>,
+    ) -> Result<DreamerJobExecution> {
+        self.executed += 1;
+        self.cancel.cancel();
+        Ok(DreamerJobExecution::Completed {
+            completed_units: 40,
+        })
+    }
+}
+
+#[test]
+fn cancel_mid_pass_finishes_in_flight_job_then_stops() -> Result<()> {
+    // H-S5/R2: a cancel raised while a job is executing is honored only at
+    // the NEXT job boundary — the in-flight job runs to completion and
+    // settles (never aborted mid-write); the second job is never admitted.
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let first = enqueue_micro(&store, "in-flight", 10)?;
+    let second = enqueue_micro(&store, "never-started", 11)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let cancel = WakeCancellation::new();
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let mut exec = CancellingExecutor {
+        cancel: cancel.clone(),
+        executed: 0,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+        &cancel,
+    ))?;
+    assert_eq!(report.stop, WakePassStop::Cancelled);
+    assert_eq!(report.admitted, 1);
+    assert_eq!(report.completed, 1, "the in-flight job settles normally");
+    assert_eq!(exec.executed, 1);
+
+    // Job 1 fully settled: spent, no reservation held.
+    let status = store.status(first.job.id)?.expect("first job status");
+    assert_eq!(status.job.state, JobState::Completed);
+    let budget = store.budget("wake")?.expect("budget row");
+    assert_eq!(budget.remaining_units, 10_000 - 40);
+    assert_eq!(budget.reserved_units, 0);
+
+    // Job 2 untouched — ready for the next pass.
+    let status = store.status(second.job.id)?.expect("second job status");
+    assert_eq!(status.job.state, JobState::Queued, "never claimed");
     Ok(())
 }
