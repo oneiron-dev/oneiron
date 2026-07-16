@@ -291,6 +291,120 @@ fn consent_refusal_and_one_shot_human_approval_preserve_exact_counts() -> CommRe
 }
 
 #[test]
+fn restrictive_stop_cancels_pending_clear_and_preserves_opt_out() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-stop-cancels-clear", "email", 10)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        request_opt_out_clear(&vault, "party-stop-cancels-clear", "email", 20)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 1);
+
+    record_comm_inbound_stop(&vault, "party-stop-cancels-clear", "email", 30)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-stop-cancels-clear",
+            "email",
+        )?,
+        1
+    );
+    assert_eq!(
+        count_opt_out_clear_receipts(&vault, "party-stop-cancels-clear")?,
+        0
+    );
+
+    let party_ref =
+        resolve_party(&vault, "party-stop-cancels-clear")?.ok_or(CommError::InvalidRecord)?;
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    let error =
+        approve_pending_opt_out_clear(&vault, "party-stop-cancels-clear", "email", human, 40)
+            .expect_err("restrictive STOP consumes the pending widening gate");
+    assert!(matches!(error, CommError::PendingGateNotFound));
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-stop-cancels-clear",
+            "email",
+        )?,
+        1
+    );
+    assert_eq!(
+        count_opt_out_clear_receipts(&vault, "party-stop-cancels-clear")?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn pending_clear_without_intervening_stop_is_approved_and_receipted() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-clear-approved", "email", 10)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        request_opt_out_clear(&vault, "party-clear-approved", "email", 20)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 1);
+
+    let party_ref =
+        resolve_party(&vault, "party-clear-approved")?.ok_or(CommError::InvalidRecord)?;
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    approve_pending_opt_out_clear(&vault, "party-clear-approved", "email", human, 40)?;
+
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-clear-approved",
+            "email",
+        )?,
+        0
+    );
+    assert_eq!(
+        count_opt_out_clear_receipts(&vault, "party-clear-approved")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn backdated_stop_does_not_cancel_later_pending_clear() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-backdated-stop", "email", 10)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        request_opt_out_clear(&vault, "party-backdated-stop", "email", 20)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+
+    record_comm_inbound_stop(&vault, "party-backdated-stop", "email", 15)?;
+    run_comm_projector(&vault)?;
+
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 1);
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-backdated-stop",
+            "email",
+        )?,
+        1
+    );
+    assert_eq!(
+        count_opt_out_clear_receipts(&vault, "party-backdated-stop")?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn contact_materialization_is_deterministic_without_intervening_writes() -> CommResult<()> {
     let (_dir, vault) = open_vault();
     record_comm_send_receipt(&vault, "party-a", "email", 10)?;
@@ -822,6 +936,75 @@ fn delayed_projection_uses_current_learn_time_for_party_claim_and_record() -> Co
     assert!(learned_after_event.contains(&party_ref));
     assert!(learned_after_event.contains(&claim_id));
     assert!(learned_after_event.contains(&record_id));
+    Ok(())
+}
+
+#[test]
+fn party_absent_event_does_not_wedge_later_projection() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-after-missing", "email", 20)?;
+
+    let missing_party_ref = entity(0xB1);
+    let missing_event_id = EntityId::now();
+    let missing_event = CommRecord::Event {
+        sequence: 0,
+        kind: CommEventKind::SendSucceeded,
+        party_ref: missing_party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| {
+        put_comm_record_in_txn(&vault, wtxn, missing_event_id, &missing_event)
+    })?;
+    assert_eq!(vault.get_entity_type(&missing_party_ref)?, None);
+
+    run_comm_projector(&vault)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let records = comm_records_in_txn(&vault, &rtxn)?;
+    let (_, retained) = records
+        .iter()
+        .find(|(id, _)| *id == missing_event_id)
+        .ok_or(CommError::InvalidRecord)?;
+    assert!(matches!(
+        retained,
+        CommRecord::Event {
+            projected: false,
+            ..
+        }
+    ));
+    drop(rtxn);
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-after-missing",
+            "email",
+        )?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-after-missing",
+            "email",
+        )?,
+        1
+    );
+
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_total_comm_claim_rows(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-after-missing",
+            "email",
+        )?,
+        1
+    );
     Ok(())
 }
 

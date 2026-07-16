@@ -638,7 +638,15 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
     };
     pending.sort_by_key(|(sequence, _)| *sequence);
     for (_, event_id) in pending {
-        project_event(vault, event_id)?;
+        match project_event(vault, event_id) {
+            Ok(()) => {}
+            Err(CommError::Engine(Error::EntityNotFound)) => {
+                // A replicated event can arrive before its party row. Leave it
+                // unprojected so a later pass retries after the party syncs.
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
     }
     Ok(())
 }
@@ -1031,6 +1039,33 @@ fn apply_projector_rule_in_txn(
                 if let Some(boundary) = latest_transition.filter(|boundary| occurred_at < *boundary)
                 {
                     vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
+                }
+            } else {
+                for (gate_id, record) in comm_records_in_txn(vault, &*wtxn)? {
+                    let CommRecord::Gate {
+                        party_ref: gate_party_ref,
+                        channel_class: gate_channel,
+                        claim_ref,
+                        created_at,
+                        pending,
+                    } = record
+                    else {
+                        continue;
+                    };
+                    if pending
+                        && gate_party_ref == party_ref
+                        && gate_channel == channel
+                        && created_at <= occurred_at
+                    {
+                        let consumed = CommRecord::Gate {
+                            party_ref,
+                            channel_class: channel.to_owned(),
+                            claim_ref,
+                            created_at,
+                            pending: false,
+                        };
+                        put_comm_record_in_txn(vault, wtxn, gate_id, &consumed)?;
+                    }
                 }
             }
             Ok(())
