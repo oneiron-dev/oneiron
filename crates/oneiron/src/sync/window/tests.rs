@@ -2126,6 +2126,145 @@ fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<
 }
 
 #[test]
+fn forward_rematerialization_quarantines_forged_shell_and_continues_edge_pass() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let forged_source = EntityId::from_bytes([0x81; 16])?;
+    let ordinary_source = EntityId::from_bytes([0x82; 16])?;
+    let target = EntityId::from_bytes([0x83; 16])?;
+    for id in [&forged_source, &ordinary_source, &target] {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+
+    let doc = create_window_doc("remote", &window_key);
+    let edges = doc.get_map("edges");
+    let forged_key = format_edge_key(&forged_source, EdgeKind::MergedInto, &target);
+    let forged_value = encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.3, 10, None, None)?;
+    map_insert_bytes(&edges, &forged_key, &forged_value)?;
+    let ordinary_key = format_edge_key(&ordinary_source, EdgeKind::Mentions, &target);
+    let ordinary_value = encode_edge_value_for_crdt(EdgeKind::Mentions, 0.4, 11, None, None)?;
+    map_insert_bytes(&edges, &ordinary_key, &ordinary_value)?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        count, 1,
+        "the forged shell is skipped while the other N-1 edge still heals"
+    );
+    assert!(
+        !vault.edge_exists(&forged_source, EdgeKind::MergedInto, &target)?,
+        "an unledgered reserved edge must never land"
+    );
+    assert!(
+        vault.edge_exists(&ordinary_source, EdgeKind::Mentions, &target)?,
+        "one poisoned edge must not abort the rest of the rematerialization pass"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    let record = &quarantined[0].1;
+    assert_eq!(record.container, QuarantineContainer::Edges);
+    assert_eq!(record.reason_code, "ReservedEdgeKind");
+    assert_eq!(
+        (record.crdt_key_hash, record.crdt_key_len),
+        crate::sync::quarantine::crdt_key_metadata(&forged_key)
+    );
+    assert_eq!(
+        record.payload_hash,
+        crate::sync::quarantine::payload_hash(&forged_value)
+    );
+    Ok(())
+}
+
+#[test]
+fn forward_rematerialization_admits_byte_exact_mandated_shell_echo() -> Result<()> {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        SurvivorshipPlan,
+    };
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let survivor = EntityId::from_bytes([0x91; 16])?;
+    let loser = EntityId::from_bytes([0x92; 16])?;
+    for id in [&survivor, &loser] {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+    let outcome = vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![loser],
+            survivor,
+            evidence: IdentityOpEvidence {
+                refs: Vec::new(),
+                rationale: "mandated echo fixture".to_owned(),
+            },
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        200,
+    )?;
+    assert!(matches!(outcome, IdentityOpOutcome::Applied { .. }));
+    assert!(vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+
+    // Simulate a replica whose ledger event survived but whose derived edge
+    // indexes did not. Only the byte-exact door echo in the CRDT may heal it.
+    let out_key = Store::encode_edge_key(&loser, EdgeKind::MergedInto, &survivor);
+    let in_key = Store::encode_edge_key(&survivor, EdgeKind::MergedInto, &loser);
+    vault.with_write_txn(|wtxn| {
+        vault.store.edges_out.delete(wtxn, &out_key)?;
+        vault.store.edges_in.delete(wtxn, &in_key)?;
+        Ok(())
+    })?;
+    assert!(!vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+
+    let doc = create_window_doc("remote", &window_key);
+    let shell_key = format_edge_key(&loser, EdgeKind::MergedInto, &survivor);
+    let shell_value = encode_edge_value_for_crdt(
+        EdgeKind::MergedInto,
+        EdgeKind::MergedInto.default_weight().expect("shell weight"),
+        200,
+        None,
+        None,
+    )?;
+    map_insert_bytes(&doc.get_map("edges"), &shell_key, &shell_value)?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(count, 1, "the mandated echo must heal the missing edge");
+    assert!(vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+    let rtxn = vault.store.env.read_txn()?;
+    let healed_out = vault
+        .store
+        .edges_out
+        .get(&rtxn, &out_key)?
+        .expect("outbound shell index healed");
+    let healed_in = vault
+        .store
+        .edges_in
+        .get(&rtxn, &in_key)?
+        .expect("inbound shell index healed");
+    assert_eq!(healed_out.as_ref(), shell_value.as_slice());
+    assert_eq!(healed_in.as_ref(), shell_value.as_slice());
+    drop(rtxn);
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)?.is_empty(),
+        "a byte-exact mandated echo must be admitted, not quarantined"
+    );
+    Ok(())
+}
+
+#[test]
 fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Result<()> {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
 

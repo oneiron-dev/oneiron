@@ -16,8 +16,6 @@ use crate::batch::{
 use crate::config::VaultConfig;
 use crate::deletion::HydratedShortIdDeletion;
 use crate::deletion::HydratedShortIdDeletionSource;
-#[cfg(test)]
-use crate::deletion::ReplayedTombstoneOutcome;
 use crate::edge::{EdgeActorClass, EdgeInfo, EdgeKind, parse_strict_edge_record};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};

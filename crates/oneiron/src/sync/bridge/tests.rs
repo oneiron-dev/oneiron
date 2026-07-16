@@ -1793,8 +1793,25 @@ fn observer_b_rejects_type_76_merge_with_nonstructural_participant() {
         ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
     );
+    let claim_body = crate::claim::encode_claim_body(&claim).unwrap();
+    // This row is participant state for the sync-door test, not a local
+    // claim-policy decision. Seed it through the replicated materialization
+    // door: that still runs the full CLAIM body validator, while avoiding the
+    // unrelated local criticality-floor gate that can legitimately park an
+    // Auto `user.note` write.
     vault
-        .put_claim(&claim_id, &claim, TimeRange { start: 1, end: 1 }, 2)
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &claim_id,
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    TimeRange { start: 1, end: 1 },
+                    2,
+                    &claim_body,
+                )
+                .apply(wtxn)
+        })
         .unwrap();
 
     let event_id = EntityId::now();

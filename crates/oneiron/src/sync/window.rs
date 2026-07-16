@@ -1488,6 +1488,7 @@ pub fn forward_rematerialize(
             Written,
             Unchanged,
             Deferred,
+            Quarantined,
         }
 
         let mut edge_error = None;
@@ -1577,7 +1578,16 @@ pub fn forward_rematerialize(
                         decoded.created_at == at && kind.default_weight() == Some(decoded.weight)
                     });
                     if !door_echo {
-                        return Err(reserved);
+                        quarantine::quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            QuarantineContainer::Edges,
+                            key,
+                            &reserved,
+                            buf,
+                        )?;
+                        return Ok(EdgeRematOutcome::Quarantined);
                     }
                 }
 
@@ -1632,6 +1642,12 @@ pub fn forward_rematerialize(
                         edge = %key,
                         "forward remat: edge deferred — endpoint absent"
                     );
+                }
+                Ok(EdgeRematOutcome::Quarantined) => {
+                    // The reserved-kind rejection and its durable evidence
+                    // committed in the edge txn above. Keep iterating: one
+                    // forged row must not starve the other N-1 edge heals.
+                    terminal_quarantines.push(src);
                 }
                 Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
                     if let Err(q_err) = quarantine::quarantine_rejected_op(
