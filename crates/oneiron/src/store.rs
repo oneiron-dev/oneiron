@@ -1153,7 +1153,9 @@ pub struct StoreCore {
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
     pub(crate) env: Env,
     /// Raw handles; runtime access goes through the [`Store`] accessors.
-    pub(crate) raw: RawDatabases,
+    /// Private so no code outside `store.rs` can bypass the [`OverlayDb`]
+    /// seam — open-time machinery and accessor construction both live here.
+    raw: RawDatabases,
     /// Vault-scoped dynamic StructuralKind registry loaded from `vault_meta`.
     pub(crate) kind_registry: RwLock<HashMap<u8, StructuralKindRegistration>>,
     /// Serializes reward-to-weight tuning so concurrent callers cannot lose
@@ -1206,8 +1208,10 @@ pub struct Store {
     // DROP-ORDER: `core` is declared before `owner` so this handle's Arc
     // reference drops first; `owner` then closes the environment (its
     // `OwnedEnv` holds the last remaining `Env` clone) and finally releases
-    // the registered path.
-    pub(crate) core: Arc<StoreCore>,
+    // the registered path. Private so no code outside `store.rs` can clone
+    // the Arc past this handle's lifetime; deliberate sharing arrives with
+    // the ONE-1727 session lease.
+    core: Arc<StoreCore>,
     pub(crate) entities: OverlayDb,
     pub(crate) edges_out: OverlayDb,
     pub(crate) edges_in: OverlayDb,
