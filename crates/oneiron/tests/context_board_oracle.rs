@@ -34,7 +34,40 @@ mod cb_t {
     /// ONE-1694 fixture: any non-empty board (1 world, 1 pinned memory,
     /// 1 running task) rendered in RESIDENT mode. Returns the full block.
     fn arm_render_board_block() -> BoardBlockRender {
-        unimplemented!("armed by ONE-1694: render the Context Board block from typed state")
+        use oneiron::context_board::{
+            BoardBlockHeader, BoardSection, TaskBoardStatus, TaskIntentPresence,
+            render_board_block, render_tasks_section,
+        };
+
+        let running_task = TaskIntentPresence {
+            id: "tk_a".to_owned(),
+            status: TaskBoardStatus::Running,
+            label: None,
+            acked: false,
+            realizing_jobs: Vec::new(),
+        };
+        let tasks = render_tasks_section(&[running_task], &[]);
+        let sections = [
+            BoardSection {
+                name: "WORLDS".to_owned(),
+                rows: vec!["wd_1 active".to_owned()],
+            },
+            BoardSection {
+                name: "MEMORIES".to_owned(),
+                rows: vec!["cl_1 pinned".to_owned()],
+            },
+            BoardSection {
+                name: "TASKS".to_owned(),
+                rows: tasks.rows.iter().map(|row| row.line.clone()).collect(),
+            },
+        ];
+        let header = BoardBlockHeader {
+            epoch: 47,
+            scope: "WorldSet(wd_1)".to_owned(),
+        };
+        BoardBlockRender {
+            text: render_board_block(&header, &sections),
+        }
     }
 
     /// ONE-1694 · 08b §0/§1 (r1) · CB-01 contract: the board render tag is
@@ -42,7 +75,6 @@ mod cb_t {
     /// a tag like `[CONTEXT_BOARD_EVIL …]` must NOT satisfy this test, and
     /// the check must fail closed on malformed renders (no slice panics).
     #[test]
-    #[ignore = "armed by ONE-1694"]
     fn board_block_opens_with_context_board_render_tag() {
         let render = arm_render_board_block();
         let first_line = render.text.lines().next().expect("block has a first line");
@@ -81,7 +113,68 @@ mod cb_t {
     /// no jobs) + bare system job `jb_c` (running), read via the SURF-005
     /// observe API; render the TASKS section, collapsed.
     fn arm_render_tasks_section() -> TasksSectionRender {
-        unimplemented!("armed by ONE-1694: TASKS section renderer over TASK entities + JobQueue")
+        use oneiron::context_board::{
+            JobPresence, TaskBoardStatus, TaskIntentPresence, render_tasks_section,
+        };
+        use oneiron::run_tree::{RunTreeNode, RunTreeStatus, RunTreeTimestamps};
+
+        let observed_running_job = |id: &str| RunTreeNode {
+            attempt_id: id.to_owned(),
+            run_id: None,
+            parent_id: None,
+            worker_kind: "sync".to_owned(),
+            agent_id: None,
+            status: RunTreeStatus::Running,
+            timestamps: RunTreeTimestamps {
+                created_at: 1,
+                updated_at: 1,
+            },
+            failure: None,
+            events: Vec::new(),
+            children: Vec::new(),
+        };
+        let realizing_nodes = [observed_running_job("jb_1"), observed_running_job("jb_2")];
+        let realizing_jobs: Vec<JobPresence> = realizing_nodes
+            .iter()
+            .map(|node| {
+                JobPresence::from_run_tree_node(node)
+                    .expect("running observed job must reach the board")
+            })
+            .collect();
+
+        let intent = |id: &str, status: TaskBoardStatus| TaskIntentPresence {
+            id: id.to_owned(),
+            status,
+            label: None,
+            acked: false,
+            realizing_jobs: Vec::new(),
+        };
+        let mut tk_a = intent("tk_a", TaskBoardStatus::Running);
+        tk_a.realizing_jobs = realizing_jobs;
+        let intents = [
+            tk_a,
+            intent("tk_b", TaskBoardStatus::Scheduled),
+            intent("tk_q", TaskBoardStatus::Queued),
+            intent("tk_d", TaskBoardStatus::Done),
+        ];
+        let bare_node = observed_running_job("jb_c");
+        let bare_jobs = [JobPresence::from_run_tree_node(&bare_node)
+            .expect("running observed bare job must reach the board")];
+
+        let section = render_tasks_section(&intents, &bare_jobs);
+        TasksSectionRender {
+            rows: section
+                .rows
+                .into_iter()
+                .map(|row| TasksRow {
+                    id: row.id,
+                    line: row.line,
+                    status: row.status.as_str().to_owned(),
+                    is_intent: row.is_intent,
+                    folded_job_count: row.folded_job_count,
+                })
+                .collect(),
+        }
     }
 
     /// ONE-1694 · 08b §3 · owner render law: one-line rows; intent rows fold
@@ -90,7 +183,6 @@ mod cb_t {
     /// done / failed" — every state in the fixture is asserted by row
     /// identity (F6/G5), failed is owned by the failed-lane test below.
     #[test]
-    #[ignore = "armed by ONE-1694"]
     fn tasks_section_renders_one_line_rows_over_intent_and_bare_jobs() {
         let section = arm_render_tasks_section();
         assert_eq!(section.rows.len(), 5);
@@ -101,6 +193,15 @@ mod cb_t {
             .count();
         assert_eq!(one_liners, 5);
         assert_eq!(section.rows.iter().filter(|r| r.is_intent).count(), 4);
+        for row in &section.rows {
+            assert_eq!(
+                row.line
+                    .split_whitespace()
+                    .filter(|token| *token == row.status)
+                    .count(),
+                1
+            );
+        }
         for (id, status) in [("tk_b", "scheduled"), ("tk_q", "queued"), ("tk_d", "done")] {
             let row = section
                 .rows
@@ -119,6 +220,20 @@ mod cb_t {
         assert_eq!(tk_a.status, "running");
         assert!(tk_a.is_intent);
         assert_eq!(tk_a.folded_job_count, 2);
+        assert_eq!(
+            tk_a.line
+                .split_whitespace()
+                .filter(|token| *token == "running")
+                .count(),
+            1
+        );
+        assert_eq!(
+            tk_a.line
+                .split_whitespace()
+                .filter(|token| *token == "jobs=2")
+                .count(),
+            1
+        );
         let jb_c = section
             .rows
             .iter()
@@ -127,19 +242,54 @@ mod cb_t {
         assert_eq!(jb_c.status, "running");
         assert!(!jb_c.is_intent);
         assert_eq!(jb_c.folded_job_count, 0);
+        assert_eq!(
+            jb_c.line
+                .split_whitespace()
+                .filter(|token| *token == "running")
+                .count(),
+            1
+        );
     }
 
     /// ONE-1694 fixture: two FAILED tasks — `tk_failed_unacked` (never acked)
     /// and `tk_failed_acked` (acked via `tasks.ack`); render the TASKS
     /// section and return only its failed-lane rows.
     fn arm_render_failed_lane() -> TasksSectionRender {
-        unimplemented!("armed by ONE-1694: failed rows stay surfaced until acked")
+        use oneiron::context_board::{
+            TaskBoardStatus, TaskIntentPresence, failed_lane, render_tasks_section,
+        };
+
+        let failed = |id: &str, acked: bool| TaskIntentPresence {
+            id: id.to_owned(),
+            status: TaskBoardStatus::Failed,
+            label: None,
+            acked,
+            realizing_jobs: Vec::new(),
+        };
+        let section = render_tasks_section(
+            &[
+                failed("tk_failed_unacked", false),
+                failed("tk_failed_acked", true),
+            ],
+            &[],
+        );
+        TasksSectionRender {
+            rows: failed_lane(&section)
+                .into_iter()
+                .map(|row| TasksRow {
+                    id: row.id.clone(),
+                    line: row.line.clone(),
+                    status: row.status.as_str().to_owned(),
+                    is_intent: row.is_intent,
+                    folded_job_count: row.folded_job_count,
+                })
+                .collect(),
+        }
     }
 
     /// ONE-1694 · 08b §3: failed rows stay surfaced until acked; an acked
     /// failed row leaves the lane.
     #[test]
-    #[ignore = "armed by ONE-1694"]
     fn failed_rows_stay_surfaced_until_acked() {
         let lane = arm_render_failed_lane();
         assert_eq!(lane.rows.len(), 1);
@@ -155,20 +305,51 @@ mod cb_t {
     /// ONE-1694 fixture: `tk_a` (running, 2 realizing jobs `jb_1`/`jb_2`);
     /// apply `board.expand tasks.tk_a` and return the expanded rendering.
     fn arm_expand_task_with_two_jobs() -> ExpandedTask {
-        unimplemented!("armed by ONE-1694: collapse/expand via board.expand verbs")
+        use oneiron::context_board::{
+            JobPresence, TaskBoardStatus, TaskIntentPresence, expand_task,
+        };
+
+        let job = |id: &str| JobPresence {
+            id: id.to_owned(),
+            kind: "sync".to_owned(),
+            status: TaskBoardStatus::Running,
+        };
+        let tk_a = TaskIntentPresence {
+            id: "tk_a".to_owned(),
+            status: TaskBoardStatus::Running,
+            label: None,
+            acked: false,
+            realizing_jobs: vec![job("jb_1"), job("jb_2")],
+        };
+        ExpandedTask {
+            lines: expand_task(&tk_a),
+        }
     }
 
     /// ONE-1694 · 08b §3 · owner render law: expand unfolds the realizing
     /// jobs UNDER the intent row — exact rows and order: the `tk_a` intent
     /// line first, then `jb_1`, then `jb_2` (G7).
     #[test]
-    #[ignore = "armed by ONE-1694"]
     fn expand_unfolds_realizing_jobs_under_intent_row() {
         let expanded = arm_expand_task_with_two_jobs();
         assert_eq!(expanded.lines.len(), 3);
         assert!(expanded.lines[0].contains("tk_a"));
         assert!(expanded.lines[1].contains("jb_1"));
         assert!(expanded.lines[2].contains("jb_2"));
+        assert_eq!(
+            expanded.lines[1]
+                .split_whitespace()
+                .filter(|token| *token == "running")
+                .count(),
+            1
+        );
+        assert_eq!(
+            expanded.lines[2]
+                .split_whitespace()
+                .filter(|token| *token == "running")
+                .count(),
+            1
+        );
         let job_lines = expanded.lines.iter().filter(|l| l.contains("jb_")).count();
         assert_eq!(job_lines, 2);
     }
