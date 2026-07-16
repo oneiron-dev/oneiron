@@ -109,6 +109,7 @@ pub struct VaultConfig {
     pub skip_text_index_manifest_check: bool,
     /// TEST-SUPPORT ONLY: Skip seeding the default policy manifest at
     /// [`crate::Vault::open`]. Production callers must leave this `false`.
+    #[doc(hidden)]
     pub skip_default_policy_manifest: bool,
 }
 

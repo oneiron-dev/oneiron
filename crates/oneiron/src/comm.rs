@@ -798,9 +798,10 @@ pub fn approve_pending_opt_out_clear(
             true,
         )?;
         require_at_most_one(&active)?;
-        let live_claim_ref = active.into_iter().next().map(|(claim_id, _)| claim_id);
-        if let Some(live_claim_ref) = live_claim_ref {
-            vault.retract_claim_in_txn(wtxn, &live_claim_ref, ruled_at)?;
+        let live_claim = active.into_iter().next();
+        if let Some((live_claim_ref, matched)) = &live_claim {
+            let close_at = ruled_at.max(matched.valid_from.unwrap_or(ruled_at));
+            vault.retract_claim_in_txn(wtxn, live_claim_ref, close_at)?;
         }
         let consumed = CommRecord::Gate {
             party_ref,
@@ -810,7 +811,7 @@ pub fn approve_pending_opt_out_clear(
             pending: false,
         };
         put_comm_record_in_txn(vault, wtxn, gate_id, &consumed)?;
-        if live_claim_ref.is_some() {
+        if live_claim.is_some() {
             let receipt = CommRecord::Receipt {
                 party_ref,
                 channel_class: channel_class.to_owned(),
@@ -820,7 +821,7 @@ pub fn approve_pending_opt_out_clear(
             };
             put_comm_record_in_txn(vault, wtxn, EntityId::now(), &receipt)?;
         }
-        Ok(live_claim_ref.is_some())
+        Ok(live_claim.is_some())
     })?;
     if cleared {
         Ok(())
@@ -849,7 +850,9 @@ pub fn count_opt_out_clear_receipts(vault: &Vault, party: &str) -> CommResult<us
 
 /// Returns canonical contact-view bytes derived from live standing claims.
 pub fn materialize_contact_record(vault: &Vault, party: &str) -> CommResult<Vec<u8>> {
-    let party_ref = resolve_or_create_party(vault, party)?;
+    let Some(party_ref) = resolve_party(vault, party)? else {
+        return Ok(Vec::new());
+    };
     let rtxn = vault.store.env.read_txn()?;
     build_contact_view_in_txn(vault, &rtxn, party_ref).map(|(bytes, _)| bytes)
 }
@@ -984,18 +987,14 @@ fn apply_projector_rule_in_txn(
                 occurred_at,
             };
             let new_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
-            if let Some((old_id, _)) = active.into_iter().next() {
-                let raw = vault
-                    .store
-                    .entities
-                    .get(&*wtxn, old_id.as_bytes())?
-                    .ok_or(CommError::InvalidRecord)?;
-                let header = EntityMetadataHeader::parse(&raw).ok_or(CommError::InvalidRecord)?;
-                if header.entity_type != ENTITY_TYPE_CLAIM {
-                    return Err(CommError::InvalidRecord);
+            if let Some((old_head_id, old_head)) = active.into_iter().next() {
+                let head_at = old_head.valid_from.unwrap_or(occurred_at);
+                let close_at = occurred_at.max(head_at);
+                if occurred_at >= head_at {
+                    vault.supersede_claim_in_txn(wtxn, &new_id, &old_head_id, close_at)?;
+                } else {
+                    vault.supersede_claim_in_txn(wtxn, &old_head_id, &new_id, close_at)?;
                 }
-                let close_at = occurred_at.max(header.occurred_start);
-                vault.supersede_claim_in_txn(wtxn, &new_id, &old_id, close_at)?;
             }
             Ok(())
         }
@@ -1056,8 +1055,9 @@ fn apply_projector_rule_in_txn(
                 true,
             )?;
             require_at_most_one(&active)?;
-            if let Some((claim_id, _)) = active.into_iter().next() {
-                vault.retract_claim_in_txn(wtxn, &claim_id, occurred_at)?;
+            if let Some((claim_id, matched)) = active.into_iter().next() {
+                let close_at = occurred_at.max(matched.valid_from.unwrap_or(occurred_at));
+                vault.retract_claim_in_txn(wtxn, &claim_id, close_at)?;
             }
             Ok(())
         }

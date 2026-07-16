@@ -46,6 +46,32 @@ fn standing_channel_claim_id(
     Ok(claims[0].0)
 }
 
+fn active_last_touch_occurred_at(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+) -> CommResult<u64> {
+    let party_ref = resolve_party(vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let active = matching_claims_in_txn(
+        vault,
+        &rtxn,
+        party_ref,
+        PREDICATE_COMM_LAST_TOUCH,
+        Some(channel_class),
+        None,
+        true,
+    )?;
+    require_at_most_one(&active)?;
+    let Some((_, head)) = active.into_iter().next() else {
+        return Err(CommError::InvalidRecord);
+    };
+    match head.value {
+        CommClaimValue::LastTouch { occurred_at, .. } => Ok(occurred_at),
+        _ => Err(CommError::InvalidRecord),
+    }
+}
+
 fn put_malformed_comm_record(vault: &Vault) -> CommResult<()> {
     let id = EntityId::now();
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 1);
@@ -250,6 +276,18 @@ fn contact_materialization_is_deterministic_without_intervening_writes() -> Comm
 }
 
 #[test]
+fn materializing_unknown_party_is_read_only() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    assert_eq!(resolve_party(&vault, "party-never-recorded")?, None);
+
+    let materialized = materialize_contact_record(&vault, "party-never-recorded")?;
+
+    assert!(materialized.is_empty());
+    assert_eq!(resolve_party(&vault, "party-never-recorded")?, None);
+    Ok(())
+}
+
+#[test]
 fn finding_1_future_dated_claims_are_standing_and_materialize_deterministically() -> CommResult<()>
 {
     let (_dir, vault) = open_vault();
@@ -431,6 +469,10 @@ fn finding_4_out_of_order_last_touch_events_do_not_wedge_projection() -> CommRes
         count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f4", "email")?,
         2
     );
+    assert_eq!(
+        active_last_touch_occurred_at(&vault, "party-f4", "email")?,
+        100
+    );
 
     record_comm_send_receipt(&vault, "party-f4", "email", 25)?;
     run_comm_projector(&vault)?;
@@ -441,6 +483,115 @@ fn finding_4_out_of_order_last_touch_events_do_not_wedge_projection() -> CommRes
     assert_eq!(
         count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f4", "email")?,
         3
+    );
+    assert_eq!(
+        active_last_touch_occurred_at(&vault, "party-f4", "email")?,
+        100
+    );
+    Ok(())
+}
+
+#[test]
+fn forward_last_touch_event_replaces_the_active_head() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-last-touch-forward", "email", 100)?;
+    run_comm_projector(&vault)?;
+    record_comm_send_receipt(&vault, "party-last-touch-forward", "email", 150)?;
+    run_comm_projector(&vault)?;
+
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-last-touch-forward",
+            "email",
+        )?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-last-touch-forward",
+            "email",
+        )?,
+        2
+    );
+    assert_eq!(
+        active_last_touch_occurred_at(&vault, "party-last-touch-forward", "email")?,
+        150
+    );
+    Ok(())
+}
+
+#[test]
+fn backdated_thread_leave_clamps_to_the_join_start() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_thread_event(&vault, "thread-backdated-leave", "party-thread", true, 100)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-backdated-leave", "party-thread")?,
+        1
+    );
+
+    record_comm_thread_event(&vault, "thread-backdated-leave", "party-thread", false, 50)?;
+    run_comm_projector(&vault)?;
+
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-backdated-leave", "party-thread")?,
+        0
+    );
+    assert_eq!(
+        count_comm_claims(
+            &vault,
+            PREDICATE_COMM_THREAD_MEMBER,
+            "party-thread",
+            None,
+            Some("thread-backdated-leave"),
+            false,
+        )?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn backdated_opt_out_clear_clamps_to_the_live_claim_start() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-opt-out-clamp", "email", 100)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        request_opt_out_clear(&vault, "party-opt-out-clamp", "email", 40)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+
+    let party_ref =
+        resolve_party(&vault, "party-opt-out-clamp")?.ok_or(CommError::InvalidRecord)?;
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    approve_pending_opt_out_clear(&vault, "party-opt-out-clamp", "email", human, 50)?;
+
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-opt-out-clamp",
+            "email",
+        )?,
+        0
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-opt-out-clamp",
+            "email",
+        )?,
+        1
+    );
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
+    assert_eq!(
+        count_opt_out_clear_receipts(&vault, "party-opt-out-clamp")?,
+        1
     );
     Ok(())
 }
