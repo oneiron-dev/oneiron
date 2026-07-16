@@ -894,6 +894,11 @@ impl Vault {
                 "package content hash does not match its canonical file tree",
             ));
         }
+        if let HubPin::ContentHash(pinned_hash) = &hub_ref.pin
+            && SkillContentHash::parse_hex(pinned_hash)? != content_hash
+        {
+            return Err(Error::InvalidSkillBody("content-hash-pinned ref drifted"));
+        }
         if package.record.source != ClaimSource::Imported {
             return Err(Error::InvalidSkillBody(
                 "hub import package must carry imported source",
@@ -901,27 +906,28 @@ impl Vault {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        let entity = match self.skill_entity_for_content_hash_in_txn(&wtxn, content_hash)? {
-            Some(existing) => existing,
-            None => {
-                let mut candidate = package.record.clone();
-                candidate.lifecycle_status = SkillLifecycle::Candidate;
-                candidate.content_hash = Some(content_hash);
-                self.apply_hub_import_skill_record(
-                    &mut wtxn,
-                    &preferred_id,
-                    &candidate,
-                    occurred,
-                    learned_at,
-                )?;
-                self.write_admitted_capability_surface_in_txn(
-                    &mut wtxn,
-                    &preferred_id,
-                    &package.capabilities,
-                )?;
-                preferred_id
-            }
-        };
+        let entity =
+            match self.imported_skill_entity_for_content_hash_in_txn(&wtxn, content_hash)? {
+                Some(existing) => existing,
+                None => {
+                    let mut candidate = package.record.clone();
+                    candidate.lifecycle_status = SkillLifecycle::Candidate;
+                    candidate.content_hash = Some(content_hash);
+                    self.apply_hub_import_skill_record(
+                        &mut wtxn,
+                        &preferred_id,
+                        &candidate,
+                        occurred,
+                        learned_at,
+                    )?;
+                    self.write_admitted_capability_surface_in_txn(
+                        &mut wtxn,
+                        &preferred_id,
+                        &package.capabilities,
+                    )?;
+                    preferred_id
+                }
+            };
 
         if self
             .read_admitted_capability_surface_in_txn(&wtxn, &entity)?
@@ -1220,6 +1226,18 @@ impl Vault {
         })
     }
 
+    fn imported_skill_entity_for_content_hash_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        content_hash: SkillContentHash,
+    ) -> Result<Option<EntityId>> {
+        self.find_structured_skill_entity_in_txn(rtxn, |id, record| {
+            Ok((record.source == ClaimSource::Imported
+                && record.content_hash == Some(content_hash))
+            .then_some(id))
+        })
+    }
+
     fn find_structured_skill_entity_in_txn<T>(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -1363,12 +1381,10 @@ impl Vault {
         for (id, body, occurred_start) in
             self.active_claims_for_predicate_in_txn(&*wtxn, entity, PREDICATE_SKILL_HUB_PROVENANCE)?
         {
-            let stored_ref = HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
+            HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
                 Error::InvalidSkillBody("hub provenance claim is missing hubRef"),
             )?)?;
-            if same_hub_alias(&stored_ref, hub_ref) {
-                prior_rows.push((id, occurred_start));
-            }
+            prior_rows.push((id, occurred_start));
         }
 
         let replacement_id = EntityId::now();
@@ -1844,6 +1860,72 @@ mod tests {
     }
 
     #[test]
+    fn hub_import_content_hash_pin_must_match_computed_tree_hash() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let imported = package(
+            candidate("fixture.content-hash-pinned-import"),
+            SkillCapabilitySurface::default(),
+        );
+        let computed_hash = imported.content_hash()?;
+        let different_hash =
+            canonical_skill_tree_hash([("SKILL.md", b"# different pinned content\n".as_slice())])?;
+        assert_ne!(computed_hash, different_hash);
+
+        let mismatched_ref = hub_ref(HubPin::ContentHash(different_hash.to_hex()));
+        assert_eq!(
+            vault
+                .import_skill_from_hub(&mismatched_ref, &imported, t(1), 2)
+                .expect_err("content-hash pin must match the computed package tree")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+
+        let matching_ref = hub_ref(HubPin::ContentHash(computed_hash.to_hex()));
+        let imported_entity = vault.import_skill_from_hub(&matching_ref, &imported, t(3), 4)?;
+        assert_eq!(
+            vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(5), 6)?,
+            imported_entity
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hub_import_dedup_ignores_local_skill_with_matching_content_hash() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let local_entity = EntityId::now();
+        let mut local = candidate("fixture.local-hash-owner");
+        local.source = ClaimSource::UserStated;
+        vault.put_skill_record(&local_entity, &local, t(1), 2)?;
+
+        let imported = package(
+            candidate("fixture.imported-hash-owner"),
+            SkillCapabilitySurface::default(),
+        );
+        assert_eq!(local.content_hash, Some(imported.content_hash()?));
+        let imported_entity =
+            vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(3), 4)?;
+
+        assert_ne!(imported_entity, local_entity);
+        assert_eq!(
+            vault
+                .get_skill_record(&local_entity)?
+                .expect("local skill remains materialized")
+                .source,
+            ClaimSource::UserStated
+        );
+        assert_eq!(vault.skill_hub_provenance_count(&local_entity)?, 0);
+        assert_eq!(
+            vault
+                .get_skill_record(&imported_entity)?
+                .expect("hub import creates a distinct skill")
+                .source,
+            ClaimSource::Imported
+        );
+        assert_eq!(vault.skill_hub_provenance_count(&imported_entity)?, 1);
+        Ok(())
+    }
+
+    #[test]
     fn hub_reimport_moves_provenance_alias_to_new_content_entity() -> Result<()> {
         let (_temp, vault) = open_vault();
         let reference = hub_ref(HubPin::None);
@@ -2255,6 +2337,79 @@ mod tests {
             HubRef::from_value(map_value(&rows[0].1.value, "hubRef").expect("provenance hub ref"))?,
             reference
         );
+        Ok(())
+    }
+
+    #[test]
+    fn hub_sync_content_change_supersedes_other_hub_provenance_aliases() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let syncing_ref = hub_ref(HubPin::None);
+        let other_ref = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.multi-hub-provenance-refresh"),
+            SkillCapabilitySurface::default(),
+        );
+        assert_eq!(
+            vault.import_skill_from_hub_with_id(&syncing_ref, &initial, entity, t(1), 2)?,
+            entity
+        );
+        assert_eq!(
+            vault.import_skill_from_hub_with_id(&other_ref, &initial, EntityId::now(), t(3), 4,)?,
+            entity
+        );
+        assert_eq!(vault.skill_hub_provenance_count(&entity)?, 2);
+
+        let mut update_record = candidate("fixture.multi-hub-provenance-refresh");
+        update_record.version = "1.1.0".to_owned();
+        let update = package_with_content(
+            update_record,
+            b"# changed through the syncing hub\n",
+            SkillCapabilitySurface::default(),
+        );
+        let updated_hash = update.content_hash()?;
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &syncing_ref,
+                &update,
+                HubSyncPolicy::MirrorOfHub,
+                t(5),
+                6,
+            )?,
+            HubSyncDisposition::Applied
+        );
+
+        let active = vault.active_claims_for_predicate(&entity, PREDICATE_SKILL_HUB_PROVENANCE)?;
+        assert_eq!(active.len(), 1);
+        assert_eq!(
+            map_text(&active[0].1.value, "contentHash"),
+            Some(updated_hash.to_hex().as_str())
+        );
+        assert_eq!(
+            HubRef::from_value(
+                map_value(&active[0].1.value, "hubRef").expect("active provenance hub ref")
+            )?,
+            syncing_ref
+        );
+
+        let mut other_alias_superseded = 0;
+        for claim_id in vault.claims_for_subject(&entity)? {
+            let Some(body) = vault.get_claim(&claim_id)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE_SKILL_HUB_PROVENANCE {
+                continue;
+            }
+            let stored_ref =
+                HubRef::from_value(map_value(&body.value, "hubRef").expect("provenance hub ref"))?;
+            if same_hub_alias(&stored_ref, &other_ref)
+                && body.lifecycle == ClaimLifecycleStatus::Superseded
+            {
+                other_alias_superseded += 1;
+            }
+        }
+        assert_eq!(other_alias_superseded, 1);
         Ok(())
     }
 
