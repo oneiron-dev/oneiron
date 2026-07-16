@@ -285,6 +285,7 @@ struct Lifecycle {
     state: OverlayLifecycleState,
     generation: u64,
     leases: usize,
+    segment_active: bool,
 }
 
 struct Lease {
@@ -508,6 +509,7 @@ pub(crate) struct SessionOverlay {
     state: Mutex<Arc<OverlayState>>,
     lifecycle: Mutex<Lifecycle>,
     lease_drained: Condvar,
+    segment_available: Condvar,
     budget_bytes: usize,
 }
 
@@ -519,8 +521,10 @@ impl SessionOverlay {
                 state: OverlayLifecycleState::Live,
                 generation: NEXT_OVERLAY_GENERATION.fetch_add(1, Ordering::Relaxed),
                 leases: 0,
+                segment_active: false,
             }),
             lease_drained: Condvar::new(),
+            segment_available: Condvar::new(),
             budget_bytes,
         })
     }
@@ -559,13 +563,26 @@ impl SessionOverlay {
     }
 
     pub(crate) fn install_txn_segment(self: &Arc<Self>) -> Result<TxnSegmentGuard> {
-        let lease = self.acquire_live_lease()?;
+        ACTIVE_SEGMENT.with(|slot| {
+            if slot.borrow().is_some() {
+                return Err(Error::InvariantViolation(
+                    "a session txn segment is already installed on this thread",
+                ));
+            }
+            Ok(())
+        })?;
+
+        let lease = self.acquire_segment_lease()?;
         let generation = lease.generation;
-        let snapshot = self
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))?
-            .clone();
+        let snapshot = match self.state.lock() {
+            Ok(state) => state.clone(),
+            Err(_) => {
+                self.release_segment_writer();
+                return Err(Error::InvariantViolation(
+                    "session overlay state mutex poisoned",
+                ));
+            }
+        };
         let segment = TxnSegment {
             overlay: self.clone(),
             generation,
@@ -575,7 +592,7 @@ impl SessionOverlay {
             journal_bytes: 0,
             _lease: lease,
         };
-        ACTIVE_SEGMENT.with(|slot| {
+        let install_result = ACTIVE_SEGMENT.with(|slot| {
             let mut slot = slot.borrow_mut();
             if slot.is_some() {
                 return Err(Error::InvariantViolation(
@@ -584,7 +601,11 @@ impl SessionOverlay {
             }
             *slot = Some(segment);
             Ok(())
-        })?;
+        });
+        if let Err(error) = install_result {
+            self.release_segment_writer();
+            return Err(error);
+        }
         Ok(TxnSegmentGuard {
             overlay: self.clone(),
             finished: false,
@@ -740,15 +761,55 @@ impl SessionOverlay {
                     "the active txn segment belongs to another session overlay",
                 ));
             }
-            segment.preview = self.apply_to_state(
+            segment.preview = Self::apply_preflighted_to_state(
                 segment.preview.clone(),
                 std::slice::from_ref(&mutation),
                 &[],
-                true,
             )?;
             segment.mutations.push(mutation);
             Ok(())
         })
+    }
+
+    fn acquire_segment_lease(self: &Arc<Self>) -> Result<Lease> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
+        while lifecycle.segment_active {
+            if lifecycle.state != OverlayLifecycleState::Live {
+                return Err(Error::OffRecordOverlayLeaseClosed {
+                    generation: lifecycle.generation,
+                });
+            }
+            // Base writers are acquired before this permit (base -> segment). Commit
+            // releases the base writer before applying/releasing this permit and never
+            // reacquires it, so there is no reverse-order path and waiters make progress.
+            lifecycle = self.segment_available.wait(lifecycle).map_err(|_| {
+                Error::InvariantViolation("session overlay lifecycle mutex poisoned")
+            })?;
+        }
+        if lifecycle.state != OverlayLifecycleState::Live {
+            return Err(Error::OffRecordOverlayLeaseClosed {
+                generation: lifecycle.generation,
+            });
+        }
+        lifecycle.leases = lifecycle
+            .leases
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("session overlay lease count"))?;
+        lifecycle.segment_active = true;
+        Ok(Lease {
+            overlay: self.clone(),
+            generation: lifecycle.generation,
+        })
+    }
+
+    fn release_segment_writer(&self) {
+        if let Ok(mut lifecycle) = self.lifecycle.lock() {
+            lifecycle.segment_active = false;
+            self.segment_available.notify_one();
+        }
     }
 
     fn acquire_live_lease(self: &Arc<Self>) -> Result<Lease> {
@@ -805,33 +866,23 @@ impl SessionOverlay {
             .state
             .lock()
             .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))?;
-        *state = self.apply_to_state(state.clone(), &segment.mutations, &segment.journal, true)?;
+        *state =
+            Self::apply_preflighted_to_state(state.clone(), &segment.mutations, &segment.journal)?;
         Ok(())
     }
 
-    fn apply_to_state(
-        &self,
+    // Budget failures belong exclusively to preflight, before the base commit.
+    // This apply helper deliberately has no budget input or budget-error branch.
+    fn apply_preflighted_to_state(
         state: Arc<OverlayState>,
         mutations: &[OverlayMutation],
         journal: &[JournalEntry],
-        enforce_budget: bool,
     ) -> Result<Arc<OverlayState>> {
         let mut next = state.as_ref().clone();
         for mutation in mutations {
-            let projected = project_mutation(&next, mutation)?;
-            if enforce_budget {
-                self.ensure_mutation_budget(
-                    next.bytes_used,
-                    next.bytes_used,
-                    projected.bytes_used,
-                )?;
-            }
-            next = projected;
+            next = project_mutation(&next, mutation)?;
         }
         for entry in journal {
-            if enforce_budget {
-                self.ensure_budget(next.bytes_used, entry.byte_size())?;
-            }
             Arc::make_mut(&mut next.journal).push(entry.clone());
             next.recalculate_bytes();
         }
@@ -903,18 +954,18 @@ impl TxnSegmentGuard {
 
 impl Drop for TxnSegmentGuard {
     fn drop(&mut self) {
-        if self.finished {
-            return;
+        if !self.finished {
+            ACTIVE_SEGMENT.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                if slot
+                    .as_ref()
+                    .is_some_and(|segment| Arc::ptr_eq(&segment.overlay, &self.overlay))
+                {
+                    slot.take();
+                }
+            });
         }
-        ACTIVE_SEGMENT.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if slot
-                .as_ref()
-                .is_some_and(|segment| Arc::ptr_eq(&segment.overlay, &self.overlay))
-            {
-                slot.take();
-            }
-        });
+        self.overlay.release_segment_writer();
     }
 }
 
@@ -1031,6 +1082,10 @@ fn debug_bytes(value: &impl std::fmt::Debug) -> usize {
 mod tests {
     use super::*;
     use crate::temporal::TimeRange;
+    use std::sync::mpsc::{RecvTimeoutError, sync_channel};
+    use std::time::Duration;
+
+    const CONCURRENCY_TIMEOUT: Duration = Duration::from_secs(1);
 
     fn put_op(data: Vec<u8>) -> BatchOp {
         BatchOp::Put {
@@ -1042,6 +1097,265 @@ mod tests {
             allow_maintenance: false,
             allow_reserved_predicate: false,
         }
+    }
+
+    #[test]
+    fn same_overlay_segments_serialize_across_threads() -> Result<()> {
+        let budget = 7;
+        let overlay = SessionOverlay::new(budget);
+        let (first_installed_tx, first_installed_rx) = sync_channel(0);
+        let (release_first_tx, release_first_rx) = sync_channel(0);
+        let first_overlay = overlay.clone();
+        let first = std::thread::spawn(move || -> Result<()> {
+            let segment = first_overlay.install_txn_segment()?;
+            first_overlay.put(OverlayKeyspace::Entities, b"a", &[1_u8; 3])?;
+            first_installed_tx
+                .send(())
+                .expect("first install receiver remains live");
+            release_first_rx
+                .recv()
+                .expect("first release sender remains live");
+            segment.commit()
+        });
+        first_installed_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("first segment installs");
+
+        let (second_attempting_tx, second_attempting_rx) = sync_channel(0);
+        let (second_installed_tx, second_installed_rx) = sync_channel(0);
+        let second_overlay = overlay.clone();
+        let second = std::thread::spawn(move || -> Result<()> {
+            second_attempting_tx
+                .send(())
+                .expect("second attempt receiver remains live");
+            let segment = second_overlay.install_txn_segment()?;
+            second_installed_tx
+                .send(())
+                .expect("second install receiver remains live");
+            match second_overlay.put(OverlayKeyspace::Entities, b"b", &[2_u8; 3]) {
+                Err(Error::OffRecordOverlayFull {
+                    budget_bytes,
+                    attempted_bytes,
+                }) => {
+                    assert_eq!(budget_bytes, budget);
+                    assert_eq!(attempted_bytes, budget + 1);
+                    segment.commit()
+                }
+                Err(other) => Err(other),
+                Ok(()) => {
+                    segment.commit()?;
+                    Err(Error::InvariantViolation(
+                        "serialized second segment escaped budget preflight",
+                    ))
+                }
+            }
+        });
+        second_attempting_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("second thread reaches install");
+
+        // Without the per-overlay permit, this arrives while both previews are
+        // empty; both puts stage, and one of the later applies tears at the budget.
+        let second_was_blocked = match second_installed_rx.recv_timeout(CONCURRENCY_TIMEOUT) {
+            Err(RecvTimeoutError::Timeout) => true,
+            Ok(()) => false,
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("second installer disconnected before reporting")
+            }
+        };
+        release_first_tx
+            .send(())
+            .expect("first segment remains live until release");
+        if second_was_blocked {
+            second_installed_rx
+                .recv_timeout(CONCURRENCY_TIMEOUT)
+                .expect("second segment installs after first commit");
+        }
+
+        let first_apply = first.join().expect("first segment thread does not panic");
+        let second_apply = second.join().expect("second segment thread does not panic");
+        assert!(
+            second_was_blocked,
+            "second segment installed before the first segment finished"
+        );
+        match first_apply {
+            Ok(()) => {}
+            Err(Error::OffRecordOverlayFull { .. }) => {
+                panic!("first post-commit apply returned OffRecordOverlayFull")
+            }
+            Err(other) => panic!("first post-commit apply failed: {other}"),
+        }
+        match second_apply {
+            Ok(()) => {}
+            Err(Error::OffRecordOverlayFull { .. }) => {
+                panic!("second post-commit apply returned OffRecordOverlayFull")
+            }
+            Err(other) => panic!("second segment failed: {other}"),
+        }
+        let snapshot = overlay.snapshot()?;
+        assert_eq!(snapshot.row_count(OverlayKeyspace::Entities), 1);
+        assert_eq!(snapshot.bytes_used(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn apply_is_budget_infallible_after_authoritative_preflight() -> Result<()> {
+        let budget = 8;
+        let overlay = SessionOverlay::new(budget);
+        let segment = overlay.install_txn_segment()?;
+        overlay.put(OverlayKeyspace::Entities, b"a", &[1_u8; 5])?;
+        segment.commit()?;
+        assert_eq!(overlay.snapshot()?.bytes_used(), 6);
+
+        let segment = overlay.install_txn_segment()?;
+        match overlay.put(OverlayKeyspace::Entities, b"b", &[2_u8; 2]) {
+            Err(Error::OffRecordOverlayFull {
+                budget_bytes,
+                attempted_bytes,
+            }) => {
+                assert_eq!(budget_bytes, budget);
+                assert_eq!(attempted_bytes, budget + 1);
+            }
+            Err(other) => panic!("unexpected preflight error: {other}"),
+            Ok(()) => panic!("over-budget mutation escaped preflight"),
+        }
+        match segment.commit() {
+            Ok(()) => {}
+            Err(Error::OffRecordOverlayFull { .. }) => {
+                panic!("empty post-preflight apply returned OffRecordOverlayFull")
+            }
+            Err(other) => panic!("empty post-preflight apply failed: {other}"),
+        }
+        assert_eq!(overlay.snapshot()?.bytes_used(), 6);
+
+        // Production staging cannot create this state: preflight above rejects it.
+        // Injecting it test-only proves the post-base-commit helper is structurally
+        // budget-free and cannot construct OffRecordOverlayFull even at 9/8 bytes.
+        let segment = overlay.install_txn_segment()?;
+        ACTIVE_SEGMENT.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let active = slot.as_mut().expect("the test segment is installed");
+            active.mutations.push(OverlayMutation::Put {
+                keyspace: OverlayKeyspace::Entities,
+                key: b"b".to_vec(),
+                value: vec![2_u8; 2],
+            });
+        });
+        match segment.commit() {
+            Ok(()) => {}
+            Err(Error::OffRecordOverlayFull { .. }) => {
+                panic!("post-commit apply reconstructed OffRecordOverlayFull")
+            }
+            Err(other) => panic!("post-commit apply failed: {other}"),
+        }
+        let snapshot = overlay.snapshot()?;
+        assert_eq!(snapshot.row_count(OverlayKeyspace::Entities), 2);
+        assert_eq!(snapshot.bytes_used(), budget + 1);
+        Ok(())
+    }
+
+    #[test]
+    #[allow(clippy::unnecessary_wraps)]
+    fn different_overlays_keep_segment_concurrency_parallel() -> Result<()> {
+        let first_overlay = SessionOverlay::new(64);
+        let other_overlay = SessionOverlay::new(64);
+        let (first_installed_tx, first_installed_rx) = sync_channel(0);
+        let (release_first_tx, release_first_rx) = sync_channel(0);
+        let held_overlay = first_overlay.clone();
+        let first = std::thread::spawn(move || -> Result<()> {
+            let segment = held_overlay.install_txn_segment()?;
+            first_installed_tx
+                .send(())
+                .expect("first install receiver remains live");
+            release_first_rx
+                .recv()
+                .expect("first release sender remains live");
+            segment.commit()
+        });
+        first_installed_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("first overlay segment installs");
+
+        let (other_attempting_tx, other_attempting_rx) = sync_channel(0);
+        let (other_installed_tx, other_installed_rx) = sync_channel(0);
+        let parallel_overlay = other_overlay;
+        let other = std::thread::spawn(move || -> Result<()> {
+            other_attempting_tx
+                .send(())
+                .expect("other attempt receiver remains live");
+            let segment = parallel_overlay.install_txn_segment()?;
+            other_installed_tx
+                .send(())
+                .expect("other install receiver remains live");
+            segment.commit()
+        });
+
+        let (same_attempting_tx, same_attempting_rx) = sync_channel(0);
+        let (same_installed_tx, same_installed_rx) = sync_channel(0);
+        let contended_overlay = first_overlay;
+        let same = std::thread::spawn(move || -> Result<()> {
+            same_attempting_tx
+                .send(())
+                .expect("same-overlay attempt receiver remains live");
+            let segment = contended_overlay.install_txn_segment()?;
+            same_installed_tx
+                .send(())
+                .expect("same-overlay install receiver remains live");
+            segment.commit()
+        });
+        other_attempting_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("other-overlay thread reaches install");
+        same_attempting_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("same-overlay thread reaches install");
+
+        let other_ran_in_parallel = match other_installed_rx.recv_timeout(CONCURRENCY_TIMEOUT) {
+            Ok(()) => true,
+            Err(RecvTimeoutError::Timeout) => false,
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("other-overlay installer disconnected before reporting")
+            }
+        };
+        let same_was_blocked = match same_installed_rx.recv_timeout(CONCURRENCY_TIMEOUT) {
+            Err(RecvTimeoutError::Timeout) => true,
+            Ok(()) => false,
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("same-overlay installer disconnected before reporting")
+            }
+        };
+        release_first_tx
+            .send(())
+            .expect("first overlay segment remains live until release");
+        if !other_ran_in_parallel {
+            other_installed_rx
+                .recv_timeout(CONCURRENCY_TIMEOUT)
+                .expect("other overlay eventually installs");
+        }
+        if same_was_blocked {
+            same_installed_rx
+                .recv_timeout(CONCURRENCY_TIMEOUT)
+                .expect("same overlay installs after release");
+        }
+
+        match first.join().expect("first overlay thread does not panic") {
+            Ok(()) => {}
+            Err(other) => panic!("first overlay segment failed: {other}"),
+        }
+        match other.join().expect("other overlay thread does not panic") {
+            Ok(()) => {}
+            Err(other) => panic!("other overlay segment failed: {other}"),
+        }
+        match same.join().expect("same overlay thread does not panic") {
+            Ok(()) => {}
+            Err(other) => panic!("same overlay segment failed: {other}"),
+        }
+        assert!(
+            other_ran_in_parallel,
+            "a segment on another overlay was blocked by a global permit"
+        );
+        assert!(same_was_blocked, "the same-overlay permit was not held");
+        Ok(())
     }
 
     #[test]
