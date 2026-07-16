@@ -503,18 +503,25 @@ impl<'a> AgentDispatcher<'a> {
                 proposer: *killer_attempt,
             }));
         }
-        let killer_payload = decode_dreamer_attempt_payload(&killer.payload)?;
+        // The killer's authority is read from its own stored row, and every check that
+        // cannot confirm it as a real agent-dispatch parent fails closed to a proposal
+        // (found / live / kind / attempt-type / decodes / parent). Its payload bytes are
+        // caller-reachable — `AttemptQueue::enqueue` stores arbitrary bytes under any
+        // kind, and `DreamerRunnerStore::enqueue` stores an unvalidated input `Value` —
+        // so a killer whose envelope or dispatch input does not decode is an
+        // unconfirmable killer, not storage corruption: classify it, do not error.
+        let Ok(killer_payload) = decode_dreamer_attempt_payload(&killer.payload) else {
+            return Ok(KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: *spawn_attempt_id,
+                proposer: *killer_attempt,
+            }));
+        };
         if killer_payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
             return Ok(KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: *spawn_attempt_id,
                 proposer: *killer_attempt,
             }));
         }
-        // Unlike the target/envelope decodes above (corruption-only), a live
-        // agent-dispatch row can carry caller-supplied input that fails the codec —
-        // `enqueue` validates only the attempt-type string, never the input — so a
-        // malformed killer is an unauthorized killer, not a data-integrity error:
-        // fail closed to a proposal like the other non-real-killer cases.
         if decode_agent_dispatch_input(&killer_payload.input).is_err() {
             return Ok(KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: *spawn_attempt_id,
@@ -903,6 +910,49 @@ mod one_1698_tests {
             KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: child.attempt.id,
                 proposer: malformed_killer.id,
+            })
+        );
+        assert_eq!(
+            queue.get(child.attempt.id)?.expect("child exists").state,
+            AttemptState::Queued
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn undecodable_killer_envelope_proposes() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let queue = AttemptQueue::new(&vault);
+        // The generic queue stores arbitrary payload bytes under any kind, so a caller
+        // can enqueue a live dreamer-kind killer whose envelope never decodes as a
+        // DreamerAttemptPayload (0xC1 is the reserved, never-valid MessagePack marker).
+        let EnqueueOutcome::Enqueued(undecodable_killer) = queue.enqueue(EnqueueAttempt {
+            kind: crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
+            payload: vec![0xC1],
+            dedupe_key: None,
+            run_id: None,
+            now: 1,
+        })?
+        else {
+            panic!("expected fresh undecodable killer");
+        };
+        let dispatcher = AgentDispatcher::new(&vault);
+        let child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            undecodable_killer.id,
+            2,
+        )?;
+
+        // The killer is the child's named parent, but its envelope does not decode, so
+        // it cannot be confirmed as a real killer. The old `?` aborted the call with a
+        // decode error; it must fail closed to Proposed with the target left alive.
+        let outcome = dispatcher.kill_spawn(&child.attempt.id, &undecodable_killer.id, 3)?;
+        assert_eq!(
+            outcome,
+            KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: child.attempt.id,
+                proposer: undecodable_killer.id,
             })
         );
         assert_eq!(
