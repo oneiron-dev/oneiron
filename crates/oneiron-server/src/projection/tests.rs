@@ -119,7 +119,9 @@ fn skill_full_projection_exposes_reliability_metadata() {
         "generated": false,
         "humanAuthored": true,
         "dependencies": [{"skillId": "oneiron.skill.base", "minVersion": "1.0.0"}],
-        "provenance": {"source": "fixture"}
+        "provenance": {"source": "fixture"},
+        "contentHash": "c4f2fad6eeab4789a4560a3ee555ad9be4384b57c55f3a72b9244351a7508460",
+        "forkedFrom": "0123456789abcdef0123456789abcdef"
     }))
     .unwrap();
 
