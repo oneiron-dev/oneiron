@@ -46,7 +46,13 @@ mod cb_t {
     fn board_block_opens_with_context_board_render_tag() {
         let render = arm_render_board_block();
         let first_line = render.text.lines().next().expect("block has a first line");
-        assert!(first_line.starts_with("[CONTEXT_BOARD "));
+        assert!(
+            first_line
+                .strip_prefix("[CONTEXT_BOARD ")
+                .and_then(|rest| rest.strip_suffix(']'))
+                .is_some(),
+            "opening tag must be a complete [CONTEXT_BOARD …] line"
+        );
         assert_eq!(render.text.matches("[CONTEXT_BOARD ").count(), 1);
         assert_eq!(render.text.matches("[/CONTEXT_BOARD]").count(), 1);
         assert_eq!(render.text.matches("MEMORY_BOARD").count(), 0);
@@ -854,8 +860,11 @@ mod cb_a {
 
     /// Label-forgery lineage-check observations.
     struct LabelForgeryAttempt {
-        /// Distinct agent-exposed write paths through which the restamp was
-        /// attempted (fixture: EVERY exposed path — F24).
+        /// Write paths exposed to the agent, enumerated by the fixture —
+        /// the FULL exposed surface, not a sample (F24).
+        exposed_agent_write_paths: usize,
+        /// Count of paths through which the restamp was actually attempted
+        /// (must cover every exposed agent write path — F24).
         write_paths_attempted: usize,
         /// Lineage-check rejections (must equal the attempted paths).
         lineage_check_rejections: usize,
@@ -877,7 +886,11 @@ mod cb_a {
     #[ignore = "armed by ONE-1710"]
     fn label_forgery_lineage_check_rejects_restamped_source() {
         let forgery = arm_label_forgery_attempt();
-        assert!(forgery.write_paths_attempted >= 1);
+        assert!(forgery.exposed_agent_write_paths >= 1);
+        assert_eq!(
+            forgery.write_paths_attempted,
+            forgery.exposed_agent_write_paths
+        );
         assert_eq!(
             forgery.lineage_check_rejections,
             forgery.write_paths_attempted
@@ -1115,6 +1128,12 @@ mod cb_s {
         /// Classes on untouched connection B, observed at the same moment
         /// (must still hold the full default — no cross-connection leak).
         conn_b_classes: usize,
+        /// True iff connection A still holds the my-children class after the
+        /// unsubscribe (must be false — that is the class it removed).
+        conn_a_includes_my_children_after_unsubscribe: bool,
+        /// True iff untouched connection B still holds the my-children class
+        /// (must be true — no cross-connection leak).
+        conn_b_includes_my_children: bool,
         /// Gate/consent prompts raised by the unsubscribe (agent-free verb).
         unsubscribe_gate_prompts: usize,
     }
@@ -1135,6 +1154,8 @@ mod cb_s {
         let isolation = arm_subscription_isolation();
         assert_eq!(isolation.conn_a_classes_after_unsubscribe, 2);
         assert_eq!(isolation.conn_b_classes, 3);
+        assert!(!isolation.conn_a_includes_my_children_after_unsubscribe);
+        assert!(isolation.conn_b_includes_my_children);
         assert_eq!(isolation.unsubscribe_gate_prompts, 0);
     }
 
@@ -1211,6 +1232,13 @@ mod cb_s {
         deliveries_via_adapter: usize,
         /// Deliveries via the hard fallback (layer 3).
         deliveries_via_fallback: usize,
+        /// True iff the hook-capable instance's wake was delivered through
+        /// its installed adapter (layer 2 — the instance that owns the one
+        /// adapter install).
+        hook_capable_delivered_via_adapter: bool,
+        /// True iff the weak-hook instance's wake was delivered through the
+        /// hard fallback (layer 3 — it has no adapter to use).
+        weak_hook_delivered_via_fallback: bool,
     }
 
     /// ONE-1703 fixture: two instances of the SAME harness under different
@@ -1234,6 +1262,8 @@ mod cb_s {
         assert!(install.mailbox_persisted_until_delivery);
         assert_eq!(install.deliveries_via_adapter, 1);
         assert_eq!(install.deliveries_via_fallback, 1);
+        assert!(install.hook_capable_delivered_via_adapter);
+        assert!(install.weak_hook_delivered_via_fallback);
     }
 }
 
