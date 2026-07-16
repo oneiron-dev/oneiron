@@ -15,8 +15,9 @@
 //! public API.
 
 use oneiron::{
-    ClaimSource, ClaimSubject, EntityId, HnswConfig, IdentityOpEvidence, IdentityOpWrite,
-    IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan, Vault, VaultConfig,
+    ClaimSource, ClaimSubject, EntityId, HnswConfig, IdentityOpEvidence, IdentityOpOutcome,
+    IdentityOpWrite, IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan,
+    Vault, VaultConfig,
 };
 
 fn test_config() -> VaultConfig {
@@ -55,7 +56,7 @@ fn put_person(vault: &Vault, byte: u8) -> EntityId {
 /// Applies a REAL MS-01 merge (auto by default, r3) and returns its ledger
 /// event id.
 fn real_merge(vault: &Vault, sources: Vec<EntityId>, survivor: EntityId, now: u64) -> EntityId {
-    vault
+    let outcome = vault
         .apply_identity_topology_op(
             &IdentityTopologyOp::Merge(MergeOp {
                 sources,
@@ -69,13 +70,16 @@ fn real_merge(vault: &Vault, sources: Vec<EntityId>, survivor: EntityId, now: u6
             &IdentityOpWrite::auto(ClaimSource::Inferred),
             now,
         )
-        .expect("apply merge")
-        .event
+        .expect("apply merge");
+    let IdentityOpOutcome::Applied { event, .. } = outcome else {
+        panic!("auto merge must apply, got {outcome:?}");
+    };
+    event
 }
 
 /// Applies a REAL MS-01 split (≥1 head) and returns its ledger event id.
 fn real_split(vault: &Vault, entity: EntityId, heads: Vec<EntityId>, now: u64) -> EntityId {
-    vault
+    let outcome = vault
         .apply_identity_topology_op(
             &IdentityTopologyOp::Split(SplitOp {
                 entity,
@@ -89,8 +93,11 @@ fn real_split(vault: &Vault, entity: EntityId, heads: Vec<EntityId>, now: u64) -
             &IdentityOpWrite::auto(ClaimSource::Inferred),
             now,
         )
-        .expect("apply split")
-        .event
+        .expect("apply split");
+    let IdentityOpOutcome::Applied { event, .. } = outcome else {
+        panic!("auto split must apply, got {outcome:?}");
+    };
+    event
 }
 
 /// Proposal ruling a human (or the propose lane) applies to a parked
@@ -169,6 +176,11 @@ mod seam {
         unimplemented!("armed by ONE-1745: per-head claim assignment count")
     }
 
+    /// The EXACT claim-id set assigned to `head` (identity, not just count).
+    pub(crate) fn claim_ids_assigned_to_head(_vault: &Vault, _head: &EntityId) -> Vec<EntityId> {
+        unimplemented!("armed by ONE-1745: per-head claim-id set")
+    }
+
     /// Claims still stored on the split original.
     pub(crate) fn count_claims_on_original(_vault: &Vault, _entity: &EntityId) -> usize {
         unimplemented!("armed by ONE-1745: original-entity claim count")
@@ -200,6 +212,11 @@ mod seam {
     /// Behavioral claims scoped to `facet` via `facet_of`.
     pub(crate) fn count_facet_of_scoped_claims(_vault: &Vault, _facet: &EntityId) -> usize {
         unimplemented!("armed by ONE-1745: facet_of scoping count")
+    }
+
+    /// The EXACT claim-id set scoped to `facet` (membership, not count).
+    pub(crate) fn claim_ids_scoped_to_facet(_vault: &Vault, _facet: &EntityId) -> Vec<EntityId> {
+        unimplemented!("armed by ONE-1745: per-facet claim-id set")
     }
 
     /// Total entities of one registry type byte (base-id conservation
@@ -310,6 +327,12 @@ mod seam {
     /// Receipts recorded for self-demotions (never silent).
     pub(crate) fn count_demotion_receipts(_vault: &Vault) -> usize {
         unimplemented!("armed by ONE-1748: demotion receipts")
+    }
+
+    /// The scope's current consent posture (pinned wire strings, e.g.
+    /// "auto" / "proposed").
+    pub(crate) fn scope_state(_vault: &Vault, _scope: u64) -> String {
+        unimplemented!("armed by ONE-1748: scope consent-state read")
     }
 
     /// Whether an op kind's scopes sit on the propose→auto ramp at all.
@@ -461,6 +484,21 @@ fn ms03_reassignment_assigns_each_claim_to_a_head() {
     );
     assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_a), 2);
     assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_b), 1);
+
+    // Fully assigned map: ZERO claims remain on the split original.
+    assert_eq!(seam::count_claims_on_original(&vault, &original), 0);
+
+    // Identity, not just cardinality: each head carries EXACTLY the claim
+    // ids the map assigned, and the head sets are disjoint.
+    let mut on_a = seam::claim_ids_assigned_to_head(&vault, &head_a);
+    on_a.sort();
+    let mut expected_a = vec![claim_1, claim_2];
+    expected_a.sort();
+    assert_eq!(on_a, expected_a);
+    assert_eq!(
+        seam::claim_ids_assigned_to_head(&vault, &head_b),
+        vec![claim_3]
+    );
 }
 
 /// [NEG] r2/§4: unattributable residue is NEVER force-assigned — it stays
@@ -548,6 +586,17 @@ fn ms03_facet_never_blends_profiles_across_masks() {
     // Exactly one claim per mask; a blending implementation reads 2.
     assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[0]), 1);
     assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[1]), 1);
+
+    // Exact per-facet MEMBERSHIP, not just counts: each mask carries the
+    // one claim the map scoped to it, and never the other's.
+    assert_eq!(
+        seam::claim_ids_scoped_to_facet(&vault, &minted[0]),
+        vec![claim_a]
+    );
+    assert_eq!(
+        seam::claim_ids_scoped_to_facet(&vault, &minted[1]),
+        vec![claim_b]
+    );
 }
 
 // ===== ONE-1746 (MS-04) — entity.distinct_from =====
@@ -742,6 +791,8 @@ fn ms06_self_demotion_is_receipted_never_silent() {
     assert_eq!(seam::count_demotion_receipts(&vault), 0);
     seam::demote_scope_to_propose(&vault, scope);
     assert_eq!(seam::count_demotion_receipts(&vault), 1);
+    // The demotion actually moved the scope's consent posture.
+    assert_eq!(seam::scope_state(&vault, scope), "proposed");
 }
 
 /// [NEG] r7: merge/split are AUTO day one — they are never placed on the

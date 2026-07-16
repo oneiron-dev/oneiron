@@ -1676,6 +1676,27 @@ fn materialize_entity_blob_in_txn(
             peer_key,
             crate::unix_seconds_now(),
         )?
+    } else if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        // ARCH-0055 identity-topology ledger events: the ARCH-0023b
+        // fail-closed · single-writer stream class, registered in the
+        // AUTHORITY_LOG shape. Events are immutable single-writer records:
+        // a byte-identical replay is an idempotent skip; divergent bytes
+        // for one id are equivocation-shaped and quarantine typed (never
+        // silent LWW). Structure is re-validated fail-closed before any
+        // byte stages, and ingest is quota-bounded per stream.
+        if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+            if *existing == *blob {
+                return Ok(false);
+            }
+            return Err(crate::Error::IdentityTopologyEventDivergence { id });
+        }
+        crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
+        quota::try_accept_maintenance_ingest_peer_in_txn(
+            vault,
+            wtxn,
+            quota::peer_key_from_identity_topology_stream(lease_vault_id),
+            crate::unix_seconds_now(),
+        )?
     } else {
         None
     };

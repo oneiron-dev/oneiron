@@ -8,81 +8,86 @@
 //! concurrent state joins ([`merge_lifecycle_states`]).
 //!
 //! Structural truth follows the D11 supersedes law: `merged_into` /
-//! `split_into` edges are canonical and carry no body-field twin. The ledger
-//! events are type-0 CLAIM rows under [`PREDICATE_IDENTITY_TOPOLOGY_OP`]
-//! riding the existing deterministic gate fold with
-//! [`ClaimApprovalStatus::Auto`] by default (ARCH-0055 r3 — the propose lane
-//! is an explicit caller choice, never a mandatory human queue), and they
-//! project into the receipt family as `ReceiptKind::IdentityLifecycle`
-//! records. Undo is a counter-event over the ledger,
-//! never a rewrite (r1); claim subjects are never eagerly rewritten (r6) —
-//! read-time canonicalization through the redirect projection is ONE-1744.
-//! Reassignment-map application and FACET minting arm in ONE-1745;
-//! `entity.distinct_from` claim storage arms in ONE-1746.
+//! `split_into` edges are canonical and carry no body-field twin, and their
+//! writes are RESERVED to this module's apply/undo door (public edge
+//! builders reject them typed). The ledger events are engine-authored
+//! type-76 [`crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT`]
+//! maintenance records: public puts are rejected like every maintenance
+//! kind (D5/MODEL pattern), sync ingest rides the fail-closed
+//! single-writer-leased stream class (ARCH-0023b), and the fold, the
+//! receipt projection, and any rebuild all read from this one record
+//! family. Causality is the engine-stamped monotonic `seq` — the caller's
+//! `at` is stored as data and never orders the fold, so a backdated
+//! counter-event cannot rewrite history.
+//!
+//! Consent (ARCH-0055 r3): `Auto` is the family default and applies
+//! immediately; `Approved` applies; `Proposed` PARKS — the event is
+//! recorded for legibility but carries zero topology effects until
+//! approved; `Rejected` is the consent no-op. The propose lane is an
+//! explicit caller choice, never an engine-imposed gate. Undo is a
+//! counter-event over the ledger, never a rewrite (r1); claim subjects are
+//! never eagerly rewritten (r6) — read-time canonicalization through the
+//! redirect projection is ONE-1744. Reassignment-map application and FACET
+//! minting arm in ONE-1745; `entity.distinct_from` claim storage arms in
+//! ONE-1746.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
-use crate::affect::Vad;
-use crate::batch::{BatchOp, apply_ops};
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    encode_claim_body,
-};
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, is_structural_kind};
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, is_structural_kind};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
-
-/// Predicate of one identity-topology ledger event CLAIM (merge / split /
-/// undo counter-event). ARCH-0055 names the `entity.*` predicate namespace
-/// for this family (§9 pins `entity.distinct_from`); the ledger predicate
-/// itself is engine-chosen within that namespace.
-pub const PREDICATE_IDENTITY_TOPOLOGY_OP: &str = "entity.identity_op";
 
 /// Predicate of the anti-merge claim (ARCH-0055 §9 G.1 row): symmetric
 /// `entity.distinct_from` pair, conflict-set keyed by [`distinct_pair_key`].
 /// Declared here as the family's contract; the write path — a
 /// `CLAIM_PREDICATE_REGISTRY` entry plus the literal-dispatch match arm in
 /// `claim.rs` — arms in ONE-1746 together with re-proposal suppression.
+/// Unlike the op events (engine-authored type-76 records), distinct_from
+/// stays a public CLAIM: it is a statement about the world, not an action.
 pub const PREDICATE_ENTITY_DISTINCT_FROM: &str = "entity.distinct_from";
 
-/// vault_meta key prefix indexing identity-topology ledger events for the
-/// receipt projection: `idtop:` ‖ at(8 BE) ‖ event claim id(16). The index
-/// is enumeration plumbing only — rebuildable from the event CLAIMs, never
-/// authoritative (CID-7 law; the claim row stays the single truth).
-pub(crate) const IDENTITY_TOPOLOGY_EVENT_META_PREFIX: &[u8] = b"idtop:";
+/// vault_meta key of the engine-stamped monotonic event sequence — the
+/// family's causality clock. Allocated inside the apply/undo write txn, so
+/// a rolled-back op never burns a visible gap into committed history.
+pub(crate) const IDENTITY_TOPOLOGY_SEQ_KEY: &[u8] = b"m:identity_topology_seq";
 
-fn identity_topology_event_meta_key(at: u64, event_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(IDENTITY_TOPOLOGY_EVENT_META_PREFIX.len() + 8 + ENTITY_ID_LEN);
-    key.extend_from_slice(IDENTITY_TOPOLOGY_EVENT_META_PREFIX);
-    key.extend_from_slice(&at.to_be_bytes());
-    key.extend_from_slice(event_id.as_bytes());
-    key
-}
+const BODY_KEY_KIND: &str = "kind";
+const BODY_KEY_SEQ: &str = "seq";
+const BODY_KEY_AT: &str = "at";
+const BODY_KEY_ACTOR: &str = "actor";
+const BODY_KEY_ACTOR_CLASS: &str = "actor_class";
+const BODY_KEY_SOURCE: &str = "src";
+const BODY_KEY_APPROVAL: &str = "appr";
+const BODY_KEY_CONFIDENCE: &str = "conf";
+const BODY_KEY_EVIDENCE: &str = "evid";
+const BODY_KEY_SOURCES: &str = "sources";
+const BODY_KEY_SURVIVOR: &str = "survivor";
+const BODY_KEY_PLAN: &str = "plan";
+const BODY_KEY_ENTITY: &str = "entity";
+const BODY_KEY_HEADS: &str = "heads";
+const BODY_KEY_MAP: &str = "map";
+const BODY_KEY_TARGET: &str = "target";
 
-const VALUE_KEY_KIND: &str = "kind";
-const VALUE_KEY_AT: &str = "at";
-const VALUE_KEY_ACTOR: &str = "actor";
-const VALUE_KEY_ACTOR_CLASS: &str = "actor_class";
-const VALUE_KEY_SOURCES: &str = "sources";
-const VALUE_KEY_SURVIVOR: &str = "survivor";
-const VALUE_KEY_PLAN: &str = "plan";
-const VALUE_KEY_ENTITY: &str = "entity";
-const VALUE_KEY_HEADS: &str = "heads";
-const VALUE_KEY_ASSIGNED: &str = "assigned";
-const VALUE_KEY_RESIDUE: &str = "residue";
-const VALUE_KEY_TARGET: &str = "target";
+const MAP_KEY_ITEM: &str = "item";
+const MAP_KEY_HEAD: &str = "head";
+const MAP_KEY_FACET: &str = "facet";
 
 const EVENT_KIND_MERGE: &str = "merge";
 const EVENT_KIND_SPLIT: &str = "split";
 const EVENT_KIND_UNDO: &str = "undo";
 
 const PLAN_READ_THROUGH: &str = "read_through";
+
+const EVIDENCE_KEY_REFS: &str = "refs";
+const EVIDENCE_KEY_RATIONALE: &str = "rationale";
 
 // ─── Lifecycle state ────────────────────────────────────────────────────────
 
@@ -176,26 +181,14 @@ pub fn merge_lifecycle_states(
 // ─── Op vocabulary ──────────────────────────────────────────────────────────
 
 /// Evidence carried by an identity-topology op: entity refs backing the
-/// decision plus the agent's stated rationale. Stored on the ledger event's
-/// `evid` field — receipts explain, they never gate (r3).
+/// decision plus the agent's stated rationale. Stored on the ledger event
+/// record — receipts explain, they never gate (r3).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IdentityOpEvidence {
     /// Entities (claims, turns, mentions, …) the decision points back to.
     pub refs: Vec<EntityId>,
     /// Free-form rationale from the deciding agent or user.
     pub rationale: String,
-}
-
-impl IdentityOpEvidence {
-    fn encode(&self) -> Value {
-        Value::Map(vec![
-            (Value::from("refs"), ids_value(&self.refs)),
-            (
-                Value::from("rationale"),
-                Value::from(self.rationale.as_str()),
-            ),
-        ])
-    }
 }
 
 /// Merge survivorship posture. Nothing is overwritten by a merge — both
@@ -211,7 +204,7 @@ pub enum SurvivorshipPlan {
 }
 
 /// One reassignment-map row: where an item of the split/facet entity goes.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReassignmentEntry {
     /// The claim (entity ref) or edge being reassigned.
     pub item: ClaimSubject,
@@ -236,16 +229,20 @@ pub enum ReassignmentTarget {
 
 /// Evidence-guided reassignment map shared by split and facet (r2/r5).
 ///
-/// MS-01 records the map and validates its targets; applying it to claims,
-/// edges, and mention-links arms in ONE-1745.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// The map is encoded CANONICALLY into the split event record (entries
+/// normalized by item bytes) so ONE-1745 replays exactly what the decision
+/// stated; MS-01 validates targets and records — application arms there.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReassignmentMap {
     /// Per-item assignments; items absent from the map are residue.
     pub entries: Vec<ReassignmentEntry>,
 }
 
 impl ReassignmentMap {
-    fn assigned_and_residue_counts(&self) -> (u64, u64) {
+    /// r2 stats over the map: rows assigned to a head/facet vs rows left
+    /// as explicit ambiguous residue.
+    #[must_use]
+    pub fn assigned_and_residue_counts(&self) -> (u64, u64) {
         let assigned = self
             .entries
             .iter()
@@ -253,6 +250,28 @@ impl ReassignmentMap {
             .count() as u64;
         let residue = self.entries.len() as u64 - assigned;
         (assigned, residue)
+    }
+
+    /// The canonical entry order the wire codec pins: sorted by encoded
+    /// item bytes, then target shape — deterministic for any caller order.
+    #[must_use]
+    pub fn canonicalized(&self) -> Self {
+        let mut entries = self.entries.clone();
+        entries.sort_by_key(|entry| {
+            (
+                encode_reassignment_item(&entry.item),
+                reassignment_target_rank(&entry.target),
+            )
+        });
+        Self { entries }
+    }
+}
+
+fn reassignment_target_rank(target: &ReassignmentTarget) -> (u8, Vec<u8>) {
+    match target {
+        ReassignmentTarget::Head(head) => (0, head.as_bytes().to_vec()),
+        ReassignmentTarget::Facet { index } => (1, index.to_be_bytes().to_vec()),
+        ReassignmentTarget::Residue => (2, Vec::new()),
     }
 }
 
@@ -285,9 +304,11 @@ pub struct SplitOp {
     pub entity: EntityId,
     /// Head entities the original resolves to. MS-01 requires ≥1 head —
     /// the r2 zero-head ("gone") form has no readable witness until the
-    /// redirect projection lands (ONE-1744 lifts [`IdentityTopologyRejection::EmptyHeads`]).
+    /// redirect projection lands (ONE-1744 lifts
+    /// [`IdentityTopologyRejection::EmptyHeads`]).
     pub heads: Vec<EntityId>,
-    /// Evidence-guided item map; application arms in ONE-1745.
+    /// Evidence-guided item map; recorded canonically on the event,
+    /// application arms in ONE-1745.
     pub reassignment: ReassignmentMap,
     /// Decision evidence + rationale for the ledger event.
     pub evidence: IdentityOpEvidence,
@@ -433,8 +454,8 @@ pub enum IdentityTopologyRejection {
         entity: EntityId,
     },
     /// undo names an event that is not the current topology writer for its
-    /// entities (already undone, superseded by a later re-apply, or never
-    /// applied).
+    /// entities (already undone, superseded by a later re-apply, parked, or
+    /// never applied).
     NotCurrent {
         /// The named event.
         event: EntityId,
@@ -584,10 +605,15 @@ pub enum IdentityTopologyAction {
 /// One identity-topology ledger event, ready for folding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IdentityTopologyEvent {
-    /// The event's CLAIM entity id (unique per event).
+    /// The event's type-76 record entity id (unique per event).
     pub event_id: EntityId,
-    /// Event time (Unix seconds); the fold orders by `(at, event_id)`.
-    pub at: u64,
+    /// Engine-stamped monotonic sequence — the causality axis the fold
+    /// orders by. Caller wall time is data, never ordering.
+    pub seq: u64,
+    /// Consent axis the event was recorded under. The fold evaluates
+    /// EFFECTIVE events only (`Auto` / `Approved`); a `Proposed` event is
+    /// parked legibility with zero topology effects.
+    pub approval: ClaimApprovalStatus,
     /// The action the event records.
     pub action: IdentityTopologyAction,
 }
@@ -605,19 +631,26 @@ pub struct IdentityTopologyFold {
 }
 
 /// Folds identity-topology events into lifecycle states — the
-/// `fold_authority_log` analogue. Events are ordered by `(at, event_id)`
-/// so the fold is independent of input order; rejected events change
-/// nothing and are recorded.
+/// `fold_authority_log` analogue. Events are ordered by `(seq, event_id)`
+/// so the fold is independent of input order AND of caller-supplied wall
+/// time (a backdated counter-event cannot reorder history); non-effective
+/// events (`Proposed` parks, `Rejected` is never recorded) change nothing.
 #[must_use]
 pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityTopologyFold {
     let mut ordered: Vec<&IdentityTopologyEvent> = events.iter().collect();
-    ordered.sort_by_key(|event| (event.at, event.event_id));
+    ordered.sort_by_key(|event| (event.seq, event.event_id));
 
     let mut fold = IdentityTopologyFold::default();
     let mut applied: BTreeMap<EntityId, &IdentityTopologyOp> = BTreeMap::new();
     let mut undo_events: BTreeSet<EntityId> = BTreeSet::new();
 
     for event in ordered {
+        if !matches!(
+            event.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) {
+            continue;
+        }
         match &event.action {
             IdentityTopologyAction::Apply(op) => match evaluate_transition(&fold.states, op) {
                 Ok(transitions) => {
@@ -685,12 +718,11 @@ fn evaluate_fold_undo(
     Ok(shelled)
 }
 
-// ─── Wire events ────────────────────────────────────────────────────────────
+// ─── Event records (type-76 wire) ───────────────────────────────────────────
 
-/// Action payload of one stored ledger event. The wire drops what the fold
-/// does not evaluate: evidence lives on the claim's `evid` field, and the
-/// reassignment map is recorded as its r2 stats (assigned / residue counts;
-/// full map application arms in ONE-1745).
+/// Action payload of one stored ledger event. The split map is carried
+/// CANONICALLY (never discarded) so ONE-1745 replays exactly what the
+/// decision stated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoredIdentityOpAction {
     /// A merge event.
@@ -700,16 +732,14 @@ pub enum StoredIdentityOpAction {
         /// Surviving canonical head.
         survivor: EntityId,
     },
-    /// A split event with its r2 first-class stats.
+    /// A split event carrying its full reassignment map.
     Split {
         /// The split original.
         entity: EntityId,
         /// Head entities.
         heads: Vec<EntityId>,
-        /// Reassignment rows targeting a head.
-        assigned: u64,
-        /// Reassignment rows left as ambiguous residue.
-        residue: u64,
+        /// Canonically ordered reassignment map.
+        reassignment: ReassignmentMap,
     },
     /// A counter-event reverting `target`.
     Undo {
@@ -729,8 +759,9 @@ impl StoredIdentityOpAction {
         }
     }
 
-    /// Reconstructs the fold-grade action: evidence, survivorship plan and
-    /// reassignment map do not participate in transition evaluation.
+    /// Reconstructs the fold-grade action. Evidence and survivorship plan
+    /// do not participate in transition evaluation; the split map rides
+    /// along verbatim.
     #[must_use]
     pub fn to_fold_action(&self) -> IdentityTopologyAction {
         match self {
@@ -742,112 +773,234 @@ impl StoredIdentityOpAction {
                     survivorship_plan: SurvivorshipPlan::ReadThrough,
                 }))
             }
-            Self::Split { entity, heads, .. } => {
-                IdentityTopologyAction::Apply(IdentityTopologyOp::Split(SplitOp {
-                    entity: *entity,
-                    heads: heads.clone(),
-                    reassignment: ReassignmentMap::default(),
-                    evidence: IdentityOpEvidence::default(),
-                }))
-            }
+            Self::Split {
+                entity,
+                heads,
+                reassignment,
+            } => IdentityTopologyAction::Apply(IdentityTopologyOp::Split(SplitOp {
+                entity: *entity,
+                heads: heads.clone(),
+                reassignment: reassignment.clone(),
+                evidence: IdentityOpEvidence::default(),
+            })),
             Self::Undo { target } => IdentityTopologyAction::Undo { target: *target },
         }
     }
 }
 
-/// One identity-topology ledger event as stored on the CLAIM's `val` field
-/// (MessagePack map, pinned keys).
+/// One identity-topology ledger event as stored in a type-76 maintenance
+/// record body (engine-pinned MessagePack map).
+///
+/// Engine-authored ONLY: public puts of the type byte are rejected
+/// (`MaintenanceKindNotWritable`), so every stored record passed this
+/// module's door — the fold and the receipt projection therefore read the
+/// family fail-closed (a malformed body is corruption, never skipped).
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredIdentityOpEvent {
-    /// Event time (Unix seconds) — the `now` the apply path stamped.
+    /// Engine-stamped monotonic causality sequence.
+    pub seq: u64,
+    /// Caller-supplied event time (Unix seconds) — data, never ordering.
     pub at: u64,
-    /// Deciding actor, when the caller bound one (r1: events carry actor).
+    /// Deciding actor, validated at the door when bound (r1).
     pub actor: Option<WriteActor>,
+    /// Provenance source of the decision.
+    pub source: ClaimSource,
+    /// Consent axis the event was recorded under.
+    pub approval: ClaimApprovalStatus,
+    /// Decision confidence, finite in `[0, 1]`.
+    pub confidence: f32,
+    /// Decision evidence; absent on undo counter-events.
+    pub evidence: Option<IdentityOpEvidence>,
     /// The recorded action.
     pub action: StoredIdentityOpAction,
 }
 
 impl StoredIdentityOpEvent {
-    /// Encodes the event into its pinned MessagePack map.
+    /// Encodes the record into its pinned MessagePack map value. Split
+    /// reassignment entries are canonicalized (sorted by item bytes).
     #[must_use]
-    pub fn encode(&self) -> Value {
+    pub fn encode_value(&self) -> Value {
         let mut entries = Vec::new();
-        let kind = match &self.action {
-            StoredIdentityOpAction::Merge { .. } => EVENT_KIND_MERGE,
-            StoredIdentityOpAction::Split { .. } => EVENT_KIND_SPLIT,
-            StoredIdentityOpAction::Undo { .. } => EVENT_KIND_UNDO,
-        };
-        entries.push((Value::from(VALUE_KEY_KIND), Value::from(kind)));
-        entries.push((Value::from(VALUE_KEY_AT), Value::from(self.at)));
+        entries.push((
+            Value::from(BODY_KEY_KIND),
+            Value::from(self.action.kind_str()),
+        ));
+        entries.push((Value::from(BODY_KEY_SEQ), Value::from(self.seq)));
+        entries.push((Value::from(BODY_KEY_AT), Value::from(self.at)));
         if let Some(actor) = self.actor {
-            entries.push((Value::from(VALUE_KEY_ACTOR), id_value(&actor.entity_ref())));
+            entries.push((Value::from(BODY_KEY_ACTOR), id_value(&actor.entity_ref())));
             entries.push((
-                Value::from(VALUE_KEY_ACTOR_CLASS),
+                Value::from(BODY_KEY_ACTOR_CLASS),
                 Value::from(actor.actor_class().gate_actor_class()),
+            ));
+        }
+        entries.push((
+            Value::from(BODY_KEY_SOURCE),
+            Value::from(self.source.as_str()),
+        ));
+        entries.push((
+            Value::from(BODY_KEY_APPROVAL),
+            Value::from(self.approval.as_str()),
+        ));
+        entries.push((
+            Value::from(BODY_KEY_CONFIDENCE),
+            Value::F32(self.confidence),
+        ));
+        if let Some(evidence) = &self.evidence {
+            entries.push((
+                Value::from(BODY_KEY_EVIDENCE),
+                Value::Map(vec![
+                    (Value::from(EVIDENCE_KEY_REFS), ids_value(&evidence.refs)),
+                    (
+                        Value::from(EVIDENCE_KEY_RATIONALE),
+                        Value::from(evidence.rationale.as_str()),
+                    ),
+                ]),
             ));
         }
         match &self.action {
             StoredIdentityOpAction::Merge { sources, survivor } => {
-                entries.push((Value::from(VALUE_KEY_SOURCES), ids_value(sources)));
-                entries.push((Value::from(VALUE_KEY_SURVIVOR), id_value(survivor)));
-                entries.push((Value::from(VALUE_KEY_PLAN), Value::from(PLAN_READ_THROUGH)));
+                entries.push((Value::from(BODY_KEY_SOURCES), ids_value(sources)));
+                entries.push((Value::from(BODY_KEY_SURVIVOR), id_value(survivor)));
+                entries.push((Value::from(BODY_KEY_PLAN), Value::from(PLAN_READ_THROUGH)));
             }
             StoredIdentityOpAction::Split {
                 entity,
                 heads,
-                assigned,
-                residue,
+                reassignment,
             } => {
-                entries.push((Value::from(VALUE_KEY_ENTITY), id_value(entity)));
-                entries.push((Value::from(VALUE_KEY_HEADS), ids_value(heads)));
-                entries.push((Value::from(VALUE_KEY_ASSIGNED), Value::from(*assigned)));
-                entries.push((Value::from(VALUE_KEY_RESIDUE), Value::from(*residue)));
+                entries.push((Value::from(BODY_KEY_ENTITY), id_value(entity)));
+                entries.push((Value::from(BODY_KEY_HEADS), ids_value(heads)));
+                entries.push((
+                    Value::from(BODY_KEY_MAP),
+                    encode_reassignment_map(reassignment),
+                ));
             }
             StoredIdentityOpAction::Undo { target } => {
-                entries.push((Value::from(VALUE_KEY_TARGET), id_value(target)));
+                entries.push((Value::from(BODY_KEY_TARGET), id_value(target)));
             }
         }
         Value::Map(entries)
     }
 
-    /// Decodes a stored event, fail-closed on any malformed field.
-    pub fn decode(value: &Value) -> Result<Self> {
+    /// Decodes a stored record value, fail-closed on any malformed field.
+    pub fn decode_value(value: &Value) -> Result<Self> {
         let map = value
             .as_map()
-            .ok_or(Error::InvalidClaimBody("identity op event must be a map"))?;
-        let kind = decode_str_field(map, VALUE_KEY_KIND, "identity op event kind")?;
-        let at = decode_u64_field(map, VALUE_KEY_AT, "identity op event at")?;
+            .ok_or(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event must be a map",
+            ))?;
+        let kind = decode_str_field(map, BODY_KEY_KIND, "identity topology event kind")?;
+        let seq = decode_u64_field(map, BODY_KEY_SEQ, "identity topology event seq")?;
+        let at = decode_u64_field(map, BODY_KEY_AT, "identity topology event at")?;
         let actor = decode_actor(map)?;
+        let source = map_field(map, BODY_KEY_SOURCE)
+            .and_then(Value::as_str)
+            .and_then(ClaimSource::parse)
+            .ok_or(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event source",
+            ))?;
+        let approval = map_field(map, BODY_KEY_APPROVAL)
+            .and_then(Value::as_str)
+            .and_then(ClaimApprovalStatus::parse)
+            .ok_or(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event approval",
+            ))?;
+        let confidence = map_field(map, BODY_KEY_CONFIDENCE)
+            .and_then(Value::as_f64)
+            .ok_or(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event confidence",
+            ))? as f32;
+        if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+            return Err(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event confidence",
+            ));
+        }
+        let evidence = match map_field(map, BODY_KEY_EVIDENCE) {
+            None => None,
+            Some(value) => Some(decode_evidence(value)?),
+        };
         let action = match kind {
             EVENT_KIND_MERGE => {
-                let plan = decode_str_field(map, VALUE_KEY_PLAN, "identity op event plan")?;
+                let plan = decode_str_field(map, BODY_KEY_PLAN, "identity topology event plan")?;
                 if plan != PLAN_READ_THROUGH {
-                    return Err(Error::InvalidClaimBody("identity op event plan is unknown"));
+                    return Err(Error::InvalidIdentityTopologyEventBody(
+                        "identity topology event plan is unknown",
+                    ));
                 }
                 StoredIdentityOpAction::Merge {
-                    sources: decode_ids_field(map, VALUE_KEY_SOURCES, "identity op event sources")?,
+                    sources: decode_ids_field(
+                        map,
+                        BODY_KEY_SOURCES,
+                        "identity topology event sources",
+                    )?,
                     survivor: decode_id_field(
                         map,
-                        VALUE_KEY_SURVIVOR,
-                        "identity op event survivor",
+                        BODY_KEY_SURVIVOR,
+                        "identity topology event survivor",
                     )?,
                 }
             }
             EVENT_KIND_SPLIT => StoredIdentityOpAction::Split {
-                entity: decode_id_field(map, VALUE_KEY_ENTITY, "identity op event entity")?,
-                heads: decode_ids_field(map, VALUE_KEY_HEADS, "identity op event heads")?,
-                assigned: decode_u64_field(map, VALUE_KEY_ASSIGNED, "identity op event assigned")?,
-                residue: decode_u64_field(map, VALUE_KEY_RESIDUE, "identity op event residue")?,
+                entity: decode_id_field(map, BODY_KEY_ENTITY, "identity topology event entity")?,
+                heads: decode_ids_field(map, BODY_KEY_HEADS, "identity topology event heads")?,
+                reassignment: decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(
+                    Error::InvalidIdentityTopologyEventBody("identity topology event map"),
+                )?)?,
             },
             EVENT_KIND_UNDO => StoredIdentityOpAction::Undo {
-                target: decode_id_field(map, VALUE_KEY_TARGET, "identity op event target")?,
+                target: decode_id_field(map, BODY_KEY_TARGET, "identity topology event target")?,
             },
             _ => {
-                return Err(Error::InvalidClaimBody("identity op event kind is unknown"));
+                return Err(Error::InvalidIdentityTopologyEventBody(
+                    "identity topology event kind is unknown",
+                ));
             }
         };
-        Ok(Self { at, actor, action })
+        Ok(Self {
+            seq,
+            at,
+            actor,
+            source,
+            approval,
+            confidence,
+            evidence,
+            action,
+        })
     }
+}
+
+/// Encodes a type-76 record body to its pinned MessagePack bytes.
+pub(crate) fn encode_identity_topology_event_body(
+    record: &StoredIdentityOpEvent,
+) -> Result<Vec<u8>> {
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &record.encode_value()).map_err(|_| {
+        Error::InvalidIdentityTopologyEventBody("identity topology event encode failed")
+    })?;
+    Ok(data)
+}
+
+/// Decodes a type-76 record body from its pinned MessagePack bytes,
+/// fail-closed on trailing bytes or any malformed field.
+pub(crate) fn decode_identity_topology_event_body(data: &[u8]) -> Result<StoredIdentityOpEvent> {
+    let mut cursor = data;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        Error::InvalidIdentityTopologyEventBody("identity topology event bytes are malformed")
+    })?;
+    if !cursor.is_empty() {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event carries trailing bytes",
+        ));
+    }
+    StoredIdentityOpEvent::decode_value(&value)
+}
+
+/// D18 body validator for the type-76 maintenance kind, run at the shared
+/// write chokepoint on every path that can admit the byte (engine door and
+/// sync replay alike).
+pub(crate) fn validate_identity_topology_event_body_bytes(data: &[u8]) -> Result<()> {
+    decode_identity_topology_event_body(data).map(|_| ())
 }
 
 fn id_value(id: &EntityId) -> Value {
@@ -856,6 +1009,119 @@ fn id_value(id: &EntityId) -> Value {
 
 fn ids_value(ids: &[EntityId]) -> Value {
     Value::Array(ids.iter().map(id_value).collect())
+}
+
+fn encode_reassignment_item(item: &ClaimSubject) -> Vec<u8> {
+    match item {
+        ClaimSubject::Entity(id) => id.as_bytes().to_vec(),
+        ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } => {
+            let mut bytes = Vec::with_capacity(ENTITY_ID_LEN * 2 + 1);
+            bytes.extend_from_slice(source.as_bytes());
+            bytes.push(*kind as u8);
+            bytes.extend_from_slice(target.as_bytes());
+            bytes
+        }
+    }
+}
+
+fn decode_reassignment_item(bytes: &[u8]) -> Result<ClaimSubject> {
+    const ITEM_CONTEXT: &str = "identity topology event map item";
+    match bytes.len() {
+        ENTITY_ID_LEN => {
+            let arr: [u8; ENTITY_ID_LEN] = bytes
+                .try_into()
+                .map_err(|_| Error::InvalidIdentityTopologyEventBody(ITEM_CONTEXT))?;
+            EntityId::from_bytes(arr)
+                .map(ClaimSubject::Entity)
+                .map_err(|_| Error::InvalidIdentityTopologyEventBody(ITEM_CONTEXT))
+        }
+        len if len == ENTITY_ID_LEN * 2 + 1 => {
+            let source = decode_id_bytes(&bytes[..ENTITY_ID_LEN], ITEM_CONTEXT)?;
+            let kind = EdgeKind::try_from_u8(bytes[ENTITY_ID_LEN])
+                .ok_or(Error::InvalidIdentityTopologyEventBody(ITEM_CONTEXT))?;
+            let target = decode_id_bytes(&bytes[ENTITY_ID_LEN + 1..], ITEM_CONTEXT)?;
+            Ok(ClaimSubject::Edge {
+                source,
+                kind,
+                target,
+            })
+        }
+        _ => Err(Error::InvalidIdentityTopologyEventBody(ITEM_CONTEXT)),
+    }
+}
+
+fn encode_reassignment_map(map: &ReassignmentMap) -> Value {
+    let canonical = map.canonicalized();
+    Value::Array(
+        canonical
+            .entries
+            .iter()
+            .map(|entry| {
+                let mut fields = vec![(
+                    Value::from(MAP_KEY_ITEM),
+                    Value::Binary(encode_reassignment_item(&entry.item)),
+                )];
+                match entry.target {
+                    ReassignmentTarget::Head(head) => {
+                        fields.push((Value::from(MAP_KEY_HEAD), id_value(&head)));
+                    }
+                    ReassignmentTarget::Facet { index } => {
+                        fields.push((Value::from(MAP_KEY_FACET), Value::from(index)));
+                    }
+                    ReassignmentTarget::Residue => {}
+                }
+                Value::Map(fields)
+            })
+            .collect(),
+    )
+}
+
+fn decode_reassignment_map(value: &Value) -> Result<ReassignmentMap> {
+    const MAP_CONTEXT: &str = "identity topology event map";
+    let Value::Array(rows) = value else {
+        return Err(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT));
+    };
+    let mut entries = Vec::with_capacity(rows.len());
+    for row in rows {
+        let fields = row
+            .as_map()
+            .ok_or(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT))?;
+        let item = map_field(fields, MAP_KEY_ITEM)
+            .and_then(Value::as_slice)
+            .ok_or(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT))?;
+        let item = decode_reassignment_item(item)?;
+        let head = map_field(fields, MAP_KEY_HEAD);
+        let facet = map_field(fields, MAP_KEY_FACET);
+        let target = match (head, facet) {
+            (None, None) => ReassignmentTarget::Residue,
+            (Some(head), None) => ReassignmentTarget::Head(decode_id_value(head, MAP_CONTEXT)?),
+            (None, Some(index)) => ReassignmentTarget::Facet {
+                index: index
+                    .as_u64()
+                    .and_then(|index| u32::try_from(index).ok())
+                    .ok_or(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT))?,
+            },
+            (Some(_), Some(_)) => {
+                return Err(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT));
+            }
+        };
+        entries.push(ReassignmentEntry { item, target });
+    }
+    Ok(ReassignmentMap { entries })
+}
+
+fn decode_evidence(value: &Value) -> Result<IdentityOpEvidence> {
+    const EVIDENCE_CONTEXT: &str = "identity topology event evidence";
+    let map = value
+        .as_map()
+        .ok_or(Error::InvalidIdentityTopologyEventBody(EVIDENCE_CONTEXT))?;
+    let refs = decode_ids_field(map, EVIDENCE_KEY_REFS, EVIDENCE_CONTEXT)?;
+    let rationale = decode_str_field(map, EVIDENCE_KEY_RATIONALE, EVIDENCE_CONTEXT)?.to_owned();
+    Ok(IdentityOpEvidence { refs, rationale })
 }
 
 fn map_field<'a>(map: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
@@ -871,26 +1137,34 @@ fn decode_str_field<'a>(
 ) -> Result<&'a str> {
     map_field(map, key)
         .and_then(Value::as_str)
-        .ok_or(Error::InvalidClaimBody(context))
+        .ok_or(Error::InvalidIdentityTopologyEventBody(context))
 }
 
 fn decode_u64_field(map: &[(Value, Value)], key: &str, context: &'static str) -> Result<u64> {
     map_field(map, key)
         .and_then(Value::as_u64)
-        .ok_or(Error::InvalidClaimBody(context))
+        .ok_or(Error::InvalidIdentityTopologyEventBody(context))
+}
+
+fn decode_id_bytes(bytes: &[u8], context: &'static str) -> Result<EntityId> {
+    let arr: [u8; ENTITY_ID_LEN] = bytes
+        .try_into()
+        .map_err(|_| Error::InvalidIdentityTopologyEventBody(context))?;
+    EntityId::from_bytes(arr).map_err(|_| Error::InvalidIdentityTopologyEventBody(context))
 }
 
 fn decode_id_value(value: &Value, context: &'static str) -> Result<EntityId> {
-    let bytes = value.as_slice().ok_or(Error::InvalidClaimBody(context))?;
-    let arr: [u8; 16] = bytes
-        .try_into()
-        .map_err(|_| Error::InvalidClaimBody(context))?;
-    EntityId::from_bytes(arr).map_err(|_| Error::InvalidClaimBody(context))
+    decode_id_bytes(
+        value
+            .as_slice()
+            .ok_or(Error::InvalidIdentityTopologyEventBody(context))?,
+        context,
+    )
 }
 
 fn decode_id_field(map: &[(Value, Value)], key: &str, context: &'static str) -> Result<EntityId> {
     decode_id_value(
-        map_field(map, key).ok_or(Error::InvalidClaimBody(context))?,
+        map_field(map, key).ok_or(Error::InvalidIdentityTopologyEventBody(context))?,
         context,
     )
 }
@@ -901,7 +1175,7 @@ fn decode_ids_field(
     context: &'static str,
 ) -> Result<Vec<EntityId>> {
     let Some(Value::Array(items)) = map_field(map, key) else {
-        return Err(Error::InvalidClaimBody(context));
+        return Err(Error::InvalidIdentityTopologyEventBody(context));
     };
     items
         .iter()
@@ -910,20 +1184,19 @@ fn decode_ids_field(
 }
 
 fn decode_actor(map: &[(Value, Value)]) -> Result<Option<WriteActor>> {
-    let entity = map_field(map, VALUE_KEY_ACTOR);
-    let class = map_field(map, VALUE_KEY_ACTOR_CLASS);
+    let entity = map_field(map, BODY_KEY_ACTOR);
+    let class = map_field(map, BODY_KEY_ACTOR_CLASS);
     match (entity, class) {
         (None, None) => Ok(None),
         (Some(entity), Some(class)) => {
-            let entity_ref = decode_id_value(entity, "identity op event actor")?;
-            let class = class
-                .as_str()
-                .and_then(parse_actor_class)
-                .ok_or(Error::InvalidClaimBody("identity op event actor class"))?;
+            let entity_ref = decode_id_value(entity, "identity topology event actor")?;
+            let class = class.as_str().and_then(parse_actor_class).ok_or(
+                Error::InvalidIdentityTopologyEventBody("identity topology event actor class"),
+            )?;
             Ok(Some(WriteActor::new(entity_ref, class)))
         }
-        _ => Err(Error::InvalidClaimBody(
-            "identity op event actor requires both entity and class",
+        _ => Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event actor requires both entity and class",
         )),
     }
 }
@@ -939,19 +1212,21 @@ fn parse_actor_class(value: &str) -> Option<EdgeActorClass> {
 
 // ─── Vault apply path ───────────────────────────────────────────────────────
 
-/// Write metadata for one identity-topology op: the ARCH-0003 consent axes
-/// the ledger event claim carries. AUTO is the family default (r3); the
-/// propose lane is the caller dialing `approval` to `Proposed` for the
-/// three exception conditions (§6) — never an engine-imposed gate.
+/// Write metadata for one identity-topology op: the consent axes the ledger
+/// event record carries. AUTO is the family default (r3); the propose lane
+/// is the caller dialing `approval` to `Proposed` for the three exception
+/// conditions (§6) — never an engine-imposed gate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IdentityOpWrite {
-    /// Provenance source stamped on the event claim.
+    /// Provenance source stamped on the event record.
     pub source: ClaimSource,
-    /// Consent axis for the event claim; `Auto` by default.
+    /// Consent axis: `Auto`/`Approved` apply, `Proposed` parks with zero
+    /// topology effects, `Rejected` is the consent no-op.
     pub approval: ClaimApprovalStatus,
-    /// Confidence stamped on the event claim, finite in `[0, 1]`.
+    /// Confidence stamped on the event record, finite in `[0, 1]`.
     pub confidence: f32,
-    /// Deciding actor recorded on the event (r1), when bound.
+    /// Deciding actor recorded on the event (r1); validated at the door
+    /// (existence + type/class fit) when bound.
     pub actor: Option<WriteActor>,
 }
 
@@ -973,65 +1248,33 @@ impl IdentityOpWrite {
         self.actor = Some(actor);
         self
     }
+
+    const fn is_effective(&self) -> bool {
+        matches!(
+            self.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
+    }
 }
 
-/// Receipt of one applied (or undone) identity-topology op.
+/// Receipt of one identity-topology door call.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IdentityOpOutcome {
-    /// The ledger event CLAIM written for this op.
-    pub event: EntityId,
-    /// Lifecycle assignments the op performed, in role order.
-    pub transitions: Vec<(EntityId, EntityLifecycleState)>,
-}
-
-fn identity_event_put_ops(
-    event_id: EntityId,
-    subject: EntityId,
-    value: Value,
-    evidence: Option<Value>,
-    write: &IdentityOpWrite,
-    now: u64,
-) -> Result<Vec<BatchOp>> {
-    let mut body = ClaimBody::new(
-        PREDICATE_IDENTITY_TOPOLOGY_OP,
-        ClaimSubject::Entity(subject),
-        value,
-        write.confidence,
-        write.approval,
-        ClaimLifecycleStatus::Active,
-    );
-    body.source = Some(write.source);
-    body.valid_from = Some(now);
-    body.evidence = evidence;
-    let data = encode_claim_body(&body)?;
-    let claim_of_weight = EdgeKind::ClaimOf
-        .default_weight()
-        .ok_or(Error::InvariantViolation(
-            "ClaimOf edge missing default weight",
-        ))?;
-    Ok(vec![
-        BatchOp::Put {
-            id: event_id,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred: TimeRange {
-                start: now,
-                end: now,
-            },
-            learned_at: now,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-        },
-        BatchOp::EdgeWithCreatedAt {
-            src: event_id,
-            kind: EdgeKind::ClaimOf,
-            tgt: subject,
-            weight: claim_of_weight,
-            created_at: now,
-            vad: Vad::NEUTRAL,
-            provenance: None,
-        },
-    ])
+pub enum IdentityOpOutcome {
+    /// `Auto`/`Approved`: topology written, event recorded.
+    Applied {
+        /// The ledger event record written for this op.
+        event: EntityId,
+        /// Lifecycle assignments the op performed, in role order.
+        transitions: Vec<(EntityId, EntityLifecycleState)>,
+    },
+    /// `Proposed`: the event is recorded for legibility, but no edge and no
+    /// lifecycle state moved — zero topology effects until approved.
+    Parked {
+        /// The parked ledger event record.
+        event: EntityId,
+    },
+    /// `Rejected`: the consent no-op — nothing validated, nothing written.
+    Noop,
 }
 
 fn shell_edge_weight(kind: EdgeKind) -> Result<f32> {
@@ -1042,7 +1285,7 @@ fn shell_edge_weight(kind: EdgeKind) -> Result<f32> {
 
 impl Vault {
     /// Current lifecycle state of `id`, read from its canonical redirect
-    /// edges (D11: the edge is the sole source of truth; the ledger fold and
+    /// edges (D11: the edge is the sole state witness; the ledger fold and
     /// the apply path keep them in lockstep). An id with no shell edge —
     /// including one never written — is `Active`.
     pub fn entity_lifecycle_state(&self, id: &EntityId) -> Result<EntityLifecycleState> {
@@ -1052,7 +1295,9 @@ impl Vault {
 
     /// Transaction-composable [`Vault::entity_lifecycle_state`]. Fails
     /// closed with `CorruptedIndex` when an id carries BOTH shell edge
-    /// kinds — a state no apply path can produce.
+    /// kinds or more than one `merged_into` target — states no apply path
+    /// can produce (a merge redirects to exactly ONE canonical head; only
+    /// a split resolves to a set).
     pub(crate) fn entity_lifecycle_state_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -1074,20 +1319,22 @@ impl Vault {
             None,
             "identity topology",
         )?;
-        match (merged.is_empty(), split.is_empty()) {
-            (true, true) => Ok(EntityLifecycleState::Active),
-            (false, true) => Ok(EntityLifecycleState::Merged),
-            (true, false) => Ok(EntityLifecycleState::Split),
-            (false, false) => Err(Error::CorruptedIndex("identity topology shell")),
+        match (merged.len(), split.is_empty()) {
+            (0, true) => Ok(EntityLifecycleState::Active),
+            (1, true) => Ok(EntityLifecycleState::Merged),
+            (0, false) => Ok(EntityLifecycleState::Split),
+            _ => Err(Error::CorruptedIndex("identity topology shell")),
         }
     }
 
     /// Applies one identity-topology op in ONE write transaction: validates
-    /// the storage guards and the (state, op) transition table, writes the
-    /// canonical shell edges, and appends the ledger event CLAIM (evidence,
-    /// rationale, actor; `Auto` by default). Fail-closed — nothing is
-    /// written on any rejection. No participant is tombstoned and no claim
-    /// subject is rewritten (r1/r6).
+    /// the bound actor (existence + type/class fit, the provenance rule),
+    /// the storage guards, and the (state, op) transition table; then per
+    /// the consent axis writes the canonical shell edges plus the type-76
+    /// ledger event (`Auto`/`Approved`), parks the event with zero topology
+    /// effects (`Proposed`), or no-ops (`Rejected`). Fail-closed — nothing
+    /// is written on any rejection. No participant is tombstoned and no
+    /// claim subject is rewritten (r1/r6).
     ///
     /// Facet and assert_distinct ops are validated through the same table
     /// but their apply doors are not armed yet
@@ -1114,6 +1361,11 @@ impl Vault {
         write: &IdentityOpWrite,
         now: u64,
     ) -> Result<IdentityOpOutcome> {
+        if write.approval == ClaimApprovalStatus::Rejected {
+            return Ok(IdentityOpOutcome::Noop);
+        }
+        self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
+
         let participants = op.participants();
         let is_merge = matches!(op, IdentityTopologyOp::Merge(_));
         let mut states = BTreeMap::new();
@@ -1145,79 +1397,65 @@ impl Vault {
 
         match op {
             IdentityTopologyOp::Merge(merge) => {
-                let weight = shell_edge_weight(EdgeKind::MergedInto)?;
-                let event_id = EntityId::now();
-                let stored = StoredIdentityOpEvent {
-                    at: now,
-                    actor: write.actor,
-                    action: StoredIdentityOpAction::Merge {
-                        sources: merge.sources.clone(),
-                        survivor: merge.survivor,
-                    },
+                let action = StoredIdentityOpAction::Merge {
+                    sources: merge.sources.clone(),
+                    survivor: merge.survivor,
                 };
-                let mut ops = identity_event_put_ops(
-                    event_id,
-                    merge.survivor,
-                    stored.encode(),
-                    Some(merge.evidence.encode()),
+                let mut edges = Vec::new();
+                if write.is_effective() {
+                    let weight = shell_edge_weight(EdgeKind::MergedInto)?;
+                    for source in &merge.sources {
+                        edges.push(BatchOp::EdgeWithCreatedAt {
+                            src: *source,
+                            kind: EdgeKind::MergedInto,
+                            tgt: merge.survivor,
+                            weight,
+                            created_at: now,
+                            vad: crate::affect::Vad::NEUTRAL,
+                            provenance: None,
+                        });
+                    }
+                }
+                self.write_identity_event_in_txn(
+                    wtxn,
                     write,
                     now,
-                )?;
-                for source in &merge.sources {
-                    ops.push(BatchOp::EdgeWithCreatedAt {
-                        src: *source,
-                        kind: EdgeKind::MergedInto,
-                        tgt: merge.survivor,
-                        weight,
-                        created_at: now,
-                        vad: Vad::NEUTRAL,
-                        provenance: None,
-                    });
-                }
-                self.commit_identity_event_in_txn(wtxn, ops, now, &event_id)?;
-                Ok(IdentityOpOutcome {
-                    event: event_id,
+                    action,
+                    Some(merge.evidence.clone()),
+                    edges,
                     transitions,
-                })
+                )
             }
             IdentityTopologyOp::Split(split) => {
-                let weight = shell_edge_weight(EdgeKind::SplitInto)?;
-                let event_id = EntityId::now();
-                let (assigned, residue) = split.reassignment.assigned_and_residue_counts();
-                let stored = StoredIdentityOpEvent {
-                    at: now,
-                    actor: write.actor,
-                    action: StoredIdentityOpAction::Split {
-                        entity: split.entity,
-                        heads: split.heads.clone(),
-                        assigned,
-                        residue,
-                    },
+                let action = StoredIdentityOpAction::Split {
+                    entity: split.entity,
+                    heads: split.heads.clone(),
+                    reassignment: split.reassignment.canonicalized(),
                 };
-                let mut ops = identity_event_put_ops(
-                    event_id,
-                    split.entity,
-                    stored.encode(),
-                    Some(split.evidence.encode()),
+                let mut edges = Vec::new();
+                if write.is_effective() {
+                    let weight = shell_edge_weight(EdgeKind::SplitInto)?;
+                    for head in &split.heads {
+                        edges.push(BatchOp::EdgeWithCreatedAt {
+                            src: split.entity,
+                            kind: EdgeKind::SplitInto,
+                            tgt: *head,
+                            weight,
+                            created_at: now,
+                            vad: crate::affect::Vad::NEUTRAL,
+                            provenance: None,
+                        });
+                    }
+                }
+                self.write_identity_event_in_txn(
+                    wtxn,
                     write,
                     now,
-                )?;
-                for head in &split.heads {
-                    ops.push(BatchOp::EdgeWithCreatedAt {
-                        src: split.entity,
-                        kind: EdgeKind::SplitInto,
-                        tgt: *head,
-                        weight,
-                        created_at: now,
-                        vad: Vad::NEUTRAL,
-                        provenance: None,
-                    });
-                }
-                self.commit_identity_event_in_txn(wtxn, ops, now, &event_id)?;
-                Ok(IdentityOpOutcome {
-                    event: event_id,
+                    action,
+                    Some(split.evidence.clone()),
+                    edges,
                     transitions,
-                })
+                )
             }
             IdentityTopologyOp::Facet(_) => Err(Error::IdentityTopologyUnarmed("facet minting")),
             IdentityTopologyOp::AssertDistinct(_) => {
@@ -1228,12 +1466,15 @@ impl Vault {
 
     /// Undoes one applied merge/split event: appends the counter-event to
     /// the ledger (never rewriting the original) and removes the shell
-    /// edges it wrote, restoring `Active`. Currency is judged by the
-    /// subject's own ledger fold — the event must still be the current
-    /// topology writer for every entity it shelled; an already-undone or
-    /// superseded event is rejected with
-    /// [`IdentityTopologyRejection::NotCurrent`]. Undo of a counter-event
-    /// is rejected with [`IdentityTopologyRejection::NotUndoable`].
+    /// edges it wrote, restoring `Active`. Currency is judged by the FOLD
+    /// over the whole event family ordered by the engine-stamped `seq` —
+    /// the event must still be the current topology writer for every entity
+    /// it shelled; an already-undone, superseded, or parked event is
+    /// rejected with [`IdentityTopologyRejection::NotCurrent`]. Undo of a
+    /// counter-event is rejected with
+    /// [`IdentityTopologyRejection::NotUndoable`]. The consent axis applies
+    /// like the apply door: `Proposed` parks the counter-event with the
+    /// shell edges untouched; `Rejected` is the consent no-op.
     pub fn undo_identity_topology_event(
         &self,
         event: &EntityId,
@@ -1254,21 +1495,15 @@ impl Vault {
         write: &IdentityOpWrite,
         now: u64,
     ) -> Result<IdentityOpOutcome> {
-        let body = self
-            .get_claim_in_txn(&*wtxn, event)?
-            .ok_or(Error::EntityNotFound)?;
-        if body.predicate != PREDICATE_IDENTITY_TOPOLOGY_OP {
-            return Err(Error::InvalidClaimBody(
-                "entity is not an identity-topology op event",
-            ));
+        if write.approval == ClaimApprovalStatus::Rejected {
+            return Ok(IdentityOpOutcome::Noop);
         }
-        let ClaimSubject::Entity(subject) = body.subject else {
-            return Err(Error::InvalidClaimBody(
-                "identity op event subject must be an entity",
-            ));
-        };
-        let stored = StoredIdentityOpEvent::decode(&body.value)?;
-        let (shelled, removed_edges) = match &stored.action {
+        self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
+
+        let record = self
+            .identity_topology_event_in_txn(&*wtxn, event)?
+            .ok_or(Error::EntityNotFound)?;
+        let (shelled, removed_edges) = match &record.action {
             StoredIdentityOpAction::Undo { .. } => {
                 return Err(Error::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
@@ -1290,7 +1525,7 @@ impl Vault {
             ),
         };
 
-        let events = self.identity_events_for_subject_in_txn(&*wtxn, &subject)?;
+        let events = self.identity_topology_events_in_txn(&*wtxn)?;
         let fold = fold_identity_topology_log(&events);
         for entity in &shelled {
             if fold.current_event.get(entity) != Some(event) {
@@ -1300,68 +1535,164 @@ impl Vault {
             }
         }
 
-        let counter = StoredIdentityOpEvent {
-            at: now,
-            actor: write.actor,
-            action: StoredIdentityOpAction::Undo { target: *event },
-        };
-        let counter_id = EntityId::now();
-        let mut ops =
-            identity_event_put_ops(counter_id, subject, counter.encode(), None, write, now)?;
-        for (src, kind, tgt) in removed_edges {
-            ops.push(BatchOp::DeleteEdge { src, kind, tgt });
+        let mut edges = Vec::new();
+        if write.is_effective() {
+            for (src, kind, tgt) in removed_edges {
+                edges.push(BatchOp::DeleteEdge { src, kind, tgt });
+            }
         }
-        self.commit_identity_event_in_txn(wtxn, ops, now, &counter_id)?;
-        Ok(IdentityOpOutcome {
-            event: counter_id,
-            transitions: shelled
-                .into_iter()
-                .map(|entity| (entity, EntityLifecycleState::Active))
-                .collect(),
-        })
+        let transitions = shelled
+            .into_iter()
+            .map(|entity| (entity, EntityLifecycleState::Active))
+            .collect();
+        self.write_identity_event_in_txn(
+            wtxn,
+            write,
+            now,
+            StoredIdentityOpAction::Undo { target: *event },
+            None,
+            edges,
+            transitions,
+        )
     }
 
-    /// Identity-topology ledger events attached to `subject` (via the event
-    /// claims' `claim_of` edges), ready for folding. Malformed values under
-    /// the predicate are skipped: the predicate namespace is public D17
-    /// grammar, so a garbage row must not be able to wedge undo — the
-    /// canonical edges stay the structural truth either way.
-    pub(crate) fn identity_events_for_subject_in_txn(
+    /// Reads one type-76 ledger event record. `Ok(None)` when the id is
+    /// absent; a present id of another type is a typed mismatch; a present
+    /// record that fails decode is corruption (the family is engine-
+    /// authored and door-validated).
+    pub fn identity_topology_event(&self, id: &EntityId) -> Result<Option<StoredIdentityOpEvent>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.identity_topology_event_in_txn(&rtxn, id)
+    }
+
+    /// Transaction-composable [`Vault::identity_topology_event`].
+    pub(crate) fn identity_topology_event_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
-        subject: &EntityId,
+        id: &EntityId,
+    ) -> Result<Option<StoredIdentityOpEvent>> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// The whole identity-topology event family, read from the type-76
+    /// record index — the ONE enumeration surface the fold, the receipt
+    /// projection, and any rebuild share (no side index is authoritative).
+    /// Fail-closed: the family is engine-authored, so an undecodable row is
+    /// corruption, never skipped.
+    pub(crate) fn identity_topology_events_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
     ) -> Result<Vec<IdentityTopologyEvent>> {
         let mut events = Vec::new();
-        for claim_id in self.claims_for_subject_in_txn(rtxn, subject)? {
-            let Some(body) = self.get_claim_in_txn(rtxn, &claim_id)? else {
-                continue;
-            };
-            if body.predicate != PREDICATE_IDENTITY_TOPOLOGY_OP {
-                continue;
-            }
-            let Ok(stored) = StoredIdentityOpEvent::decode(&body.value) else {
-                continue;
-            };
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+        {
+            let (key, _) = entry?;
+            let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let record = self
+                .identity_topology_event_in_txn(rtxn, &event_id)?
+                .ok_or(Error::CorruptedIndex("identity topology event index"))?;
             events.push(IdentityTopologyEvent {
-                event_id: claim_id,
-                at: stored.at,
-                action: stored.action.to_fold_action(),
+                event_id,
+                seq: record.seq,
+                approval: record.approval,
+                action: record.action.to_fold_action(),
             });
         }
         Ok(events)
     }
 
-    /// Applies the staged ops and indexes the ledger event for the
-    /// `ReceiptKind::IdentityLifecycle` projection, atomically in the
-    /// caller's wtxn. The index row is rebuildable plumbing (CID-7); the
-    /// event CLAIM stays the single truth.
-    fn commit_identity_event_in_txn(
+    fn validate_identity_op_actor_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        write: &IdentityOpWrite,
+    ) -> Result<()> {
+        let Some(actor) = write.actor else {
+            return Ok(());
+        };
+        let actor_type = self
+            .get_entity_type_in_txn(rtxn, &actor.entity_ref())?
+            .ok_or(Error::EntityNotFound)?;
+        crate::provenance::validate_actor_class(actor_type, actor.actor_class())
+    }
+
+    /// Allocates the next engine-stamped causality sequence, inside the
+    /// caller's write txn (a rolled-back op burns no committed gap).
+    fn next_identity_topology_seq_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
+        let previous = match self
+            .store
+            .vault_meta
+            .get(&*wtxn, IDENTITY_TOPOLOGY_SEQ_KEY)?
+        {
+            None => 0,
+            Some(raw) => {
+                let arr: [u8; 8] = raw
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("identity topology seq"))?;
+                u64::from_be_bytes(arr)
+            }
+        };
+        let next = previous
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("identity topology seq"))?;
+        self.store
+            .vault_meta
+            .put(wtxn, IDENTITY_TOPOLOGY_SEQ_KEY, &next.to_be_bytes())?;
+        Ok(next)
+    }
+
+    /// Stamps `seq`, writes the type-76 event record plus the staged edge
+    /// ops atomically, and shapes the outcome from the consent axis.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "single internal chokepoint for the door's event+edges commit"
+    )]
+    fn write_identity_event_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        ops: Vec<BatchOp>,
-        at: u64,
-        event_id: &EntityId,
-    ) -> Result<()> {
+        write: &IdentityOpWrite,
+        now: u64,
+        action: StoredIdentityOpAction,
+        evidence: Option<IdentityOpEvidence>,
+        edges: Vec<BatchOp>,
+        transitions: Vec<(EntityId, EntityLifecycleState)>,
+    ) -> Result<IdentityOpOutcome> {
+        let event_id = EntityId::now();
+        let seq = self.next_identity_topology_seq_in_txn(wtxn)?;
+        let record = StoredIdentityOpEvent {
+            seq,
+            at: now,
+            actor: write.actor,
+            source: write.source,
+            approval: write.approval,
+            confidence: write.confidence,
+            evidence,
+            action,
+        };
+        let mut ops = vec![BatchOp::Put {
+            id: event_id,
+            entity_type: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            learned_at: now,
+            data: encode_identity_topology_event_body(&record)?,
+            allow_maintenance: true,
+            allow_reserved_predicate: false,
+        }];
+        ops.extend(edges);
         apply_ops(
             &self.store,
             &self.config,
@@ -1373,41 +1704,14 @@ impl Vault {
             false,
             true,
         )?;
-        self.store
-            .vault_meta
-            .put(wtxn, &identity_topology_event_meta_key(at, event_id), &[])?;
-        Ok(())
-    }
-
-    /// Ledger event claim ids from the receipt-projection index, in
-    /// `(at, event_id)` order, capped at `scan_cap` rows.
-    pub(crate) fn identity_topology_event_refs_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        scan_cap: usize,
-    ) -> Result<Vec<EntityId>> {
-        let mut refs = Vec::new();
-        for row in self
-            .store
-            .vault_meta
-            .prefix_iter(rtxn, IDENTITY_TOPOLOGY_EVENT_META_PREFIX)?
-        {
-            if refs.len() >= scan_cap {
-                break;
-            }
-            let (key, _) = row?;
-            let id_offset = IDENTITY_TOPOLOGY_EVENT_META_PREFIX.len() + 8;
-            let Some(id_bytes) = key.get(id_offset..id_offset + ENTITY_ID_LEN) else {
-                return Err(Error::CorruptedIndex("identity topology event index"));
-            };
-            let arr: [u8; ENTITY_ID_LEN] = id_bytes
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("identity topology event index"))?;
-            let event_id = EntityId::from_bytes(arr)
-                .map_err(|_| Error::CorruptedIndex("identity topology event index"))?;
-            refs.push(event_id);
+        if write.is_effective() {
+            Ok(IdentityOpOutcome::Applied {
+                event: event_id,
+                transitions,
+            })
+        } else {
+            Ok(IdentityOpOutcome::Parked { event: event_id })
         }
-        Ok(refs)
     }
 }
 

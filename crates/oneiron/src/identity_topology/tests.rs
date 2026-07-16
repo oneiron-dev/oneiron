@@ -1,6 +1,7 @@
 //! ONE-1743 (MS-01) unit tests: op vocabulary, the full (state, op)
-//! transition table, the ledger fold, CRDT precedence, wire round-trips,
-//! and the vault merge/split apply + undo paths.
+//! transition table, the seq-ordered ledger fold, CRDT precedence, the
+//! type-76 record wire, and the vault merge/split apply + undo doors
+//! (consent axis, actor validation, reserved edges, receipts).
 
 use super::*;
 
@@ -96,6 +97,77 @@ fn expect_rejection(error: Error) -> IdentityTopologyRejection {
     }
 }
 
+fn expect_applied(outcome: IdentityOpOutcome) -> (EntityId, Vec<(EntityId, EntityLifecycleState)>) {
+    match outcome {
+        IdentityOpOutcome::Applied { event, transitions } => (event, transitions),
+        other => panic!("expected Applied outcome, got {other:?}"),
+    }
+}
+
+fn expect_parked(outcome: IdentityOpOutcome) -> EntityId {
+    match outcome {
+        IdentityOpOutcome::Parked { event } => event,
+        other => panic!("expected Parked outcome, got {other:?}"),
+    }
+}
+
+fn fold_event(
+    event_id: EntityId,
+    seq: u64,
+    action: IdentityTopologyAction,
+) -> IdentityTopologyEvent {
+    IdentityTopologyEvent {
+        event_id,
+        seq,
+        approval: ClaimApprovalStatus::Auto,
+        action,
+    }
+}
+
+fn event_count(vault: &Vault) -> usize {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    vault
+        .identity_topology_events_in_txn(&rtxn)
+        .expect("scan events")
+        .len()
+}
+
+/// Writes a raw shell edge through the INTERNAL op path (the public
+/// builders reject reserved kinds), to fabricate corruption fixtures.
+fn force_edge(vault: &Vault, src: EntityId, kind: EdgeKind, tgt: EntityId) {
+    vault
+        .with_write_txn(|wtxn| {
+            crate::batch::apply_ops(
+                &vault.store,
+                &vault.config,
+                &vault.analyzer,
+                wtxn,
+                vec![BatchOp::EdgeWithCreatedAt {
+                    src,
+                    kind,
+                    tgt,
+                    weight: 0.3,
+                    created_at: 100,
+                    vad: crate::affect::Vad::NEUTRAL,
+                    provenance: None,
+                }],
+                true,
+                false,
+                true,
+            )
+        })
+        .expect("force edge");
+}
+
+fn identity_receipts(vault: &Vault) -> Vec<crate::receipt::ReceiptRecord> {
+    vault
+        .receipts(
+            crate::receipt::ReceiptQuery::new(10)
+                .with_kind(crate::receipt::ReceiptKind::IdentityLifecycle),
+        )
+        .expect("query receipts")
+}
+
 // ─── Pure vocabulary + table ────────────────────────────────────────────────
 
 #[test]
@@ -141,16 +213,12 @@ fn lifecycle_can_transition_to_pins_the_full_matrix() {
 }
 
 #[test]
-fn predicate_contracts_are_pinned_and_grammar_valid() {
-    assert_eq!(PREDICATE_IDENTITY_TOPOLOGY_OP, "entity.identity_op");
+fn distinct_from_contract_is_pinned_and_grammar_valid() {
     assert_eq!(PREDICATE_ENTITY_DISTINCT_FROM, "entity.distinct_from");
-    // Both pass the D17 public-write grammar (no reserved namespace).
-    for predicate in [
-        PREDICATE_IDENTITY_TOPOLOGY_OP,
-        PREDICATE_ENTITY_DISTINCT_FROM,
-    ] {
-        crate::claim::validate_predicate(predicate, false).expect("grammar-valid predicate");
-    }
+    // Passes the D17 public-write grammar (no reserved namespace): the
+    // anti-merge assertion stays a public CLAIM (statement, not action).
+    crate::claim::validate_predicate(PREDICATE_ENTITY_DISTINCT_FROM, false)
+        .expect("grammar-valid predicate");
 }
 
 #[test]
@@ -373,16 +441,8 @@ fn fold_applies_merge_undo_and_rejects_stale_or_double_undo() {
 
     // Apply e1, then a second merge of the now-shelled source must reject.
     let fold = fold_identity_topology_log(&[
-        IdentityTopologyEvent {
-            event_id: e1,
-            at: 100,
-            action: IdentityTopologyAction::Apply(merge_op(vec![b], a)),
-        },
-        IdentityTopologyEvent {
-            event_id: e2,
-            at: 200,
-            action: IdentityTopologyAction::Apply(merge_op(vec![b], a)),
-        },
+        fold_event(e1, 1, IdentityTopologyAction::Apply(merge_op(vec![b], a))),
+        fold_event(e2, 2, IdentityTopologyAction::Apply(merge_op(vec![b], a))),
     ]);
     assert_eq!(fold.states.len(), 1);
     assert_eq!(fold.states.get(&b), Some(&EntityLifecycleState::Merged));
@@ -401,26 +461,10 @@ fn fold_applies_merge_undo_and_rejects_stale_or_double_undo() {
     // Undo restores Active; undoing again is stale; undoing the undo is
     // not undoable.
     let fold = fold_identity_topology_log(&[
-        IdentityTopologyEvent {
-            event_id: e1,
-            at: 100,
-            action: IdentityTopologyAction::Apply(merge_op(vec![b], a)),
-        },
-        IdentityTopologyEvent {
-            event_id: u1,
-            at: 200,
-            action: IdentityTopologyAction::Undo { target: e1 },
-        },
-        IdentityTopologyEvent {
-            event_id: e2,
-            at: 300,
-            action: IdentityTopologyAction::Undo { target: e1 },
-        },
-        IdentityTopologyEvent {
-            event_id: u2,
-            at: 400,
-            action: IdentityTopologyAction::Undo { target: u1 },
-        },
+        fold_event(e1, 1, IdentityTopologyAction::Apply(merge_op(vec![b], a))),
+        fold_event(u1, 2, IdentityTopologyAction::Undo { target: e1 }),
+        fold_event(e2, 3, IdentityTopologyAction::Undo { target: e1 }),
+        fold_event(u2, 4, IdentityTopologyAction::Undo { target: u1 }),
     ]);
     assert_eq!(fold.states.get(&b), Some(&EntityLifecycleState::Active));
     assert_eq!(fold.current_event.len(), 0);
@@ -434,22 +478,14 @@ fn fold_applies_merge_undo_and_rejects_stale_or_double_undo() {
 }
 
 #[test]
-fn fold_orders_events_deterministically_by_time_then_event_id() {
+fn fold_orders_by_engine_seq_and_ignores_input_order() {
     let a = id(0x31);
     let b = id(0x32);
     let e1 = id(0x41);
     let u1 = id(0x42);
     let events = vec![
-        IdentityTopologyEvent {
-            event_id: u1,
-            at: 200,
-            action: IdentityTopologyAction::Undo { target: e1 },
-        },
-        IdentityTopologyEvent {
-            event_id: e1,
-            at: 100,
-            action: IdentityTopologyAction::Apply(merge_op(vec![b], a)),
-        },
+        fold_event(u1, 2, IdentityTopologyAction::Undo { target: e1 }),
+        fold_event(e1, 1, IdentityTopologyAction::Apply(merge_op(vec![b], a))),
     ];
     let mut reversed = events.clone();
     reversed.reverse();
@@ -459,19 +495,11 @@ fn fold_orders_events_deterministically_by_time_then_event_id() {
     assert_eq!(fold.states.get(&b), Some(&EntityLifecycleState::Active));
     assert_eq!(fold.rejections.len(), 0);
 
-    // Same-second tie: the smaller event id folds first, so the undo (u1,
-    // later id) still lands after its target.
+    // Seq tie (divergent replicas): the smaller event id folds first, so
+    // the outcome stays deterministic regardless of input order.
     let tied = vec![
-        IdentityTopologyEvent {
-            event_id: u1,
-            at: 100,
-            action: IdentityTopologyAction::Undo { target: e1 },
-        },
-        IdentityTopologyEvent {
-            event_id: e1,
-            at: 100,
-            action: IdentityTopologyAction::Apply(merge_op(vec![b], a)),
-        },
+        fold_event(u1, 1, IdentityTopologyAction::Undo { target: e1 }),
+        fold_event(e1, 1, IdentityTopologyAction::Apply(merge_op(vec![b], a))),
     ];
     let fold = fold_identity_topology_log(&tied);
     assert_eq!(fold.states.get(&b), Some(&EntityLifecycleState::Active));
@@ -479,85 +507,300 @@ fn fold_orders_events_deterministically_by_time_then_event_id() {
 }
 
 #[test]
-fn stored_event_wire_round_trips_and_fails_closed() {
+fn fold_counts_effective_events_only() {
+    let a = id(0x31);
+    let b = id(0x32);
+    let parked = IdentityTopologyEvent {
+        event_id: id(0x41),
+        seq: 1,
+        approval: ClaimApprovalStatus::Proposed,
+        action: IdentityTopologyAction::Apply(merge_op(vec![b], a)),
+    };
+    // A parked proposal has ZERO topology effects: the source stays
+    // Active and a later effective merge of the same pair applies.
+    let fold = fold_identity_topology_log(std::slice::from_ref(&parked));
+    assert_eq!(fold.states.len(), 0);
+    assert_eq!(fold.current_event.len(), 0);
+    assert_eq!(fold.rejections.len(), 0);
+
+    let fold = fold_identity_topology_log(&[
+        parked,
+        fold_event(
+            id(0x42),
+            2,
+            IdentityTopologyAction::Apply(merge_op(vec![b], a)),
+        ),
+    ]);
+    assert_eq!(fold.states.get(&b), Some(&EntityLifecycleState::Merged));
+    assert_eq!(fold.current_event.get(&b), Some(&id(0x42)));
+    assert_eq!(fold.rejections.len(), 0);
+}
+
+// ─── Type-76 record wire ────────────────────────────────────────────────────
+
+#[test]
+fn stored_event_wire_round_trips_canonically_and_fails_closed() {
     let a = id(0x31);
     let b = id(0x32);
     let c = id(0x33);
     let actor = WriteActor::new(id(0x51), EdgeActorClass::Agent);
+
+    // The split map is given UNSORTED; the wire canonicalizes by item
+    // bytes and the decode yields the canonical order (codex#6: the map is
+    // carried verbatim, never reduced to stats).
+    let unsorted = ReassignmentMap {
+        entries: vec![
+            ReassignmentEntry {
+                item: ClaimSubject::Entity(id(0x72)),
+                target: ReassignmentTarget::Residue,
+            },
+            ReassignmentEntry {
+                item: ClaimSubject::Entity(id(0x71)),
+                target: ReassignmentTarget::Head(b),
+            },
+        ],
+    };
+    let split_record = StoredIdentityOpEvent {
+        seq: 2,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 0.9,
+        evidence: None,
+        action: StoredIdentityOpAction::Split {
+            entity: a,
+            heads: vec![b, c],
+            reassignment: unsorted.clone(),
+        },
+    };
+    let decoded =
+        StoredIdentityOpEvent::decode_value(&split_record.encode_value()).expect("split decode");
+    let StoredIdentityOpAction::Split { reassignment, .. } = &decoded.action else {
+        panic!("expected split action");
+    };
+    assert_eq!(*reassignment, unsorted.canonicalized());
+    assert_eq!(reassignment.entries.len(), 2);
+    assert_eq!(reassignment.entries[0].item, ClaimSubject::Entity(id(0x71)));
+    assert_eq!(reassignment.assigned_and_residue_counts(), (1, 1));
+
+    // Merge + undo round trips, with actor and evidence carried.
     let cases = vec![
         StoredIdentityOpEvent {
+            seq: 1,
             at: 100,
             actor: Some(actor),
+            source: ClaimSource::UserStated,
+            approval: ClaimApprovalStatus::Approved,
+            confidence: 1.0,
+            evidence: Some(IdentityOpEvidence {
+                refs: vec![b, c],
+                rationale: "same referent".to_owned(),
+            }),
             action: StoredIdentityOpAction::Merge {
                 sources: vec![b, c],
                 survivor: a,
             },
         },
         StoredIdentityOpEvent {
-            at: 200,
-            actor: None,
-            action: StoredIdentityOpAction::Split {
-                entity: a,
-                heads: vec![b, c],
-                assigned: 2,
-                residue: 1,
-            },
-        },
-        StoredIdentityOpEvent {
+            seq: 3,
             at: 300,
             actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Proposed,
+            confidence: 0.5,
+            evidence: None,
             action: StoredIdentityOpAction::Undo { target: b },
         },
     ];
-    assert_eq!(cases.len(), 3);
-    for event in cases {
-        let decoded = StoredIdentityOpEvent::decode(&event.encode()).expect("round trip");
-        assert_eq!(decoded, event);
+    assert_eq!(cases.len(), 2);
+    for record in cases {
+        let bytes = encode_identity_topology_event_body(&record).expect("encode");
+        let decoded = decode_identity_topology_event_body(&bytes).expect("decode");
+        assert_eq!(decoded, record);
+        // Trailing bytes fail closed.
+        let mut padded = bytes.clone();
+        padded.push(0);
+        assert!(matches!(
+            decode_identity_topology_event_body(&padded),
+            Err(Error::InvalidIdentityTopologyEventBody(_))
+        ));
     }
 
-    // Fail-closed decode: non-map, unknown kind, missing field, unknown plan.
+    // Fail-closed decode: non-map, unknown kind, unknown plan, missing
+    // seq, out-of-range confidence, both-targets map row.
     assert!(matches!(
-        StoredIdentityOpEvent::decode(&Value::from("merge")),
-        Err(Error::InvalidClaimBody(_))
+        StoredIdentityOpEvent::decode_value(&Value::from("merge")),
+        Err(Error::InvalidIdentityTopologyEventBody(_))
     ));
-    let unknown_kind = Value::Map(vec![
-        (Value::from("kind"), Value::from("rename")),
-        (Value::from("at"), Value::from(1_u64)),
-    ]);
+    let base = |kind: &str| -> Vec<(Value, Value)> {
+        vec![
+            (Value::from("kind"), Value::from(kind)),
+            (Value::from("seq"), Value::from(1_u64)),
+            (Value::from("at"), Value::from(1_u64)),
+            (Value::from("src"), Value::from("inferred")),
+            (Value::from("appr"), Value::from("auto")),
+            (Value::from("conf"), Value::F32(1.0)),
+        ]
+    };
     assert!(matches!(
-        StoredIdentityOpEvent::decode(&unknown_kind),
-        Err(Error::InvalidClaimBody(_))
+        StoredIdentityOpEvent::decode_value(&Value::Map(base("rename"))),
+        Err(Error::InvalidIdentityTopologyEventBody(_))
     ));
-    let missing_survivor = Value::Map(vec![
-        (Value::from("kind"), Value::from("merge")),
-        (Value::from("at"), Value::from(1_u64)),
-        (Value::from("plan"), Value::from("read_through")),
-        (Value::from("sources"), Value::Array(Vec::new())),
-    ]);
-    assert!(matches!(
-        StoredIdentityOpEvent::decode(&missing_survivor),
-        Err(Error::InvalidClaimBody(_))
+    let mut bad_plan = base("merge");
+    bad_plan.push((Value::from("sources"), Value::Array(Vec::new())));
+    bad_plan.push((
+        Value::from("survivor"),
+        Value::Binary(a.as_bytes().to_vec()),
     ));
-    let unknown_plan = Value::Map(vec![
-        (Value::from("kind"), Value::from("merge")),
-        (Value::from("at"), Value::from(1_u64)),
-        (Value::from("plan"), Value::from("rewrite_references")),
-        (Value::from("sources"), Value::Array(Vec::new())),
-        (
-            Value::from("survivor"),
-            Value::Binary(a.as_bytes().to_vec()),
-        ),
-    ]);
+    bad_plan.push((Value::from("plan"), Value::from("rewrite_references")));
     assert!(matches!(
-        StoredIdentityOpEvent::decode(&unknown_plan),
-        Err(Error::InvalidClaimBody(_))
+        StoredIdentityOpEvent::decode_value(&Value::Map(bad_plan)),
+        Err(Error::InvalidIdentityTopologyEventBody(_))
+    ));
+    let mut no_seq = base("undo");
+    no_seq.retain(|(key, _)| key.as_str() != Some("seq"));
+    no_seq.push((Value::from("target"), Value::Binary(a.as_bytes().to_vec())));
+    assert!(matches!(
+        StoredIdentityOpEvent::decode_value(&Value::Map(no_seq)),
+        Err(Error::InvalidIdentityTopologyEventBody(_))
+    ));
+    let mut bad_conf = base("undo");
+    bad_conf.retain(|(key, _)| key.as_str() != Some("conf"));
+    bad_conf.push((Value::from("conf"), Value::F32(1.5)));
+    bad_conf.push((Value::from("target"), Value::Binary(a.as_bytes().to_vec())));
+    assert!(matches!(
+        StoredIdentityOpEvent::decode_value(&Value::Map(bad_conf)),
+        Err(Error::InvalidIdentityTopologyEventBody(_))
+    ));
+    let mut both_targets = base("split");
+    both_targets.push((Value::from("entity"), Value::Binary(a.as_bytes().to_vec())));
+    both_targets.push((
+        Value::from("heads"),
+        Value::Array(vec![Value::Binary(b.as_bytes().to_vec())]),
+    ));
+    both_targets.push((
+        Value::from("map"),
+        Value::Array(vec![Value::Map(vec![
+            (
+                Value::from("item"),
+                Value::Binary(id(0x71).as_bytes().to_vec()),
+            ),
+            (Value::from("head"), Value::Binary(b.as_bytes().to_vec())),
+            (Value::from("facet"), Value::from(0_u32)),
+        ])]),
+    ));
+    assert!(matches!(
+        StoredIdentityOpEvent::decode_value(&Value::Map(both_targets)),
+        Err(Error::InvalidIdentityTopologyEventBody(_))
     ));
 }
 
-// ─── Vault apply paths ──────────────────────────────────────────────────────
+// ─── Vault doors ────────────────────────────────────────────────────────────
 
 #[test]
-fn merge_apply_writes_shell_edges_ledger_event_and_never_rewrites_subjects() {
+fn type_76_is_a_pinned_engine_authored_maintenance_kind() {
+    // Conformance pin for the owner-ruled seat (byte-space v3 canon row).
+    assert_eq!(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, 76);
+    assert!(!crate::registry::is_structural_kind(76));
+    assert!(crate::registry::short_id_prefix(76).is_err());
+
+    // D5/MODEL pattern: public puts are rejected typed; only the
+    // identity-topology door (allow_maintenance) writes the byte.
+    let (_dir, vault) = open_vault();
+    let err = vault
+        .put_entity(
+            &id(0x50),
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"forged event",
+        )
+        .expect_err("public put of type 76 must reject");
+    assert!(matches!(err, Error::MaintenanceKindNotWritable(76)));
+    assert_eq!(event_count(&vault), 0);
+}
+
+#[test]
+fn reserved_edge_kinds_reject_every_public_write_path() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x61);
+    let b = put_person(&vault, 0x62);
+
+    // Raw put_edge / put_edge_with_vad (grok P2 / codex#3).
+    let err = vault
+        .put_edge(&a, EdgeKind::MergedInto, &b, 0.3)
+        .expect_err("raw merged_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    let err = vault
+        .put_edge_with_vad(
+            &a,
+            EdgeKind::SplitInto,
+            &b,
+            0.3,
+            crate::affect::Vad::NEUTRAL,
+        )
+        .expect_err("raw split_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+
+    // Batch builder creation + deletion ops.
+    let err = vault
+        .batch()
+        .edge_with_created_at(&a, EdgeKind::MergedInto, &b, 0.3, 100)
+        .commit()
+        .expect_err("batch created_at merged_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    let err = vault
+        .batch()
+        .edge_with_created_at_and_vad(
+            &a,
+            EdgeKind::SplitInto,
+            &b,
+            0.3,
+            100,
+            crate::affect::Vad::NEUTRAL,
+        )
+        .commit()
+        .expect_err("batch created_at+vad split_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    let err = vault
+        .delete_edge(&a, EdgeKind::MergedInto, &b)
+        .expect_err("public delete of merged_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+
+    // Txn builder path.
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .edge(&a, EdgeKind::SplitInto, &b, 0.3)
+                .apply(wtxn)
+        })
+        .expect_err("txn builder split_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+
+    // Nothing leaked through any of the rejected paths.
+    assert_eq!(
+        vault
+            .targets(&a, EdgeKind::MergedInto, None)
+            .expect("merged_into targets")
+            .len(),
+        0
+    );
+    assert_eq!(
+        vault
+            .targets(&a, EdgeKind::SplitInto, None)
+            .expect("split_into targets")
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn merge_apply_writes_shell_edges_event_record_and_receipt() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x61);
     let loser = put_person(&vault, 0x62);
@@ -565,13 +808,13 @@ fn merge_apply_writes_shell_edges_ledger_event_and_never_rewrites_subjects() {
 
     // A pre-existing claim whose subject is the loser (provenance truth).
     let note_id = id(0x64);
-    let note = ClaimBody::new(
+    let note = crate::claim::ClaimBody::new(
         "user.note",
         ClaimSubject::Entity(loser),
         Value::from("fixture note"),
         1.0,
         ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
+        crate::claim::ClaimLifecycleStatus::Active,
     );
     vault
         .put_claim(
@@ -589,10 +832,8 @@ fn merge_apply_writes_shell_edges_ledger_event_and_never_rewrites_subjects() {
     let outcome = vault
         .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 200)
         .expect("apply merge");
-    assert_eq!(
-        outcome.transitions,
-        vec![(loser, EntityLifecycleState::Merged)]
-    );
+    let (event_id, transitions) = expect_applied(outcome);
+    assert_eq!(transitions, vec![(loser, EntityLifecycleState::Merged)]);
 
     // Canonical D11 edge: exactly one merged_into, loser -> survivor.
     let targets = vault
@@ -617,35 +858,24 @@ fn merge_apply_writes_shell_edges_ledger_event_and_never_rewrites_subjects() {
         Some(crate::registry::ENTITY_TYPE_PERSON)
     );
 
-    // Exactly one ledger event, attached to the survivor, Auto by default,
-    // carrying evidence + actor.
-    let survivor_claims = vault
-        .claims_for_subject(&survivor)
-        .expect("survivor claims");
-    assert_eq!(survivor_claims.len(), 1);
-    let event_id = outcome.event;
-    assert_eq!(survivor_claims, vec![event_id]);
-    let event = vault
-        .get_claim(&event_id)
+    // Exactly one type-76 ledger event, seq-stamped, Auto by default,
+    // carrying actor + evidence.
+    assert_eq!(event_count(&vault), 1);
+    let record = vault
+        .identity_topology_event(&event_id)
         .expect("read event")
         .expect("event exists");
-    assert_eq!(event.predicate, PREDICATE_IDENTITY_TOPOLOGY_OP);
-    assert_eq!(event.approval, ClaimApprovalStatus::Auto);
-    assert_eq!(event.lifecycle, ClaimLifecycleStatus::Active);
-    assert_eq!(event.subject, ClaimSubject::Entity(survivor));
-    assert_eq!(event.valid_from, Some(200));
-    assert_eq!(event.source, Some(ClaimSource::Inferred));
-    assert!(event.evidence.is_some());
-    let stored = StoredIdentityOpEvent::decode(&event.value).expect("decode event");
+    assert_eq!(record.seq, 1);
+    assert_eq!(record.at, 200);
+    assert_eq!(record.actor, Some(actor));
+    assert_eq!(record.source, ClaimSource::Inferred);
+    assert_eq!(record.approval, ClaimApprovalStatus::Auto);
+    assert!(record.evidence.is_some());
     assert_eq!(
-        stored,
-        StoredIdentityOpEvent {
-            at: 200,
-            actor: Some(actor),
-            action: StoredIdentityOpAction::Merge {
-                sources: vec![loser],
-                survivor,
-            },
+        record.action,
+        StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
         }
     );
 
@@ -655,21 +885,9 @@ fn merge_apply_writes_shell_edges_ledger_event_and_never_rewrites_subjects() {
         .expect("read note")
         .expect("note exists");
     assert_eq!(note_after.subject, ClaimSubject::Entity(loser));
-    assert_eq!(
-        vault
-            .claims_for_subject(&loser)
-            .expect("loser claims")
-            .len(),
-        1
-    );
 
     // The apply event rides the existing IdentityLifecycle receipt kind.
-    let receipts = vault
-        .receipts(
-            crate::receipt::ReceiptQuery::new(10)
-                .with_kind(crate::receipt::ReceiptKind::IdentityLifecycle),
-        )
-        .expect("query receipts");
+    let receipts = identity_receipts(&vault);
     assert_eq!(receipts.len(), 1);
     assert_eq!(
         receipts[0].receipt_kind,
@@ -678,6 +896,8 @@ fn merge_apply_writes_shell_edges_ledger_event_and_never_rewrites_subjects() {
     assert_eq!(receipts[0].outcome, "merge");
     assert_eq!(receipts[0].occurred_at, 200);
     assert_eq!(receipts[0].actor, Some(actor.entity_ref().to_hex()));
+    assert_eq!(receipts[0].fields.get("seq"), Some(&"1".to_owned()));
+    assert_eq!(receipts[0].fields.get("approval"), Some(&"auto".to_owned()));
     assert_eq!(receipts[0].fields.get("survivor"), Some(&survivor.to_hex()));
     assert_eq!(
         receipts[0].fields.get("source_count"),
@@ -696,6 +916,7 @@ fn merge_apply_rejects_shells_facets_missing_and_non_structural_participants() {
     vault
         .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 200)
         .expect("apply merge");
+    assert_eq!(event_count(&vault), 1);
 
     // Shell SOURCE: merging the shell again rejects — resolution through
     // the redirect is read-time (r6), the ledger stays explicit.
@@ -752,13 +973,13 @@ fn merge_apply_rejects_shells_facets_missing_and_non_structural_participants() {
 
     // Non-structural participant (a CLAIM): claims supersede, entities merge.
     let claim_id = id(0x68);
-    let claim = ClaimBody::new(
+    let claim = crate::claim::ClaimBody::new(
         "user.note",
         ClaimSubject::Entity(bystander),
         Value::from("fixture"),
         1.0,
         ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
+        crate::claim::ClaimLifecycleStatus::Active,
     );
     vault
         .put_claim(
@@ -795,8 +1016,9 @@ fn merge_apply_rejects_shells_facets_missing_and_non_structural_participants() {
         IdentityTopologyRejection::SelfReference { entity: bystander }
     );
 
-    // Nothing extra was written by the rejected ops: the bystander is
-    // still Active with zero shell edges, and no ledger event attached.
+    // Nothing was written by the rejected ops: no new event record, no
+    // shell edge, bystander still Active.
+    assert_eq!(event_count(&vault), 1);
     assert_eq!(
         vault
             .entity_lifecycle_state(&bystander)
@@ -813,25 +1035,157 @@ fn merge_apply_rejects_shells_facets_missing_and_non_structural_participants() {
 }
 
 #[test]
+fn actor_is_validated_at_the_door() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+    let person = put_person(&vault, 0x63);
+
+    // Unknown actor entity: rejected before anything is staged.
+    let ghost_actor = WriteActor::new(id(0x6F), EdgeActorClass::Human);
+    let err = vault
+        .apply_identity_topology_op(
+            &merge_op(vec![loser], survivor),
+            &IdentityOpWrite::auto(ClaimSource::Inferred).with_actor(ghost_actor),
+            200,
+        )
+        .expect_err("ghost actor must reject");
+    assert!(matches!(err, Error::EntityNotFound));
+
+    // Class mismatch per the provenance rule (a PERSON is never `system`).
+    let mismatched = WriteActor::new(person, EdgeActorClass::System);
+    let err = vault
+        .apply_identity_topology_op(
+            &merge_op(vec![loser], survivor),
+            &IdentityOpWrite::auto(ClaimSource::Inferred).with_actor(mismatched),
+            200,
+        )
+        .expect_err("class mismatch must reject");
+    assert!(matches!(err, Error::ActorClassMismatch { .. }));
+
+    // Nothing recorded, nothing shelled.
+    assert_eq!(event_count(&vault), 0);
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Active
+    );
+}
+
+#[test]
+fn approval_axis_parks_proposed_and_noops_rejected() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+    let auto = IdentityOpWrite::auto(ClaimSource::Inferred);
+
+    // Rejected = the consent no-op: nothing written.
+    let mut rejected = auto;
+    rejected.approval = ClaimApprovalStatus::Rejected;
+    let outcome = vault
+        .apply_identity_topology_op(&merge_op(vec![loser], survivor), &rejected, 150)
+        .expect("rejected apply is a no-op");
+    assert_eq!(outcome, IdentityOpOutcome::Noop);
+    assert_eq!(event_count(&vault), 0);
+
+    // Proposed PARKS: the event is recorded for legibility, but zero
+    // topology effects — no edge, no lifecycle movement.
+    let mut proposed = auto;
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    let parked_event = expect_parked(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![loser], survivor), &proposed, 200)
+            .expect("proposed apply parks"),
+    );
+    assert_eq!(event_count(&vault), 1);
+    assert_eq!(
+        vault
+            .targets(&loser, EdgeKind::MergedInto, None)
+            .expect("merged_into targets")
+            .len(),
+        0
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Active
+    );
+    let record = vault
+        .identity_topology_event(&parked_event)
+        .expect("read parked event")
+        .expect("parked event exists");
+    assert_eq!(record.approval, ClaimApprovalStatus::Proposed);
+    // The parked proposal is visible in the receipt family.
+    let receipts = identity_receipts(&vault);
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        receipts[0].fields.get("approval"),
+        Some(&"proposed".to_owned())
+    );
+
+    // The park is not a topology writer: the same pair still merges Auto.
+    let (applied_event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![loser], survivor), &auto, 300)
+            .expect("auto apply after park"),
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Merged
+    );
+
+    // A PARKED undo leaves the shell intact.
+    let parked_undo = expect_parked(
+        vault
+            .undo_identity_topology_event(&applied_event, &proposed, 400)
+            .expect("proposed undo parks"),
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Merged
+    );
+    let undo_record = vault
+        .identity_topology_event(&parked_undo)
+        .expect("read parked undo")
+        .expect("parked undo exists");
+    assert_eq!(
+        undo_record.action,
+        StoredIdentityOpAction::Undo {
+            target: applied_event,
+        }
+    );
+
+    // Undo of the PARKED proposal itself is not current (never effective).
+    let err = vault
+        .undo_identity_topology_event(&parked_event, &auto, 500)
+        .expect_err("undoing a parked event must reject");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::NotCurrent {
+            event: parked_event,
+        }
+    );
+}
+
+#[test]
 fn undo_merge_removes_edges_restores_active_and_appends_counter_event() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x61);
     let loser = put_person(&vault, 0x62);
     let write = IdentityOpWrite::auto(ClaimSource::Inferred);
 
-    let outcome = vault
-        .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 200)
-        .expect("apply merge");
-    let undo = vault
-        .undo_identity_topology_event(&outcome.event, &write, 300)
-        .expect("undo merge");
-    assert_eq!(
-        undo.transitions,
-        vec![(loser, EntityLifecycleState::Active)]
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 200)
+            .expect("apply merge"),
     );
+    let (counter, transitions) = expect_applied(
+        vault
+            .undo_identity_topology_event(&event, &write, 300)
+            .expect("undo merge"),
+    );
+    assert_eq!(transitions, vec![(loser, EntityLifecycleState::Active)]);
 
     // Counter-event semantics: edge removed, state restored, BOTH ledger
-    // events still readable (append-only, r1).
+    // records still readable (append-only, r1).
     assert_eq!(
         vault
             .targets(&loser, EdgeKind::MergedInto, None)
@@ -843,54 +1197,26 @@ fn undo_merge_removes_edges_restores_active_and_appends_counter_event() {
         vault.entity_lifecycle_state(&loser).expect("loser state"),
         EntityLifecycleState::Active
     );
-    let survivor_claims = vault
-        .claims_for_subject(&survivor)
-        .expect("survivor claims");
-    assert_eq!(survivor_claims.len(), 2);
-    let counter = vault
-        .get_claim(&undo.event)
+    assert_eq!(event_count(&vault), 2);
+    let counter_record = vault
+        .identity_topology_event(&counter)
         .expect("read counter event")
         .expect("counter exists");
-    let stored = StoredIdentityOpEvent::decode(&counter.value).expect("decode counter");
+    assert_eq!(counter_record.seq, 2);
     assert_eq!(
-        stored.action,
-        StoredIdentityOpAction::Undo {
-            target: outcome.event,
-        }
+        counter_record.action,
+        StoredIdentityOpAction::Undo { target: event }
     );
-    let original = vault
-        .get_claim(&outcome.event)
-        .expect("read original event")
-        .expect("original still readable");
-    assert_eq!(original.lifecycle, ClaimLifecycleStatus::Active);
-
-    // Double undo is stale.
-    let err = vault
-        .undo_identity_topology_event(&outcome.event, &write, 400)
-        .expect_err("double undo must reject");
-    assert_eq!(
-        expect_rejection(err),
-        IdentityTopologyRejection::NotCurrent {
-            event: outcome.event,
-        }
-    );
-    // Undoing the counter-event is not undoable.
-    let err = vault
-        .undo_identity_topology_event(&undo.event, &write, 400)
-        .expect_err("undo of undo must reject");
-    assert_eq!(
-        expect_rejection(err),
-        IdentityTopologyRejection::NotUndoable { event: undo.event }
+    assert!(
+        vault
+            .identity_topology_event(&event)
+            .expect("read original event")
+            .is_some()
     );
 
     // Both ledger events project as IdentityLifecycle receipts: the apply
     // AND its counter-event (symmetric honesty — undo is never silent).
-    let receipts = vault
-        .receipts(
-            crate::receipt::ReceiptQuery::new(10)
-                .with_kind(crate::receipt::ReceiptKind::IdentityLifecycle),
-        )
-        .expect("query receipts");
+    let receipts = identity_receipts(&vault);
     assert_eq!(receipts.len(), 2);
     let undo_receipts: Vec<_> = receipts
         .iter()
@@ -900,40 +1226,62 @@ fn undo_merge_removes_edges_restores_active_and_appends_counter_event() {
     assert_eq!(undo_receipts[0].occurred_at, 300);
     assert_eq!(
         undo_receipts[0].fields.get("undo_of"),
-        Some(&outcome.event.to_hex())
+        Some(&event.to_hex())
+    );
+
+    // Double undo is stale.
+    let err = vault
+        .undo_identity_topology_event(&event, &write, 400)
+        .expect_err("double undo must reject");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::NotCurrent { event }
+    );
+    // Undoing the counter-event is not undoable.
+    let err = vault
+        .undo_identity_topology_event(&counter, &write, 400)
+        .expect_err("undo of undo must reject");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::NotUndoable { event: counter }
     );
 }
 
 #[test]
-fn undo_binds_to_the_current_ledger_event_not_edge_shape() {
+fn undo_currency_rides_engine_seq_not_wall_clock() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x61);
     let loser = put_person(&vault, 0x62);
     let write = IdentityOpWrite::auto(ClaimSource::Inferred);
 
-    // Same-second merge → undo → re-merge: the first event's undo must be
-    // stale even though the re-merged edge bytes are identical.
-    let first = vault
-        .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 100)
-        .expect("first merge");
+    // Merge, undo, then RE-MERGE with a BACKDATED wall clock (now = 50,
+    // earlier than the first event's 100). Causality is the engine seq:
+    // the first event's undo is stale, the backdated re-merge is current.
+    let (first, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 100)
+            .expect("first merge"),
+    );
     vault
-        .undo_identity_topology_event(&first.event, &write, 100)
+        .undo_identity_topology_event(&first, &write, 100)
         .expect("undo first merge");
-    let second = vault
-        .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 100)
-        .expect("re-merge");
+    let (second, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 50)
+            .expect("backdated re-merge"),
+    );
 
     let err = vault
-        .undo_identity_topology_event(&first.event, &write, 100)
+        .undo_identity_topology_event(&first, &write, 100)
         .expect_err("stale undo must reject");
     assert_eq!(
         expect_rejection(err),
-        IdentityTopologyRejection::NotCurrent { event: first.event }
+        IdentityTopologyRejection::NotCurrent { event: first }
     );
 
     vault
-        .undo_identity_topology_event(&second.event, &write, 100)
-        .expect("undo current merge");
+        .undo_identity_topology_event(&second, &write, 25)
+        .expect("undo current merge with an even earlier wall clock");
     assert_eq!(
         vault.entity_lifecycle_state(&loser).expect("loser state"),
         EntityLifecycleState::Active
@@ -941,37 +1289,39 @@ fn undo_binds_to_the_current_ledger_event_not_edge_shape() {
 }
 
 #[test]
-fn split_apply_writes_head_edges_event_stats_and_undo_restores() {
+fn split_apply_records_canonical_map_and_undo_restores() {
     let (_dir, vault) = open_vault();
     let original = put_person(&vault, 0x61);
     let head_a = put_person(&vault, 0x62);
     let head_b = put_person(&vault, 0x63);
     let write = IdentityOpWrite::auto(ClaimSource::Inferred);
 
+    // Map entries given UNSORTED: the recorded event carries the CANONICAL
+    // map (codex#6 — never discarded; ONE-1745 replays it).
+    let map = ReassignmentMap {
+        entries: vec![
+            ReassignmentEntry {
+                item: ClaimSubject::Entity(id(0x72)),
+                target: ReassignmentTarget::Residue,
+            },
+            ReassignmentEntry {
+                item: ClaimSubject::Entity(id(0x71)),
+                target: ReassignmentTarget::Head(head_a),
+            },
+        ],
+    };
     let op = IdentityTopologyOp::Split(SplitOp {
         entity: original,
         heads: vec![head_a, head_b],
-        reassignment: ReassignmentMap {
-            entries: vec![
-                ReassignmentEntry {
-                    item: ClaimSubject::Entity(id(0x71)),
-                    target: ReassignmentTarget::Head(head_a),
-                },
-                ReassignmentEntry {
-                    item: ClaimSubject::Entity(id(0x72)),
-                    target: ReassignmentTarget::Residue,
-                },
-            ],
-        },
+        reassignment: map.clone(),
         evidence: evidence(),
     });
-    let outcome = vault
-        .apply_identity_topology_op(&op, &write, 200)
-        .expect("apply split");
-    assert_eq!(
-        outcome.transitions,
-        vec![(original, EntityLifecycleState::Split)]
+    let (event, transitions) = expect_applied(
+        vault
+            .apply_identity_topology_op(&op, &write, 200)
+            .expect("apply split"),
     );
+    assert_eq!(transitions, vec![(original, EntityLifecycleState::Split)]);
 
     let mut heads = vault
         .targets(&original, EdgeKind::SplitInto, None)
@@ -991,30 +1341,21 @@ fn split_apply_writes_head_edges_event_stats_and_undo_restores() {
         EntityLifecycleState::Active
     );
 
-    // r2 first-class stats on the ledger event.
-    let event = vault
-        .get_claim(&outcome.event)
+    let record = vault
+        .identity_topology_event(&event)
         .expect("read event")
         .expect("event exists");
-    let stored = StoredIdentityOpEvent::decode(&event.value).expect("decode event");
     assert_eq!(
-        stored.action,
+        record.action,
         StoredIdentityOpAction::Split {
             entity: original,
             heads: vec![head_a, head_b],
-            assigned: 1,
-            residue: 1,
+            reassignment: map.canonicalized(),
         }
     );
 
-    // The split apply event projects one IdentityLifecycle receipt with the
-    // r2 stats as fields.
-    let receipts = vault
-        .receipts(
-            crate::receipt::ReceiptQuery::new(10)
-                .with_kind(crate::receipt::ReceiptKind::IdentityLifecycle),
-        )
-        .expect("query receipts");
+    // Receipt carries the r2 stats derived from the recorded map.
+    let receipts = identity_receipts(&vault);
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].outcome, "split");
     assert_eq!(receipts[0].fields.get("head_count"), Some(&"2".to_owned()));
@@ -1022,10 +1363,6 @@ fn split_apply_writes_head_edges_event_stats_and_undo_restores() {
     assert_eq!(receipts[0].fields.get("residue"), Some(&"1".to_owned()));
 
     // MS-01 zero-head split parks until the redirect projection (ONE-1744).
-    let err = vault
-        .apply_identity_topology_op(&split_op(id(0x64), Vec::new()), &write, 300)
-        .expect_err("zero heads must reject");
-    assert!(matches!(err, Error::EntityNotFound));
     let fresh = put_person(&vault, 0x64);
     let err = vault
         .apply_identity_topology_op(&split_op(fresh, Vec::new()), &write, 300)
@@ -1033,11 +1370,13 @@ fn split_apply_writes_head_edges_event_stats_and_undo_restores() {
     assert_eq!(expect_rejection(err), IdentityTopologyRejection::EmptyHeads);
 
     // Undo restores the original and removes both head edges.
-    let undo = vault
-        .undo_identity_topology_event(&outcome.event, &write, 400)
-        .expect("undo split");
+    let (_, undo_transitions) = expect_applied(
+        vault
+            .undo_identity_topology_event(&event, &write, 400)
+            .expect("undo split"),
+    );
     assert_eq!(
-        undo.transitions,
+        undo_transitions,
         vec![(original, EntityLifecycleState::Active)]
     );
     assert_eq!(
@@ -1086,6 +1425,7 @@ fn facet_and_assert_distinct_doors_validate_then_stay_unarmed() {
     );
 
     // Valid ops hit the honest unarmed door and write NOTHING.
+    assert_eq!(event_count(&vault), 1);
     let err = vault
         .apply_identity_topology_op(&facet_op(other), &write, 300)
         .expect_err("facet apply is unarmed");
@@ -1094,13 +1434,7 @@ fn facet_and_assert_distinct_doors_validate_then_stay_unarmed() {
         .apply_identity_topology_op(&distinct_op(other, survivor), &write, 300)
         .expect_err("assert_distinct apply is unarmed");
     assert!(matches!(err, Error::IdentityTopologyUnarmed(_)));
-    assert_eq!(
-        vault
-            .claims_for_subject(&other)
-            .expect("other claims")
-            .len(),
-        0
-    );
+    assert_eq!(event_count(&vault), 1);
     assert_eq!(
         vault.entity_lifecycle_state(&other).expect("other state"),
         EntityLifecycleState::Active
@@ -1108,33 +1442,54 @@ fn facet_and_assert_distinct_doors_validate_then_stay_unarmed() {
 }
 
 #[test]
-fn lifecycle_state_fails_closed_on_conflicting_shell_edges() {
+fn lifecycle_reads_fail_closed_on_corrupt_shells() {
     let (_dir, vault) = open_vault();
     let entity = put_person(&vault, 0x61);
     let peer_a = put_person(&vault, 0x62);
     let peer_b = put_person(&vault, 0x63);
 
-    // Raw writes can only produce this outside the apply path; reads must
-    // refuse to guess which shell state wins.
-    vault
-        .put_edge(&entity, EdgeKind::MergedInto, &peer_a, 0.3)
-        .expect("raw merged_into");
-    vault
-        .put_edge(&entity, EdgeKind::SplitInto, &peer_b, 0.3)
-        .expect("raw split_into");
+    // Sanity: one door-shaped merged_into edge reads Merged.
+    force_edge(&vault, entity, EdgeKind::MergedInto, peer_a);
+    assert_eq!(
+        vault.entity_lifecycle_state(&entity).expect("one shell"),
+        EntityLifecycleState::Merged
+    );
+
+    // codex#7: TWO merged_into targets = corruption (a merge redirects to
+    // exactly one canonical head); reads must refuse to guess.
+    force_edge(&vault, entity, EdgeKind::MergedInto, peer_b);
     let err = vault
         .entity_lifecycle_state(&entity)
+        .expect_err("multi merged_into must fail closed");
+    assert!(matches!(err, Error::CorruptedIndex(_)));
+
+    // Both shell kinds at once is equally corrupt.
+    let other = put_person(&vault, 0x64);
+    force_edge(&vault, other, EdgeKind::MergedInto, peer_a);
+    force_edge(&vault, other, EdgeKind::SplitInto, peer_b);
+    let err = vault
+        .entity_lifecycle_state(&other)
         .expect_err("conflicting shells must fail closed");
     assert!(matches!(err, Error::CorruptedIndex(_)));
+
+    // A split keeps its N-head set readable.
+    let split_entity = put_person(&vault, 0x65);
+    force_edge(&vault, split_entity, EdgeKind::SplitInto, peer_a);
+    force_edge(&vault, split_entity, EdgeKind::SplitInto, peer_b);
+    assert_eq!(
+        vault
+            .entity_lifecycle_state(&split_entity)
+            .expect("n-head split"),
+        EntityLifecycleState::Split
+    );
 }
 
-// ─── Edge-kind registry pins for the new redirect edges ────────────────────
+// ─── Edge-kind registry pins for the redirect edges ─────────────────────────
 
 #[test]
 fn merged_into_and_split_into_edge_kind_pins() {
-    // Discriminants 21/22 — byte 20 stays unregistered (the ARCH-0034
-    // frontier probe pins it; final byte assignment is an L0 registry
-    // ruling, flagged in the ONE-1743 out-file).
+    // Ratified bytes 21/22; byte 20 stays unregistered (the ONE-1414
+    // same-as parking spot, pinned by the ARCH-0034 frontier probe).
     assert_eq!(EdgeKind::MergedInto as u8, 21);
     assert_eq!(EdgeKind::SplitInto as u8, 22);
     assert_eq!(EdgeKind::try_from_u8(20), None);
@@ -1144,7 +1499,7 @@ fn merged_into_and_split_into_edge_kind_pins() {
     // Structural 12-byte layout, supersedes-class stored-weight prior, and
     // supersedes-class PPR λ.
     for kind in [EdgeKind::MergedInto, EdgeKind::SplitInto] {
-        let value = crate::edge::encode_edge_value(kind, 0.3, 1, Vad::NEUTRAL, None)
+        let value = crate::edge::encode_edge_value(kind, 0.3, 1, crate::affect::Vad::NEUTRAL, None)
             .expect("encode structural value");
         assert_eq!(value.len(), 12);
         assert_eq!(kind.default_weight(), Some(0.3));

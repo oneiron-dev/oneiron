@@ -6526,6 +6526,16 @@ fn all_entity_type_prefixes() {
             EntityClassification::Pack,
             TypeByteBand::Companion,
         ),
+        // Maintenance-classified engine kind carved from the 64–79 companion
+        // byte-range: band_of(76) == Companion (byte position), classification
+        // == Maintenance (the door gate). Per byte-space v3 canon row.
+        (
+            "IDENTITY_TOPOLOGY_EVENT",
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::Companion,
+        ),
         (
             "TASK_LIST",
             80,

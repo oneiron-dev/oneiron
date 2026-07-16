@@ -822,6 +822,12 @@ impl Vault {
 
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
+        // Reserved redirect-shell kinds (merged_into / split_into) are writable
+        // and deletable ONLY through the identity-topology apply/undo door — a
+        // public delete could tear a real shell edge without a ledger
+        // counter-event (ARCH-0055). Mirrors the batch-builder guard, which this
+        // convenience door bypasses (direct store delete, not a staged op).
+        crate::edge::validate_public_edge_kind(kind)?;
         let key_out = Store::encode_edge_key(src, kind, tgt);
         let key_in = Store::encode_edge_key(tgt, kind, src);
 

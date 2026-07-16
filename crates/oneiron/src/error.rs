@@ -285,6 +285,10 @@ pub enum ErrorKind {
     ReceiptLeaseRevoked,
     IdentityTopologyRejected,
     IdentityTopologyUnarmed,
+    InvalidIdentityTopologyEventBody,
+    ReservedEdgeKind,
+    #[cfg(feature = "sync")]
+    IdentityTopologyEventDivergence,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1408,6 +1412,22 @@ pub enum Error {
     /// transition table, its storage guards, or undo-currency evaluation.
     #[error("identity topology op rejected: {0:?}")]
     IdentityTopologyRejected(crate::identity_topology::IdentityTopologyRejection),
+    /// A type-76 IDENTITY_TOPOLOGY_EVENT body failed structural validation
+    /// (D18 fail-closed on every path that can admit the byte).
+    #[error("invalid identity topology event body: {0}")]
+    InvalidIdentityTopologyEventBody(&'static str),
+    /// A public edge write named a kind whose topology writes are reserved
+    /// to an engine door (`merged_into` / `split_into` — the ARCH-0055
+    /// apply/undo door is the only writer).
+    #[error("edge kind is reserved to an engine door: {0}")]
+    ReservedEdgeKind(&'static str),
+    /// A replicated identity-topology event carried divergent bytes for an
+    /// existing event id — equivocation on an immutable single-writer
+    /// stream (ARCH-0023b): local bytes are kept, the remote payload is
+    /// quarantined.
+    #[cfg(feature = "sync")]
+    #[error("identity topology event divergence for {}", id.to_hex())]
+    IdentityTopologyEventDivergence { id: EntityId },
     /// The identity-topology apply door for this op kind is declared but not
     /// armed yet (facet minting arms in ONE-1745; distinct_from assertion in
     /// ONE-1746). Fail-closed so no ledger event records an op that had no
@@ -1645,6 +1665,14 @@ impl Error {
             Self::ReceiptLeaseRevoked { .. } => ErrorKind::ReceiptLeaseRevoked,
             Self::IdentityTopologyRejected(_) => ErrorKind::IdentityTopologyRejected,
             Self::IdentityTopologyUnarmed(_) => ErrorKind::IdentityTopologyUnarmed,
+            Self::InvalidIdentityTopologyEventBody(_) => {
+                ErrorKind::InvalidIdentityTopologyEventBody
+            }
+            Self::ReservedEdgeKind(_) => ErrorKind::ReservedEdgeKind,
+            #[cfg(feature = "sync")]
+            Self::IdentityTopologyEventDivergence { .. } => {
+                ErrorKind::IdentityTopologyEventDivergence
+            }
         }
     }
 

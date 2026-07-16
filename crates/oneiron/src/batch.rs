@@ -588,8 +588,17 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
+    fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        if self.validation_error.is_none()
+            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+        {
+            self.validation_error = Some(e);
+        }
+    }
+
     /// Adds a graph edge write operation to the batch.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -617,6 +626,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -636,6 +646,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -657,6 +668,7 @@ impl<'a> BatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -771,6 +783,7 @@ impl<'a> BatchBuilder<'a> {
 
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::DeleteEdge {
             src: *src,
             kind,
@@ -1194,8 +1207,17 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        if self.validation_error.is_none()
+            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+        {
+            self.validation_error = Some(e);
+        }
+    }
+
     /// Adds a graph edge write operation.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -1215,6 +1237,7 @@ impl<'a> TxnBatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1236,6 +1259,7 @@ impl<'a> TxnBatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1269,6 +1293,7 @@ impl<'a> TxnBatchBuilder<'a> {
 
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::DeleteEdge {
             src: *src,
             kind,
@@ -2810,6 +2835,8 @@ fn apply_put(
         crate::psych_profile::validate_psych_profile_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
+    } else if entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         new_skill_record = Some(crate::skill::decode_skill_record(data)?);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
