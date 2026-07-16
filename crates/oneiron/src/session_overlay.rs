@@ -191,6 +191,7 @@ impl KeyspaceState {
                 .iter()
                 .map(|(key, delta)| {
                     key.len()
+                        + delta.present.keys().map(Vec::len).sum::<usize>()
                         + delta.present.values().map(Vec::len).sum::<usize>()
                         + delta.deleted.iter().map(Vec::len).sum::<usize>()
                 })
@@ -258,18 +259,6 @@ enum OverlayMutation {
     Clear {
         keyspace: OverlayKeyspace,
     },
-}
-
-impl OverlayMutation {
-    fn byte_size(&self) -> usize {
-        match self {
-            Self::Put { key, value, .. } | Self::DeleteDuplicate { key, value, .. } => {
-                key.len().saturating_add(value.len())
-            }
-            Self::Delete { key, .. } => key.len(),
-            Self::Clear { .. } => 0,
-        }
-    }
 }
 
 /// Turn/conversation scope carried by each typed journal operation.
@@ -609,21 +598,22 @@ impl SessionOverlay {
         key: &[u8],
         value: &[u8],
     ) -> Result<()> {
-        let incoming_bytes = checked_sum(key.len(), value.len(), "overlay put byte cost")?;
-        self.preflight_segment_insert(incoming_bytes)?;
-        self.stage_mutation(OverlayMutation::Put {
+        let mutation = OverlayMutation::Put {
             keyspace,
             key: key.to_vec(),
             value: value.to_vec(),
-        })
+        };
+        self.preflight_segment_mutation(&mutation)?;
+        self.stage_mutation(mutation)
     }
 
     pub(crate) fn delete(self: &Arc<Self>, keyspace: OverlayKeyspace, key: &[u8]) -> Result<()> {
-        self.preflight_segment_insert(key.len())?;
-        self.stage_mutation(OverlayMutation::Delete {
+        let mutation = OverlayMutation::Delete {
             keyspace,
             key: key.to_vec(),
-        })
+        };
+        self.preflight_segment_mutation(&mutation)?;
+        self.stage_mutation(mutation)
     }
 
     pub(crate) fn delete_duplicate(
@@ -632,19 +622,19 @@ impl SessionOverlay {
         key: &[u8],
         value: &[u8],
     ) -> Result<()> {
-        let incoming_bytes =
-            checked_sum(key.len(), value.len(), "overlay duplicate delete byte cost")?;
-        self.preflight_segment_insert(incoming_bytes)?;
-        self.stage_mutation(OverlayMutation::DeleteDuplicate {
+        let mutation = OverlayMutation::DeleteDuplicate {
             keyspace,
             key: key.to_vec(),
             value: value.to_vec(),
-        })
+        };
+        self.preflight_segment_mutation(&mutation)?;
+        self.stage_mutation(mutation)
     }
 
     pub(crate) fn clear(self: &Arc<Self>, keyspace: OverlayKeyspace) -> Result<()> {
-        self.preflight_segment_insert(0)?;
-        self.stage_mutation(OverlayMutation::Clear { keyspace })
+        let mutation = OverlayMutation::Clear { keyspace };
+        self.preflight_segment_mutation(&mutation)?;
+        self.stage_mutation(mutation)
     }
 
     pub(crate) fn stage_journal(self: &Arc<Self>, scope: JournalScope, op: BatchOp) -> Result<()> {
@@ -710,7 +700,7 @@ impl SessionOverlay {
         Ok(())
     }
 
-    fn preflight_segment_insert(self: &Arc<Self>, incoming_bytes: usize) -> Result<()> {
+    fn preflight_segment_mutation(self: &Arc<Self>, mutation: &OverlayMutation) -> Result<()> {
         ACTIVE_SEGMENT.with(|slot| {
             let slot = slot.borrow();
             let Some(segment) = slot.as_ref() else {
@@ -728,7 +718,12 @@ impl SessionOverlay {
                 .bytes_used
                 .checked_add(segment.journal_bytes)
                 .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
-            self.ensure_budget(current_bytes, incoming_bytes)
+            let projected = project_mutation(&segment.preview, mutation)?;
+            self.ensure_mutation_budget(
+                current_bytes,
+                segment.preview.bytes_used,
+                projected.bytes_used,
+            )
         })
     }
 
@@ -823,17 +818,15 @@ impl SessionOverlay {
     ) -> Result<Arc<OverlayState>> {
         let mut next = state.as_ref().clone();
         for mutation in mutations {
+            let projected = project_mutation(&next, mutation)?;
             if enforce_budget {
-                self.ensure_budget(next.bytes_used, mutation.byte_size())?;
+                self.ensure_mutation_budget(
+                    next.bytes_used,
+                    next.bytes_used,
+                    projected.bytes_used,
+                )?;
             }
-            apply_mutation(&mut next, mutation)?;
-            next.recalculate_bytes();
-            if enforce_budget && next.bytes_used > self.budget_bytes {
-                return Err(Error::OffRecordOverlayFull {
-                    budget_bytes: self.budget_bytes,
-                    attempted_bytes: next.bytes_used,
-                });
-            }
+            next = projected;
         }
         for entry in journal {
             if enforce_budget {
@@ -843,6 +836,21 @@ impl SessionOverlay {
             next.recalculate_bytes();
         }
         Ok(Arc::new(next))
+    }
+
+    fn ensure_mutation_budget(
+        &self,
+        current_bytes: usize,
+        old_mutation_bytes: usize,
+        new_mutation_bytes: usize,
+    ) -> Result<()> {
+        let Some(net_increase) = new_mutation_bytes.checked_sub(old_mutation_bytes) else {
+            return Ok(());
+        };
+        if net_increase == 0 {
+            return Ok(());
+        }
+        self.ensure_budget(current_bytes, net_increase)
     }
 
     fn ensure_budget(&self, current_bytes: usize, incoming_bytes: usize) -> Result<()> {
@@ -857,6 +865,13 @@ impl SessionOverlay {
         }
         Ok(())
     }
+}
+
+fn project_mutation(state: &OverlayState, mutation: &OverlayMutation) -> Result<OverlayState> {
+    let mut projected = state.clone();
+    apply_mutation(&mut projected, mutation)?;
+    projected.recalculate_bytes();
+    Ok(projected)
 }
 
 /// RAII owner of the thread-local segment installed for one base write txn.
@@ -963,11 +978,6 @@ fn duplicate_identity(value: &[u8]) -> Vec<u8> {
     value.get(..16).unwrap_or(value).to_vec()
 }
 
-fn checked_sum(left: usize, right: usize, context: &'static str) -> Result<usize> {
-    left.checked_add(right)
-        .ok_or(Error::ArithmeticOverflow(context))
-}
-
 fn batch_op_payload_bytes(op: &BatchOp) -> usize {
     match op {
         BatchOp::Put { data, .. } => data.len(),
@@ -1054,6 +1064,71 @@ mod tests {
         }
         assert_eq!(overlay.snapshot()?.bytes_used(), 0);
         drop(segment);
+        Ok(())
+    }
+
+    #[test]
+    fn dupsort_present_identity_keys_count_toward_budget_before_staging() -> Result<()> {
+        let value = vec![7_u8; 16];
+        let budget = b"t".len() + value.len();
+        let overlay = SessionOverlay::new(budget);
+        let segment = overlay.install_txn_segment()?;
+
+        match overlay.put(OverlayKeyspace::TextPostings, b"t", &value) {
+            Err(Error::OffRecordOverlayFull {
+                budget_bytes,
+                attempted_bytes,
+            }) => {
+                assert_eq!(budget_bytes, budget);
+                assert_eq!(attempted_bytes, budget + value.len());
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+            Ok(()) => panic!("DUP_SORT present identity key escaped the overlay budget"),
+        }
+        let snapshot = overlay.snapshot()?;
+        assert_eq!(snapshot.row_count(OverlayKeyspace::TextPostings), 0);
+        assert_eq!(snapshot.bytes_used(), 0);
+        drop(segment);
+        Ok(())
+    }
+
+    #[test]
+    fn mutations_at_capacity_are_charged_by_net_byte_change() -> Result<()> {
+        let budget = 8;
+        let overlay = SessionOverlay::new(budget);
+        let full_value = vec![7_u8; budget - b"k".len()];
+
+        let segment = overlay.install_txn_segment()?;
+        overlay.put(OverlayKeyspace::Entities, b"k", &full_value)?;
+        segment.commit()?;
+        assert_eq!(overlay.snapshot()?.bytes_used(), budget);
+
+        let segment = overlay.install_txn_segment()?;
+        overlay.put(OverlayKeyspace::Entities, b"k", b"x")?;
+        assert_eq!(overlay.snapshot()?.bytes_used(), 2);
+        segment.commit()?;
+
+        let segment = overlay.install_txn_segment()?;
+        overlay.put(OverlayKeyspace::Entities, b"k", &full_value)?;
+        segment.commit()?;
+        assert_eq!(overlay.snapshot()?.bytes_used(), budget);
+
+        let segment = overlay.install_txn_segment()?;
+        overlay.delete(OverlayKeyspace::Entities, b"k")?;
+        assert_eq!(overlay.snapshot()?.bytes_used(), 1);
+        match overlay.put(OverlayKeyspace::Entities, b"k", &[9_u8; 8]) {
+            Err(Error::OffRecordOverlayFull {
+                budget_bytes,
+                attempted_bytes,
+            }) => {
+                assert_eq!(budget_bytes, budget);
+                assert_eq!(attempted_bytes, budget + 1);
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+            Ok(()) => panic!("net-increasing over-budget put unexpectedly staged"),
+        }
+        assert_eq!(overlay.snapshot()?.bytes_used(), 1);
+        segment.commit()?;
         Ok(())
     }
 

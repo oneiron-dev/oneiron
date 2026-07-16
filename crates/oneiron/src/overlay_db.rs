@@ -114,7 +114,9 @@ impl OverlayDb {
             return self.base.delete(txn, key).map_err(Error::from);
         };
         let existed = self.get(txn, key)?.is_some();
-        overlay.live.delete(overlay.keyspace, key)?;
+        if existed {
+            overlay.live.delete(overlay.keyspace, key)?;
+        }
         Ok(existed)
     }
 
@@ -304,6 +306,7 @@ impl OverlayDb {
         Ok(Some(OverlayDupValues::Merged(PrefetchedMergedRows {
             first: Some(first),
             inner: merged,
+            last_duplicate_identity: None,
         })))
     }
 }
@@ -368,7 +371,9 @@ impl OverlayStrDb {
             return self.base.delete(txn, key).map_err(Error::from);
         };
         let existed = self.get(txn, key)?.is_some();
-        overlay.live.delete(overlay.keyspace, key.as_bytes())?;
+        if existed {
+            overlay.live.delete(overlay.keyspace, key.as_bytes())?;
+        }
         Ok(existed)
     }
 
@@ -627,6 +632,7 @@ where
 {
     first: Option<KvPair<'txn>>,
     inner: MergedRows<'txn, I>,
+    last_duplicate_identity: Option<Vec<u8>>,
 }
 
 impl<'txn, I> Iterator for PrefetchedMergedRows<'txn, I>
@@ -636,7 +642,22 @@ where
     type Item = Result<KvPair<'txn>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.first.take().map(Ok).or_else(|| self.inner.next())
+        let row = self.first.take().map(Ok).or_else(|| self.inner.next())?;
+        let Ok((_, value)) = &row else {
+            return Some(row);
+        };
+        let identity = duplicate_identity(value);
+        if self
+            .last_duplicate_identity
+            .as_deref()
+            .is_some_and(|previous| identity <= previous)
+        {
+            return Some(Err(Error::CorruptedIndex(
+                "duplicate posting entries for one entity",
+            )));
+        }
+        self.last_duplicate_identity = Some(identity.to_vec());
+        Some(row)
     }
 }
 
@@ -946,6 +967,48 @@ mod tests {
     }
 
     #[test]
+    fn composed_delete_only_stages_tombstones_for_visible_keys() -> Result<()> {
+        let (_dir, env, base) = env_with_db(DatabaseFlags::empty());
+        let mut setup_txn = env.write_txn()?;
+        base.put(&mut setup_txn, b"base", b"present")?;
+        setup_txn.commit()?;
+
+        let overlay = SessionOverlay::new(4096);
+        let snapshot = Arc::new(overlay.snapshot()?);
+        let view = OverlayDb::composed(base, overlay.clone(), snapshot, OverlayKeyspace::Entities);
+        let mut wtxn = env.write_txn()?;
+        let segment = overlay.install_txn_segment()?;
+
+        assert!(!view.delete(&mut wtxn, b"absent")?);
+        let after_absent = overlay.snapshot()?;
+        assert_eq!(
+            after_absent
+                .merge_plan(OverlayKeyspace::Entities, |_| true)
+                .rows
+                .len(),
+            0
+        );
+        assert_eq!(after_absent.bytes_used(), 0);
+
+        assert!(view.delete(&mut wtxn, b"base")?);
+        let after_present = Arc::new(overlay.snapshot()?);
+        assert_eq!(
+            after_present
+                .merge_plan(OverlayKeyspace::Entities, |_| true)
+                .rows
+                .len(),
+            1
+        );
+        let staged_view =
+            OverlayDb::composed(base, overlay, after_present, OverlayKeyspace::Entities);
+        assert_eq!(staged_view.get(&wtxn, b"base")?, None);
+
+        wtxn.commit()?;
+        segment.commit()?;
+        Ok(())
+    }
+
+    #[test]
     fn empty_overlay_streams_base_rows_as_borrowed() -> Result<()> {
         const ROW_COUNT: usize = 512;
         let (_dir, env, base) = env_with_db(DatabaseFlags::empty());
@@ -1017,6 +1080,58 @@ mod tests {
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], present);
+        Ok(())
+    }
+
+    #[test]
+    fn merged_duplicate_stream_rejects_out_of_order_entity_ids() -> Result<()> {
+        type EmptyBase = std::iter::Empty<heed::Result<(&'static [u8], &'static [u8])>>;
+
+        let mut higher = vec![0_u8; 16];
+        higher[15] = 2;
+        higher.push(0);
+        let mut lower = vec![0_u8; 16];
+        lower[15] = 1;
+        lower.push(0);
+        let snapshot = Arc::new(SessionOverlay::new(4096).snapshot()?);
+        let inner: MergedRows<'static, EmptyBase> = MergedRows::new(
+            None,
+            SnapshotMergePlan {
+                clear_base: true,
+                deleted_keys: BTreeSet::new(),
+                rows: vec![SnapshotMergeRow::Duplicate {
+                    key: b"term".to_vec(),
+                    identity: duplicate_identity(&lower).to_vec(),
+                    deleted: BTreeSet::new(),
+                    present: Some(lower),
+                }],
+            },
+            Direction::Forward,
+            snapshot,
+        );
+        let merged = PrefetchedMergedRows {
+            first: Some((Cow::Owned(b"term".to_vec()), Cow::Owned(higher))),
+            inner,
+            last_duplicate_identity: None,
+        };
+
+        let rows = merged.collect::<Vec<_>>();
+        assert_eq!(rows.len(), 2);
+        match &rows[0] {
+            Ok((key, value)) => {
+                assert_eq!(key.as_ref(), b"term");
+                assert_eq!(value.len(), 17);
+                assert_eq!(value[15], 2);
+            }
+            Err(other) => panic!("first duplicate unexpectedly failed: {other}"),
+        }
+        match &rows[1] {
+            Err(Error::CorruptedIndex(message)) => {
+                assert_eq!(*message, "duplicate posting entries for one entity");
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+            Ok(_) => panic!("out-of-order duplicate unexpectedly emitted"),
+        }
         Ok(())
     }
 }
