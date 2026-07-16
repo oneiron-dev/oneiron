@@ -70,6 +70,46 @@ fn projected_receipt(
     }
 }
 
+#[test]
+fn durable_send_receipt_requires_explicit_outcome() {
+    #[derive(Serialize)]
+    struct MissingOutcomeReceipt {
+        version: u8,
+        task_ref: String,
+        transport_dispatched: bool,
+        receipt: ReceiptRecord,
+    }
+
+    let task_ref = entity(0xE1);
+    let task_ref_hex = task_ref.to_hex();
+    let receipt = ReceiptRecord {
+        receipt_id: "outbound:required-outcome".to_owned(),
+        receipt_kind: ReceiptKind::Outbound,
+        occurred_at: 10,
+        actor: None,
+        on_behalf_of: None,
+        outcome: "delivered_to_channel".to_owned(),
+        job_ref: None,
+        trigger_ref: None,
+        policy_trace: Vec::new(),
+        fields: field_map(&[
+            (FIELD_TASK_REF, task_ref_hex.as_str()),
+            (FIELD_TRANSPORT_DISPATCHED, "true"),
+        ]),
+    };
+    let encoded = rmp_serde::to_vec_named(&MissingOutcomeReceipt {
+        version: SEND_RECEIPT_RECORD_VERSION,
+        task_ref: task_ref_hex,
+        transport_dispatched: true,
+        receipt,
+    })
+    .expect("encode missing-outcome fixture");
+
+    // Discriminating: restoring the old serde default would decode this row
+    // as Delivered and silently recreate receipt resend authority.
+    assert!(decode_durable_send_receipt(task_ref.as_bytes(), &encoded).is_err());
+}
+
 fn append_gate_decision(
     vault: &Vault,
     created_at: u64,

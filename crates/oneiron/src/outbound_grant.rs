@@ -17,14 +17,17 @@ use crate::batch::apply_ops;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
+use crate::outbound_consent::{DataClass, ScopedMcpGrantRef};
 use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
 use crate::temporal::TimeRange;
 
 /// Current StandingOutboundGrant body schema version.
 pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 1;
 
-/// Pinned on-disk MessagePack key set for StandingOutboundGrant bodies.
-pub const OUTBOUND_GRANT_BODY_KEYS: [&str; 12] = [
+/// Pinned recursive MessagePack key vocabulary for StandingOutboundGrant
+/// bodies. Existing top-level positions remain stable; scoped-tool keys are
+/// appended and encoded inside the `scope` map.
+pub const OUTBOUND_GRANT_BODY_KEYS: [&str; 16] = [
     "schema_version",
     "principal_ref",
     "origin_component_id",
@@ -37,6 +40,25 @@ pub const OUTBOUND_GRANT_BODY_KEYS: [&str; 12] = [
     "last_used_at",
     "binding_diff_handle",
     "read_frontier_hash",
+    "server",
+    "tool",
+    "data_class_ceiling",
+    "endpoint_allowlist",
+];
+
+const OUTBOUND_GRANT_TOP_LEVEL_KEYS: [&str; 12] = [
+    OUTBOUND_GRANT_BODY_KEYS[0],
+    OUTBOUND_GRANT_BODY_KEYS[1],
+    OUTBOUND_GRANT_BODY_KEYS[2],
+    OUTBOUND_GRANT_BODY_KEYS[3],
+    OUTBOUND_GRANT_BODY_KEYS[4],
+    OUTBOUND_GRANT_BODY_KEYS[5],
+    OUTBOUND_GRANT_BODY_KEYS[6],
+    OUTBOUND_GRANT_BODY_KEYS[7],
+    OUTBOUND_GRANT_BODY_KEYS[8],
+    OUTBOUND_GRANT_BODY_KEYS[9],
+    OUTBOUND_GRANT_BODY_KEYS[10],
+    OUTBOUND_GRANT_BODY_KEYS[11],
 ];
 
 pub(crate) const OUTBOUND_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "status", "last_used_at"];
@@ -48,7 +70,7 @@ pub(crate) const OUTBOUND_GRANT_FIELDS_STANDARD: &[&str] = &[
     "status",
     "last_used_at",
 ];
-pub(crate) const OUTBOUND_GRANT_FIELDS_FULL: &[&str] = &OUTBOUND_GRANT_BODY_KEYS;
+pub(crate) const OUTBOUND_GRANT_FIELDS_FULL: &[&str] = &OUTBOUND_GRANT_TOP_LEVEL_KEYS;
 
 const KEY_SCHEMA_VERSION: &str = OUTBOUND_GRANT_BODY_KEYS[0];
 const KEY_PRINCIPAL_REF: &str = OUTBOUND_GRANT_BODY_KEYS[1];
@@ -63,12 +85,23 @@ const KEY_LAST_USED_AT: &str = OUTBOUND_GRANT_BODY_KEYS[9];
 const KEY_BINDING_DIFF_HANDLE: &str = OUTBOUND_GRANT_BODY_KEYS[10];
 const KEY_READ_FRONTIER_HASH: &str = OUTBOUND_GRANT_BODY_KEYS[11];
 
-const SCOPE_KEYS: [&str; 5] = ["kind", "contact_ref", "verb_class", "channel", "brief_ref"];
+const SCOPE_KEYS: [&str; 9] = [
+    "kind",
+    "contact_ref",
+    "verb_class",
+    "channel",
+    "brief_ref",
+    "server",
+    "tool",
+    "data_class_ceiling",
+    "endpoint_allowlist",
+];
 
 const SCOPE_KIND_CONTACT: &str = "contact";
 const SCOPE_KIND_VERB_CLASS: &str = "verb_class";
 const SCOPE_KIND_CHANNEL: &str = "channel";
 const SCOPE_KIND_BRIEF_VERB_CLASS: &str = "brief_verb_class";
+const SCOPE_KIND_SCOPED_MCP: &str = "scoped_mcp";
 const PRINCIPAL_INDEX_PREFIX: &[u8] = b"outbound_grant/principal/v1\0";
 const SEND_VERB_CLASS: &str = "send";
 
@@ -87,6 +120,26 @@ pub enum StandingOutboundGrantScope {
         brief_ref: String,
         verb_class: String,
     },
+    /// Payload-aware standing authority for one external tool.
+    ScopedMcp {
+        server: String,
+        tool: String,
+        data_class_ceiling: DataClass,
+        endpoint_allowlist: Vec<String>,
+    },
+}
+
+/// Authenticated grant-time input for one payload-aware external tool scope.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ScopedMcpGrantMintIntent {
+    pub principal_ref: String,
+    pub origin_component_id: String,
+    pub origin_action_id: String,
+    pub origin_receipt_ref: Option<String>,
+    pub server: String,
+    pub tool: String,
+    pub data_class_ceiling: DataClass,
+    pub endpoint_allowlist: Vec<String>,
 }
 
 impl StandingOutboundGrantScope {
@@ -122,6 +175,27 @@ impl StandingOutboundGrantScope {
             Self::VerbClass { .. } => "always_this_verb_class",
             Self::Channel { .. } => "always_this_channel",
             Self::BriefVerbClass { .. } => "brief_verb_class",
+            Self::ScopedMcp { .. } => "scoped_mcp",
+        }
+    }
+
+    /// Returns the payload-aware axes when this is a scoped external-tool
+    /// grant. Blind grant kinds intentionally return `None`.
+    #[must_use]
+    pub fn scoped_mcp_grant(&self) -> Option<ScopedMcpGrantRef<'_>> {
+        match self {
+            Self::ScopedMcp {
+                server,
+                tool,
+                data_class_ceiling,
+                endpoint_allowlist,
+            } => Some(ScopedMcpGrantRef {
+                server,
+                tool,
+                data_class_ceiling: *data_class_ceiling,
+                endpoint_allowlist,
+            }),
+            _ => None,
         }
     }
 
@@ -134,6 +208,11 @@ impl StandingOutboundGrantScope {
         counterparty: Option<&str>,
         brief_ref: Option<&str>,
     ) -> bool {
+        // MCP calls require the payload-aware path. No argument-blind dial is
+        // allowed to authorize one, even if its channel string matches.
+        if is_mcp_channel(channel) {
+            return false;
+        }
         match self {
             Self::Contact { contact_ref } => {
                 counterparty.is_some_and(|counterparty| refs_match(contact_ref, counterparty))
@@ -149,6 +228,7 @@ impl StandingOutboundGrantScope {
                 verb_class.trim() == verb.trim()
                     && brief_ref.is_some_and(|brief_ref| refs_match(grant_brief, brief_ref))
             }
+            Self::ScopedMcp { .. } => false,
         }
     }
 }
@@ -225,6 +305,36 @@ impl StandingOutboundGrant {
             origin_action_id: non_empty_string(&intent.origin_action_id)?,
             origin_receipt_ref: non_empty_optional(intent.origin_receipt_ref.as_deref())?,
             scope: StandingOutboundGrantScope::from_grant_mint_scope(&intent.scope)?,
+            status: StandingOutboundGrantStatus::Active,
+            created_at,
+            revoked_at: None,
+            last_used_at: None,
+            binding_diff_handle,
+            read_frontier_hash,
+        };
+        grant.validate()?;
+        Ok(grant)
+    }
+
+    /// Constructs an active payload-aware grant from authenticated grant-time
+    /// input whose resolved endpoints were shown to the consenting principal.
+    pub fn from_scoped_mcp_grant_mint_intent(
+        intent: &ScopedMcpGrantMintIntent,
+        created_at: u64,
+        binding_diff_handle: Vec<u8>,
+        read_frontier_hash: [u8; 32],
+    ) -> Result<Self> {
+        let grant = Self {
+            principal_ref: non_empty_string(&intent.principal_ref)?,
+            origin_component_id: non_empty_string(&intent.origin_component_id)?,
+            origin_action_id: non_empty_string(&intent.origin_action_id)?,
+            origin_receipt_ref: non_empty_optional(intent.origin_receipt_ref.as_deref())?,
+            scope: StandingOutboundGrantScope::ScopedMcp {
+                server: intent.server.clone(),
+                tool: intent.tool.clone(),
+                data_class_ceiling: intent.data_class_ceiling,
+                endpoint_allowlist: intent.endpoint_allowlist.clone(),
+            },
             status: StandingOutboundGrantStatus::Active,
             created_at,
             revoked_at: None,
@@ -368,7 +478,7 @@ fn decode_standing_outbound_grant_value(value: &Value) -> Result<StandingOutboun
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    validate_keys(entries, &OUTBOUND_GRANT_BODY_KEYS)?;
+    validate_keys(entries, &OUTBOUND_GRANT_TOP_LEVEL_KEYS)?;
 
     if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(OUTBOUND_GRANT_SCHEMA_VERSION)
     {
@@ -413,6 +523,10 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
     let mut verb_class = Value::Nil;
     let mut channel = Value::Nil;
     let mut brief_ref = Value::Nil;
+    let mut server = Value::Nil;
+    let mut tool = Value::Nil;
+    let mut data_class_ceiling = Value::Nil;
+    let mut endpoint_allowlist = Value::Nil;
     let kind = match scope {
         StandingOutboundGrantScope::Contact {
             contact_ref: grant_contact_ref,
@@ -440,6 +554,19 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
             verb_class = Value::from(grant_verb_class.clone());
             SCOPE_KIND_BRIEF_VERB_CLASS
         }
+        StandingOutboundGrantScope::ScopedMcp {
+            server: grant_server,
+            tool: grant_tool,
+            data_class_ceiling: grant_ceiling,
+            endpoint_allowlist: grant_endpoints,
+        } => {
+            server = Value::from(grant_server.clone());
+            tool = Value::from(grant_tool.clone());
+            data_class_ceiling = Value::from(grant_ceiling.as_str());
+            endpoint_allowlist =
+                Value::Array(grant_endpoints.iter().cloned().map(Value::from).collect());
+            SCOPE_KIND_SCOPED_MCP
+        }
     };
 
     Value::Map(vec![
@@ -448,6 +575,10 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
         (Value::from(SCOPE_KEYS[2]), verb_class),
         (Value::from(SCOPE_KEYS[3]), channel),
         (Value::from(SCOPE_KEYS[4]), brief_ref),
+        (Value::from(SCOPE_KEYS[5]), server),
+        (Value::from(SCOPE_KEYS[6]), tool),
+        (Value::from(SCOPE_KEYS[7]), data_class_ceiling),
+        (Value::from(SCOPE_KEYS[8]), endpoint_allowlist),
     ])
 }
 
@@ -455,11 +586,20 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    validate_keys(entries, &SCOPE_KEYS)?;
+    validate_keys_with_optional(entries, &SCOPE_KEYS[..5], &SCOPE_KEYS[5..])?;
 
     let kind = required_value(entries, SCOPE_KEYS[0])?
         .as_str()
         .ok_or_else(invalid_grant)?;
+    if kind != SCOPE_KIND_SCOPED_MCP
+        && SCOPE_KEYS[5..].iter().any(|scope_key| {
+            entries.iter().any(|(key, value)| {
+                key.as_str() == Some(*scope_key) && !matches!(value, Value::Nil)
+            })
+        })
+    {
+        return Err(invalid_grant());
+    }
     match kind {
         SCOPE_KIND_CONTACT => Ok(StandingOutboundGrantScope::Contact {
             contact_ref: decode_non_empty_string(required_value(entries, SCOPE_KEYS[1])?)?,
@@ -474,6 +614,25 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
             brief_ref: decode_non_empty_string(required_value(entries, SCOPE_KEYS[4])?)?,
             verb_class: decode_non_empty_string(required_value(entries, SCOPE_KEYS[2])?)?,
         }),
+        SCOPE_KIND_SCOPED_MCP => {
+            let data_class_ceiling = DataClass::parse(
+                required_value(entries, SCOPE_KEYS[7])?
+                    .as_str()
+                    .ok_or_else(invalid_grant)?,
+            );
+            if !data_class_ceiling.is_grantable() {
+                return Err(invalid_grant());
+            }
+            Ok(StandingOutboundGrantScope::ScopedMcp {
+                server: decode_canonical_non_empty_string(required_value(entries, SCOPE_KEYS[5])?)?,
+                tool: decode_canonical_non_empty_string(required_value(entries, SCOPE_KEYS[6])?)?,
+                data_class_ceiling,
+                endpoint_allowlist: decode_canonical_non_empty_string_array(required_value(
+                    entries,
+                    SCOPE_KEYS[8],
+                )?)?,
+            })
+        }
         _ => Err(invalid_grant()),
     }
 }
@@ -489,6 +648,21 @@ fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
         } => {
             non_empty_str(brief_ref)?;
             non_empty_str(verb_class)?;
+        }
+        StandingOutboundGrantScope::ScopedMcp {
+            server,
+            tool,
+            data_class_ceiling,
+            endpoint_allowlist,
+        } => {
+            canonical_non_empty_str(server)?;
+            canonical_non_empty_str(tool)?;
+            if !data_class_ceiling.is_grantable() || endpoint_allowlist.is_empty() {
+                return Err(invalid_grant());
+            }
+            for endpoint in endpoint_allowlist {
+                canonical_non_empty_str(endpoint)?;
+            }
         }
     }
     Ok(())
@@ -530,18 +704,33 @@ pub(crate) fn standing_outbound_grant_principal_index_entity_id(
 }
 
 fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
+    validate_keys_with_optional(entries, keys, &[])
+}
+
+fn validate_keys_with_optional(
+    entries: &[(Value, Value)],
+    required_keys: &[&str],
+    optional_keys: &[&str],
+) -> Result<()> {
+    let mut required_seen = vec![false; required_keys.len()];
+    let mut optional_seen = vec![false; optional_keys.len()];
     for (key, _) in entries {
         let key = key.as_str().ok_or_else(invalid_grant)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_grant());
-        };
-        if seen[index] {
+        if let Some(index) = required_keys.iter().position(|known| *known == key) {
+            if required_seen[index] {
+                return Err(invalid_grant());
+            }
+            required_seen[index] = true;
+        } else if let Some(index) = optional_keys.iter().position(|known| *known == key) {
+            if optional_seen[index] {
+                return Err(invalid_grant());
+            }
+            optional_seen[index] = true;
+        } else {
             return Err(invalid_grant());
         }
-        seen[index] = true;
     }
-    if seen.into_iter().all(|value| value) {
+    if required_seen.into_iter().all(|value| value) {
         Ok(())
     } else {
         Err(invalid_grant())
@@ -558,6 +747,12 @@ fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Va
 fn decode_non_empty_string(value: &Value) -> Result<String> {
     let value = value.as_str().ok_or_else(invalid_grant)?;
     non_empty_string(value)
+}
+
+fn decode_canonical_non_empty_string(value: &Value) -> Result<String> {
+    let value = value.as_str().ok_or_else(invalid_grant)?;
+    canonical_non_empty_str(value)?;
+    Ok(value.to_owned())
 }
 
 fn decode_optional_string(value: &Value) -> Result<Option<String>> {
@@ -582,6 +777,19 @@ fn decode_non_empty_binary(value: &Value) -> Result<Vec<u8>> {
         return Err(invalid_grant());
     }
     Ok(bytes.clone())
+}
+
+fn decode_canonical_non_empty_string_array(value: &Value) -> Result<Vec<String>> {
+    let Value::Array(values) = value else {
+        return Err(invalid_grant());
+    };
+    if values.is_empty() {
+        return Err(invalid_grant());
+    }
+    values
+        .iter()
+        .map(decode_canonical_non_empty_string)
+        .collect()
 }
 
 fn decode_hash32(value: &Value) -> Result<[u8; 32]> {
@@ -611,12 +819,27 @@ fn non_empty_str(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn canonical_non_empty_str(value: &str) -> Result<()> {
+    non_empty_str(value)?;
+    if value != value.trim() {
+        return Err(invalid_grant());
+    }
+    Ok(())
+}
+
 fn refs_match(candidate: &str, target: &str) -> bool {
     candidate.trim() == target.trim()
 }
 
 fn is_send_class_verb(verb: &str) -> bool {
     verb.trim() == SEND_VERB_CLASS
+}
+
+fn is_mcp_channel(channel: &str) -> bool {
+    channel
+        .trim()
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mcp:"))
 }
 
 fn invalid_grant() -> Error {
@@ -642,6 +865,35 @@ impl Vault {
             created_at,
             binding_diff_handle,
             read_frontier_hash,
+        )?;
+        let data = encode_standing_outbound_grant_body(&grant)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+            return Err(Error::OutboundGrantAlreadyExists);
+        }
+        self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
+        wtxn.commit()?;
+        Ok(grant)
+    }
+
+    /// Mints a payload-aware standing grant from an authenticated grant-time
+    /// decision and binds it to the current policy floor.
+    pub fn mint_scoped_mcp_outbound_grant(
+        &self,
+        id: &EntityId,
+        intent: &ScopedMcpGrantMintIntent,
+        created_at: u64,
+    ) -> Result<StandingOutboundGrant> {
+        let policy = {
+            let rtxn = self.store.env.read_txn()?;
+            crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
+        };
+        let binding_diff_handle = scoped_mcp_grant_binding_handle(intent);
+        let grant = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
+            intent,
+            created_at,
+            binding_diff_handle,
+            policy.read_frontier_hash()?,
         )?;
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
@@ -753,6 +1005,36 @@ impl Vault {
         self.store.vault_meta.put(wtxn, &new_index_key, &[])?;
         Ok(())
     }
+}
+
+fn scoped_mcp_grant_binding_handle(intent: &ScopedMcpGrantMintIntent) -> Vec<u8> {
+    let mut hasher = blake3::Hasher::new();
+    scoped_mcp_binding_hash_bytes(
+        &mut hasher,
+        b"oneiron.gate.standing_outbound_grant.scoped_mcp.v1",
+    );
+    scoped_mcp_binding_hash_str(&mut hasher, &intent.principal_ref);
+    scoped_mcp_binding_hash_str(&mut hasher, &intent.origin_component_id);
+    scoped_mcp_binding_hash_str(&mut hasher, &intent.origin_action_id);
+    if let Some(origin_receipt_ref) = intent.origin_receipt_ref.as_deref() {
+        scoped_mcp_binding_hash_str(&mut hasher, origin_receipt_ref);
+    }
+    scoped_mcp_binding_hash_str(&mut hasher, &intent.server);
+    scoped_mcp_binding_hash_str(&mut hasher, &intent.tool);
+    scoped_mcp_binding_hash_str(&mut hasher, intent.data_class_ceiling.as_str());
+    for endpoint in &intent.endpoint_allowlist {
+        scoped_mcp_binding_hash_str(&mut hasher, endpoint);
+    }
+    hasher.finalize().as_bytes().to_vec()
+}
+
+fn scoped_mcp_binding_hash_str(hasher: &mut blake3::Hasher, value: &str) {
+    scoped_mcp_binding_hash_bytes(hasher, value.as_bytes());
+}
+
+fn scoped_mcp_binding_hash_bytes(hasher: &mut blake3::Hasher, value: &[u8]) {
+    hasher.update(&(value.len() as u64).to_le_bytes());
+    hasher.update(value);
 }
 
 #[cfg(test)]

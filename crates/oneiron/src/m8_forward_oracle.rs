@@ -39,7 +39,16 @@ use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::off_record::OffRecordBackendClass;
-use crate::outbound_grant::StandingOutboundGrantScope;
+use crate::outbound_consent::{
+    DataClass, FrozenMcpPayload, OutboundBindingAuthority, OutboundResultSender,
+    OutboundTransportResult, RawOutboundResult, ScopedMcpCall as EngineScopedMcpCall,
+    ScopedMcpCallContext, evaluate_scoped_mcp_calls as evaluate_engine_scoped_mcp_calls,
+    execute_scoped_mcp_outbound_call,
+};
+use crate::outbound_grant::{ScopedMcpGrantMintIntent, StandingOutboundGrantScope};
+use crate::outbound_intent_ledger::{
+    FrozenOutboundCall, OutboundSendOutcome, OutboundToolDescriptor,
+};
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
@@ -579,7 +588,6 @@ fn one_1689_threads_progress_per_thread_not_one_global_handoff() {
 /// channel scope matches on channel string + send-verb alone
 /// (argument-blind `matches_effect`), which is exactly the verified hole.
 #[test]
-#[ignore = "armed by ONE-1690"]
 fn one_1690_argument_blind_scopes_must_not_cover_mcp_calls() {
     let scope = StandingOutboundGrantScope::Channel {
         channel: "mcp:calendar".to_owned(),
@@ -624,25 +632,32 @@ fn evaluate_scoped_mcp_calls(
     grant: &ScopedMcpGrant,
     calls: &[ScopedMcpCall],
 ) -> ScopedMcpVerdict {
-    // Every fixture axis stays live until the real check replaces this seam.
-    let _grant_axes = (
-        grant.server,
-        grant.tool,
-        grant.data_class_ceiling,
-        grant.endpoint_allowlist,
-    );
-    for call in calls {
-        let _call_axes = (
-            call.server,
-            call.tool,
-            call.payload_data_class,
-            call.resolved_endpoint,
-        );
+    let endpoint_allowlist = grant
+        .endpoint_allowlist
+        .iter()
+        .map(|endpoint| (*endpoint).to_owned())
+        .collect::<Vec<_>>();
+    let scope = StandingOutboundGrantScope::ScopedMcp {
+        server: grant.server.to_owned(),
+        tool: grant.tool.to_owned(),
+        data_class_ceiling: DataClass::parse(grant.data_class_ceiling),
+        endpoint_allowlist,
+    };
+    let grant = scope.scoped_mcp_grant().expect("scoped fixture grant");
+    let calls = calls
+        .iter()
+        .map(|call| EngineScopedMcpCall {
+            server: call.server,
+            tool: call.tool,
+            payload_data_class: DataClass::parse(call.payload_data_class),
+            resolved_endpoint: call.resolved_endpoint,
+        })
+        .collect::<Vec<_>>();
+    let verdict = evaluate_engine_scoped_mcp_calls(grant, &calls);
+    ScopedMcpVerdict {
+        auto_fired: verdict.auto_fired,
+        human_escalations: verdict.human_escalations,
     }
-    unimplemented!(
-        "ONE-1690 arming seam: route through the payload-aware scoped-grant \
-         per-call check (endpoint-allowlist + tool + data-class ceiling)"
-    )
 }
 
 /// RT-09: a call INSIDE scope auto-fires with no human in the loop (auto
@@ -651,7 +666,6 @@ fn evaluate_scoped_mcp_calls(
 /// The ticket states no escalation coalescing, so the escalation count is
 /// pinned only as ≥ 1 (armer policy); the fire count is exactly 0.
 #[test]
-#[ignore = "armed by ONE-1690"]
 fn one_1690_in_scope_auto_fires_and_scope_exceeds_escalate_without_firing() {
     let (_dir, vault) = open_vault();
     let grant = ScopedMcpGrant {
@@ -711,6 +725,40 @@ fn one_1690_in_scope_auto_fires_and_scope_exceeds_escalate_without_firing() {
         secret_over_ceiling.human_escalations >= 1,
         "the data-class exceed escalates to a human"
     );
+
+    let wrong_server = evaluate_scoped_mcp_calls(
+        &vault,
+        &grant,
+        &[ScopedMcpCall {
+            server: "calendar",
+            ..in_scope_call()
+        }],
+    );
+    assert_eq!(
+        wrong_server.auto_fired, 0,
+        "a grant for another server never auto-fires"
+    );
+    assert!(
+        wrong_server.human_escalations >= 1,
+        "a wrong-server call escalates to a human"
+    );
+
+    let wrong_tool = evaluate_scoped_mcp_calls(
+        &vault,
+        &grant,
+        &[ScopedMcpCall {
+            tool: "write_file",
+            ..in_scope_call()
+        }],
+    );
+    assert_eq!(
+        wrong_tool.auto_fired, 0,
+        "a grant for another tool never auto-fires"
+    );
+    assert!(
+        wrong_tool.human_escalations >= 1,
+        "a wrong-tool call escalates to a human"
+    );
 }
 
 /// Byte-level trace of one consented effectful send.
@@ -732,11 +780,96 @@ struct EffectfulSendTrace {
 /// ARMING SEAM (ONE-1690): drive one effectful `self.mcp` call whose
 /// result carries EXACTLY four scrubbable fields (body, error, stderr,
 /// URL) and report the frozen-buffer + scrub trace.
-fn trace_effectful_mcp_send(_vault: &Vault) -> EffectfulSendTrace {
-    unimplemented!(
-        "ONE-1690 arming seam: one immutable FROZEN buffer shared by \
-         check + send; scrub ALL result fields behind the off-record fence"
+#[derive(Default)]
+struct OracleMcpResultSender {
+    sent_bytes: Vec<Vec<u8>>,
+}
+
+impl OutboundResultSender for OracleMcpResultSender {
+    fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
+        self.sent_bytes.push(call.payload().to_vec());
+        OutboundTransportResult {
+            outcome: OutboundSendOutcome::Acked,
+            raw_result: RawOutboundResult::new(
+                Some(b"provider body".to_vec()),
+                Some("provider error".to_owned()),
+                Some(b"provider stderr".to_vec()),
+                Some("https://provider.example/result".to_owned()),
+            ),
+        }
+    }
+}
+
+fn trace_effectful_mcp_send(vault: &Vault) -> EffectfulSendTrace {
+    let grant_id = EntityId::from_bytes([0x90; 16]).expect("grant id");
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(
+            &grant_id,
+            &ScopedMcpGrantMintIntent {
+                principal_ref: "principal:oracle".to_owned(),
+                origin_component_id: "consent:oracle".to_owned(),
+                origin_action_id: "grant:oracle".to_owned(),
+                origin_receipt_ref: Some("gate:oracle".to_owned()),
+                server: "files".to_owned(),
+                tool: "read_file".to_owned(),
+                data_class_ceiling: DataClass::Personal,
+                endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+            },
+            10,
+        )
+        .expect("mint oracle scoped grant");
+    vault
+        .register_connector_key(
+            &EntityId::from_bytes([0x92; 16]).expect("connector key id"),
+            crate::ConnectorKeyRecord::active(
+                crate::gate::scoped_mcp_credential_connector_key("files", &grant_id),
+                None,
+                vec![crate::EffectorBudget::sends(
+                    100,
+                    crate::EffectorBudgetWindow::Calendar {
+                        period: crate::CalendarPeriod::Day,
+                        tz: None,
+                    },
+                    crate::EffectorBudgetOnExhaust::Refuse,
+                )],
+                10,
+            ),
+        )
+        .expect("register active scoped connector key");
+    let authority = OutboundBindingAuthority::for_vault(vault).expect("binding authority");
+    let payload = b"{\"path\":\"calendar.txt\"}".to_vec();
+    let mut sender = OracleMcpResultSender::default();
+    let result = execute_scoped_mcp_outbound_call(
+        vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        OutboundToolDescriptor {
+            read_only_hint: Some(false),
+            idempotency_supported_hint: Some(true),
+        },
+        crate::attempt_queue::AttemptId::from_bytes(&[0x91; 16]).expect("attempt id"),
+        1,
+        ScopedMcpCallContext {
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            payload_data_class: DataClass::Personal,
+            resolved_endpoint: "https://files.internal.example".to_owned(),
+        },
+        FrozenMcpPayload::new(payload),
+        11,
+        &mut sender,
     )
+    .expect("effectful scoped send");
+    EffectfulSendTrace {
+        effectful_sends: result.effectful_sends,
+        freeze_events: result.freeze_events,
+        checked_bytes: result.checked_bytes().to_vec(),
+        sent_bytes: sender.sent_bytes.into_iter().next().unwrap_or_default(),
+        scrubbable_result_fields: result.scrubbable_result_fields,
+        scrubbed_result_fields: result.scrubbed_result_fields,
+    }
 }
 
 /// RT-09 R2: for EFFECTFUL calls the checked bytes ARE the sent bytes —
@@ -745,7 +878,6 @@ fn trace_effectful_mcp_send(_vault: &Vault) -> EffectfulSendTrace {
 /// not just headers. Non-vacuous by construction: the trace must show the
 /// send happened and the buffer carries real bytes.
 #[test]
-#[ignore = "armed by ONE-1690"]
 fn one_1690_checked_bytes_equal_sent_bytes_and_results_are_fully_scrubbed() {
     let (_dir, vault) = open_vault();
     let trace = trace_effectful_mcp_send(&vault);

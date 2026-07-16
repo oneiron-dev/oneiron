@@ -826,6 +826,8 @@ mod tests {
                 job_ref: None,
             },
             originating_session_ref: None,
+            attempt_started_node_id: None,
+            outcome: None,
             occurred_at: 1,
         }
     }

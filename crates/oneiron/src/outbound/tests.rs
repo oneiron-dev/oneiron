@@ -327,9 +327,16 @@ fn delivered_send_idempotency_survives_attempt_completion() -> crate::Result<()>
         .schedule_outbound(&draft)
         .expect("first schedule");
     assert!(!first.deduped);
-    assert_eq!(vault.connector_send_tasks()?.len(), 1);
-    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let unsettled_tasks = vault.connector_send_tasks()?;
+    assert_eq!(unsettled_tasks.len(), 1);
+    let unsettled = &unsettled_tasks[0];
+    let task_ref = unsettled.task_ref;
+    // Discriminating: additive absent fields must hydrate as outcome unknown,
+    // not as a fabricated successful terminal state.
+    assert_eq!(unsettled.attempt_started_node_id, None);
+    assert_eq!(unsettled.outcome, None);
 
+    reset_delivered_projection_receipt_observation();
     let mut executor = RecordingExecutor::default();
     assert_eq!(
         vault
@@ -338,6 +345,20 @@ fn delivered_send_idempotency_survives_attempt_completion() -> crate::Result<()>
         1
     );
     assert_eq!(executor.calls.len(), 1);
+    let settled = vault
+        .connector_send_task(&task_ref)?
+        .expect("settled connector task");
+    assert!(settled.attempt_started_node_id.is_some());
+    // The Delivered projection is strictly after receipt durability: a crash
+    // before the receipt must leave the task outcome unknown, never Delivered.
+    assert_eq!(
+        (
+            settled.outcome,
+            send_receipt_exists_for_task(&vault, task_ref)?
+        ),
+        (Some(ConnectorSendTaskOutcome::Delivered), true)
+    );
+    assert_eq!(delivered_projection_receipt_observation(), Some(true));
     assert_eq!(
         vault
             .effector_budget_read("email", None)?
@@ -443,6 +464,7 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
             .with_receipt_field("transport_status", "timeout"),
         ..Default::default()
     };
+    reset_failed_projection_receipt_observation();
     assert_eq!(
         vault
             .run_connector_task_executor(&mut executor, 101)
@@ -450,9 +472,26 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
         0
     );
     assert_eq!(executor.calls.len(), 1);
+    let failed_task = vault
+        .connector_send_task(&task_ref)?
+        .expect("failed connector task");
+    assert!(failed_task.attempt_started_node_id.is_some());
+    assert_eq!(failed_task.outcome, Some(ConnectorSendTaskOutcome::Failed));
     let failed_receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(failed_receipts.len(), 1);
     assert_eq!(failed_receipts[0].outcome, "failed");
+    // The Failed projection is strictly after the durable failure receipt: a
+    // crash before that record must leave outcome unknown, never Failed.
+    assert_eq!(
+        (
+            failed_task.outcome,
+            failed_receipts
+                .first()
+                .is_some_and(|receipt| receipt.outcome == "failed")
+        ),
+        (Some(ConnectorSendTaskOutcome::Failed), true)
+    );
+    assert_eq!(failed_projection_receipt_observation(), Some(true));
     let task_ref_hex = task_ref.to_hex();
     assert_eq!(
         failed_receipts[0]
@@ -516,6 +555,14 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
         1
     );
     assert_eq!(executor.calls.len(), 2);
+    let delivered_task = vault
+        .connector_send_task(&task_ref)?
+        .expect("retried connector task");
+    assert!(delivered_task.attempt_started_node_id.is_some());
+    assert_eq!(
+        delivered_task.outcome,
+        Some(ConnectorSendTaskOutcome::Delivered)
+    );
     assert_eq!(
         usize::from(send_receipt_exists_for_task(&vault, task_ref)?),
         1

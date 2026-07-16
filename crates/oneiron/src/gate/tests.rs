@@ -1677,6 +1677,7 @@ fn external_effect_gate_input(
         brief_ref: None,
         send_ref: None,
         standing_grant_ref: None,
+        scoped_mcp_call: None,
         counterparty_first_touch: None,
         counterparty_opted_out: false,
         counterparty_opt_out_receipt_reason: None,
@@ -2509,6 +2510,303 @@ fn forged_standing_grant_ref_does_not_authorize_external_effect() -> Result<()> 
     let decisions = vault.store.gate_decisions(10)?;
     assert_eq!(decisions.len(), 1);
     assert_eq!(decisions[0].grant_ref, None);
+    Ok(())
+}
+
+#[test]
+fn scoped_mcp_grant_is_payload_aware_at_external_effect_gate() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD8, &encode_policy_manifest(vec![]))?;
+    let grant_id = test_id(0xD9);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &crate::outbound_grant::ScopedMcpGrantMintIntent {
+            principal_ref: test_id(0xE0).to_hex(),
+            origin_component_id: "ask-mcp".to_owned(),
+            origin_action_id: "grant-scoped-mcp".to_owned(),
+            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+        },
+        10,
+    )?;
+    vault.register_connector_key(
+        &test_id(0xDA),
+        crate::ConnectorKeyRecord::active(
+            scoped_mcp_credential_connector_key("files", &grant_id),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let in_scope_call = || crate::outbound_consent::ScopedMcpCallContext {
+        server: "files".to_owned(),
+        tool: "read_file".to_owned(),
+        payload_data_class: crate::outbound_consent::DataClass::Personal,
+        resolved_endpoint: "https://files.internal.example".to_owned(),
+    };
+
+    let mut in_scope = external_effect_gate_input(&test_id(0xE0).to_hex(), "send", "mcp:calendar");
+    in_scope.has_opted_in = false;
+    in_scope.scoped_mcp_call = Some(in_scope_call());
+    let (_, decision, _) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &in_scope, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+
+    let exceeds = [
+        crate::outbound_consent::ScopedMcpCallContext {
+            server: "calendar".to_owned(),
+            ..in_scope_call()
+        },
+        crate::outbound_consent::ScopedMcpCallContext {
+            tool: "write_file".to_owned(),
+            ..in_scope_call()
+        },
+        crate::outbound_consent::ScopedMcpCallContext {
+            payload_data_class: crate::outbound_consent::DataClass::Secret,
+            ..in_scope_call()
+        },
+        crate::outbound_consent::ScopedMcpCallContext {
+            resolved_endpoint: "https://exfil.example".to_owned(),
+            ..in_scope_call()
+        },
+    ];
+    let mut escalations = 0_usize;
+    for call in exceeds {
+        let mut effect =
+            external_effect_gate_input(&test_id(0xE0).to_hex(), "send", "mcp:calendar");
+        effect.has_opted_in = false;
+        effect.scoped_mcp_call = Some(call);
+        let (_, decision, _) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+        })?;
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        escalations = escalations.saturating_add(1);
+    }
+    // Discriminating: presence-only authorization makes at least one of the
+    // four scope-exceeds Allow instead of recording all four escalations.
+    assert_eq!(escalations, 4);
+    Ok(())
+}
+
+#[test]
+fn scoped_mcp_grant_without_registered_connector_key_stays_pending() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xDC, &encode_policy_manifest(vec![]))?;
+    let grant_id = test_id(0xDD);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &crate::outbound_grant::ScopedMcpGrantMintIntent {
+            principal_ref: test_id(0xE0).to_hex(),
+            origin_component_id: "ask-mcp".to_owned(),
+            origin_action_id: "grant-scoped-mcp".to_owned(),
+            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+        },
+        10,
+    )?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input(&test_id(0xE0).to_hex(), "send", "mcp:calendar");
+    effect.has_opted_in = false;
+    effect.scoped_mcp_call = Some(crate::outbound_consent::ScopedMcpCallContext {
+        server: "files".to_owned(),
+        tool: "read_file".to_owned(),
+        payload_data_class: crate::outbound_consent::DataClass::Personal,
+        resolved_endpoint: "https://files.internal.example".to_owned(),
+    });
+
+    let (_, decision, _) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    // Discriminating: this exact-principal, in-scope call used to Allow when
+    // its synthetic scoped-MCP connector key was not registered.
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.pending.connector_key_unregistered"]
+    );
+    assert_eq!(decision.receipt_reasons(), &["connector_key_unregistered"]);
+    Ok(())
+}
+
+#[test]
+fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xC0, &encode_policy_manifest(vec![]))?;
+    let principal_ref = test_id(0xE0).to_hex();
+    let grant_id = test_id(0xC1);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &crate::outbound_grant::ScopedMcpGrantMintIntent {
+            principal_ref: principal_ref.clone(),
+            origin_component_id: "ask-mcp".to_owned(),
+            origin_action_id: "grant-scoped-mcp".to_owned(),
+            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+        },
+        10,
+    )?;
+    let governing_connector = scoped_mcp_credential_connector_key("files", &grant_id);
+    let key_id = test_id(0xC2);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active(
+            governing_connector,
+            None,
+            vec![crate::EffectorBudget::rate(1, 3_600)],
+            10,
+        ),
+    )?;
+
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input(&principal_ref, "send", "mcp:calendar");
+    effect.has_opted_in = false;
+    effect.send_ref = Some("intent:scoped".to_owned());
+    effect.scoped_mcp_call = Some(crate::outbound_consent::ScopedMcpCallContext {
+        server: "files".to_owned(),
+        tool: "read_file".to_owned(),
+        payload_data_class: crate::outbound_consent::DataClass::Personal,
+        resolved_endpoint: "https://files.internal.example".to_owned(),
+    });
+
+    // The first in-scope scoped call charges the rate-1 budget on the
+    // synthetic per-grant key.
+    let (_, decision, charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert!(charge.is_some(), "the synthetic governing row was enforced");
+
+    // Discriminating: the rate-1 cap lives on the synthetic per-grant key.
+    // Comparing against the raw mcp:calendar channel would miss the cap and
+    // let this second in-scope scoped call auto-fire instead of exhausting.
+    let (_, decision, _) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.effector_budget_exhausted"]
+    );
+    Ok(())
+}
+
+#[test]
+fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let herald_id = test_id(0xB7);
+    vault.fork_system_agent(
+        &herald_id,
+        SystemAgentPreset::Herald,
+        "test.proposed.scoped_mcp",
+        test_time(1),
+        1,
+    )?;
+    put_policy_manifest_bytes(&vault, 0xB8, &encode_policy_manifest(vec![]))?;
+    let grant_id = test_id(0xB9);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &crate::outbound_grant::ScopedMcpGrantMintIntent {
+            principal_ref: herald_id.to_hex(),
+            origin_component_id: "ask-mcp".to_owned(),
+            origin_action_id: "grant-scoped-mcp".to_owned(),
+            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+        },
+        10,
+    )?;
+    vault.register_connector_key(
+        &test_id(0xBA),
+        crate::ConnectorKeyRecord::active(
+            scoped_mcp_credential_connector_key("files", &grant_id),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input(&herald_id.to_hex(), "send", "mcp:calendar");
+    effect.actor.actor_class = "agent".to_owned();
+    effect.provenance.actor_entity_ref = Some(herald_id);
+    effect.has_opted_in = false;
+    effect.scoped_mcp_call = Some(crate::outbound_consent::ScopedMcpCallContext {
+        server: "files".to_owned(),
+        tool: "read_file".to_owned(),
+        payload_data_class: crate::outbound_consent::DataClass::Personal,
+        resolved_endpoint: "https://files.internal.example".to_owned(),
+    });
+
+    let (_, decision, _) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    // Discriminating: leaving the earlier actor-ceiling branch unchanged
+    // adds PendingActorCeiling despite the verified scoped grant.
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    Ok(())
+}
+
+#[test]
+fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xBB, &encode_policy_manifest(vec![]))?;
+    let caller_id = test_id(0xBC);
+    let grant_owner_id = test_id(0xBD);
+    let grant_id = test_id(0xBE);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &crate::outbound_grant::ScopedMcpGrantMintIntent {
+            principal_ref: grant_owner_id.to_hex(),
+            origin_component_id: "ask-mcp".to_owned(),
+            origin_action_id: "grant-scoped-mcp".to_owned(),
+            origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+        },
+        10,
+    )?;
+    vault.register_connector_key(
+        &test_id(0xBF),
+        crate::ConnectorKeyRecord::active(
+            scoped_mcp_credential_connector_key("files", &grant_id),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input(&caller_id.to_hex(), "send", "mcp:calendar");
+    effect.actor.actor_class = "agent".to_owned();
+    effect.provenance.actor_entity_ref = Some(grant_owner_id);
+    effect.has_opted_in = false;
+    effect.scoped_mcp_call = Some(crate::outbound_consent::ScopedMcpCallContext {
+        server: "files".to_owned(),
+        tool: "read_file".to_owned(),
+        payload_data_class: crate::outbound_consent::DataClass::Personal,
+        resolved_endpoint: "https://files.internal.example".to_owned(),
+    });
+
+    let (_, decision, _) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    // Discriminating: the caller's own actor_ref is paired with a different
+    // entity that owns this in-scope grant; matching either identity would
+    // dissolve the Proposed clamp and make this call Allow.
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
     Ok(())
 }
 

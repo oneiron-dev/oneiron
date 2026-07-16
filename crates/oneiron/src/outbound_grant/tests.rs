@@ -34,6 +34,215 @@ fn standing_outbound_grant_codec_round_trips_active_grant() -> Result<()> {
 }
 
 #[test]
+fn scoped_mcp_grant_codec_round_trips_all_payload_axes() -> Result<()> {
+    assert_eq!(OUTBOUND_GRANT_BODY_KEYS[5], "scope");
+    assert_eq!(OUTBOUND_GRANT_BODY_KEYS[11], "read_frontier_hash");
+    assert_eq!(
+        &OUTBOUND_GRANT_BODY_KEYS[12..],
+        &["server", "tool", "data_class_ceiling", "endpoint_allowlist"]
+    );
+    let grant = StandingOutboundGrant {
+        principal_ref: "owner".to_owned(),
+        origin_component_id: "ask-mcp".to_owned(),
+        origin_action_id: "grant-scoped-mcp".to_owned(),
+        origin_receipt_ref: Some("gate:mcp".to_owned()),
+        scope: StandingOutboundGrantScope::ScopedMcp {
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: DataClass::Personal,
+            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+        },
+        status: StandingOutboundGrantStatus::Active,
+        created_at: 10,
+        revoked_at: None,
+        last_used_at: None,
+        binding_diff_handle: vec![0xA5; 32],
+        read_frontier_hash: [0xB6; 32],
+    };
+
+    let encoded = encode_standing_outbound_grant_body(&grant)?;
+    let decoded = decode_standing_outbound_grant_body(&encoded)?;
+    // Discriminating: omitting any new pinned scope key breaks equality.
+    assert_eq!(decoded, grant);
+    assert_eq!(decoded.scope.dial_label(), "scoped_mcp");
+    Ok(())
+}
+
+#[test]
+fn schema_v1_contact_grant_with_legacy_five_key_scope_decodes() -> Result<()> {
+    let grant = StandingOutboundGrant::from_grant_mint_intent(
+        &intent(GrantMintIntentScope::Contact {
+            contact_ref: "contact:legacy".to_owned(),
+        }),
+        10,
+        vec![0xA5; 32],
+        [0xB6; 32],
+    )?;
+    let legacy_value = Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(OUTBOUND_GRANT_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_PRINCIPAL_REF),
+            Value::from(grant.principal_ref.clone()),
+        ),
+        (
+            Value::from(KEY_ORIGIN_COMPONENT_ID),
+            Value::from(grant.origin_component_id.clone()),
+        ),
+        (
+            Value::from(KEY_ORIGIN_ACTION_ID),
+            Value::from(grant.origin_action_id.clone()),
+        ),
+        (
+            Value::from(KEY_ORIGIN_RECEIPT_REF),
+            option_string_value(grant.origin_receipt_ref.as_deref()),
+        ),
+        (
+            Value::from(KEY_SCOPE),
+            Value::Map(vec![
+                (Value::from(SCOPE_KEYS[0]), Value::from(SCOPE_KIND_CONTACT)),
+                (Value::from(SCOPE_KEYS[1]), Value::from("contact:legacy")),
+                (Value::from(SCOPE_KEYS[2]), Value::Nil),
+                (Value::from(SCOPE_KEYS[3]), Value::Nil),
+                (Value::from(SCOPE_KEYS[4]), Value::Nil),
+            ]),
+        ),
+        (Value::from(KEY_STATUS), Value::from(grant.status.as_str())),
+        (Value::from(KEY_CREATED_AT), Value::from(grant.created_at)),
+        (Value::from(KEY_REVOKED_AT), Value::Nil),
+        (Value::from(KEY_LAST_USED_AT), Value::Nil),
+        (
+            Value::from(KEY_BINDING_DIFF_HANDLE),
+            Value::Binary(grant.binding_diff_handle.clone()),
+        ),
+        (
+            Value::from(KEY_READ_FRONTIER_HASH),
+            Value::Binary(grant.read_frontier_hash.to_vec()),
+        ),
+    ]);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &legacy_value)
+        .expect("encode legacy schema-v1 grant fixture");
+
+    // Discriminating: strict nine-key scope validation rejects this legacy
+    // on-disk row because it contains only the original five scope keys.
+    assert_eq!(decode_standing_outbound_grant_body(&encoded)?, grant);
+    Ok(())
+}
+
+#[test]
+fn contact_grant_decode_rejects_non_nil_scoped_mcp_field() -> Result<()> {
+    let grant = StandingOutboundGrant::from_grant_mint_intent(
+        &intent(GrantMintIntentScope::Contact {
+            contact_ref: "contact:injected".to_owned(),
+        }),
+        10,
+        vec![0xA5; 32],
+        [0xB6; 32],
+    )?;
+    let encoded = encode_standing_outbound_grant_body(&grant)?;
+    let mut body = rmpv::decode::read_value(&mut std::io::Cursor::new(encoded))
+        .expect("decode contact grant fixture");
+    let Value::Map(body_entries) = &mut body else {
+        panic!("grant body must be a map");
+    };
+    let scope = &mut body_entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(KEY_SCOPE))
+        .expect("scope field")
+        .1;
+    let Value::Map(scope_entries) = scope else {
+        panic!("scope must be a map");
+    };
+    let server = &mut scope_entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(SCOPE_KEYS[5]))
+        .expect("server field")
+        .1;
+    *server = Value::from("files");
+    let mut injected = Vec::new();
+    rmpv::encode::write_value(&mut injected, &body).expect("encode injected contact grant fixture");
+
+    let error = decode_standing_outbound_grant_body(&injected)
+        .expect_err("non-applicable scoped MCP field must fail closed");
+    // Discriminating: without the applicability check, this decodes as a
+    // clean blind contact grant while silently ignoring `server`.
+    assert_eq!(error.kind(), crate::ErrorKind::InvalidOutboundGrantBody);
+    Ok(())
+}
+
+#[test]
+fn scoped_mcp_grant_decode_rejects_noncanonical_endpoint() {
+    let body = Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(OUTBOUND_GRANT_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_PRINCIPAL_REF),
+            Value::from("principal:scope"),
+        ),
+        (
+            Value::from(KEY_ORIGIN_COMPONENT_ID),
+            Value::from("consent:scope"),
+        ),
+        (
+            Value::from(KEY_ORIGIN_ACTION_ID),
+            Value::from("grant:scoped_tool"),
+        ),
+        (Value::from(KEY_ORIGIN_RECEIPT_REF), Value::Nil),
+        (
+            Value::from(KEY_SCOPE),
+            Value::Map(vec![
+                (
+                    Value::from(SCOPE_KEYS[0]),
+                    Value::from(SCOPE_KIND_SCOPED_MCP),
+                ),
+                (Value::from(SCOPE_KEYS[1]), Value::Nil),
+                (Value::from(SCOPE_KEYS[2]), Value::Nil),
+                (Value::from(SCOPE_KEYS[3]), Value::Nil),
+                (Value::from(SCOPE_KEYS[4]), Value::Nil),
+                (Value::from(SCOPE_KEYS[5]), Value::from("files")),
+                (Value::from(SCOPE_KEYS[6]), Value::from("read_file")),
+                (
+                    Value::from(SCOPE_KEYS[7]),
+                    Value::from(DataClass::Personal.as_str()),
+                ),
+                (
+                    Value::from(SCOPE_KEYS[8]),
+                    Value::Array(vec![Value::from("https://files.internal.example ")]),
+                ),
+            ]),
+        ),
+        (
+            Value::from(KEY_STATUS),
+            Value::from(StandingOutboundGrantStatus::Active.as_str()),
+        ),
+        (Value::from(KEY_CREATED_AT), Value::from(10_u64)),
+        (Value::from(KEY_REVOKED_AT), Value::Nil),
+        (Value::from(KEY_LAST_USED_AT), Value::Nil),
+        (
+            Value::from(KEY_BINDING_DIFF_HANDLE),
+            Value::Binary(vec![0xA5; 32]),
+        ),
+        (
+            Value::from(KEY_READ_FRONTIER_HASH),
+            Value::Binary(vec![0xB6; 32]),
+        ),
+    ]);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &body).expect("encode scoped MCP grant fixture");
+
+    let error = decode_standing_outbound_grant_body(&encoded)
+        .expect_err("noncanonical scoped MCP endpoint must fail closed");
+    // Discriminating: silent-trim decode would turn this row into a clean
+    // endpoint that can auto-authorize instead of rejecting the grant.
+    assert_eq!(error.kind(), crate::ErrorKind::InvalidOutboundGrantBody);
+}
+
+#[test]
 fn standing_outbound_grant_revoke_and_touch_validate_lifecycle() -> Result<()> {
     let grant = StandingOutboundGrant::from_grant_mint_intent(
         &intent(GrantMintIntentScope::Channel {
@@ -68,6 +277,17 @@ fn standing_outbound_grant_scope_matching_is_narrow() {
     assert!(channel.matches_effect("send", "line", None, None));
     assert!(!channel.matches_effect("provision", "line", None, None));
     assert!(!channel.matches_effect("send", "email", None, None));
+
+    let contact = StandingOutboundGrantScope::Contact {
+        contact_ref: "contact:yuki".to_owned(),
+    };
+    let verb = StandingOutboundGrantScope::VerbClass {
+        verb_class: "send".to_owned(),
+    };
+    // Discriminating: any blind scope returning true here reopens the
+    // argument-blind MCP auto-fire path.
+    assert!(!contact.matches_effect("send", "mcp:calendar", Some("contact:yuki"), None));
+    assert!(!verb.matches_effect("send", "mcp:calendar", None, None));
 
     let brief = StandingOutboundGrantScope::BriefVerbClass {
         brief_ref: "brief:party".to_owned(),

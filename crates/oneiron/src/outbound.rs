@@ -86,6 +86,14 @@ const CONNECTOR_ACTOR_KIND: &str = "connector_actor";
 const CONNECTOR_ASSIGNMENT_WEIGHT: f32 = 1.0;
 const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
 
+#[cfg(test)]
+std::thread_local! {
+    static DELIVERED_PROJECTION_SAW_RECEIPT: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+    static FAILED_PROJECTION_SAW_RECEIPT: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
 /// Outbound intent spine shared by OF-327 dispatch and receipt projection.
 ///
 /// `job_ref` is optional so older ad-hoc or commitment-triggered intents remain
@@ -150,7 +158,23 @@ struct ConnectorSendTaskBody {
     job_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     originating_session_ref: Option<String>,
+    /// Additive synced execution marker. Absence means no visible attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attempt_started_node_id: Option<u64>,
+    /// Additive synced terminal projection. Absence means outcome unknown or
+    /// still in flight; device-local intent rows never enter this body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcome: Option<ConnectorSendTaskOutcome>,
     occurred_at: u64,
+}
+
+/// Terminal delivery projection carried by the synced connector-send TASK.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorSendTaskOutcome {
+    Delivered,
+    Failed,
+    Ambiguous,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -174,6 +198,8 @@ pub struct ConnectorSendTask {
     pub actor_class: EdgeActorClass,
     pub intent: OutboundIntent,
     pub originating_session_ref: Option<String>,
+    pub attempt_started_node_id: Option<u64>,
+    pub outcome: Option<ConnectorSendTaskOutcome>,
     pub occurred_at: u64,
 }
 
@@ -244,6 +270,8 @@ pub(crate) fn put_connector_send_task_in_txn(
         trigger_ref: intent.trigger_ref.clone(),
         job_ref: intent.job_ref.clone(),
         originating_session_ref: originating_session_ref.map(str::to_owned),
+        attempt_started_node_id: None,
+        outcome: None,
         occurred_at,
     };
     let task_body = rmp_serde::to_vec_named(&task_body)
@@ -1082,6 +1110,7 @@ impl OutboundDispatchPipeline {
             brief_ref: request.intent.job_ref.clone(),
             send_ref: Some(request.intent_ref.clone()),
             standing_grant_ref: None,
+            scoped_mcp_call: None,
             counterparty_first_touch: None,
             counterparty_opted_out: false,
             counterparty_opt_out_receipt_reason: None,
@@ -1442,6 +1471,8 @@ impl Vault {
                 job_ref: body.job_ref,
             },
             originating_session_ref: body.originating_session_ref,
+            attempt_started_node_id: body.attempt_started_node_id,
+            outcome: body.outcome,
             occurred_at: body.occurred_at,
         }))
     }
@@ -1522,6 +1553,12 @@ impl Vault {
             };
 
             if send_receipt_exists_for_task(self, task_ref)? {
+                project_connector_send_task_outcome(
+                    self,
+                    task_ref,
+                    ConnectorSendTaskOutcome::Delivered,
+                    now,
+                )?;
                 complete_connector_task_attempt(&queue, &attempt, now)?;
                 continue;
             }
@@ -1533,6 +1570,8 @@ impl Vault {
                     continue;
                 }
             };
+            let attempt_started_node_id = crate::identity::load_or_mint_client_id(self)?;
+            mark_connector_send_task_attempt_started(self, task_ref, attempt_started_node_id, now)?;
             let actor = OutboundDispatchActor {
                 actor_class: task.actor_class.gate_actor_class().to_owned(),
                 actor_ref: Some(task.actor_ref.to_hex()),
@@ -1561,6 +1600,12 @@ impl Vault {
                 Ok(result) => result,
                 Err(_) => {
                     fail_connector_task_attempt(&queue, &attempt, now, "dispatch_rejected")?;
+                    project_connector_send_task_outcome(
+                        self,
+                        task_ref,
+                        ConnectorSendTaskOutcome::Failed,
+                        now,
+                    )?;
                     continue;
                 }
             };
@@ -1578,6 +1623,12 @@ impl Vault {
                     )? {
                         executed = executed.saturating_add(1);
                     }
+                    project_connector_send_task_outcome(
+                        self,
+                        task_ref,
+                        ConnectorSendTaskOutcome::Delivered,
+                        now,
+                    )?;
                     complete_connector_task_attempt(&queue, &attempt, now)?;
                 }
                 OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
@@ -1585,6 +1636,12 @@ impl Vault {
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
                     fail_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
+                    project_connector_send_task_outcome(
+                        self,
+                        task_ref,
+                        ConnectorSendTaskOutcome::Failed,
+                        now,
+                    )?;
                 }
                 OutboundDispatchOutcome::Failed => {
                     persist_send_receipt(
@@ -1596,11 +1653,119 @@ impl Vault {
                         None,
                     )?;
                     fail_connector_task_attempt(&queue, &attempt, now, "transport_failed")?;
+                    project_connector_send_task_outcome(
+                        self,
+                        task_ref,
+                        ConnectorSendTaskOutcome::Failed,
+                        now,
+                    )?;
                 }
             }
         }
         Ok(executed)
     }
+}
+
+fn mark_connector_send_task_attempt_started(
+    vault: &Vault,
+    task_ref: EntityId,
+    node_id: u64,
+    now: u64,
+) -> Result<(), Error> {
+    update_connector_send_task_body(vault, task_ref, now, |body| {
+        body.attempt_started_node_id = Some(node_id);
+        body.outcome = None;
+    })
+}
+
+fn project_connector_send_task_outcome(
+    vault: &Vault,
+    task_ref: EntityId,
+    outcome: ConnectorSendTaskOutcome,
+    now: u64,
+) -> Result<(), Error> {
+    #[cfg(test)]
+    if outcome == ConnectorSendTaskOutcome::Delivered {
+        let receipt_exists = send_receipt_exists_for_task(vault, task_ref)?;
+        DELIVERED_PROJECTION_SAW_RECEIPT.with(|observed| observed.set(Some(receipt_exists)));
+    }
+    #[cfg(test)]
+    if outcome == ConnectorSendTaskOutcome::Failed {
+        let receipt_exists = vault.store.get_send_receipt_by_task(&task_ref)?.is_some();
+        FAILED_PROJECTION_SAW_RECEIPT.with(|observed| observed.set(Some(receipt_exists)));
+    }
+    update_connector_send_task_body(vault, task_ref, now, |body| {
+        body.outcome = Some(outcome);
+    })
+}
+
+#[cfg(test)]
+fn reset_delivered_projection_receipt_observation() {
+    DELIVERED_PROJECTION_SAW_RECEIPT.with(|observed| observed.set(None));
+}
+
+#[cfg(test)]
+fn delivered_projection_receipt_observation() -> Option<bool> {
+    DELIVERED_PROJECTION_SAW_RECEIPT.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn reset_failed_projection_receipt_observation() {
+    FAILED_PROJECTION_SAW_RECEIPT.with(|observed| observed.set(None));
+}
+
+#[cfg(test)]
+fn failed_projection_receipt_observation() -> Option<bool> {
+    FAILED_PROJECTION_SAW_RECEIPT.with(std::cell::Cell::get)
+}
+
+fn update_connector_send_task_body(
+    vault: &Vault,
+    task_ref: EntityId,
+    now: u64,
+    update: impl FnOnce(&mut ConnectorSendTaskBody),
+) -> Result<(), Error> {
+    vault.with_write_txn(|wtxn| {
+        let raw = vault
+            .store
+            .entities
+            .get(&*wtxn, task_ref.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("connector task entity header"))?;
+        if header.entity_type != ENTITY_TYPE_TASK {
+            return Err(Error::InvalidTaskBody(
+                "connector send entity is not a TASK",
+            ));
+        }
+        let mut body: ConnectorSendTaskBody =
+            rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
+                .map_err(|_| Error::InvalidTaskBody("invalid connector send body"))?;
+        if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
+            || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
+            || body.role != TaskRole::Task.role_byte()
+        {
+            return Err(Error::InvalidTaskBody(
+                "unsupported connector send body version",
+            ));
+        }
+        update(&mut body);
+        let encoded = rmp_serde::to_vec_named(&body)
+            .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
+        vault
+            .batch_in()
+            .put(
+                &task_ref,
+                ENTITY_TYPE_TASK,
+                TimeRange {
+                    start: body.occurred_at,
+                    end: body.occurred_at,
+                },
+                now,
+                &encoded,
+            )
+            .apply(wtxn)
+    })
 }
 
 fn has_connector_send_subkind(body: &[u8]) -> Result<bool, Error> {
