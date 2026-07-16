@@ -937,15 +937,18 @@ impl Vault {
                 }
             };
 
-        if self
-            .read_admitted_capability_surface_in_txn(&wtxn, &entity)?
-            .is_none()
-        {
-            self.write_admitted_capability_surface_in_txn(
+        match self.read_admitted_capability_surface_in_txn(&wtxn, &entity)? {
+            Some(admitted) if admitted != package.capabilities => {
+                return Err(Error::InvalidSkillBody(
+                    "matching content hash carries conflicting capabilities",
+                ));
+            }
+            Some(_) => {}
+            None => self.write_admitted_capability_surface_in_txn(
                 &mut wtxn,
                 &entity,
                 &package.capabilities,
-            )?;
+            )?,
         }
         self.append_hub_provenance_in_txn(
             &mut wtxn,
@@ -1041,6 +1044,7 @@ impl Vault {
         if !package.capabilities.is_same_or_narrower_than(&admitted) {
             let hub_value = hub_ref.to_value()?;
             let hash_hex = content_hash.to_hex();
+            let encoded_caps = encode_capability_surface_value(&package.capabilities);
             for (proposal_id, body, _) in self.active_claims_for_predicate_in_txn(
                 &wtxn,
                 entity,
@@ -1048,6 +1052,8 @@ impl Vault {
             )? {
                 if map_value(&body.value, "hubRef") == Some(&hub_value)
                     && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
+                    && map_text(&body.value, "version") == Some(package.record.version.as_str())
+                    && map_value(&body.value, "capabilities") == Some(&encoded_caps)
                 {
                     return Ok(HubSyncDisposition::Proposed {
                         proposal_id,
@@ -1067,10 +1073,7 @@ impl Vault {
                         Value::from(package.record.version.as_str()),
                     ),
                     (Value::from("contentHash"), Value::from(hash_hex)),
-                    (
-                        Value::from("capabilities"),
-                        encode_capability_surface_value(&package.capabilities),
-                    ),
+                    (Value::from("capabilities"), encoded_caps),
                 ]),
                 1.0,
                 ClaimApprovalStatus::Proposed,
@@ -1982,6 +1985,56 @@ mod tests {
     }
 
     #[test]
+    fn import_refuses_conflicting_capabilities_on_dedup() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let first_ref = HubRef::new(EntityId::now(), "skills/foo-a", HubPin::None)?;
+        let second_ref = HubRef::new(EntityId::now(), "skills/foo-b", HubPin::None)?;
+        let first = package(
+            candidate("foo"),
+            SkillCapabilitySurface::default().with_bin("foo"),
+        );
+        let second = package(
+            candidate("foo"),
+            SkillCapabilitySurface::default().with_bin("bar"),
+        );
+
+        let entity = vault.import_skill_from_hub(&first_ref, &first, t(1), 2)?;
+        let error = vault
+            .import_skill_from_hub(&second_ref, &second, t(3), 4)
+            .expect_err("matching content must not dedup conflicting capabilities");
+
+        assert!(matches!(
+            error,
+            Error::InvalidSkillBody("matching content hash carries conflicting capabilities")
+        ));
+        assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn import_dedups_equal_capabilities() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let first_ref = HubRef::new(EntityId::now(), "skills/foo-a", HubPin::None)?;
+        let second_ref = HubRef::new(EntityId::now(), "skills/foo-b", HubPin::None)?;
+        let first = package(
+            candidate("foo"),
+            SkillCapabilitySurface::default().with_bin("foo"),
+        );
+        let second = package(
+            candidate("foo"),
+            SkillCapabilitySurface::default().with_bin("foo"),
+        );
+
+        let entity = vault.import_skill_from_hub(&first_ref, &first, t(1), 2)?;
+        assert_eq!(
+            vault.import_skill_from_hub(&second_ref, &second, t(3), 4)?,
+            entity
+        );
+        assert_eq!(vault.skill_hub_provenance_count(&entity)?, 2);
+        Ok(())
+    }
+
+    #[test]
     fn hub_reimport_moves_provenance_alias_to_new_content_entity() -> Result<()> {
         let (_temp, vault) = open_vault();
         let reference = hub_ref(HubPin::None);
@@ -2706,6 +2759,61 @@ mod tests {
             vault.active_claims_for_predicate(&entity, PREDICATE_SKILL_HUB_UPDATE_PROPOSAL)?;
         assert_eq!(proposals.len(), 1);
         assert_eq!(proposals[0].0, first_id);
+        Ok(())
+    }
+
+    #[test]
+    fn sync_widening_proposal_refreshes_on_changed_capabilities() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let reference = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.proposal-capability-refresh"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?;
+
+        let wider_record = candidate("fixture.proposal-capability-refresh");
+        let first_wider = package(
+            wider_record.clone(),
+            SkillCapabilitySurface::default().with_bin("bin-a"),
+        );
+        let second_wider = package(
+            wider_record,
+            SkillCapabilitySurface::default()
+                .with_bin("bin-a")
+                .with_bin("bin-b"),
+        );
+        let first_id = match vault.sync_skill_from_hub(
+            &entity,
+            &reference,
+            &first_wider,
+            HubSyncPolicy::MirrorOfHub,
+            t(3),
+            4,
+        )? {
+            HubSyncDisposition::Proposed { proposal_id, .. } => proposal_id,
+            other => panic!("expected proposal, got {other:?}"),
+        };
+        let second_id = match vault.sync_skill_from_hub(
+            &entity,
+            &reference,
+            &second_wider,
+            HubSyncPolicy::MirrorOfHub,
+            t(5),
+            6,
+        )? {
+            HubSyncDisposition::Proposed { proposal_id, .. } => proposal_id,
+            other => panic!("expected refreshed proposal, got {other:?}"),
+        };
+
+        assert_ne!(second_id, first_id);
+        assert_eq!(
+            vault
+                .active_claims_for_predicate(&entity, PREDICATE_SKILL_HUB_UPDATE_PROPOSAL)?
+                .len(),
+            2
+        );
         Ok(())
     }
 
