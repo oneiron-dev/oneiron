@@ -35,7 +35,8 @@ use crate::habit::TaskRole;
 use crate::linkedin_connector::{LinkedInSeatPolicyAction, LinkedInSeatSandboxPolicy};
 use crate::llm::BudgetLadderEvent;
 use crate::receipt::{
-    ContextReceiptFields, ReceiptRecord, outbound_intent_receipt, persist_send_receipt,
+    ContextReceiptFields, ReceiptRecord, SendReceiptOutcome, delivered_send_receipt_for_task,
+    outbound_intent_receipt, persist_send_receipt,
 };
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
 use crate::temporal::TimeRange;
@@ -1538,6 +1539,7 @@ impl Vault {
                 actor_entity_ref: Some(task.actor_ref),
             };
             let originating_session_ref = task.originating_session_ref.clone();
+            let idempotency_key = task.intent.idempotency_key.clone();
             let mut request = OutboundDispatchRequest::new(
                 format!("outbound:task:{}", task_ref.to_hex()),
                 format!("intent:task:{}", task_ref.to_hex()),
@@ -1564,7 +1566,16 @@ impl Vault {
             };
             match result.outcome {
                 OutboundDispatchOutcome::DeliveredToChannel => {
-                    if persist_send_receipt(self, task_ref, result.receipt, true)? {
+                    let delivered_idempotency =
+                        idempotency_key.as_deref().map(|key| (task.actor_ref, key));
+                    if persist_send_receipt(
+                        self,
+                        task_ref,
+                        result.receipt,
+                        SendReceiptOutcome::Delivered,
+                        true,
+                        delivered_idempotency,
+                    )? {
                         executed = executed.saturating_add(1);
                     }
                     complete_connector_task_attempt(&queue, &attempt, now)?;
@@ -1576,6 +1587,14 @@ impl Vault {
                     fail_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
                 }
                 OutboundDispatchOutcome::Failed => {
+                    persist_send_receipt(
+                        self,
+                        task_ref,
+                        result.receipt,
+                        SendReceiptOutcome::Failed,
+                        false,
+                        None,
+                    )?;
                     fail_connector_task_attempt(&queue, &attempt, now, "transport_failed")?;
                 }
             }
@@ -1620,7 +1639,7 @@ fn connector_actor_raw_matches(raw: &[u8], connector_class: &str) -> Result<bool
 }
 
 fn send_receipt_exists_for_task(vault: &Vault, task_ref: EntityId) -> Result<bool, Error> {
-    Ok(vault.store.get_send_receipt_by_task(&task_ref)?.is_some())
+    Ok(delivered_send_receipt_for_task(vault, task_ref)?.is_some())
 }
 
 fn complete_connector_task_attempt(

@@ -294,6 +294,272 @@ fn connector_send_schedule_is_additive_and_executor_is_idempotent() -> crate::Re
     Ok(())
 }
 
+#[test]
+fn delivered_send_idempotency_survives_attempt_completion() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, AttemptState};
+    use crate::facade::{BRIDGE_OUTBOUND_ATTEMPT_KIND, OutboundDraftInput};
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x4A);
+    put_connector_task_actor(&vault, actor, 90)?;
+    put_policy_manifest(
+        &vault,
+        0x4B,
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    vault.register_connector_key(&entity(0x4E), sends_per_day_key(5))?;
+    let draft = OutboundDraftInput {
+        verb: "send".to_owned(),
+        channel: "email".to_owned(),
+        target: "counterparty:durable-idempotency".to_owned(),
+        on_behalf_of: None,
+        content_ref: None,
+        idempotency_key: Some("durable-idempotency:test".to_owned()),
+        dedupe_key: None,
+        trigger: "agent_immediate".to_owned(),
+        trigger_ref: "session:durable-idempotency".to_owned(),
+        job_ref: None,
+        occurred_at: Some(90),
+    };
+    let first = vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("first schedule");
+    assert!(!first.deduped);
+    assert_eq!(vault.connector_send_tasks()?.len(), 1);
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+
+    let mut executor = RecordingExecutor::default();
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 91)
+            .unwrap(),
+        1
+    );
+    assert_eq!(executor.calls.len(), 1);
+    assert_eq!(
+        vault
+            .effector_budget_read("email", None)?
+            .expect("budget after delivery")
+            .rows[0]
+            .used,
+        1
+    );
+    assert_eq!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .len(),
+        1
+    );
+    assert_eq!(
+        vault
+            .store
+            .get_delivered_send_task_by_idempotency(&actor, "durable-idempotency:test")?,
+        Some(task_ref)
+    );
+    let attempts = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(
+        attempts
+            .iter()
+            .filter(|attempt| attempt.state == AttemptState::Completed)
+            .count(),
+        1
+    );
+
+    let replay = vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("delivered replay");
+    assert!(replay.deduped);
+    assert_eq!(replay.outcome, "already_sent");
+    assert_eq!(vault.connector_send_tasks()?.len(), 1);
+    assert_eq!(
+        vault
+            .effector_budget_read("email", None)?
+            .expect("budget after delivered dedupe")
+            .rows[0]
+            .used,
+        1
+    );
+    assert_eq!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .into_iter()
+            .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
+            .count(),
+        1
+    );
+    assert_eq!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .len(),
+        1
+    );
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 92)
+            .unwrap(),
+        0
+    );
+    assert_eq!(executor.calls.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome};
+    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::receipt::{FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind, ReceiptQuery};
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x4C);
+    put_connector_task_actor(&vault, actor, 100)?;
+    put_policy_manifest(
+        &vault,
+        0x4D,
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    let draft = connector_task_draft(
+        "failed-receipt-retry:test",
+        "session:failed-receipt-retry",
+        100,
+    );
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule outbound");
+    let tasks = vault.connector_send_tasks()?;
+    assert_eq!(tasks.len(), 1);
+    let task_ref = tasks[0].task_ref;
+
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout")
+            .with_receipt_field("transport_status", "timeout"),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 101)
+            .unwrap(),
+        0
+    );
+    assert_eq!(executor.calls.len(), 1);
+    let failed_receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(failed_receipts.len(), 1);
+    assert_eq!(failed_receipts[0].outcome, "failed");
+    let task_ref_hex = task_ref.to_hex();
+    assert_eq!(
+        failed_receipts[0]
+            .fields
+            .get(FIELD_TASK_REF)
+            .map(String::as_str),
+        Some(task_ref_hex.as_str())
+    );
+    assert_eq!(
+        failed_receipts[0]
+            .fields
+            .get(FIELD_TRANSPORT_DISPATCHED)
+            .map(String::as_str),
+        Some("false")
+    );
+    assert_eq!(
+        failed_receipts[0]
+            .fields
+            .get("retry_state")
+            .map(String::as_str),
+        Some("provider_timeout")
+    );
+    assert_eq!(
+        failed_receipts[0]
+            .fields
+            .get("transport_status")
+            .map(String::as_str),
+        Some("timeout")
+    );
+    assert_eq!(
+        usize::from(vault.store.get_send_receipt_by_task(&task_ref)?.is_some()),
+        1
+    );
+    assert_eq!(
+        usize::from(send_receipt_exists_for_task(&vault, task_ref)?),
+        0
+    );
+    assert_eq!(
+        usize::from(
+            vault
+                .store
+                .get_delivered_send_task_by_idempotency(&actor, "failed-receipt-retry:test")?
+                .is_some()
+        ),
+        0
+    );
+
+    let retry = AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
+        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+        payload: connector_send_attempt_payload(task_ref)?,
+        dedupe_key: None,
+        run_id: None,
+        now: 102,
+    })?;
+    assert_eq!(usize::from(matches!(retry, EnqueueOutcome::Enqueued(_))), 1);
+    executor.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:retry:ok");
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 103)
+            .unwrap(),
+        1
+    );
+    assert_eq!(executor.calls.len(), 2);
+    assert_eq!(
+        usize::from(send_receipt_exists_for_task(&vault, task_ref)?),
+        1
+    );
+    assert_eq!(
+        vault
+            .store
+            .get_delivered_send_task_by_idempotency(&actor, "failed-receipt-retry:test")?,
+        Some(task_ref)
+    );
+    let delivered_receipts =
+        vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(delivered_receipts.len(), 1);
+    assert_eq!(delivered_receipts[0].outcome, "delivered_to_channel");
+    let attempts = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(
+        attempts
+            .iter()
+            .filter(|attempt| attempt.state == AttemptState::Failed)
+            .count(),
+        1
+    );
+    assert_eq!(
+        attempts
+            .iter()
+            .filter(|attempt| attempt.state == AttemptState::Completed)
+            .count(),
+        1
+    );
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 104)
+            .unwrap(),
+        0
+    );
+    assert_eq!(executor.calls.len(), 2);
+    Ok(())
+}
+
 fn connector_task_draft(
     idempotency_key: &str,
     trigger_ref: &str,
@@ -360,7 +626,14 @@ fn send_receipt_point_lookup_skips_gate_and_sink_without_scanning() -> crate::Re
         "delivered_to_channel",
     );
     assert_eq!(
-        usize::from(persist_send_receipt(&vault, task_ref, receipt, false)?),
+        usize::from(persist_send_receipt(
+            &vault,
+            task_ref,
+            receipt,
+            SendReceiptOutcome::Delivered,
+            false,
+            Some((actor, "point-receipt:test")),
+        )?),
         1
     );
     assert_eq!(
@@ -398,7 +671,7 @@ fn send_receipt_point_lookup_skips_gate_and_sink_without_scanning() -> crate::Re
 }
 
 #[test]
-fn connector_executor_denied_attempt_does_not_wedge_or_abort_batch() -> crate::Result<()> {
+fn schedule_denial_is_not_enqueued_and_does_not_block_allowed_task() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState};
     use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
     use crate::receipt::{FIELD_TASK_REF, ReceiptKind, ReceiptQuery};
@@ -424,7 +697,7 @@ fn connector_executor_denied_attempt_does_not_wedge_or_abort_batch() -> crate::R
         crate::ConnectorKeyRecord::active("email", None, Vec::new(), 30),
     )?;
     vault.suspend_connector_key(&denied_key, "test_denial", 30)?;
-    vault
+    let denied = vault
         .memory_facade(denied_actor, EdgeActorClass::Agent)
         .schedule_outbound(&connector_task_draft(
             "batch-denied:test",
@@ -432,6 +705,7 @@ fn connector_executor_denied_attempt_does_not_wedge_or_abort_batch() -> crate::R
             30,
         ))
         .expect("schedule denied outbound");
+    assert_eq!(denied.outcome, "suppressed");
     let mut allowed_draft = connector_task_draft("batch-allowed:test", "session:batch-allowed", 31);
     allowed_draft.channel = "slack".to_owned();
     vault
@@ -440,12 +714,7 @@ fn connector_executor_denied_attempt_does_not_wedge_or_abort_batch() -> crate::R
         .expect("schedule allowed outbound");
 
     let tasks = vault.connector_send_tasks()?;
-    assert_eq!(tasks.len(), 2);
-    let denied_task = tasks
-        .iter()
-        .find(|task| task.actor_ref == denied_actor)
-        .expect("denied task")
-        .task_ref;
+    assert_eq!(tasks.len(), 1);
     let allowed_task = tasks
         .iter()
         .find(|task| task.actor_ref == allowed_actor)
@@ -465,20 +734,13 @@ fn connector_executor_denied_attempt_does_not_wedge_or_abort_batch() -> crate::R
         .into_iter()
         .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
         .collect::<Vec<_>>();
-    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts.len(), 1);
     assert_eq!(
         attempts
             .iter()
             .filter(|attempt| attempt.state == AttemptState::Leased)
             .count(),
         0
-    );
-    assert_eq!(
-        attempts
-            .iter()
-            .filter(|attempt| attempt.state == AttemptState::Failed)
-            .count(),
-        1
     );
     assert_eq!(
         attempts
@@ -492,13 +754,6 @@ fn connector_executor_denied_attempt_does_not_wedge_or_abort_batch() -> crate::R
     assert_eq!(
         receipts
             .iter()
-            .filter(|receipt| receipt.fields.get(FIELD_TASK_REF) == Some(&denied_task.to_hex()))
-            .count(),
-        0
-    );
-    assert_eq!(
-        receipts
-            .iter()
             .filter(|receipt| receipt.fields.get(FIELD_TASK_REF) == Some(&allowed_task.to_hex()))
             .count(),
         1
@@ -507,9 +762,10 @@ fn connector_executor_denied_attempt_does_not_wedge_or_abort_batch() -> crate::R
 }
 
 #[test]
-fn connector_executor_restores_off_record_session_provenance() -> crate::Result<()> {
-    use crate::attempt_queue::{AttemptQueue, AttemptState};
-    use crate::off_record::OffRecordBackendClass;
+fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptQueue;
+    use crate::facade::{BRIDGE_OUTBOUND_ATTEMPT_KIND, FACADE_CODE_BAD_REQUEST};
+    use crate::off_record::{OffRecordBackendClass, OffRecordMode};
     use crate::receipt::{ReceiptKind, ReceiptQuery};
 
     let (_tmp, vault) = temp_vault();
@@ -522,17 +778,25 @@ fn connector_executor_restores_off_record_session_provenance() -> crate::Result<
     )?;
     let session_ref = "session:off-record-executor";
     vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
-    vault
+    let draft = connector_task_draft("off-record:test", session_ref, 40);
+    let err = vault
         .memory_facade(actor, EdgeActorClass::Agent)
-        .schedule_outbound(&connector_task_draft("off-record:test", session_ref, 40))
-        .expect("schedule off-record outbound");
+        .schedule_outbound(&draft)
+        .expect_err("off-record outbound is talk-only");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
 
     let tasks = vault.connector_send_tasks()?;
-    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks.len(), 0);
     assert_eq!(
-        tasks[0].originating_session_ref.as_deref(),
-        Some(session_ref)
+        AttemptQueue::new(&vault)
+            .list()?
+            .into_iter()
+            .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
+            .count(),
+        0
     );
+
+    vault.set_off_record_session_mode(session_ref, OffRecordMode::OnRecord)?;
     let mut executor = RecordingExecutor::default();
     assert_eq!(
         vault
@@ -547,23 +811,22 @@ fn connector_executor_restores_off_record_session_provenance() -> crate::Result<
             .len(),
         0
     );
+
+    // The rejected schedule left the idempotency key free. Once the same
+    // originating session is on-record, the same draft schedules normally.
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule on-record outbound");
+    assert_eq!(vault.connector_send_tasks()?.len(), 1);
     assert_eq!(
         AttemptQueue::new(&vault)
             .list()?
-            .iter()
-            .filter(|attempt| attempt.state == AttemptState::Failed)
+            .into_iter()
+            .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
             .count(),
         1
     );
-
-    vault
-        .memory_facade(actor, EdgeActorClass::Agent)
-        .schedule_outbound(&connector_task_draft(
-            "on-record:test",
-            "session:on-record-executor",
-            42,
-        ))
-        .expect("schedule on-record outbound");
     assert_eq!(
         vault
             .run_connector_task_executor(&mut executor, 43)
@@ -615,7 +878,9 @@ fn preexisting_send_receipt_does_not_debit_budget_again() -> crate::Result<()> {
             &vault,
             tasks[0].task_ref,
             receipt,
-            true
+            SendReceiptOutcome::Delivered,
+            true,
+            Some((actor, "budget-replay:test")),
         )?),
         1
     );
@@ -640,7 +905,7 @@ fn preexisting_send_receipt_does_not_debit_budget_again() -> crate::Result<()> {
 }
 
 #[test]
-fn schedule_gate_error_removes_task_and_retry_creates_one() -> crate::Result<()> {
+fn schedule_gate_error_leaves_nothing_claimable_and_retry_creates_one() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState};
     use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 
@@ -679,14 +944,15 @@ fn schedule_gate_error_removes_task_and_retry_creates_one() -> crate::Result<()>
         .into_iter()
         .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
         .collect::<Vec<_>>();
-    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts.len(), 0);
+    let mut executor = RecordingExecutor::default();
     assert_eq!(
-        attempts
-            .iter()
-            .filter(|attempt| attempt.state == AttemptState::Cancelled)
-            .count(),
-        1
+        vault
+            .run_connector_task_executor(&mut executor, 61)
+            .unwrap(),
+        0
     );
+    assert_eq!(executor.calls.len(), 0);
 
     let replacement = ClaimBody::new(
         "test.non_delivery_window",
@@ -707,11 +973,11 @@ fn schedule_gate_error_removes_task_and_retry_creates_one() -> crate::Result<()>
         .into_iter()
         .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
         .collect::<Vec<_>>();
-    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts.len(), 1);
     assert_eq!(
         attempts
             .iter()
-            .filter(|attempt| attempt.state != AttemptState::Cancelled)
+            .filter(|attempt| attempt.state == AttemptState::Queued)
             .count(),
         1
     );

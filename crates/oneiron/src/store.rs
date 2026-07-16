@@ -307,6 +307,12 @@ const OUTBOUND_GATE_BINDING_KEY_PREFIX: &[u8] = b"outbound_gate_binding:v0:";
 /// of the ABI-pinned Gate decision ledger and carries its own record version.
 pub(crate) const SEND_RECEIPT_RECORD_VERSION: u8 = 0;
 const SEND_RECEIPT_KEY_PREFIX: &[u8] = b"send_receipt:v0:";
+/// Additive delivered-send idempotency index. This is intentionally separate
+/// from the attempt queue's lifecycle-scoped dedupe rows and from the
+/// ABI-pinned Gate ledger.
+pub(crate) const SEND_IDEMPOTENCY_INDEX_VERSION: u8 = 0;
+const SEND_IDEMPOTENCY_KEY_PREFIX: &[u8] = b"send_idem:v0:";
+const SEND_IDEMPOTENCY_HASH_DOMAIN: &[u8] = b"oneiron.send_idem.v0\0";
 const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
 const GATE_RECEIPT_REASON_MAX_LEN: usize = 128;
 const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
@@ -2271,14 +2277,69 @@ impl Store {
         Ok(true)
     }
 
-    /// Reads one connector-send receipt directly by its originating TASK.
-    pub(crate) fn get_send_receipt_by_task(&self, task_id: &EntityId) -> Result<Option<Vec<u8>>> {
-        let key = send_receipt_key(task_id);
-        let rtxn = self.env.read_txn()?;
+    /// Replaces one connector-send receipt row. Receipt semantics decide
+    /// whether replacement is legal before calling this storage-only helper.
+    pub(crate) fn set_send_receipt_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        task_id: &EntityId,
+        value: &[u8],
+    ) -> Result<()> {
+        self.vault_meta
+            .put(wtxn, &send_receipt_key(task_id), value)?;
+        Ok(())
+    }
+
+    /// Reads one connector-send receipt inside a caller-owned transaction.
+    pub(crate) fn get_send_receipt_by_task_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        task_id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
         Ok(self
             .vault_meta
-            .get(&rtxn, &key)?
+            .get(txn, &send_receipt_key(task_id))?
             .map(|value| value.into_owned()))
+    }
+
+    /// Reads one connector-send receipt directly by its originating TASK.
+    pub(crate) fn get_send_receipt_by_task(&self, task_id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let rtxn = self.env.read_txn()?;
+        self.get_send_receipt_by_task_in_txn(&rtxn, task_id)
+    }
+
+    /// Records the first delivered TASK for one actor-scoped client
+    /// idempotency key. Later deliveries keep the original winner.
+    pub(crate) fn put_delivered_send_idempotency_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        actor_ref: &EntityId,
+        idempotency_key: &str,
+        task_ref: &EntityId,
+    ) -> Result<()> {
+        let key = send_idempotency_key(actor_ref, idempotency_key);
+        if let Some(existing) = self.vault_meta.get(&*wtxn, &key)? {
+            send_idempotency_task_ref_from_value(&existing)?;
+            return Ok(());
+        }
+        let value = send_idempotency_value(task_ref);
+        self.vault_meta.put(wtxn, &key, &value)?;
+        Ok(())
+    }
+
+    /// Point-reads the delivered TASK for one actor-scoped client
+    /// idempotency key.
+    pub(crate) fn get_delivered_send_task_by_idempotency(
+        &self,
+        actor_ref: &EntityId,
+        idempotency_key: &str,
+    ) -> Result<Option<EntityId>> {
+        let key = send_idempotency_key(actor_ref, idempotency_key);
+        let rtxn = self.env.read_txn()?;
+        self.vault_meta
+            .get(&rtxn, &key)?
+            .map(|value| send_idempotency_task_ref_from_value(&value))
+            .transpose()
     }
 
     /// Returns all opaque connector-send receipt rows in TASK-id order.
@@ -3723,6 +3784,38 @@ fn send_receipt_task_id_from_key(key: &[u8]) -> Result<[u8; 16]> {
         .ok_or(Error::CorruptedIndex("send receipt ledger"))?
         .try_into()
         .map_err(|_| Error::CorruptedIndex("send receipt ledger"))
+}
+
+fn send_idempotency_key(actor_ref: &EntityId, idempotency_key: &str) -> Vec<u8> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(SEND_IDEMPOTENCY_HASH_DOMAIN);
+    hasher.update(actor_ref.as_bytes());
+    hasher.update(&(idempotency_key.len() as u64).to_be_bytes());
+    hasher.update(idempotency_key.as_bytes());
+    let hash = hasher.finalize();
+    let mut key = Vec::with_capacity(SEND_IDEMPOTENCY_KEY_PREFIX.len() + hash.as_bytes().len());
+    key.extend_from_slice(SEND_IDEMPOTENCY_KEY_PREFIX);
+    key.extend_from_slice(hash.as_bytes());
+    key
+}
+
+fn send_idempotency_value(task_ref: &EntityId) -> [u8; 17] {
+    let mut value = [0_u8; 17];
+    value[0] = SEND_IDEMPOTENCY_INDEX_VERSION;
+    value[1..].copy_from_slice(task_ref.as_bytes());
+    value
+}
+
+fn send_idempotency_task_ref_from_value(value: &[u8]) -> Result<EntityId> {
+    if value.len() != 17 || value[0] != SEND_IDEMPOTENCY_INDEX_VERSION {
+        return Err(Error::CorruptedIndex("send idempotency index"));
+    }
+    EntityId::from_bytes(
+        value[1..]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("send idempotency index"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("send idempotency index"))
 }
 
 fn gate_decision_id_from_key(key: &[u8]) -> Result<GateDecisionId> {

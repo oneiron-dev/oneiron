@@ -87,7 +87,6 @@ mod seam {
         DecisionHistoryEntry, DispatchTally, EffectorBudget, EffectorBudgetDimension,
         EffectorBudgetOnExhaust, EffectorBudgetWindow, FanOutEstimate, Vault,
     };
-    use std::cell::Cell;
 
     thread_local! {
         static ORACLE_SEND_INVOCATIONS: Cell<usize> = const { Cell::new(0) };
