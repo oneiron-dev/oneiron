@@ -84,6 +84,7 @@ pub mod repo_mutation;
 pub mod rerank;
 pub mod run_tree;
 pub mod serialize;
+pub mod session_lifecycle;
 pub mod settings;
 pub mod skill;
 pub mod speculative;
@@ -688,6 +689,10 @@ pub use crate::run_tree::{
     RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
     RunTreeRepair, RunTreeStatus, RunTreeTimestamps, render_run_tree,
 };
+pub use crate::session_lifecycle::{
+    EndedSession, OpenSession, SessionClosePredicate, SessionEndReason, SessionEndWake,
+    SessionLifecycleRecord, SessionMintOutcome,
+};
 pub use crate::settings::{
     AccentLayer, CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND, CUSTOMIZATION_SETTINGS_LAYER_COUNT,
     CUSTOMIZATION_SETTINGS_SCHEMA_VERSION, CustomizationLayer, CustomizationLayerValue,
@@ -764,6 +769,13 @@ mod tests;
 
 #[cfg(test)]
 mod tests_bug;
+
+/// M8 forward test oracle (path-opener ONE-1685): contract-level red tests
+/// for ONE-1687 / ONE-1689 / ONE-1690 / ONE-1691, each behind
+/// `#[ignore = "armed by ONE-XXXX"]`. Arming tickets remove the ignore and
+/// adapt signatures — the asserts are never weakened.
+#[cfg(test)]
+mod m8_forward_oracle;
 
 #[cfg(test)]
 pub(crate) mod test_util {

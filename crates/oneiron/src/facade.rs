@@ -1398,6 +1398,14 @@ impl MemoryFacade<'_> {
                     true,
                 )?;
             }
+            // RT-03 (ONE-1685): a witnessed turn bumps the open session's
+            // activity clock — atomically with the turn write, so a crash
+            // cannot record the turn without the bump.
+            let _bumped_session = crate::session_lifecycle::bump_open_session_activity_in_txn(
+                &self.vault.store,
+                wtxn,
+                learned_at,
+            )?;
             Ok(None)
         })?;
         if let Some(id) = refused {

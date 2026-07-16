@@ -167,7 +167,11 @@ pub struct WorkingSetTurn {
     pub turn_id: EntityId,
     pub role: DreamerTurnRole,
     pub learned_at: u64,
-    pub session: Option<EntityId>,
+    /// The turn's CONVERSATION (`conversation_of(turn)`) — the consolidation
+    /// grouping key. Never a SESSION entity: the canonical SESSION (type 2)
+    /// is one time-bounded visit to a conversation (ONE-1685 resolved the
+    /// 7-way "session" naming collision; this field was the misnomer).
+    pub conversation: Option<EntityId>,
 }
 
 fn watermark_key(scope: DreamerConsolidationScope) -> Vec<u8> {
@@ -189,6 +193,20 @@ pub fn read_watermark(
     decode_watermark(&raw)
 }
 
+/// Reads the per-scope watermark inside a caller-owned write transaction
+/// (the ONE-1685 session close re-reads it to guard its pre-planned round
+/// against a concurrent planner).
+pub(crate) fn read_watermark_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+) -> Result<ConsolidationWatermark> {
+    let Some(raw) = vault.store.vault_meta.get(txn, &watermark_key(scope))? else {
+        return Ok(ConsolidationWatermark::bootstrap());
+    };
+    decode_watermark(&raw)
+}
+
 /// Advances the per-scope watermark. Call ONLY after the round's attempts are
 /// enqueued+committed — a crash before this re-scans, and idempotency rides
 /// the enqueue dedupe keys (dedupe, never a lock).
@@ -197,16 +215,29 @@ pub fn advance_watermark(
     scope: DreamerConsolidationScope,
     last_learned_at: u64,
 ) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    advance_watermark_in_txn(vault, &mut wtxn, scope, last_learned_at)?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// [`advance_watermark`] inside a caller-owned write transaction: composing
+/// the advance into the same commit as the round's enqueue makes
+/// "enqueued+committed before the advance" structural instead of ordered.
+pub(crate) fn advance_watermark_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    last_learned_at: u64,
+) -> Result<()> {
     let encoded = encode_watermark(&ConsolidationWatermark {
         schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at,
     })?;
-    let mut wtxn = vault.store.env.write_txn()?;
     vault
         .store
         .vault_meta
-        .put(&mut wtxn, &watermark_key(scope), &encoded)?;
-    wtxn.commit()?;
+        .put(wtxn, &watermark_key(scope), &encoded)?;
     Ok(())
 }
 
@@ -317,10 +348,67 @@ pub fn scan_dirty_turns(
             turn_id,
             role,
             learned_at,
-            session: conversation_of(vault, &turn_id)?,
+            conversation: conversation_of(vault, &turn_id)?,
         });
     }
     Ok(out)
+}
+
+/// Collects admissible dirty-turn IDs in a bounded learned-at window through
+/// a caller-owned write transaction. This intentionally mirrors only Pass 1
+/// of [`scan_dirty_turns`]: conversation edges are irrelevant to snapshot
+/// fencing. The temporal index yields deterministic `(learned_at, id)` order.
+pub(crate) fn collect_dirty_turn_ids_in_txn(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    lower_exclusive: u64,
+    upper_inclusive: u64,
+) -> Result<Vec<EntityId>> {
+    let _ = scope; // selection is scope-independent; scope identifies the fenced round
+    if lower_exclusive >= upper_inclusive {
+        return Ok(Vec::new());
+    }
+
+    let mut lower = [0_u8; 24];
+    lower[..8].copy_from_slice(&(lower_exclusive + 1).to_be_bytes());
+    let mut upper = [u8::MAX; 24];
+    upper[..8].copy_from_slice(&upper_inclusive.to_be_bytes());
+
+    let mut turn_ids = Vec::new();
+    for entry in vault.store.temporal_learned.range(
+        wtxn,
+        &(
+            std::ops::Bound::Included(&lower[..]),
+            std::ops::Bound::Included(&upper[..]),
+        ),
+    )? {
+        let (key, _) = entry?;
+        if key.len() != 24 {
+            continue;
+        }
+        let Ok(id_bytes) = <[u8; 16]>::try_from(&key[8..24]) else {
+            continue;
+        };
+        let Ok(turn_id) = EntityId::from_bytes(id_bytes) else {
+            continue;
+        };
+        let Some(raw) = vault.store.entities.get(wtxn, turn_id.as_bytes())? else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            continue;
+        };
+        if header.entity_type != ENTITY_TYPE_TURN {
+            continue;
+        }
+        let body = decode_turn_body(&raw[ENTITY_METADATA_HEADER_LEN..]);
+        let role = dreamer_turn_role(body.speaker.as_deref());
+        if dreamer_extraction_role_admissible(role) {
+            turn_ids.push(turn_id);
+        }
+    }
+    Ok(turn_ids)
 }
 
 struct TurnBodyFacts {
@@ -541,7 +629,7 @@ pub fn plan_partitions(
     let _ = scope;
     let mut plans: BTreeMap<ConsolidationPartitionKey, Vec<WorkingSetTurn>> = BTreeMap::new();
     for turn in dirty_turns {
-        let Some(conversation_ref) = turn.session else {
+        let Some(conversation_ref) = turn.conversation else {
             // A turn without its structural conversation edge cannot be
             // partitioned; skip fail-closed rather than invent a partition.
             continue;
@@ -579,6 +667,30 @@ fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFacts> {
     ))
 }
 
+/// One partition plan as its production enqueue input: the executor-
+/// decodable payload ([`encode_partition_payload`]) plus the advisory
+/// dedupe key `hex(partition_hash):watermark`.
+fn partition_attempt_input(
+    scope: DreamerConsolidationScope,
+    plan: &ConsolidationPartitionPlan,
+    run_id: Option<String>,
+    now: u64,
+) -> EnqueueDreamerConsolidationAttempt {
+    let dedupe_key = format!(
+        "{}:{}",
+        bytes_to_hex_lower(&plan.key.partition_hash()),
+        plan.watermark_last_learned_at
+    );
+    EnqueueDreamerConsolidationAttempt {
+        scope,
+        input: encode_partition_payload(plan),
+        parent_attempt: None,
+        dedupe_key: Some(dedupe_key),
+        run_id,
+        now,
+    }
+}
+
 /// Enqueues one consolidation attempt per partition plan with the advisory
 /// dedupe key `hex(partition_hash):watermark` (idempotency floor — two
 /// devices planning the same partition coalesce, never lock).
@@ -591,21 +703,34 @@ pub fn enqueue_partition_attempts(
 ) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
     let mut outcomes = Vec::with_capacity(plans.len());
     for plan in plans {
-        let dedupe_key = format!(
-            "{}:{}",
-            bytes_to_hex_lower(&plan.key.partition_hash()),
-            plan.watermark_last_learned_at
-        );
-        outcomes.push(
-            store.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
-                scope,
-                input: encode_partition_payload(plan),
-                parent_attempt: None,
-                dedupe_key: Some(dedupe_key),
-                run_id: Some(run_id.to_owned()),
-                now,
-            })?,
-        );
+        outcomes.push(store.enqueue_consolidation(partition_attempt_input(
+            scope,
+            plan,
+            Some(run_id.to_owned()),
+            now,
+        ))?);
+    }
+    Ok(outcomes)
+}
+
+/// [`enqueue_partition_attempts`] inside a caller-owned write transaction —
+/// the ONE-1685 session close enqueues its SessionEnd → Meso round in the
+/// SAME transaction that stamps `ended_at`, so an attempt row exists exactly
+/// when the end committed.
+pub(crate) fn enqueue_partition_attempts_in_txn(
+    store: &DreamerRunnerStore<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    plans: &[ConsolidationPartitionPlan],
+    run_id: Option<&str>,
+    now: u64,
+) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
+    let mut outcomes = Vec::with_capacity(plans.len());
+    for plan in plans {
+        outcomes.push(store.enqueue_consolidation_in_txn(
+            wtxn,
+            partition_attempt_input(scope, plan, run_id.map(str::to_owned), now),
+        )?);
     }
     Ok(outcomes)
 }
@@ -1238,8 +1363,8 @@ pub fn scan_reflection_gaps(
 ) -> Result<Vec<ReflectionGap>> {
     let mut by_conversation: BTreeMap<EntityId, Vec<&WorkingSetTurn>> = BTreeMap::new();
     for turn in working_set {
-        if let Some(session) = turn.session {
-            by_conversation.entry(session).or_default().push(turn);
+        if let Some(conversation) = turn.conversation {
+            by_conversation.entry(conversation).or_default().push(turn);
         }
     }
 
@@ -2027,7 +2152,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     turn_id: *turn_id,
                     role,
                     learned_at: 0,
-                    session: conversation_of(ctx.vault, turn_id)?,
+                    conversation: conversation_of(ctx.vault, turn_id)?,
                 });
             }
             let gaps = scan_reflection_gaps(ctx.vault, &working_set, ctx.now_ms)?;
