@@ -393,6 +393,7 @@ impl<'a> AgentDispatcher<'a> {
             }
         };
 
+        let requested_parent = input.parent_attempt;
         let dispatch_input = AgentDispatchInput {
             target: input.target,
             definition,
@@ -401,7 +402,7 @@ impl<'a> AgentDispatcher<'a> {
         let outcome = self.runner.enqueue(EnqueueDreamerAttempt {
             attempt_type: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
             input: encoded,
-            parent_attempt: input.parent_attempt,
+            parent_attempt: requested_parent,
             dedupe_key: input
                 .dedupe_key
                 .map(|key| format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")),
@@ -418,6 +419,13 @@ impl<'a> AgentDispatcher<'a> {
                 if status.input.target != dispatch_input.target {
                     return Err(Error::InvalidAgentDispatchInput(
                         "existing dedupe row targets a different agent",
+                    ));
+                }
+                let existing_parent =
+                    decode_dreamer_attempt_payload(&status.attempt.payload)?.parent_attempt;
+                if existing_parent != requested_parent {
+                    return Err(Error::InvalidAgentDispatchInput(
+                        "existing dedupe row belongs to a different parent",
                     ));
                 }
                 AgentDispatchOutcome::Existing(status)
@@ -457,11 +465,10 @@ impl<'a> AgentDispatcher<'a> {
         now: u64,
     ) -> Result<KillOutcome> {
         let queue = AttemptQueue::new(self.vault);
-        let record = queue
-            .get(*spawn_attempt_id)?
-            .ok_or(Error::InvalidAgentDispatchInput(
-                "kill target attempt not found",
-            ))?;
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let record = queue.get_in_write_txn(&wtxn, *spawn_attempt_id)?.ok_or(
+            Error::InvalidAgentDispatchInput("kill target attempt not found"),
+        )?;
         if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
             return Err(Error::InvalidAgentDispatchInput(
                 "kill target must be a dreamer attempt",
@@ -475,7 +482,7 @@ impl<'a> AgentDispatcher<'a> {
         }
         decode_agent_dispatch_input(&payload.input)?;
 
-        let Some(killer) = queue.get(*killer_attempt)? else {
+        let Some(killer) = queue.get_in_write_txn(&wtxn, *killer_attempt)? else {
             return Ok(KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: *spawn_attempt_id,
                 proposer: *killer_attempt,
@@ -491,15 +498,17 @@ impl<'a> AgentDispatcher<'a> {
             }));
         }
         if killer.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
-            return Err(Error::InvalidAgentDispatchInput(
-                "killer must be a dreamer agent dispatch attempt",
-            ));
+            return Ok(KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: *spawn_attempt_id,
+                proposer: *killer_attempt,
+            }));
         }
         let killer_payload = decode_dreamer_attempt_payload(&killer.payload)?;
         if killer_payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
-            return Err(Error::InvalidAgentDispatchInput(
-                "killer must be an agent dispatch attempt",
-            ));
+            return Ok(KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: *spawn_attempt_id,
+                proposer: *killer_attempt,
+            }));
         }
         decode_agent_dispatch_input(&killer_payload.input)?;
 
@@ -519,13 +528,17 @@ impl<'a> AgentDispatcher<'a> {
                 return Ok(KillOutcome::AlreadyTerminal);
             }
         };
-        let outcome = queue.intervene(InterveneAttempt {
-            id: *spawn_attempt_id,
-            kind: intervention_kind,
-            actor: crate::entity_id::bytes_to_hex_lower(killer_attempt.as_bytes()),
-            note: None,
-            now,
-        })?;
+        let outcome = queue.intervene_in_txn(
+            &mut wtxn,
+            InterveneAttempt {
+                id: *spawn_attempt_id,
+                kind: intervention_kind,
+                actor: crate::entity_id::bytes_to_hex_lower(killer_attempt.as_bytes()),
+                note: None,
+                now,
+            },
+        )?;
+        wtxn.commit()?;
         match outcome.effect {
             AttemptInterventionEffect::Cancelled => Ok(KillOutcome::Killed),
             AttemptInterventionEffect::AlreadyCancelled => Ok(KillOutcome::AlreadyTerminal),
@@ -552,7 +565,10 @@ fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchSt
 mod one_1698_tests {
     use super::*;
     use crate::VaultConfig;
-    use crate::attempt_queue::{ClaimAttempt, ClaimOutcome, EnqueueAttempt, EnqueueOutcome};
+    use crate::attempt_queue::{
+        ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
+        EnqueueOutcome,
+    };
     use crate::temporal::TimeRange;
 
     fn dispatched_status(outcome: AgentDispatchOutcome) -> AgentDispatchStatus {
@@ -795,7 +811,7 @@ mod one_1698_tests {
     }
 
     #[test]
-    fn non_agent_killer_is_rejected() -> Result<()> {
+    fn non_agent_killer_proposes() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
         let queue = AttemptQueue::new(&vault);
         let EnqueueOutcome::Enqueued(non_agent) = queue.enqueue(EnqueueAttempt {
@@ -822,10 +838,14 @@ mod one_1698_tests {
             2,
         )?;
 
-        let error = dispatcher
-            .kill_spawn(&child.attempt.id, &non_agent.id, 3)
-            .expect_err("non-agent killer must be rejected");
-        assert!(matches!(error, Error::InvalidAgentDispatchInput(_)));
+        let outcome = dispatcher.kill_spawn(&child.attempt.id, &non_agent.id, 3)?;
+        assert_eq!(
+            outcome,
+            KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: child.attempt.id,
+                proposer: non_agent.id,
+            })
+        );
         assert_eq!(
             queue.get(child.attempt.id)?.expect("child exists").state,
             AttemptState::Queued
@@ -873,6 +893,86 @@ mod one_1698_tests {
                 .filter(|event| event.kind == AttemptInterventionKind::Interrupt)
                 .count(),
             1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn kill_spawn_uses_current_leased_and_terminal_target_states() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
+        let leased_child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            spawner.attempt.id,
+            2,
+        )?;
+        let completed_child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Keeper),
+            spawner.attempt.id,
+            3,
+        )?;
+        let queue = AttemptQueue::new(&vault);
+
+        let ClaimOutcome::Claimed(claimed_spawner) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now: 4,
+        })?
+        else {
+            panic!("expected spawner lease");
+        };
+        let ClaimOutcome::Claimed(claimed_leased_child) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-b".to_owned(),
+            now: 5,
+        })?
+        else {
+            panic!("expected leased child lease");
+        };
+        let ClaimOutcome::Claimed(claimed_completed_child) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-c".to_owned(),
+            now: 6,
+        })?
+        else {
+            panic!("expected completed child lease");
+        };
+        assert_eq!(claimed_spawner.id, spawner.attempt.id);
+        assert_eq!(claimed_leased_child.id, leased_child.attempt.id);
+        assert_eq!(claimed_completed_child.id, completed_child.attempt.id);
+
+        let CompleteOutcome::Completed(completed) = queue.complete(CompleteAttempt {
+            id: claimed_completed_child.id,
+            lease_owner: "worker-c".to_owned(),
+            attempt_count: claimed_completed_child.attempt_count,
+            now: 7,
+        })?
+        else {
+            panic!("expected completed child transition");
+        };
+        assert_eq!(completed.state, AttemptState::Completed);
+
+        assert_eq!(
+            dispatcher.kill_spawn(&leased_child.attempt.id, &spawner.attempt.id, 8)?,
+            KillOutcome::CancellationRequested
+        );
+        assert_eq!(
+            dispatcher.kill_spawn(&completed_child.attempt.id, &spawner.attempt.id, 9)?,
+            KillOutcome::AlreadyTerminal
+        );
+        assert_eq!(
+            queue
+                .get(leased_child.attempt.id)?
+                .expect("leased child exists")
+                .state,
+            AttemptState::Leased
+        );
+        assert_eq!(
+            queue
+                .get(completed_child.attempt.id)?
+                .expect("completed child exists")
+                .state,
+            AttemptState::Completed
         );
         Ok(())
     }
@@ -945,7 +1045,7 @@ mod one_1698_tests {
     }
 
     #[test]
-    fn default_dispatch_rejects_cross_target_dedupe_but_keeps_same_target_dedupe() -> Result<()> {
+    fn default_dispatch_rejects_cross_target_and_cross_parent_dedupe() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
         let dispatcher = AgentDispatcher::new(&vault);
         let scout = dispatcher.dispatch(DispatchAgent {
@@ -955,18 +1055,56 @@ mod one_1698_tests {
             run_id: None,
             now: 1,
         })?;
-        assert!(matches!(scout, AgentDispatchOutcome::Dispatched(_)));
+        let AgentDispatchOutcome::Dispatched(_) = scout else {
+            panic!("expected fresh scout dispatch");
+        };
         let mismatch = dispatcher
             .dispatch_default_base(None, Some("shared".to_owned()), None, 2)
             .expect_err("cross-target dedupe must fail closed");
-        assert!(matches!(mismatch, Error::InvalidAgentDispatchInput(_)));
+        let Error::InvalidAgentDispatchInput(reason) = mismatch else {
+            panic!("expected invalid agent dispatch input");
+        };
+        assert_eq!(reason, "existing dedupe row targets a different agent");
 
-        let first_default =
-            dispatcher.dispatch_default_base(None, Some("default-only".to_owned()), None, 3)?;
-        let second_default =
-            dispatcher.dispatch_default_base(None, Some("default-only".to_owned()), None, 4)?;
-        assert!(matches!(first_default, AgentDispatchOutcome::Dispatched(_)));
-        assert!(matches!(second_default, AgentDispatchOutcome::Existing(_)));
+        let first_default = dispatched_status(dispatcher.dispatch_default_base(
+            None,
+            Some("default-only".to_owned()),
+            None,
+            3,
+        )?);
+        let AgentDispatchOutcome::Existing(second_default) =
+            dispatcher.dispatch_default_base(None, Some("default-only".to_owned()), None, 4)?
+        else {
+            panic!("expected parentless existing dispatch");
+        };
+        assert_eq!(second_default, first_default);
+
+        let parent = AttemptId::from_bytes(&[0xD1; 16])?;
+        let other_parent = AttemptId::from_bytes(&[0xD2; 16])?;
+        let first_parented = dispatched_status(dispatcher.dispatch_default_base(
+            Some(parent),
+            Some("parent-owned".to_owned()),
+            None,
+            5,
+        )?);
+        let AgentDispatchOutcome::Existing(second_parented) = dispatcher.dispatch_default_base(
+            Some(parent),
+            Some("parent-owned".to_owned()),
+            None,
+            6,
+        )?
+        else {
+            panic!("expected same-parent existing dispatch");
+        };
+        assert_eq!(second_parented, first_parented);
+
+        let mismatch = dispatcher
+            .dispatch_default_base(Some(other_parent), Some("parent-owned".to_owned()), None, 7)
+            .expect_err("cross-parent dedupe must fail closed");
+        let Error::InvalidAgentDispatchInput(reason) = mismatch else {
+            panic!("expected invalid agent dispatch input");
+        };
+        assert_eq!(reason, "existing dedupe row belongs to a different parent");
         Ok(())
     }
 

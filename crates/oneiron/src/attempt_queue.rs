@@ -1274,6 +1274,18 @@ impl<'a> AttemptQueue<'a> {
         decode_record(&raw, id).map(Some)
     }
 
+    /// Reads an attempt by id inside a caller-owned write transaction.
+    pub(crate) fn get_in_write_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<AttemptRecord>> {
+        let Some(raw) = self.store.attempt_records.get(wtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        decode_record(&raw, id).map(Some)
+    }
+
     /// Reads all persisted attempt rows in deterministic creation order.
     pub fn list(&self) -> Result<Vec<AttemptRecord>> {
         let rtxn = self.store.env.read_txn()?;
