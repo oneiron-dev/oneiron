@@ -31,7 +31,7 @@ use crate::temporal::TimeRange;
 pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 1;
 
 /// Pinned on-disk MessagePack key set for ConnectorKeyRecord bodies.
-pub const CONNECTOR_KEY_BODY_KEYS: [&str; 10] = [
+pub const CONNECTOR_KEY_BODY_KEYS: [&str; 11] = [
     "schema_version",
     "connector",
     "actor_entity_ref",
@@ -42,6 +42,7 @@ pub const CONNECTOR_KEY_BODY_KEYS: [&str; 10] = [
     "suspended_reason",
     "charter",
     "pending_charter",
+    "suggested_budgets",
 ];
 
 const KEY_SCHEMA_VERSION: &str = CONNECTOR_KEY_BODY_KEYS[0];
@@ -54,6 +55,8 @@ const KEY_STATUS_CHANGED_AT: &str = CONNECTOR_KEY_BODY_KEYS[6];
 const KEY_SUSPENDED_REASON: &str = CONNECTOR_KEY_BODY_KEYS[7];
 const KEY_CHARTER: &str = CONNECTOR_KEY_BODY_KEYS[8];
 const KEY_PENDING_CHARTER: &str = CONNECTOR_KEY_BODY_KEYS[9];
+const KEY_SUGGESTED_BUDGETS: &str = CONNECTOR_KEY_BODY_KEYS[10];
+const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 1] = [KEY_SUGGESTED_BUDGETS];
 
 const BUDGET_KEYS: [&str; 7] = [
     "dimension",
@@ -799,6 +802,9 @@ pub struct ConnectorKeyRecord {
     pub actor_entity_ref: Option<EntityId>,
     pub status: ConnectorKeyStatus,
     pub budgets: Vec<EffectorBudget>,
+    /// Advisory rows staged by a connector handshake. These rows are never
+    /// charged until an owner explicitly accepts one into `budgets`.
+    pub suggested_budgets: Vec<EffectorBudget>,
     pub registered_at: u64,
     pub status_changed_at: Option<u64>,
     /// `"budget_exhausted:row:{i}"` | `"budget_exhausted:charter_row:{i}"`
@@ -824,6 +830,7 @@ impl ConnectorKeyRecord {
             actor_entity_ref,
             status: ConnectorKeyStatus::Active,
             budgets,
+            suggested_budgets: Vec::new(),
             registered_at,
             status_changed_at: None,
             suspended_reason: None,
@@ -844,6 +851,12 @@ impl ConnectorKeyRecord {
         }
         for budget in &self.budgets {
             validate_budget_row(budget)?;
+        }
+        if self.suggested_budgets.len() > CONNECTOR_KEY_MAX_BUDGET_ROWS {
+            return Err(invalid_body("too many suggested budget rows"));
+        }
+        for budget in &self.suggested_budgets {
+            validate_suggested_budget_row(budget)?;
         }
         if let Some(reason) = self.suspended_reason.as_deref() {
             if reason.trim().is_empty() {
@@ -942,6 +955,17 @@ fn validate_budget_row(budget: &EffectorBudget) -> Result<()> {
         if channel_class != normalize_connector_key(channel_class) {
             return Err(invalid_body("channel_class must be stored normalized"));
         }
+    }
+    Ok(())
+}
+
+fn validate_suggested_budget_row(budget: &EffectorBudget) -> Result<()> {
+    validate_budget_row(budget)?;
+    if budget.dimension == EffectorBudgetDimension::Spend {
+        return Err(invalid_body("suggested budget rows must be sends or rate"));
+    }
+    if budget.on_exhaust != EffectorBudgetOnExhaust::Refuse {
+        return Err(invalid_body("suggested budget rows must refuse on exhaust"));
     }
     Ok(())
 }
@@ -1088,6 +1112,16 @@ pub fn encode_connector_key_body(record: &ConnectorKeyRecord) -> Result<Vec<u8>>
                 .pending_charter
                 .as_ref()
                 .map_or(Value::Nil, encode_pending_charter),
+        ),
+        (
+            Value::from(KEY_SUGGESTED_BUDGETS),
+            Value::Array(
+                record
+                    .suggested_budgets
+                    .iter()
+                    .map(encode_budget_row)
+                    .collect(),
+            ),
         ),
     ]);
 
@@ -1258,7 +1292,7 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
     let Value::Map(entries) = value else {
         return Err(malformed());
     };
-    validate_keys(entries, &CONNECTOR_KEY_BODY_KEYS)?;
+    validate_connector_key_body_keys(entries)?;
 
     if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(CONNECTOR_KEY_SCHEMA_VERSION) {
         return Err(invalid_body("unsupported schema version"));
@@ -1285,6 +1319,8 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
             entries,
             KEY_PENDING_CHARTER,
         )?)?,
+        suggested_budgets: optional_value(entries, KEY_SUGGESTED_BUDGETS)
+            .map_or_else(|| Ok(Vec::new()), decode_budget_rows)?,
     };
     record.validate()?;
     Ok(record)
@@ -1437,11 +1473,40 @@ fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
     }
 }
 
+fn validate_connector_key_body_keys(entries: &[(Value, Value)]) -> Result<()> {
+    let mut seen = vec![false; CONNECTOR_KEY_BODY_KEYS.len()];
+    for (key, _) in entries {
+        let key = key.as_str().ok_or_else(malformed)?;
+        let Some(index) = CONNECTOR_KEY_BODY_KEYS
+            .iter()
+            .position(|known| *known == key)
+        else {
+            return Err(malformed());
+        };
+        if seen[index] {
+            return Err(malformed());
+        }
+        seen[index] = true;
+    }
+    for (index, key) in CONNECTOR_KEY_BODY_KEYS.iter().enumerate() {
+        if !seen[index] && !OPTIONAL_CONNECTOR_KEY_BODY_KEYS.contains(key) {
+            return Err(malformed());
+        }
+    }
+    Ok(())
+}
+
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
     entries
         .iter()
         .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
         .ok_or_else(malformed)
+}
+
+fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
+    entries
+        .iter()
+        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
 }
 
 fn decode_non_empty_string(value: &Value) -> Result<String> {
@@ -1821,6 +1886,14 @@ pub struct EffectorBudgetCharge {
     /// Threshold events fired by this charge, for the host steering queue
     /// (same contract as `BudgetAdmission.ladder_events`).
     pub ladder_events: Vec<BudgetLadderEvent>,
+}
+
+/// Aggregate result of applying connector-key admission to a sequential batch
+/// of send-like dispatches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectorKeyDispatchTally {
+    pub admitted: u64,
+    pub refused: u64,
 }
 
 /// Outcome of one budget-stage evaluation over a key's matched rows.
@@ -2300,6 +2373,11 @@ impl Vault {
                 budget.channel_class = Some(normalize_connector_key(&channel_class));
             }
         }
+        for budget in &mut record.suggested_budgets {
+            if let Some(channel_class) = budget.channel_class.take() {
+                budget.channel_class = Some(normalize_connector_key(&channel_class));
+            }
+        }
         record.validate()?;
         if record.status != ConnectorKeyStatus::Active {
             return Err(invalid_body("registration requires status active"));
@@ -2393,6 +2471,205 @@ impl Vault {
         )
     }
 
+    /// Mints an Active connector key whose budget table is necessarily empty.
+    /// Optional budget rows can only enter through the owner mutation APIs.
+    pub fn mint_unbudgeted_connector_key(
+        &self,
+        connector: &str,
+        actor_entity_ref: Option<EntityId>,
+        registered_at: u64,
+    ) -> Result<ConnectorKeyRecord> {
+        self.register_connector_key(
+            &EntityId::now(),
+            ConnectorKeyRecord::active(connector, actor_entity_ref, Vec::new(), registered_at),
+        )
+    }
+
+    /// Appends one owner-supplied budget row to an existing non-revoked key.
+    pub fn add_connector_key_budget(
+        &self,
+        id: &EntityId,
+        mut budget: EffectorBudget,
+        now: u64,
+    ) -> Result<ConnectorKeyRecord> {
+        if let Some(channel_class) = budget.channel_class.take() {
+            budget.channel_class = Some(normalize_connector_key(&channel_class));
+        }
+        validate_budget_row(&budget)?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.status == ConnectorKeyStatus::Revoked {
+            return Err(invalid_body("cannot add budget row to revoked key"));
+        }
+        if record.budgets.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
+            return Err(invalid_body("too many budget rows"));
+        }
+        record.budgets.push(budget);
+        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &record)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut wtxn,
+            id,
+            "gate.connector_key.budget_add",
+            &record,
+            policy.read_frontier_hash()?,
+            now,
+        )?;
+        wtxn.commit()?;
+        Ok(record)
+    }
+
+    /// Stages one advisory budget row. Suggested rows never participate in
+    /// charging, and may only carry Refuse semantics.
+    pub fn suggest_connector_key_budget(
+        &self,
+        id: &EntityId,
+        mut budget: EffectorBudget,
+        now: u64,
+    ) -> Result<ConnectorKeyRecord> {
+        if let Some(channel_class) = budget.channel_class.take() {
+            budget.channel_class = Some(normalize_connector_key(&channel_class));
+        }
+        validate_suggested_budget_row(&budget)?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.status == ConnectorKeyStatus::Revoked {
+            return Err(invalid_body("cannot suggest budget row on revoked key"));
+        }
+        if record.suggested_budgets.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
+            return Err(invalid_body("too many suggested budget rows"));
+        }
+        record.suggested_budgets.push(budget);
+        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &record)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut wtxn,
+            id,
+            "gate.connector_key.budget_suggest",
+            &record,
+            policy.read_frontier_hash()?,
+            now,
+        )?;
+        wtxn.commit()?;
+        Ok(record)
+    }
+
+    /// Accepts one staged row into the active budget table. Existing usage is
+    /// not consulted or backfilled, so accounting begins at activation.
+    pub fn accept_connector_key_budget_suggestion(
+        &self,
+        id: &EntityId,
+        suggestion_index: usize,
+        now: u64,
+    ) -> Result<ConnectorKeyRecord> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.status == ConnectorKeyStatus::Revoked {
+            return Err(invalid_body("cannot accept budget row on revoked key"));
+        }
+        if record.budgets.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
+            return Err(invalid_body("too many budget rows"));
+        }
+        if suggestion_index >= record.suggested_budgets.len() {
+            return Err(invalid_body("suggested budget row not found"));
+        }
+        let budget = record.suggested_budgets.remove(suggestion_index);
+        validate_suggested_budget_row(&budget)?;
+        record.budgets.push(budget);
+        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &record)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut wtxn,
+            id,
+            "gate.connector_key.budget_accept",
+            &record,
+            policy.read_frontier_hash()?,
+            now,
+        )?;
+        wtxn.commit()?;
+        Ok(record)
+    }
+
+    /// Applies the existing effector-budget charger sequentially to a batch
+    /// of send-like dispatches through one key.
+    pub fn admit_connector_key_dispatches(
+        &self,
+        id: &EntityId,
+        effect_channel: &str,
+        count: u64,
+        now: u64,
+    ) -> Result<ConnectorKeyDispatchTally> {
+        let effect_channel = normalize_connector_key(effect_channel);
+        if effect_channel.is_empty() {
+            return Err(invalid_body("effect channel must not be blank"));
+        }
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        let mut tally = ConnectorKeyDispatchTally {
+            admitted: 0,
+            refused: 0,
+        };
+
+        for _ in 0..count {
+            if record.status != ConnectorKeyStatus::Active {
+                tally.refused = tally.refused.saturating_add(1);
+                continue;
+            }
+            match charge_effector_budgets(
+                &self.store,
+                &mut wtxn,
+                id,
+                &mut record,
+                &effect_channel,
+                true,
+                now,
+            )? {
+                EffectorBudgetChargeOutcome::NoRows(_)
+                | EffectorBudgetChargeOutcome::Charged(_) => {
+                    tally.admitted = tally.admitted.saturating_add(1);
+                }
+                EffectorBudgetChargeOutcome::Exhausted {
+                    row_index,
+                    on_exhaust,
+                    ..
+                } => {
+                    tally.refused = tally.refused.saturating_add(1);
+                    if on_exhaust == EffectorBudgetOnExhaust::Suspend {
+                        record = suspend_connector_key_in_txn(
+                            &self.store,
+                            &mut wtxn,
+                            id,
+                            &record,
+                            budget_exhausted_reason(row_index),
+                            now,
+                        )?;
+                        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+                        append_connector_key_op_record(
+                            &self.store,
+                            &mut wtxn,
+                            id,
+                            "gate.connector_key.dispatch_suspend",
+                            &record,
+                            policy.read_frontier_hash()?,
+                            now,
+                        )?;
+                    }
+                }
+            }
+        }
+        wtxn.commit()?;
+        Ok(tally)
+    }
+
     /// Suspends an Active key (owner op).
     pub fn suspend_connector_key(
         &self,
@@ -2475,6 +2752,7 @@ impl Vault {
             // key carries no mutable charter state (approve/discard also gate
             // on Revoked below).
             pending_charter: None,
+            suggested_budgets: Vec::new(),
             ..record
         };
         rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &revoked)?;

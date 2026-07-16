@@ -44,6 +44,19 @@ fn all_dimension_budgets() -> Vec<EffectorBudget> {
     ]
 }
 
+fn connector_key_op_receipt_count(vault: &Vault) -> Result<usize> {
+    let receipts = vault.receipts(ReceiptQuery::new(20).with_kind(ReceiptKind::Gate))?;
+    Ok(receipts
+        .iter()
+        .filter(|receipt| {
+            receipt
+                .policy_trace
+                .iter()
+                .any(|reason| reason.starts_with("gate.connector_key."))
+        })
+        .count())
+}
+
 #[test]
 fn connector_key_codec_round_trips_all_dimensions() -> Result<()> {
     let actor_bound = ConnectorKeyRecord {
@@ -68,6 +81,256 @@ fn connector_key_codec_round_trips_all_dimensions() -> Result<()> {
     };
     let encoded = encode_connector_key_body(&suspended)?;
     assert_eq!(decode_connector_key_body(&encoded)?, suspended);
+    Ok(())
+}
+
+#[test]
+fn suggested_budget_codec_round_trips_and_old_body_defaults_empty() -> Result<()> {
+    let mut record = ConnectorKeyRecord::active("peer_link", None, Vec::new(), 1_000);
+    let mut suggestion = EffectorBudget::sends(
+        200,
+        EffectorBudgetWindow::Rolling { duration_s: 3_600 },
+        EffectorBudgetOnExhaust::Refuse,
+    );
+    suggestion.channel_class = Some("peer".to_owned());
+    record.suggested_budgets.push(suggestion);
+
+    let encoded = encode_connector_key_body(&record)?;
+    let decoded = decode_connector_key_body(&encoded)?;
+    assert_eq!(decoded.suggested_budgets.len(), 1);
+    assert_eq!(decoded, record);
+
+    let mut cursor = std::io::Cursor::new(encoded);
+    let mut value = rmpv::decode::read_value(&mut cursor).expect("decode fixture");
+    let rmpv::Value::Map(entries) = &mut value else {
+        panic!("connector key body must be a map");
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("suggested_budgets"));
+    let mut old_body = Vec::new();
+    rmpv::encode::write_value(&mut old_body, &value).expect("encode old fixture");
+    let old_decoded = decode_connector_key_body(&old_body)?;
+    assert_eq!(old_decoded.suggested_budgets.len(), 0);
+    Ok(())
+}
+
+#[test]
+fn connector_key_codec_rejects_missing_required_body_key() -> Result<()> {
+    let record = ConnectorKeyRecord::active("peer_link", None, Vec::new(), 1_000);
+    let encoded = encode_connector_key_body(&record)?;
+    let mut cursor = std::io::Cursor::new(encoded);
+    let mut value = rmpv::decode::read_value(&mut cursor).expect("decode fixture");
+    let rmpv::Value::Map(entries) = &mut value else {
+        panic!("connector key body must be a map");
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("connector"));
+    let mut missing_connector = Vec::new();
+    rmpv::encode::write_value(&mut missing_connector, &value).expect("encode malformed fixture");
+
+    assert!(matches!(
+        decode_connector_key_body(&missing_connector),
+        Err(Error::InvalidConnectorKeyBody("body failed validation"))
+    ));
+    Ok(())
+}
+
+#[test]
+fn unbudgeted_mint_normalizes_and_owner_add_enforces() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let minted = vault.mint_unbudgeted_connector_key(" Peer-Link ", None, 1_000)?;
+    assert_eq!(minted.connector, "peer_link");
+    assert_eq!(minted.status, ConnectorKeyStatus::Active);
+    assert_eq!(minted.budgets.len(), 0);
+
+    let (id, _) = vault
+        .connector_key_for("peer-link", None)?
+        .expect("minted key");
+    let invalid_limit = EffectorBudget::rate(0, 3_600);
+    assert!(matches!(
+        vault.add_connector_key_budget(&id, invalid_limit, 1_000),
+        Err(Error::InvalidConnectorKeyBody(
+            "budget limit must be at least 1"
+        ))
+    ));
+    let mut invalid_unit = EffectorBudget::rate(10, 3_600);
+    invalid_unit.unit = Some("USD".to_owned());
+    assert!(matches!(
+        vault.add_connector_key_budget(&id, invalid_unit, 1_000),
+        Err(Error::InvalidConnectorKeyBody(
+            "unit only allowed on spend rows"
+        ))
+    ));
+
+    let mut row = EffectorBudget::rate(2, 3_600);
+    row.channel_class = Some(" Peer ".to_owned());
+    let updated = vault.add_connector_key_budget(&id, row, 1_000)?;
+    assert_eq!(updated.budgets.len(), 1);
+    assert_eq!(updated.budgets[0].channel_class.as_deref(), Some("peer"));
+    assert_eq!(
+        vault
+            .get_connector_key(&id)?
+            .expect("stored key")
+            .budgets
+            .len(),
+        1
+    );
+    let tally = vault.admit_connector_key_dispatches(&id, "peer", 3, 1_000)?;
+    assert_eq!(tally.admitted, 2);
+    assert_eq!(tally.refused, 1);
+
+    let full_id = test_id(0xA8);
+    vault.register_connector_key(
+        &full_id,
+        ConnectorKeyRecord::active(
+            "full_peer",
+            None,
+            vec![EffectorBudget::rate(1, 60); CONNECTOR_KEY_MAX_BUDGET_ROWS],
+            1_000,
+        ),
+    )?;
+    assert!(matches!(
+        vault.add_connector_key_budget(&full_id, EffectorBudget::rate(1, 60), 1_000),
+        Err(Error::InvalidConnectorKeyBody("too many budget rows"))
+    ));
+    Ok(())
+}
+
+#[test]
+fn suggested_budget_is_inactive_until_acceptance() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xA9);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer_link", None, Vec::new(), 1_000),
+    )?;
+    let mut suggestion = EffectorBudget::sends(
+        2,
+        EffectorBudgetWindow::Rolling { duration_s: 3_600 },
+        EffectorBudgetOnExhaust::Refuse,
+    );
+    suggestion.channel_class = Some("peer".to_owned());
+    let staged = vault.suggest_connector_key_budget(&id, suggestion, 1_000)?;
+    assert_eq!(staged.budgets.len(), 0);
+    assert_eq!(staged.suggested_budgets.len(), 1);
+
+    let uncapped = vault.admit_connector_key_dispatches(&id, "peer", 3, 1_000)?;
+    assert_eq!(uncapped.admitted, 3);
+    assert_eq!(uncapped.refused, 0);
+    let accepted = vault.accept_connector_key_budget_suggestion(&id, 0, 1_000)?;
+    assert_eq!(accepted.budgets.len(), 1);
+    assert_eq!(accepted.suggested_budgets.len(), 0);
+    let capped = vault.admit_connector_key_dispatches(&id, "peer", 3, 1_000)?;
+    assert_eq!(capped.admitted, 2);
+    assert_eq!(capped.refused, 1);
+
+    let suspend = EffectorBudget::sends(
+        1,
+        EffectorBudgetWindow::Rolling { duration_s: 60 },
+        EffectorBudgetOnExhaust::Suspend,
+    );
+    assert!(matches!(
+        vault.suggest_connector_key_budget(&id, suspend, 1_000),
+        Err(Error::InvalidConnectorKeyBody(
+            "suggested budget rows must refuse on exhaust"
+        ))
+    ));
+    let spend = EffectorBudget::spend(
+        100,
+        "USD",
+        EffectorBudgetWindow::Rolling { duration_s: 60 },
+        EffectorBudgetOnExhaust::Refuse,
+    );
+    assert!(matches!(
+        vault.suggest_connector_key_budget(&id, spend, 1_000),
+        Err(Error::InvalidConnectorKeyBody(
+            "suggested budget rows must be sends or rate"
+        ))
+    ));
+    Ok(())
+}
+
+#[test]
+fn suggestion_accept_respects_active_row_cap() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xAA);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active(
+            "capped_peer",
+            None,
+            vec![EffectorBudget::rate(1, 60); CONNECTOR_KEY_MAX_BUDGET_ROWS],
+            1_000,
+        ),
+    )?;
+    let staged = vault.suggest_connector_key_budget(&id, EffectorBudget::rate(2, 60), 1_000)?;
+    assert_eq!(staged.budgets.len(), 16);
+    assert_eq!(staged.suggested_budgets.len(), 1);
+    assert!(matches!(
+        vault.accept_connector_key_budget_suggestion(&id, 0, 1_000),
+        Err(Error::InvalidConnectorKeyBody("too many budget rows"))
+    ));
+    let unchanged = vault.get_connector_key(&id)?.expect("stored key");
+    assert_eq!(unchanged.budgets.len(), 16);
+    assert_eq!(unchanged.suggested_budgets.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn budget_mutations_and_dispatch_suspension_append_one_op_record_each() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xAC);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer_audit", None, Vec::new(), 1_000),
+    )?;
+    assert_eq!(connector_key_op_receipt_count(&vault)?, 1);
+
+    let mut suspending = EffectorBudget::sends(
+        1,
+        EffectorBudgetWindow::Rolling { duration_s: 60 },
+        EffectorBudgetOnExhaust::Suspend,
+    );
+    suspending.channel_class = Some("peer".to_owned());
+    vault.add_connector_key_budget(&id, suspending, 1_010)?;
+    assert_eq!(connector_key_op_receipt_count(&vault)?, 2);
+
+    vault.suggest_connector_key_budget(&id, EffectorBudget::rate(10, 60), 1_020)?;
+    assert_eq!(connector_key_op_receipt_count(&vault)?, 3);
+
+    vault.accept_connector_key_budget_suggestion(&id, 0, 1_030)?;
+    assert_eq!(connector_key_op_receipt_count(&vault)?, 4);
+
+    let tally = vault.admit_connector_key_dispatches(&id, "peer", 2, 1_040)?;
+    assert_eq!(tally.admitted, 1);
+    assert_eq!(tally.refused, 1);
+    assert_eq!(connector_key_op_receipt_count(&vault)?, 5);
+    Ok(())
+}
+
+#[test]
+fn refuse_dispatch_stays_active_and_rolling_window_frees_budget() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xAB);
+    let mut row = EffectorBudget::sends(
+        5,
+        EffectorBudgetWindow::Rolling { duration_s: 3_600 },
+        EffectorBudgetOnExhaust::Refuse,
+    );
+    row.channel_class = Some("peer".to_owned());
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer_window", None, vec![row], 1_000),
+    )?;
+
+    let exhausted = vault.admit_connector_key_dispatches(&id, "peer", 6, 1_000)?;
+    assert_eq!(exhausted.admitted, 5);
+    assert_eq!(exhausted.refused, 1);
+    assert_eq!(
+        vault.get_connector_key(&id)?.expect("stored key").status,
+        ConnectorKeyStatus::Active
+    );
+    let fresh = vault.admit_connector_key_dispatches(&id, "peer", 1, 4_600)?;
+    assert_eq!(fresh.admitted, 1);
+    assert_eq!(fresh.refused, 0);
     Ok(())
 }
 
