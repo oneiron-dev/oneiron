@@ -1050,6 +1050,7 @@ fn accept_member_in_txn(
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
+                hub_sync_imported: false,
             }],
             vault
                 .text_index_trusted
