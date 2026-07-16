@@ -1011,13 +1011,27 @@ fn apply_projector_rule_in_txn(
             )?;
             require_at_most_one(&active)?;
             if active.is_empty() {
+                let history = matching_claims_in_txn(
+                    vault,
+                    &*wtxn,
+                    party_ref,
+                    rule.predicate,
+                    Some(channel),
+                    None,
+                    false,
+                )?;
+                let latest_transition = latest_claim_transition_boundary(&history);
                 let value = CommClaimValue::OptOut {
                     party_ref,
                     channel_class: channel.to_owned(),
                     reason: OPT_OUT_REASON_STOP.to_owned(),
                     occurred_at,
                 };
-                put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
+                let claim_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
+                if let Some(boundary) = latest_transition.filter(|boundary| occurred_at < *boundary)
+                {
+                    vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
+                }
             }
             Ok(())
         }
@@ -1034,12 +1048,28 @@ fn apply_projector_rule_in_txn(
             )?;
             require_at_most_one(&active)?;
             if active.is_empty() {
+                let history = matching_claims_in_txn(
+                    vault,
+                    &*wtxn,
+                    party_ref,
+                    rule.predicate,
+                    None,
+                    Some(thread),
+                    false,
+                )?;
+                let latest_transition = latest_claim_transition_boundary(&history).max(
+                    latest_projected_thread_transition_in_txn(vault, &*wtxn, party_ref, thread)?,
+                );
                 let value = CommClaimValue::ThreadMember {
                     party_ref,
                     thread_ref: thread.to_owned(),
                     occurred_at,
                 };
-                put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
+                let claim_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
+                if let Some(boundary) = latest_transition.filter(|boundary| occurred_at < *boundary)
+                {
+                    vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
+                }
             }
             Ok(())
         }
@@ -1095,7 +1125,7 @@ fn put_comm_claim_in_txn(
                     start: occurred_at,
                     end: occurred_at,
                 },
-                learned_at: occurred_at,
+                learned_at: crate::unix_seconds_now(),
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -1193,6 +1223,43 @@ fn require_at_most_one(matches: &[(EntityId, CommClaim)]) -> CommResult<()> {
     } else {
         Ok(())
     }
+}
+
+fn latest_claim_transition_boundary(matches: &[(EntityId, CommClaim)]) -> Option<u64> {
+    matches
+        .iter()
+        .filter_map(|(_, claim)| {
+            if claim.is_standing() {
+                claim.valid_from
+            } else {
+                claim.valid_to
+            }
+        })
+        .max()
+}
+
+fn latest_projected_thread_transition_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    party_ref: EntityId,
+    thread_ref: &str,
+) -> CommResult<Option<u64>> {
+    Ok(comm_records_in_txn(vault, rtxn)?
+        .into_iter()
+        .filter_map(|(_, record)| match record {
+            CommRecord::Event {
+                kind: CommEventKind::ThreadJoined | CommEventKind::ThreadLeft,
+                party_ref: candidate_party,
+                thread_ref: Some(candidate_thread),
+                occurred_at,
+                projected: true,
+                ..
+            } if candidate_party == party_ref && candidate_thread == thread_ref => {
+                Some(occurred_at)
+            }
+            _ => None,
+        })
+        .max())
 }
 
 fn build_contact_view_in_txn(
@@ -1295,7 +1362,10 @@ fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
     let index_key = party_index_key(party);
     vault.try_with_write_txn(|wtxn| {
         if let Some(raw) = vault.store.vault_meta.get(&*wtxn, &index_key)? {
-            return decode_entity_id(&raw).map_err(CommError::from);
+            let id = decode_entity_id(&raw)?;
+            if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
+                return Ok(id);
+            }
         }
         let id = EntityId::now();
         let body = encode_value(&Value::Map(vec![
@@ -1314,7 +1384,7 @@ fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
                 id,
                 entity_type: ENTITY_TYPE_PERSON,
                 occurred: TimeRange { start: 0, end: 0 },
-                learned_at: 0,
+                learned_at: crate::unix_seconds_now(),
                 data: body,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -1424,7 +1494,7 @@ fn put_comm_record_in_txn(
                 start: occurred_at,
                 end: occurred_at,
             },
-            learned_at: occurred_at,
+            learned_at: crate::unix_seconds_now(),
             data: encode_comm_record(record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -1521,51 +1591,80 @@ fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
     let party_ref =
         required_entity_ref(entries, KEY_PARTY_REF).map_err(|_| CommError::InvalidRecord)?;
     match kind {
-        RECORD_KIND_EVENT => Ok(CommRecord::Event {
-            sequence: required_u64(entries, "sequence").map_err(|_| CommError::InvalidRecord)?,
-            kind: required_string(entries, "event_kind")
+        RECORD_KIND_EVENT => {
+            let event_kind = required_string(entries, "event_kind")
                 .ok()
                 .and_then(CommEventKind::parse)
-                .ok_or(CommError::InvalidRecord)?,
-            party_ref,
-            channel_class: optional_string(entries, KEY_CHANNEL_CLASS)
-                .map_err(|_| CommError::InvalidRecord)?,
-            thread_ref: optional_string(entries, KEY_THREAD_REF)
-                .map_err(|_| CommError::InvalidRecord)?,
-            occurred_at: required_u64(entries, KEY_OCCURRED_AT)
-                .map_err(|_| CommError::InvalidRecord)?,
-            projected: required_bool(entries, "projected").map_err(|_| CommError::InvalidRecord)?,
-        }),
-        RECORD_KIND_GATE => Ok(CommRecord::Gate {
-            party_ref,
-            channel_class: required_string(entries, KEY_CHANNEL_CLASS)
+                .ok_or(CommError::InvalidRecord)?;
+            let channel_class = optional_string(entries, KEY_CHANNEL_CLASS)
+                .map_err(|_| CommError::InvalidRecord)?;
+            if let Some(channel_class) = &channel_class {
+                validate_channel_class(channel_class).map_err(|_| CommError::InvalidRecord)?;
+            }
+            let thread_ref =
+                optional_string(entries, KEY_THREAD_REF).map_err(|_| CommError::InvalidRecord)?;
+            if let Some(thread_ref) = &thread_ref {
+                validate_key_string(thread_ref).map_err(|_| CommError::InvalidRecord)?;
+            }
+            match event_kind {
+                CommEventKind::SendSucceeded | CommEventKind::InboundStop => {
+                    channel_class.as_ref().ok_or(CommError::InvalidRecord)?;
+                }
+                CommEventKind::ThreadJoined | CommEventKind::ThreadLeft => {
+                    thread_ref.as_ref().ok_or(CommError::InvalidRecord)?;
+                }
+            }
+            Ok(CommRecord::Event {
+                sequence: required_u64(entries, "sequence")
+                    .map_err(|_| CommError::InvalidRecord)?,
+                kind: event_kind,
+                party_ref,
+                channel_class,
+                thread_ref,
+                occurred_at: required_u64(entries, KEY_OCCURRED_AT)
+                    .map_err(|_| CommError::InvalidRecord)?,
+                projected: required_bool(entries, "projected")
+                    .map_err(|_| CommError::InvalidRecord)?,
+            })
+        }
+        RECORD_KIND_GATE => {
+            let channel_class = required_string(entries, KEY_CHANNEL_CLASS)
                 .map_err(|_| CommError::InvalidRecord)?
-                .to_owned(),
-            claim_ref: required_entity_ref(entries, "claim_ref")
-                .map_err(|_| CommError::InvalidRecord)?,
-            created_at: required_u64(entries, KEY_OCCURRED_AT)
-                .map_err(|_| CommError::InvalidRecord)?,
-            pending: match required_string(entries, "gate_status")
+                .to_owned();
+            validate_channel_class(&channel_class).map_err(|_| CommError::InvalidRecord)?;
+            Ok(CommRecord::Gate {
+                party_ref,
+                channel_class,
+                claim_ref: required_entity_ref(entries, "claim_ref")
+                    .map_err(|_| CommError::InvalidRecord)?,
+                created_at: required_u64(entries, KEY_OCCURRED_AT)
+                    .map_err(|_| CommError::InvalidRecord)?,
+                pending: match required_string(entries, "gate_status")
+                    .map_err(|_| CommError::InvalidRecord)?
+                {
+                    GATE_STATUS_PENDING => true,
+                    GATE_STATUS_CONSUMED => false,
+                    _ => return Err(CommError::InvalidRecord),
+                },
+            })
+        }
+        RECORD_KIND_RECEIPT => {
+            let channel_class = required_string(entries, KEY_CHANNEL_CLASS)
                 .map_err(|_| CommError::InvalidRecord)?
-            {
-                GATE_STATUS_PENDING => true,
-                GATE_STATUS_CONSUMED => false,
-                _ => return Err(CommError::InvalidRecord),
-            },
-        }),
-        RECORD_KIND_RECEIPT => Ok(CommRecord::Receipt {
-            party_ref,
-            channel_class: required_string(entries, KEY_CHANNEL_CLASS)
-                .map_err(|_| CommError::InvalidRecord)?
-                .to_owned(),
-            occurred_at: required_u64(entries, KEY_OCCURRED_AT)
-                .map_err(|_| CommError::InvalidRecord)?,
-            outcome: required_string(entries, "outcome")
-                .map_err(|_| CommError::InvalidRecord)?
-                .to_owned(),
-            actor_ref: required_entity_ref(entries, "actor_ref")
-                .map_err(|_| CommError::InvalidRecord)?,
-        }),
+                .to_owned();
+            validate_channel_class(&channel_class).map_err(|_| CommError::InvalidRecord)?;
+            Ok(CommRecord::Receipt {
+                party_ref,
+                channel_class,
+                occurred_at: required_u64(entries, KEY_OCCURRED_AT)
+                    .map_err(|_| CommError::InvalidRecord)?,
+                outcome: required_string(entries, "outcome")
+                    .map_err(|_| CommError::InvalidRecord)?
+                    .to_owned(),
+                actor_ref: required_entity_ref(entries, "actor_ref")
+                    .map_err(|_| CommError::InvalidRecord)?,
+            })
+        }
         _ => Err(CommError::InvalidRecord),
     }
 }

@@ -6,7 +6,8 @@ use crate::claim::{
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_COMM_RECORD, EntityClassification, TypeByteBand, entity_type_registry_entry,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_PERSON, EntityClassification,
+    TypeByteBand, entity_type_registry_entry,
 };
 
 fn entity(seed: u8) -> EntityId {
@@ -80,6 +81,35 @@ fn put_malformed_comm_record(vault: &Vault) -> CommResult<()> {
     payload.extend_from_slice(&0_u64.to_be_bytes());
     payload.extend_from_slice(&0_u64.to_be_bytes());
     payload.push(0xC1);
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .entities
+        .put(&mut wtxn, id.as_bytes(), &payload)?;
+    let type_key = crate::store::Store::encode_type_key(ENTITY_TYPE_COMM_RECORD, &id);
+    vault.store.type_index.put(&mut wtxn, &type_key, &[])?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+fn put_semantically_invalid_comm_record(vault: &Vault, party_ref: EntityId) -> CommResult<()> {
+    let record = CommRecord::Event {
+        sequence: u64::MAX,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("Email".to_owned()),
+        thread_ref: None,
+        occurred_at: 20,
+        projected: false,
+    };
+    let id = EntityId::now();
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 128);
+    payload.push(ENTITY_TYPE_COMM_RECORD);
+    payload.extend_from_slice(&20_u64.to_be_bytes());
+    payload.extend_from_slice(&20_u64.to_be_bytes());
+    payload.extend_from_slice(&20_u64.to_be_bytes());
+    payload.extend_from_slice(&encode_comm_record(&record)?);
 
     let mut wtxn = vault.store.env.write_txn()?;
     vault
@@ -591,6 +621,289 @@ fn backdated_opt_out_clear_clamps_to_the_live_claim_start() -> CommResult<()> {
     assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
     assert_eq!(
         count_opt_out_clear_receipts(&vault, "party-opt-out-clamp")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn delayed_stop_does_not_resurrect_a_human_cleared_opt_out() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-delayed-stop", "email", 100)?;
+    run_comm_projector(&vault)?;
+
+    assert_eq!(
+        request_opt_out_clear(&vault, "party-delayed-stop", "email", 120)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+    let party_ref = resolve_party(&vault, "party-delayed-stop")?.ok_or(CommError::InvalidRecord)?;
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    approve_pending_opt_out_clear(&vault, "party-delayed-stop", "email", human, 120)?;
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-delayed-stop",
+            "email",
+        )?,
+        0
+    );
+    assert_eq!(
+        count_opt_out_clear_receipts(&vault, "party-delayed-stop")?,
+        1
+    );
+
+    record_comm_inbound_stop(&vault, "party-delayed-stop", "email", 90)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-delayed-stop",
+            "email",
+        )?,
+        0
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-delayed-stop",
+            "email",
+        )?,
+        2
+    );
+    assert_eq!(
+        count_opt_out_clear_receipts(&vault, "party-delayed-stop")?,
+        1
+    );
+
+    record_comm_inbound_stop(&vault, "party-delayed-stop", "email", 130)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-delayed-stop",
+            "email",
+        )?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-delayed-stop",
+            "email",
+        )?,
+        3
+    );
+    assert_eq!(
+        count_opt_out_clear_receipts(&vault, "party-delayed-stop")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn delayed_join_does_not_resurrect_membership_after_a_projected_leave() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_thread_event(
+        &vault,
+        "thread-delayed-join",
+        "party-delayed-join",
+        false,
+        100,
+    )?;
+    run_comm_projector(&vault)?;
+    record_comm_thread_event(
+        &vault,
+        "thread-delayed-join",
+        "party-delayed-join",
+        true,
+        50,
+    )?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-delayed-join", "party-delayed-join",)?,
+        0
+    );
+    assert_eq!(
+        count_comm_claims(
+            &vault,
+            PREDICATE_COMM_THREAD_MEMBER,
+            "party-delayed-join",
+            None,
+            Some("thread-delayed-join"),
+            false,
+        )?,
+        1
+    );
+
+    record_comm_thread_event(
+        &vault,
+        "thread-control-order",
+        "party-delayed-join",
+        true,
+        60,
+    )?;
+    run_comm_projector(&vault)?;
+    record_comm_thread_event(
+        &vault,
+        "thread-control-order",
+        "party-delayed-join",
+        false,
+        100,
+    )?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-control-order", "party-delayed-join",)?,
+        0
+    );
+
+    record_comm_thread_event(
+        &vault,
+        "thread-delayed-join",
+        "party-delayed-join",
+        true,
+        150,
+    )?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-delayed-join", "party-delayed-join",)?,
+        1
+    );
+    assert_eq!(
+        count_comm_claims(
+            &vault,
+            PREDICATE_COMM_THREAD_MEMBER,
+            "party-delayed-join",
+            None,
+            Some("thread-delayed-join"),
+            false,
+        )?,
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn delayed_projection_uses_current_learn_time_for_party_claim_and_record() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-delayed-learning", "email", 100)?;
+    run_comm_projector(&vault)?;
+
+    let party_ref =
+        resolve_party(&vault, "party-delayed-learning")?.ok_or(CommError::InvalidRecord)?;
+    let (claim_id, record_id) = {
+        let rtxn = vault.store.env.read_txn()?;
+        let claims = matching_claims_in_txn(
+            &vault,
+            &rtxn,
+            party_ref,
+            PREDICATE_COMM_LAST_TOUCH,
+            Some("email"),
+            None,
+            true,
+        )?;
+        assert_eq!(claims.len(), 1);
+        let records = comm_records_in_txn(&vault, &rtxn)?;
+        assert_eq!(records.len(), 1);
+        (claims[0].0, records[0].0)
+    };
+
+    assert_eq!(vault.get_entity_type(&party_ref)?, Some(ENTITY_TYPE_PERSON));
+    assert_eq!(vault.get_entity_type(&claim_id)?, Some(ENTITY_TYPE_CLAIM));
+    assert_eq!(
+        vault.get_entity_type(&record_id)?,
+        Some(ENTITY_TYPE_COMM_RECORD)
+    );
+    let learned_after_event = vault.entities_in_learned_range(101, u64::MAX)?;
+    assert!(learned_after_event.contains(&party_ref));
+    assert!(learned_after_event.contains(&claim_id));
+    assert!(learned_after_event.contains(&record_id));
+    Ok(())
+}
+
+#[test]
+fn deleted_indexed_party_is_reminted_before_projector_reuse() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-reminted", "email", 10)?;
+    run_comm_projector(&vault)?;
+    let deleted_party = resolve_party(&vault, "party-reminted")?.ok_or(CommError::InvalidRecord)?;
+
+    assert!(vault.delete_entity(&deleted_party)?);
+    assert_eq!(vault.get_entity_type(&deleted_party)?, None);
+    assert_eq!(
+        resolve_party(&vault, "party-reminted")?,
+        Some(deleted_party)
+    );
+
+    record_comm_send_receipt(&vault, "party-reminted", "email", 20)?;
+    let reminted_party =
+        resolve_party(&vault, "party-reminted")?.ok_or(CommError::InvalidRecord)?;
+    assert_ne!(reminted_party, deleted_party);
+    assert_eq!(
+        vault.get_entity_type(&reminted_party)?,
+        Some(ENTITY_TYPE_PERSON)
+    );
+
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-reminted", "email",)?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-reminted", "email",)?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn semantically_invalid_comm_record_is_skipped_without_wedging_family() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-invalid-record", "email", 10)?;
+    let party_ref =
+        resolve_party(&vault, "party-invalid-record")?.ok_or(CommError::InvalidRecord)?;
+    put_semantically_invalid_comm_record(&vault, party_ref)?;
+
+    run_comm_projector(&vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let records = comm_records_in_txn(&vault, &rtxn)?;
+    assert_eq!(records.len(), 1);
+    assert!(matches!(
+        &records[0].1,
+        CommRecord::Event {
+            party_ref: candidate_party,
+            channel_class: Some(channel_class),
+            occurred_at: 10,
+            ..
+        } if *candidate_party == party_ref && channel_class == "email"
+    ));
+    drop(rtxn);
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-invalid-record",
+            "email",
+        )?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-invalid-record",
+            "email",
+        )?,
+        1
+    );
+    let materialized = materialize_contact_record(&vault, "party-invalid-record")?;
+    assert!(!materialized.is_empty());
+    assert_eq!(
+        count_contact_record_claim_entries(&vault, "party-invalid-record")?,
         1
     );
     Ok(())
