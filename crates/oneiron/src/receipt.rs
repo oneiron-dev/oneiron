@@ -371,7 +371,9 @@ pub struct ContextReceiptFields {
     /// The claim/summary entity ids actually placed in context this emit,
     /// in board row order.
     pub activated_memory_ids: Vec<String>,
-    /// Content-hash ref of the assembled context board at emit.
+    /// Content-hash ref of the Eiri activated-memories board
+    /// ([`EiriMemoryBoard`]) at emit — a distinct surface from the
+    /// `[CONTEXT_BOARD]` render block, which is never hashed here.
     pub board_state_ref: String,
     /// Provenance join: ref of the MODEL substrate entity in effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -399,7 +401,9 @@ impl ContextReceiptFields {
     ///
     /// `persona_compile_stamp` records the compile id of the resolved
     /// standing-block prompt in effect; `activated_memory_ids` and
-    /// `board_state_ref` record the assembled context board as shown.
+    /// `board_state_ref` record the Eiri activated-memories board
+    /// ([`EiriMemoryBoard`]) as shown — not the `[CONTEXT_BOARD]` render
+    /// block, which is a distinct surface.
     pub fn from_assembly(persona: &PromptRecompileStamp, board: &EiriMemoryBoard) -> Result<Self> {
         Ok(Self {
             persona_compile_stamp: format!(
@@ -484,7 +488,9 @@ impl ContextReceiptFields {
     }
 }
 
-/// Computes the content-hash ref of an assembled context board.
+/// Computes the content-hash ref of the Eiri activated-memories board
+/// ([`EiriMemoryBoard`]) — a distinct surface from the `[CONTEXT_BOARD]`
+/// render block, which is never hashed here.
 ///
 /// The ref covers the board as shown (rows, scores, budget, companion), so
 /// any drift in retrieval output produces a different ref while already

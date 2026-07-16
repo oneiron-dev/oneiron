@@ -1,5 +1,6 @@
 //! Typed Context Board render projections.
 
+use crate::outbound::ConnectorSendTask;
 use crate::run_tree::{RunTreeNode, RunTreeStatus};
 
 /// AGENTS row lane.
@@ -144,10 +145,258 @@ const fn status_token(status: RunTreeStatus) -> &'static str {
     }
 }
 
+/// TASKS board status axis (08b §3): running / scheduled / queued / done /
+/// failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskBoardStatus {
+    Running,
+    Scheduled,
+    Queued,
+    Done,
+    Failed,
+}
+
+impl TaskBoardStatus {
+    /// Stable structural token for the status.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Scheduled => "scheduled",
+            Self::Queued => "queued",
+            Self::Done => "done",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// One collapsed TASKS row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRow {
+    pub id: String,
+    pub line: String,
+    pub status: TaskBoardStatus,
+    pub is_intent: bool,
+    pub folded_job_count: usize,
+}
+
+/// Collapsed TASKS section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TasksSection {
+    pub rows: Vec<TaskRow>,
+}
+
+/// One non-agent-dispatch JobQueue job projected for the board — a bare
+/// system job row, or a realizing job folded under its owning intent row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobPresence {
+    pub id: String,
+    pub kind: String,
+    pub status: TaskBoardStatus,
+}
+
+impl JobPresence {
+    /// Projects one SURF-005 observed run-tree node onto the board axis.
+    /// Row identity and normalized worker kind come from the observe surface.
+    /// Returns `None` for agent-dispatch attempts, which belong to AGENTS.
+    /// Returns `None` for cancelled rows: the axis has no token for withdrawn
+    /// work, so it leaves the board.
+    #[must_use]
+    pub fn from_run_tree_node(node: &RunTreeNode) -> Option<JobPresence> {
+        if node.worker_kind == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+            return None;
+        }
+
+        Some(JobPresence {
+            id: node.attempt_id.clone(),
+            kind: node.worker_kind.clone(),
+            status: run_tree_board_status(node.status)?,
+        })
+    }
+}
+
+/// Maps the SURF-005 lifecycle onto the board status axis. `Paused` reads as
+/// scheduled (deferred, not eligible to run now); `Cancelled` has no axis
+/// token and leaves the board.
+const fn run_tree_board_status(status: RunTreeStatus) -> Option<TaskBoardStatus> {
+    match status {
+        RunTreeStatus::Queued => Some(TaskBoardStatus::Queued),
+        RunTreeStatus::Running => Some(TaskBoardStatus::Running),
+        RunTreeStatus::Paused => Some(TaskBoardStatus::Scheduled),
+        RunTreeStatus::Completed => Some(TaskBoardStatus::Done),
+        RunTreeStatus::Failed => Some(TaskBoardStatus::Failed),
+        RunTreeStatus::Cancelled => None,
+    }
+}
+
+/// One intent TASK entity projected for the board (08b §3 two-layer /
+/// one-surface: the intent row carries its realizing JobQueue jobs folded
+/// under it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskIntentPresence {
+    pub id: String,
+    pub status: TaskBoardStatus,
+    pub label: Option<String>,
+    pub acked: bool,
+    pub realizing_jobs: Vec<JobPresence>,
+}
+
+impl TaskIntentPresence {
+    /// Projects the connector-send TASK read (the one realized TASK subkind
+    /// today). Board status arrives from the observe projection — the
+    /// job→task fold-up derivation is ONE-1695 — and `acked` starts false
+    /// because ack state is only written by the ONE-1696 verb surface.
+    #[must_use]
+    pub fn from_connector_send_task(
+        task: &ConnectorSendTask,
+        status: TaskBoardStatus,
+        realizing_jobs: Vec<JobPresence>,
+    ) -> TaskIntentPresence {
+        TaskIntentPresence {
+            id: task.task_ref.to_hex(),
+            status,
+            label: Some(task.intent.verb.clone()),
+            acked: false,
+            realizing_jobs,
+        }
+    }
+
+    /// Failed rows stay surfaced until acked (08b §3); an acked failure has
+    /// left the board surface.
+    #[must_use]
+    pub fn is_acked_failure(&self) -> bool {
+        self.status == TaskBoardStatus::Failed && self.acked
+    }
+}
+
+/// Renders provided task presence into stable, collapsed rows — intent rows
+/// first with realizing jobs folded under them, then bare system jobs as-is.
+/// Acked failures have left the surface.
+#[must_use]
+pub fn render_tasks_section(
+    intents: &[TaskIntentPresence],
+    bare_jobs: &[JobPresence],
+) -> TasksSection {
+    let mut rows = Vec::with_capacity(intents.len() + bare_jobs.len());
+    rows.extend(
+        intents
+            .iter()
+            .filter(|intent| !intent.is_acked_failure())
+            .map(intent_row),
+    );
+    rows.extend(bare_jobs.iter().map(bare_job_row));
+    TasksSection { rows }
+}
+
+/// The failed lane of a rendered TASKS section. Acked failures were already
+/// dropped at render time, so the lane is every surfaced failed row.
+#[must_use]
+pub fn failed_lane(section: &TasksSection) -> Vec<&TaskRow> {
+    section
+        .rows
+        .iter()
+        .filter(|row| row.status == TaskBoardStatus::Failed)
+        .collect()
+}
+
+/// Unfolds one intent's realizing jobs under its row — the engine seam
+/// behind `board.expand tasks.<id>`; the verb dispatch surface is ONE-1696.
+/// Line order: the collapsed intent row first, then its realizing jobs in
+/// presence order, indented one level.
+#[must_use]
+pub fn expand_task(intent: &TaskIntentPresence) -> Vec<String> {
+    let mut lines = Vec::with_capacity(1 + intent.realizing_jobs.len());
+    lines.push(intent_row(intent).line);
+    lines.extend(
+        intent
+            .realizing_jobs
+            .iter()
+            .map(|job| format!("  {}", bare_job_row(job).line)),
+    );
+    lines
+}
+
+fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
+    let folded_job_count = intent.realizing_jobs.len();
+    let mut tokens = vec![one_line_token(&intent.id)];
+    if let Some(label) = intent.label.as_deref() {
+        tokens.push(one_line_token(label));
+    }
+    tokens.push(intent.status.as_str().to_owned());
+    if folded_job_count > 0 {
+        tokens.push(format!("jobs={folded_job_count}"));
+    }
+    TaskRow {
+        id: intent.id.clone(),
+        line: tokens.join(" "),
+        status: intent.status,
+        is_intent: true,
+        folded_job_count,
+    }
+}
+
+fn bare_job_row(job: &JobPresence) -> TaskRow {
+    TaskRow {
+        id: job.id.clone(),
+        line: format!(
+            "{} {} {}",
+            one_line_token(&job.id),
+            one_line_token(&job.kind),
+            job.status.as_str()
+        ),
+        status: job.status,
+        is_intent: false,
+        folded_job_count: 0,
+    }
+}
+
+/// Header tokens of the block envelope (08b §0 shape:
+/// `[CONTEXT_BOARD epoch=47 scope=WorldSet(...)]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardBlockHeader {
+    pub epoch: u64,
+    pub scope: String,
+}
+
+/// One assembled block section: a name token over one-line rows. TASKS and
+/// AGENTS rows come from their typed section renders; other sections pass
+/// whatever one-line rows their renderers produce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardSection {
+    pub name: String,
+    pub rows: Vec<String>,
+}
+
+/// Assembles the full Context Board block: one `[CONTEXT_BOARD …]` open-tag
+/// line, each section's name and one-line rows, one `[/CONTEXT_BOARD]`
+/// close-tag line. Every embedded token rides [`one_line_token`], so an
+/// injected control character can never mint or split a physical line; the
+/// block is render output only — no code path parses it back into state
+/// (08b §0 keystone).
+#[must_use]
+pub fn render_board_block(header: &BoardBlockHeader, sections: &[BoardSection]) -> String {
+    let row_count: usize = sections.iter().map(|section| 1 + section.rows.len()).sum();
+    let mut lines = Vec::with_capacity(2 + row_count);
+    lines.push(format!(
+        "[CONTEXT_BOARD epoch={} scope={}]",
+        header.epoch,
+        one_line_token(&header.scope)
+    ));
+    for section in sections {
+        lines.push(one_line_token(&section.name));
+        lines.extend(section.rows.iter().map(|row| one_line_token(row)));
+    }
+    lines.push("[/CONTEXT_BOARD]".to_owned());
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
+    use crate::edge::EdgeActorClass;
+    use crate::entity_id::EntityId;
+    use crate::outbound::OutboundIntent;
     use crate::run_tree::{RunTreeStatus, RunTreeTimestamps};
 
     fn child(id: &str) -> ChildAgentPresence {
@@ -468,5 +717,353 @@ mod tests {
         let section = render_agents_section(&[], &[]);
 
         assert_eq!(section.rows.len(), 0);
+    }
+
+    fn intent(id: &str, status: TaskBoardStatus) -> TaskIntentPresence {
+        TaskIntentPresence {
+            id: id.to_owned(),
+            status,
+            label: None,
+            acked: false,
+            realizing_jobs: Vec::new(),
+        }
+    }
+
+    fn job(id: &str, status: TaskBoardStatus) -> JobPresence {
+        JobPresence {
+            id: id.to_owned(),
+            kind: "sync".to_owned(),
+            status,
+        }
+    }
+
+    fn connector_send_task() -> ConnectorSendTask {
+        ConnectorSendTask {
+            task_ref: EntityId::from_bytes([0x51; 16]).expect("task ref from 16 bytes"),
+            assignee_ref: EntityId::from_bytes([0x52; 16]).expect("assignee ref from 16 bytes"),
+            actor_ref: EntityId::from_bytes([0x53; 16]).expect("actor ref from 16 bytes"),
+            actor_class: EdgeActorClass::Agent,
+            intent: OutboundIntent {
+                actor: "actor_a".to_owned(),
+                on_behalf_of: None,
+                verb: "send".to_owned(),
+                channel: "channel_a".to_owned(),
+                target: "target_a".to_owned(),
+                content_ref: None,
+                idempotency_key: None,
+                dedupe_key: None,
+                intent_source: "commitment".to_owned(),
+                trigger_ref: "tr_1".to_owned(),
+                job_ref: None,
+            },
+            originating_session_ref: None,
+            occurred_at: 1,
+        }
+    }
+
+    #[test]
+    fn renders_tasks_section_as_one_line_rows_over_intents_and_bare_jobs() {
+        let mut tk_a = intent("tk_a", TaskBoardStatus::Running);
+        tk_a.realizing_jobs = vec![
+            job("jb_1", TaskBoardStatus::Running),
+            job("jb_2", TaskBoardStatus::Queued),
+        ];
+        let intents = [
+            tk_a,
+            intent("tk_b", TaskBoardStatus::Scheduled),
+            intent("tk_q", TaskBoardStatus::Queued),
+            intent("tk_d", TaskBoardStatus::Done),
+        ];
+        let bare_jobs = [job("jb_c", TaskBoardStatus::Running)];
+
+        let section = render_tasks_section(&intents, &bare_jobs);
+
+        assert_eq!(section.rows.len(), 5);
+        let one_line_rows = section
+            .rows
+            .iter()
+            .filter(|row| !row.line.is_empty() && row.line.lines().count() == 1)
+            .count();
+        assert_eq!(one_line_rows, 5);
+        assert_eq!(section.rows.iter().filter(|row| row.is_intent).count(), 4);
+        for (id, status, line) in [
+            ("tk_b", TaskBoardStatus::Scheduled, "tk_b scheduled"),
+            ("tk_q", TaskBoardStatus::Queued, "tk_q queued"),
+            ("tk_d", TaskBoardStatus::Done, "tk_d done"),
+        ] {
+            let row = section
+                .rows
+                .iter()
+                .find(|row| row.id == id)
+                .unwrap_or_else(|| panic!("{id} row must be rendered"));
+            assert_eq!(row.status, status);
+            assert!(row.is_intent);
+            assert_eq!(row.folded_job_count, 0);
+            assert_eq!(row.line, line);
+        }
+        let tk_a_row = section
+            .rows
+            .iter()
+            .find(|row| row.id == "tk_a")
+            .expect("tk_a row must be rendered");
+        assert_eq!(tk_a_row.status, TaskBoardStatus::Running);
+        assert!(tk_a_row.is_intent);
+        assert_eq!(tk_a_row.folded_job_count, 2);
+        assert_eq!(tk_a_row.line, "tk_a running jobs=2");
+        let jb_c_row = section
+            .rows
+            .iter()
+            .find(|row| row.id == "jb_c")
+            .expect("jb_c row must be rendered");
+        assert_eq!(jb_c_row.status, TaskBoardStatus::Running);
+        assert!(!jb_c_row.is_intent);
+        assert_eq!(jb_c_row.folded_job_count, 0);
+        assert_eq!(jb_c_row.line, "jb_c sync running");
+    }
+
+    #[test]
+    fn bridges_discriminate_bare_jobs_from_intent_rows() {
+        let bare_node = run_tree_node_with_worker_kind(
+            "11111111111111111111111111111111",
+            None,
+            RunTreeStatus::Running,
+            "sync",
+        );
+        let bare = JobPresence::from_run_tree_node(&bare_node)
+            .expect("running observed job must reach the board");
+        assert_eq!(bare.id, "11111111111111111111111111111111");
+        assert_eq!(bare.kind, "sync");
+        assert_eq!(bare.status, TaskBoardStatus::Running);
+        let cancelled_node = run_tree_node_with_worker_kind(
+            "31313131313131313131313131313131",
+            None,
+            RunTreeStatus::Cancelled,
+            "sync",
+        );
+        assert_eq!(JobPresence::from_run_tree_node(&cancelled_node), None);
+
+        let completed_node = run_tree_node_with_worker_kind(
+            "21212121212121212121212121212121",
+            None,
+            RunTreeStatus::Completed,
+            "sync",
+        );
+        let running_node = run_tree_node_with_worker_kind(
+            "22222222222222222222222222222222",
+            None,
+            RunTreeStatus::Running,
+            "sync",
+        );
+        let realizing_jobs = vec![
+            JobPresence::from_run_tree_node(&completed_node)
+                .expect("completed observed job must reach the board"),
+            JobPresence::from_run_tree_node(&running_node)
+                .expect("running observed job must reach the board"),
+        ];
+        let connector_task = connector_send_task();
+        let intent_read = TaskIntentPresence::from_connector_send_task(
+            &connector_task,
+            TaskBoardStatus::Running,
+            realizing_jobs,
+        );
+        assert_eq!(intent_read.id, connector_task.task_ref.to_hex());
+        assert_eq!(
+            intent_read.label.as_deref(),
+            Some(connector_task.intent.verb.as_str())
+        );
+        assert!(!intent_read.acked);
+        assert_eq!(intent_read.realizing_jobs.len(), 2);
+
+        let section = render_tasks_section(&[intent_read], &[bare]);
+
+        assert_eq!(section.rows.len(), 2);
+        assert_eq!(section.rows.iter().filter(|row| row.is_intent).count(), 1);
+        assert!(section.rows[0].is_intent);
+        assert_eq!(section.rows[0].folded_job_count, 2);
+        assert!(!section.rows[1].is_intent);
+        assert_eq!(section.rows[1].folded_job_count, 0);
+        assert_eq!(section.rows[1].status, TaskBoardStatus::Running);
+        assert_eq!(section.rows[1].line.matches("sync").count(), 1);
+        assert_eq!(section.rows[1].line.matches("running").count(), 1);
+    }
+
+    #[test]
+    fn agent_dispatch_attempt_never_projects_into_tasks_jobs() {
+        let node = run_tree_node_with_worker_kind(
+            "agent_attempt",
+            Some("researcher"),
+            RunTreeStatus::Running,
+            AGENT_DISPATCH_ATTEMPT_TYPE,
+        );
+
+        assert_eq!(JobPresence::from_run_tree_node(&node), None);
+        let projected_jobs: Vec<JobPresence> = [node]
+            .iter()
+            .filter_map(JobPresence::from_run_tree_node)
+            .collect();
+        assert_eq!(projected_jobs.len(), 0);
+
+        let section = render_tasks_section(&[], &projected_jobs);
+        assert_eq!(section.rows.len(), 0);
+    }
+
+    #[test]
+    fn bare_job_bridge_renders_observed_dreamer_worker_kind() {
+        let observed_node = run_tree_node_with_worker_kind(
+            "jb_dreamer",
+            None,
+            RunTreeStatus::Running,
+            "dreamer.consolidate",
+        );
+
+        let bare = JobPresence::from_run_tree_node(&observed_node)
+            .expect("running observed dreamer job must reach the board");
+        assert_eq!(bare.kind, "dreamer.consolidate");
+
+        let section = render_tasks_section(&[], &[bare]);
+
+        assert_eq!(section.rows.len(), 1);
+        assert_eq!(
+            section.rows[0].line,
+            "jb_dreamer dreamer.consolidate running"
+        );
+        let raw_runner_tokens = section.rows[0]
+            .line
+            .split_whitespace()
+            .filter(|token| *token == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND)
+            .count();
+        assert_eq!(raw_runner_tokens, 0);
+    }
+
+    #[test]
+    fn failed_lane_surfaces_only_unacked_failures() {
+        let unacked = intent("tk_failed_unacked", TaskBoardStatus::Failed);
+        let mut acked = intent("tk_failed_acked", TaskBoardStatus::Failed);
+        acked.acked = true;
+        let mut done_acked = intent("tk_done_acked", TaskBoardStatus::Done);
+        done_acked.acked = true;
+
+        let section =
+            render_tasks_section(&[unacked.clone(), acked.clone(), done_acked.clone()], &[]);
+
+        assert_eq!(section.rows.len(), 2);
+        let lane = failed_lane(&section);
+        assert_eq!(lane.len(), 1);
+        assert_eq!(lane[0].id, "tk_failed_unacked");
+        assert_eq!(lane[0].status, TaskBoardStatus::Failed);
+
+        let mut now_acked = unacked;
+        now_acked.acked = true;
+        let mut now_unacked = acked;
+        now_unacked.acked = false;
+
+        let flipped = render_tasks_section(&[now_acked, now_unacked, done_acked], &[]);
+
+        assert_eq!(flipped.rows.len(), 2);
+        let flipped_lane = failed_lane(&flipped);
+        assert_eq!(flipped_lane.len(), 1);
+        assert_eq!(flipped_lane[0].id, "tk_failed_acked");
+        assert_eq!(flipped_lane[0].status, TaskBoardStatus::Failed);
+    }
+
+    #[test]
+    fn expand_unfolds_realizing_jobs_in_order() {
+        let mut tk_a = intent("tk_a", TaskBoardStatus::Running);
+        tk_a.realizing_jobs = vec![
+            job("jb_1", TaskBoardStatus::Running),
+            job("jb_2", TaskBoardStatus::Queued),
+        ];
+
+        let lines = expand_task(&tk_a);
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "tk_a running jobs=2");
+        assert_eq!(lines[1], "  jb_1 sync running");
+        assert_eq!(lines[2], "  jb_2 sync queued");
+        let job_lines = lines.iter().filter(|line| line.contains("jb_")).count();
+        assert_eq!(job_lines, 2);
+        let one_line_rows = lines
+            .iter()
+            .filter(|line| line.lines().count() == 1)
+            .count();
+        assert_eq!(one_line_rows, 3);
+    }
+
+    #[test]
+    fn board_block_envelope_is_exactly_one_open_one_close() {
+        let header = BoardBlockHeader {
+            epoch: 47,
+            scope: "WorldSet(wd_1)".to_owned(),
+        };
+        let sections = [
+            BoardSection {
+                name: "WORLDS".to_owned(),
+                rows: vec!["wd_1 active".to_owned()],
+            },
+            BoardSection {
+                name: "MEMORIES".to_owned(),
+                rows: vec!["cl_1 pinned".to_owned()],
+            },
+            BoardSection {
+                name: "TASKS".to_owned(),
+                rows: vec!["tk_a running".to_owned()],
+            },
+        ];
+
+        let text = render_board_block(&header, &sections);
+
+        let first_line = text.lines().next().expect("block must have a first line");
+        assert!(
+            first_line
+                .strip_prefix("[CONTEXT_BOARD ")
+                .and_then(|rest| rest.strip_suffix(']'))
+                .is_some()
+        );
+        assert_eq!(first_line, "[CONTEXT_BOARD epoch=47 scope=WorldSet(wd_1)]");
+        assert_eq!(text.matches("[CONTEXT_BOARD ").count(), 1);
+        assert_eq!(text.matches("[/CONTEXT_BOARD]").count(), 1);
+        assert_eq!(text.matches("MEMORY_BOARD").count(), 0);
+        assert_eq!(text.lines().count(), 8);
+
+        let hostile_header = BoardBlockHeader {
+            epoch: 47,
+            scope: "WorldSet(\nwd_1)".to_owned(),
+        };
+        let hostile_sections = [
+            BoardSection {
+                name: "WORLDS\nSPOOF".to_owned(),
+                rows: vec!["wd_1\ractive".to_owned()],
+            },
+            BoardSection {
+                name: "MEMORIES".to_owned(),
+                rows: vec!["cl_1 pinned".to_owned()],
+            },
+            BoardSection {
+                name: "TASKS".to_owned(),
+                rows: vec!["tk_a\nrunning".to_owned()],
+            },
+        ];
+
+        let hostile = render_board_block(&hostile_header, &hostile_sections);
+
+        assert_eq!(hostile.lines().count(), text.lines().count());
+        assert_eq!(hostile.matches("[CONTEXT_BOARD ").count(), 1);
+        assert_eq!(hostile.matches("[/CONTEXT_BOARD]").count(), 1);
+        assert_eq!(hostile.matches("MEMORY_BOARD").count(), 0);
+    }
+
+    #[test]
+    fn run_tree_status_maps_onto_board_status_axis() {
+        let statuses = [
+            (RunTreeStatus::Queued, Some(TaskBoardStatus::Queued)),
+            (RunTreeStatus::Running, Some(TaskBoardStatus::Running)),
+            (RunTreeStatus::Paused, Some(TaskBoardStatus::Scheduled)),
+            (RunTreeStatus::Completed, Some(TaskBoardStatus::Done)),
+            (RunTreeStatus::Failed, Some(TaskBoardStatus::Failed)),
+            (RunTreeStatus::Cancelled, None),
+        ];
+        for (status, board_status) in statuses {
+            assert_eq!(run_tree_board_status(status), board_status);
+        }
     }
 }
