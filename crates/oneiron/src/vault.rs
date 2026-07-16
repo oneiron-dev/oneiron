@@ -268,8 +268,13 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
-        // Test-support knob; the production default (`false`) always seeds.
-        if store.created_new_vault() && !config.skip_default_policy_manifest {
+        // Test-support knob: it can only skip seeding when the crate is built
+        // with the `test-support` feature (enabled via a dev-dependency for the
+        // effect-spine oracle). In a production build the bypass is compiled
+        // out, so an unseeded vault is unreachable regardless of the field.
+        let skip_default_manifest =
+            cfg!(feature = "test-support") && config.skip_default_policy_manifest;
+        if store.created_new_vault() && !skip_default_manifest {
             seed_default_policy_manifest(&store, &config, &analyzer, text_index_trusted)?;
         }
         // The reserved system-agent-id occupancy census must complete BEFORE

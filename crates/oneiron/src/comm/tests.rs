@@ -1105,6 +1105,128 @@ fn non_person_party_ref_is_skipped_without_wedging_projection() -> CommResult<()
 }
 
 #[test]
+fn opt_out_clear_rejects_actor_absent_at_ruling_time_without_consuming_gate() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-actor-absent", "email", 10)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        request_opt_out_clear(&vault, "party-actor-absent", "email", 20)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+    // An actor entity that does not exist is rejected by the in-transaction
+    // authorization read (TOCTOU-safe); the rejected ruling rolls back, so the
+    // pending gate and active opt-out are left intact.
+    let ghost = WriteActor::new(entity(0xD4), EdgeActorClass::Human);
+    let error = approve_pending_opt_out_clear(&vault, "party-actor-absent", "email", ghost, 40)
+        .expect_err("absent actor is not authorized");
+    assert!(matches!(
+        error,
+        CommError::Engine(crate::error::Error::EntityNotFound)
+    ));
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 1);
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_OPT_OUT,
+            "party-actor-absent",
+            "email"
+        )?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_populated_event_fields_are_rejected_at_decode() -> CommResult<()> {
+    let party = entity(0xE7);
+    // A send/STOP event carrying BOTH channel_class and thread_ref must not decode.
+    let cross_send = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref: party,
+        channel_class: Some("email".to_owned()),
+        thread_ref: Some("thread-x".to_owned()),
+        occurred_at: 10,
+        projected: false,
+    };
+    assert!(matches!(
+        decode_comm_record(&encode_comm_record(&cross_send)?),
+        Err(CommError::InvalidRecord)
+    ));
+
+    // A thread event carrying BOTH thread_ref and channel_class must not decode.
+    let cross_thread = CommRecord::Event {
+        sequence: 2,
+        kind: CommEventKind::ThreadJoined,
+        party_ref: party,
+        channel_class: Some("email".to_owned()),
+        thread_ref: Some("thread-x".to_owned()),
+        occurred_at: 11,
+        projected: false,
+    };
+    assert!(matches!(
+        decode_comm_record(&encode_comm_record(&cross_thread)?),
+        Err(CommError::InvalidRecord)
+    ));
+
+    // The correctly-shaped variants still decode.
+    let ok_send = CommRecord::Event {
+        sequence: 3,
+        kind: CommEventKind::SendSucceeded,
+        party_ref: party,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 12,
+        projected: false,
+    };
+    assert!(decode_comm_record(&encode_comm_record(&ok_send)?).is_ok());
+    Ok(())
+}
+
+#[test]
+fn stale_non_person_cached_party_is_reminted_before_reuse() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    // Simulate a party whose original PERSON was deleted and whose indexed id
+    // was reused by another entity type: create a fresh MACHINE and point the
+    // comm party index directly at it (the precondition the resolver must
+    // detect), without mutating any existing entity's type in place.
+    let stale_id = entity(0xD4);
+    vault.put_entity(
+        &stale_id,
+        ENTITY_TYPE_MACHINE,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"machine",
+    )?;
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &party_index_key("party-reuse"),
+            stale_id.as_bytes(),
+        )?;
+        wtxn.commit()?;
+    }
+    assert_eq!(vault.get_entity_type(&stale_id)?, Some(ENTITY_TYPE_MACHINE));
+    assert_eq!(resolve_party(&vault, "party-reuse")?, Some(stale_id));
+
+    // A new local record must remint a fresh PERSON and rebind the index rather
+    // than mint the event against the stale non-PERSON id.
+    record_comm_send_receipt(&vault, "party-reuse", "email", 20)?;
+    let new_id = resolve_party(&vault, "party-reuse")?.ok_or(CommError::InvalidRecord)?;
+    assert_ne!(new_id, stale_id);
+    assert_eq!(vault.get_entity_type(&new_id)?, Some(ENTITY_TYPE_PERSON));
+
+    run_comm_projector(&vault)?;
+    // The event minted against the fresh PERSON projects (no wedge).
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-reuse", "email")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
 fn deleted_indexed_party_is_reminted_before_projector_reuse() -> CommResult<()> {
     let (_dir, vault) = open_vault();
     record_comm_send_receipt(&vault, "party-reminted", "email", 10)?;

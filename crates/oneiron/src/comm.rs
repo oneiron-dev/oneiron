@@ -758,17 +758,24 @@ pub fn approve_pending_opt_out_clear(
     actor: WriteActor,
     ruled_at: u64,
 ) -> CommResult<()> {
-    let Some(actor_entity_type) = vault.get_entity_type(&actor.entity_ref())? else {
-        return Err(CommError::Engine(Error::EntityNotFound));
-    };
-    validate_actor_class(actor_entity_type, actor.actor_class())?;
-    if actor.actor_class() != EdgeActorClass::Human {
-        return Err(CommError::HumanApprovalRequired);
-    }
+    let actor_ref = actor.entity_ref();
     let Some(party_ref) = resolve_party(vault, party)? else {
         return Err(CommError::PendingGateNotFound);
     };
     let cleared = vault.try_with_write_txn(|wtxn| {
+        // Authorize the approving actor from the write transaction's view so a
+        // concurrent delete/recreate cannot leave the gate consumed under a
+        // stale authorization decision (TOCTOU).
+        let actor_entity_type = vault
+            .store
+            .entities
+            .get(&*wtxn, actor_ref.as_bytes())?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
+            .ok_or(CommError::Engine(Error::EntityNotFound))?;
+        validate_actor_class(actor_entity_type, actor.actor_class())?;
+        if actor.actor_class() != EdgeActorClass::Human {
+            return Err(CommError::HumanApprovalRequired);
+        }
         let records = comm_records_in_txn(vault, &*wtxn)?;
         let mut gates = records.into_iter().filter(|(_, record)| {
             matches!(record, CommRecord::Gate {
@@ -1185,6 +1192,7 @@ fn put_comm_claim_in_txn(
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
+                hub_sync_imported: false,
             },
             BatchOp::Edge {
                 src: id,
@@ -1419,7 +1427,18 @@ fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
     vault.try_with_write_txn(|wtxn| {
         if let Some(raw) = vault.store.vault_meta.get(&*wtxn, &index_key)? {
             let id = decode_entity_id(&raw)?;
-            if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
+            // Only reuse the cached party id if it still resolves to a PERSON
+            // row. If the entity was deleted (or its explicit id reused by
+            // another entity type), the cache is stale — fall through to remint
+            // and rebind, otherwise new comm events would be minted against a
+            // non-PERSON subject and wedge at the projector's PERSON check.
+            let cached_is_person = vault
+                .store
+                .entities
+                .get(&*wtxn, id.as_bytes())?
+                .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
+                == Some(ENTITY_TYPE_PERSON);
+            if cached_is_person {
                 return Ok(id);
             }
         }
@@ -1444,6 +1463,7 @@ fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
                 data: body,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
+                hub_sync_imported: false,
             }],
             vault
                 .text_index_trusted
@@ -1554,6 +1574,7 @@ fn put_comm_record_in_txn(
             data: encode_comm_record(record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,
+            hub_sync_imported: false,
         }],
         vault
             .text_index_trusted
@@ -1669,13 +1690,16 @@ fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
             if let Some(thread_ref) = &thread_ref {
                 validate_key_string(thread_ref).map_err(|_| CommError::InvalidRecord)?;
             }
+            // Enforce the exact per-variant field shape: a send/STOP carries a
+            // channel_class and no thread_ref; a thread event carries a
+            // thread_ref and no channel_class. Cross-populated bodies are
+            // rejected at the door (fail-closed) rather than silently accepted.
             match event_kind {
-                CommEventKind::SendSucceeded | CommEventKind::InboundStop => {
-                    channel_class.as_ref().ok_or(CommError::InvalidRecord)?;
-                }
-                CommEventKind::ThreadJoined | CommEventKind::ThreadLeft => {
-                    thread_ref.as_ref().ok_or(CommError::InvalidRecord)?;
-                }
+                CommEventKind::SendSucceeded | CommEventKind::InboundStop
+                    if channel_class.is_some() && thread_ref.is_none() => {}
+                CommEventKind::ThreadJoined | CommEventKind::ThreadLeft
+                    if thread_ref.is_some() && channel_class.is_none() => {}
+                _ => return Err(CommError::InvalidRecord),
             }
             Ok(CommRecord::Event {
                 sequence: required_u64(entries, "sequence")
