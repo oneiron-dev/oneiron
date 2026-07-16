@@ -11,7 +11,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill::{
     SkillContentHash, SkillLifecycle, SkillRecord, canonical_skill_tree_hash, decode_skill_record,
@@ -42,6 +42,8 @@ const MAX_HUB_TEXT_BYTES: usize = 4096;
 const MAX_CAPABILITY_ENTRIES: usize = 256;
 const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
 const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_HUB_PACKAGE_FILES: usize = 4096;
+const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 const MAX_HUB_SKILL_SCAN_ENTRIES: usize = 100_000;
 
 /// Generic adapter kind stored on a SKILL_HUB record.
@@ -529,14 +531,27 @@ impl HubPackage {
     /// Recomputes canonical identity from the package tree.
     pub fn content_hash(&self) -> Result<SkillContentHash> {
         self.capabilities.validate()?;
-        if self
-            .files
-            .iter()
-            .any(|file| file.content.len() > MAX_HUB_FILE_BYTES)
-        {
-            return Err(Error::InvalidSkillBody(
-                "hub package file exceeds the maximum size",
-            ));
+        if self.files.len() > MAX_HUB_PACKAGE_FILES {
+            return Err(Error::InvalidSkillBody("hub package has too many files"));
+        }
+        let mut total_bytes = 0_usize;
+        for file in &self.files {
+            if file.content.len() > MAX_HUB_FILE_BYTES {
+                return Err(Error::InvalidSkillBody(
+                    "hub package file exceeds the maximum size",
+                ));
+            }
+            total_bytes =
+                total_bytes
+                    .checked_add(file.content.len())
+                    .ok_or(Error::InvalidSkillBody(
+                        "hub package total size exceeds the maximum",
+                    ))?;
+            if total_bytes > MAX_HUB_PACKAGE_TOTAL_BYTES {
+                return Err(Error::InvalidSkillBody(
+                    "hub package total size exceeds the maximum",
+                ));
+            }
         }
         canonical_skill_tree_hash(
             self.files
@@ -983,24 +998,57 @@ impl Vault {
             return Ok(HubSyncDisposition::RefusedByPolicy);
         }
 
+        let provenance_rows =
+            self.active_claims_for_predicate_in_txn(&wtxn, entity, PREDICATE_SKILL_HUB_PROVENANCE)?;
+        // Legacy direct imports remain permissive until vault-bound authority lands in ONE-1751.
+        if !provenance_rows.is_empty() {
+            let mut matches_provenance_alias = false;
+            for (_, body, _) in &provenance_rows {
+                let stored_ref = HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
+                    Error::InvalidSkillBody("hub provenance claim is missing hubRef"),
+                )?)?;
+                if same_hub_alias(&stored_ref, hub_ref) {
+                    matches_provenance_alias = true;
+                    break;
+                }
+            }
+            if !matches_provenance_alias {
+                return Ok(HubSyncDisposition::RefusedByPolicy);
+            }
+        }
+
         let admitted = self
             .read_admitted_capability_surface_in_txn(&wtxn, entity)?
             .unwrap_or_default();
         if !package.capabilities.is_same_or_narrower_than(&admitted) {
+            let hub_value = hub_ref.to_value()?;
+            let hash_hex = content_hash.to_hex();
+            for (proposal_id, body, _) in self.active_claims_for_predicate_in_txn(
+                &wtxn,
+                entity,
+                PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
+            )? {
+                if map_value(&body.value, "hubRef") == Some(&hub_value)
+                    && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
+                {
+                    return Ok(HubSyncDisposition::Proposed {
+                        proposal_id,
+                        approval: ClaimApprovalStatus::Proposed,
+                    });
+                }
+            }
+
             let proposal_id = EntityId::now();
             let mut proposal = ClaimBody::new(
                 PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
                 ClaimSubject::Entity(*entity),
                 Value::Map(vec![
-                    (Value::from("hubRef"), hub_ref.to_value()?),
+                    (Value::from("hubRef"), hub_value),
                     (
                         Value::from("version"),
                         Value::from(package.record.version.as_str()),
                     ),
-                    (
-                        Value::from("contentHash"),
-                        Value::from(content_hash.to_hex()),
-                    ),
+                    (Value::from("contentHash"), Value::from(hash_hex)),
                     (
                         Value::from("capabilities"),
                         encode_capability_surface_value(&package.capabilities),
@@ -1019,6 +1067,15 @@ impl Vault {
             });
         }
 
+        let content_hash_changed = current.content_hash != Some(content_hash);
+        if content_hash_changed
+            && self
+                .skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
+                .is_some_and(|owner| owner != *entity)
+        {
+            return Ok(HubSyncDisposition::RefusedByPolicy);
+        }
+
         let mut updated = package.record.clone();
         // Hub sync mutates content fields; canonical approval/lifecycle state stays local.
         updated.approval_status = current.approval_status;
@@ -1026,6 +1083,16 @@ impl Vault {
         updated.content_hash = Some(content_hash);
         self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
         self.write_admitted_capability_surface_in_txn(&mut wtxn, entity, &package.capabilities)?;
+        if content_hash_changed {
+            self.replace_hub_provenance_in_txn(
+                &mut wtxn,
+                entity,
+                content_hash,
+                hub_ref,
+                occurred,
+                learned_at,
+            )?;
+        }
         wtxn.commit()?;
         Ok(HubSyncDisposition::Applied)
     }
@@ -1160,7 +1227,17 @@ impl Vault {
             if header.entity_type != ENTITY_TYPE_SKILL {
                 return Err(Error::CorruptedIndex("skill type index"));
             }
-            let record = decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let record = match decode_skill_record(body) {
+                Ok(record) => record,
+                Err(error)
+                    if error.kind() == ErrorKind::InvalidSkillBody
+                        && crate::skill::is_legacy_opaque_skill_body(body) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             if record.content_hash == Some(content_hash) {
                 return Ok(Some(id));
             }
@@ -1201,6 +1278,56 @@ impl Vault {
         );
         body.source = Some(ClaimSource::Observed);
         self.put_claim_in_txn(wtxn, &EntityId::now(), &body, occurred, learned_at)
+    }
+
+    fn replace_hub_provenance_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        content_hash: SkillContentHash,
+        hub_ref: &HubRef,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let hub_value = hub_ref.to_value()?;
+        let mut prior_rows = Vec::new();
+        for (id, body, occurred_start) in
+            self.active_claims_for_predicate_in_txn(&*wtxn, entity, PREDICATE_SKILL_HUB_PROVENANCE)?
+        {
+            let stored_ref = HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
+                Error::InvalidSkillBody("hub provenance claim is missing hubRef"),
+            )?)?;
+            if same_hub_alias(&stored_ref, hub_ref) {
+                prior_rows.push((id, occurred_start));
+            }
+        }
+
+        let replacement_id = EntityId::now();
+        let mut body = ClaimBody::new(
+            PREDICATE_SKILL_HUB_PROVENANCE,
+            ClaimSubject::Entity(*entity),
+            Value::Map(vec![
+                (
+                    Value::from("contentHash"),
+                    Value::from(content_hash.to_hex()),
+                ),
+                (Value::from("hubRef"), hub_value),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(ClaimSource::Observed);
+        self.put_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
+        for (prior_id, prior_start) in prior_rows {
+            self.supersede_claim_in_txn(
+                wtxn,
+                &replacement_id,
+                &prior_id,
+                learned_at.max(prior_start),
+            )?;
+        }
+        Ok(())
     }
 
     fn active_claims_for_predicate(
@@ -1433,6 +1560,10 @@ fn map_text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     map_value(value, key)?.as_str()
 }
 
+fn same_hub_alias(left: &HubRef, right: &HubRef) -> bool {
+    left.hub_id == right.hub_id && left.ref_string == right.ref_string
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1470,6 +1601,20 @@ mod tests {
         )
     }
 
+    fn package_with_content(
+        mut record: SkillRecord,
+        content: &[u8],
+        capabilities: SkillCapabilitySurface,
+    ) -> HubPackage {
+        record.content_hash =
+            Some(canonical_skill_tree_hash([("SKILL.md", content)]).expect("package content hash"));
+        HubPackage::new(
+            record,
+            vec![HubFile::new("SKILL.md", content.to_vec())],
+            capabilities,
+        )
+    }
+
     fn hub_ref(pin: HubPin) -> HubRef {
         HubRef::new(EntityId::now(), "skills/example", pin).expect("hub ref")
     }
@@ -1478,6 +1623,127 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let vault = Vault::open(temp.path(), crate::VaultConfig::default()).expect("open vault");
         (temp, vault)
+    }
+
+    #[test]
+    fn hub_package_rejects_file_count_above_limit() {
+        let files = (0..=MAX_HUB_PACKAGE_FILES)
+            .map(|index| HubFile::new(format!("file-{index}"), Vec::new()))
+            .collect();
+        let package = HubPackage::new(
+            candidate("fixture.file-count-limit"),
+            files,
+            SkillCapabilitySurface::default(),
+        );
+
+        assert_eq!(package.files.len(), MAX_HUB_PACKAGE_FILES + 1);
+        assert_eq!(
+            package
+                .content_hash()
+                .expect_err("file count must be capped")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert_eq!(
+            package
+                .export_files()
+                .expect_err("export file count must be capped")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+    }
+
+    #[test]
+    fn hub_package_rejects_total_bytes_above_limit() {
+        let bytes_per_file = MAX_HUB_PACKAGE_TOTAL_BYTES / 3 + 1;
+        assert!(bytes_per_file < MAX_HUB_FILE_BYTES);
+        let files = (0..3)
+            .map(|index| HubFile::new(format!("file-{index}"), vec![0; bytes_per_file]))
+            .collect();
+        let package = HubPackage::new(
+            candidate("fixture.total-bytes-limit"),
+            files,
+            SkillCapabilitySurface::default(),
+        );
+
+        assert!(
+            package
+                .files
+                .iter()
+                .map(|file| file.content.len())
+                .sum::<usize>()
+                > MAX_HUB_PACKAGE_TOTAL_BYTES
+        );
+        assert_eq!(
+            package
+                .content_hash()
+                .expect_err("total bytes must be capped")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert_eq!(
+            package
+                .export_files()
+                .expect_err("export bytes must be capped")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+    }
+
+    #[test]
+    fn hub_package_accepts_normal_small_package() -> Result<()> {
+        let package = package(
+            candidate("fixture.normal-package"),
+            SkillCapabilitySurface::default(),
+        );
+
+        assert_eq!(package.content_hash()?, fixture_hash());
+        assert_eq!(package.export_files()?, package.files);
+        Ok(())
+    }
+
+    #[test]
+    fn hub_import_skips_legacy_opaque_skill_during_dedup_scan() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let legacy_entity = EntityId::now();
+        let structured = encode_skill_record(&candidate("fixture.legacy-opaque"))?;
+        vault.put_entity(&legacy_entity, ENTITY_TYPE_SKILL, t(1), 2, &structured)?;
+
+        let legacy_body = b"legacy opaque skill body";
+        assert!(crate::skill::is_legacy_opaque_skill_body(legacy_body));
+        let rtxn = vault.store.env.read_txn()?;
+        let mut raw = vault
+            .store
+            .entities
+            .get(&rtxn, legacy_entity.as_bytes())?
+            .expect("legacy fixture entity")
+            .to_vec();
+        drop(rtxn);
+        raw.truncate(ENTITY_METADATA_HEADER_LEN);
+        raw.extend_from_slice(legacy_body);
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, legacy_entity.as_bytes(), &raw)?;
+        wtxn.commit()?;
+
+        let imported = package(
+            candidate("fixture.import-after-legacy"),
+            SkillCapabilitySurface::default(),
+        );
+        let imported_entity =
+            vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(3), 4)?;
+
+        assert_ne!(imported_entity, legacy_entity);
+        assert_eq!(
+            vault
+                .get_skill_record(&imported_entity)?
+                .expect("imported skill")
+                .skill_id,
+            "fixture.import-after-legacy"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1602,6 +1868,239 @@ mod tests {
             vault.get_skill_record(&entity)?.expect("stored").version,
             "1.1.0"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn hub_sync_requires_existing_provenance_alias_but_allows_untracked_skills() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let reference = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.sync-authority"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?;
+
+        let mut update_record = candidate("fixture.sync-authority");
+        update_record.version = "1.1.0".to_owned();
+        let update = package(update_record, SkillCapabilitySurface::default());
+        let unrelated_ref =
+            HubRef::new(EntityId::now(), reference.ref_string.clone(), HubPin::None)?;
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &unrelated_ref,
+                &update,
+                HubSyncPolicy::MirrorOfHub,
+                t(3),
+                4,
+            )?,
+            HubSyncDisposition::RefusedByPolicy
+        );
+        assert_eq!(
+            vault
+                .get_skill_record(&entity)?
+                .expect("original skill")
+                .version,
+            "1.0.0"
+        );
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &reference,
+                &update,
+                HubSyncPolicy::MirrorOfHub,
+                t(5),
+                6,
+            )?,
+            HubSyncDisposition::Applied
+        );
+
+        let direct_entity = EntityId::now();
+        let direct = package_with_content(
+            candidate("fixture.sync-without-provenance"),
+            b"# direct import\n",
+            SkillCapabilitySurface::default(),
+        );
+        vault.put_skill_record(&direct_entity, &direct.record, t(7), 8)?;
+        assert_eq!(vault.skill_hub_provenance_count(&direct_entity)?, 0);
+        let mut direct_update_record = direct.record;
+        direct_update_record.version = "1.1.0".to_owned();
+        let direct_update = package_with_content(
+            direct_update_record,
+            b"# direct import\n",
+            SkillCapabilitySurface::default(),
+        );
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &direct_entity,
+                &hub_ref(HubPin::None),
+                &direct_update,
+                HubSyncPolicy::MirrorOfHub,
+                t(9),
+                10,
+            )?,
+            HubSyncDisposition::Applied
+        );
+        assert_eq!(
+            vault
+                .get_skill_record(&direct_entity)?
+                .expect("direct imported skill")
+                .version,
+            "1.1.0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hub_sync_refuses_content_hash_owned_by_different_entity() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let reference = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.hash-collision-source"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?;
+
+        let owner = EntityId::now();
+        let owner_package = package_with_content(
+            candidate("fixture.hash-collision-owner"),
+            b"# already owned\n",
+            SkillCapabilitySurface::default(),
+        );
+        let owner_hash = owner_package.content_hash()?;
+        vault.import_skill_from_hub_with_id(
+            &hub_ref(HubPin::None),
+            &owner_package,
+            owner,
+            t(3),
+            4,
+        )?;
+
+        let mut colliding_record = candidate("fixture.hash-collision-source");
+        colliding_record.version = "2.0.0".to_owned();
+        let colliding = package_with_content(
+            colliding_record,
+            b"# already owned\n",
+            SkillCapabilitySurface::default(),
+        );
+        assert_eq!(colliding.content_hash()?, owner_hash);
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &reference,
+                &colliding,
+                HubSyncPolicy::MirrorOfHub,
+                t(5),
+                6,
+            )?,
+            HubSyncDisposition::RefusedByPolicy
+        );
+
+        let unchanged = vault.get_skill_record(&entity)?.expect("source skill");
+        let existing_owner = vault.get_skill_record(&owner)?.expect("hash owner");
+        assert_ne!(entity, owner);
+        assert_eq!(unchanged.content_hash, Some(fixture_hash()));
+        assert_eq!(unchanged.version, "1.0.0");
+        assert_eq!(existing_owner.content_hash, Some(owner_hash));
+        Ok(())
+    }
+
+    #[test]
+    fn hub_sync_refreshes_provenance_after_content_hash_change() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let reference = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.provenance-refresh"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?;
+
+        let mut update_record = candidate("fixture.provenance-refresh");
+        update_record.version = "1.1.0".to_owned();
+        let update = package_with_content(
+            update_record,
+            b"# changed upstream tree\n",
+            SkillCapabilitySurface::default(),
+        );
+        let updated_hash = update.content_hash()?;
+        assert_ne!(updated_hash, fixture_hash());
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &reference,
+                &update,
+                HubSyncPolicy::MirrorOfHub,
+                t(3),
+                4,
+            )?,
+            HubSyncDisposition::Applied
+        );
+
+        let rows = vault.active_claims_for_predicate(&entity, PREDICATE_SKILL_HUB_PROVENANCE)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            map_text(&rows[0].1.value, "contentHash"),
+            Some(updated_hash.to_hex().as_str())
+        );
+        assert_eq!(
+            HubRef::from_value(map_value(&rows[0].1.value, "hubRef").expect("provenance hub ref"))?,
+            reference
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hub_sync_deduplicates_identical_widening_proposals() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let reference = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.proposal-dedup"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?;
+
+        let mut wider_record = candidate("fixture.proposal-dedup");
+        wider_record.version = "2.0.0".to_owned();
+        let wider = package(
+            wider_record,
+            SkillCapabilitySurface::default().with_bin("new-bin"),
+        );
+        let first = vault.sync_skill_from_hub(
+            &entity,
+            &reference,
+            &wider,
+            HubSyncPolicy::MirrorOfHub,
+            t(3),
+            4,
+        )?;
+        let first_id = match first {
+            HubSyncDisposition::Proposed { proposal_id, .. } => proposal_id,
+            other => panic!("expected proposal, got {other:?}"),
+        };
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &reference,
+                &wider,
+                HubSyncPolicy::MirrorOfHub,
+                t(5),
+                6,
+            )?,
+            HubSyncDisposition::Proposed {
+                proposal_id: first_id,
+                approval: ClaimApprovalStatus::Proposed,
+            }
+        );
+
+        let proposals =
+            vault.active_claims_for_predicate(&entity, PREDICATE_SKILL_HUB_UPDATE_PROPOSAL)?;
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].0, first_id);
         Ok(())
     }
 
