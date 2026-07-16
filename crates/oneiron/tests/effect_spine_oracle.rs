@@ -13,8 +13,8 @@
 //! fails RED instead of vacuously passing.
 
 use oneiron::{
-    ConnectorKeyRecord, EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust,
-    EffectorBudgetWindow, HnswConfig, Vault, VaultConfig,
+    ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget, EffectorBudgetDimension,
+    EffectorBudgetOnExhaust, EffectorBudgetWindow, HnswConfig, Vault, VaultConfig,
 };
 
 fn test_config() -> VaultConfig {
@@ -81,9 +81,11 @@ struct DispatchTally {
 #[allow(dead_code)]
 mod seam {
     use super::{
-        AutoGateRuling, ClearOptOutOutcome, ConnectorKeyRecord, DecisionHistoryEntry,
-        DispatchTally, EffectorBudget, FanOutEstimate, Vault,
+        AutoGateRuling, ClearOptOutOutcome, ConnectorKeyRecord, ConnectorKeyStatus,
+        DecisionHistoryEntry, DispatchTally, EffectorBudget, EffectorBudgetDimension,
+        EffectorBudgetOnExhaust, EffectorBudgetWindow, FanOutEstimate, Vault,
     };
+    use std::cell::Cell;
 
     // ---- ONE-1715 (ES-02): OutboundIntent -> TASK subkind ----
 
@@ -381,55 +383,91 @@ mod seam {
 
     // ---- ONE-1721 (ES-08): optional per-peer EffectorBudget ----
 
+    thread_local! {
+        static PEER_BUDGET_NOW: Cell<u64> = const { Cell::new(1_000) };
+    }
+
+    fn peer_key(vault: &Vault, peer: &str) -> (oneiron::EntityId, ConnectorKeyRecord) {
+        vault
+            .connector_key_for(peer, None)
+            .unwrap()
+            .expect("peer connector key")
+    }
+
     /// Mints a peer connector key (BYOA link).
-    pub(crate) fn mint_peer_connector_key(_vault: &Vault, _peer: &str) -> ConnectorKeyRecord {
-        unimplemented!("armed by ONE-1721: mint peer key (budgets ship empty)")
+    pub(crate) fn mint_peer_connector_key(vault: &Vault, peer: &str) -> ConnectorKeyRecord {
+        PEER_BUDGET_NOW.with(|now| now.set(1_000));
+        vault
+            .mint_unbudgeted_connector_key(peer, None, 1_000)
+            .unwrap()
     }
 
     /// Owner adds an optional per-peer budget row to a peer key.
-    pub(crate) fn add_peer_budget_row(_vault: &Vault, _peer: &str, _row: EffectorBudget) {
-        unimplemented!("armed by ONE-1721: owner-added optional budget row")
+    pub(crate) fn add_peer_budget_row(vault: &Vault, peer: &str, row: EffectorBudget) {
+        let (id, _) = peer_key(vault, peer);
+        vault
+            .add_connector_key_budget(&id, row, PEER_BUDGET_NOW.with(Cell::get))
+            .unwrap();
     }
 
     /// Dispatches `count` consults through the peer key's effector gate.
-    pub(crate) fn dispatch_peer_consults(
-        _vault: &Vault,
-        _peer: &str,
-        _count: u64,
-    ) -> DispatchTally {
-        unimplemented!("armed by ONE-1721: effector gate over peer consults")
+    pub(crate) fn dispatch_peer_consults(vault: &Vault, peer: &str, count: u64) -> DispatchTally {
+        let (id, _) = peer_key(vault, peer);
+        let now = PEER_BUDGET_NOW.with(Cell::get);
+        let tally = vault
+            .admit_connector_key_dispatches(&id, "peer", count, now)
+            .unwrap();
+        DispatchTally {
+            sent: tally.admitted,
+            refused: tally.refused,
+        }
     }
 
     /// BYOA handshake suggests a cap; it may only PRE-FILL the optional row.
-    pub(crate) fn receive_handshake_cap_suggestion(_vault: &Vault, _peer: &str, _cap: u64) {
-        unimplemented!("armed by ONE-1721: handshake cap suggestion")
+    pub(crate) fn receive_handshake_cap_suggestion(vault: &Vault, peer: &str, cap: u64) {
+        let (id, _) = peer_key(vault, peer);
+        let row = EffectorBudget {
+            dimension: EffectorBudgetDimension::Sends,
+            channel_class: Some("peer".to_owned()),
+            limit: cap,
+            unit: None,
+            window: EffectorBudgetWindow::Rolling { duration_s: 3_600 },
+            on_exhaust: EffectorBudgetOnExhaust::Refuse,
+            reserve_policy: None,
+        };
+        vault
+            .suggest_connector_key_budget(&id, row, PEER_BUDGET_NOW.with(Cell::get))
+            .unwrap();
     }
 
     /// Budget rows ACTIVE (enforced) on the peer key.
-    pub(crate) fn count_active_peer_budget_rows(_vault: &Vault, _peer: &str) -> usize {
-        unimplemented!("armed by ONE-1721: count active budget rows")
+    pub(crate) fn count_active_peer_budget_rows(vault: &Vault, peer: &str) -> usize {
+        peer_key(vault, peer).1.budgets.len()
     }
 
     /// Suggested-but-unaccepted (pre-filled) budget rows on the peer key.
-    pub(crate) fn count_suggested_peer_budget_rows(_vault: &Vault, _peer: &str) -> usize {
-        unimplemented!("armed by ONE-1721: count suggested rows")
+    pub(crate) fn count_suggested_peer_budget_rows(vault: &Vault, peer: &str) -> usize {
+        peer_key(vault, peer).1.suggested_budgets.len()
     }
 
     /// Human accepts the pre-filled suggested cap.
-    pub(crate) fn accept_suggested_cap(_vault: &Vault, _peer: &str) {
-        unimplemented!("armed by ONE-1721: human accepts suggested cap")
+    pub(crate) fn accept_suggested_cap(vault: &Vault, peer: &str) {
+        let (id, _) = peer_key(vault, peer);
+        vault
+            .accept_connector_key_budget_suggestion(&id, 0, PEER_BUDGET_NOW.with(Cell::get))
+            .unwrap();
     }
 
     /// True while the peer key is ACTIVE (not suspended) — Refuse must
     /// never flip the key to Suspended.
-    pub(crate) fn peer_key_active(_vault: &Vault, _peer: &str) -> bool {
-        unimplemented!("armed by ONE-1721: peer key lifecycle read")
+    pub(crate) fn peer_key_active(vault: &Vault, peer: &str) -> bool {
+        peer_key(vault, peer).1.status == ConnectorKeyStatus::Active
     }
 
     /// Advances/rolls the peer key's budget windows so exhausted rolling
     /// windows free up (test clock seam).
     pub(crate) fn advance_budget_window(_vault: &Vault, _peer: &str) {
-        unimplemented!("armed by ONE-1721: budget window clock seam")
+        PEER_BUDGET_NOW.with(|now| now.set(now.get().saturating_add(3_600)));
     }
 
     // ---- ONE-1722 (ES-09): read-time confidence for provider priors ----
@@ -982,7 +1020,6 @@ fn es07_human_ruling_persistence_is_optional() {
 
 /// Ticket ONE-1721: "Peer keys ship budgets: [] (default OFF)".
 #[test]
-#[ignore = "armed by ONE-1721"]
 fn es08_peer_keys_ship_with_empty_budgets() {
     let (_dir, vault) = open_vault();
     let key = seam::mint_peer_connector_key(&vault, "peer-codex");
@@ -993,7 +1030,6 @@ fn es08_peer_keys_ship_with_empty_budgets() {
 /// means UNCAPPED — 500 consults all dispatch, zero refused. Catches any
 /// hidden default cap.
 #[test]
-#[ignore = "armed by ONE-1721"]
 fn es08_empty_budget_table_is_uncapped() {
     let (_dir, vault) = open_vault();
     let _key = seam::mint_peer_connector_key(&vault, "peer-codex");
@@ -1007,7 +1043,6 @@ fn es08_empty_budget_table_is_uncapped() {
 /// dispatch gate (10 allowed, the 11th refused; on_exhaust = Refuse keeps
 /// the key active).
 #[test]
-#[ignore = "armed by ONE-1721"]
 fn es08_owner_added_rate_row_enforces_at_dispatch_gate() {
     let (_dir, vault) = open_vault();
     let _key = seam::mint_peer_connector_key(&vault, "peer-codex");
@@ -1034,7 +1069,6 @@ fn es08_owner_added_rate_row_enforces_at_dispatch_gate() {
 /// refuses WITHOUT suspending the key: the key stays active and a
 /// within-budget send succeeds once the window rolls over.
 #[test]
-#[ignore = "armed by ONE-1721"]
 fn es08_owner_added_sends_row_enforces_and_refuse_does_not_suspend() {
     let (_dir, vault) = open_vault();
     let _key = seam::mint_peer_connector_key(&vault, "peer-codex");
@@ -1068,7 +1102,6 @@ fn es08_owner_added_sends_row_enforces_and_refuse_does_not_suspend() {
 /// rows, dispatch stays uncapped, until the human accepts; acceptance
 /// activates exactly one row.
 #[test]
-#[ignore = "armed by ONE-1721"]
 fn es08_handshake_cap_suggestion_prefills_but_never_activates_itself() {
     let (_dir, vault) = open_vault();
     let _key = seam::mint_peer_connector_key(&vault, "peer-codex");
