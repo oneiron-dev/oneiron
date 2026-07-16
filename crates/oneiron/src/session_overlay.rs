@@ -256,6 +256,7 @@ enum OverlayMutation {
         keyspace: OverlayKeyspace,
         key: Vec<u8>,
         value: Vec<u8>,
+        base_backed: bool,
     },
     Clear {
         keyspace: OverlayKeyspace,
@@ -654,12 +655,14 @@ impl SessionOverlay {
         keyspace: OverlayKeyspace,
         key: &[u8],
         value: &[u8],
+        base_backed: bool,
     ) -> Result<()> {
         self.reject_unbudgetable_payload(key, value)?;
         let mutation = OverlayMutation::DeleteDuplicate {
             keyspace,
             key: key.to_vec(),
             value: value.to_vec(),
+            base_backed,
         };
         self.preflight_segment_mutation(&mutation)?;
         self.stage_mutation(mutation)
@@ -1067,15 +1070,23 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
             );
         }
         (
-            KeyspaceState::DupSort { rows, .. },
-            OverlayMutation::DeleteDuplicate { key, value, .. },
+            KeyspaceState::DupSort { clear_base, rows },
+            OverlayMutation::DeleteDuplicate {
+                key,
+                value,
+                base_backed,
+                ..
+            },
         ) => {
             let identity = duplicate_identity(value);
             let delta = rows.entry(key.clone()).or_default();
+            let effective_base_backed = *base_backed && !*clear_base && !delta.delete_base;
             if delta.present.get(&identity) == Some(value) {
                 delta.present.remove(&identity);
             }
-            delta.deleted.insert(value.clone());
+            if effective_base_backed {
+                delta.deleted.insert(value.clone());
+            }
         }
         (KeyspaceState::Single { .. }, OverlayMutation::DeleteDuplicate { .. }) => {
             return Err(Error::InvariantViolation(
@@ -1143,7 +1154,10 @@ fn debug_bytes(value: &impl std::fmt::Debug) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlay_db::OverlayDb;
     use crate::temporal::TimeRange;
+    use heed::types::Bytes;
+    use heed::{Database, DatabaseFlags, Env, EnvOpenOptions};
     use std::sync::mpsc::{RecvTimeoutError, sync_channel};
     use std::time::{Duration, Instant};
 
@@ -1160,6 +1174,29 @@ mod tests {
             allow_reserved_predicate: false,
             hub_sync_imported: false,
         }
+    }
+
+    fn dupsort_test_db() -> (tempfile::TempDir, Env, Database<Bytes, Bytes>) {
+        let dir = tempfile::tempdir().expect("session overlay test temp dir");
+        // SAFETY: this test owns the freshly created directory and opens it
+        // exactly once; the returned directory outlives the environment.
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .map_size(16 * 1024 * 1024)
+                .max_dbs(1)
+                .open(dir.path())
+                .expect("open session overlay test env")
+        };
+        let mut wtxn = env.write_txn().expect("open setup write txn");
+        let db = env
+            .database_options()
+            .types::<Bytes, Bytes>()
+            .name("rows")
+            .flags(DatabaseFlags::DUP_SORT)
+            .create(&mut wtxn)
+            .expect("create session overlay test database");
+        wtxn.commit().expect("commit session overlay setup");
+        (dir, env, db)
     }
 
     #[test]
@@ -1613,7 +1650,7 @@ mod tests {
         assert_eq!(snapshot.row_count(OverlayKeyspace::Entities), 0);
         drop(snapshot);
 
-        match overlay.delete_duplicate(OverlayKeyspace::TextPostings, b"k", &value) {
+        match overlay.delete_duplicate(OverlayKeyspace::TextPostings, b"k", &value, true) {
             Err(Error::OffRecordOverlayFull {
                 budget_bytes,
                 attempted_bytes,
@@ -1725,6 +1762,83 @@ mod tests {
             snapshot.merge_rows(keyspace, vec![(key.to_vec(), b"base".to_vec())]),
             Vec::<(Vec<u8>, Vec<u8>)>::new()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn delete_duplicate_removes_overlay_only_value_without_tombstone() -> Result<()> {
+        let keyspace = OverlayKeyspace::TextPostings;
+        let key = b"term";
+        let mut base_value = vec![0_u8; 17];
+        base_value[15] = 1;
+        let mut overlay_value = vec![0_u8; 17];
+        overlay_value[15] = 2;
+        let (_dir, env, base) = dupsort_test_db();
+        let mut setup_txn = env.write_txn()?;
+        base.put(&mut setup_txn, key, &base_value)?;
+        setup_txn.commit()?;
+
+        let overlay = SessionOverlay::new(4096);
+        let segment = overlay.install_txn_segment()?;
+        overlay.put(keyspace, key, &overlay_value)?;
+        overlay.delete_duplicate(keyspace, key, &overlay_value, false)?;
+        segment.commit()?;
+
+        let snapshot = overlay.snapshot()?;
+        let KeyspaceState::DupSort { rows, .. } =
+            snapshot.state.keyspaces[keyspace.slot()].as_ref()
+        else {
+            panic!("text postings overlay is not DUP_SORT");
+        };
+        let delta = rows
+            .get(key.as_slice())
+            .expect("term delta remains allocated");
+        assert!(delta.present.is_empty());
+        assert!(delta.deleted.is_empty());
+        assert_eq!(snapshot.bytes_used(), key.len());
+        assert!(snapshot.merge_plan(keyspace, |_| true).rows.is_empty());
+
+        let view = OverlayDb::composed(base, overlay, Arc::new(snapshot), keyspace);
+        let rtxn = env.read_txn()?;
+        let values = view
+            .get_duplicates(&rtxn, key)?
+            .expect("different base posting remains visible")
+            .map(|row| row.map(|(_, value)| value.into_owned()))
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(values, vec![base_value]);
+        Ok(())
+    }
+
+    #[test]
+    fn delete_duplicate_retains_base_backed_tombstone() -> Result<()> {
+        let keyspace = OverlayKeyspace::TextPostings;
+        let key = b"term";
+        let mut value = vec![0_u8; 17];
+        value[15] = 1;
+        let (_dir, env, base) = dupsort_test_db();
+        let mut setup_txn = env.write_txn()?;
+        base.put(&mut setup_txn, key, &value)?;
+        setup_txn.commit()?;
+
+        let overlay = SessionOverlay::new(4096);
+        let segment = overlay.install_txn_segment()?;
+        overlay.delete_duplicate(keyspace, key, &value, true)?;
+        segment.commit()?;
+
+        let snapshot = overlay.snapshot()?;
+        let KeyspaceState::DupSort { rows, .. } =
+            snapshot.state.keyspaces[keyspace.slot()].as_ref()
+        else {
+            panic!("text postings overlay is not DUP_SORT");
+        };
+        let delta = rows.get(key.as_slice()).expect("base mask is retained");
+        assert!(delta.present.is_empty());
+        assert_eq!(delta.deleted.iter().collect::<Vec<_>>(), vec![&value]);
+        assert_eq!(snapshot.bytes_used(), key.len() + value.len());
+
+        let view = OverlayDb::composed(base, overlay, Arc::new(snapshot), keyspace);
+        let rtxn = env.read_txn()?;
+        assert!(view.get_duplicates(&rtxn, key)?.is_none());
         Ok(())
     }
 

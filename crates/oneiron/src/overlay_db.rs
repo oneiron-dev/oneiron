@@ -145,7 +145,19 @@ impl OverlayDb {
             }
         }
         if exact_count != 0 {
-            overlay.live.delete_duplicate(overlay.keyspace, key, data)?;
+            let mut base_backed = false;
+            if let Some(values) = self.base.get_duplicates(txn, key)? {
+                for row in values {
+                    let (_, value) = row?;
+                    if value == data {
+                        base_backed = true;
+                        break;
+                    }
+                }
+            }
+            overlay
+                .live
+                .delete_duplicate(overlay.keyspace, key, data, base_backed)?;
         }
         Ok(exact_count != 0)
     }
