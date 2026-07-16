@@ -908,7 +908,15 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let entity =
             match self.imported_skill_entity_for_content_hash_in_txn(&wtxn, content_hash)? {
-                Some(existing) => existing,
+                Some(existing) => {
+                    let existing_record = self.read_skill_record_in_txn(&wtxn, &existing)?;
+                    if existing_record.skill_id != package.record.skill_id {
+                        return Err(Error::InvalidSkillBody(
+                            "hub import content hash collides with a different skill id",
+                        ));
+                    }
+                    existing
+                }
                 None => {
                     let mut candidate = package.record.clone();
                     candidate.lifecycle_status = SkillLifecycle::Candidate;
@@ -990,15 +998,19 @@ impl Vault {
                 "package content hash does not match its canonical file tree",
             ));
         }
-        if sync_policy == HubSyncPolicy::ContentHashFrozen {
-            let HubPin::ContentHash(frozen_pin) = &hub_ref.pin else {
-                return Err(Error::InvalidSkillBody(
-                    "content-hash-frozen policy requires a content_hash pin",
-                ));
-            };
-            if SkillContentHash::parse_hex(frozen_pin)? != content_hash {
-                return Err(Error::InvalidSkillBody("content-hash-frozen ref drifted"));
-            }
+        // A content-hash pin binds the ref's identity on every sync path, not only under the
+        // frozen policy (mirrors the import door at import_skill_from_hub_with_id).
+        if let HubPin::ContentHash(pinned) = &hub_ref.pin
+            && SkillContentHash::parse_hex(pinned)? != content_hash
+        {
+            return Err(Error::InvalidSkillBody("content-hash-pinned ref drifted"));
+        }
+        if sync_policy == HubSyncPolicy::ContentHashFrozen
+            && !matches!(&hub_ref.pin, HubPin::ContentHash(_))
+        {
+            return Err(Error::InvalidSkillBody(
+                "content-hash-frozen policy requires a content_hash pin",
+            ));
         }
         if !sync_policy.allows_automatic_update() {
             return Ok(HubSyncDisposition::RefusedByPolicy);
@@ -1926,6 +1938,50 @@ mod tests {
     }
 
     #[test]
+    fn import_refuses_hash_collision_across_skill_ids() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let first_ref = HubRef::new(EntityId::now(), "skills/foo", HubPin::None)?;
+        let second_ref = HubRef::new(EntityId::now(), "skills/bar", HubPin::None)?;
+        let first = package(candidate("foo"), SkillCapabilitySurface::default());
+        let second = package(candidate("bar"), SkillCapabilitySurface::default());
+
+        let entity = vault.import_skill_from_hub(&first_ref, &first, t(1), 2)?;
+        let error = vault
+            .import_skill_from_hub(&second_ref, &second, t(3), 4)
+            .expect_err("matching content must not dedup across skill ids");
+
+        assert!(matches!(
+            error,
+            Error::InvalidSkillBody("hub import content hash collides with a different skill id")
+        ));
+        assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
+        assert_eq!(
+            vault
+                .get_skill_record(&entity)?
+                .expect("original imported skill")
+                .skill_id,
+            "foo"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn import_dedups_matching_skill_id_across_hubs() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let first_ref = HubRef::new(EntityId::now(), "skills/foo-a", HubPin::None)?;
+        let second_ref = HubRef::new(EntityId::now(), "skills/foo-b", HubPin::None)?;
+        let imported = package(candidate("foo"), SkillCapabilitySurface::default());
+
+        let entity = vault.import_skill_from_hub(&first_ref, &imported, t(1), 2)?;
+        assert_eq!(
+            vault.import_skill_from_hub(&second_ref, &imported, t(3), 4)?,
+            entity
+        );
+        assert_eq!(vault.skill_hub_provenance_count(&entity)?, 2);
+        Ok(())
+    }
+
+    #[test]
     fn hub_reimport_moves_provenance_alias_to_new_content_entity() -> Result<()> {
         let (_temp, vault) = open_vault();
         let reference = hub_ref(HubPin::None);
@@ -2106,6 +2162,136 @@ mod tests {
             vault.get_skill_record(&entity)?.expect("stored").version,
             "1.1.0"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn sync_enforces_content_hash_pin_under_any_policy() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let initial = package(
+            candidate("fixture.content-hash-pin-sync"),
+            SkillCapabilitySurface::default(),
+        );
+        let initial_hash = initial.content_hash()?;
+        let reference = hub_ref(HubPin::ContentHash(initial_hash.to_hex()));
+        let entity = vault.import_skill_from_hub(&reference, &initial, t(1), 2)?;
+
+        let mut update_record = candidate("fixture.content-hash-pin-sync");
+        update_record.version = "1.1.0".to_owned();
+        let update = package_with_content(
+            update_record,
+            b"# drifted content-hash-pinned tree\n",
+            SkillCapabilitySurface::default(),
+        );
+        let updated_hash = update.content_hash()?;
+        assert_ne!(updated_hash, initial_hash);
+
+        let error = vault
+            .sync_skill_from_hub(
+                &entity,
+                &reference,
+                &update,
+                HubSyncPolicy::MirrorOfHub,
+                t(3),
+                4,
+            )
+            .expect_err("content-hash pin must bind every sync policy");
+        assert!(matches!(
+            error,
+            Error::InvalidSkillBody("content-hash-pinned ref drifted")
+        ));
+        assert_eq!(
+            vault
+                .get_skill_record(&entity)?
+                .expect("original pinned skill")
+                .content_hash,
+            Some(initial_hash)
+        );
+
+        let provenance =
+            vault.active_claims_for_predicate(&entity, PREDICATE_SKILL_HUB_PROVENANCE)?;
+        assert_eq!(provenance.len(), 1);
+        assert_eq!(
+            map_text(&provenance[0].1.value, "contentHash"),
+            Some(initial_hash.to_hex().as_str())
+        );
+        assert_eq!(
+            HubRef::from_value(
+                map_value(&provenance[0].1.value, "hubRef").expect("pinned provenance hub ref")
+            )?,
+            reference
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sync_none_pin_still_moves_hash() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let reference = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.none-pin-sync"),
+            SkillCapabilitySurface::default(),
+        );
+        let initial_hash = initial.content_hash()?;
+        let entity = vault.import_skill_from_hub(&reference, &initial, t(1), 2)?;
+
+        let mut update_record = candidate("fixture.none-pin-sync");
+        update_record.version = "1.1.0".to_owned();
+        let update = package_with_content(
+            update_record,
+            b"# movable none-pin tree\n",
+            SkillCapabilitySurface::default(),
+        );
+        let updated_hash = update.content_hash()?;
+        assert_ne!(updated_hash, initial_hash);
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &reference,
+                &update,
+                HubSyncPolicy::MirrorOfHub,
+                t(3),
+                4,
+            )?,
+            HubSyncDisposition::Applied
+        );
+        assert_eq!(
+            vault
+                .get_skill_record(&entity)?
+                .expect("updated none-pin skill")
+                .content_hash,
+            Some(updated_hash)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn content_hash_frozen_requires_pin() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let reference = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.frozen-policy-pin-required"),
+            SkillCapabilitySurface::default(),
+        );
+        let entity = vault.import_skill_from_hub(&reference, &initial, t(1), 2)?;
+
+        let mut update_record = candidate("fixture.frozen-policy-pin-required");
+        update_record.version = "1.1.0".to_owned();
+        let update = package(update_record, SkillCapabilitySurface::default());
+        let error = vault
+            .sync_skill_from_hub(
+                &entity,
+                &reference,
+                &update,
+                HubSyncPolicy::ContentHashFrozen,
+                t(3),
+                4,
+            )
+            .expect_err("content-hash-frozen policy requires a content_hash pin");
+        assert!(matches!(
+            error,
+            Error::InvalidSkillBody("content-hash-frozen policy requires a content_hash pin")
+        ));
         Ok(())
     }
 
