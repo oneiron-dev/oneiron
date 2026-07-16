@@ -24,16 +24,26 @@ fn test_config() -> VaultConfig {
     cfg.embedding_model = Some("test-model-v1".to_owned());
     cfg.max_readers = 16;
     cfg.hnsw = HnswConfig::default();
-    // Test-support: open without the default policy gate so the ARCH-0035 projector's
-    // comm.* claim writes land. Gate-integrated comm semantics (default-manifest seed +
-    // the Recorded write-class door) re-arm in ONE-1752.
-    cfg.skip_default_policy_manifest = true;
     cfg
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), test_config()).unwrap();
+    (dir, vault)
+}
+
+/// ES-03 comm oracle opener. Skips the default policy manifest so the ARCH-0035
+/// projector's comm.* claim writes land instead of flooring to Critical/Pending
+/// under the default gate; the comm oracle runs cacheless without that gate.
+/// Gate-integrated comm semantics (default-manifest seed + the Recorded
+/// write-class door) re-arm in ONE-1752. Pre-existing spine legs (es02 send
+/// pipeline, later-armed tests) keep the seeded manifest via open_vault().
+fn open_comm_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = test_config();
+    cfg.skip_default_policy_manifest = true;
+    let vault = Vault::open(dir.path(), cfg).unwrap();
     (dir, vault)
 }
 
@@ -667,7 +677,7 @@ fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
 /// one), never duplicates.
 #[test]
 fn es03_send_receipt_projects_one_last_touch_claim_idempotently() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_comm_vault();
     seam::record_send_receipt(&vault, "party-yura", "email");
     // Meaning-by-projection (§3): recording the event writes NO comm.*
     // claim — only the projector may.
@@ -702,7 +712,7 @@ fn es03_send_receipt_projects_one_last_touch_claim_idempotently() {
 /// Safety tightens itself.
 #[test]
 fn es03_inbound_stop_sets_opt_out_automatically_without_human_gate() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_comm_vault();
     seam::record_inbound_stop(&vault, "party-yura", "email");
     // Meaning-by-projection (§3): the raw STOP event alone is not a claim.
     assert_eq!(
@@ -728,7 +738,7 @@ fn es03_inbound_stop_sets_opt_out_automatically_without_human_gate() {
 /// a pending ruling; only the human approval clears it, with a receipt.
 #[test]
 fn es03_clearing_opt_out_is_human_gated_and_receipted() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_comm_vault();
     seam::record_inbound_stop(&vault, "party-yura", "email");
     seam::run_comm_projector(&vault);
 
@@ -767,7 +777,7 @@ fn es03_clearing_opt_out_is_human_gated_and_receipted() {
 /// STATE — join yields one active membership claim, leave retires it.
 #[test]
 fn es03_thread_join_and_leave_project_membership_state() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_comm_vault();
     seam::record_thread_event(&vault, "thread-1", "party-yura", true);
     // Meaning-by-projection (§3): the raw join event alone is not a claim.
     assert_eq!(
@@ -797,7 +807,7 @@ fn es03_thread_join_and_leave_project_membership_state() {
 /// claims reproduces the exact bytes, and claims are untouched by the drop.
 #[test]
 fn es03_contact_record_rebuilds_byte_identical_from_claims() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_comm_vault();
     seam::record_send_receipt(&vault, "party-yura", "email");
     seam::record_inbound_stop(&vault, "party-yura", "email");
     seam::run_comm_projector(&vault);
