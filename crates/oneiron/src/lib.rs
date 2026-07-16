@@ -26,6 +26,7 @@ pub mod codebase;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
+pub mod context_board;
 pub mod context_pack;
 pub mod counterparty_contact;
 pub mod critic;

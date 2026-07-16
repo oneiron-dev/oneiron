@@ -384,7 +384,57 @@ mod cb_a {
     /// handles are `cc-main` and `cc-second` (08b §4.2 multi-instance law);
     /// render the AGENTS section collapsed.
     fn arm_render_agents_section() -> AgentsSectionRender {
-        unimplemented!("armed by ONE-1697: AGENTS section renderer — children + peer presence")
+        use oneiron::context_board::{ChildAgentPresence, PeerPresence};
+        use oneiron::run_tree::{RunTreeNode, RunTreeStatus, RunTreeTimestamps};
+
+        let node = RunTreeNode {
+            attempt_id: "attempt_child_a".to_owned(),
+            run_id: None,
+            parent_id: None,
+            worker_kind: "agent.dispatch".to_owned(),
+            agent_id: Some("child_a".to_owned()),
+            status: RunTreeStatus::Running,
+            timestamps: RunTreeTimestamps {
+                created_at: 1,
+                updated_at: 1,
+            },
+            failure: None,
+            events: Vec::new(),
+            children: Vec::new(),
+        };
+        let children = [
+            ChildAgentPresence::from_run_tree_node(&node)
+                .expect("running driver node must produce child presence"),
+            ChildAgentPresence {
+                id: "child_b".to_owned(),
+                status: RunTreeStatus::Running,
+            },
+        ];
+        let peers = [
+            PeerPresence {
+                actor_handle: "cc-main".to_owned(),
+                harness_label: "claude-code".to_owned(),
+                last_seen: Some(1),
+            },
+            PeerPresence {
+                actor_handle: "cc-second".to_owned(),
+                harness_label: "claude-code".to_owned(),
+                last_seen: Some(2),
+            },
+        ];
+
+        let section = oneiron::context_board::render_agents_section(&children, &peers);
+        let rows = section
+            .rows
+            .into_iter()
+            .map(|row| AgentRow {
+                id: row.id,
+                lane: row.lane.as_str().to_string(),
+                line: row.line,
+                harness_label: row.harness_label,
+            })
+            .collect();
+        AgentsSectionRender { rows }
     }
 
     /// ONE-1697 · 08b §4.1–4.2: one-line rows; children from driver state;
@@ -392,7 +442,6 @@ mod cb_a {
     /// two same-vendor connections are two named actors (`cc-main` /
     /// `cc-second`); harness is a row label with an exact value (F9).
     #[test]
-    #[ignore = "armed by ONE-1697"]
     fn agents_section_renders_children_and_connection_keyed_peers() {
         let section = arm_render_agents_section();
         assert_eq!(section.rows.len(), 4);
