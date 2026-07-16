@@ -2844,7 +2844,7 @@ fn dispatch_pipeline_preserves_gate_hold_reason_when_window_also_holds()
 fn dispatch_pipeline_suppresses_gate_denied_without_executing()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA6);
+    let agent = entity(0xD6);
     let actor = OutboundDispatchActor::agent(agent);
     vault
         .put_entity(

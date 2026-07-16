@@ -114,7 +114,7 @@ fn malformed_reputation_claims_fail_closed() {
 
     let bad_proposal = ClaimBody::new(
         PREDICATE_IDENTITY_REPUTATION_ROTATE_PROPOSAL,
-        ClaimSubject::Entity(entity(0xA6)),
+        ClaimSubject::Entity(entity(0xD6)),
         Value::Map(vec![
             (
                 Value::from("schema_version"),

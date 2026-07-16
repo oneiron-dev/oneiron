@@ -27,11 +27,14 @@ use crate::Vault;
 use crate::agent_def::{
     AgentDefinition, SystemAgentPreset, decode_agent_definition, encode_agent_definition,
 };
-use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::attempt_queue::{
+    AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
+    AttemptState, InterveneAttempt,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerRunnerStore, EnqueueDreamerAttempt,
-    EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerAttemptOutcome, decode_dreamer_attempt_payload,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -125,6 +128,26 @@ pub struct AgentDispatchStatus {
 pub enum AgentDispatchOutcome {
     Dispatched(AgentDispatchStatus),
     Existing(AgentDispatchStatus),
+}
+
+/// An unauthorized kill request parked for an authority decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KillProposal {
+    pub spawn_attempt_id: AttemptId,
+    pub proposer: AttemptId,
+}
+
+/// Typed result of requesting cancellation of an agent spawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum KillOutcome {
+    /// The spawn transitioned to `Cancelled` synchronously.
+    Killed,
+    /// A leased spawn received a durable cooperative interrupt request.
+    CancellationRequested,
+    /// The spawn was already terminal, so no kill effect occurred.
+    AlreadyTerminal,
+    Proposed(KillProposal),
 }
 
 /// Encodes a dispatch input into its pinned-key MessagePack `Value` map.
@@ -391,9 +414,124 @@ impl<'a> AgentDispatcher<'a> {
                 AgentDispatchOutcome::Dispatched(agent_dispatch_status(status)?)
             }
             EnqueueDreamerAttemptOutcome::Existing(status) => {
-                AgentDispatchOutcome::Existing(agent_dispatch_status(status)?)
+                let status = agent_dispatch_status(status)?;
+                if status.input.target != dispatch_input.target {
+                    return Err(Error::InvalidAgentDispatchInput(
+                        "existing dedupe row targets a different agent",
+                    ));
+                }
+                AgentDispatchOutcome::Existing(status)
             }
         })
+    }
+
+    /// Dispatches the always-available generic base without a caller-supplied
+    /// definition or target selection.
+    pub fn dispatch_default_base(
+        &self,
+        parent_attempt: Option<AttemptId>,
+        dedupe_key: Option<String>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<AgentDispatchOutcome> {
+        self.dispatch(DispatchAgent {
+            target: AgentDispatchTarget::System(SystemAgentPreset::default_base()),
+            parent_attempt,
+            dedupe_key,
+            run_id,
+            now,
+        })
+    }
+
+    /// Cancels a direct child spawn when the executing attempt is its spawner.
+    ///
+    /// `killer_attempt` MUST be the runtime-authenticated executing attempt.
+    /// The caller/runtime owns that binding; this trusted wrapper is not a raw
+    /// agent verb, and queue intervention must not be exposed around it.
+    /// Requests from any other attempt leave the spawn unchanged and surface
+    /// a typed proposal.
+    pub fn kill_spawn(
+        &self,
+        spawn_attempt_id: &AttemptId,
+        killer_attempt: &AttemptId,
+        now: u64,
+    ) -> Result<KillOutcome> {
+        let queue = AttemptQueue::new(self.vault);
+        let record = queue
+            .get(*spawn_attempt_id)?
+            .ok_or(Error::InvalidAgentDispatchInput(
+                "kill target attempt not found",
+            ))?;
+        if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+            return Err(Error::InvalidAgentDispatchInput(
+                "kill target must be a dreamer attempt",
+            ));
+        }
+        let payload = decode_dreamer_attempt_payload(&record.payload)?;
+        if payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
+            return Err(Error::InvalidAgentDispatchInput(
+                "kill target must be an agent dispatch attempt",
+            ));
+        }
+        decode_agent_dispatch_input(&payload.input)?;
+
+        let Some(killer) = queue.get(*killer_attempt)? else {
+            return Ok(KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: *spawn_attempt_id,
+                proposer: *killer_attempt,
+            }));
+        };
+        if !matches!(
+            killer.state,
+            AttemptState::Queued | AttemptState::Leased | AttemptState::Paused
+        ) {
+            return Ok(KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: *spawn_attempt_id,
+                proposer: *killer_attempt,
+            }));
+        }
+        if killer.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+            return Err(Error::InvalidAgentDispatchInput(
+                "killer must be a dreamer agent dispatch attempt",
+            ));
+        }
+        let killer_payload = decode_dreamer_attempt_payload(&killer.payload)?;
+        if killer_payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
+            return Err(Error::InvalidAgentDispatchInput(
+                "killer must be an agent dispatch attempt",
+            ));
+        }
+        decode_agent_dispatch_input(&killer_payload.input)?;
+
+        if payload.parent_attempt != Some(*killer_attempt) {
+            return Ok(KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: *spawn_attempt_id,
+                proposer: *killer_attempt,
+            }));
+        }
+
+        let intervention_kind = match record.state {
+            AttemptState::Queued | AttemptState::Paused | AttemptState::Cancelled => {
+                AttemptInterventionKind::Cancel
+            }
+            AttemptState::Leased => AttemptInterventionKind::Interrupt,
+            AttemptState::Completed | AttemptState::Failed => {
+                return Ok(KillOutcome::AlreadyTerminal);
+            }
+        };
+        let outcome = queue.intervene(InterveneAttempt {
+            id: *spawn_attempt_id,
+            kind: intervention_kind,
+            actor: crate::entity_id::bytes_to_hex_lower(killer_attempt.as_bytes()),
+            note: None,
+            now,
+        })?;
+        match outcome.effect {
+            AttemptInterventionEffect::Cancelled => Ok(KillOutcome::Killed),
+            AttemptInterventionEffect::AlreadyCancelled => Ok(KillOutcome::AlreadyTerminal),
+            AttemptInterventionEffect::Interrupted => Ok(KillOutcome::CancellationRequested),
+            _ => Err(Error::InvariantViolation("kill spawn intervention effect")),
+        }
     }
 }
 
@@ -408,6 +546,439 @@ fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchSt
         attempt: status.attempt,
         input,
     })
+}
+
+#[cfg(test)]
+mod one_1698_tests {
+    use super::*;
+    use crate::VaultConfig;
+    use crate::attempt_queue::{ClaimAttempt, ClaimOutcome, EnqueueAttempt, EnqueueOutcome};
+    use crate::temporal::TimeRange;
+
+    fn dispatched_status(outcome: AgentDispatchOutcome) -> AgentDispatchStatus {
+        let AgentDispatchOutcome::Dispatched(status) = outcome else {
+            panic!("expected fresh dispatch");
+        };
+        status
+    }
+
+    fn dispatch_child(
+        dispatcher: &AgentDispatcher<'_>,
+        target: AgentDispatchTarget,
+        parent: AttemptId,
+        now: u64,
+    ) -> Result<AgentDispatchStatus> {
+        dispatcher
+            .dispatch(DispatchAgent {
+                target,
+                parent_attempt: Some(parent),
+                dedupe_key: None,
+                run_id: None,
+                now,
+            })
+            .map(dispatched_status)
+    }
+
+    #[test]
+    fn zero_config_dispatch_resolves_system_default_base() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let status = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
+
+        assert_eq!(
+            status.input.target,
+            AgentDispatchTarget::System(SystemAgentPreset::Default)
+        );
+        let AgentDispatchTarget::System(resolved) = status.input.target else {
+            panic!("default dispatch must resolve to a system preset");
+        };
+        assert_eq!(resolved.preset_id(), "sys.default");
+        Ok(())
+    }
+
+    #[test]
+    fn kill_authority_is_spawner_only_and_class_independent() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let custom_id = EntityId::from_bytes([0x61; 16])?;
+        vault.fork_system_agent(
+            &custom_id,
+            SystemAgentPreset::Keeper,
+            "custom",
+            TimeRange { start: 1, end: 1 },
+            1,
+        )?;
+
+        let dispatcher = AgentDispatcher::new(&vault);
+        let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 2)?);
+        let non_spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 3)?);
+        let system_child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            spawner.attempt.id,
+            4,
+        )?;
+        let custom_child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::Custom(custom_id),
+            spawner.attempt.id,
+            5,
+        )?;
+        let proposed_child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Creative),
+            spawner.attempt.id,
+            6,
+        )?;
+
+        let outcomes = [
+            dispatcher.kill_spawn(&system_child.attempt.id, &spawner.attempt.id, 7)?,
+            dispatcher.kill_spawn(&custom_child.attempt.id, &spawner.attempt.id, 8)?,
+        ];
+        let killed = outcomes
+            .into_iter()
+            .filter(|outcome| matches!(outcome, KillOutcome::Killed))
+            .count();
+        assert_eq!(killed, 2);
+
+        let proposal =
+            dispatcher.kill_spawn(&proposed_child.attempt.id, &non_spawner.attempt.id, 9)?;
+        assert_eq!(
+            proposal,
+            KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: proposed_child.attempt.id,
+                proposer: non_spawner.attempt.id,
+            })
+        );
+
+        let queue = AttemptQueue::new(&vault);
+        assert_eq!(
+            queue
+                .get(system_child.attempt.id)?
+                .expect("system child")
+                .state,
+            AttemptState::Cancelled
+        );
+        assert_eq!(
+            queue
+                .get(custom_child.attempt.id)?
+                .expect("custom child")
+                .state,
+            AttemptState::Cancelled
+        );
+        assert_eq!(
+            queue
+                .get(proposed_child.attempt.id)?
+                .expect("proposed child")
+                .state,
+            AttemptState::Queued
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn spawner_authority_does_not_depend_on_target_class() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let custom_id = EntityId::from_bytes([0x62; 16])?;
+        vault.fork_system_agent(
+            &custom_id,
+            SystemAgentPreset::Keeper,
+            "custom",
+            TimeRange { start: 1, end: 1 },
+            1,
+        )?;
+
+        let dispatcher = AgentDispatcher::new(&vault);
+        let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 2)?);
+        let system_child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            spawner.attempt.id,
+            3,
+        )?;
+        let custom_child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::Custom(custom_id),
+            spawner.attempt.id,
+            4,
+        )?;
+
+        let outcomes = [
+            dispatcher.kill_spawn(&system_child.attempt.id, &spawner.attempt.id, 5)?,
+            dispatcher.kill_spawn(&custom_child.attempt.id, &spawner.attempt.id, 6)?,
+        ];
+        assert_eq!(
+            outcomes
+                .into_iter()
+                .filter(|outcome| matches!(outcome, KillOutcome::Killed))
+                .count(),
+            2
+        );
+        assert_eq!(
+            AttemptQueue::new(&vault)
+                .get(system_child.attempt.id)?
+                .expect("system child")
+                .state,
+            AttemptState::Cancelled
+        );
+        assert_eq!(
+            AttemptQueue::new(&vault)
+                .get(custom_child.attempt.id)?
+                .expect("custom child")
+                .state,
+            AttemptState::Cancelled
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fabricated_and_terminal_killers_only_propose() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let fabricated = AttemptId::from_bytes(&[0xF1; 16])?;
+        let fabricated_child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            fabricated,
+            1,
+        )?;
+        let fabricated_outcome =
+            dispatcher.kill_spawn(&fabricated_child.attempt.id, &fabricated, 2)?;
+        assert_eq!(
+            fabricated_outcome,
+            KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: fabricated_child.attempt.id,
+                proposer: fabricated,
+            })
+        );
+
+        let terminal_killer =
+            dispatched_status(dispatcher.dispatch_default_base(None, None, None, 3)?);
+        let terminal_child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Keeper),
+            terminal_killer.attempt.id,
+            4,
+        )?;
+        let queue = AttemptQueue::new(&vault);
+        let cancelled = queue.intervene(InterveneAttempt {
+            id: terminal_killer.attempt.id,
+            kind: AttemptInterventionKind::Cancel,
+            actor: "runtime".to_owned(),
+            note: None,
+            now: 5,
+        })?;
+        assert_eq!(cancelled.effect, AttemptInterventionEffect::Cancelled);
+        let terminal_outcome =
+            dispatcher.kill_spawn(&terminal_child.attempt.id, &terminal_killer.attempt.id, 6)?;
+        assert_eq!(
+            terminal_outcome,
+            KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: terminal_child.attempt.id,
+                proposer: terminal_killer.attempt.id,
+            })
+        );
+        assert_eq!(
+            [fabricated_child.attempt.id, terminal_child.attempt.id]
+                .into_iter()
+                .filter(|id| {
+                    queue
+                        .get(*id)
+                        .expect("read child")
+                        .expect("child exists")
+                        .state
+                        == AttemptState::Queued
+                })
+                .count(),
+            2
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn non_agent_killer_is_rejected() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let queue = AttemptQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(non_agent) = queue.enqueue(EnqueueAttempt {
+            kind: crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
+            payload: crate::dreamer_runner::encode_dreamer_attempt_payload(
+                &DreamerAttemptPayload {
+                    attempt_type: "maintenance".to_owned(),
+                    input: Value::Nil,
+                    parent_attempt: None,
+                },
+            )?,
+            dedupe_key: None,
+            run_id: None,
+            now: 1,
+        })?
+        else {
+            panic!("expected fresh non-agent attempt");
+        };
+        let dispatcher = AgentDispatcher::new(&vault);
+        let child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            non_agent.id,
+            2,
+        )?;
+
+        let error = dispatcher
+            .kill_spawn(&child.attempt.id, &non_agent.id, 3)
+            .expect_err("non-agent killer must be rejected");
+        assert!(matches!(error, Error::InvalidAgentDispatchInput(_)));
+        assert_eq!(
+            queue.get(child.attempt.id)?.expect("child exists").state,
+            AttemptState::Queued
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn leased_spawn_receives_cooperative_cancellation_request() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
+        let child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            spawner.attempt.id,
+            2,
+        )?;
+        let queue = AttemptQueue::new(&vault);
+        let ClaimOutcome::Claimed(claimed_spawner) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now: 3,
+        })?
+        else {
+            panic!("expected spawner lease");
+        };
+        let ClaimOutcome::Claimed(claimed_child) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-b".to_owned(),
+            now: 4,
+        })?
+        else {
+            panic!("expected child lease");
+        };
+        assert_eq!(claimed_spawner.id, spawner.attempt.id);
+        assert_eq!(claimed_child.id, child.attempt.id);
+
+        let outcome = dispatcher.kill_spawn(&child.attempt.id, &spawner.attempt.id, 5)?;
+        assert_eq!(outcome, KillOutcome::CancellationRequested);
+        let observed = queue.get(child.attempt.id)?.expect("child exists");
+        assert_eq!(observed.state, AttemptState::Leased);
+        assert_eq!(
+            observed
+                .events
+                .iter()
+                .filter(|event| event.kind == AttemptInterventionKind::Interrupt)
+                .count(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn already_cancelled_spawn_is_not_reported_killed_again() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
+        let child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            spawner.attempt.id,
+            2,
+        )?;
+
+        assert_eq!(
+            dispatcher.kill_spawn(&child.attempt.id, &spawner.attempt.id, 3)?,
+            KillOutcome::Killed
+        );
+        assert_eq!(
+            dispatcher.kill_spawn(&child.attempt.id, &spawner.attempt.id, 4)?,
+            KillOutcome::AlreadyTerminal
+        );
+        assert_eq!(
+            AttemptQueue::new(&vault)
+                .get(child.attempt.id)?
+                .expect("child exists")
+                .state,
+            AttemptState::Cancelled
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn non_dreamer_row_cannot_masquerade_as_spawn() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
+        let child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            spawner.attempt.id,
+            2,
+        )?;
+        let queue = AttemptQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(masquerader) = queue.enqueue(EnqueueAttempt {
+            kind: "worker".to_owned(),
+            payload: child.attempt.payload,
+            dedupe_key: None,
+            run_id: None,
+            now: 3,
+        })?
+        else {
+            panic!("expected fresh masquerader");
+        };
+
+        let error = dispatcher
+            .kill_spawn(&masquerader.id, &spawner.attempt.id, 4)
+            .expect_err("non-dreamer target must be rejected");
+        assert!(matches!(error, Error::InvalidAgentDispatchInput(_)));
+        assert_eq!(
+            queue
+                .get(masquerader.id)?
+                .expect("masquerader exists")
+                .state,
+            AttemptState::Queued
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_dispatch_rejects_cross_target_dedupe_but_keeps_same_target_dedupe() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let scout = dispatcher.dispatch(DispatchAgent {
+            target: AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            parent_attempt: None,
+            dedupe_key: Some("shared".to_owned()),
+            run_id: None,
+            now: 1,
+        })?;
+        assert!(matches!(scout, AgentDispatchOutcome::Dispatched(_)));
+        let mismatch = dispatcher
+            .dispatch_default_base(None, Some("shared".to_owned()), None, 2)
+            .expect_err("cross-target dedupe must fail closed");
+        assert!(matches!(mismatch, Error::InvalidAgentDispatchInput(_)));
+
+        let first_default =
+            dispatcher.dispatch_default_base(None, Some("default-only".to_owned()), None, 3)?;
+        let second_default =
+            dispatcher.dispatch_default_base(None, Some("default-only".to_owned()), None, 4)?;
+        assert!(matches!(first_default, AgentDispatchOutcome::Dispatched(_)));
+        assert!(matches!(second_default, AgentDispatchOutcome::Existing(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn default_dispatch_stays_enabled_after_disable_request() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        vault.set_system_agent_enabled(SystemAgentPreset::Default, false)?;
+        assert!(vault.system_agent_enabled(SystemAgentPreset::Default)?);
+        let outcome = AgentDispatcher::new(&vault).dispatch_default_base(None, None, None, 1)?;
+        assert!(matches!(outcome, AgentDispatchOutcome::Dispatched(_)));
+        Ok(())
+    }
 }
 
 #[cfg(test)]
