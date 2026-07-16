@@ -2949,7 +2949,7 @@ fn apply_put(
                     .ok_or(Error::InvalidSkillBody(
                         "forkedFrom parent must exist as a type-7 SKILL",
                     ))?;
-            let parent_header = EntityMetadataHeader::parse(parent_raw)
+            let parent_header = EntityMetadataHeader::parse(&parent_raw)
                 .ok_or(Error::CorruptedIndex("entity header"))?;
             if parent_header.entity_type != ENTITY_TYPE_SKILL {
                 return Err(Error::InvalidSkillBody(
