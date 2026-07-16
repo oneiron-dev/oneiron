@@ -1086,8 +1086,18 @@ fn apply_projector_rule_in_txn(
             )?;
             require_at_most_one(&active)?;
             if let Some((claim_id, matched)) = active.into_iter().next() {
-                let close_at = occurred_at.max(matched.valid_from.unwrap_or(occurred_at));
-                vault.retract_claim_in_txn(wtxn, &claim_id, close_at)?;
+                // Latest-event-wins: a leave older than the newest projected
+                // transition for this membership is stale and must not end
+                // it; the type-136 event row remains its durable trace.
+                let latest_transition =
+                    matched
+                        .valid_from
+                        .max(latest_projected_thread_transition_in_txn(
+                            vault, &*wtxn, party_ref, thread,
+                        )?);
+                if latest_transition.is_none_or(|boundary| occurred_at >= boundary) {
+                    vault.retract_claim_in_txn(wtxn, &claim_id, occurred_at)?;
+                }
             }
             Ok(())
         }
@@ -1572,6 +1582,13 @@ fn encode_comm_record(record: &CommRecord) -> CommResult<Vec<u8>> {
             .collect(),
     );
     encode_value(&map).map_err(CommError::from)
+}
+
+/// Validates one COMM_RECORD body at the replicated write door (FED-001).
+pub(crate) fn validate_comm_record_body_bytes(bytes: &[u8]) -> Result<()> {
+    decode_comm_record(bytes)
+        .map(|_| ())
+        .map_err(|_| Error::InvalidCommRecordBody("body failed validation"))
 }
 
 fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {

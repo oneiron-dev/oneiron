@@ -555,7 +555,7 @@ fn forward_last_touch_event_replaces_the_active_head() -> CommResult<()> {
 }
 
 #[test]
-fn backdated_thread_leave_clamps_to_the_join_start() -> CommResult<()> {
+fn stale_leave_before_an_active_join_is_ignored() -> CommResult<()> {
     let (_dir, vault) = open_vault();
     record_comm_thread_event(&vault, "thread-backdated-leave", "party-thread", true, 100)?;
     run_comm_projector(&vault)?;
@@ -569,7 +569,7 @@ fn backdated_thread_leave_clamps_to_the_join_start() -> CommResult<()> {
 
     assert_eq!(
         count_active_thread_member_claims(&vault, "thread-backdated-leave", "party-thread")?,
-        0
+        1
     );
     assert_eq!(
         count_comm_claims(

@@ -180,6 +180,7 @@ pub enum ErrorKind {
     ConnectorCharterMissing,
     InvalidChannelIdentityBody,
     InvalidCounterpartyContactBody,
+    InvalidCommRecordBody,
     InvalidDisclosureScope,
     DisclosureClampViolation,
     InvalidTaskBody,
@@ -894,6 +895,10 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
     InvalidCounterpartyContactBody(&'static str),
+    /// A COMM_RECORD body failed pinned structural validation. Nothing was
+    /// written.
+    #[error("invalid comm record body: {0}")]
+    InvalidCommRecordBody(&'static str),
     /// A DisclosureScope body failed pinned structural validation. Nothing
     /// was written.
     #[error("invalid disclosure scope: {0}")]
@@ -1496,6 +1501,7 @@ impl Error {
             Self::ConnectorCharterMissing => ErrorKind::ConnectorCharterMissing,
             Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
+            Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDisclosureScope(_) => ErrorKind::InvalidDisclosureScope,
             Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
