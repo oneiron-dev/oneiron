@@ -69,6 +69,7 @@ pub mod maintain;
 pub mod off_record;
 pub mod outbound;
 pub mod outbound_grant;
+pub mod outbound_intent_ledger;
 pub(crate) mod overlay_db;
 pub mod persona_snapshot;
 pub mod pipeline;
@@ -609,6 +610,15 @@ pub use crate::outbound_grant::{
     OUTBOUND_GRANT_BODY_KEYS, OUTBOUND_GRANT_SCHEMA_VERSION, StandingOutboundGrant,
     StandingOutboundGrantScope, StandingOutboundGrantStatus, decode_standing_outbound_grant_body,
     encode_standing_outbound_grant_body,
+};
+pub use crate::outbound_intent_ledger::{
+    FrozenOutboundCall, INTENT_LEDGER_SCHEMA_VERSION, INTENT_LEDGER_VALUE_KEYS,
+    IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerError,
+    IntentLedgerRecord, IntentLedgerResult, IntentRecoveryFailure, IntentRecoveryReport,
+    IntentState, OutboundAuthorizationBinding, OutboundCallClass, OutboundCallRequest,
+    OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome, OutboundSender,
+    OutboundToolDescriptor, classify_outbound_tool, derive_intent_id, execute_outbound_call,
+    intent_ledger_records, recover_outbound_intents,
 };
 pub use crate::persona_snapshot::{
     DEFAULT_PERSONA_SNAPSHOT_MAX_CLAIM_ROWS, DEFAULT_PERSONA_SNAPSHOT_MAX_THIRD_PARTY_ROWS,
