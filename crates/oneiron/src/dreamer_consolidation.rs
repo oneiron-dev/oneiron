@@ -204,7 +204,7 @@ pub(crate) fn read_watermark_in_txn(
     let Some(raw) = vault.store.vault_meta.get(txn, &watermark_key(scope))? else {
         return Ok(ConsolidationWatermark::bootstrap());
     };
-    decode_watermark(raw)
+    decode_watermark(&raw)
 }
 
 /// Advances the per-scope watermark. Call ONLY after the round's attempts are
@@ -395,7 +395,7 @@ pub(crate) fn count_dirty_turns_in_txn(
         let Some(raw) = vault.store.entities.get(wtxn, turn_id.as_bytes())? else {
             continue;
         };
-        let Some(header) = EntityMetadataHeader::parse(raw) else {
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
         if header.entity_type != ENTITY_TYPE_TURN {

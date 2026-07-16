@@ -37,16 +37,24 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+use oneiron::session_lifecycle::{SessionActivityPeriod, SessionHintTimestamp};
 use oneiron::{
     DreamerConsolidationScope, EndedSession, EntityId, Result, SessionClosePredicate,
     SessionEndWake, SessionMintOutcome, Vault, plan_partitions, read_watermark, scan_dirty_turns,
 };
 
-use crate::tick::{NowMillis, Tick, TickSource, sleep_until_due};
+use crate::tick::{
+    NowMillis, SessionHintCarrier, SessionHintStamp, Tick, TickSource, sleep_until_due,
+};
 
 /// The ticket-pinned default idle floor: 20 minutes without activity ends
 /// the session. A floor, not a cap (H-S4).
 pub const DEFAULT_SESSION_IDLE_FLOOR_SECS: u64 = 20 * 60;
+
+/// Stored Activity periods separated by less than one second are rolled up.
+/// This is tiny beside the 20-minute idle floor while bounding high-frequency
+/// typing storage; hosts can select zero for lossless per-delivery periods.
+pub const DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS: u64 = 1_000;
 
 const HINT_RETRY_BACKOFF_BASE_MS: u64 = 1;
 const HINT_RETRY_BACKOFF_CAP_MS: u64 = 1_000;
@@ -83,6 +91,9 @@ pub struct SessionLifecycleConfig {
     /// Hard wall-clock lifetime ceiling, measured from `started_at` and
     /// INDEPENDENT of activity hints. Must exceed the idle floor.
     pub lifetime_ceiling_secs: u64,
+    /// Storage-only Activity-period rollup gap in milliseconds. This never
+    /// participates in expiry or ordering decisions.
+    pub activity_rollup_gap_ms: u64,
 }
 
 impl SessionLifecycleConfig {
@@ -91,7 +102,16 @@ impl SessionLifecycleConfig {
         Self {
             idle_floor_secs,
             lifetime_ceiling_secs,
+            activity_rollup_gap_ms: DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS,
         }
+    }
+
+    /// Overrides the storage-only Activity period rollup gap. `0` retains
+    /// every delivered period without cross-delivery merging.
+    #[must_use]
+    pub fn with_activity_rollup_gap_ms(mut self, activity_rollup_gap_ms: u64) -> Self {
+        self.activity_rollup_gap_ms = activity_rollup_gap_ms;
+        self
     }
 
     /// The ticket-default 20-minute idle floor with a host-chosen ceiling.
@@ -160,40 +180,124 @@ impl<'v> SessionLifecycleDriver<'v> {
         })
     }
 
-    fn now_secs(&self) -> u64 {
-        (self.now_ms)() / 1_000
-    }
-
     pub(crate) fn clock(&self) -> NowMillis {
         Arc::clone(&self.now_ms)
     }
 
-    fn now_millis(&self) -> u64 {
-        (self.now_ms)()
+    fn hint_timestamp(
+        &self,
+        stamp: SessionHintStamp,
+        last_effective_ms: u64,
+    ) -> SessionHintTimestamp {
+        let ceiling_ms = self.config.lifetime_ceiling_secs.saturating_mul(1_000);
+        let claim_is_insane = stamp.claimed_ms.is_some_and(|claimed_ms| {
+            claimed_ms > stamp.arrival_ms
+                || stamp.arrival_ms.saturating_sub(claimed_ms) > ceiling_ms
+        });
+        if claim_is_insane {
+            tracing::warn!(
+                claimed_ms = stamp.claimed_ms,
+                arrival_ms = stamp.arrival_ms,
+                lifetime_ceiling_ms = ceiling_ms,
+                "session hint claim outside sane window; retained raw and ignored for derivation"
+            );
+        }
+        let candidate = if claim_is_insane {
+            stamp.arrival_ms
+        } else {
+            stamp.claimed_ms.unwrap_or(stamp.arrival_ms)
+        };
+        // Queue arrivals are monotone. Keep the mutation panic-free if an
+        // external TickSource violates that contract: monotonicity wins.
+        let effective_ms = if last_effective_ms > stamp.arrival_ms {
+            last_effective_ms
+        } else {
+            candidate.clamp(last_effective_ms, stamp.arrival_ms)
+        };
+        SessionHintTimestamp {
+            claimed_ms: stamp.claimed_ms,
+            arrival_ms: stamp.arrival_ms,
+            effective_ms,
+        }
     }
 
-    /// Applies one session hint under driver policy.
-    pub fn apply_hint(&self, hint: SessionHint) -> Result<SessionHintEffect> {
-        let now = self.now_secs();
-        match hint {
-            SessionHint::AppOpen => match self.vault.mint_session(now)? {
+    /// Applies one point session hint under driver policy. All lifecycle
+    /// mutations use the carried timestamps; this method never reads the wall
+    /// clock. Adjacent Activity periods enter through the same apply site via
+    /// [`Self::apply_hint_carrier`].
+    pub fn apply_hint(
+        &self,
+        hint: SessionHint,
+        claimed_ms: Option<u64>,
+        arrival_ms: u64,
+    ) -> Result<SessionHintEffect> {
+        self.apply_hint_carrier(SessionHintCarrier::point(hint, claimed_ms, arrival_ms))
+    }
+
+    fn apply_hint_carrier(&self, carrier: SessionHintCarrier) -> Result<SessionHintEffect> {
+        let mut open = self.vault.open_session()?;
+        let first_floor_ms = open.as_ref().map_or(carrier.first.arrival_ms, |session| {
+            session.last_effective_ms
+        });
+        let first = self.hint_timestamp(carrier.first, first_floor_ms);
+        let last = if carrier.count == 1 {
+            first
+        } else {
+            self.hint_timestamp(carrier.last, first.effective_ms)
+        };
+
+        // Ordering is decided only by the first effective endpoint. If the
+        // sitting was already due then, close at the exact due instant before
+        // applying the fact (an AppOpen may subsequently mint a replacement).
+        if let Some(session) = open
+            && self.expiry_ms(session.started_at, session.last_activity) <= first.effective_ms
+        {
+            let due_at_ms = self.expiry_ms(session.started_at, session.last_activity);
+            open = match self.close_due_session_at(due_at_ms)? {
+                Some(_) => None,
+                // A concurrent bump may have won the transaction's expiry
+                // re-check. Re-read that winner so this carried fact still
+                // applies to the sitting instead of being discarded.
+                None => self.vault.open_session()?,
+            };
+        }
+
+        match carrier.hint {
+            SessionHint::AppOpen => match self.vault.mint_session_from_hint(first)? {
                 SessionMintOutcome::Minted(id) => Ok(SessionHintEffect::Minted(id)),
                 // Presence re-signal on the open sitting counts as activity.
                 SessionMintOutcome::AlreadyOpen(_) => Ok(self
                     .vault
-                    .bump_session_activity(now)?
+                    .record_session_app_open_hint(first)?
                     .map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped)),
             },
-            SessionHint::Activity => Ok(self
-                .vault
-                .bump_session_activity(now)?
-                .map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped)),
+            SessionHint::Activity => {
+                if open.is_none() {
+                    return Ok(SessionHintEffect::NoOp);
+                }
+                Ok(self
+                    .vault
+                    .record_session_activity_period(
+                        SessionActivityPeriod {
+                            first,
+                            last,
+                            count: carrier.count,
+                        },
+                        self.config.activity_rollup_gap_ms,
+                    )?
+                    .map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped))
+            }
             SessionHint::ExplicitEnd => {
-                let Some(open) = self.vault.open_session()? else {
+                let Some(open) = open else {
                     return Ok(SessionHintEffect::NoOp);
                 };
                 Ok(self
-                    .end_session(&open.session, SessionClosePredicate::Explicit)?
+                    .end_session(
+                        &open.session,
+                        SessionClosePredicate::Explicit,
+                        first.effective_ms / 1_000,
+                        Some(first),
+                    )?
                     .map_or(SessionHintEffect::NoOp, SessionHintEffect::Ended))
             }
         }
@@ -206,16 +310,13 @@ impl<'v> SessionLifecycleDriver<'v> {
         let Some(open) = self.vault.open_session()? else {
             return Ok(None);
         };
-        Ok(Some(
-            self.expiry_secs(open.started_at, open.last_activity)
-                .saturating_mul(1_000),
-        ))
+        Ok(Some(self.expiry_ms(open.started_at, open.last_activity)))
     }
 
-    fn expiry_secs(&self, started_at: u64, last_activity: u64) -> u64 {
+    fn expiry_ms(&self, started_at: u64, last_activity: u64) -> u64 {
         let idle_due = last_activity.saturating_add(self.config.idle_floor_secs);
         let ceiling_due = started_at.saturating_add(self.config.lifetime_ceiling_secs);
-        idle_due.min(ceiling_due)
+        idle_due.min(ceiling_due).saturating_mul(1_000)
     }
 
     /// Closes the open session if its idle floor or lifetime ceiling has
@@ -227,10 +328,19 @@ impl<'v> SessionLifecycleDriver<'v> {
     /// record, so a bump that races this close makes it a no-op instead of
     /// ending a still-active sitting.
     pub fn close_due_session(&self) -> Result<Option<EndedSession>> {
+        let observed_ms = (self.now_ms)();
+        self.close_due_session_at(observed_ms)
+    }
+
+    /// Closes a due sitting using a caller-carried observation time. The
+    /// mutation is stamped at the policy-derived due instant, never at a late
+    /// resume/processing time, and does not read the driver's wall clock.
+    pub fn close_due_session_at(&self, observed_ms: u64) -> Result<Option<EndedSession>> {
         let Some(open) = self.vault.open_session()? else {
             return Ok(None);
         };
-        if self.now_secs() < self.expiry_secs(open.started_at, open.last_activity) {
+        let due_at_ms = self.expiry_ms(open.started_at, open.last_activity);
+        if observed_ms < due_at_ms {
             return Ok(None);
         }
         self.end_session(
@@ -239,6 +349,8 @@ impl<'v> SessionLifecycleDriver<'v> {
                 idle_floor_secs: self.config.idle_floor_secs,
                 lifetime_ceiling_secs: self.config.lifetime_ceiling_secs,
             },
+            due_at_ms / 1_000,
+            None,
         )
     }
 
@@ -258,6 +370,8 @@ impl<'v> SessionLifecycleDriver<'v> {
         &self,
         expected: &EntityId,
         predicate: SessionClosePredicate,
+        ended_at: u64,
+        end_hint: Option<SessionHintTimestamp>,
     ) -> Result<Option<EndedSession>> {
         let scope = DreamerConsolidationScope::Meso;
         let watermark = read_watermark(self.vault, scope)?;
@@ -291,7 +405,7 @@ impl<'v> SessionLifecycleDriver<'v> {
             advance_watermark_to,
         };
         self.vault
-            .end_session_with_wake(expected, predicate, self.now_secs(), &wake)
+            .end_session_with_wake_and_hint(expected, predicate, ended_at, &wake, end_hint)
     }
 }
 
@@ -318,7 +432,7 @@ pub struct SessionTicks<'v, T> {
     pending_hints: VecDeque<crate::tick::HintSignal>,
     /// The oldest hint whose due-close or apply failed. Nothing newer is
     /// removed from the inner buffer until this hint applies successfully.
-    retry_hint: Option<(SessionHint, u64)>,
+    retry_hint: Option<SessionHintCarrier>,
     /// Consecutive retained-hint drain failures, used for capped backoff.
     retry_backoff_failures: u32,
 }
@@ -335,32 +449,21 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
         }
     }
 
-    /// Applies one arrival-stamped fact. If the sitting was already due when
-    /// the fact arrived, close it first; an earlier arrival still gets to
-    /// bump the sitting before the ordinary close check. Failed work stays
-    /// at the head of the pipeline and is never surfaced as if it succeeded.
-    fn apply_guarded_hint(&mut self, hint: SessionHint, arrival_ms: u64) -> bool {
-        let applied = (|| {
-            if self
-                .lifecycle
-                .next_expiry_ms()?
-                .is_some_and(|due_ms| due_ms <= arrival_ms)
-            {
-                self.lifecycle.close_due_session()?;
-            }
-            self.lifecycle.apply_hint(hint)
-        })();
+    /// Applies one timestamp-carrying point/period. Failed work stays at the
+    /// head of the pipeline and is never surfaced as if it succeeded.
+    fn apply_guarded_hint(&mut self, carrier: SessionHintCarrier) -> bool {
+        let applied = self.lifecycle.apply_hint_carrier(carrier);
 
         match applied {
             Ok(SessionHintEffect::Ended(_)) => true,
             Ok(_) => {
                 self.pending_hints.push_back(crate::tick::HintSignal {
-                    session: Some(hint),
+                    session: Some(carrier.hint),
                 });
                 true
             }
             Err(error) => {
-                self.retry_hint = Some((hint, arrival_ms));
+                self.retry_hint = Some(carrier);
                 tracing::error!(?error, "session hint apply failed; retained for retry");
                 false
             }
@@ -370,13 +473,13 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
     /// Retries the oldest failed fact first, then drains buffered facts in
     /// arrival order. A failure stops the drain so causality cannot invert.
     fn drain_buffered_hints(&mut self) -> bool {
-        if let Some((hint, arrival_ms)) = self.retry_hint.take()
-            && !self.apply_guarded_hint(hint, arrival_ms)
+        if let Some(carrier) = self.retry_hint.take()
+            && !self.apply_guarded_hint(carrier)
         {
             return false;
         }
-        while let Some((hint, arrival_ms)) = self.inner.take_buffered_session_hint() {
-            if !self.apply_guarded_hint(hint, arrival_ms) {
+        while let Some(carrier) = self.inner.take_buffered_session_hint_carrier() {
+            if !self.apply_guarded_hint(carrier) {
                 return false;
             }
         }
@@ -402,9 +505,31 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
         probe.as_mut().poll(&mut context)
     }
 
+    fn take_awaited_carrier(&mut self, hint: SessionHint) -> Option<SessionHintCarrier> {
+        let carrier = self.inner.take_delivered_session_hint_carrier();
+        match carrier {
+            Some(carrier) if carrier.hint == hint => Some(carrier),
+            Some(carrier) => {
+                tracing::error!(
+                    surfaced_hint = ?hint,
+                    carried_hint = ?carrier.hint,
+                    "session hint carrier mismatched surfaced hint; mutation refused"
+                );
+                None
+            }
+            None => {
+                tracing::error!(
+                    ?hint,
+                    "awaited session hint had no timestamp carrier; mutation refused"
+                );
+                None
+            }
+        }
+    }
+
     #[cfg(test)]
     fn with_retry_hint(mut self, hint: SessionHint, arrival_ms: u64) -> Self {
-        self.retry_hint = Some((hint, arrival_ms));
+        self.retry_hint = Some(SessionHintCarrier::point(hint, None, arrival_ms));
         self
     }
 }
@@ -458,8 +583,10 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                         let Some(hint) = signal.session else {
                             return Some(Tick::Hint(signal));
                         };
-                        let arrival_ms = self.lifecycle.now_millis();
-                        self.apply_guarded_hint(hint, arrival_ms);
+                        let Some(carrier) = self.take_awaited_carrier(hint) else {
+                            return Some(Tick::Hint(signal));
+                        };
+                        self.apply_guarded_hint(carrier);
                     }
                     Poll::Ready(None) | Poll::Pending => {}
                 }
@@ -485,13 +612,22 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                 // Expiry fired: loop — the close at the top runs, enqueues
                 // the durable meso attempt, and the inner deadline lane
                 // surfaces it as a due Tick::Deadline on the next read.
-                None => continue,
+                None => {
+                    if let Some(due_at_ms) = expiry
+                        && let Err(error) = self.lifecycle.close_due_session_at(due_at_ms)
+                    {
+                        tracing::error!(?error, "session close failed at due instant");
+                    }
+                    continue;
+                }
                 Some(Some(Tick::Hint(signal))) => {
                     let Some(hint) = signal.session else {
                         return Some(Tick::Hint(signal));
                     };
-                    let arrival_ms = self.lifecycle.now_millis();
-                    self.apply_guarded_hint(hint, arrival_ms);
+                    let Some(carrier) = self.take_awaited_carrier(hint) else {
+                        return Some(Tick::Hint(signal));
+                    };
+                    self.apply_guarded_hint(carrier);
                     if let Some(pending) = self.pending_hints.pop_front() {
                         return Some(Tick::Hint(pending));
                     }
@@ -509,7 +645,7 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                         Ok(Some(due_at_ms)) => {
                             let clock = self.lifecycle.clock();
                             sleep_until_due(&clock, due_at_ms).await;
-                            if let Err(error) = self.lifecycle.close_due_session() {
+                            if let Err(error) = self.lifecycle.close_due_session_at(due_at_ms) {
                                 tracing::error!(
                                     ?error,
                                     "final session close failed at exhaustion; stopping"

@@ -13,7 +13,7 @@
 //! [`HybridTick`] selects over both with deadline priority: when a deadline
 //! and a push are ready in the same poll, the deadline wins. Push bursts
 //! coalesce (capacity 1 per wake lane and plain-hint slot; session hints
-//! ride a bounded ORDERED queue that coalesces only adjacent same-kind
+//! ride a bounded ORDERED queue that coalesces only adjacent Activity
 //! hints — lifecycle causality is never reordered) into follow-up passes,
 //! while a missed deadline can never be dropped — deadlines are never
 //! buffered here, they are re-read from the attempt queue on every cycle, so
@@ -93,6 +93,49 @@ pub struct HintSignal {
     pub session: Option<SessionHint>,
 }
 
+/// One raw producer/channel timestamp pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SessionHintStamp {
+    pub(crate) claimed_ms: Option<u64>,
+    pub(crate) arrival_ms: u64,
+}
+
+/// Internal carrier consumed by [`SessionTicks`](crate::SessionTicks) before
+/// the inert public [`HintSignal`] is surfaced. Boundary hints are points;
+/// adjacent Activity hints aggregate into a period whose endpoints and count
+/// survive queueing and awaited delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionHintCarrier {
+    pub(crate) hint: SessionHint,
+    pub(crate) first: SessionHintStamp,
+    pub(crate) last: SessionHintStamp,
+    pub(crate) count: u64,
+}
+
+impl SessionHintCarrier {
+    pub(crate) fn point(hint: SessionHint, claimed_ms: Option<u64>, arrival_ms: u64) -> Self {
+        let stamp = SessionHintStamp {
+            claimed_ms,
+            arrival_ms,
+        };
+        Self {
+            hint,
+            first: stamp,
+            last: stamp,
+            count: 1,
+        }
+    }
+
+    fn aggregate_activity(&mut self, claimed_ms: Option<u64>, arrival_ms: u64) {
+        debug_assert_eq!(self.hint, SessionHint::Activity);
+        self.last = SessionHintStamp {
+            claimed_ms,
+            arrival_ms,
+        };
+        self.count = self.count.saturating_add(1);
+    }
+}
+
 /// Source of wakeups for the supervisor. Signature pinned by the
 /// agent-runtime design doc: `async fn next_tick(&mut self) -> Option<Tick>`.
 /// `None` means the source is exhausted — nothing can ever wake the driver
@@ -102,13 +145,29 @@ pub trait TickSource {
     async fn next_tick(&mut self) -> Option<Tick>;
 
     /// Pops the OLDEST buffered session-lifecycle hint and its push-time
-    /// arrival stamp without waiting, if this source buffers any. The session decorator
-    /// ([`SessionTicks`](crate::SessionTicks)) drains these BEFORE trusting
+    /// arrival stamp without waiting, if this source buffers any. The
+    /// session decorator ([`SessionTicks`](crate::SessionTicks)) drains these BEFORE trusting
     /// durable expiry state, so an activity hint that arrived ahead of a
     /// close deadline is applied before the close decision reads the clock
     /// it bumps (ONE-1685). Sources without a hint buffer keep the default:
     /// no buffered hints, ever.
-    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, u64)> {
+    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, Option<u64>, u64)> {
+        None
+    }
+
+    /// Full period-aware form used by the session decorator. The default
+    /// adapts the required point triple for sources that do not aggregate.
+    fn take_buffered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+        self.take_buffered_session_hint()
+            .map(|(hint, claimed_ms, arrival_ms)| {
+                SessionHintCarrier::point(hint, claimed_ms, arrival_ms)
+            })
+    }
+
+    /// Retrieves the carrier associated with the session hint most recently
+    /// returned by `next_tick`. PushTick uses this sidecar so the public inert
+    /// HintSignal shape and the level-triggered pop contract both stay intact.
+    fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
         None
     }
 }
@@ -307,10 +366,10 @@ fn scope_lane(scope: DreamerConsolidationScope) -> usize {
 /// Bound of the ordered SESSION-hint queue. Arrival order IS lifecycle
 /// causality (end-then-open is a reopen; open-end-open is two sittings), so
 /// session hints are queued in order and NEVER reordered; only ADJACENT
-/// same-kind hints coalesce (a typing burst is one bump). On overflow the
-/// OLDEST hint drops with a journal line — bounded like every other lane,
-/// and the durable idle-floor/ceiling backstop still closes whatever a
-/// dropped hint would have.
+/// Activity hints coalesce (a typing burst is one endpoint-preserving period).
+/// Boundary hints never coalesce or evict: overflow sheds only Activity, and
+/// reports [`TickPushError::QueueFull`] when a full all-boundary queue receives
+/// another boundary.
 const SESSION_HINT_QUEUE_CAP: usize = 8;
 
 #[derive(Debug, Default)]
@@ -320,7 +379,7 @@ struct PushState {
     plain_hint: Option<HintSignal>,
     /// Session-lifecycle hints in ARRIVAL order (see
     /// [`SESSION_HINT_QUEUE_CAP`]).
-    session_hints: std::collections::VecDeque<(SessionHint, u64)>,
+    session_hints: std::collections::VecDeque<SessionHintCarrier>,
 }
 
 struct PushShared {
@@ -348,12 +407,16 @@ impl PushShared {
 pub enum TickPushError {
     /// The receiving supervisor is gone; the signal can never be consumed.
     Closed,
+    /// A full all-boundary session queue cannot durably accept another
+    /// AppOpen/ExplicitEnd point. The producer may retry.
+    QueueFull,
 }
 
 impl fmt::Display for TickPushError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Closed => write!(f, "push tick channel closed"),
+            Self::QueueFull => write!(f, "session hint queue full"),
         }
     }
 }
@@ -364,7 +427,7 @@ impl std::error::Error for TickPushError {}
 /// one wake slot per consolidation lane (drained first with a rotating scan
 /// start so a lane that refills every pass cannot starve older buffered
 /// wakes), an ORDERED bounded session-hint queue (arrival order preserved;
-/// only adjacent same-kind hints coalesce — lifecycle causality is never
+/// only adjacent Activity hints coalesce — lifecycle causality is never
 /// rewritten), and one coalescing slot for the plain advisory hint. Bursts
 /// therefore collapse while distinct signals keep their order.
 pub struct PushTick {
@@ -373,6 +436,9 @@ pub struct PushTick {
     /// returned wake so every occupied lane drains within [`SCOPE_LANES`]
     /// takes even when a lower index refills between drains.
     wake_scan_start: usize,
+    /// Timestamp sidecar for the session hint most recently surfaced by
+    /// `next_tick`; consumed by the SessionTicks decorator before surfacing.
+    delivered_session_hint: Option<SessionHintCarrier>,
 }
 
 impl PushTick {
@@ -401,6 +467,7 @@ impl PushTick {
             Self {
                 shared: Arc::clone(&shared),
                 wake_scan_start: 0,
+                delivered_session_hint: None,
             },
             WakePusher {
                 shared: Arc::clone(&shared),
@@ -418,6 +485,7 @@ impl PushTick {
     /// hint drain does not move the wake cursor. Deterministic and
     /// per-instance (not shared across receivers).
     fn take_pending(&mut self) -> Option<Tick> {
+        self.delivered_session_hint = None;
         let mut state = self.shared.lock_state();
         let start = self.wake_scan_start % SCOPE_LANES;
         for offset in 0..SCOPE_LANES {
@@ -430,9 +498,10 @@ impl PushTick {
         // Session hints drain in ARRIVAL order: reordering lifecycle facts
         // rewrites causality (an end-then-open burst is a reopen, not an
         // open that ends itself). The plain advisory slot drains last.
-        if let Some((hint, _arrival_ms)) = state.session_hints.pop_front() {
+        if let Some(carrier) = state.session_hints.pop_front() {
+            self.delivered_session_hint = Some(carrier);
             return Some(Tick::Hint(HintSignal {
-                session: Some(hint),
+                session: Some(carrier.hint),
             }));
         }
         state.plain_hint.take().map(Tick::Hint)
@@ -480,8 +549,26 @@ impl TickSource for PushTick {
         self.recv().await
     }
 
-    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, u64)> {
+    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, Option<u64>, u64)> {
+        self.shared
+            .lock_state()
+            .session_hints
+            .pop_front()
+            .map(|carrier| {
+                (
+                    carrier.hint,
+                    carrier.first.claimed_ms,
+                    carrier.first.arrival_ms,
+                )
+            })
+    }
+
+    fn take_buffered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
         self.shared.lock_state().session_hints.pop_front()
+    }
+
+    fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+        self.delivered_session_hint.take()
     }
 }
 
@@ -574,31 +661,57 @@ impl HintPusher {
     /// Pushes a session-lifecycle hint (ONE-1685) onto the bounded ORDERED
     /// queue. Arrival order is preserved end-to-end — lifecycle causality
     /// (open → end → open is two sittings) is never rewritten by
-    /// coalescing; only ADJACENT same-kind hints coalesce (a typing burst
-    /// is one bump). On overflow the oldest buffered hint is dropped and
-    /// journaled. Carrying a lifecycle fact grants NO pass-shaping
+    /// coalescing; only ADJACENT Activity hints aggregate (with both endpoint
+    /// stamps and a count). On overflow only Activity is loss-tolerant;
+    /// boundaries are never evicted. Carrying a lifecycle fact grants NO pass-shaping
     /// authority — the driver's session policy decides what, if anything,
     /// results (H-S4).
-    pub fn push_session_hint(&self, hint: SessionHint) -> Result<(), TickPushError> {
+    pub fn push_session_hint(
+        &self,
+        hint: SessionHint,
+        claimed_ms: Option<u64>,
+    ) -> Result<(), TickPushError> {
         if !self.shared.receiver_alive.load(Ordering::Acquire) {
             return Err(TickPushError::Closed);
         }
         let arrival_ms = (self.shared.now_ms)();
         {
             let mut state = self.shared.lock_state();
-            if state
-                .session_hints
-                .back()
-                .is_none_or(|(queued, _)| *queued != hint)
+            if hint == SessionHint::Activity
+                && let Some(last) = state.session_hints.back_mut()
+                && last.hint == SessionHint::Activity
             {
+                last.aggregate_activity(claimed_ms, arrival_ms);
+            } else {
                 if state.session_hints.len() == SESSION_HINT_QUEUE_CAP {
-                    let dropped = state.session_hints.pop_front();
-                    tracing::warn!(
-                        ?dropped,
-                        "session hint queue overflow; dropped the oldest hint"
-                    );
+                    let oldest_activity = state
+                        .session_hints
+                        .iter()
+                        .position(|queued| queued.hint == SessionHint::Activity);
+                    match (hint, oldest_activity) {
+                        (SessionHint::AppOpen | SessionHint::ExplicitEnd, None) => {
+                            return Err(TickPushError::QueueFull);
+                        }
+                        (SessionHint::Activity, None) => {
+                            tracing::warn!(
+                                ?claimed_ms,
+                                arrival_ms,
+                                "session hint queue overflow; dropped incoming activity"
+                            );
+                            return Ok(());
+                        }
+                        (_, Some(index)) => {
+                            let dropped = state.session_hints.remove(index);
+                            tracing::warn!(
+                                ?dropped,
+                                "session hint queue overflow; dropped oldest activity period"
+                            );
+                        }
+                    }
                 }
-                state.session_hints.push_back((hint, arrival_ms));
+                state
+                    .session_hints
+                    .push_back(SessionHintCarrier::point(hint, claimed_ms, arrival_ms));
             }
         }
         self.shared.notify.notify_one();
@@ -681,8 +794,16 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
         }
     }
 
-    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, u64)> {
+    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, Option<u64>, u64)> {
         self.push.take_buffered_session_hint()
+    }
+
+    fn take_buffered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+        self.push.take_buffered_session_hint_carrier()
+    }
+
+    fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+        self.push.take_delivered_session_hint_carrier()
     }
 }
 
@@ -788,15 +909,15 @@ mod tests {
         // end, REOPEN, plain advisory. The second AppOpen is same-kind but
         // NOT adjacent to the first — collapsing them would erase a whole
         // sitting (the C4/G1 causality bug).
-        hint.push_session_hint(SessionHint::AppOpen)
+        hint.push_session_hint(SessionHint::AppOpen, None)
             .expect("open channel");
         for _ in 0..3 {
-            hint.push_session_hint(SessionHint::Activity)
+            hint.push_session_hint(SessionHint::Activity, None)
                 .expect("open channel");
         }
-        hint.push_session_hint(SessionHint::ExplicitEnd)
+        hint.push_session_hint(SessionHint::ExplicitEnd, None)
             .expect("open channel");
-        hint.push_session_hint(SessionHint::AppOpen)
+        hint.push_session_hint(SessionHint::AppOpen, None)
             .expect("open channel");
         hint.push_hint().expect("open channel");
 
@@ -821,45 +942,53 @@ mod tests {
     }
 
     #[test]
-    fn adjacent_session_hint_coalescing_keeps_the_first_arrival_stamp() {
+    fn adjacent_session_hint_coalescing_retains_the_activity_period() {
         let now = Arc::new(AtomicU64::new(10));
         let clock_now = Arc::clone(&now);
         let clock: NowMillis = Arc::new(move || clock_now.load(Ordering::Acquire));
         let (mut receiver, _wake, hint) = PushTick::channel_with_clock(clock);
 
-        hint.push_session_hint(SessionHint::Activity)
+        hint.push_session_hint(SessionHint::Activity, None)
             .expect("open channel");
         now.store(20, Ordering::Release);
-        hint.push_session_hint(SessionHint::Activity)
+        hint.push_session_hint(SessionHint::Activity, None)
             .expect("coalesced activity");
-        hint.push_session_hint(SessionHint::ExplicitEnd)
+        hint.push_session_hint(SessionHint::ExplicitEnd, None)
             .expect("distinct hint");
 
+        let activity = receiver
+            .take_buffered_session_hint_carrier()
+            .expect("activity period");
+        assert_eq!(activity.hint, SessionHint::Activity);
+        assert_eq!(activity.first.claimed_ms, None);
+        assert_eq!(activity.first.arrival_ms, 10);
+        assert_eq!(activity.last.claimed_ms, None);
+        assert_eq!(activity.last.arrival_ms, 20);
+        assert_eq!(activity.count, 2);
         assert_eq!(
             receiver.take_buffered_session_hint(),
-            Some((SessionHint::Activity, 10)),
-            "the typing burst retains its earliest arrival"
-        );
-        assert_eq!(
-            receiver.take_buffered_session_hint(),
-            Some((SessionHint::ExplicitEnd, 20))
+            Some((SessionHint::ExplicitEnd, None, 20))
         );
         assert_eq!(receiver.take_buffered_session_hint(), None);
     }
 
     #[test]
-    fn session_hint_queue_overflow_drops_the_oldest_and_keeps_order() {
+    fn session_hint_queue_overflow_preserves_boundaries_and_evicts_only_activity() {
         let (mut receiver, _wake, hint) = PushTick::channel();
-        // 10 alternating (never-adjacent-same-kind) hints against a cap of
-        // 8: the two OLDEST drop, the surviving 8 keep arrival order.
-        for index in 0..10 {
+        // A full all-boundary queue rejects another boundary for producer
+        // retry; all eight durable points remain present and ordered.
+        for index in 0..SESSION_HINT_QUEUE_CAP {
             let kind = if index % 2 == 0 {
                 SessionHint::AppOpen
             } else {
                 SessionHint::ExplicitEnd
             };
-            hint.push_session_hint(kind).expect("open channel");
+            hint.push_session_hint(kind, None).expect("open channel");
         }
+        assert_eq!(
+            hint.push_session_hint(SessionHint::AppOpen, None),
+            Err(TickPushError::QueueFull)
+        );
 
         let mut drained = Vec::new();
         while let Some(tick) = receiver.take_pending() {
@@ -868,8 +997,8 @@ mod tests {
             };
             drained.push(signal.session.expect("session hints only"));
         }
-        assert_eq!(drained.len(), 8, "bounded: exactly the cap survives");
-        let expected: Vec<SessionHint> = (2..10)
+        assert_eq!(drained.len(), SESSION_HINT_QUEUE_CAP);
+        let expected: Vec<SessionHint> = (0..SESSION_HINT_QUEUE_CAP)
             .map(|index| {
                 if index % 2 == 0 {
                     SessionHint::AppOpen
@@ -878,7 +1007,57 @@ mod tests {
                 }
             })
             .collect();
-        assert_eq!(drained, expected, "oldest dropped, order preserved");
+        assert_eq!(drained, expected, "QueueFull lost no boundary point");
+
+        // With a mixed full queue, accepting a new boundary removes the
+        // oldest Activity period and no boundary.
+        let (mut mixed, _wake, hint) = PushTick::channel();
+        let initial = [
+            SessionHint::AppOpen,
+            SessionHint::Activity,
+            SessionHint::ExplicitEnd,
+            SessionHint::Activity,
+            SessionHint::AppOpen,
+            SessionHint::ExplicitEnd,
+            SessionHint::AppOpen,
+            SessionHint::ExplicitEnd,
+        ];
+        for (index, kind) in initial.into_iter().enumerate() {
+            hint.push_session_hint(kind, Some(index as u64))
+                .expect("fill mixed queue");
+        }
+        hint.push_session_hint(SessionHint::ExplicitEnd, Some(8))
+            .expect("boundary evicts activity");
+
+        let mut mixed_drained = Vec::new();
+        while let Some(carrier) = mixed.take_buffered_session_hint_carrier() {
+            mixed_drained.push(carrier);
+        }
+        assert_eq!(mixed_drained.len(), SESSION_HINT_QUEUE_CAP);
+        assert_eq!(
+            mixed_drained
+                .iter()
+                .filter(|carrier| carrier.hint == SessionHint::Activity)
+                .count(),
+            1,
+            "exactly the later Activity period survives"
+        );
+        assert_eq!(
+            mixed_drained
+                .iter()
+                .filter(|carrier| carrier.first.claimed_ms == Some(1))
+                .count(),
+            0,
+            "the oldest Activity period was the sole eviction"
+        );
+        assert_eq!(
+            mixed_drained
+                .iter()
+                .filter(|carrier| carrier.hint != SessionHint::Activity)
+                .count(),
+            7,
+            "all six original boundaries plus the incoming boundary survive"
+        );
     }
 
     #[test]

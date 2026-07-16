@@ -28,6 +28,15 @@ fn decode_session_record_rejects_an_unsupported_version() {
         last_activity: 1_000,
         ended_at: None,
         end_reason: None,
+        started_effective_ms: 1_000_000,
+        last_effective_ms: 1_000_000,
+        app_open_hints: vec![SessionHintTimestamp {
+            claimed_ms: None,
+            arrival_ms: 1_000_000,
+            effective_ms: 1_000_000,
+        }],
+        activity_periods: Vec::new(),
+        explicit_end_hint: None,
     })
     .expect("encode unsupported-version record");
 

@@ -33,8 +33,8 @@ mod supervisor;
 mod tick;
 
 pub use session::{
-    DEFAULT_SESSION_IDLE_FLOOR_SECS, SessionHint, SessionHintEffect, SessionLifecycleConfig,
-    SessionLifecycleDriver, SessionTicks,
+    DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS, DEFAULT_SESSION_IDLE_FLOOR_SECS, SessionHint,
+    SessionHintEffect, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks,
 };
 pub use supervisor::{
     ConsolidationExecutorFactory, MAX_PASS_BUDGET_BASE_LEN, NowSeconds, PassExecutorFactory,

@@ -54,7 +54,7 @@ const SESSION_LIFECYCLE_OPEN_KEY: &[u8] = b"session_lifecycle:v0:open";
 /// `vault_meta` key prefix for per-session lifecycle records (suffix = id).
 const SESSION_LIFECYCLE_RECORD_KEY_PREFIX: &[u8] = b"session_lifecycle:v0:record:";
 
-const SESSION_LIFECYCLE_RECORD_VERSION: u8 = 0;
+const SESSION_LIFECYCLE_RECORD_VERSION: u8 = 1;
 
 /// Why a session ended. `Explicit` is the app's own end hint; `IdleFloor`
 /// is the driver's inactivity backstop; `LifetimeCeiling` is the hard
@@ -69,9 +69,32 @@ pub enum SessionEndReason {
     LifetimeCeiling,
 }
 
-/// Durable lifecycle clock fields for one SESSION entity. Times are unix
-/// SECONDS (the engine's `learned_at` / attempt-stamp convention).
+/// The three timestamps retained for one driver-authored session hint.
+///
+/// `claimed_ms` is producer provenance and is never rewritten, even when the
+/// driver rejects it for derivation. `arrival_ms` is the channel stamp, and
+/// `effective_ms` is the driver's monotone, bounded decisional time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionHintTimestamp {
+    pub claimed_ms: Option<u64>,
+    pub arrival_ms: u64,
+    pub effective_ms: u64,
+}
+
+/// A loss-aware rollup of adjacent activity hints. The endpoints retain the
+/// complete timestamp provenance; `count` records how many hints the period
+/// represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionActivityPeriod {
+    pub first: SessionHintTimestamp,
+    pub last: SessionHintTimestamp,
+    pub count: u64,
+}
+
+/// Durable lifecycle clock fields for one SESSION entity. The legacy entity
+/// clock fields remain unix SECONDS; hint provenance is stored in unix
+/// MILLISECONDS so source data is never rounded away.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionLifecycleRecord {
     pub version: u8,
     /// Stamped by the app-open hint — not by the first turn.
@@ -81,6 +104,21 @@ pub struct SessionLifecycleRecord {
     /// Set exactly once, by explicit-end, idle floor, or lifetime ceiling.
     pub ended_at: Option<u64>,
     pub end_reason: Option<SessionEndReason>,
+    /// Effective timestamp of the minting app-open hint.
+    #[serde(default)]
+    pub started_effective_ms: u64,
+    /// Monotone floor used to derive the next hint's effective timestamp.
+    #[serde(default)]
+    pub last_effective_ms: u64,
+    /// Every app-open point applied to this sitting, including the mint.
+    #[serde(default)]
+    pub app_open_hints: Vec<SessionHintTimestamp>,
+    /// Activity hints retained as endpoint-and-count periods.
+    #[serde(default)]
+    pub activity_periods: Vec<SessionActivityPeriod>,
+    /// The explicit-end point, when this sitting ended explicitly.
+    #[serde(default)]
+    pub explicit_end_hint: Option<SessionHintTimestamp>,
 }
 
 /// The currently open session, if any.
@@ -89,6 +127,7 @@ pub struct OpenSession {
     pub session: EntityId,
     pub started_at: u64,
     pub last_activity: u64,
+    pub last_effective_ms: u64,
 }
 
 /// Outcome of [`Vault::mint_session`].
@@ -232,11 +271,11 @@ fn open_session_in_txn(
     let Some(raw) = store.vault_meta.get(txn, SESSION_LIFECYCLE_OPEN_KEY)? else {
         return Ok(None);
     };
-    let id = decode_open_pointer(raw)?;
+    let id = decode_open_pointer(&raw)?;
     let Some(record) = store.vault_meta.get(txn, &session_record_key(&id))? else {
         return Err(Error::CorruptedIndex("session lifecycle record"));
     };
-    Ok(Some((id, decode_session_record(record)?)))
+    Ok(Some((id, decode_session_record(&record)?)))
 }
 
 /// Bumps the open session's `last_activity` (monotonic — never rewinds)
@@ -277,15 +316,16 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let id = decode_open_pointer(raw)?;
+        let id = decode_open_pointer(&raw)?;
         let Some(record) = self.store.vault_meta.get(&rtxn, &session_record_key(&id))? else {
             return Err(Error::CorruptedIndex("session lifecycle record"));
         };
-        let record = decode_session_record(record)?;
+        let record = decode_session_record(&record)?;
         Ok(Some(OpenSession {
             session: id,
             started_at: record.started_at,
             last_activity: record.last_activity,
+            last_effective_ms: record.last_effective_ms,
         }))
     }
 
@@ -298,7 +338,7 @@ impl Vault {
         let Some(raw) = self.store.vault_meta.get(&rtxn, &session_record_key(id))? else {
             return Ok(None);
         };
-        decode_session_record(raw).map(Some)
+        decode_session_record(&raw).map(Some)
     }
 
     /// Mints and opens a canonical SESSION entity at `now` (unix seconds).
@@ -309,6 +349,22 @@ impl Vault {
     /// [`SessionMintOutcome::AlreadyOpen`]: the open sitting continues and
     /// the caller's policy decides whether the re-open counts as activity.
     pub fn mint_session(&self, now: u64) -> Result<SessionMintOutcome> {
+        let timestamp_ms = now.saturating_mul(1_000);
+        self.mint_session_from_hint(SessionHintTimestamp {
+            claimed_ms: None,
+            arrival_ms: timestamp_ms,
+            effective_ms: timestamp_ms,
+        })
+    }
+
+    /// Mints and opens a canonical SESSION entity from an app-open hint whose
+    /// raw and derived millisecond timestamps have already been decided by the
+    /// driver.
+    pub fn mint_session_from_hint(
+        &self,
+        timestamp: SessionHintTimestamp,
+    ) -> Result<SessionMintOutcome> {
+        let now = timestamp.effective_ms / 1_000;
         let id = EntityId::now();
         let record = SessionLifecycleRecord {
             version: SESSION_LIFECYCLE_RECORD_VERSION,
@@ -316,6 +372,11 @@ impl Vault {
             last_activity: now,
             ended_at: None,
             end_reason: None,
+            started_effective_ms: timestamp.effective_ms,
+            last_effective_ms: timestamp.effective_ms,
+            app_open_hints: vec![timestamp],
+            activity_periods: Vec::new(),
+            explicit_end_hint: None,
         };
         let record_bytes = encode_session_record(&record)?;
         let mut body = Vec::new();
@@ -327,7 +388,7 @@ impl Vault {
                 .vault_meta
                 .get(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?
             {
-                let open = decode_open_pointer(raw)?;
+                let open = decode_open_pointer(&raw)?;
                 return Ok(SessionMintOutcome::AlreadyOpen(open));
             }
             self.batch_in()
@@ -358,6 +419,72 @@ impl Vault {
     /// by app-open only).
     pub fn bump_session_activity(&self, now: u64) -> Result<Option<EntityId>> {
         self.with_write_txn(|wtxn| bump_open_session_activity_in_txn(&self.store, wtxn, now))
+    }
+
+    /// Records an app-open point on the current sitting and advances its
+    /// decisional activity clock to the point's effective time.
+    pub fn record_session_app_open_hint(
+        &self,
+        timestamp: SessionHintTimestamp,
+    ) -> Result<Option<EntityId>> {
+        self.with_write_txn(|wtxn| {
+            let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
+                return Ok(None);
+            };
+            record.last_effective_ms = record.last_effective_ms.max(timestamp.effective_ms);
+            record.last_activity = record.last_activity.max(timestamp.effective_ms / 1_000);
+            record.app_open_hints.push(timestamp);
+            self.store.vault_meta.put(
+                wtxn,
+                &session_record_key(&id),
+                &encode_session_record(&record)?,
+            )?;
+            Ok(Some(id))
+        })
+    }
+
+    /// Records an activity period and advances the sitting to the period's
+    /// last effective time. Stored periods whose arrival gap is strictly less
+    /// than `rollup_gap_ms` merge; zero therefore preserves every delivered
+    /// period losslessly.
+    pub fn record_session_activity_period(
+        &self,
+        period: SessionActivityPeriod,
+        rollup_gap_ms: u64,
+    ) -> Result<Option<EntityId>> {
+        self.with_write_txn(|wtxn| {
+            let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
+                return Ok(None);
+            };
+            record.last_effective_ms = record.last_effective_ms.max(period.last.effective_ms);
+            record.last_activity = record.last_activity.max(period.last.effective_ms / 1_000);
+
+            let merge = rollup_gap_ms > 0
+                && record.activity_periods.last().is_some_and(|previous| {
+                    period
+                        .first
+                        .arrival_ms
+                        .checked_sub(previous.last.arrival_ms)
+                        .is_some_and(|gap| gap < rollup_gap_ms)
+                });
+            if merge {
+                let previous = record
+                    .activity_periods
+                    .last_mut()
+                    .expect("merge requires a previous activity period");
+                previous.last = period.last;
+                previous.count = previous.count.saturating_add(period.count);
+            } else {
+                record.activity_periods.push(period);
+            }
+
+            self.store.vault_meta.put(
+                wtxn,
+                &session_record_key(&id),
+                &encode_session_record(&record)?,
+            )?;
+            Ok(Some(id))
+        })
     }
 
     /// Predicate-free close primitive retained for in-crate mechanism tests.
@@ -424,6 +551,21 @@ impl Vault {
         now: u64,
         wake: &SessionEndWake,
     ) -> Result<Option<EndedSession>> {
+        self.end_session_with_wake_and_hint(expected, predicate, now, wake, None)
+    }
+
+    /// Timestamp-preserving form of [`Self::end_session_with_wake`]. Driver
+    /// explicit-end closes pass their raw and effective point here so the
+    /// retained lifecycle record is a complete audit trail; expiry closes
+    /// pass `None` because their due instant is policy-derived, not a hint.
+    pub fn end_session_with_wake_and_hint(
+        &self,
+        expected: &EntityId,
+        predicate: SessionClosePredicate,
+        now: u64,
+        wake: &SessionEndWake,
+        end_hint: Option<SessionHintTimestamp>,
+    ) -> Result<Option<EndedSession>> {
         self.with_write_txn(|wtxn| {
             let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
                 return Ok(None);
@@ -437,6 +579,10 @@ impl Vault {
             let ended_at = now.max(record.last_activity).max(record.started_at);
             record.ended_at = Some(ended_at);
             record.end_reason = Some(reason);
+            if let Some(timestamp) = end_hint {
+                record.last_effective_ms = record.last_effective_ms.max(timestamp.effective_ms);
+                record.explicit_end_hint = Some(timestamp);
+            }
             self.store.vault_meta.put(
                 wtxn,
                 &session_record_key(&id),
