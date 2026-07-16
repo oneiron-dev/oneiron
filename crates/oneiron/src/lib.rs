@@ -86,6 +86,7 @@ pub mod rerank;
 pub mod run_tree;
 pub mod serialize;
 pub mod session_lifecycle;
+pub(crate) mod session_overlay;
 pub mod settings;
 pub mod skill;
 pub mod skill_hub;
