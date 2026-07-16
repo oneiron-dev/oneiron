@@ -1084,7 +1084,7 @@ impl Vault {
         self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
         self.write_admitted_capability_surface_in_txn(&mut wtxn, entity, &package.capabilities)?;
         if content_hash_changed {
-            self.replace_hub_provenance_in_txn(
+            let provenance_id = self.replace_hub_provenance_in_txn(
                 &mut wtxn,
                 entity,
                 content_hash,
@@ -1092,6 +1092,15 @@ impl Vault {
                 occurred,
                 learned_at,
             )?;
+            if let Some(previous_hash) = current.content_hash {
+                self.supersede_scan_verdicts_for_content_hash_in_txn(
+                    &mut wtxn,
+                    entity,
+                    previous_hash,
+                    &provenance_id,
+                    learned_at,
+                )?;
+            }
         }
         wtxn.commit()?;
         Ok(HubSyncDisposition::Applied)
@@ -1206,6 +1215,16 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         content_hash: SkillContentHash,
     ) -> Result<Option<EntityId>> {
+        self.find_structured_skill_entity_in_txn(rtxn, |id, record| {
+            Ok((record.content_hash == Some(content_hash)).then_some(id))
+        })
+    }
+
+    fn find_structured_skill_entity_in_txn<T>(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        mut find: impl FnMut(EntityId, &SkillRecord) -> Result<Option<T>>,
+    ) -> Result<Option<T>> {
         for (scanned, entry) in self
             .store
             .type_index
@@ -1238,11 +1257,39 @@ impl Vault {
                 }
                 Err(error) => return Err(error),
             };
-            if record.content_hash == Some(content_hash) {
-                return Ok(Some(id));
+            if let Some(found) = find(id, &record)? {
+                return Ok(Some(found));
             }
         }
         Ok(None)
+    }
+
+    fn active_hub_aliases_on_other_skill_entities_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        hub_ref: &HubRef,
+    ) -> Result<Vec<(EntityId, u64)>> {
+        let mut prior_rows = Vec::new();
+        self.find_structured_skill_entity_in_txn(rtxn, |candidate, _| {
+            if candidate == *entity {
+                return Ok(None::<()>);
+            }
+            for (claim_id, body, occurred_start) in self.active_claims_for_predicate_in_txn(
+                rtxn,
+                &candidate,
+                PREDICATE_SKILL_HUB_PROVENANCE,
+            )? {
+                let stored_ref = HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
+                    Error::InvalidSkillBody("hub provenance claim is missing hubRef"),
+                )?)?;
+                if same_hub_alias(&stored_ref, hub_ref) {
+                    prior_rows.push((claim_id, occurred_start));
+                }
+            }
+            Ok(None)
+        })?;
+        Ok(prior_rows)
     }
 
     fn append_hub_provenance_in_txn(
@@ -1255,29 +1302,51 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let hub_value = hub_ref.to_value()?;
-        for (_, body, _) in
+        let prior_rows =
+            self.active_hub_aliases_on_other_skill_entities_in_txn(&*wtxn, entity, hub_ref)?;
+        let mut replacement_id = None;
+        for (claim_id, body, _) in
             self.active_claims_for_predicate_in_txn(&*wtxn, entity, PREDICATE_SKILL_HUB_PROVENANCE)?
         {
-            if map_value(&body.value, "hubRef") == Some(&hub_value) {
-                return Ok(());
+            let stored_ref = HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
+                Error::InvalidSkillBody("hub provenance claim is missing hubRef"),
+            )?)?;
+            if same_hub_alias(&stored_ref, hub_ref) {
+                replacement_id = Some(claim_id);
+                break;
             }
         }
-        let mut body = ClaimBody::new(
-            PREDICATE_SKILL_HUB_PROVENANCE,
-            ClaimSubject::Entity(*entity),
-            Value::Map(vec![
-                (
-                    Value::from("contentHash"),
-                    Value::from(content_hash.to_hex()),
-                ),
-                (Value::from("hubRef"), hub_value),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        );
-        body.source = Some(ClaimSource::Observed);
-        self.put_claim_in_txn(wtxn, &EntityId::now(), &body, occurred, learned_at)
+        let replacement_id = if let Some(replacement_id) = replacement_id {
+            replacement_id
+        } else {
+            let replacement_id = EntityId::now();
+            let mut body = ClaimBody::new(
+                PREDICATE_SKILL_HUB_PROVENANCE,
+                ClaimSubject::Entity(*entity),
+                Value::Map(vec![
+                    (
+                        Value::from("contentHash"),
+                        Value::from(content_hash.to_hex()),
+                    ),
+                    (Value::from("hubRef"), hub_value),
+                ]),
+                1.0,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            );
+            body.source = Some(ClaimSource::Observed);
+            self.put_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
+            replacement_id
+        };
+        for (prior_id, prior_start) in prior_rows {
+            self.supersede_claim_in_txn(
+                wtxn,
+                &replacement_id,
+                &prior_id,
+                learned_at.max(prior_start),
+            )?;
+        }
+        Ok(())
     }
 
     fn replace_hub_provenance_in_txn(
@@ -1288,7 +1357,7 @@ impl Vault {
         hub_ref: &HubRef,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<()> {
+    ) -> Result<EntityId> {
         let hub_value = hub_ref.to_value()?;
         let mut prior_rows = Vec::new();
         for (id, body, occurred_start) in
@@ -1323,6 +1392,34 @@ impl Vault {
             self.supersede_claim_in_txn(
                 wtxn,
                 &replacement_id,
+                &prior_id,
+                learned_at.max(prior_start),
+            )?;
+        }
+        Ok(replacement_id)
+    }
+
+    fn supersede_scan_verdicts_for_content_hash_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        content_hash: SkillContentHash,
+        replacement_id: &EntityId,
+        learned_at: u64,
+    ) -> Result<()> {
+        let hash_hex = content_hash.to_hex();
+        let mut prior_rows = Vec::new();
+        for (claim_id, body, occurred_start) in
+            self.active_claims_for_predicate_in_txn(&*wtxn, entity, PREDICATE_SKILL_SCAN_VERDICT)?
+        {
+            if map_text(&body.value, "contentHash") == Some(hash_hex.as_str()) {
+                prior_rows.push((claim_id, occurred_start));
+            }
+        }
+        for (prior_id, prior_start) in prior_rows {
+            self.supersede_claim_in_txn(
+                wtxn,
+                replacement_id,
                 &prior_id,
                 learned_at.max(prior_start),
             )?;
@@ -1561,7 +1658,7 @@ fn map_text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn same_hub_alias(left: &HubRef, right: &HubRef) -> bool {
-    left.hub_id == right.hub_id && left.ref_string == right.ref_string
+    left.hub_id == right.hub_id && left.ref_string == right.ref_string && left.pin == right.pin
 }
 
 #[cfg(test)]
@@ -1742,6 +1839,65 @@ mod tests {
                 .expect("imported skill")
                 .skill_id,
             "fixture.import-after-legacy"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hub_reimport_moves_provenance_alias_to_new_content_entity() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let reference = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.mutable-hub-alias"),
+            SkillCapabilitySurface::default(),
+        );
+        let first_entity =
+            vault.import_skill_from_hub_with_id(&reference, &initial, EntityId::now(), t(1), 2)?;
+
+        let moved = package_with_content(
+            candidate("fixture.mutable-hub-alias"),
+            b"# moved upstream ref\n",
+            SkillCapabilitySurface::default(),
+        );
+        let moved_hash = moved.content_hash()?;
+        let second_entity =
+            vault.import_skill_from_hub_with_id(&reference, &moved, EntityId::now(), t(3), 4)?;
+        assert_ne!(first_entity, second_entity);
+
+        let mut first_alias_superseded = 0;
+        for claim_id in vault.claims_for_subject(&first_entity)? {
+            let Some(body) = vault.get_claim(&claim_id)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE_SKILL_HUB_PROVENANCE {
+                continue;
+            }
+            let stored_ref =
+                HubRef::from_value(map_value(&body.value, "hubRef").expect("provenance hub ref"))?;
+            if same_hub_alias(&stored_ref, &reference)
+                && body.lifecycle == ClaimLifecycleStatus::Superseded
+            {
+                first_alias_superseded += 1;
+            }
+        }
+        assert_eq!(first_alias_superseded, 1);
+
+        let first_active =
+            vault.active_claims_for_predicate(&first_entity, PREDICATE_SKILL_HUB_PROVENANCE)?;
+        let second_active =
+            vault.active_claims_for_predicate(&second_entity, PREDICATE_SKILL_HUB_PROVENANCE)?;
+        assert_eq!(first_active.len(), 0);
+        assert_eq!(second_active.len(), 1);
+        assert_eq!(first_active.len() + second_active.len(), 1);
+        assert_eq!(
+            map_text(&second_active[0].1.value, "contentHash"),
+            Some(moved_hash.to_hex().as_str())
+        );
+        assert_eq!(
+            HubRef::from_value(
+                map_value(&second_active[0].1.value, "hubRef").expect("provenance hub ref")
+            )?,
+            reference
         );
         Ok(())
     }
@@ -1954,6 +2110,55 @@ mod tests {
     }
 
     #[test]
+    fn hub_sync_requires_exact_provenance_pin() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let hub_id = EntityId::now();
+        let stable_ref = HubRef::new(
+            hub_id,
+            "skills/pinned-authority",
+            HubPin::Tag("stable".to_owned()),
+        )?;
+        let beta_ref = HubRef::new(
+            hub_id,
+            "skills/pinned-authority",
+            HubPin::Tag("beta".to_owned()),
+        )?;
+        let initial = package(
+            candidate("fixture.pinned-sync-authority"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&stable_ref, &initial, entity, t(1), 2)?;
+
+        let mut update_record = candidate("fixture.pinned-sync-authority");
+        update_record.version = "1.1.0".to_owned();
+        let update = package(update_record, SkillCapabilitySurface::default());
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &beta_ref,
+                &update,
+                HubSyncPolicy::MirrorOfHub,
+                t(3),
+                4,
+            )?,
+            HubSyncDisposition::RefusedByPolicy
+        );
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &stable_ref,
+                &update,
+                HubSyncPolicy::MirrorOfHub,
+                t(5),
+                6,
+            )?,
+            HubSyncDisposition::Applied
+        );
+        Ok(())
+    }
+
+    #[test]
     fn hub_sync_refuses_content_hash_owned_by_different_entity() -> Result<()> {
         let (_temp, vault) = open_vault();
         let entity = EntityId::now();
@@ -2050,6 +2255,65 @@ mod tests {
             HubRef::from_value(map_value(&rows[0].1.value, "hubRef").expect("provenance hub ref"))?,
             reference
         );
+        Ok(())
+    }
+
+    #[test]
+    fn hub_sync_supersedes_scan_verdicts_for_previous_content_hash() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let reference = hub_ref(HubPin::None);
+        let initial = package(
+            candidate("fixture.scan-reset-on-sync"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?;
+        let receipt = SkillScanReceipt::new(
+            "provider-a",
+            3,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?;
+        let verdict_id =
+            vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(3), 4)?;
+
+        let mut update_record = candidate("fixture.scan-reset-on-sync");
+        update_record.version = "1.1.0".to_owned();
+        let update = package_with_content(
+            update_record,
+            b"# content changed after scan\n",
+            SkillCapabilitySurface::default(),
+        );
+        let updated_hash = update.content_hash()?;
+        assert_ne!(updated_hash, fixture_hash());
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &reference,
+                &update,
+                HubSyncPolicy::MirrorOfHub,
+                t(5),
+                6,
+            )?,
+            HubSyncDisposition::Applied
+        );
+
+        assert_eq!(
+            vault
+                .get_claim(&verdict_id)?
+                .expect("scan verdict")
+                .lifecycle,
+            ClaimLifecycleStatus::Superseded
+        );
+        let old_hash_hex = fixture_hash().to_hex();
+        let active_old_hash_verdicts = vault
+            .active_claims_for_predicate(&entity, PREDICATE_SKILL_SCAN_VERDICT)?
+            .into_iter()
+            .filter(|(_, body)| map_text(&body.value, "contentHash") == Some(old_hash_hex.as_str()))
+            .count();
+        assert_eq!(active_old_hash_verdicts, 0);
         Ok(())
     }
 
