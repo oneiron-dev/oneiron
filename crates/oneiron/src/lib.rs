@@ -590,7 +590,8 @@ pub use crate::off_record::{
     OffRecordPromoteReceipt, OffRecordSessionRecord, off_record_context_marker,
 };
 pub use crate::outbound::{
-    COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION,
+    COMMON_OUTBOUND_VERB_KINDS, CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask,
+    ConnectorTaskExecutorError, OUTBOUND_CAPABILITY_MANIFEST_VERSION,
     OUTBOUND_INTENT_SCHEMA_VERSION, OUTBOUND_VERB_FIELD_CONTRACT, OutboundCapabilityManifest,
     OutboundCapabilityPermission, OutboundDeliverySemantics, OutboundDeliverySemanticsKind,
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -599,8 +600,9 @@ pub use crate::outbound::{
     OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionRequest,
     OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentSource,
     OutboundIntentTrigger, OutboundInterruptionClass, OutboundPermissionState, OutboundRetryClass,
-    OutboundVerbContract, UnsupportedOutboundCapability, outbound_capability_manifest,
-    outbound_capability_manifests, outbound_verb_contract, unsupported_outbound_connector,
+    OutboundVerbContract, UnsupportedOutboundCapability, connector_actor_id,
+    outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
+    unsupported_outbound_connector,
 };
 pub use crate::outbound_grant::{
     OUTBOUND_GRANT_BODY_KEYS, OUTBOUND_GRANT_SCHEMA_VERSION, StandingOutboundGrant,
@@ -650,13 +652,13 @@ pub use crate::psych_profile::{
     decode_psych_profile_body, encode_psych_profile_body,
 };
 pub use crate::receipt::{
-    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection,
-    GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent,
-    ReceiptProjectionRun, ReceiptQuery, ReceiptRecord, ReceiptView, SessionLocalReceiptLog,
-    SessionReceiptClose, StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction,
-    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, append_context_receipt_fields,
-    eiri_memory_board_state_ref, outbound_intent_receipt, project_receipts_by_brief,
-    project_receipts_by_counterparty, project_receipts_by_grant,
+    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection, FIELD_TASK_REF,
+    FIELD_TRANSPORT_DISPATCHED, GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery,
+    ReceiptKind, ReceiptProjectionIntent, ReceiptProjectionRun, ReceiptQuery, ReceiptRecord,
+    ReceiptView, SessionLocalReceiptLog, SessionReceiptClose, StandingOutboundGrantLensRow,
+    StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery,
+    append_context_receipt_fields, eiri_memory_board_state_ref, outbound_intent_receipt,
+    project_receipts_by_brief, project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,

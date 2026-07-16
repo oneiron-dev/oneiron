@@ -34,7 +34,7 @@ use crate::registry::{
 };
 use crate::store::{
     ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, GateSystemNoticeRecord,
-    PendingGateConsentRecord,
+    PendingGateConsentRecord, SEND_RECEIPT_RECORD_VERSION,
 };
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
@@ -66,6 +66,10 @@ const FIELD_JOB_REF: &str = "job_ref";
 const FIELD_BRIEF_REF: &str = "brief_ref";
 const FIELD_RUN_REF: &str = "run_ref";
 const FIELD_INTENT_REF: &str = "intent_ref";
+/// Originating connector-send TASK carried by durable outbound receipts.
+pub const FIELD_TASK_REF: &str = "task_ref";
+/// Durable proof that the connector execution sink was reached successfully.
+pub const FIELD_TRANSPORT_DISPATCHED: &str = "transport_dispatched";
 const FIELD_PARENT_REF: &str = "parent_ref";
 const FIELD_COUNTERPARTY_REF: &str = "counterparty_ref";
 const FIELD_IDENTITY_REF: &str = "identity_ref";
@@ -300,6 +304,30 @@ pub struct ReceiptRecord {
     pub policy_trace: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fields: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DurableSendReceipt {
+    version: u8,
+    task_ref: String,
+    #[serde(default = "default_send_receipt_outcome")]
+    outcome: SendReceiptOutcome,
+    transport_dispatched: bool,
+    receipt: ReceiptRecord,
+}
+
+/// Delivery state carried by the additive connector-send receipt ledger.
+/// Failed transport audit rows remain visible but are not idempotency tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SendReceiptOutcome {
+    Delivered,
+    Failed,
+}
+
+const fn default_send_receipt_outcome() -> SendReceiptOutcome {
+    // Rows written before the field was added were delivered-only.
+    SendReceiptOutcome::Delivered
 }
 
 /// Minimal OF-367/RCPT-3 seam for consumers that render receipts.
@@ -852,6 +880,115 @@ impl Vault {
     ) -> Result<StandingOutboundGrantsLens> {
         standing_outbound_grants_lens(self, query)
     }
+}
+
+/// Persists the outbound pipeline receipt as the sole durable record of a
+/// connector send. A delivered row atomically installs the actor-scoped client
+/// idempotency index; a failed row remains audit-only and may be replaced by a
+/// later delivered retry for the same TASK.
+pub(crate) fn persist_send_receipt(
+    vault: &Vault,
+    task_ref: EntityId,
+    mut receipt: ReceiptRecord,
+    outcome: SendReceiptOutcome,
+    transport_dispatched: bool,
+    delivered_idempotency: Option<(EntityId, &str)>,
+) -> Result<bool> {
+    receipt
+        .fields
+        .insert(FIELD_TASK_REF.to_owned(), task_ref.to_hex());
+    receipt.fields.insert(
+        FIELD_TRANSPORT_DISPATCHED.to_owned(),
+        transport_dispatched.to_string(),
+    );
+    let durable = DurableSendReceipt {
+        version: SEND_RECEIPT_RECORD_VERSION,
+        task_ref: task_ref.to_hex(),
+        outcome,
+        transport_dispatched,
+        receipt,
+    };
+    let encoded = rmp_serde::to_vec_named(&durable)
+        .map_err(|_| Error::InvariantViolation("send receipt encode failed"))?;
+    vault.with_write_txn(|wtxn| {
+        let existing = vault
+            .store
+            .get_send_receipt_by_task_in_txn(&*wtxn, &task_ref)?;
+        if let Some(raw) = existing.as_deref() {
+            let existing = decode_durable_send_receipt(task_ref.as_bytes(), raw)?;
+            if existing.outcome == SendReceiptOutcome::Delivered {
+                return Ok(false);
+            }
+        }
+        if existing.is_some() {
+            vault
+                .store
+                .set_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
+        } else {
+            vault
+                .store
+                .put_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
+        }
+        if outcome == SendReceiptOutcome::Delivered
+            && let Some((actor_ref, idempotency_key)) = delivered_idempotency
+        {
+            vault.store.put_delivered_send_idempotency_in_txn(
+                wtxn,
+                &actor_ref,
+                idempotency_key,
+                &task_ref,
+            )?;
+        }
+        Ok(true)
+    })
+}
+
+/// Point-reads a delivered receipt for executor and schedule idempotency.
+/// Failed audit rows intentionally project as absent from this seam.
+pub(crate) fn delivered_send_receipt_for_task(
+    vault: &Vault,
+    task_ref: EntityId,
+) -> Result<Option<ReceiptRecord>> {
+    let Some(raw) = vault.store.get_send_receipt_by_task(&task_ref)? else {
+        return Ok(None);
+    };
+    let durable = decode_durable_send_receipt(task_ref.as_bytes(), &raw)?;
+    Ok((durable.outcome == SendReceiptOutcome::Delivered).then_some(durable.receipt))
+}
+
+fn decode_durable_send_receipt(task_id: &[u8; 16], raw: &[u8]) -> Result<DurableSendReceipt> {
+    let durable: DurableSendReceipt =
+        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("send receipt ledger"))?;
+    let expected_receipt_outcome = match durable.outcome {
+        SendReceiptOutcome::Delivered => "delivered_to_channel",
+        SendReceiptOutcome::Failed => "failed",
+    };
+    if durable.version != SEND_RECEIPT_RECORD_VERSION
+        || durable.task_ref != crate::entity_id::bytes_to_hex_lower(task_id)
+        || durable.receipt.receipt_kind != ReceiptKind::Outbound
+        || durable.receipt.outcome != expected_receipt_outcome
+        || durable.receipt.fields.get(FIELD_TASK_REF) != Some(&durable.task_ref)
+        || durable
+            .receipt
+            .fields
+            .get(FIELD_TRANSPORT_DISPATCHED)
+            .and_then(|value| value.parse::<bool>().ok())
+            != Some(durable.transport_dispatched)
+    {
+        return Err(Error::CorruptedIndex("send receipt ledger"));
+    }
+    Ok(durable)
+}
+
+fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+    vault
+        .store
+        .send_receipt_rows()?
+        .into_iter()
+        .map(|(task_id, raw)| {
+            decode_durable_send_receipt(&task_id, &raw).map(|durable| durable.receipt)
+        })
+        .collect()
 }
 
 /// Builds an outbound receipt row from the OF-327 intent spine.
@@ -1668,6 +1805,13 @@ fn receipt_family_query(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Recei
 
 fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let mut records = Vec::new();
+    if query.includes_kind(ReceiptKind::Outbound) {
+        records.extend(
+            durable_send_receipts(vault)?
+                .into_iter()
+                .filter(|receipt| query.matches(receipt)),
+        );
+    }
     if query.includes_kind(ReceiptKind::Gate) {
         records.extend(gate_receipts(vault, query)?);
     }
