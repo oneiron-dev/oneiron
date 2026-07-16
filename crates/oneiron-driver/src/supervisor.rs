@@ -1097,9 +1097,28 @@ mod tests {
 
     #[test]
     fn hint_ticks_map_to_least_privileged_pass_shape() {
-        let (scope, trigger) = pass_shape(&Tick::Hint(crate::tick::HintSignal {}));
+        let (scope, trigger) = pass_shape(&Tick::Hint(crate::tick::HintSignal::default()));
         assert_eq!(scope, DreamerConsolidationScope::Micro);
         assert_eq!(trigger, WakeTrigger::Event);
+    }
+
+    #[test]
+    fn session_hint_ticks_carry_no_pass_shaping_authority() {
+        // H-S4 (ONE-1685): a lifecycle fact on a hint never escalates the
+        // pass it provokes — even "explicit end" maps least-privileged
+        // here; the Meso consolidation on close is driver policy (a
+        // DURABLE queue attempt), not producer authority.
+        for hint in [
+            crate::SessionHint::AppOpen,
+            crate::SessionHint::Activity,
+            crate::SessionHint::ExplicitEnd,
+        ] {
+            let (scope, trigger) = pass_shape(&Tick::Hint(crate::tick::HintSignal {
+                session: Some(hint),
+            }));
+            assert_eq!(scope, DreamerConsolidationScope::Micro);
+            assert_eq!(trigger, WakeTrigger::Event);
+        }
     }
 
     #[tokio::test]
@@ -1107,7 +1126,7 @@ mod tests {
         let (_dir, vault) = open_vault();
         enqueue_micro(&vault, "driver-smoke", 10);
 
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
             .expect("open channel");
         drop(wake);
@@ -1331,7 +1350,8 @@ mod tests {
     #[tokio::test]
     async fn shutdown_between_passes_stops_the_loop() {
         let (_dir, vault) = open_vault();
-        let (push, _wake, _hint) = PushTick::channel();
+        let (push, _wake, _hint) =
+            PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
@@ -1439,7 +1459,7 @@ mod tests {
             crate::AttemptQueueDeadlines::new(&vault, 1),
             Arc::clone(&now_ms),
         );
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         // No push producers: once the queue is empty the hybrid source
         // exhausts and the supervisor must stop.
         drop(wake);
@@ -1597,7 +1617,8 @@ mod tests {
     #[tokio::test]
     async fn over_long_budget_base_refuses_to_run_instead_of_spinning() {
         let (_dir, vault) = open_vault();
-        let (push, _wake, _hint) = PushTick::channel();
+        let (push, _wake, _hint) =
+            PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
@@ -1774,7 +1795,7 @@ mod tests {
     async fn zero_local_node_id_refuses_to_run_instead_of_ticking() {
         let (_dir, vault) = open_vault();
         enqueue_micro(&vault, "never-touched", 10);
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
             .expect("open channel");
         drop(wake);
@@ -1899,7 +1920,7 @@ mod tests {
         let (_dir, vault) = open_vault();
         let attempt = enqueue_micro(&vault, "redrive-after-factory-err", 10);
 
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
             .expect("open channel");
         // Drop producers so the source exhausts after the re-driven pass
@@ -1956,7 +1977,7 @@ mod tests {
         let (_dir, vault) = open_vault();
         enqueue_micro(&vault, "shutdown-redrive", 10);
 
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
             .expect("open channel");
         // Keep producers alive so next_tick would otherwise wait forever —
@@ -2142,7 +2163,7 @@ mod tests {
         let (_dir, vault) = open_vault();
         let attempt = enqueue_micro(&vault, "factory-panic-redrive", 10);
 
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
             .expect("open channel");
         drop(wake);
@@ -2186,7 +2207,7 @@ mod tests {
         let first = enqueue_micro(&vault, "fail-after-admit-1", 10);
         let second = enqueue_micro(&vault, "fail-after-admit-2", 11);
 
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
             .expect("open channel");
         drop(wake);
@@ -2248,7 +2269,7 @@ mod tests {
         let (_dir, vault) = open_vault();
         let attempt = enqueue_micro(&vault, "empty-then-complete", 10);
 
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
             .expect("open channel");
         drop(wake);

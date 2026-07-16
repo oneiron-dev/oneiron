@@ -3171,3 +3171,72 @@ fn schedule_outbound_dedupe_recovers_original_gate_decision_ref() {
     assert_eq!(replay.gate_outcome, first.gate_outcome);
     assert_eq!(replay.gate_reason_codes, first.gate_reason_codes);
 }
+
+// ── RT-03 (ONE-1685): turn-witness bumps the open session ───────────────
+
+#[test]
+fn witness_bumps_open_session_activity_atomically() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let facade = facade_for(&vault, actor);
+
+    let session = match vault.mint_session(400).expect("mint session") {
+        crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+        other => panic!("expected fresh mint, got {other:?}"),
+    };
+
+    let conversation_hex = EntityId::from_bytes([0x72; 16]).expect("conv id").to_hex();
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex.clone(),
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "hello again")],
+            occurred_at: 500,
+        })
+        .expect("witness turn");
+
+    let open = vault
+        .open_session()
+        .expect("open session read")
+        .expect("session still open");
+    assert_eq!(open.session, session);
+    assert_eq!(
+        open.last_activity, 500,
+        "turn-witness bumps last_activity to the turn's occurred_at"
+    );
+
+    // An OLDER turn (backfill) never rewinds the activity clock.
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex,
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "backfilled note")],
+            occurred_at: 450,
+        })
+        .expect("witness backfill turn");
+    let open = vault
+        .open_session()
+        .expect("open session read")
+        .expect("session still open");
+    assert_eq!(open.last_activity, 500, "activity clock is monotonic");
+}
+
+#[test]
+fn witness_without_an_open_session_stays_valid() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x73);
+    let facade = facade_for(&vault, actor);
+
+    // ARCH-0002 open-endedness: turns outside any session are valid; the
+    // bump is a no-op, not an error, and no session is minted.
+    let conversation_hex = EntityId::from_bytes([0x74; 16]).expect("conv id").to_hex();
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex,
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "sessionless turn")],
+            occurred_at: 600,
+        })
+        .expect("witness sessionless turn");
+    assert_eq!(vault.open_session().expect("open session read"), None);
+}

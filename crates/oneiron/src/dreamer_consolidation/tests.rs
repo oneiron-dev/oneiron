@@ -212,7 +212,7 @@ fn working_set_selects_only_new_admissible_turns() -> Result<()> {
     assert_eq!(turns.len(), 2, "only admissible post-watermark turns");
     assert_eq!(turns[0].turn_id, user_turn);
     assert_eq!(turns[0].role, DreamerTurnRole::User);
-    assert_eq!(turns[0].session, Some(conversation));
+    assert_eq!(turns[0].conversation, Some(conversation));
     assert_eq!(turns[1].turn_id, assistant_turn);
     assert_eq!(turns[1].role, DreamerTurnRole::Assistant);
     Ok(())
