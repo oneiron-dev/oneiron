@@ -20,6 +20,24 @@ fn minted(outcome: SessionMintOutcome) -> EntityId {
     }
 }
 
+#[test]
+fn decode_session_record_rejects_an_unsupported_version() {
+    let encoded = encode_session_record(&SessionLifecycleRecord {
+        version: SESSION_LIFECYCLE_RECORD_VERSION + 1,
+        started_at: 1_000,
+        last_activity: 1_000,
+        ended_at: None,
+        end_reason: None,
+    })
+    .expect("encode unsupported-version record");
+
+    let error = decode_session_record(&encoded).expect_err("unsupported version must fail closed");
+    assert!(matches!(
+        error,
+        Error::CorruptedIndex("unsupported session lifecycle record version")
+    ));
+}
+
 fn seed_conversation(vault: &Vault, seed: u8) -> EntityId {
     let id = EntityId::from_bytes([seed; 16]).expect("conversation id");
     vault
@@ -72,10 +90,12 @@ fn meso_wake(vault: &Vault) -> SessionEndWake {
     let watermark = read_watermark(vault, scope).expect("watermark");
     let dirty = scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
     let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
+    let planned_dirty_count = dirty.len();
     let plans = plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
     SessionEndWake {
         plans,
         planned_watermark: watermark.last_learned_at,
+        planned_dirty_count,
         advance_watermark_to,
     }
 }
@@ -235,6 +255,7 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
 
     let wake = meso_wake(&vault);
     assert_eq!(wake.plans.len(), 1, "one dirty conversation, one partition");
+    assert_eq!(wake.planned_dirty_count, 1, "one dirty turn was planned");
     let ended = vault
         .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)
         .expect("end")
@@ -282,6 +303,51 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
         None
     );
     assert_eq!(meso_attempt_count(&vault), 1);
+}
+
+#[test]
+fn an_in_range_dirty_turn_that_races_the_close_defers_the_whole_round() {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_conversation(&vault, 0x55);
+    seed_dirty_turn(&vault, &conversation, 900);
+    let id = minted(vault.mint_session(1_000).expect("mint"));
+
+    let wake = meso_wake(&vault);
+    assert_eq!(wake.planned_dirty_count, 1, "one dirty turn was planned");
+    assert_eq!(wake.advance_watermark_to, Some(900));
+
+    // Same-second arrival is inside the planned watermark window while the
+    // watermark itself is unchanged.
+    let injected = seed_dirty_turn(&vault, &conversation, 900);
+    vault
+        .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)
+        .expect("end")
+        .expect("the close itself still commits");
+
+    assert_eq!(
+        meso_attempt_count(&vault),
+        0,
+        "a moved dirty snapshot enqueues none of the stale round"
+    );
+    let watermark = read_watermark(&vault, DreamerConsolidationScope::Meso)
+        .expect("watermark after deferred round");
+    assert_eq!(
+        watermark.last_learned_at, wake.planned_watermark,
+        "the stale round must not advance the watermark"
+    );
+    let dirty = scan_dirty_turns(
+        &vault,
+        DreamerConsolidationScope::Meso,
+        &watermark,
+        usize::MAX,
+    )
+    .expect("fresh dirty scan");
+    assert_eq!(dirty.len(), 2, "both turns remain consolidatable");
+    assert_eq!(
+        dirty.iter().filter(|turn| turn.turn_id == injected).count(),
+        1,
+        "the injected turn remains in the dirty set"
+    );
 }
 
 #[test]

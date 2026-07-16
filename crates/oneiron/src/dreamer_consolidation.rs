@@ -354,6 +354,62 @@ pub fn scan_dirty_turns(
     Ok(out)
 }
 
+/// Counts admissible dirty turns in a bounded learned-at window through a
+/// caller-owned write transaction. This intentionally mirrors only Pass 1 of
+/// [`scan_dirty_turns`]: conversation edges are irrelevant to snapshot fencing.
+pub(crate) fn count_dirty_turns_in_txn(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    lower_exclusive: u64,
+    upper_inclusive: u64,
+) -> Result<usize> {
+    let _ = scope; // selection is scope-independent; scope identifies the fenced round
+    if lower_exclusive >= upper_inclusive {
+        return Ok(0);
+    }
+
+    let mut lower = [0_u8; 24];
+    lower[..8].copy_from_slice(&(lower_exclusive + 1).to_be_bytes());
+    let mut upper = [u8::MAX; 24];
+    upper[..8].copy_from_slice(&upper_inclusive.to_be_bytes());
+
+    let mut count = 0;
+    for entry in vault.store.temporal_learned.range(
+        wtxn,
+        &(
+            std::ops::Bound::Included(&lower[..]),
+            std::ops::Bound::Included(&upper[..]),
+        ),
+    )? {
+        let (key, _) = entry?;
+        if key.len() != 24 {
+            continue;
+        }
+        let Ok(id_bytes) = <[u8; 16]>::try_from(&key[8..24]) else {
+            continue;
+        };
+        let Ok(turn_id) = EntityId::from_bytes(id_bytes) else {
+            continue;
+        };
+        let Some(raw) = vault.store.entities.get(wtxn, turn_id.as_bytes())? else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(raw) else {
+            continue;
+        };
+        if header.entity_type != ENTITY_TYPE_TURN {
+            continue;
+        }
+        let body = decode_turn_body(&raw[ENTITY_METADATA_HEADER_LEN..]);
+        let role = dreamer_turn_role(body.speaker.as_deref());
+        if dreamer_extraction_role_admissible(role) {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 struct TurnBodyFacts {
     speaker: Option<String>,
     text: Option<String>,

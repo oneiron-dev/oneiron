@@ -39,8 +39,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::dreamer_consolidation::{
-    ConsolidationPartitionPlan, advance_watermark_in_txn, enqueue_partition_attempts_in_txn,
-    read_watermark_in_txn,
+    ConsolidationPartitionPlan, advance_watermark_in_txn, count_dirty_turns_in_txn,
+    enqueue_partition_attempts_in_txn, read_watermark_in_txn,
 };
 use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore};
 use crate::entity_id::EntityId;
@@ -172,6 +172,9 @@ pub struct SessionEndWake {
     /// re-reads the watermark and skips the enqueue + advance when it
     /// moved — another planner already owns those turns.
     pub planned_watermark: u64,
+    /// Number of admissible dirty turns in the planned watermark window.
+    /// The transaction re-counts this set before settling the round.
+    pub planned_dirty_count: usize,
     /// Where the watermark advances after the enqueue (the scan's max
     /// `learned_at`), if the scan found dirty turns.
     pub advance_watermark_to: Option<u64>,
@@ -184,6 +187,7 @@ impl SessionEndWake {
         Self {
             plans: Vec::new(),
             planned_watermark,
+            planned_dirty_count: 0,
             advance_watermark_to: None,
         }
     }
@@ -202,7 +206,14 @@ fn encode_session_record(record: &SessionLifecycleRecord) -> Result<Vec<u8>> {
 }
 
 fn decode_session_record(bytes: &[u8]) -> Result<SessionLifecycleRecord> {
-    rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("session lifecycle record"))
+    let record: SessionLifecycleRecord = rmp_serde::from_slice(bytes)
+        .map_err(|_| Error::CorruptedIndex("session lifecycle record"))?;
+    if record.version != SESSION_LIFECYCLE_RECORD_VERSION {
+        return Err(Error::CorruptedIndex(
+            "unsupported session lifecycle record version",
+        ));
+    }
+    Ok(record)
 }
 
 fn decode_open_pointer(bytes: &[u8]) -> Result<EntityId> {
@@ -436,17 +447,38 @@ impl Vault {
                 .delete(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?;
 
             // (d) The durable wake, same commit. Skipped wholesale when the
-            // Meso watermark moved since the plan was taken: those turns
-            // already belong to another planner's round.
+            // Meso watermark or bounded dirty snapshot moved since the plan
+            // was taken: those turns belong to a later planning round.
             let scope = DreamerConsolidationScope::Meso;
             let current = read_watermark_in_txn(self, wtxn, scope)?;
             if current.last_learned_at == wake.planned_watermark {
-                if !wake.plans.is_empty() {
-                    let store = DreamerRunnerStore::new(self);
-                    enqueue_partition_attempts_in_txn(&store, wtxn, scope, &wake.plans, None, now)?;
-                }
-                if let Some(advance_to) = wake.advance_watermark_to {
-                    advance_watermark_in_txn(self, wtxn, scope, advance_to)?;
+                let dirty_snapshot_matches = match wake.advance_watermark_to {
+                    Some(advance_to) => {
+                        count_dirty_turns_in_txn(
+                            self,
+                            wtxn,
+                            scope,
+                            wake.planned_watermark,
+                            advance_to,
+                        )? == wake.planned_dirty_count
+                    }
+                    None => true,
+                };
+                if dirty_snapshot_matches {
+                    if !wake.plans.is_empty() {
+                        let store = DreamerRunnerStore::new(self);
+                        enqueue_partition_attempts_in_txn(
+                            &store,
+                            wtxn,
+                            scope,
+                            &wake.plans,
+                            None,
+                            now,
+                        )?;
+                    }
+                    if let Some(advance_to) = wake.advance_watermark_to {
+                        advance_watermark_in_txn(self, wtxn, scope, advance_to)?;
+                    }
                 }
             }
 

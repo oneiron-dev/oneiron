@@ -35,6 +35,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 
 use oneiron::{
     DreamerConsolidationScope, EndedSession, EntityId, Result, SessionClosePredicate,
@@ -46,6 +47,9 @@ use crate::tick::{NowMillis, Tick, TickSource, sleep_until_due};
 /// The ticket-pinned default idle floor: 20 minutes without activity ends
 /// the session. A floor, not a cap (H-S4).
 pub const DEFAULT_SESSION_IDLE_FLOOR_SECS: u64 = 20 * 60;
+
+const HINT_RETRY_BACKOFF_BASE_MS: u64 = 1;
+const HINT_RETRY_BACKOFF_CAP_MS: u64 = 1_000;
 
 /// Session-lifecycle facts an app may hint. Deliberately carries no session
 /// id, no scope, and no trigger: the driver owns which session (at most one
@@ -278,10 +282,12 @@ impl<'v> SessionLifecycleDriver<'v> {
             dirty
         };
         let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
+        let planned_dirty_count = dirty.len();
         let plans = plan_partitions(self.vault, scope, &dirty, &watermark)?;
         let wake = SessionEndWake {
             plans,
             planned_watermark: watermark.last_learned_at,
+            planned_dirty_count,
             advance_watermark_to,
         };
         self.vault
@@ -313,6 +319,8 @@ pub struct SessionTicks<'v, T> {
     /// The oldest hint whose due-close or apply failed. Nothing newer is
     /// removed from the inner buffer until this hint applies successfully.
     retry_hint: Option<(SessionHint, u64)>,
+    /// Consecutive retained-hint drain failures, used for capped backoff.
+    retry_backoff_failures: u32,
 }
 
 impl<'v, T: TickSource> SessionTicks<'v, T> {
@@ -323,6 +331,7 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
             lifecycle,
             pending_hints: VecDeque::new(),
             retry_hint: None,
+            retry_backoff_failures: 0,
         }
     }
 
@@ -374,6 +383,17 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
         true
     }
 
+    fn retry_backoff_duration(&self) -> Duration {
+        let multiplier = 1_u64
+            .checked_shl(self.retry_backoff_failures)
+            .unwrap_or(u64::MAX);
+        Duration::from_millis(
+            HINT_RETRY_BACKOFF_BASE_MS
+                .saturating_mul(multiplier)
+                .min(HINT_RETRY_BACKOFF_CAP_MS),
+        )
+    }
+
     /// Polls the inner source once without waiting. Its mailbox and deadline
     /// lanes are re-readable, so abandoning a pending future loses nothing.
     fn probe_inner(&mut self) -> Poll<Option<Tick>> {
@@ -395,9 +415,12 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
             // Buffered lifecycle facts first: the close predicate below must
             // see the activity clock they bump, not a stale snapshot.
             if !self.drain_buffered_hints() {
-                tokio::task::yield_now().await;
+                let backoff = self.retry_backoff_duration();
+                self.retry_backoff_failures = self.retry_backoff_failures.saturating_add(1);
+                tokio::time::sleep(backoff).await;
                 continue;
             }
+            self.retry_backoff_failures = 0;
 
             // Close anything already due (also catches a session left
             // open across a restart). A lifecycle read/write error leaves

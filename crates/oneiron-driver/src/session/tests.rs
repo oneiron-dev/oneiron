@@ -142,10 +142,12 @@ fn meso_wake(vault: &Vault) -> SessionEndWake {
     let watermark = read_watermark(vault, scope).expect("watermark");
     let dirty = scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
     let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
+    let planned_dirty_count = dirty.len();
     let plans = plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
     SessionEndWake {
         plans,
         planned_watermark: watermark.last_learned_at,
+        planned_dirty_count,
         advance_watermark_to,
     }
 }
