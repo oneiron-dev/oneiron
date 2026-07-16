@@ -2015,3 +2015,112 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
     assert_eq!(record.container, QuarantineContainer::Entities);
     assert_eq!(record.reason_code, "RedactionReceiptDivergence");
 }
+
+/// MS-01 (ARCH-0055 trust perimeter): forward rematerialization routes
+/// type-76 identity-topology events through the SAME fail-closed
+/// single-writer ingest door as Observer B — an accepted record derives its
+/// shell edge, DIVERGENT remote bytes quarantine-and-continue instead of
+/// LWW-overwriting the accepted local event (the pre-fix generic
+/// `put_replicated` arm), and an unledgered reserved-kind edges-map row is
+/// quarantined, never materialized.
+#[test]
+fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<()> {
+    use crate::identity_topology::{
+        EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let survivor = EntityId::from_bytes([0x61; 16])?;
+    let loser = EntityId::from_bytes([0x62; 16])?;
+    let stranger = EntityId::from_bytes([0x63; 16])?;
+    for id in [&survivor, &loser, &stranger] {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+
+    let event_id = EntityId::from_bytes([0x70; 16])?;
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record)?;
+    let doc = create_window_doc("remote", &window_key);
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    map_insert_bytes(
+        &entities,
+        &event_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            200,
+            &body,
+        ),
+    )?;
+    // A forged reserved-kind row no ledger event mandates.
+    let forged_key = format_edge_key(&stranger, EdgeKind::MergedInto, &survivor);
+    map_insert_bytes(
+        &edges,
+        &forged_key,
+        &encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.3, 10, None, None)?,
+    )?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+
+    // The accepted record materialized AND derived its shell edge; the
+    // forged row never landed but left quarantine evidence.
+    assert!(vault.identity_topology_event(&event_id)?.is_some());
+    assert!(vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        EntityLifecycleState::Merged
+    );
+    assert!(!vault.edge_exists(&stranger, EdgeKind::MergedInto, &survivor)?);
+    assert!(
+        !crate::sync::quarantine::quarantined_records(&vault)?.is_empty(),
+        "the forged shell row must leave hashed quarantine evidence"
+    );
+
+    // Divergent bytes for the SAME event id: the door keeps the accepted
+    // local bytes and quarantines-and-continues — remat must not abort and
+    // must not silently LWW-overwrite.
+    let mut divergent = record;
+    divergent.at = 999;
+    let divergent_body = crate::identity_topology::encode_identity_topology_event_body(&divergent)?;
+    map_insert_bytes(
+        &entities,
+        &event_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            200,
+            &divergent_body,
+        ),
+    )?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        vault.identity_topology_event(&event_id)?.map(|r| r.at),
+        Some(200),
+        "divergent remote bytes must never overwrite the accepted event"
+    );
+    assert!(
+        vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?,
+        "the mandated shell edge survives the rejected divergence"
+    );
+    Ok(())
+}

@@ -10,15 +10,21 @@
 //! Structural truth follows the D11 supersedes law: `merged_into` /
 //! `split_into` edges are canonical and carry no body-field twin, and their
 //! writes are RESERVED to this module's apply/undo door (public edge
-//! builders reject them typed). The ledger events are engine-authored
-//! type-76 [`crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT`]
-//! maintenance records: public puts are rejected like every maintenance
-//! kind (D5/MODEL pattern), sync ingest rides the fail-closed
-//! single-writer-leased stream class (ARCH-0023b), and the fold, the
-//! receipt projection, and any rebuild all read from this one record
-//! family. Causality is the engine-stamped monotonic `seq` — the caller's
-//! `at` is stored as data and never orders the fold, so a backdated
-//! counter-event cannot rewrite history.
+//! builders — creation, deletion, AND the operational weight/VAD setters —
+//! reject them typed; sync edge doors admit a 21/22 row only when the
+//! local validated ledger mandates it). The ledger events are
+//! engine-authored type-76
+//! [`crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT`] maintenance
+//! records: public puts AND deletes are rejected like every protected
+//! engine record (D5/MODEL pattern — undo is a counter-event, never a row
+//! deletion), sync ingest rides the fail-closed single-writer-leased
+//! stream class (ARCH-0023b) through ONE shared door that validates,
+//! quota-bounds, joins `seq = max(local, incoming)`, and reconciles the
+//! shell edges from the fold; the fold, the receipt projection, and any
+//! rebuild all read from this one record family. Causality is the
+//! engine-stamped monotonic `seq` — the caller's `at` is stored as data
+//! and never orders the fold, so a backdated counter-event cannot rewrite
+//! history.
 //!
 //! Consent (ARCH-0055 r3): `Auto` is the family default and applies
 //! immediately; `Approved` applies; `Proposed` PARKS — the event is
@@ -439,6 +445,11 @@ pub enum IdentityTopologyRejection {
     /// A reassignment row uses a target kind foreign to the op (a facet
     /// target on a split, a head target on a facet).
     InvalidReassignmentTarget,
+    /// A reassignment map names the same item twice. The map is
+    /// single-valued per item (r2): recording two assignments for one
+    /// claim would force ONE-1745's replay to duplicate the claim or pick
+    /// a winner the decision never stated.
+    DuplicateReassignmentItem,
     /// A merge participant is a FACET mask: facets partition within one
     /// entity and behavioral profiles never blend across masks
     /// (ARCH-0022 no-merge canon; ARCH-0055 §5 catches this by construction).
@@ -475,7 +486,7 @@ pub enum IdentityTopologyRejection {
 /// assert_distinct pair) are absent from the result.
 ///
 /// Check order is pinned: op shape (empty / self / duplicate), then
-/// per-role state cells, then reassignment-map targets.
+/// per-role state cells, then reassignment-map item uniqueness and targets.
 pub fn evaluate_transition(
     states: &BTreeMap<EntityId, EntityLifecycleState>,
     op: &IdentityTopologyOp,
@@ -539,7 +550,11 @@ pub fn evaluate_transition(
             for head in &split.heads {
                 require_active(head)?;
             }
+            let mut seen_items = BTreeSet::new();
             for entry in &split.reassignment.entries {
+                if !seen_items.insert(encode_reassignment_item(&entry.item)) {
+                    return Err(IdentityTopologyRejection::DuplicateReassignmentItem);
+                }
                 match entry.target {
                     ReassignmentTarget::Head(head) => {
                         if !split.heads.contains(&head) {
@@ -560,7 +575,11 @@ pub fn evaluate_transition(
             }
             require_active(&facet.entity)?;
             let facet_count = facet.facets.len() as u32;
+            let mut seen_items = BTreeSet::new();
             for entry in &facet.reassignment.entries {
+                if !seen_items.insert(encode_reassignment_item(&entry.item)) {
+                    return Err(IdentityTopologyRejection::DuplicateReassignmentItem);
+                }
                 match entry.target {
                     ReassignmentTarget::Facet { index } => {
                         if index >= facet_count {
@@ -1086,14 +1105,25 @@ fn decode_reassignment_map(value: &Value) -> Result<ReassignmentMap> {
         return Err(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT));
     };
     let mut entries = Vec::with_capacity(rows.len());
+    let mut previous_item: Option<&[u8]> = None;
     for row in rows {
         let fields = row
             .as_map()
             .ok_or(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT))?;
-        let item = map_field(fields, MAP_KEY_ITEM)
+        let item_bytes = map_field(fields, MAP_KEY_ITEM)
             .and_then(Value::as_slice)
             .ok_or(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT))?;
-        let item = decode_reassignment_item(item)?;
+        // The pinned wire order is STRICTLY ascending encoded item bytes
+        // (the `canonicalized()` sort key): equal items are the duplicate-
+        // assignment shape (one claim must not carry two assignments), and
+        // out-of-order rows would re-serialize to different bytes than
+        // stored — breaking the on-disk == re-encoded identity the sync
+        // divergence checks rely on. Fail closed on both.
+        if previous_item.is_some_and(|previous| previous >= item_bytes) {
+            return Err(Error::InvalidIdentityTopologyEventBody(MAP_CONTEXT));
+        }
+        previous_item = Some(item_bytes);
+        let item = decode_reassignment_item(item_bytes)?;
         let head = map_field(fields, MAP_KEY_HEAD);
         let facet = map_field(fields, MAP_KEY_FACET);
         let target = match (head, facet) {
@@ -1579,7 +1609,15 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+        // A STORED row that fails decode is on-disk corruption (the family
+        // is engine-authored and door-validated on every admit path) —
+        // classified as `CorruptedIndex`, never as the
+        // `InvalidIdentityTopologyEventBody` ingress rejection, so local
+        // damage can never be quarantine-classified as a rejectable
+        // remote input.
+        decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+            .map(Some)
+            .map_err(|_| Error::CorruptedIndex("identity topology event body"))
     }
 
     /// The whole identity-topology event family, read from the type-76
@@ -1626,23 +1664,24 @@ impl Vault {
         crate::provenance::validate_actor_class(actor_type, actor.actor_class())
     }
 
-    /// Allocates the next engine-stamped causality sequence, inside the
-    /// caller's write txn (a rolled-back op burns no committed gap).
-    fn next_identity_topology_seq_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
-        let previous = match self
-            .store
-            .vault_meta
-            .get(&*wtxn, IDENTITY_TOPOLOGY_SEQ_KEY)?
-        {
-            None => 0,
+    /// Reads the engine-stamped causality clock (0 when never advanced).
+    fn read_identity_topology_seq_in_txn(&self, rtxn: &heed::RoTxn<'_>) -> Result<u64> {
+        match self.store.vault_meta.get(rtxn, IDENTITY_TOPOLOGY_SEQ_KEY)? {
+            None => Ok(0),
             Some(raw) => {
                 let arr: [u8; 8] = raw
                     .as_ref()
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("identity topology seq"))?;
-                u64::from_be_bytes(arr)
+                Ok(u64::from_be_bytes(arr))
             }
-        };
+        }
+    }
+
+    /// Allocates the next engine-stamped causality sequence, inside the
+    /// caller's write txn (a rolled-back op burns no committed gap).
+    fn next_identity_topology_seq_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
+        let previous = self.read_identity_topology_seq_in_txn(&*wtxn)?;
         let next = previous
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("identity topology seq"))?;
@@ -1650,6 +1689,204 @@ impl Vault {
             .vault_meta
             .put(wtxn, IDENTITY_TOPOLOGY_SEQ_KEY, &next.to_be_bytes())?;
         Ok(next)
+    }
+
+    /// Joins a replicated record's engine-stamped `seq` into the local
+    /// causality clock: `seq = max(local, incoming)`, in the caller's write
+    /// txn. Every sync ingest path (fresh accept, idempotent replay,
+    /// rebuild) runs this join, so a LOCAL event allocated after ingest can
+    /// never order before the ingested history in the `(seq, event_id)`
+    /// fold — without it, an undo of a synced merge folds BEFORE the merge
+    /// it targets, is rejected `NotCurrent`, and ledger and edge truth
+    /// permanently diverge.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn advance_identity_topology_seq_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        incoming_seq: u64,
+    ) -> Result<()> {
+        if incoming_seq > self.read_identity_topology_seq_in_txn(&*wtxn)? {
+            self.store.vault_meta.put(
+                wtxn,
+                IDENTITY_TOPOLOGY_SEQ_KEY,
+                &incoming_seq.to_be_bytes(),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The shell edges the ledger fold currently mandates for `entity`, as
+    /// `(kind, target, created_at)` rows derived from its current topology
+    /// writer — empty for `Active`. `created_at` is the current event's
+    /// recorded `at`, matching the bytes the origin door wrote so replicas
+    /// converge byte-identically.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    fn desired_shell_edges_for_entity_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        fold: &IdentityTopologyFold,
+        entity: &EntityId,
+    ) -> Result<Vec<(EdgeKind, EntityId, u64)>> {
+        let state = fold
+            .states
+            .get(entity)
+            .copied()
+            .unwrap_or(EntityLifecycleState::Active);
+        if state == EntityLifecycleState::Active {
+            return Ok(Vec::new());
+        }
+        let event_id = fold
+            .current_event
+            .get(entity)
+            .ok_or(Error::CorruptedIndex("identity topology fold"))?;
+        let record = self
+            .identity_topology_event_in_txn(rtxn, event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        Ok(match (&record.action, state) {
+            (StoredIdentityOpAction::Merge { survivor, .. }, EntityLifecycleState::Merged) => {
+                vec![(EdgeKind::MergedInto, *survivor, record.at)]
+            }
+            (StoredIdentityOpAction::Split { heads, .. }, EntityLifecycleState::Split) => heads
+                .iter()
+                .map(|head| (EdgeKind::SplitInto, *head, record.at))
+                .collect(),
+            _ => return Err(Error::CorruptedIndex("identity topology fold")),
+        })
+    }
+
+    /// When the current ledger fold mandates exactly this shell edge,
+    /// returns the mandating event's `at` (the `created_at` the door
+    /// writes); `None` otherwise. This is the sync doors' admission
+    /// predicate for the reserved kinds (`merged_into` / `split_into`): a
+    /// replicated 21/22 edge may land ONLY as the byte-exact echo of a
+    /// validated, locally ingested type-76 event that is the source
+    /// entity's current topology writer — callers must also pin the value
+    /// bytes (default weight + this `at`), because peer-chosen bytes on a
+    /// mandated pair are still a forgery (weight 0 silently drops the
+    /// shell's PPR mass, unledgered). Folds the whole (rare,
+    /// quota-bounded) event family per call.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn identity_topology_mandated_shell_edge_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+    ) -> Result<Option<u64>> {
+        let events = self.identity_topology_events_in_txn(rtxn)?;
+        let fold = fold_identity_topology_log(&events);
+        let desired = self.desired_shell_edges_for_entity_in_txn(rtxn, &fold, src)?;
+        Ok(desired
+            .iter()
+            .find(|(desired_kind, target, _)| *desired_kind == kind && target == tgt)
+            .map(|(_, _, at)| *at))
+    }
+
+    /// Reconciles the canonical shell edges of every entity `record`
+    /// touches to the CURRENT ledger fold, inside the caller's write txn —
+    /// the sync-ingest twin of the local door's edge side-effects (the
+    /// ruled invariant: a `merged_into` / `split_into` edge only ever moves
+    /// as the side-effect of a validated type-76 event). Edges the fold no
+    /// longer mandates are deleted; mandated edges are written when both
+    /// endpoints are materialized locally — a deferred endpoint leaves the
+    /// edge to the sync edges-map pass, whose admission runs the same
+    /// ledger predicate after hydrating endpoints. An undo counter-event
+    /// arriving before its target reconciles nothing yet: the target's own
+    /// ingest reruns this with the full fold, and the seq join makes the
+    /// outcome order-independent.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn reconcile_identity_topology_edges_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &StoredIdentityOpEvent,
+    ) -> Result<()> {
+        let touched = match &record.action {
+            StoredIdentityOpAction::Merge { sources, .. } => sources.clone(),
+            StoredIdentityOpAction::Split { entity, .. } => vec![*entity],
+            StoredIdentityOpAction::Undo { target } => {
+                match self.identity_topology_event_in_txn(&*wtxn, target)? {
+                    None => return Ok(()),
+                    Some(target_record) => match target_record.action {
+                        StoredIdentityOpAction::Merge { sources, .. } => sources,
+                        StoredIdentityOpAction::Split { entity, .. } => vec![entity],
+                        StoredIdentityOpAction::Undo { .. } => return Ok(()),
+                    },
+                }
+            }
+        };
+        if touched.is_empty() {
+            return Ok(());
+        }
+
+        let events = self.identity_topology_events_in_txn(&*wtxn)?;
+        let fold = fold_identity_topology_log(&events);
+        let mut ops = Vec::new();
+        for entity in &touched {
+            let desired = self.desired_shell_edges_for_entity_in_txn(&*wtxn, &fold, entity)?;
+            for kind in [EdgeKind::MergedInto, EdgeKind::SplitInto] {
+                let existing = self.filtered_edge_peers(
+                    &*wtxn,
+                    &self.store.edges_out,
+                    entity,
+                    kind,
+                    None,
+                    "identity topology",
+                )?;
+                for peer in &existing {
+                    if !desired
+                        .iter()
+                        .any(|(desired_kind, target, _)| *desired_kind == kind && target == peer)
+                    {
+                        ops.push(BatchOp::DeleteEdge {
+                            src: *entity,
+                            kind,
+                            tgt: *peer,
+                        });
+                    }
+                }
+                for (desired_kind, target, created_at) in &desired {
+                    if *desired_kind != kind || existing.contains(target) {
+                        continue;
+                    }
+                    if self
+                        .store
+                        .entities
+                        .get(&*wtxn, entity.as_bytes())?
+                        .is_none()
+                        || self
+                            .store
+                            .entities
+                            .get(&*wtxn, target.as_bytes())?
+                            .is_none()
+                    {
+                        continue;
+                    }
+                    ops.push(BatchOp::EdgeWithCreatedAt {
+                        src: *entity,
+                        kind,
+                        tgt: *target,
+                        weight: shell_edge_weight(kind)?,
+                        created_at: *created_at,
+                        vad: crate::affect::Vad::NEUTRAL,
+                        provenance: None,
+                    });
+                }
+            }
+        }
+        if ops.is_empty() {
+            return Ok(());
+        }
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
     }
 
     /// Stamps `seq`, writes the type-76 event record plus the staged edge

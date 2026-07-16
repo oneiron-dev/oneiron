@@ -1573,3 +1573,352 @@ fn local_endpoint_error_aborts_batch_before_remote_quarantine() {
         "aborted txn must not materialize the src endpoint"
     );
 }
+
+#[test]
+fn observer_b_gates_reserved_edges_on_the_ledger_and_derives_shells_from_records() {
+    use crate::identity_topology::{
+        EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
+
+    let vault = test_vault();
+    let doc = LoroDoc::new();
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+    // Participants materialize through the ordinary entity pass first.
+    for id in [&survivor, &loser] {
+        map_insert_bytes(
+            &entities,
+            &id.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            ),
+        )
+        .unwrap();
+    }
+    doc.commit();
+    assert!(vault.get(&survivor).unwrap().is_some());
+    assert!(vault.get(&loser).unwrap().is_some());
+
+    // A raw edges-map merged_into row with NO ledger event behind it is a
+    // forged shell: quarantined-and-continue, never materialized — the
+    // peer-controlled edges CRDT map has no redirect-shell write authority.
+    let shell_key = format_edge_key(&loser, EdgeKind::MergedInto, &survivor);
+    map_insert_bytes(
+        &edges,
+        &shell_key,
+        &encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.3, 10, None, None).unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        !vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "an unledgered merged_into row must never land"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).unwrap(),
+        EntityLifecycleState::Active
+    );
+    assert!(
+        !crate::sync::quarantine::quarantined_records(&vault)
+            .unwrap()
+            .is_empty(),
+        "the forged shell row must leave hashed quarantine evidence"
+    );
+
+    // The validated type-76 record arriving through the entities map IS
+    // the door: its ingest reconciles the shell edge as a side-effect,
+    // with no admissible edges-map row involved.
+    let event_id = EntityId::now();
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    map_insert_bytes(
+        &entities,
+        &event_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            &body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "the ingested record's door side-effect materializes the shell edge"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).unwrap(),
+        EntityLifecycleState::Merged
+    );
+
+    // A mandated PAIR with peer-chosen value bytes is still a forgery:
+    // weight 0 would silently drop the shell's PPR mass. Only the door's
+    // byte-exact echo (default weight, the event's `at`) is admitted.
+    map_insert_bytes(
+        &edges,
+        &shell_key,
+        &encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.0, 200, None, None).unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+    let shell_weight = vault
+        .edges_out(&loser)
+        .unwrap()
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::MergedInto)
+        .map(|edge| edge.weight);
+    assert_eq!(
+        shell_weight,
+        Some(0.3),
+        "a zero-weight rewrite of a mandated shell edge must be quarantined"
+    );
+
+    // The door's byte-exact echo passes admission (idempotent rewrite).
+    map_insert_bytes(
+        &edges,
+        &shell_key,
+        &encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.3, 200, None, None).unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+
+    // A raw edges-map REMOVAL of the still-mandated shell edge is an
+    // unledgered teardown: quarantined, the edge survives.
+    edges.delete(&shell_key).unwrap();
+    doc.commit();
+    assert!(
+        vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "an unledgered removal must not tear a mandated shell edge"
+    );
+
+    // The replicated undo counter-event is the legitimate teardown door.
+    let undo_id = EntityId::now();
+    let undo = StoredIdentityOpEvent {
+        seq: 51,
+        at: 300,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Undo { target: event_id },
+    };
+    let undo_body = crate::identity_topology::encode_identity_topology_event_body(&undo).unwrap();
+    map_insert_bytes(
+        &entities,
+        &undo_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 300,
+                end: 300,
+            },
+            300,
+            &undo_body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        !vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "the ingested undo counter-event tears the shell edge down"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).unwrap(),
+        EntityLifecycleState::Active
+    );
+}
+
+#[test]
+fn identity_topology_ingest_door_replays_diverges_and_validates() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let vault = test_vault();
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+    for id in [&survivor, &loser] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            )
+            .unwrap();
+    }
+
+    let event_id = EntityId::now();
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    let blob = entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange {
+            start: 200,
+            end: 200,
+        },
+        200,
+        &body,
+    );
+    let ingest = |blob: &[u8]| {
+        let header = EntityMetadataHeader::parse(blob).unwrap();
+        vault.with_write_txn(|wtxn| {
+            ingest_replicated_identity_topology_event_in_txn(
+                &vault,
+                wtxn,
+                &event_id,
+                &header,
+                blob,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+                7,
+            )
+        })
+    };
+
+    // Fresh accept: record stored, shell edge reconciled.
+    assert!(ingest(&blob).unwrap());
+    assert!(
+        vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+
+    // Byte-identical replay: idempotent skip.
+    assert!(!ingest(&blob).unwrap());
+
+    // Divergent bytes for the SAME id: equivocation-shaped typed
+    // rejection; the accepted local bytes win.
+    let mut divergent = record.clone();
+    divergent.at = 999;
+    let divergent_body =
+        crate::identity_topology::encode_identity_topology_event_body(&divergent).unwrap();
+    let divergent_blob = entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange {
+            start: 200,
+            end: 200,
+        },
+        200,
+        &divergent_body,
+    );
+    let err = ingest(&divergent_blob).unwrap_err();
+    assert_matches!(err, Error::IdentityTopologyEventDivergence { .. });
+    assert_eq!(
+        vault
+            .identity_topology_event(&event_id)
+            .unwrap()
+            .unwrap()
+            .at,
+        200,
+        "divergent remote bytes must never overwrite the accepted event"
+    );
+
+    // A malformed FRESH body is the typed ingress rejection.
+    let bad_id = EntityId::now();
+    let bad_blob = entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"not a type-76 body",
+    );
+    let bad_header = EntityMetadataHeader::parse(&bad_blob).unwrap();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            ingest_replicated_identity_topology_event_in_txn(
+                &vault,
+                wtxn,
+                &bad_id,
+                &bad_header,
+                &bad_blob,
+                &bad_blob[ENTITY_METADATA_HEADER_LEN..],
+                7,
+            )
+        })
+        .unwrap_err();
+    assert_matches!(err, Error::InvalidIdentityTopologyEventBody(_));
+
+    // Both reject shapes classify as REMOTE rejections
+    // (quarantine-and-continue), so one bad row cannot abort a batch.
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&Error::IdentityTopologyEventDivergence {
+            id: event_id
+        })
+        .is_some()
+    );
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&Error::InvalidIdentityTopologyEventBody(
+            "identity topology event bytes are malformed"
+        ))
+        .is_some()
+    );
+
+    // The ingested seq joined the local clock: a LOCAL undo of the synced
+    // merge allocates ABOVE it and the fold orders it after its target.
+    let write = crate::identity_topology::IdentityOpWrite::auto(ClaimSource::UserStated);
+    let outcome = vault
+        .undo_identity_topology_event(&event_id, &write, 300)
+        .unwrap();
+    let crate::identity_topology::IdentityOpOutcome::Applied { event, .. } = outcome else {
+        panic!("undo of the ingested merge must apply");
+    };
+    let undo_record = vault.identity_topology_event(&event).unwrap().unwrap();
+    assert!(
+        undo_record.seq > record.seq,
+        "seq join: local undo must order after ingested history"
+    );
+    assert!(
+        !vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+}

@@ -727,7 +727,11 @@ impl Vault {
     ///
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist
     /// (the setter never upserts); [`Error::InvalidEdgeWeight`] outside the
-    /// contract \[0, 1\]. PPR caches for the edge endpoints are invalidated
+    /// contract \[0, 1\]; [`Error::ReservedEdgeKind`] on the redirect-shell
+    /// kinds (`merged_into` / `split_into`) — a weight rewrite is a
+    /// topology-effect mutation (PPR drops a zero-weight shell edge), so
+    /// shell edges move only through the identity-topology door
+    /// (ARCH-0055). PPR caches for the edge endpoints are invalidated
     /// exactly like a plain edge write.
     pub fn set_edge_weight(
         &self,
@@ -754,7 +758,9 @@ impl Vault {
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist;
     /// [`Error::InvalidVad`] on non-finite/out-of-range components; a typed
     /// rejection on structural 12-byte kinds (the contract layout table —
-    /// structural edges carry no VAD).
+    /// structural edges carry no VAD); [`Error::ReservedEdgeKind`] on the
+    /// redirect-shell kinds (`merged_into` / `split_into`), same as every
+    /// other public edge write (ARCH-0055).
     pub fn set_edge_vad(
         &self,
         src: &EntityId,

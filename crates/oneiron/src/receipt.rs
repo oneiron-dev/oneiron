@@ -2099,10 +2099,11 @@ fn companion_lifecycle_receipt(
 /// counter-events, effective AND parked) into `IdentityLifecycle` receipts.
 ///
 /// Scans the type-76 record family NEWEST-FIRST (reverse type-index walk;
-/// UUIDv7 ids order by mint time) and enters the query window from its
-/// upper time bound, so the scan cap can never starve recent receipts
-/// behind a backlog of old ones. The family is engine-authored and
-/// door-validated: an undecodable row is corruption, never skipped.
+/// UUIDv7 ids order by mint time) and charges the scan cap ONLY for rows
+/// inside the query's `[start_at, end_at]` window, so the cap can never
+/// starve an in-window receipt behind a backlog of old — or newer-minted
+/// backdated — ones. The family is engine-authored and door-validated: an
+/// undecodable row is corruption, never skipped.
 fn identity_topology_receipts(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -2122,9 +2123,14 @@ fn identity_topology_receipts(
         let record = vault
             .identity_topology_event_in_txn(rtxn, &event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
-        // Rows above the query's upper bound are outside the window the
-        // caller asked for — skipping them must not consume the scan cap.
-        if query.end_at.is_some_and(|end_at| record.at > end_at) {
+        // Rows outside the query window — above its upper bound OR below
+        // its lower bound — must not consume the scan cap: UUID mint order
+        // is not `at` order, so a flood of newer-minted BACKDATED rows
+        // (`at` below the window) would otherwise exhaust the cap before
+        // the scan reaches an older-minted in-window receipt.
+        if query.end_at.is_some_and(|end_at| record.at > end_at)
+            || query.start_at.is_some_and(|start_at| record.at < start_at)
+        {
             continue;
         }
         scanned += 1;

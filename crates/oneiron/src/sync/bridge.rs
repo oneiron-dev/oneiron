@@ -748,6 +748,44 @@ fn materialize_edges_from_delta(
                         }
                     };
 
+                    // ARCH-0055 reserved-kind gate: `merged_into` /
+                    // `split_into` carry redirect-shell lifecycle meaning,
+                    // and the raw edges CRDT map is peer-controlled input
+                    // with no write authority over them. The edge is
+                    // admitted ONLY as the BYTE-EXACT echo of a door
+                    // side-effect: the local validated type-76 ledger must
+                    // mandate exactly this pair AND the value must carry
+                    // the door-written bytes (default weight, the event's
+                    // `at` as `created_at`) — peer-chosen bytes on a
+                    // mandated pair are still a forgery (weight 0 drops
+                    // the shell's PPR mass, unledgered). Anything else
+                    // quarantines-and-continues: the record may simply not
+                    // have arrived yet, and the quarantined bytes stay in
+                    // the CRDT map to re-admit at the next forward
+                    // rematerialization once the ledger justifies them
+                    // (the OD-10 lazy re-admission shape).
+                    if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+                        let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
+                            &*wtxn, &src, kind, &tgt,
+                        )?;
+                        let door_echo = mandated_at.is_some_and(|at| {
+                            decoded.created_at == at
+                                && kind.default_weight() == Some(decoded.weight)
+                        });
+                        if !door_echo {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key.as_ref(),
+                                &reserved,
+                                buf,
+                            )?;
+                            continue;
+                        }
+                    }
+
                     let src_ready = ensure_entity_materialized_from_crdt(
                         vault,
                         wtxn,
@@ -903,6 +941,30 @@ fn materialize_edges_from_delta(
                         )?;
                         continue;
                     };
+                    // ARCH-0055 reserved-kind gate, removal side: a raw
+                    // edges-map removal must not tear a shell edge the
+                    // validated ledger still mandates (an unledgered
+                    // merge/split teardown → EntityNotFound-shaped wedge).
+                    // The honest undo path deletes the edge as the
+                    // ingested counter-event's door side-effect; after
+                    // that the fold no longer mandates it and the removal
+                    // echo passes through as a no-op delete.
+                    if let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
+                        && vault
+                            .identity_topology_mandated_shell_edge_in_txn(&*wtxn, &src, kind, &tgt)?
+                            .is_some()
+                    {
+                        quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Edges,
+                            key.as_ref(),
+                            &reserved,
+                            &[],
+                        )?;
+                        continue;
+                    }
                     ops.push(BatchOp::DeleteEdge { src, kind, tgt });
                     metas.push(EdgeOpMeta::for_key(key.as_ref(), &[]));
                 }
@@ -1677,26 +1739,20 @@ fn materialize_entity_blob_in_txn(
             crate::unix_seconds_now(),
         )?
     } else if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
-        // ARCH-0055 identity-topology ledger events: the ARCH-0023b
-        // fail-closed · single-writer stream class, registered in the
-        // AUTHORITY_LOG shape. Events are immutable single-writer records:
-        // a byte-identical replay is an idempotent skip; divergent bytes
-        // for one id are equivocation-shaped and quarantine typed (never
-        // silent LWW). Structure is re-validated fail-closed before any
-        // byte stages, and ingest is quota-bounded per stream.
-        if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
-            if *existing == *blob {
-                return Ok(false);
-            }
-            return Err(crate::Error::IdentityTopologyEventDivergence { id });
-        }
-        crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
-        quota::try_accept_maintenance_ingest_peer_in_txn(
+        // ARCH-0055 identity-topology ledger events route through the ONE
+        // shared fail-closed ingest door (validation, per-stream quota,
+        // seq-clock join, shell-edge reconciliation) — the same door
+        // forward rematerialization uses, so no sync entry point admits
+        // the byte outside the ruled trust model.
+        return ingest_replicated_identity_topology_event_in_txn(
             vault,
             wtxn,
-            quota::peer_key_from_identity_topology_stream(lease_vault_id),
-            crate::unix_seconds_now(),
-        )?
+            &id,
+            &header,
+            blob,
+            data,
+            lease_vault_id,
+        );
     } else {
         None
     };
@@ -1734,6 +1790,85 @@ fn materialize_entity_blob_in_txn(
         }
         return Err(err);
     }
+    Ok(true)
+}
+
+/// Shared fail-closed ingest door for replicated type-76 identity-topology
+/// event records (ARCH-0023b single-writer stream class, AUTHORITY_LOG
+/// shape). Observer B's entity pass and forward rematerialization BOTH
+/// route here, so every sync entry point enforces the same trust model:
+///
+/// * byte-identical replay → idempotent skip that STILL joins the seq
+///   clock and reconciles shell edges (replay/rebuild is the healing pass
+///   for rows ingested before those side effects existed);
+/// * divergent bytes for an existing id → typed
+///   [`crate::Error::IdentityTopologyEventDivergence`] (equivocation on an
+///   immutable single-writer record: local bytes win; callers quarantine
+///   via `remote_rejection_reason`, never abort, never silent-LWW);
+/// * a fresh id → fail-closed D18 body validation, per-stream ingest
+///   quota, the replicated put, then `seq = max(local, incoming)` and
+///   shell-edge reconciliation from the ledger fold — the sync twin of the
+///   local door's atomic record+edges commit (the ruled invariant:
+///   `merged_into` / `split_into` edges only move as a door side-effect of
+///   a validated type-76 event).
+pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    header: &EntityMetadataHeader,
+    blob: &[u8],
+    data: &[u8],
+    lease_vault_id: u64,
+) -> Result<bool> {
+    let byte_identical_replay = vault
+        .store
+        .entities
+        .get(&*wtxn, id.as_bytes())?
+        .map(|existing| *existing == *blob);
+    match byte_identical_replay {
+        Some(true) => {
+            // The stored bytes equal the replayed bytes, so a decode
+            // failure here is on-disk corruption — LOCAL, fail-closed —
+            // never a rejectable remote input.
+            let record = crate::identity_topology::decode_identity_topology_event_body(data)
+                .map_err(|_| crate::Error::CorruptedIndex("identity topology event body"))?;
+            vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
+            vault.reconcile_identity_topology_edges_in_txn(wtxn, &record)?;
+            return Ok(false);
+        }
+        Some(false) => {
+            return Err(crate::Error::IdentityTopologyEventDivergence { id: *id });
+        }
+        None => {}
+    }
+    let record = crate::identity_topology::decode_identity_topology_event_body(data)?;
+    let quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
+        vault,
+        wtxn,
+        quota::peer_key_from_identity_topology_stream(lease_vault_id),
+        crate::unix_seconds_now(),
+    )?;
+    let apply_result = vault
+        .batch_in()
+        .put_replicated(
+            id,
+            header.entity_type,
+            crate::temporal::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            data,
+        )
+        .apply(wtxn);
+    if let Err(err) = apply_result {
+        if let Some(quota_debit) = quota_debit {
+            quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
+        }
+        return Err(err);
+    }
+    vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
+    vault.reconcile_identity_topology_edges_in_txn(wtxn, &record)?;
     Ok(true)
 }
 

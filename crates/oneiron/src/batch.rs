@@ -710,6 +710,13 @@ impl<'a> BatchBuilder<'a> {
     /// typed at apply time: [`crate::Error::EdgeNotFound`] when the edge
     /// does not exist (the setter never upserts),
     /// [`crate::Error::InvalidEdgeWeight`] outside the contract \[0, 1\].
+    ///
+    /// Reserved redirect-shell kinds (`merged_into` / `split_into`) reject
+    /// typed at the API boundary ([`crate::Error::ReservedEdgeKind`]): a
+    /// weight rewrite IS a topology-effect mutation — PPR drops a
+    /// zero-weight shell edge, severing the shell's mass from its
+    /// canonical head with no type-76 ledger event — so shell edges stay
+    /// writable only through the identity-topology door (ARCH-0055).
     pub fn set_edge_weight(
         mut self,
         src: &EntityId,
@@ -717,6 +724,7 @@ impl<'a> BatchBuilder<'a> {
         tgt: &EntityId,
         weight: f32,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::SetEdgeWeight {
             src: *src,
             kind,
@@ -737,7 +745,10 @@ impl<'a> BatchBuilder<'a> {
     /// time: [`crate::Error::EdgeNotFound`] when the edge does not exist,
     /// [`crate::Error::InvalidVad`] on non-finite/out-of-range components,
     /// and a typed rejection on structural 12-byte edges (they carry no
-    /// VAD).
+    /// VAD). Reserved redirect-shell kinds (`merged_into` / `split_into`)
+    /// reject typed at the API boundary
+    /// ([`crate::Error::ReservedEdgeKind`]), same as every other public
+    /// edge write (ARCH-0055).
     pub fn set_edge_vad(
         mut self,
         src: &EntityId,
@@ -745,6 +756,7 @@ impl<'a> BatchBuilder<'a> {
         tgt: &EntityId,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::SetEdgeVad {
             src: *src,
             kind,
@@ -1274,7 +1286,8 @@ impl<'a> TxnBatchBuilder<'a> {
     /// Adds an operational VAD rewrite for an EXISTING semantic edge.
     ///
     /// Mirrors [`BatchBuilder::set_edge_vad`] for callers composing writes in
-    /// an externally-owned transaction.
+    /// an externally-owned transaction, including its reserved-kind
+    /// rejection ([`crate::Error::ReservedEdgeKind`], ARCH-0055).
     pub fn set_edge_vad(
         mut self,
         src: &EntityId,
@@ -1282,6 +1295,7 @@ impl<'a> TxnBatchBuilder<'a> {
         tgt: &EntityId,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::SetEdgeVad {
             src: *src,
             kind,
@@ -1752,7 +1766,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     && allow_reserved_predicate
                     && matches!(
                         entity_type,
-                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST
+                        ENTITY_TYPE_POLICY_MANIFEST
                             | ENTITY_TYPE_ACCESS_GRANT
                             | ENTITY_TYPE_OUTBOUND_GRANT
                     )

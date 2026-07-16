@@ -1123,14 +1123,24 @@ pub fn forward_rematerialize(
                 return;
             }
 
-            // Track the local record for non-REDACTION_AUDIT ids:
-            // byte-identical → idempotent skip (return). Type-120 receipts
-            // make this decision later inside the same write txn as their
-            // lease verification and replicated put, so a stale long-lived
-            // `rtxn` cannot hide a mid-flight finalized/divergent receipt.
-            let is_redaction_audit_blob =
-                blob.first().copied() == Some(crate::registry::ENTITY_TYPE_REDACTION_AUDIT);
-            if !is_redaction_audit_blob {
+            // Track the local record for most ids: byte-identical →
+            // idempotent skip (return). Two kinds make this decision later
+            // inside their own replay door instead: type-120 receipts
+            // (inside the same write txn as their lease verification and
+            // replicated put, so a stale long-lived `rtxn` cannot hide a
+            // mid-flight finalized/divergent receipt) and ARCH-0055
+            // type-76 events (whose door heals the seq-clock join and the
+            // shell edges even on byte-identical replay — remat is the
+            // rebuild pass that repairs rows ingested before those side
+            // effects existed).
+            let byte_compare_in_door = matches!(
+                blob.first().copied(),
+                Some(
+                    crate::registry::ENTITY_TYPE_REDACTION_AUDIT
+                        | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+                )
+            );
+            if !byte_compare_in_door {
                 if let Some(latest) = materialized_blobs.get(&id) {
                     if latest.as_slice() == blob {
                         return;
@@ -1359,6 +1369,26 @@ pub fn forward_rematerialize(
                         .apply(wtxn)?;
                     Ok(true)
                 })
+            } else if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+                // ARCH-0055: type-76 ledger events route through the SAME
+                // fail-closed single-writer ingest door as Observer B —
+                // never the generic LWW arm below, which would silently
+                // overwrite an accepted local event with divergent remote
+                // bytes and skip validation, the per-stream quota, the
+                // seq-clock join, and shell-edge reconciliation. A
+                // divergent or malformed remote row classifies as a remote
+                // rejection (quarantine-and-continue) at the match below.
+                vault.with_write_txn(|wtxn| {
+                    bridge::ingest_replicated_identity_topology_event_in_txn(
+                        vault,
+                        wtxn,
+                        &id,
+                        &header,
+                        blob,
+                        data,
+                        lease_vault_id,
+                    )
+                })
             } else {
                 vault
                     .batch()
@@ -1511,6 +1541,44 @@ pub fn forward_rematerialize(
                     return;
                 }
             };
+
+            // ARCH-0055 reserved-kind gate (mirrors Observer B's edge
+            // pass): a `merged_into` / `split_into` row is admitted ONLY
+            // as the BYTE-EXACT echo of a door side-effect — the local
+            // validated type-76 ledger mandates exactly this pair AND the
+            // value carries the door-written bytes (default weight, the
+            // event's `at`). The entity pass above has already ingested
+            // the window's event records, so this is also the healing
+            // re-admission for a previously quarantined door echo. A
+            // ledger-read failure is LOCAL and fails closed.
+            if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+                match vault.identity_topology_mandated_shell_edge_in_txn(&rtxn, &src, kind, &tgt) {
+                    Ok(mandated_at)
+                        if mandated_at.is_some_and(|at| {
+                            decoded.created_at == at
+                                && kind.default_weight() == Some(decoded.weight)
+                        }) => {}
+                    Ok(_) => {
+                        if let Err(q_err) = quarantine::quarantine_rejected_op(
+                            vault,
+                            window_key.as_str(),
+                            QuarantineContainer::Edges,
+                            key,
+                            &reserved,
+                            buf,
+                        ) {
+                            edge_error = Some(q_err);
+                        } else {
+                            terminal_quarantines.push(src);
+                        }
+                        return;
+                    }
+                    Err(err) => {
+                        edge_error = Some(err);
+                        return;
+                    }
+                }
+            }
 
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
             // ANY-value, entity-canonical presence — a non-binary tombstone

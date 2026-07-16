@@ -351,7 +351,7 @@ pub fn admit_federated_window_update(
 
     reject_federated_tombstones(&remote)?;
     copy_admitted_entities(vault, &policy, &remote, &admitted)?;
-    copy_binary_map(&remote.get_map("edges"), &admitted.get_map("edges"))?;
+    copy_admitted_edges(&remote.get_map("edges"), &admitted.get_map("edges"))?;
 
     admitted.commit_with(CommitOptions::new().origin(role.origin()));
     admitted
@@ -488,7 +488,17 @@ fn admit_federated_entity_blob(
             admit_federated_authority_log(vault, &blob[ENTITY_METADATA_HEADER_LEN..])?;
             return Ok(blob.to_vec());
         }
-        if band_of(header.entity_type) == TypeByteBand::InducedDynamicMaintenance {
+        // Engine-authored kinds are CLASSIFICATION-routed, not band-routed:
+        // IDENTITY_TOPOLOGY_EVENT (76) is Maintenance-classified inside the
+        // Companion band (owner-ruled byte-space v3), so a band-only check
+        // would hand a member/guest single-writer ledger authority. The
+        // band check stays for the reserved-unregistered maintenance bytes
+        // (125/126/127/130), which carry no registry entry.
+        if band_of(header.entity_type) == TypeByteBand::InducedDynamicMaintenance
+            || crate::registry::entity_type_registry_entry(header.entity_type).is_some_and(
+                |entry| entry.classification == crate::registry::EntityClassification::Maintenance,
+            )
+        {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
         return Ok(blob.to_vec());
@@ -529,11 +539,24 @@ fn admit_federated_authority_log(vault: &Vault, body: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Copies the federated edges map, rejecting reserved-kind edge keys:
+/// `merged_into` / `split_into` writes are the identity-topology door's
+/// side-effects and never member/guest input (ARCH-0055) — copying the raw
+/// bytes would hand a federated peer redirect-shell write authority over
+/// the host's entities. Keys that do not parse as edge keys copy through
+/// unchanged: the ordinary materialization path quarantines them with
+/// evidence (the same division Observer B uses).
 #[cfg(feature = "sync")]
-fn copy_binary_map(source: &loro::LoroMap, target: &loro::LoroMap) -> Result<()> {
+fn copy_admitted_edges(source: &loro::LoroMap, target: &loro::LoroMap) -> Result<()> {
     let mut result = Ok(());
     map_for_each_value_bytes(source, |key, value| {
         if result.is_err() {
+            return;
+        }
+        if let Some((_, kind, _)) = super::bridge::parse_edge_key(key)
+            && let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
+        {
+            result = Err(reserved);
             return;
         }
         result = value

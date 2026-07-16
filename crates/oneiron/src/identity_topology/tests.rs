@@ -782,6 +782,39 @@ fn reserved_edge_kinds_reject_every_public_write_path() {
         .expect_err("txn builder split_into must reject");
     assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
 
+    // Operational setters (MS-01 perimeter: the reseat's "setters cannot
+    // alter topology" carve-out was wrong — a zero weight makes PPR drop
+    // the shell edge entirely, an unledgered topology effect).
+    let err = vault
+        .set_edge_weight(&a, EdgeKind::MergedInto, &b, 0.0)
+        .expect_err("weight setter merged_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    let err = vault
+        .set_edge_vad(&a, EdgeKind::SplitInto, &b, crate::affect::Vad::NEUTRAL)
+        .expect_err("vad setter split_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    let err = vault
+        .batch()
+        .set_edge_weight(&a, EdgeKind::SplitInto, &b, 0.9)
+        .commit()
+        .expect_err("batch weight setter split_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("split_into")));
+    let err = vault
+        .batch()
+        .set_edge_vad(&a, EdgeKind::MergedInto, &b, crate::affect::Vad::NEUTRAL)
+        .commit()
+        .expect_err("batch vad setter merged_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .set_edge_vad(&a, EdgeKind::MergedInto, &b, crate::affect::Vad::NEUTRAL)
+                .apply(wtxn)
+        })
+        .expect_err("txn vad setter merged_into must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+
     // Nothing leaked through any of the rejected paths.
     assert_eq!(
         vault
@@ -1505,4 +1538,532 @@ fn merged_into_and_split_into_edge_kind_pins() {
         assert_eq!(kind.default_weight(), Some(0.3));
         assert_eq!(crate::ppr::lambda_for_kind(kind), Some(0.3));
     }
+}
+
+// ─── MS-01 trust-model perimeter (ONE-1743 fix round) ───────────────────────
+
+/// Plants a type-76 record row the way the sync ingest door's
+/// `put_replicated` stores it (replicated-shape put through `apply_ops`),
+/// standing in for a record replicated from another vault so the
+/// seq-join/reconcile helpers can be exercised without the sync feature.
+fn put_identity_event_record(vault: &Vault, event_id: EntityId, record: &StoredIdentityOpEvent) {
+    let body = encode_identity_topology_event_body(record).expect("encode record");
+    vault
+        .with_write_txn(|wtxn| {
+            crate::batch::apply_ops(
+                &vault.store,
+                &vault.config,
+                &vault.analyzer,
+                wtxn,
+                vec![BatchOp::Put {
+                    id: event_id,
+                    entity_type: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+                    occurred: TimeRange {
+                        start: record.at,
+                        end: record.at,
+                    },
+                    learned_at: record.at,
+                    data: body.clone(),
+                    allow_maintenance: true,
+                    allow_reserved_predicate: true,
+                }],
+                true,
+                false,
+                true,
+            )
+        })
+        .expect("plant replicated record");
+}
+
+fn replicated_merge_record(
+    sources: Vec<EntityId>,
+    survivor: EntityId,
+    seq: u64,
+) -> StoredIdentityOpEvent {
+    StoredIdentityOpEvent {
+        seq,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge { sources, survivor },
+    }
+}
+
+#[test]
+fn operational_setters_leave_live_shell_edges_intact() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    vault
+        .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 200)
+        .expect("apply merge");
+
+    // codex P1: pre-fix, `set_edge_weight(loser, merged_into, survivor, 0)`
+    // succeeded and PPR dropped the shell edge — an unledgered
+    // topology-effect mutation. The setter must reject typed and leave the
+    // door-written weight untouched.
+    let err = vault
+        .set_edge_weight(&loser, EdgeKind::MergedInto, &survivor, 0.0)
+        .expect_err("weight rewrite of a live shell edge must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+    let err = vault
+        .set_edge_vad(
+            &loser,
+            EdgeKind::MergedInto,
+            &survivor,
+            crate::affect::Vad::NEUTRAL,
+        )
+        .expect_err("vad rewrite of a live shell edge must reject");
+    assert!(matches!(err, Error::ReservedEdgeKind("merged_into")));
+
+    let edges = vault.edges_out(&loser).expect("edges out");
+    let shell = edges
+        .iter()
+        .find(|edge| edge.kind == EdgeKind::MergedInto)
+        .expect("shell edge survives");
+    assert_eq!(shell.weight, 0.3, "door-written weight is untouched");
+}
+
+#[test]
+fn type_76_events_are_delete_protected_on_every_delete_door() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let outcome = vault
+        .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 200)
+        .expect("apply merge");
+    let (event_id, _) = expect_applied(outcome);
+
+    // Public hard delete + every ARCH-0038 reason door (soft and hard):
+    // dropping the event while the merged_into edge survives would wedge
+    // the shell (undo → EntityNotFound), so all reject typed.
+    let err = vault
+        .delete_entity(&event_id)
+        .expect_err("delete_entity must reject the ledger event");
+    assert!(matches!(
+        err,
+        Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+    ));
+    for reason in [
+        crate::deletion::DeleteReason::UserDelete,
+        crate::deletion::DeleteReason::UserHardDelete,
+        crate::deletion::DeleteReason::GdprDelete,
+        crate::deletion::DeleteReason::PolicyDelete,
+    ] {
+        let err = vault
+            .delete_entity_with_reason(&event_id, reason)
+            .expect_err("reasoned delete must reject the ledger event");
+        assert!(matches!(
+            err,
+            Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        ));
+    }
+    // Generic batch delete door.
+    let err = vault
+        .batch()
+        .delete(&event_id)
+        .commit()
+        .expect_err("batch delete must reject the ledger event");
+    assert!(matches!(
+        err,
+        Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+    ));
+    // Replayed CRDT tombstone door (a malformed value decodes HARD).
+    let err = vault
+        .apply_replayed_tombstone(&event_id, &[])
+        .expect_err("replayed tombstone must reject the ledger event");
+    assert!(matches!(
+        err,
+        Error::MaintenanceKindNotWritable(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+    ));
+
+    // Record and shell both survived every rejected door; undo still works.
+    assert!(
+        vault
+            .identity_topology_event(&event_id)
+            .expect("read event")
+            .is_some()
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Merged
+    );
+    vault
+        .undo_identity_topology_event(&event_id, &write, 300)
+        .expect("undo remains possible");
+}
+
+#[test]
+fn stored_malformed_type_76_row_reads_as_corruption() {
+    let (_dir, vault) = open_vault();
+    let event_id = id(0x70);
+    vault
+        .with_write_txn(|wtxn| {
+            let mut blob = Vec::new();
+            blob.push(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT);
+            blob.extend_from_slice(&100_u64.to_be_bytes());
+            blob.extend_from_slice(&100_u64.to_be_bytes());
+            blob.extend_from_slice(&100_u64.to_be_bytes());
+            blob.extend_from_slice(b"not msgpack");
+            vault.store.entities.put(wtxn, event_id.as_bytes(), &blob)?;
+            let mut type_key = vec![ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT];
+            type_key.extend_from_slice(event_id.as_bytes());
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            Ok(())
+        })
+        .expect("plant corrupt stored row");
+
+    // A damaged STORED row is on-disk corruption (fail-closed
+    // CorruptedIndex), never the InvalidIdentityTopologyEventBody ingress
+    // rejection — the quarantine classifier treats the latter as a
+    // rejectable REMOTE input, and local damage must never ride that lane.
+    let err = vault
+        .identity_topology_event(&event_id)
+        .expect_err("corrupt stored row must fail the point read");
+    assert!(matches!(err, Error::CorruptedIndex(_)));
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let err = vault
+        .identity_topology_events_in_txn(&rtxn)
+        .expect_err("corrupt stored row must fail the family scan");
+    assert!(matches!(err, Error::CorruptedIndex(_)));
+}
+
+#[test]
+fn reassignment_map_rejects_duplicate_items_in_the_table() {
+    let entity = id(0x61);
+    let head_a = id(0x62);
+    let head_b = id(0x63);
+    let claim = ClaimSubject::Entity(id(0x64));
+
+    // Two assignments for one item must not both validate (split role).
+    let op = IdentityTopologyOp::Split(SplitOp {
+        entity,
+        heads: vec![head_a, head_b],
+        reassignment: ReassignmentMap {
+            entries: vec![
+                ReassignmentEntry {
+                    item: claim,
+                    target: ReassignmentTarget::Head(head_a),
+                },
+                ReassignmentEntry {
+                    item: claim,
+                    target: ReassignmentTarget::Head(head_b),
+                },
+            ],
+        },
+        evidence: evidence(),
+    });
+    assert_eq!(
+        evaluate_transition(&states_of(&[]), &op),
+        Err(IdentityTopologyRejection::DuplicateReassignmentItem)
+    );
+
+    // Same cell on the facet role.
+    let op = IdentityTopologyOp::Facet(FacetOp {
+        entity,
+        facets: vec![
+            FacetSpec {
+                label: "mask-a".to_owned(),
+            },
+            FacetSpec {
+                label: "mask-b".to_owned(),
+            },
+        ],
+        reassignment: ReassignmentMap {
+            entries: vec![
+                ReassignmentEntry {
+                    item: claim,
+                    target: ReassignmentTarget::Facet { index: 0 },
+                },
+                ReassignmentEntry {
+                    item: claim,
+                    target: ReassignmentTarget::Facet { index: 1 },
+                },
+            ],
+        },
+        evidence: evidence(),
+    });
+    assert_eq!(
+        evaluate_transition(&states_of(&[]), &op),
+        Err(IdentityTopologyRejection::DuplicateReassignmentItem)
+    );
+}
+
+#[test]
+fn reassignment_map_wire_rejects_unsorted_and_duplicate_rows() {
+    let record = StoredIdentityOpEvent {
+        seq: 1,
+        at: 100,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Split {
+            entity: id(0x61),
+            heads: vec![id(0x62)],
+            reassignment: ReassignmentMap {
+                entries: vec![
+                    ReassignmentEntry {
+                        item: ClaimSubject::Entity(id(0x01)),
+                        target: ReassignmentTarget::Residue,
+                    },
+                    ReassignmentEntry {
+                        item: ClaimSubject::Entity(id(0x02)),
+                        target: ReassignmentTarget::Residue,
+                    },
+                ],
+            },
+        },
+    };
+
+    // Canonical bytes round-trip.
+    let canonical = encode_identity_topology_event_body(&record).expect("encode");
+    decode_identity_topology_event_body(&canonical).expect("canonical bytes decode");
+
+    let tamper = |mutate: &dyn Fn(&mut Vec<Value>)| -> Vec<u8> {
+        let Value::Map(mut entries) = record.encode_value() else {
+            panic!("record encodes as map");
+        };
+        for (key, value) in &mut entries {
+            if key.as_str() == Some(BODY_KEY_MAP)
+                && let Value::Array(rows) = value
+            {
+                mutate(rows);
+            }
+        }
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).expect("encode tampered");
+        bytes
+    };
+
+    // Out-of-order rows re-serialize differently than stored — reject on
+    // decode so on-disk bytes always equal their re-encoding.
+    let unsorted = tamper(&|rows| rows.swap(0, 1));
+    let err = decode_identity_topology_event_body(&unsorted)
+        .expect_err("unsorted map rows must fail decode");
+    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+
+    // Duplicate items are the two-assignments-for-one-claim shape.
+    let duplicated = tamper(&|rows| {
+        let first = rows[0].clone();
+        rows[1] = first;
+    });
+    let err = decode_identity_topology_event_body(&duplicated)
+        .expect_err("duplicate map items must fail decode");
+    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+}
+
+#[test]
+fn seq_clock_joins_ingested_history_before_local_allocation() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+
+    // A replicated record accepted at seq 50 joins the clock; a stale
+    // lower join later never rewinds it.
+    vault
+        .with_write_txn(|wtxn| vault.advance_identity_topology_seq_in_txn(wtxn, 50))
+        .expect("join ingested seq");
+    vault
+        .with_write_txn(|wtxn| vault.advance_identity_topology_seq_in_txn(wtxn, 3))
+        .expect("stale join is a no-op");
+
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let (event_id, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 200)
+            .expect("apply merge"),
+    );
+    let record = vault
+        .identity_topology_event(&event_id)
+        .expect("read event")
+        .expect("event exists");
+    assert_eq!(
+        record.seq, 51,
+        "local allocation must order AFTER ingested history"
+    );
+}
+
+#[test]
+fn ledger_predicate_admits_only_fold_mandated_shell_edges() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+    let other = put_person(&vault, 0x63);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let (event_id, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![loser], survivor), &write, 200)
+            .expect("apply merge"),
+    );
+
+    {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        // The mandated pair carries the mandating event's `at` — the
+        // door-written `created_at` the sync doors pin value bytes to.
+        assert_eq!(
+            vault
+                .identity_topology_mandated_shell_edge_in_txn(
+                    &rtxn,
+                    &loser,
+                    EdgeKind::MergedInto,
+                    &survivor
+                )
+                .expect("mandated edge"),
+            Some(200)
+        );
+        // Wrong target, wrong kind, wrong direction: all unledgered.
+        for (src, kind, tgt) in [
+            (loser, EdgeKind::MergedInto, other),
+            (loser, EdgeKind::SplitInto, survivor),
+            (survivor, EdgeKind::MergedInto, loser),
+        ] {
+            assert_eq!(
+                vault
+                    .identity_topology_mandated_shell_edge_in_txn(&rtxn, &src, kind, &tgt)
+                    .expect("predicate reads"),
+                None,
+                "unledgered shape must not be admitted"
+            );
+        }
+    }
+
+    // After undo the fold mandates nothing for the loser.
+    vault
+        .undo_identity_topology_event(&event_id, &write, 300)
+        .expect("undo merge");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert_eq!(
+        vault
+            .identity_topology_mandated_shell_edge_in_txn(
+                &rtxn,
+                &loser,
+                EdgeKind::MergedInto,
+                &survivor
+            )
+            .expect("predicate reads"),
+        None,
+        "an undone merge no longer mandates its shell edge"
+    );
+}
+
+#[test]
+fn reconcile_materializes_and_tears_shell_edges_from_the_fold() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+
+    // A replicated merge record lands WITHOUT its edge (the record rides
+    // the entities container; the edge may be quarantined or late).
+    // Reconciliation derives the shell edge from the validated ledger.
+    let merge_event = id(0x70);
+    let merge_record = replicated_merge_record(vec![loser], survivor, 50);
+    put_identity_event_record(&vault, merge_event, &merge_record);
+    vault
+        .with_write_txn(|wtxn| {
+            vault.advance_identity_topology_seq_in_txn(wtxn, merge_record.seq)?;
+            vault.reconcile_identity_topology_edges_in_txn(wtxn, &merge_record)
+        })
+        .expect("reconcile ingested merge");
+    assert_eq!(
+        vault
+            .targets(&loser, EdgeKind::MergedInto, None)
+            .expect("read merged_into"),
+        vec![survivor]
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Merged
+    );
+
+    // The replicated undo counter-event tears the edge back down.
+    let undo_event = id(0x71);
+    let undo_record = StoredIdentityOpEvent {
+        seq: 51,
+        at: 300,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Undo {
+            target: merge_event,
+        },
+    };
+    put_identity_event_record(&vault, undo_event, &undo_record);
+    vault
+        .with_write_txn(|wtxn| {
+            vault.advance_identity_topology_seq_in_txn(wtxn, undo_record.seq)?;
+            vault.reconcile_identity_topology_edges_in_txn(wtxn, &undo_record)
+        })
+        .expect("reconcile ingested undo");
+    assert!(
+        vault
+            .targets(&loser, EdgeKind::MergedInto, None)
+            .expect("read merged_into")
+            .is_empty()
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Active
+    );
+}
+
+#[test]
+fn undo_of_ingested_merge_orders_after_it_in_the_fold() {
+    // The P1 cross-vault scenario: a fresh replica ingests merge E
+    // (seq=50) plus its shell edge, then undoes E LOCALLY. Without the
+    // seq join the undo allocates seq 1, folds BEFORE E, is rejected
+    // NotCurrent on the next fold, and ledger and edge truth diverge.
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+    let merge_event = id(0x70);
+    let merge_record = replicated_merge_record(vec![loser], survivor, 50);
+    put_identity_event_record(&vault, merge_event, &merge_record);
+    vault
+        .with_write_txn(|wtxn| {
+            vault.advance_identity_topology_seq_in_txn(wtxn, merge_record.seq)?;
+            vault.reconcile_identity_topology_edges_in_txn(wtxn, &merge_record)
+        })
+        .expect("ingest merge");
+
+    let write = IdentityOpWrite::auto(ClaimSource::UserStated);
+    let (undo_id, transitions) = expect_applied(
+        vault
+            .undo_identity_topology_event(&merge_event, &write, 300)
+            .expect("undo ingested merge"),
+    );
+    assert_eq!(transitions, vec![(loser, EntityLifecycleState::Active)]);
+    let undo_record = vault
+        .identity_topology_event(&undo_id)
+        .expect("read undo")
+        .expect("undo exists");
+    assert!(
+        undo_record.seq > merge_record.seq,
+        "the undo must order after the ingested merge, got {} <= {}",
+        undo_record.seq,
+        merge_record.seq
+    );
+
+    // Ledger fold and edge truth agree: the loser is Active on both axes.
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let fold = fold_identity_topology_log(
+        &vault
+            .identity_topology_events_in_txn(&rtxn)
+            .expect("events"),
+    );
+    assert_eq!(fold.states.get(&loser), Some(&EntityLifecycleState::Active));
+    assert!(fold.rejections.is_empty(), "no NotCurrent divergence");
+    drop(rtxn);
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Active
+    );
 }

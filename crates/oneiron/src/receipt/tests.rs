@@ -1472,3 +1472,73 @@ fn disclosure_stamp_rides_emit_receipts_and_reads_optionally() {
     let read_back = legacy.context_receipt_fields().expect("field-set reads");
     assert_eq!(read_back.disclosure_stamp, None);
 }
+
+/// MS-01 (ARCH-0055): the type-76 receipt scan walks UUID mint order, not
+/// `at` order — pre-fix, a flood of newer-minted BACKDATED `Proposed`
+/// events (`at` below the query window) consumed the whole scan cap and
+/// starved an older-minted in-window receipt. Out-of-window rows must not
+/// charge the cap.
+#[test]
+fn identity_topology_receipt_scan_charges_only_in_window_rows() -> Result<()> {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+    };
+
+    let dir = tempfile::tempdir()?;
+    let mut config = test_config();
+    config.map_size = 256 * 1024 * 1024;
+    let vault = Vault::open(dir.path(), config)?;
+    for seed in [0x61_u8, 0x62, 0x63, 0x64] {
+        vault.put_entity(
+            &entity(seed),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+    let merge = |sources: Vec<EntityId>, survivor: EntityId| {
+        IdentityTopologyOp::Merge(MergeOp {
+            sources,
+            survivor,
+            evidence: IdentityOpEvidence::default(),
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        })
+    };
+
+    // The in-window receipt has the OLDEST mint id (scanned LAST).
+    vault.apply_identity_topology_op(
+        &merge(vec![entity(0x62)], entity(0x61)),
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        1_000,
+    )?;
+
+    // Newer-minted, BACKDATED, parked events — more than the scan cap.
+    let proposed = IdentityOpWrite {
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Proposed,
+        confidence: 1.0,
+        actor: None,
+    };
+    let flood = merge(vec![entity(0x64)], entity(0x63));
+    vault.with_write_txn(|wtxn| {
+        for _ in 0..=MAX_RECEIPT_QUERY_SCAN {
+            vault.apply_identity_topology_op_in_txn(wtxn, &flood, &proposed, 10)?;
+        }
+        Ok(())
+    })?;
+
+    let receipts = vault.receipts(
+        ReceiptQuery::new(10)
+            .with_kind(ReceiptKind::IdentityLifecycle)
+            .with_time_bounds(Some(500), Some(2_000)),
+    )?;
+    assert_eq!(
+        receipts.len(),
+        1,
+        "the in-window merge receipt must not be starved by backdated mints"
+    );
+    assert_eq!(receipts[0].outcome, "merge");
+    assert_eq!(receipts[0].occurred_at, 1_000);
+    Ok(())
+}
