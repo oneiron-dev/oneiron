@@ -384,6 +384,165 @@ fn claimed_time_is_decisional_only_when_sane_and_raw_claims_are_retained() {
 }
 
 #[test]
+fn initial_app_open_mints_at_a_sane_claim_but_rejects_an_insane_old_claim() {
+    const ARRIVAL_MS: u64 = 1_000_000;
+    const SANE_CLAIM_MS: u64 = ARRIVAL_MS - 5_500;
+    const INSANE_CLAIM_MS: u64 = ARRIVAL_MS - 100_001;
+
+    let (_sane_dir, sane_vault) = open_vault();
+    let (_now, clock) = manual_clock(ARRIVAL_MS);
+    let lifecycle = driver(&sane_vault, SessionLifecycleConfig::new(10, 100), clock);
+    let SessionHintEffect::Minted(sane_id) = lifecycle
+        .apply_hint(SessionHint::AppOpen, Some(SANE_CLAIM_MS), ARRIVAL_MS)
+        .expect("sane delayed app open")
+    else {
+        panic!("expected sane app open to mint");
+    };
+    let sane = sane_vault
+        .session_lifecycle_record(&sane_id)
+        .expect("sane record read")
+        .expect("sane record exists");
+    assert_eq!(sane.started_at, SANE_CLAIM_MS / 1_000);
+    assert_ne!(sane.started_at, ARRIVAL_MS / 1_000);
+    assert_eq!(sane.started_effective_ms, SANE_CLAIM_MS);
+    assert_eq!(sane.app_open_hints.len(), 1);
+
+    let (_insane_dir, insane_vault) = open_vault();
+    let (_now, clock) = manual_clock(ARRIVAL_MS);
+    let lifecycle = driver(&insane_vault, SessionLifecycleConfig::new(10, 100), clock);
+    let SessionHintEffect::Minted(insane_id) = lifecycle
+        .apply_hint(SessionHint::AppOpen, Some(INSANE_CLAIM_MS), ARRIVAL_MS)
+        .expect("insane delayed app open")
+    else {
+        panic!("expected insane app open to mint at arrival");
+    };
+    let insane = insane_vault
+        .session_lifecycle_record(&insane_id)
+        .expect("insane record read")
+        .expect("insane record exists");
+    assert_eq!(insane.started_at, ARRIVAL_MS / 1_000);
+    assert_eq!(insane.started_effective_ms, ARRIVAL_MS);
+    assert_eq!(insane.app_open_hints.len(), 1);
+    assert_eq!(insane.app_open_hints[0].claimed_ms, Some(INSANE_CLAIM_MS));
+}
+
+#[test]
+fn delayed_pre_expiry_claim_reopens_after_arrival_closes_the_stale_sitting() {
+    const START_MS: u64 = 1_000_000;
+    const DEADLINE_MS: u64 = START_MS + 10_000;
+    const CLAIMED_MS: u64 = DEADLINE_MS - 1_000;
+    const ARRIVAL_MS: u64 = DEADLINE_MS + 2_000;
+
+    let (_dir, vault) = open_vault();
+    let (_now, clock) = manual_clock(START_MS);
+    let lifecycle = driver(&vault, SessionLifecycleConfig::new(10, 100), clock);
+    let SessionHintEffect::Minted(old_id) = lifecycle
+        .apply_hint(SessionHint::AppOpen, None, START_MS)
+        .expect("mint old sitting")
+    else {
+        panic!("expected old sitting to mint");
+    };
+
+    let SessionHintEffect::Minted(new_id) = lifecycle
+        .apply_hint(SessionHint::AppOpen, Some(CLAIMED_MS), ARRIVAL_MS)
+        .expect("delayed reopen")
+    else {
+        panic!("arrival after expiry must mint a replacement");
+    };
+    assert_ne!(old_id, new_id);
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_SESSION)
+            .expect("session entities")
+            .len(),
+        2
+    );
+    let old = vault
+        .session_lifecycle_record(&old_id)
+        .expect("old record read")
+        .expect("old record exists");
+    assert_eq!(old.end_reason, Some(SessionEndReason::IdleFloor));
+    assert_eq!(old.ended_at, Some(DEADLINE_MS / 1_000));
+    let new = vault
+        .session_lifecycle_record(&new_id)
+        .expect("new record read")
+        .expect("new record exists");
+    assert_eq!(new.started_at, CLAIMED_MS / 1_000);
+    assert_eq!(new.started_effective_ms, CLAIMED_MS);
+    assert_eq!(new.ended_at, None);
+    assert_eq!(meso_attempt_count(&vault), 0);
+}
+
+#[test]
+fn coalesced_activity_straddling_the_ceiling_closes_and_drops_the_post_wall_tail() {
+    const START_MS: u64 = 1_000_000;
+    const CEILING_MS: u64 = START_MS + 30_000;
+    const FIRST_MS: u64 = CEILING_MS - 1_000;
+    const LAST_MS: u64 = CEILING_MS + 1_000;
+
+    let (_dir, vault) = open_vault();
+    let (_now, clock) = manual_clock(START_MS);
+    let lifecycle = driver(
+        &vault,
+        SessionLifecycleConfig::new(10, 30).with_activity_rollup_gap_ms(0),
+        clock,
+    );
+    let SessionHintEffect::Minted(id) = lifecycle
+        .apply_hint(SessionHint::AppOpen, None, START_MS)
+        .expect("mint sitting")
+    else {
+        panic!("expected sitting to mint");
+    };
+    for arrival_ms in [START_MS + 9_000, START_MS + 18_000, START_MS + 27_000] {
+        assert_eq!(
+            lifecycle
+                .apply_hint(SessionHint::Activity, None, arrival_ms)
+                .expect("keep sitting active until its ceiling"),
+            SessionHintEffect::Bumped(id)
+        );
+    }
+
+    let effect = lifecycle
+        .apply_hint_carrier(SessionHintCarrier {
+            hint: SessionHint::Activity,
+            first: SessionHintStamp {
+                claimed_ms: None,
+                arrival_ms: FIRST_MS,
+            },
+            last: SessionHintStamp {
+                claimed_ms: None,
+                arrival_ms: LAST_MS,
+            },
+            count: 2,
+        })
+        .expect("apply ceiling-straddling carrier");
+    assert_eq!(effect, SessionHintEffect::Bumped(id));
+    assert_eq!(vault.open_session().expect("open read"), None);
+    let record = vault
+        .session_lifecycle_record(&id)
+        .expect("record read")
+        .expect("record exists");
+    assert_eq!(record.end_reason, Some(SessionEndReason::LifetimeCeiling));
+    assert_eq!(record.ended_at, Some(CEILING_MS / 1_000));
+    assert_eq!(record.last_activity, FIRST_MS / 1_000);
+    assert!(record.last_activity <= CEILING_MS / 1_000);
+    assert_eq!(record.activity_periods.len(), 4);
+    let capped = record.activity_periods[3];
+    assert_eq!(capped.count, 1);
+    assert_eq!(capped.first.effective_ms, FIRST_MS);
+    assert_eq!(capped.last, capped.first);
+    assert_eq!(
+        record
+            .activity_periods
+            .iter()
+            .map(|period| period.count)
+            .sum::<u64>(),
+        4,
+        "the post-ceiling endpoint was not attributed to the sitting"
+    );
+}
+
+#[test]
 fn app_open_mints_a_zero_turn_session() {
     let (_dir, vault) = open_vault();
     let (_now, clock) = manual_clock(1_000_000);

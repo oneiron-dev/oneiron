@@ -238,9 +238,11 @@ impl<'v> SessionLifecycleDriver<'v> {
 
     fn apply_hint_carrier(&self, carrier: SessionHintCarrier) -> Result<SessionHintEffect> {
         let mut open = self.vault.open_session()?;
-        let first_floor_ms = open.as_ref().map_or(carrier.first.arrival_ms, |session| {
-            session.last_effective_ms
-        });
+        let ceiling_ms = self.config.lifetime_ceiling_secs.saturating_mul(1_000);
+        let first_floor_ms = open.as_ref().map_or_else(
+            || carrier.first.arrival_ms.saturating_sub(ceiling_ms),
+            |session| session.last_effective_ms,
+        );
         let first = self.hint_timestamp(carrier.first, first_floor_ms);
         let last = if carrier.count == 1 {
             first
@@ -248,11 +250,12 @@ impl<'v> SessionLifecycleDriver<'v> {
             self.hint_timestamp(carrier.last, first.effective_ms)
         };
 
-        // Ordering is decided only by the first effective endpoint. If the
-        // sitting was already due then, close at the exact due instant before
-        // applying the fact (an AppOpen may subsequently mint a replacement).
+        // A prior sitting expires in real arrival time: an earlier sane claim
+        // cannot retroactively keep it alive. Close at the exact due instant
+        // before applying the fact at its effective time (an AppOpen may then
+        // mint a replacement stamped at its claimed time).
         if let Some(session) = open
-            && self.expiry_ms(session.started_at, session.last_activity) <= first.effective_ms
+            && self.expiry_ms(session.started_at, session.last_activity) <= first.arrival_ms
         {
             let due_at_ms = self.expiry_ms(session.started_at, session.last_activity);
             open = match self.close_due_session_at(due_at_ms)? {
@@ -274,8 +277,28 @@ impl<'v> SessionLifecycleDriver<'v> {
                     .map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped)),
             },
             SessionHint::Activity => {
-                if open.is_none() {
+                let Some(session) = open else {
                     return Ok(SessionHintEffect::NoOp);
+                };
+                let ceiling_at_ms = session
+                    .started_at
+                    .saturating_add(self.config.lifetime_ceiling_secs)
+                    .saturating_mul(1_000);
+                if first.effective_ms <= ceiling_at_ms && last.effective_ms > ceiling_at_ms {
+                    // The carrier retains only its endpoints, so only `first`
+                    // is known to be at/before the hard wall. Attribute that
+                    // point to the old sitting, then close at the ceiling;
+                    // the post-ceiling endpoint and count attach nowhere.
+                    let bumped = self.vault.record_session_activity_period(
+                        SessionActivityPeriod {
+                            first,
+                            last: first,
+                            count: 1,
+                        },
+                        self.config.activity_rollup_gap_ms,
+                    )?;
+                    self.close_due_session_at(ceiling_at_ms)?;
+                    return Ok(bumped.map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped));
                 }
                 Ok(self
                     .vault
