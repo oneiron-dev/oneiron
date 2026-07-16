@@ -706,7 +706,7 @@ impl Vault {
         let mut entries = Vec::new();
         for row in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (_, bytes) = row?;
-            entries.push(decode_stored_oplog_entry(bytes)?);
+            entries.push(decode_stored_oplog_entry(&bytes)?);
         }
         entries.sort_by_key(|entry| entry.seq);
         Ok(entries)
@@ -994,7 +994,7 @@ impl Vault {
                 .ok_or(Error::InvalidRepoMutationRecord(
                     "repo mutation oplog row disappeared before completion",
                 ))?;
-        let mut stored = decode_stored_oplog_entry(raw)?;
+        let mut stored = decode_stored_oplog_entry(&raw)?;
         stored.status = status.as_str().to_owned();
         stored.failure = failure;
         stored.finished_at_ms = Some(finished_at_ms);
@@ -1685,7 +1685,7 @@ fn supersede_repo_conflict_claim(
         .get(&wtxn, new_id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
     let new_header =
-        EntityMetadataHeader::parse(new_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        EntityMetadataHeader::parse(&new_raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if new_header.entity_type != ENTITY_TYPE_CLAIM {
         return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
     }
@@ -1704,7 +1704,7 @@ fn supersede_repo_conflict_claim(
         .get(&wtxn, old_id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
     let old_header =
-        EntityMetadataHeader::parse(old_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        EntityMetadataHeader::parse(&old_raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if old_header.entity_type != ENTITY_TYPE_CLAIM {
         return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
     }
@@ -3036,7 +3036,7 @@ fn allocate_next_repo_mutation_seq(
     let key = repo_mutation_seq_key(repo_key_hash);
     let current = match vault.store.vault_meta.get(wtxn, &key)? {
         Some(bytes) => {
-            let bytes: [u8; 8] = bytes.try_into().map_err(|_| {
+            let bytes: [u8; 8] = bytes.as_ref().try_into().map_err(|_| {
                 Error::InvalidRepoMutationRecord("repo mutation seq row must be 8 bytes")
             })?;
             u64::from_be_bytes(bytes)

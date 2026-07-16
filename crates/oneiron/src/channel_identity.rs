@@ -838,7 +838,7 @@ impl Vault {
             .get(&wtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -865,7 +865,7 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -885,14 +885,14 @@ impl Vault {
             .prefix_iter(&rtxn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
         {
             let (key, _) = entry?;
-            let id = entity_id_from_type_index_key(key)?;
+            let id = entity_id_from_type_index_key(&key)?;
             let raw = self
                 .store
                 .entities
                 .get(&rtxn, id.as_bytes())?
                 .ok_or(Error::CorruptedIndex("type index row without entity"))?;
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
                 return Err(Error::CorruptedIndex("type index row kind mismatch"));
             }
@@ -916,7 +916,7 @@ impl Vault {
             .prefix_iter(txn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
         {
             let (key, _) = entry?;
-            let existing_id = entity_id_from_type_index_key(key)?;
+            let existing_id = entity_id_from_type_index_key(&key)?;
             if existing_id == *id {
                 continue;
             }
@@ -926,7 +926,7 @@ impl Vault {
                 .get(txn, existing_id.as_bytes())?
                 .ok_or(Error::CorruptedIndex("type index row without entity"))?;
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
                 return Err(Error::CorruptedIndex("type index row kind mismatch"));
             }

@@ -451,7 +451,7 @@ impl<'a> DreamerTournamentEvidenceStore<'a> {
         let mut evidence = Vec::new();
         for row in self.vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (_key, raw) = row?;
-            evidence.push(decode_tournament_evidence(raw)?);
+            evidence.push(decode_tournament_evidence(&raw)?);
         }
         evidence.sort_by(|left, right| {
             (left.round, left.candidate_ref.as_str())

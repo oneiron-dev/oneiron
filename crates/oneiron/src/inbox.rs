@@ -285,7 +285,7 @@ impl Vault {
             return Ok(InboxReviewDial::default());
         };
         let token =
-            std::str::from_utf8(raw).map_err(|_| Error::CorruptedIndex("inbox review dial"))?;
+            std::str::from_utf8(&raw).map_err(|_| Error::CorruptedIndex("inbox review dial"))?;
         InboxReviewDial::parse(token).ok_or(Error::CorruptedIndex("inbox review dial"))
     }
 
@@ -1019,7 +1019,7 @@ fn accept_member_in_txn(
     let Some(raw) = vault.store.entities.get(wtxn, id.as_bytes())? else {
         return Err(Error::CorruptedIndex("pending gate consent"));
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
     }

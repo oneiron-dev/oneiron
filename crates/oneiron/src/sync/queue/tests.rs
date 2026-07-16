@@ -336,7 +336,12 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
         "clear_all must drop queued embed-job rows",
     );
     assert_eq!(
-        vault.store.sync_queue.get(&rtxn, &sweep_key).unwrap(),
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, &sweep_key)
+            .unwrap()
+            .as_deref(),
         Some(sweep_value.as_slice()),
         "clear_all must preserve hard-erase sweep jobs",
     );
@@ -354,7 +359,8 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
             .store
             .sync_queue
             .get(&rtxn, quarantine::LAST_QUARANTINE_SEQ_KEY)
-            .unwrap(),
+            .unwrap()
+            .as_deref(),
         Some(quarantine_seq.to_le_bytes().as_slice()),
         "clear_all must preserve the quarantine sequence cursor",
     );
@@ -363,7 +369,8 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
             .store
             .sync_queue
             .get(&rtxn, LAST_UPDATE_SEQ_KEY)
-            .unwrap(),
+            .unwrap()
+            .as_deref(),
         Some(update_seq.to_le_bytes().as_slice()),
         "clear_all must preserve the update sequence cursor",
     );
@@ -372,7 +379,8 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
             .store
             .sync_queue
             .get(&rtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY)
-            .unwrap(),
+            .unwrap()
+            .as_deref(),
         Some(sweep_seq.to_le_bytes().as_slice()),
         "clear_all must preserve the hard-erase sweep cursor",
     );
@@ -381,7 +389,8 @@ fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
             .store
             .sync_queue
             .get(&rtxn, unknown_key.as_slice())
-            .unwrap(),
+            .unwrap()
+            .as_deref(),
         Some(unknown_value.as_slice()),
         "clear_all must preserve unknown key families",
     );
@@ -424,7 +433,12 @@ fn push_delete_bearing_writes_literal_sidecar_marker() {
     let expected_marker: Vec<u8> = [b'd', b':', 0, 0, 0, 0, 0, 0, 0, 2].to_vec();
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
-        vault.store.sync_queue.get(&rtxn, &expected_marker).unwrap(),
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, &expected_marker)
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice()),
         "delete-bearing sidecar marker must be d: + seq u64 BE",
     );
@@ -1135,7 +1149,8 @@ fn clear_updates_and_clear_through_preserve_quarantine_rows() {
                 .store
                 .sync_queue
                 .get(&rtxn, quarantine::LAST_QUARANTINE_SEQ_KEY)
-                .unwrap(),
+                .unwrap()
+                .as_deref(),
             Some(quarantine_seq.to_le_bytes().as_slice()),
             "{label} must preserve the quarantine sequence cursor",
         );
@@ -1144,7 +1159,8 @@ fn clear_updates_and_clear_through_preserve_quarantine_rows() {
                 .store
                 .sync_queue
                 .get(&rtxn, quarantine::QUARANTINE_EVICTIONS_KEY)
-                .unwrap(),
+                .unwrap()
+                .as_deref(),
             Some(evictions_value.as_slice()),
             "{label} must preserve the quarantine eviction counter",
         );

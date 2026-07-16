@@ -280,7 +280,7 @@ pub(crate) fn persist_window_update_in_txn(
     // `u:w:{window}:00000001` before the row was corrupted.
     let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
         None => 0,
-        Some(raw) => decode_observer_u_seq(raw)?,
+        Some(raw) => decode_observer_u_seq(&raw)?,
     };
     // checked_add surfaces overflow as a typed error rather than
     // `wrapping_add`-ing to 0 and silently overwriting update key
@@ -997,7 +997,7 @@ fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob: &[u8]) -> 
     };
     matches!(
         vault.store.entities.get(&rtxn, id.as_bytes()),
-        Ok(Some(existing)) if existing == blob
+        Ok(Some(existing)) if *existing == *blob
     )
 }
 
@@ -1010,7 +1010,7 @@ fn committed_edge_state_matches(vault: &Vault, edge_key: &[u8; 33], buf: &[u8]) 
     };
     matches!(
         vault.store.edges_out.get(&rtxn, edge_key),
-        Ok(Some(existing)) if existing == buf
+        Ok(Some(existing)) if *existing == *buf
     )
 }
 
@@ -1621,7 +1621,7 @@ fn materialize_entity_blob_in_txn(
     let quota_debit = if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
         crate::deletion::validate_redaction_receipt_body(data)?;
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
-            if existing == blob {
+            if *existing == *blob {
                 return Ok(false);
             }
             // ONE-1087 designed exception: the sweep executor's receipt
@@ -1632,7 +1632,7 @@ fn materialize_entity_blob_in_txn(
             // stale echo: idempotent skip, never quarantine, never
             // overwrite local. Every other divergence stays on the M4-07
             // quarantine path.
-            if crate::deletion::redaction_receipt_is_stale_finalization_echo(existing, blob) {
+            if crate::deletion::redaction_receipt_is_stale_finalization_echo(&existing, blob) {
                 tracing::debug!(
                     entity = %key,
                     "observer-b: stale pre-finalization receipt echo — keeping finalized local"
@@ -1656,7 +1656,7 @@ fn materialize_entity_blob_in_txn(
         )?
     } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())?
-            && existing == blob
+            && *existing == *blob
         {
             return Ok(false);
         }
@@ -1904,7 +1904,7 @@ fn ensure_entity_materialized_from_crdt(
     }
 
     if let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
-        if companion_register_blob_is_local_only(raw)? {
+        if companion_register_blob_is_local_only(&raw)? {
             return Ok(EndpointHydration::LocalOnly);
         }
         return Ok(EndpointHydration::Ready);

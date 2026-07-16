@@ -1051,7 +1051,7 @@ fn disclosure_admits_candidate(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(false);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
     ctx.admits(store, rtxn, id, header.entity_type, claim_bodies.get(id))
@@ -1076,7 +1076,7 @@ fn disclosure_admits_target(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(false);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
     ctx.admits(store, rtxn, id, header.entity_type, None)
@@ -1184,7 +1184,7 @@ fn validate_pack_entity_reference(
             PACK_VALIDATION_MISSING_PAYLOAD,
         ));
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
     validate_entity_time_ordering(*id, header)?;
@@ -1318,10 +1318,10 @@ fn load_pack_quarantine_index(store: &Store, rtxn: &RoTxn<'_>) -> Result<PackQua
     let iter = store.sync_queue.prefix_iter(rtxn, b"x:")?;
     for entry in iter {
         let (key, value) = entry?;
-        if !is_quarantine_key(key) {
+        if !is_quarantine_key(&key) {
             continue;
         }
-        let record = rmp_serde::from_slice::<PackQuarantineRecord>(value)
+        let record = rmp_serde::from_slice::<PackQuarantineRecord>(&value)
             .map_err(|_| Error::CorruptedIndex(PACK_QUARANTINE_ROW))?;
         if record.container != PackQuarantineContainer::Entities {
             continue;
@@ -1793,7 +1793,7 @@ fn hydrate_entity(
         return Ok(None);
     };
 
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
 
@@ -1823,7 +1823,7 @@ fn hydrate_entity(
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
-            None => decode_entity_fields(raw, header.entity_type).unwrap_or_default(),
+            None => decode_entity_fields(&raw, header.entity_type).unwrap_or_default(),
         })
     } else {
         None
@@ -2089,7 +2089,7 @@ fn read_vector(vault: &Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<
         return Ok(None);
     };
 
-    let vector = le_bytes_to_f32_vec(raw).map_err(|_| Error::CorruptedIndex("entity vector"))?;
+    let vector = le_bytes_to_f32_vec(&raw).map_err(|_| Error::CorruptedIndex("entity vector"))?;
 
     if vector.len() != vault.config.dimensions {
         return Err(Error::CorruptedIndex("entity vector"));
@@ -2149,7 +2149,7 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
         if edges.len() >= MAX_EDGE_SCAN_RESULTS {
             return Err(Error::CorruptedIndex("edge scan exceeded bound"));
         }
-        edges.push(crate::vault::parse_edge_record(key, value)?);
+        edges.push(crate::vault::parse_edge_record(&key, &value)?);
     }
 
     Ok(edges)

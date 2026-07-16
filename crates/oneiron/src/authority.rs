@@ -4326,7 +4326,7 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -4360,7 +4360,7 @@ impl Vault {
                 .store
                 .sync_state
                 .get(wtxn, floor_key)?
-                .and_then(decode_authority_first_seen_secs)
+                .and_then(|raw| decode_authority_first_seen_secs(&raw))
                 .unwrap_or(0);
             let observed_floor = authority_observation_secs_for_domain(
                 self.store.authority_clock_domain,
@@ -4379,13 +4379,13 @@ impl Vault {
                 .prefix_iter(wtxn, &[ENTITY_TYPE_AUTHORITY_LOG])?
             {
                 let (key, _) = entry?;
-                let id = entity_id_from_type_index_key(key)?;
+                let id = entity_id_from_type_index_key(&key)?;
                 let raw = self
                     .store
                     .entities
                     .get(wtxn, id.as_bytes())?
                     .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-                let header = EntityMetadataHeader::parse(raw)
+                let header = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("entity header"))?;
                 if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
                     return Err(Error::CorruptedIndex("type index row kind mismatch"));
@@ -4434,7 +4434,7 @@ impl Vault {
             .store
             .sync_state
             .get(&rtxn, authority_first_seen_clock_sync_key())?
-            .and_then(decode_authority_first_seen_secs)
+            .and_then(|raw| decode_authority_first_seen_secs(&raw))
             .unwrap_or(0);
         for entry in self
             .store
@@ -4442,14 +4442,14 @@ impl Vault {
             .prefix_iter(&rtxn, &[ENTITY_TYPE_AUTHORITY_LOG])?
         {
             let (key, _) = entry?;
-            let id = entity_id_from_type_index_key(key)?;
+            let id = entity_id_from_type_index_key(&key)?;
             let raw = self
                 .store
                 .entities
                 .get(&rtxn, id.as_bytes())?
                 .ok_or(Error::CorruptedIndex("type index row without entity"))?;
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
                 return Err(Error::CorruptedIndex("type index row kind mismatch"));
             }
@@ -4459,7 +4459,7 @@ impl Vault {
                 .store
                 .sync_state
                 .get(&rtxn, authority_first_seen_sync_key(&hash).as_str())?
-                .and_then(decode_authority_first_seen_secs)
+                .and_then(|raw| decode_authority_first_seen_secs(&raw))
             {
                 first_seen_at_secs.insert(hash, first_seen);
             }
@@ -4471,7 +4471,7 @@ impl Vault {
                 .store
                 .sync_state
                 .get(wtxn, authority_first_seen_clock_sync_key())?
-                .and_then(decode_authority_first_seen_secs)
+                .and_then(|raw| decode_authority_first_seen_secs(&raw))
                 .unwrap_or(previous_floor);
             let now_secs = authority_observation_secs_for_domain(
                 self.store.authority_clock_domain,

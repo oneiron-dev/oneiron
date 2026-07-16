@@ -536,7 +536,7 @@ impl Vault {
             .store
             .vault_meta
             .get(&wtxn, &key)?
-            .map(decode_code_run_replay_record)
+            .map(|raw| decode_code_run_replay_record(&raw))
             .transpose()?;
         let current_generation = current
             .as_ref()
@@ -561,7 +561,7 @@ impl Vault {
         self.store
             .vault_meta
             .get(&rtxn, &code_run_replay_record_key(run_id))?
-            .map(decode_code_run_replay_record)
+            .map(|raw| decode_code_run_replay_record(&raw))
             .transpose()
     }
 
@@ -589,7 +589,7 @@ impl Vault {
             .store
             .vault_meta
             .get(&rtxn, &code_run_raw_output_key(output))?
-            .map(<[u8]>::to_vec)
+            .map(|value| value.to_vec())
         else {
             return Ok(None);
         };
@@ -1608,7 +1608,7 @@ impl<'a> HostSelfDispatcher<'a> {
             .entities
             .get(&rtxn, actor.entity_ref().as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let actor_header = crate::batch::EntityMetadataHeader::parse(actor_raw)
+        let actor_header = crate::batch::EntityMetadataHeader::parse(&actor_raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
         crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
     }

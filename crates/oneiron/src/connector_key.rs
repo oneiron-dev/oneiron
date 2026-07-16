@@ -1959,7 +1959,7 @@ fn load_budget_row_states<'a>(
     for (row_index, budget) in record_budget_rows(record)? {
         let usage_key = connector_key_usage_row_key(key_id, row_index);
         let mut usage = match store.vault_meta.get(txn, &usage_key)? {
-            Some(bytes) => ConnectorKeyUsage::decode(bytes)?,
+            Some(bytes) => ConnectorKeyUsage::decode(&bytes)?,
             None => ConnectorKeyUsage::default(),
         };
         usage.touch(&budget.window, budget.limit, now);
@@ -2136,7 +2136,7 @@ fn read_connector_key_in_txn(
     let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CONNECTOR_KEY {
         return Err(Error::InvalidEntityType(header.entity_type));
     }
@@ -2161,7 +2161,7 @@ pub(crate) fn governing_connector_key(
     let mut candidate_ids = Vec::new();
     for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
         let (key, _) = entry?;
-        candidate_ids.push(connector_key_index_entity_id(key, connector)?);
+        candidate_ids.push(connector_key_index_entity_id(&key, connector)?);
     }
 
     let mut exact: Vec<(EntityId, ConnectorKeyRecord)> = Vec::new();
@@ -2208,7 +2208,7 @@ pub(crate) fn rewrite_connector_key_in_txn(
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Err(Error::EntityNotFound);
     };
-    let header = EntityMetadataHeader::parse(raw)
+    let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("connector key entity header"))?;
     if header.entity_type != ENTITY_TYPE_CONNECTOR_KEY {
         return Err(Error::CorruptedIndex("connector key entity type"));
@@ -2317,7 +2317,7 @@ impl Vault {
         let mut sibling_ids = Vec::new();
         for entry in self.store.vault_meta.prefix_iter(&wtxn, &prefix)? {
             let (key, _) = entry?;
-            sibling_ids.push(connector_key_index_entity_id(key, &record.connector)?);
+            sibling_ids.push(connector_key_index_entity_id(&key, &record.connector)?);
         }
         for sibling_id in sibling_ids {
             let sibling = read_connector_key_in_txn(&self.store, &wtxn, &sibling_id)?
@@ -2552,7 +2552,7 @@ impl Vault {
 
         let usage_key = connector_key_usage_row_key(id, row_index);
         let mut usage = match self.store.vault_meta.get(&wtxn, &usage_key)? {
-            Some(bytes) => ConnectorKeyUsage::decode(bytes)?,
+            Some(bytes) => ConnectorKeyUsage::decode(&bytes)?,
             None => ConnectorKeyUsage::default(),
         };
 
@@ -2766,7 +2766,7 @@ impl Vault {
         let new_record = decode_connector_key_body(&data)?;
         let new_index_key = connector_key_index_key(&new_record.connector, id)?;
         let old_index_key = if let Some(raw) = self.store.entities.get(&*wtxn, id.as_bytes())? {
-            let Some(header) = EntityMetadataHeader::parse(raw) else {
+            let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 return Err(Error::CorruptedIndex("connector key entity header"));
             };
             if header.entity_type != ENTITY_TYPE_CONNECTOR_KEY {

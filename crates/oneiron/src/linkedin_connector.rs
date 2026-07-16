@@ -1958,7 +1958,12 @@ fn release_linkedin_inbox_message_claim(
 ) -> Result<()> {
     let seen_key = linkedin_inbox_seen_key(config, message);
     vault.with_write_txn(|wtxn| {
-        if vault.store.sync_state.get(wtxn, &seen_key)? == Some(LINKEDIN_INBOX_SYNC_CLAIMED_VALUE) {
+        if vault
+            .store
+            .sync_state
+            .get(wtxn, &seen_key)?
+            .is_some_and(|value| *value == *LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)
+        {
             vault.store.sync_state.delete(wtxn, &seen_key)?;
         }
         Ok(())
@@ -1994,7 +1999,12 @@ fn finalize_linkedin_inbox_seen_message(
     })?;
 
     vault.with_write_txn(|wtxn| {
-        if vault.store.sync_state.get(wtxn, &seen_key)? != Some(LINKEDIN_INBOX_SYNC_CLAIMED_VALUE) {
+        if vault
+            .store
+            .sync_state
+            .get(wtxn, &seen_key)?
+            .is_none_or(|value| *value != *LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)
+        {
             return Err(Error::ConcurrentWrite(
                 "LinkedIn inbox sync claim missing before finalization",
             ));
@@ -2024,7 +2034,7 @@ pub fn linkedin_inbox_sync_provenance_rows(
     {
         let (_, value) = row?;
         let decoded: LinkedInInboxSyncProvenanceRow =
-            serde_json::from_slice(value).map_err(|err| {
+            serde_json::from_slice(&value).map_err(|err| {
                 Error::CorruptedIndex(match err.classify() {
                     serde_json::error::Category::Io => "LinkedIn inbox provenance io",
                     serde_json::error::Category::Syntax => "LinkedIn inbox provenance syntax",

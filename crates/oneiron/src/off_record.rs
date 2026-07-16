@@ -308,7 +308,7 @@ fn session_record_in_txn(
     else {
         return Ok(None);
     };
-    let record = decode_off_record_session(bytes)?;
+    let record = decode_off_record_session(&bytes)?;
     if record.session_ref != session_ref {
         return Err(Error::CorruptedIndex("off-record session record"));
     }
@@ -328,11 +328,12 @@ fn first_open_off_record_session_in_txn(store: &Store, rtxn: &RoTxn<'_>) -> Resu
     {
         let (key, bytes) = row?;
         let suffix = key
+            .as_ref()
             .strip_prefix(OFF_RECORD_SESSION_KEY_PREFIX)
             .ok_or(Error::CorruptedIndex("off-record session key"))?;
         let session_ref = std::str::from_utf8(suffix)
             .map_err(|_| Error::CorruptedIndex("off-record session key"))?;
-        let record = decode_off_record_session(bytes)?;
+        let record = decode_off_record_session(&bytes)?;
         if record.session_ref != session_ref {
             return Err(Error::CorruptedIndex("off-record session record"));
         }
@@ -364,7 +365,7 @@ pub(crate) fn guard_off_record_entity_put(
     let rejected = || Error::OffRecordFencedTurnWriteRejected {
         turn_ref: id.to_hex(),
     };
-    let Some(session_ref) = std::str::from_utf8(fence_value)
+    let Some(session_ref) = std::str::from_utf8(&fence_value)
         .ok()
         .filter(|session_ref| !session_ref.is_empty())
     else {
@@ -512,7 +513,7 @@ impl Vault {
             }
             let fence_key = off_record_fence_key(turn_id);
             if let Some(existing) = self.store.vault_meta.get(wtxn, &fence_key)? {
-                if existing == session_ref.as_bytes() {
+                if *existing == *session_ref.as_bytes() {
                     #[cfg(feature = "sync")]
                     crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
                     return Ok(());
@@ -723,7 +724,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        Ok(Some(decode_off_record_promote(bytes)?))
+        Ok(Some(decode_off_record_promote(&bytes)?))
     }
 
     /// Opens the session-local emit receipt log bound to a live off-record

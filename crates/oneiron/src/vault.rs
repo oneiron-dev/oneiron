@@ -5,8 +5,6 @@
 use std::path::Path;
 use std::time::Instant;
 
-use heed::Database;
-use heed::types::Bytes;
 use serde::Serialize;
 
 use crate::affect::Vad;
@@ -26,6 +24,7 @@ use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
+use crate::overlay_db::OverlayDb;
 use crate::pipeline::ScoredEntity;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration, TypeByteBand};
@@ -160,7 +159,7 @@ fn first_child_of_parent(
     let prefix = edge_kind_prefix(node, EdgeKind::ChildOf);
     if let Some(entry) = store.edges_out.prefix_iter(rtxn, &prefix)?.next() {
         let (key, value) = entry?;
-        return Ok(Some(parse_edge_record(key, value)?.target));
+        return Ok(Some(parse_edge_record(&key, &value)?.target));
     }
     Ok(None)
 }
@@ -546,7 +545,7 @@ impl Vault {
             return Ok(None);
         };
 
-        if EntityMetadataHeader::parse(bytes).is_none() {
+        if EntityMetadataHeader::parse(&bytes).is_none() {
             return Err(Error::CorruptedIndex("entity header"));
         }
 
@@ -563,7 +562,7 @@ impl Vault {
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        EntityMetadataHeader::parse(raw)
+        EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("entity metadata"))
             .map(Some)
     }
@@ -580,7 +579,7 @@ impl Vault {
             return Ok(None);
         };
 
-        let vector = le_bytes_to_f32_vec(bytes)?;
+        let vector = le_bytes_to_f32_vec(&bytes)?;
         if vector.len() != self.config.dimensions {
             // Persisted-data corruption — the LMDB row decoded to a vector
             // whose length does not match the configured dimensionality.
@@ -848,7 +847,7 @@ impl Vault {
         let mut edges = Vec::new();
         for entry in db.prefix_iter(&rtxn, prefix.as_slice())? {
             let (key, value) = entry?;
-            let edge = parse_edge_record(key, value)?;
+            let edge = parse_edge_record(&key, &value)?;
             if min_weight.is_some_and(|min| edge.weight < min) {
                 continue;
             }
@@ -1082,7 +1081,7 @@ impl Vault {
             .get(&rtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(header.learned_at)
     }
 
@@ -1092,7 +1091,7 @@ impl Vault {
         let Some((key, _)) = self.store.temporal_learned.last(&rtxn)? else {
             return Ok(None);
         };
-        require_key_len(key, 24, "temporal learned key")?;
+        require_key_len(&key, 24, "temporal learned key")?;
         Ok(Some(u64::from_be_bytes(key[..8].try_into().map_err(
             |_| Error::CorruptedIndex("temporal learned key"),
         )?)))
@@ -1106,7 +1105,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         for entry in self.store.temporal_learned.rev_iter(&rtxn)? {
             let (key, _) = entry?;
-            require_key_len(key, 24, "temporal learned key")?;
+            require_key_len(&key, 24, "temporal learned key")?;
             let learned_at = u64::from_be_bytes(
                 key[..8]
                     .try_into()
@@ -1124,7 +1123,7 @@ impl Vault {
                 .get(&rtxn, id.as_bytes())?
                 .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?;
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if !excluded_types.contains(&header.entity_type) {
                 return Ok(Some(learned_at));
             }
@@ -1153,7 +1152,7 @@ impl Vault {
             ),
         )? {
             let (key, _) = entry?;
-            require_key_len(key, 24, "temporal learned key")?;
+            require_key_len(&key, 24, "temporal learned key")?;
             // Cap check BEFORE push so an exact-MAX result set returns Ok,
             // matching scan_edges semantics. Only an MAX+1-th in-range row
             // triggers IndexOverflow.
@@ -1269,7 +1268,7 @@ impl Vault {
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
-        self.with_write_txn(|wtxn| Ok(self.store.sync_state.delete(wtxn, key)?))
+        self.with_write_txn(|wtxn| self.store.sync_state.delete(wtxn, key))
     }
 
     /// Lists all keys with the given prefix in sync_state for sync integration
@@ -1352,9 +1351,10 @@ impl Vault {
         let Some(raw_id) = self.store.short_ids.get(&rtxn, &forward_key)? else {
             return Ok(None);
         };
-        require_key_len(raw_id, ENTITY_ID_LEN, "short id entity id")?;
+        require_key_len(&raw_id, ENTITY_ID_LEN, "short id entity id")?;
         let id = EntityId::from_bytes(
             raw_id
+                .as_ref()
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("short id entity id"))?,
         )
@@ -1378,7 +1378,7 @@ impl Vault {
             }));
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         let entity_type = header.entity_type;
         let learned_at = header.learned_at;
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
@@ -1413,7 +1413,7 @@ impl Vault {
             return Ok(false);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if raw.len() != ENTITY_METADATA_HEADER_LEN {
             return Ok(false);
         }
@@ -1438,7 +1438,7 @@ impl Vault {
                 return Err(Error::IndexOverflow("entities_by_type"));
             }
             let (key, _) = entry?;
-            ids.push(entity_id_from_type_index_key(key)?);
+            ids.push(entity_id_from_type_index_key(&key)?);
         }
         Ok(ids)
     }
@@ -1481,7 +1481,7 @@ impl Vault {
             if key.first() != Some(&entity_type) {
                 break;
             }
-            ids.push(entity_id_from_type_index_key(key)?);
+            ids.push(entity_id_from_type_index_key(&key)?);
             if ids.len() >= limit {
                 break;
             }
@@ -1519,7 +1519,7 @@ impl Vault {
             }
 
             let (key, _) = entry?;
-            require_key_len(key, 24, "temporal learned key")?;
+            require_key_len(&key, 24, "temporal learned key")?;
             let learned_at = u64::from_be_bytes(
                 key[..8]
                     .try_into()
@@ -1536,7 +1536,7 @@ impl Vault {
                 continue;
             };
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != entity_type {
                 continue;
             }
@@ -1564,7 +1564,7 @@ impl Vault {
         let mut total = 0_u64;
         for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
             let (key, _) = entry?;
-            entity_id_from_type_index_key(key)?;
+            entity_id_from_type_index_key(&key)?;
             total = total
                 .checked_add(1)
                 .ok_or(Error::IndexOverflow("count_entities_by_type"))?;
@@ -1588,7 +1588,7 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(Some(header.entity_type))
     }
 
@@ -1665,7 +1665,7 @@ impl Vault {
     pub(crate) fn filtered_edge_peers(
         &self,
         rtxn: &heed::RoTxn<'_>,
-        db: &Database<Bytes, Bytes>,
+        db: &OverlayDb,
         prefix_id: &EntityId,
         kind: EdgeKind,
         peer_type: Option<u8>,
@@ -1678,7 +1678,7 @@ impl Vault {
                 return Err(Error::IndexOverflow(overflow_context));
             }
             let (key, value) = entry?;
-            let peer = parse_edge_record(key, value)?.target;
+            let peer = parse_edge_record(&key, &value)?.target;
 
             if let Some(req_type) = peer_type
                 && !self.entity_has_type(rtxn, &peer, req_type)?
@@ -1693,7 +1693,7 @@ impl Vault {
 
     fn filtered_edge_peers_page(
         &self,
-        db: &Database<Bytes, Bytes>,
+        db: &OverlayDb,
         prefix_id: &EntityId,
         kind: EdgeKind,
         peer_type: Option<u8>,
@@ -1723,7 +1723,7 @@ impl Vault {
             if !key.starts_with(&prefix) {
                 break;
             }
-            let peer = parse_edge_record(key, value)?.target;
+            let peer = parse_edge_record(&key, &value)?.target;
 
             if let Some(req_type) = peer_type
                 && !self.entity_has_type(&rtxn, &peer, req_type)?
@@ -1755,7 +1755,7 @@ impl Vault {
         let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
             return Ok(false);
         };
-        let Some(header) = EntityMetadataHeader::parse(raw) else {
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Ok(false);
         };
         Ok(header.entity_type == expected_type)
@@ -1794,7 +1794,7 @@ impl Vault {
             let child_prefix = edge_kind_prefix(&node, EdgeKind::ChildOf);
             for entry in self.store.edges_in.prefix_iter(&rtxn, &child_prefix)? {
                 let (key, value) = entry?;
-                let child = parse_edge_record(key, value)?.target;
+                let child = parse_edge_record(&key, &value)?.target;
                 if visited.insert(child) {
                     if result.len() + frontier.len() >= MAX_SUBTREE_RESULTS {
                         return Err(Error::IndexOverflow("subtree"));
@@ -1963,7 +1963,7 @@ impl ActorBound<'_> {
 }
 
 fn scan_edges(
-    database: &Database<Bytes, Bytes>,
+    database: &OverlayDb,
     rtxn: &heed::RoTxn<'_>,
     prefix: &[u8; 16],
 ) -> Result<Vec<EdgeInfo>> {
@@ -1976,7 +1976,7 @@ fn scan_edges(
             return Err(Error::IndexOverflow("scan_edges"));
         }
         let (key, value) = entry?;
-        edges.push(parse_edge_record(key, value)?);
+        edges.push(parse_edge_record(&key, &value)?);
     }
     Ok(edges)
 }
@@ -2152,6 +2152,7 @@ fn read_text_schema_version(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Opt
         return Ok(None);
     };
     let bytes: [u8; 2] = raw
+        .as_ref()
         .try_into()
         .map_err(|_| Error::CorruptedIndex("text schema version"))?;
     Ok(Some(u16::from_le_bytes(bytes)))
@@ -2162,6 +2163,7 @@ fn read_hash_32(store: &Store, rtxn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Opt
         return Ok(None);
     };
     let arr: [u8; 32] = raw
+        .as_ref()
         .try_into()
         .map_err(|_| Error::CorruptedIndex("text index hash"))?;
     Ok(Some(arr))
@@ -2208,7 +2210,7 @@ fn doctor_embedding_model_id(
     let Some(raw) = store.hnsw_meta.get(rtxn, MODEL_ID_KEY)? else {
         return Ok(None);
     };
-    match crate::store::parse_utf8_bytes(raw) {
+    match crate::store::parse_utf8_bytes(&raw) {
         Ok(model_id) => Ok(Some(model_id)),
         Err(Error::InvalidKey | Error::CorruptedIndex(_)) => {
             unreadable_fields.push("hnsw_meta.model_id".to_owned());

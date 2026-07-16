@@ -1574,13 +1574,13 @@ pub(crate) fn companion_profile_access_grant(
         .prefix_iter(txn, &[ENTITY_TYPE_ACCESS_GRANT])?
     {
         let (key, _) = index_entry?;
-        let Some(id) = type_index_entity_id(key, ENTITY_TYPE_ACCESS_GRANT) else {
+        let Some(id) = type_index_entity_id(&key, ENTITY_TYPE_ACCESS_GRANT) else {
             return Err(Error::CorruptedIndex("access grant type index key"));
         };
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             return Err(Error::CorruptedIndex("access grant entity row"));
         };
-        let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
             return Err(Error::CorruptedIndex("access grant entity header"));
         };
         if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
@@ -1944,7 +1944,7 @@ fn agent_bearing_for_entity(
     let Ok(Some(raw)) = store.entities.get(txn, entity_ref.as_bytes()) else {
         return AgentBearing::Absent;
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         tracing::warn!(
             actor_entity_id = %entity_ref.to_hex(),
             "agent definition entity header failed to parse; failing closed to proposed",
@@ -2339,7 +2339,7 @@ pub(crate) fn resolve_policy_manifest(
         .prefix_iter(txn, &[ENTITY_TYPE_POLICY_MANIFEST])?
     {
         let (key, _) = index_entry?;
-        let Some(id) = type_index_entity_id(key, ENTITY_TYPE_POLICY_MANIFEST) else {
+        let Some(id) = type_index_entity_id(&key, ENTITY_TYPE_POLICY_MANIFEST) else {
             resolution.diagnostics.malformed_manifest_seen = true;
             continue;
         };
@@ -2347,7 +2347,7 @@ pub(crate) fn resolve_policy_manifest(
             resolution.diagnostics.malformed_manifest_seen = true;
             continue;
         };
-        let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
             resolution.diagnostics.malformed_manifest_seen = true;
             continue;
         };
@@ -2704,8 +2704,8 @@ impl Vault {
             .entities
             .get(rtxn, actor.entity_ref().as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let actor_header =
-            EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let actor_header = EntityMetadataHeader::parse(&actor_raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
         crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
     }
 }
@@ -2965,7 +2965,7 @@ fn standing_outbound_grant_for_effect(
         let prefix = standing_outbound_grant_principal_index_prefix(&principal_ref)?;
         for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
             let (key, _) = entry?;
-            let id = standing_outbound_grant_principal_index_entity_id(key, &principal_ref)?;
+            let id = standing_outbound_grant_principal_index_entity_id(&key, &principal_ref)?;
             if !candidate_ids.contains(&id) {
                 candidate_ids.push(id);
             }
@@ -2975,7 +2975,7 @@ fn standing_outbound_grant_for_effect(
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             return Err(Error::CorruptedIndex("outbound grant entity row"));
         };
-        let Some(header) = EntityMetadataHeader::parse(raw) else {
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Err(Error::CorruptedIndex("outbound grant entity header"));
         };
         if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
@@ -3044,7 +3044,7 @@ fn touch_standing_outbound_grant_in_txn(
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Err(Error::EntityNotFound);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("outbound grant entity header"));
     };
     if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
@@ -3104,13 +3104,13 @@ fn counterparty_contact_for_send(
         .prefix_iter(txn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
     {
         let (key, _) = entry?;
-        let Some(id) = type_index_entity_id(key, ENTITY_TYPE_COUNTERPARTY_CONTACT) else {
+        let Some(id) = type_index_entity_id(&key, ENTITY_TYPE_COUNTERPARTY_CONTACT) else {
             return Err(Error::CorruptedIndex("counterparty contact type index key"));
         };
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             return Err(Error::CorruptedIndex("counterparty contact entity row"));
         };
-        let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
             return Err(Error::CorruptedIndex("counterparty contact entity header"));
         };
         if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
@@ -3135,13 +3135,13 @@ fn counterparty_contact_for_send_by_index(
     let Some(raw_id) = store.vault_meta.get(txn, &key)? else {
         return Ok(None);
     };
-    let id = decode_counterparty_contact_index_value(raw_id)?;
+    let id = decode_counterparty_contact_index_value(&raw_id)?;
     let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
         return Err(Error::CorruptedIndex(
             "counterparty contact lookup index entity row",
         ));
     };
-    let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex(
             "counterparty contact lookup index entity header",
         ));

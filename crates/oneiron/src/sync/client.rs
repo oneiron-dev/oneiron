@@ -1139,7 +1139,7 @@ impl SyncClient {
             let svf_key = format!("svf:w:{key}");
             let fresh = matches!(
                 self.vault.store.sync_state.get(&rtxn, &svf_key)?,
-                Some([SVF_FRESH])
+                Some(raw) if *raw == [SVF_FRESH]
             );
             // A pre-fence persisted snapshot may still contain a carrier.
             // Bypass the state-vector fast path while any fence exists so
@@ -1151,7 +1151,7 @@ impl SyncClient {
                     // before anything reaches the wire (fail-closed: a
                     // corrupt row falls through to a full doc load instead
                     // of shipping garbage).
-                    match VersionVector::decode(sv_raw) {
+                    match VersionVector::decode(&sv_raw) {
                         Ok(vv) => return Ok(vv.encode()),
                         Err(e) => {
                             tracing::warn!(
@@ -1221,7 +1221,7 @@ impl SyncClient {
 fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
     let rtxn = vault.store.env.read_txn()?;
     let doc = match vault.store.sync_state.get(&rtxn, KEY_ROOT_DOC)? {
-        Some(snapshot) => doc_from_snapshot(snapshot)?,
+        Some(snapshot) => doc_from_snapshot(&snapshot)?,
         None => LoroDoc::new(),
     };
     let iter = vault
@@ -1230,7 +1230,7 @@ fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
         .prefix_iter(&rtxn, ROOT_UPDATE_PREFIX)?;
     for entry in iter {
         let (_k, v) = entry?;
-        doc.import(v).map_err(|source| Error::CrdtDecodeError {
+        doc.import(&v).map_err(|source| Error::CrdtDecodeError {
             context: "import pending root update",
             source,
         })?;

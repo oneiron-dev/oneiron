@@ -171,8 +171,8 @@ fn prove_bm25_doc_counted_for_missing_posting_repair(
         if raw_id.len() != ENTITY_ID_LEN {
             return Err(corrupted("field lengths key has invalid byte length"));
         }
-        let lengths = decode_field_lengths(raw_lengths)?;
-        if raw_id == id.as_bytes() {
+        let lengths = decode_field_lengths(&raw_lengths)?;
+        if raw_id.as_ref() == id.as_bytes() {
             if &lengths != expected_lengths {
                 return Err(corrupted(
                     "field lengths changed during missing posting repair",
@@ -540,7 +540,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         }
         return Ok(());
     };
-    let forward = decode_forward(forward_raw)?;
+    let forward = decode_forward(&forward_raw)?;
 
     if store.text_meta.get(wtxn, id.as_bytes())?.is_none() {
         return Err(corrupted("missing text metadata for deindex"));
@@ -553,7 +553,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     let Some(raw) = store.text_doc_field_lengths.get(wtxn, id.as_bytes())? else {
         return Err(corrupted("missing field lengths for indexed document"));
     };
-    let lengths = decode_field_lengths(raw)?;
+    let lengths = decode_field_lengths(&raw)?;
 
     // Group (term, fields) so each posting is rewritten once regardless of
     // how many channels a term appears on.
@@ -737,7 +737,7 @@ fn collect_final_token_prefix_terms(
                 break 'prefixes;
             }
             let (term_bytes, _) = row?;
-            let term = str::from_utf8(term_bytes)
+            let term = str::from_utf8(&term_bytes)
                 .map_err(|_| corrupted("posting term key is not valid utf-8"))?
                 .to_owned();
             if !exact_term_has_scoped_posting(
@@ -781,7 +781,7 @@ where
         };
         for item in dups {
             let (_, dup) = item?;
-            let entry = decode_posting_entry(dup)?;
+            let entry = decode_posting_entry(&dup)?;
             let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
                 continue;
             };
@@ -838,7 +838,7 @@ where
                 break 'prefixes;
             }
             let (term_bytes, _) = row?;
-            let term = str::from_utf8(term_bytes)
+            let term = str::from_utf8(&term_bytes)
                 .map_err(|_| corrupted("posting term key is not valid utf-8"))?;
             let status = term_posting_decisions(store, rtxn, config, term, &mut classify_posting)?;
             if !status.has_scoped_posting {
@@ -881,7 +881,7 @@ fn exact_term_has_scoped_posting(
     };
     for item in dups {
         let (_, dup) = item?;
-        let entry = decode_posting_entry(dup)?;
+        let entry = decode_posting_entry(&dup)?;
         let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
             continue;
         };
@@ -912,7 +912,7 @@ fn term_posting_decisions(
     let mut decisions = TermPostingDecisions::default();
     for item in dups {
         let (_, dup) = item?;
-        let entry = decode_posting_entry(dup)?;
+        let entry = decode_posting_entry(&dup)?;
         if !posting_has_enabled_channel(config, &entry)? {
             continue;
         }
@@ -978,7 +978,7 @@ fn apply_recency_blend(
         let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
             continue;
         };
-        let Some(header) = EntityMetadataHeader::parse(raw) else {
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
         let age_secs = recency.now_secs.saturating_sub(header.learned_at) as f64;
@@ -1082,7 +1082,7 @@ where
         let mut entries: Vec<PostingEntry> = Vec::new();
         for item in dups {
             let (_, dup) = item?;
-            let entry = decode_posting_entry(dup)?;
+            let entry = decode_posting_entry(&dup)?;
             if let Some(prev) = entries.last()
                 && prev.id.as_bytes() >= entry.id.as_bytes()
             {
@@ -1119,7 +1119,7 @@ where
                         Bm25DiagnosticKind::MissingScoredDocumentMetadata,
                     ));
                 };
-                let map = decode_field_lengths(bytes)?;
+                let map = decode_field_lengths(&bytes)?;
                 v.insert(map);
             }
 
@@ -1287,7 +1287,7 @@ fn resolve_lexical_query_hint_record(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(LexicalQueryHintResolution::NonHint);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(corrupted("entity header"));
     };
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -1324,7 +1324,7 @@ fn lexical_query_hint_target_is_live_claim(
     let Some(raw) = store.entities.get(rtxn, target.as_bytes())? else {
         return Ok(false);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(corrupted("entity header"));
     };
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -1619,9 +1619,9 @@ fn write_field_stats(
 pub(crate) fn read_total_docs(store: &Store, txn: &RoTxn<'_>) -> Result<u32> {
     match store.text_meta.get(txn, &TOTAL_DOCS_KEY)? {
         Some(raw) => {
-            Ok(u32::from_le_bytes(raw.try_into().map_err(|_| {
-                corrupted("total_docs sentinel has invalid length")
-            })?))
+            Ok(u32::from_le_bytes(raw.as_ref().try_into().map_err(
+                |_| corrupted("total_docs sentinel has invalid length"),
+            )?))
         }
         None => Ok(0),
     }

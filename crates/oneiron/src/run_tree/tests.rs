@@ -497,7 +497,7 @@ fn delete_attempt_record(vault: &Vault, id: crate::AttemptId) -> Result<()> {
     let Some(raw) = vault.store.attempt_records.get(&wtxn, id.as_bytes())? else {
         return Err(Error::CorruptedIndex("attempt record"));
     };
-    let record = crate::attempt_queue::decode_record(raw, id)?;
+    let record = crate::attempt_queue::decode_record(&raw, id)?;
     vault.store.delete_attempt_run_index_in_txn(
         &mut wtxn,
         record.run_id.as_deref(),

@@ -191,7 +191,7 @@ impl Vault {
             self.store
                 .vault_meta
                 .get(&rtxn, &artifact_pointer_key(artifact, channel)?)?
-                .map(<[u8]>::to_vec)
+                .map(|value| value.to_vec())
         };
         let Some(raw) = raw else {
             return Ok(None);

@@ -186,7 +186,7 @@ pub fn read_watermark(
     let Some(raw) = vault.store.vault_meta.get(&rtxn, &watermark_key(scope))? else {
         return Ok(ConsolidationWatermark::bootstrap());
     };
-    decode_watermark(raw)
+    decode_watermark(&raw)
 }
 
 /// Advances the per-scope watermark. Call ONLY after the round's attempts are
@@ -296,7 +296,7 @@ pub fn scan_dirty_turns(
             let Some(raw) = vault.store.entities.get(&rtxn, turn_id.as_bytes())? else {
                 continue;
             };
-            let Some(header) = EntityMetadataHeader::parse(raw) else {
+            let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 continue;
             };
             if header.entity_type != ENTITY_TYPE_TURN {
@@ -461,7 +461,7 @@ pub fn read_cursor(
     else {
         return Ok(None);
     };
-    decode_cursor(raw).map(Some)
+    decode_cursor(&raw).map(Some)
 }
 
 /// Writes a partition cursor row (advance ONLY after the bucket's promotion
@@ -1324,7 +1324,7 @@ pub fn upsert_gap_queue(
         observed.insert(key.clone());
         match vault.store.vault_meta.get(&wtxn, &key)? {
             Some(raw) => {
-                let mut stored = decode_gap_row(raw)?;
+                let mut stored = decode_gap_row(&raw)?;
                 if stored.decayed {
                     // Decayed gaps are let go — never re-surfaced.
                     continue;
@@ -1360,10 +1360,10 @@ pub fn upsert_gap_queue(
             .prefix_iter(&wtxn, DREAMER_PRIVATE_GAP_PREFIX)?
         {
             let (key, raw) = row?;
-            if observed.contains(key) {
+            if observed.contains(key.as_ref()) {
                 continue;
             }
-            let stored = decode_gap_row(raw)?;
+            let stored = decode_gap_row(&raw)?;
             if !stored.decayed && now.saturating_sub(stored.last_seen) >= DREAMER_GAP_DECAY_MS {
                 stale.push((key.to_vec(), stored));
             }
@@ -2162,13 +2162,13 @@ pub(crate) fn claim_predicates_in_store(vault: &Vault) -> Result<Vec<String>> {
         let mut ids = Vec::new();
         for row in vault.store.entities.iter(&rtxn)? {
             let (key, raw) = row?;
-            let Some(header) = EntityMetadataHeader::parse(raw) else {
+            let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 continue;
             };
             if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
                 continue;
             }
-            let Ok(id_bytes) = <[u8; 16]>::try_from(key) else {
+            let Ok(id_bytes) = <[u8; 16]>::try_from(key.as_ref()) else {
                 continue;
             };
             if let Ok(id) = EntityId::from_bytes(id_bytes) {
