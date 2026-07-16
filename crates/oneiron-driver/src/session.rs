@@ -32,7 +32,9 @@
 //! attempts; no new tick authority is minted for them.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 
 use oneiron::{
     DreamerConsolidationScope, EndedSession, EntityId, Result, SessionClosePredicate,
@@ -162,6 +164,10 @@ impl<'v> SessionLifecycleDriver<'v> {
         Arc::clone(&self.now_ms)
     }
 
+    fn now_millis(&self) -> u64 {
+        (self.now_ms)()
+    }
+
     /// Applies one session hint under driver policy.
     pub fn apply_hint(&self, hint: SessionHint) -> Result<SessionHintEffect> {
         let now = self.now_secs();
@@ -242,6 +248,8 @@ impl<'v> SessionLifecycleDriver<'v> {
     /// the Meso watermark become partition attempts with the executor-decodable
     /// payload and the production dedupe key. No dirty turns → no attempt — a
     /// zero-turn sitting has nothing to dream about.
+    /// An edge-less turn truncates the round at its timestamp, including
+    /// ties, so the watermark never advances past work that was not planned.
     fn end_session(
         &self,
         expected: &EntityId,
@@ -250,6 +258,25 @@ impl<'v> SessionLifecycleDriver<'v> {
         let scope = DreamerConsolidationScope::Meso;
         let watermark = read_watermark(self.vault, scope)?;
         let dirty = scan_dirty_turns(self.vault, scope, &watermark, usize::MAX)?;
+        let dirty = if let Some(cut_learned_at) = dirty
+            .iter()
+            .find(|turn| turn.conversation.is_none())
+            .map(|turn| turn.learned_at)
+        {
+            let scanned_count = dirty.len();
+            let prefix: Vec<_> = dirty
+                .into_iter()
+                .take_while(|turn| turn.learned_at < cut_learned_at)
+                .collect();
+            tracing::warn!(
+                deferred_count = scanned_count - prefix.len(),
+                cut_learned_at,
+                "meso round truncated at first turn without a conversation edge"
+            );
+            prefix
+        } else {
+            dirty
+        };
         let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
         let plans = plan_partitions(self.vault, scope, &dirty, &watermark)?;
         let wake = SessionEndWake {
@@ -265,12 +292,11 @@ impl<'v> SessionLifecycleDriver<'v> {
 /// [`TickSource`] decorator that runs the session lifecycle on the driver's
 /// tick loop — the driver stays a pure event consumer (ARCH-0026):
 ///
-/// * BUFFERED session hints are drained and applied BEFORE the close
-///   decision reads durable state (an activity hint that arrived ahead of
-///   the idle deadline bumps the clock the close is about to trust), in
-///   ARRIVAL order — an end-then-open burst ends one sitting and mints the
-///   next; each applied hint then surfaces to the supervisor as an ordinary
-///   least-privileged hint tick — never escalated by the producer;
+/// * BUFFERED session hints carry push-time arrival stamps and apply in
+///   ARRIVAL order: a fact that arrived before expiry gets to bump first,
+///   while a fact arriving at/after expiry closes the stale sitting first;
+///   successful hints surface only after one readiness probe preserves the
+///   inner source's deadline/wake priority;
 /// * the idle-floor / ceiling expiry is a sleep armed from DURABLE session
 ///   state, re-read every cycle (the [`TimerTick`](crate::TimerTick)
 ///   pattern — no heartbeat, no poll);
@@ -284,6 +310,9 @@ pub struct SessionTicks<'v, T> {
     /// Applied-but-not-yet-surfaced session hints: each still earns its one
     /// least-privileged follow-up pass (H-S4), one tick per call.
     pending_hints: VecDeque<crate::tick::HintSignal>,
+    /// The oldest hint whose due-close or apply failed. Nothing newer is
+    /// removed from the inner buffer until this hint applies successfully.
+    retry_hint: Option<(SessionHint, u64)>,
 }
 
 impl<'v, T: TickSource> SessionTicks<'v, T> {
@@ -293,29 +322,70 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
             inner,
             lifecycle,
             pending_hints: VecDeque::new(),
+            retry_hint: None,
         }
     }
 
-    /// Drains every BUFFERED session hint from the inner source and applies
-    /// it, in arrival order, BEFORE any close decision reads durable state
-    /// (ONE-1685). A hint whose apply CLOSED the sitting is consumed — the
-    /// wakeup it earns is the meso deadline the close enqueued; every other
-    /// applied hint is queued to surface as a least-privileged hint tick.
-    fn drain_buffered_hints(&mut self) {
-        while let Some(hint) = self.inner.take_buffered_session_hint() {
-            match self.lifecycle.apply_hint(hint) {
-                Ok(SessionHintEffect::Ended(_)) => {}
-                Ok(_) => self.pending_hints.push_back(crate::tick::HintSignal {
+    /// Applies one arrival-stamped fact. If the sitting was already due when
+    /// the fact arrived, close it first; an earlier arrival still gets to
+    /// bump the sitting before the ordinary close check. Failed work stays
+    /// at the head of the pipeline and is never surfaced as if it succeeded.
+    fn apply_guarded_hint(&mut self, hint: SessionHint, arrival_ms: u64) -> bool {
+        let applied = (|| {
+            if self
+                .lifecycle
+                .next_expiry_ms()?
+                .is_some_and(|due_ms| due_ms <= arrival_ms)
+            {
+                self.lifecycle.close_due_session()?;
+            }
+            self.lifecycle.apply_hint(hint)
+        })();
+
+        match applied {
+            Ok(SessionHintEffect::Ended(_)) => true,
+            Ok(_) => {
+                self.pending_hints.push_back(crate::tick::HintSignal {
                     session: Some(hint),
-                }),
-                Err(error) => {
-                    tracing::error!(?error, "session hint apply failed");
-                    self.pending_hints.push_back(crate::tick::HintSignal {
-                        session: Some(hint),
-                    });
-                }
+                });
+                true
+            }
+            Err(error) => {
+                self.retry_hint = Some((hint, arrival_ms));
+                tracing::error!(?error, "session hint apply failed; retained for retry");
+                false
             }
         }
+    }
+
+    /// Retries the oldest failed fact first, then drains buffered facts in
+    /// arrival order. A failure stops the drain so causality cannot invert.
+    fn drain_buffered_hints(&mut self) -> bool {
+        if let Some((hint, arrival_ms)) = self.retry_hint.take()
+            && !self.apply_guarded_hint(hint, arrival_ms)
+        {
+            return false;
+        }
+        while let Some((hint, arrival_ms)) = self.inner.take_buffered_session_hint() {
+            if !self.apply_guarded_hint(hint, arrival_ms) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Polls the inner source once without waiting. Its mailbox and deadline
+    /// lanes are re-readable, so abandoning a pending future loses nothing.
+    fn probe_inner(&mut self) -> Poll<Option<Tick>> {
+        let mut probe = std::pin::pin!(self.inner.next_tick());
+        let mut context = Context::from_waker(Waker::noop());
+        probe.as_mut().poll(&mut context)
+    }
+
+    #[cfg(test)]
+    fn with_retry_hint(mut self, hint: SessionHint, arrival_ms: u64) -> Self {
+        self.retry_hint = Some((hint, arrival_ms));
+        self
     }
 }
 
@@ -324,7 +394,10 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
         loop {
             // Buffered lifecycle facts first: the close predicate below must
             // see the activity clock they bump, not a stale snapshot.
-            self.drain_buffered_hints();
+            if !self.drain_buffered_hints() {
+                tokio::task::yield_now().await;
+                continue;
+            }
 
             // Close anything already due (also catches a session left
             // open across a restart). A lifecycle read/write error leaves
@@ -349,13 +422,28 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                 }
             };
 
-            // Surface one applied hint per call: its lifecycle effect is
-            // already durable, and the supervisor still owes it one
-            // least-privileged micro pass (H-S4). A due deadline is never
-            // lost to this — deadlines are re-read every cycle and surface
-            // on the next call.
-            if let Some(signal) = self.pending_hints.pop_front() {
-                return Some(Tick::Hint(signal));
+            // Preserve the inner source's ready deadline/wake priority over
+            // applied hint surfacing. Pending polls are safe to abandon: the
+            // mailbox is level-triggered and deadlines are stateless reads.
+            if !self.pending_hints.is_empty() {
+                match self.probe_inner() {
+                    Poll::Ready(Some(Tick::Deadline(deadline))) => {
+                        return Some(Tick::Deadline(deadline));
+                    }
+                    Poll::Ready(Some(Tick::Wake(wake))) => return Some(Tick::Wake(wake)),
+                    Poll::Ready(Some(Tick::Hint(signal))) => {
+                        let Some(hint) = signal.session else {
+                            return Some(Tick::Hint(signal));
+                        };
+                        let arrival_ms = self.lifecycle.now_millis();
+                        self.apply_guarded_hint(hint, arrival_ms);
+                    }
+                    Poll::Ready(None) | Poll::Pending => {}
+                }
+                if let Some(signal) = self.pending_hints.pop_front() {
+                    return Some(Tick::Hint(signal));
+                }
+                continue;
             }
 
             let tick = match expiry {
@@ -376,21 +464,15 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                 // surfaces it as a due Tick::Deadline on the next read.
                 None => continue,
                 Some(Some(Tick::Hint(signal))) => {
-                    if let Some(hint) = signal.session {
-                        match self.lifecycle.apply_hint(hint) {
-                            // A close means a meso deadline is now queued;
-                            // loop so the deadline lane surfaces it instead
-                            // of spending this wakeup on a micro pass.
-                            Ok(SessionHintEffect::Ended(_)) => continue,
-                            Ok(_) => {}
-                            Err(error) => {
-                                tracing::error!(?error, "session hint apply failed");
-                            }
-                        }
+                    let Some(hint) = signal.session else {
+                        return Some(Tick::Hint(signal));
+                    };
+                    let arrival_ms = self.lifecycle.now_millis();
+                    self.apply_guarded_hint(hint, arrival_ms);
+                    if let Some(pending) = self.pending_hints.pop_front() {
+                        return Some(Tick::Hint(pending));
                     }
-                    // Hints keep their shipped meaning: one least-privileged
-                    // follow-up pass (H-S4) — the supervisor maps the shape.
-                    return Some(Tick::Hint(signal));
+                    continue;
                 }
                 Some(Some(tick)) => return Some(tick),
                 Some(None) => {

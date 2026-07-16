@@ -83,6 +83,58 @@ fn seed_dirty_turn(vault: &Vault, conversation: &EntityId, learned_at: u64) -> E
     turn
 }
 
+/// Dirty TURN without its structural ChildOf edge, as can happen when the
+/// entity arrives before the corresponding conversation edge during sync.
+fn seed_dirty_turn_without_edge(vault: &Vault, learned_at: u64) -> EntityId {
+    let turn = EntityId::now();
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![
+            (rmpv::Value::from("spkr"), rmpv::Value::from("user")),
+            (rmpv::Value::from("txt"), rmpv::Value::from("orphan turn")),
+        ]),
+    )
+    .expect("turn body encode");
+    vault
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        )
+        .expect("seed turn without edge");
+    turn
+}
+
+fn complete_one_meso_attempt(vault: &Vault, owner: &str, now: u64) {
+    let queue = AttemptQueue::new(vault);
+    let ClaimOutcome::Claimed(record) = queue
+        .claim_kind(
+            DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: owner.to_owned(),
+                now,
+            },
+        )
+        .expect("claim meso attempt")
+    else {
+        panic!("expected one claimable meso attempt");
+    };
+    queue
+        .complete(CompleteAttempt {
+            id: record.id,
+            lease_owner: owner.to_owned(),
+            attempt_count: record.attempt_count,
+            now: now + 1,
+        })
+        .expect("complete meso attempt");
+}
+
 /// The production planning trio, exactly as the driver's close runs it —
 /// used to hand stale closers a REAL non-empty wake plan.
 fn meso_wake(vault: &Vault) -> SessionEndWake {
@@ -486,6 +538,54 @@ fn closing_a_sitting_with_no_dirty_turns_plans_no_consolidation() {
     );
 }
 
+#[test]
+fn session_close_watermark_stops_at_the_first_unplanned_turn() {
+    let (_dir, vault) = open_vault();
+    let (_now, clock) = manual_clock(1_000_000_000);
+    let lifecycle = driver(&vault, SessionLifecycleConfig::new(FLOOR, CEILING), clock);
+    let conversation = seed_conversation(&vault, 0x71);
+    seed_dirty_turn(&vault, &conversation, 999_990);
+    let orphan = seed_dirty_turn_without_edge(&vault, 999_995);
+    seed_dirty_turn(&vault, &conversation, 999_999);
+
+    assert!(matches!(
+        lifecycle.apply_hint(SessionHint::AppOpen),
+        Ok(SessionHintEffect::Minted(_))
+    ));
+    assert!(matches!(
+        lifecycle.apply_hint(SessionHint::ExplicitEnd),
+        Ok(SessionHintEffect::Ended(_))
+    ));
+    assert_eq!(meso_attempt_count(&vault), 1);
+    assert_eq!(
+        read_watermark(&vault, DreamerConsolidationScope::Meso)
+            .expect("first watermark")
+            .last_learned_at,
+        999_990
+    );
+
+    vault
+        .batch()
+        .edge(&orphan, EdgeKind::ChildOf, &conversation, 1.0)
+        .commit()
+        .expect("late ChildOf edge");
+    assert!(matches!(
+        lifecycle.apply_hint(SessionHint::AppOpen),
+        Ok(SessionHintEffect::Minted(_))
+    ));
+    assert!(matches!(
+        lifecycle.apply_hint(SessionHint::ExplicitEnd),
+        Ok(SessionHintEffect::Ended(_))
+    ));
+    assert_eq!(meso_attempt_count(&vault), 2);
+    assert_eq!(
+        read_watermark(&vault, DreamerConsolidationScope::Meso)
+            .expect("second watermark")
+            .last_learned_at,
+        999_999
+    );
+}
+
 /// Millisecond clock that tracks tokio's (paused) time.
 fn tokio_clock(base_ms: u64) -> NowMillis {
     let start = tokio::time::Instant::now();
@@ -503,7 +603,7 @@ async fn session_ticks_close_the_idle_session_and_surface_the_meso_deadline() {
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel();
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x44);
     seed_dirty_turn(&vault, &conversation, 999_999);
@@ -556,7 +656,7 @@ async fn session_ticks_explicit_end_reaches_the_meso_deadline_without_a_micro_pa
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel();
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x45);
     seed_dirty_turn(&vault, &conversation, 999_999);
@@ -599,7 +699,7 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel();
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x62);
     seed_dirty_turn(&vault, &conversation, 999_999);
@@ -616,13 +716,26 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
         .expect("open channel");
     hint.push_session_hint(SessionHint::AppOpen)
         .expect("open channel");
-    let tick = ticks.next_tick().await.expect("tick");
+    let deadline = ticks.next_tick().await.expect("deadline");
+    assert!(
+        matches!(
+            deadline,
+            Tick::Deadline(CommitmentDeadline {
+                scope: DreamerConsolidationScope::Meso,
+                ..
+            })
+        ),
+        "A's ready meso deadline keeps inner priority, got {deadline:?}"
+    );
+    complete_one_meso_attempt(&vault, "end-reopen", 1_000_001);
+
+    let tick = ticks.next_tick().await.expect("reopen hint");
     assert_eq!(
         tick,
         Tick::Hint(crate::tick::HintSignal {
             session: Some(SessionHint::AppOpen),
         }),
-        "the reopen surfaces; the end was consumed by its close"
+        "the reopen follows the deadline; the end was consumed by its close"
     );
 
     let b = vault.open_session().expect("read").expect("B open").session;
@@ -660,7 +773,7 @@ async fn open_end_open_burst_from_closed_state_makes_two_distinct_sittings() {
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel();
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
 
     hint.push_session_hint(SessionHint::AppOpen)
@@ -711,7 +824,7 @@ async fn buffered_activity_at_the_deadline_beats_the_idle_expiry() {
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel();
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x63);
     seed_dirty_turn(&vault, &conversation, 999_999);
@@ -743,4 +856,236 @@ async fn buffered_activity_at_the_deadline_beats_the_idle_expiry() {
         .expect("session still open — the bump beat the expiry");
     assert_eq!(open.last_activity, 1_000_000 + FLOOR);
     assert_eq!(meso_attempt_count(&vault), 0, "no close ⇒ no wake attempt");
+}
+
+#[tokio::test]
+async fn retry_slot_applies_before_newer_buffered_hints() {
+    let (_dir, vault) = open_vault();
+    let (now, clock) = manual_clock(1_000_000);
+    let lifecycle = driver(
+        &vault,
+        SessionLifecycleConfig::new(FLOOR, CEILING),
+        Arc::clone(&clock),
+    );
+    let SessionHintEffect::Minted(a) = lifecycle.apply_hint(SessionHint::AppOpen).expect("open A")
+    else {
+        panic!("expected A to mint");
+    };
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    now.store(1_001_000, Ordering::Release);
+    hint.push_session_hint(SessionHint::AppOpen)
+        .expect("buffer newer reopen");
+    let mut ticks =
+        SessionTicks::new(push, lifecycle).with_retry_hint(SessionHint::ExplicitEnd, 1_000_000);
+
+    assert_eq!(
+        ticks.next_tick().await,
+        Some(Tick::Hint(crate::tick::HintSignal {
+            session: Some(SessionHint::AppOpen),
+        }))
+    );
+    let b = vault.open_session().expect("read").expect("B open").session;
+    assert_ne!(a, b, "the retained end applies before the newer reopen");
+    assert_eq!(
+        vault
+            .session_lifecycle_record(&a)
+            .expect("read A")
+            .expect("A record")
+            .end_reason,
+        Some(SessionEndReason::Explicit)
+    );
+    assert_eq!(meso_attempt_count(&vault), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn ready_meso_deadline_beats_an_applied_pending_hint() {
+    let (_dir, vault) = open_vault();
+    let clock = tokio_clock(1_000_000_000);
+    let lifecycle = driver(
+        &vault,
+        SessionLifecycleConfig::new(FLOOR, CEILING),
+        Arc::clone(&clock),
+    );
+    assert!(matches!(
+        lifecycle.apply_hint(SessionHint::AppOpen),
+        Ok(SessionHintEffect::Minted(_))
+    ));
+    let conversation = seed_conversation(&vault, 0x72);
+    seed_dirty_turn(&vault, &conversation, 999_999);
+    let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
+
+    hint.push_session_hint(SessionHint::Activity)
+        .expect("pending activity");
+    hint.push_session_hint(SessionHint::ExplicitEnd)
+        .expect("end sitting");
+    let first = ticks.next_tick().await.expect("first tick");
+    assert!(
+        matches!(
+            first,
+            Tick::Deadline(CommitmentDeadline {
+                scope: DreamerConsolidationScope::Meso,
+                ..
+            })
+        ),
+        "the ready meso deadline must beat the applied activity, got {first:?}"
+    );
+    assert_eq!(meso_attempt_count(&vault), 1);
+
+    complete_one_meso_attempt(&vault, "deadline-priority", 1_000_001);
+    assert_eq!(
+        ticks.next_tick().await,
+        Some(Tick::Hint(crate::tick::HintSignal {
+            session: Some(SessionHint::Activity),
+        }))
+    );
+}
+
+#[tokio::test]
+async fn ready_wake_beats_an_applied_pending_hint() {
+    let (_dir, vault) = open_vault();
+    let (_now, clock) = manual_clock(1_000_000);
+    let lifecycle = driver(
+        &vault,
+        SessionLifecycleConfig::new(FLOOR, CEILING),
+        Arc::clone(&clock),
+    );
+    assert!(matches!(
+        lifecycle.apply_hint(SessionHint::AppOpen),
+        Ok(SessionHintEffect::Minted(_))
+    ));
+    let (push, wake, hint) = PushTick::channel_with_clock(clock);
+    let mut ticks = SessionTicks::new(push, lifecycle);
+
+    hint.push_session_hint(SessionHint::Activity)
+        .expect("pending activity");
+    wake.push_wake(WakeTrigger::Event, DreamerConsolidationScope::Micro)
+        .expect("pending wake");
+    assert_eq!(
+        ticks.next_tick().await,
+        Some(Tick::Wake(crate::tick::WakeSignal {
+            trigger: WakeTrigger::Event,
+            scope: DreamerConsolidationScope::Micro,
+        }))
+    );
+    assert_eq!(
+        ticks.next_tick().await,
+        Some(Tick::Hint(crate::tick::HintSignal {
+            session: Some(SessionHint::Activity),
+        }))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn sustained_session_hints_cannot_starve_a_due_meso_deadline() {
+    const CYCLES: usize = 4;
+
+    let (_dir, vault) = open_vault();
+    let clock = tokio_clock(1_000_000_000);
+    let lifecycle = driver(
+        &vault,
+        SessionLifecycleConfig::new(FLOOR, CEILING),
+        Arc::clone(&clock),
+    );
+    let conversation = seed_conversation(&vault, 0x73);
+    seed_dirty_turn(&vault, &conversation, 999_999);
+    assert!(matches!(
+        lifecycle.apply_hint(SessionHint::AppOpen),
+        Ok(SessionHintEffect::Minted(_))
+    ));
+    assert!(matches!(
+        lifecycle.apply_hint(SessionHint::ExplicitEnd),
+        Ok(SessionHintEffect::Ended(_))
+    ));
+    assert!(matches!(
+        lifecycle.apply_hint(SessionHint::AppOpen),
+        Ok(SessionHintEffect::Minted(_))
+    ));
+    assert_eq!(meso_attempt_count(&vault), 1);
+
+    let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
+    let mut observed = Vec::new();
+    for _ in 0..CYCLES {
+        hint.push_session_hint(SessionHint::Activity)
+            .expect("sustained activity");
+        observed.push(ticks.next_tick().await.expect("tick"));
+    }
+
+    assert!(matches!(
+        observed[0],
+        Tick::Deadline(CommitmentDeadline {
+            scope: DreamerConsolidationScope::Meso,
+            ..
+        })
+    ));
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|tick| matches!(tick, Tick::Deadline(_)))
+            .count(),
+        CYCLES,
+        "the still-due deadline wins every cycle despite hint refill"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn app_open_arriving_past_the_idle_floor_mints_a_replacement_sitting() {
+    let (_dir, vault) = open_vault();
+    let clock = tokio_clock(1_000_000_000);
+    let lifecycle = driver(
+        &vault,
+        SessionLifecycleConfig::new(FLOOR, CEILING),
+        Arc::clone(&clock),
+    );
+    let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
+    let conversation = seed_conversation(&vault, 0x74);
+    seed_dirty_turn(&vault, &conversation, 999_999);
+
+    hint.push_session_hint(SessionHint::AppOpen)
+        .expect("open old sitting");
+    assert!(matches!(ticks.next_tick().await, Some(Tick::Hint(_))));
+    let old = vault.open_session().expect("read").expect("old open");
+
+    tokio::time::advance(std::time::Duration::from_secs(FLOOR + 1)).await;
+    hint.push_session_hint(SessionHint::AppOpen)
+        .expect("resume app open");
+    let first = ticks.next_tick().await.expect("post-resume tick");
+    assert!(
+        matches!(
+            first,
+            Tick::Deadline(CommitmentDeadline {
+                scope: DreamerConsolidationScope::Meso,
+                ..
+            })
+        ),
+        "old sitting's close deadline wins before reopen surfacing, got {first:?}"
+    );
+    assert_eq!(meso_attempt_count(&vault), 1);
+
+    complete_one_meso_attempt(&vault, "resume-past-floor", 1_001_202);
+    assert_eq!(
+        ticks.next_tick().await,
+        Some(Tick::Hint(crate::tick::HintSignal {
+            session: Some(SessionHint::AppOpen),
+        }))
+    );
+    let new = vault
+        .open_session()
+        .expect("read")
+        .expect("replacement open");
+    assert_ne!(old.session, new.session);
+    assert_eq!(new.started_at, 1_000_000 + FLOOR + 1);
+    assert_eq!(
+        vault
+            .session_lifecycle_record(&old.session)
+            .expect("read old")
+            .expect("old record")
+            .end_reason,
+        Some(SessionEndReason::IdleFloor)
+    );
 }

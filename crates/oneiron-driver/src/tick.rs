@@ -101,14 +101,14 @@ pub struct HintSignal {
 pub trait TickSource {
     async fn next_tick(&mut self) -> Option<Tick>;
 
-    /// Pops the OLDEST buffered session-lifecycle hint without waiting, if
-    /// this source buffers any. The session decorator
+    /// Pops the OLDEST buffered session-lifecycle hint and its push-time
+    /// arrival stamp without waiting, if this source buffers any. The session decorator
     /// ([`SessionTicks`](crate::SessionTicks)) drains these BEFORE trusting
     /// durable expiry state, so an activity hint that arrived ahead of a
     /// close deadline is applied before the close decision reads the clock
     /// it bumps (ONE-1685). Sources without a hint buffer keep the default:
     /// no buffered hints, ever.
-    fn take_buffered_session_hint(&mut self) -> Option<SessionHint> {
+    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, u64)> {
         None
     }
 }
@@ -320,15 +320,21 @@ struct PushState {
     plain_hint: Option<HintSignal>,
     /// Session-lifecycle hints in ARRIVAL order (see
     /// [`SESSION_HINT_QUEUE_CAP`]).
-    session_hints: std::collections::VecDeque<SessionHint>,
+    session_hints: std::collections::VecDeque<(SessionHint, u64)>,
 }
 
-#[derive(Debug)]
 struct PushShared {
     state: Mutex<PushState>,
     notify: Notify,
     pushers: AtomicUsize,
     receiver_alive: AtomicBool,
+    now_ms: NowMillis,
+}
+
+impl fmt::Debug for PushShared {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("PushShared").finish_non_exhaustive()
+    }
 }
 
 impl PushShared {
@@ -378,11 +384,18 @@ impl PushTick {
     /// the channel.
     #[must_use]
     pub fn channel() -> (Self, WakePusher, HintPusher) {
+        Self::channel_with_clock(Arc::new(system_now_ms))
+    }
+
+    /// Builds a push channel over an injected arrival clock (tests).
+    #[must_use]
+    pub fn channel_with_clock(now_ms: NowMillis) -> (Self, WakePusher, HintPusher) {
         let shared = Arc::new(PushShared {
             state: Mutex::new(PushState::default()),
             notify: Notify::new(),
             pushers: AtomicUsize::new(2),
             receiver_alive: AtomicBool::new(true),
+            now_ms,
         });
         (
             Self {
@@ -417,7 +430,7 @@ impl PushTick {
         // Session hints drain in ARRIVAL order: reordering lifecycle facts
         // rewrites causality (an end-then-open burst is a reopen, not an
         // open that ends itself). The plain advisory slot drains last.
-        if let Some(hint) = state.session_hints.pop_front() {
+        if let Some((hint, _arrival_ms)) = state.session_hints.pop_front() {
             return Some(Tick::Hint(HintSignal {
                 session: Some(hint),
             }));
@@ -467,7 +480,7 @@ impl TickSource for PushTick {
         self.recv().await
     }
 
-    fn take_buffered_session_hint(&mut self) -> Option<SessionHint> {
+    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, u64)> {
         self.shared.lock_state().session_hints.pop_front()
     }
 }
@@ -570,9 +583,14 @@ impl HintPusher {
         if !self.shared.receiver_alive.load(Ordering::Acquire) {
             return Err(TickPushError::Closed);
         }
+        let arrival_ms = (self.shared.now_ms)();
         {
             let mut state = self.shared.lock_state();
-            if state.session_hints.back() != Some(&hint) {
+            if state
+                .session_hints
+                .back()
+                .is_none_or(|(queued, _)| *queued != hint)
+            {
                 if state.session_hints.len() == SESSION_HINT_QUEUE_CAP {
                     let dropped = state.session_hints.pop_front();
                     tracing::warn!(
@@ -580,7 +598,7 @@ impl HintPusher {
                         "session hint queue overflow; dropped the oldest hint"
                     );
                 }
-                state.session_hints.push_back(hint);
+                state.session_hints.push_back((hint, arrival_ms));
             }
         }
         self.shared.notify.notify_one();
@@ -663,7 +681,7 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
         }
     }
 
-    fn take_buffered_session_hint(&mut self) -> Option<SessionHint> {
+    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, u64)> {
         self.push.take_buffered_session_hint()
     }
 }
@@ -671,6 +689,7 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
 #[cfg(test)]
 mod tests {
     use std::pin::pin;
+    use std::sync::atomic::AtomicU64;
 
     use oneiron::{DreamerHomeNodeCandidate, EnqueueDreamerConsolidationAttempt, VaultConfig};
 
@@ -799,6 +818,33 @@ mod tests {
             ],
             "arrival order preserved; only the adjacent typing burst coalesced"
         );
+    }
+
+    #[test]
+    fn adjacent_session_hint_coalescing_keeps_the_first_arrival_stamp() {
+        let now = Arc::new(AtomicU64::new(10));
+        let clock_now = Arc::clone(&now);
+        let clock: NowMillis = Arc::new(move || clock_now.load(Ordering::Acquire));
+        let (mut receiver, _wake, hint) = PushTick::channel_with_clock(clock);
+
+        hint.push_session_hint(SessionHint::Activity)
+            .expect("open channel");
+        now.store(20, Ordering::Release);
+        hint.push_session_hint(SessionHint::Activity)
+            .expect("coalesced activity");
+        hint.push_session_hint(SessionHint::ExplicitEnd)
+            .expect("distinct hint");
+
+        assert_eq!(
+            receiver.take_buffered_session_hint(),
+            Some((SessionHint::Activity, 10)),
+            "the typing burst retains its earliest arrival"
+        );
+        assert_eq!(
+            receiver.take_buffered_session_hint(),
+            Some((SessionHint::ExplicitEnd, 20))
+        );
+        assert_eq!(receiver.take_buffered_session_hint(), None);
     }
 
     #[test]

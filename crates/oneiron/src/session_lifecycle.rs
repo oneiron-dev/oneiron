@@ -349,16 +349,15 @@ impl Vault {
         self.with_write_txn(|wtxn| bump_open_session_activity_in_txn(&self.store, wtxn, now))
     }
 
-    /// Ends the open session at `now` (unix seconds) with `reason`: stamps
-    /// `ended_at` + `end_reason` on the lifecycle record (retained for
-    /// audit) and clears the open pointer. Returns `None` when no session
-    /// is open — ending is idempotent, so a crash-retried close never
-    /// errors.
+    /// Predicate-free close primitive retained for in-crate mechanism tests.
+    /// Production closes use [`Self::end_session_with_wake`], keeping the
+    /// session end and its planned attempts structurally inseparable.
     ///
     /// `ended_at` is clamped to never precede `started_at`/`last_activity`
     /// (a skewed clock must not produce a session that ends before it was
     /// last active).
-    pub fn end_open_session(
+    #[allow(dead_code)] // retained for in-crate mechanism tests; no production caller by design
+    pub(crate) fn end_open_session(
         &self,
         now: u64,
         reason: SessionEndReason,
@@ -397,9 +396,9 @@ impl Vault {
     /// * **(b) predicate**: `predicate` is re-validated against the record
     ///   RE-READ inside the transaction — an activity bump that raced an
     ///   idle close wins and the close no-ops;
-    /// * **(c) stamp**: `ended_at` (clamped as in [`Self::end_open_session`])
-    ///   plus the predicate-named reason land on the retained record and the
-    ///   open pointer clears;
+    /// * **(c) stamp**: `ended_at` is clamped not to precede activity; the
+    ///   predicate-named reason lands on the retained record and the open
+    ///   pointer clears;
     /// * **(d) wake**: the pre-planned SessionEnd → Meso partition attempts are
     ///   enqueued and the Meso watermark advanced in the SAME transaction.
     ///
