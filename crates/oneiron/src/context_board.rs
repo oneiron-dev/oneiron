@@ -215,6 +215,26 @@ impl JobPresence {
     }
 }
 
+/// Folds a task's realizing-job statuses into the owning task's board status
+/// (ONE-1695 · 08b §3). Precedence is the L0-ruled working-document order:
+/// Running > Failed > Scheduled > Queued > Done. Returns `None` for no jobs.
+#[must_use]
+pub fn fold_up_status(jobs: &[JobPresence]) -> Option<TaskBoardStatus> {
+    jobs.iter()
+        .map(|job| job.status)
+        .max_by_key(|status| task_status_precedence_rank(*status))
+}
+
+const fn task_status_precedence_rank(status: TaskBoardStatus) -> u8 {
+    match status {
+        TaskBoardStatus::Running => 5,
+        TaskBoardStatus::Failed => 4,
+        TaskBoardStatus::Scheduled => 3,
+        TaskBoardStatus::Queued => 2,
+        TaskBoardStatus::Done => 1,
+    }
+}
+
 /// Maps the SURF-005 lifecycle onto the board status axis. `Paused` reads as
 /// scheduled (deferred, not eligible to run now); `Cancelled` has no axis
 /// token and leaves the board.
@@ -734,6 +754,55 @@ mod tests {
             id: id.to_owned(),
             kind: "sync".to_owned(),
             status,
+        }
+    }
+
+    #[test]
+    fn fold_up_status_uses_total_precedence() {
+        let cases = [
+            (
+                [TaskBoardStatus::Done, TaskBoardStatus::Running],
+                TaskBoardStatus::Running,
+            ),
+            (
+                [TaskBoardStatus::Done, TaskBoardStatus::Done],
+                TaskBoardStatus::Done,
+            ),
+            (
+                [TaskBoardStatus::Done, TaskBoardStatus::Failed],
+                TaskBoardStatus::Failed,
+            ),
+            (
+                [TaskBoardStatus::Running, TaskBoardStatus::Failed],
+                TaskBoardStatus::Running,
+            ),
+            (
+                [TaskBoardStatus::Scheduled, TaskBoardStatus::Queued],
+                TaskBoardStatus::Scheduled,
+            ),
+            (
+                [TaskBoardStatus::Queued, TaskBoardStatus::Done],
+                TaskBoardStatus::Queued,
+            ),
+        ];
+
+        for (index, (statuses, expected)) in cases.into_iter().enumerate() {
+            let jobs = [job("first", statuses[0]), job("second", statuses[1])];
+            assert_eq!(fold_up_status(&jobs), Some(expected), "case {index}");
+        }
+    }
+
+    #[test]
+    fn fold_up_status_handles_empty_and_single_job() {
+        assert_eq!(fold_up_status(&[]), None);
+        for status in [
+            TaskBoardStatus::Running,
+            TaskBoardStatus::Failed,
+            TaskBoardStatus::Scheduled,
+            TaskBoardStatus::Queued,
+            TaskBoardStatus::Done,
+        ] {
+            assert_eq!(fold_up_status(&[job("only", status)]), Some(status));
         }
     }
 

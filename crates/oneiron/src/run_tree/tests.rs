@@ -536,6 +536,7 @@ fn dreamer_record(
         claimed_at: None,
         backoff_until: None,
         last_error: None,
+        task_ref: None,
         run_id: Some(run_id.to_owned()),
         dedupe_key: None,
         created_at,
