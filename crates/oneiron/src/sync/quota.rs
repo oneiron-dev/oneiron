@@ -236,7 +236,7 @@ pub(crate) fn try_accept_maintenance_ingest_peer_in_txn(
                 return Err(Error::CorruptedIndex("maintenance ingest quota value"));
             }
             let mut raw = [0_u8; MAINTENANCE_INGEST_QUOTA_VALUE_LEN];
-            raw.copy_from_slice(value);
+            raw.copy_from_slice(&value);
             Some(raw)
         }
         None => None,
@@ -307,7 +307,7 @@ pub fn maintenance_ingest_quota_snapshots(
             return Err(Error::CorruptedIndex("maintenance ingest quota key"));
         }
         let peer_key = &key[MAINTENANCE_INGEST_QUOTA_PREFIX.len()..];
-        let (window_start_secs, accepted_count) = decode_maintenance_ingest_quota_value(value)?;
+        let (window_start_secs, accepted_count) = decode_maintenance_ingest_quota_value(&value)?;
         snapshots.push(MaintenanceIngestQuotaSnapshot {
             peer_key_hex: bytes_to_hex_lower(peer_key),
             window_start_secs,
@@ -415,7 +415,7 @@ fn maintenance_ingest_quota_config_in_ro_txn(
     else {
         return Ok(MaintenanceIngestQuotaConfig::default());
     };
-    decode_maintenance_ingest_quota_config(value)
+    decode_maintenance_ingest_quota_config(&value)
 }
 
 fn maintenance_ingest_quota_config_in_rw_txn(
@@ -429,7 +429,7 @@ fn maintenance_ingest_quota_config_in_rw_txn(
     else {
         return Ok(MaintenanceIngestQuotaConfig::default());
     };
-    decode_maintenance_ingest_quota_config(value)
+    decode_maintenance_ingest_quota_config(&value)
 }
 
 fn validate_maintenance_ingest_quota_config(config: MaintenanceIngestQuotaConfig) -> Result<()> {

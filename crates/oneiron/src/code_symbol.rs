@@ -786,7 +786,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let manifest = decode_code_symbol_manifest(raw)?;
+        let manifest = decode_code_symbol_manifest(&raw)?;
         validate_code_artifact_target(&self.store, &rtxn, code_artifact_id, &manifest.repo_ref)?;
         Ok(Some(manifest))
     }
@@ -830,7 +830,7 @@ impl Vault {
         let mut result = None;
         for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (key, _) = entry?;
-            let id = id_from_index_key(key, prefix.len(), "code symbol revision index key")?;
+            let id = id_from_index_key(&key, prefix.len(), "code symbol revision index key")?;
             match validate_code_artifact_entity_exists(&self.store, &rtxn, &id) {
                 Ok(()) => {}
                 Err(Error::EntityNotFound) => continue,
@@ -841,7 +841,7 @@ impl Vault {
                 .vault_meta
                 .get(&rtxn, &code_symbol_manifest_key(&id))?
             {
-                let manifest = decode_code_symbol_manifest(raw)?;
+                let manifest = decode_code_symbol_manifest(&raw)?;
                 if manifest.repo_ref != *repo_ref {
                     return Err(Error::InvalidCodeSymbolManifestBody(
                         "symbol revision index repo_ref does not match manifest",
@@ -1559,7 +1559,7 @@ fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     Ok(Some(header.entity_type))
 }
 
@@ -1569,7 +1569,11 @@ pub(crate) fn delete_code_symbol_manifest_in_txn(
     id: &EntityId,
 ) -> Result<bool> {
     let key = code_symbol_manifest_key(id);
-    let Some(raw) = store.vault_meta.get(wtxn, &key)?.map(<[u8]>::to_vec) else {
+    let Some(raw) = store
+        .vault_meta
+        .get(wtxn, &key)?
+        .map(|value| value.to_vec())
+    else {
         return Ok(false);
     };
 
@@ -2325,7 +2329,7 @@ fn validate_code_artifact_target(
     let Some(raw) = store.entities.get(rtxn, code_artifact_id.as_bytes())? else {
         return Err(Error::EntityNotFound);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
         return Err(Error::InvalidCodeSymbolManifestBody(
             "symbol manifest target is not a CODE_ARTIFACT",
@@ -2351,7 +2355,7 @@ fn validate_code_artifact_entity_exists(
     let Some(raw) = store.entities.get(rtxn, code_artifact_id.as_bytes())? else {
         return Err(Error::EntityNotFound);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
         return Err(Error::InvalidCodeSymbolManifestBody(
             "symbol manifest target is not a CODE_ARTIFACT",

@@ -148,7 +148,7 @@ fn raw_retrieval_run_row(vault: &Vault, run_id: RetrievalRunId) -> Result<Vec<u8
         .store
         .vault_meta
         .get(&rtxn, &retrieval_run_key(run_id))?
-        .map(<[u8]>::to_vec)
+        .map(|value| value.to_vec())
         .ok_or(Error::CorruptedIndex("retrieval run telemetry"))
 }
 
@@ -162,7 +162,7 @@ fn raw_retrieval_outcome_row(
         .store
         .vault_meta
         .get(&rtxn, &retrieval_outcome_key(run_id, outcome_key))?
-        .map(<[u8]>::to_vec)
+        .map(|value| value.to_vec())
         .ok_or(Error::CorruptedIndex("retrieval outcome telemetry"))
 }
 
@@ -344,7 +344,8 @@ fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Resu
         reopened
             .store
             .vault_meta
-            .get(&rtxn, RECEIPT_FAMILY_INDEX_VERSION_KEY)?,
+            .get(&rtxn, RECEIPT_FAMILY_INDEX_VERSION_KEY)?
+            .as_deref(),
         Some(&[RECEIPT_FAMILY_INDEX_VERSION][..])
     );
     Ok(())

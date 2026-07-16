@@ -432,7 +432,11 @@ pub(crate) fn delete_codebase_snapshot_in_txn(
     id: &EntityId,
 ) -> Result<bool> {
     let key = codebase_snapshot_key(id);
-    let Some(raw) = store.vault_meta.get(wtxn, &key)?.map(<[u8]>::to_vec) else {
+    let Some(raw) = store
+        .vault_meta
+        .get(wtxn, &key)?
+        .map(|value| value.to_vec())
+    else {
         delete_index_rows_for_id(store, wtxn, CODEBASE_SCOPE_INDEX_KEY_PREFIX, id)?;
         return Ok(false);
     };
@@ -461,7 +465,11 @@ pub(crate) fn reconcile_codebase_snapshot_after_code_artifact_put(
     new_code_artifact_body: &[u8],
 ) -> Result<()> {
     let key = codebase_snapshot_key(id);
-    let Some(raw) = store.vault_meta.get(wtxn, &key)?.map(<[u8]>::to_vec) else {
+    let Some(raw) = store
+        .vault_meta
+        .get(wtxn, &key)?
+        .map(|value| value.to_vec())
+    else {
         return Ok(());
     };
 
@@ -621,7 +629,7 @@ impl Vault {
             return Err(Error::EntityNotFound);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
             return Err(Error::InvalidCodebaseSnapshotBody(
                 "snapshot target is not a CODE_ARTIFACT",
@@ -673,7 +681,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        decode_codebase_snapshot(raw).map(Some)
+        decode_codebase_snapshot(&raw).map(Some)
     }
 
     pub fn codebase_snapshots_by_repo_ref(&self, repo_ref: &RepoRef) -> Result<Vec<EntityId>> {
@@ -1534,7 +1542,7 @@ fn codebase_ids_by_index_prefix(
             continue;
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == ENTITY_TYPE_CODE_ARTIFACT {
             ids.push(id);
         }

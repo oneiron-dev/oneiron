@@ -969,7 +969,7 @@ fn normalized_overlay_persists_zero_field_length() -> Result<()> {
             .text_doc_field_lengths
             .get(&rtxn, id.as_bytes())?
             .expect("lengths row written");
-        let lens = decode_field_lengths(raw)?;
+        let lens = decode_field_lengths(&raw)?;
         assert_eq!(
             lens.get(&overlay_fid).copied(),
             Some(0),
@@ -1427,7 +1427,7 @@ fn cjk_ngram_field_length_reflects_bigram_count() -> Result<()> {
             .text_doc_field_lengths
             .get(&rtxn, id.as_bytes())?
             .expect("doc must have field lengths");
-        let map = decode_field_lengths(raw)?;
+        let map = decode_field_lengths(&raw)?;
         Ok(map.get(&ngram_fid).copied().unwrap_or(0))
     };
 

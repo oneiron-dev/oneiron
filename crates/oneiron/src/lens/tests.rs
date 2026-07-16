@@ -107,7 +107,7 @@ fn backing_target_for(
         .short_ids_reverse
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
-    let (short_id, content_hash) = crate::batch::parse_short_id_value(value)?;
+    let (short_id, content_hash) = crate::batch::parse_short_id_value(&value)?;
     match kind {
         LensBackingTargetKind::Entity => {
             LensBackingTarget::entity(*id, short_id.to_owned(), content_hash)

@@ -597,11 +597,11 @@ impl<'a> AttemptQueue<'a> {
         let mut scan = ClaimKindReadScan::default();
         for row in self.store.attempt_ready.iter(&*wtxn)? {
             let (key, value) = row?;
-            let Ok((key_ready_at, key_id)) = decode_ready_key(key) else {
+            let Ok((key_ready_at, key_id)) = decode_ready_key(&key) else {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
             };
-            let Ok(id) = AttemptId::from_bytes(value) else {
+            let Ok(id) = AttemptId::from_bytes(&value) else {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
             };
@@ -614,7 +614,7 @@ impl<'a> AttemptQueue<'a> {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
             };
-            let record = decode_record(raw_record, id)?;
+            let record = decode_record(&raw_record, id)?;
             if record.state != AttemptState::Queued {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
@@ -665,11 +665,11 @@ impl<'a> AttemptQueue<'a> {
         let mut scan = ClaimKindReadScan::default();
         for row in self.store.attempt_ready.iter(&rtxn)? {
             let (key, value) = row?;
-            let Ok((key_ready_at, key_id)) = decode_ready_key(key) else {
+            let Ok((key_ready_at, key_id)) = decode_ready_key(&key) else {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
             };
-            let Ok(id) = AttemptId::from_bytes(value) else {
+            let Ok(id) = AttemptId::from_bytes(&value) else {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
             };
@@ -682,7 +682,7 @@ impl<'a> AttemptQueue<'a> {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
             };
-            let record = decode_record(raw_record, id)?;
+            let record = decode_record(&raw_record, id)?;
             if record.state != AttemptState::Queued {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
@@ -727,7 +727,7 @@ impl<'a> AttemptQueue<'a> {
                 wtxn.commit()?;
                 return Ok(ClaimKindWriteAttempt::Retry);
             };
-            let Ok(id) = AttemptId::from_bytes(value) else {
+            let Ok(id) = AttemptId::from_bytes(&value) else {
                 self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
                 wtxn.commit()?;
                 return Ok(ClaimKindWriteAttempt::Retry);
@@ -742,7 +742,7 @@ impl<'a> AttemptQueue<'a> {
                 wtxn.commit()?;
                 return Ok(ClaimKindWriteAttempt::Retry);
             };
-            let mut record = decode_record(raw_record, id)?;
+            let mut record = decode_record(&raw_record, id)?;
             if record.state != AttemptState::Queued
                 || ready_at(&record) > input.now
                 || record.kind != kind
@@ -825,11 +825,11 @@ impl<'a> AttemptQueue<'a> {
         let mut claimed = None;
         for row in self.store.attempt_ready.iter(&*wtxn)? {
             let (key, value) = row?;
-            let Ok((key_ready_at, key_id)) = decode_ready_key(key) else {
+            let Ok((key_ready_at, key_id)) = decode_ready_key(&key) else {
                 stale_ready_keys.push(key.to_vec());
                 continue;
             };
-            let Ok(id) = AttemptId::from_bytes(value) else {
+            let Ok(id) = AttemptId::from_bytes(&value) else {
                 stale_ready_keys.push(key.to_vec());
                 continue;
             };
@@ -842,7 +842,7 @@ impl<'a> AttemptQueue<'a> {
                 stale_ready_keys.push(key.to_vec());
                 continue;
             };
-            let mut record = decode_record(raw_record, id)?;
+            let mut record = decode_record(&raw_record, id)?;
             if record.state != AttemptState::Queued {
                 stale_ready_keys.push(key.to_vec());
                 continue;
@@ -908,7 +908,7 @@ impl<'a> AttemptQueue<'a> {
             else {
                 return Err(invalid_transition("complete", "missing"));
             };
-            let record = decode_record(raw_record, input.id)?;
+            let record = decode_record(&raw_record, input.id)?;
             if record.state == AttemptState::Completed {
                 return Ok(CompleteOutcome::AlreadyCompleted(record));
             }
@@ -918,7 +918,7 @@ impl<'a> AttemptQueue<'a> {
         let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("complete", "missing"));
         };
-        let mut record = decode_record(raw_record, input.id)?;
+        let mut record = decode_record(&raw_record, input.id)?;
         match record.state {
             AttemptState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
             AttemptState::Leased => {
@@ -955,7 +955,7 @@ impl<'a> AttemptQueue<'a> {
             else {
                 return Err(invalid_transition("fail", "missing"));
             };
-            let record = decode_record(raw_record, input.id)?;
+            let record = decode_record(&raw_record, input.id)?;
             if record.state == AttemptState::Failed {
                 return Ok(FailOutcome::AlreadyFailed(record));
             }
@@ -965,7 +965,7 @@ impl<'a> AttemptQueue<'a> {
         let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("fail", "missing"));
         };
-        let mut record = decode_record(raw_record, input.id)?;
+        let mut record = decode_record(&raw_record, input.id)?;
         match record.state {
             AttemptState::Failed => Ok(FailOutcome::AlreadyFailed(record)),
             AttemptState::Leased => {
@@ -1002,7 +1002,7 @@ impl<'a> AttemptQueue<'a> {
         let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
         };
-        let mut record = decode_record(raw_record, input.id)?;
+        let mut record = decode_record(&raw_record, input.id)?;
         match record.state {
             AttemptState::Leased => {
                 validate_lease_owner(&input.lease_owner)?;
@@ -1055,7 +1055,7 @@ impl<'a> AttemptQueue<'a> {
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition(input.kind.as_str(), "missing"));
         };
-        let mut record = decode_record(raw_record, input.id)?;
+        let mut record = decode_record(&raw_record, input.id)?;
 
         let effect = match input.kind {
             AttemptInterventionKind::Interrupt => match record.state {
@@ -1157,8 +1157,8 @@ impl<'a> AttemptQueue<'a> {
 
         for row in self.store.attempt_records.iter(&rtxn)? {
             let (key, raw_record) = row?;
-            let id = AttemptId::from_bytes(key)?;
-            let record = decode_record(raw_record, id)?;
+            let id = AttemptId::from_bytes(&key)?;
+            let record = decode_record(&raw_record, id)?;
             match record.state {
                 AttemptState::Queued => {
                     report.pending += 1;
@@ -1201,7 +1201,7 @@ impl<'a> AttemptQueue<'a> {
                     mark_rechecked_candidate_not_running(&mut report);
                     continue;
                 };
-                let mut record = decode_record(raw_record, id)?;
+                let mut record = decode_record(&raw_record, id)?;
                 match record.state {
                     AttemptState::Leased
                         if lease_expired(&record, input.now, input.lease_timeout_secs) =>
@@ -1271,7 +1271,7 @@ impl<'a> AttemptQueue<'a> {
         let Some(raw) = self.store.attempt_records.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        decode_record(raw, id).map(Some)
+        decode_record(&raw, id).map(Some)
     }
 
     /// Reads all persisted attempt rows in deterministic creation order.
@@ -1280,8 +1280,8 @@ impl<'a> AttemptQueue<'a> {
         let mut records = Vec::new();
         for row in self.store.attempt_records.iter(&rtxn)? {
             let (key, raw_record) = row?;
-            let id = AttemptId::from_bytes(key)?;
-            records.push(decode_record(raw_record, id)?);
+            let id = AttemptId::from_bytes(&key)?;
+            records.push(decode_record(&raw_record, id)?);
         }
         records.sort_by(attempt_record_order);
         Ok(records)
@@ -1297,7 +1297,7 @@ impl<'a> AttemptQueue<'a> {
             let Some(raw_record) = self.store.attempt_records.get(&rtxn, id.as_bytes())? else {
                 return Err(Error::CorruptedIndex("attempt run index"));
             };
-            let record = decode_record(raw_record, id)?;
+            let record = decode_record(&raw_record, id)?;
             if record.run_id.as_deref() != Some(run_id) {
                 return Err(Error::CorruptedIndex("attempt run index"));
             }
@@ -1323,11 +1323,11 @@ impl<'a> AttemptQueue<'a> {
         let Some(existing_id) = self.store.attempt_dedupe.get(txn, index_key)? else {
             return Ok(None);
         };
-        let id = AttemptId::from_bytes(existing_id)?;
+        let id = AttemptId::from_bytes(&existing_id)?;
         let Some(raw) = self.store.attempt_records.get(txn, id.as_bytes())? else {
             return Ok(None);
         };
-        let record = decode_record(raw, id)?;
+        let record = decode_record(&raw, id)?;
         validate_dedupe_record(&record, kind, dedupe_key)?;
         if !record.state.is_pending() {
             return Ok(None);
@@ -1371,12 +1371,12 @@ impl<'a> AttemptQueue<'a> {
         let Some(existing_id) = self.store.attempt_dedupe.get(txn, index_key)? else {
             return Ok(None);
         };
-        let id = AttemptId::from_bytes(existing_id)?;
+        let id = AttemptId::from_bytes(&existing_id)?;
         let Some(raw) = self.store.attempt_records.get(txn, id.as_bytes())? else {
             self.store.attempt_dedupe.delete(txn, index_key)?;
             return Ok(None);
         };
-        let record = decode_record(raw, id)?;
+        let record = decode_record(&raw, id)?;
         validate_dedupe_record(&record, kind, dedupe_key)?;
         if !record.state.is_pending() {
             self.store.attempt_dedupe.delete(txn, index_key)?;
@@ -1410,7 +1410,7 @@ impl<'a> AttemptQueue<'a> {
         let mut keys = Vec::new();
         for row in self.store.attempt_dedupe.iter(txn)? {
             let (key, value) = row?;
-            let id = AttemptId::from_bytes(value)?;
+            let id = AttemptId::from_bytes(&value)?;
             if ids.contains(&id) {
                 keys.push(key.to_vec());
             }
@@ -1662,7 +1662,7 @@ pub(crate) fn dreamer_run_root_id_in_txn(
         let Some(raw) = store.attempt_records.get(txn, id.as_bytes())? else {
             return Err(Error::CorruptedIndex("attempt run index"));
         };
-        let record = decode_record(raw, id)?;
+        let record = decode_record(&raw, id)?;
         if record.run_id.as_deref() != Some(run_id) {
             return Err(Error::CorruptedIndex("attempt run index"));
         }
@@ -1695,7 +1695,7 @@ pub(crate) fn dreamer_run_root_id_in_txn(
         let Some(raw) = store.attempt_records.get(txn, parent_id.as_bytes())? else {
             break;
         };
-        let parent = decode_record(raw, parent_id)?;
+        let parent = decode_record(&raw, parent_id)?;
         if parent.kind != DREAMER_RUNNER_ATTEMPT_KIND {
             break;
         }

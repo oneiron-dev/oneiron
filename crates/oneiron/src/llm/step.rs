@@ -1062,12 +1062,16 @@ pub(crate) fn deindex_dreamer_step_claim(
     claim_id: &EntityId,
 ) -> Result<()> {
     let claim_key = step_index_claim_key(claim_id);
-    let Some(forward_key) = store.vault_meta.get(wtxn, &claim_key)?.map(<[u8]>::to_vec) else {
+    let Some(forward_key) = store
+        .vault_meta
+        .get(wtxn, &claim_key)?
+        .map(|value| value.to_vec())
+    else {
         return Ok(());
     };
     // Only delete the forward row if it still points at THIS claim.
     if let Some(current) = store.vault_meta.get(wtxn, &forward_key)?
-        && current == claim_id.as_bytes()
+        && *current == *claim_id.as_bytes()
     {
         store.vault_meta.delete(wtxn, &forward_key)?;
     }
@@ -1086,6 +1090,7 @@ fn step_index_lookup(
         return Ok(None);
     };
     let bytes: [u8; 16] = raw
+        .as_ref()
         .try_into()
         .map_err(|_| Error::CorruptedIndex("dreamer step index row"))?;
     EntityId::from_bytes(bytes).map(Some)
@@ -1147,7 +1152,7 @@ fn step_state_write(
             progression,
             started_at,
             updated_at: now_ms,
-            response_payload: response_payload.map(<[u8]>::to_vec),
+            response_payload: response_payload.map(|value| value.to_vec()),
         },
     )?;
     wtxn.commit()?;

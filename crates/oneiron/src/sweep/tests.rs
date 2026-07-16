@@ -111,13 +111,13 @@ fn sync_rows_contain(vault: &Vault, needle: &[u8]) -> bool {
     let rtxn = vault.store.env.read_txn().unwrap();
     for entry in vault.store.sync_state.iter(&rtxn).unwrap() {
         let (_, value) = entry.unwrap();
-        if contains(value, needle) {
+        if contains(&value, needle) {
             return true;
         }
     }
     for entry in vault.store.sync_queue.iter(&rtxn).unwrap() {
         let (key, value) = entry.unwrap();
-        if contains(key, needle) || contains(value, needle) {
+        if contains(&key, needle) || contains(&value, needle) {
             return true;
         }
     }

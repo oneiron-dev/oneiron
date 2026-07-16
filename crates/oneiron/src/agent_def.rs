@@ -1240,7 +1240,7 @@ pub(crate) fn reserved_actor_census(
     txn: &heed::RoTxn<'_>,
 ) -> Option<u8> {
     match store.vault_meta.get(txn, SYSTEM_AGENT_RESERVED_CENSUS_KEY) {
-        Ok(Some([mask])) => Some(*mask),
+        Ok(Some(raw)) if raw.len() == 1 => Some(raw[0]),
         Ok(Some(_)) | Ok(None) => None,
         Err(error) => {
             tracing::warn!(
@@ -1383,8 +1383,8 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         match self.store.vault_meta.get(&rtxn, key.as_slice())? {
             None => Ok(true),
-            Some([0x01]) => Ok(true),
-            Some([0x00]) => Ok(false),
+            Some(raw) if *raw == [0x01] => Ok(true),
+            Some(raw) if *raw == [0x00] => Ok(false),
             Some(_) => Err(Error::InvariantViolation("system agent toggle byte")),
         }
     }
@@ -1440,7 +1440,7 @@ impl Vault {
             .get(txn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_AGENT_DEF {
             return Err(Error::InvalidAgentDefBody(
                 "entity is not a type-17 AGENT_DEF",

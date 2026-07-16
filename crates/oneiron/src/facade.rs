@@ -3084,11 +3084,11 @@ impl MemoryFacade<'_> {
             .store
             .short_ids_reverse
             .get(&rtxn, id.as_bytes())
-            .map_err(|err| FacadeError::from(Error::from(err)))?
+            .map_err(FacadeError::from)?
         else {
             return Ok(None);
         };
-        let (short_id, content_hash) = parse_short_id_value(raw).map_err(FacadeError::from)?;
+        let (short_id, content_hash) = parse_short_id_value(&raw).map_err(FacadeError::from)?;
         Ok(Some(format!("{short_id}:{content_hash:02x}")))
     }
 

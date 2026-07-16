@@ -153,7 +153,7 @@ impl SyncQueue {
             if !key.starts_with(UPDATE_PREFIX) {
                 continue;
             }
-            let update = match decode_update_row(key, value) {
+            let update = match decode_update_row(&key, &value) {
                 Ok(update) => update,
                 Err(Error::CorruptedIndex(_)) => {
                     malformed_keys.push(key.to_vec());
@@ -182,7 +182,7 @@ impl SyncQueue {
             if !key.starts_with(EMBED_PREFIX) {
                 continue;
             }
-            let job = match decode_embed_job_row(key, value) {
+            let job = match decode_embed_job_row(&key, &value) {
                 Ok(job) => job,
                 Err(Error::CorruptedIndex(_)) => {
                     malformed_keys.push(key.to_vec());
@@ -239,7 +239,7 @@ impl SyncQueue {
             .store
             .sync_queue
             .get(&rtxn, LAST_UPDATE_SEQ_KEY)?
-            .and_then(|raw| decode_last_update_seq_metadata(raw).ok());
+            .and_then(|raw| decode_last_update_seq_metadata(&raw).ok());
         let mut remaining_max_seq = 0_u64;
         let iter = self.vault.store.sync_queue.iter(&rtxn)?;
         for result in iter {
@@ -247,7 +247,7 @@ impl SyncQueue {
             if !key.starts_with(UPDATE_PREFIX) {
                 continue;
             }
-            let seq = match decode_update_key(key) {
+            let seq = match decode_update_key(&key) {
                 Ok(seq) => seq,
                 Err(Error::CorruptedIndex(_)) => {
                     malformed_keys.push(key.to_vec());
@@ -308,7 +308,7 @@ impl SyncQueue {
         for result in iter {
             let (key, _) = result?;
             if key.starts_with(UPDATE_PREFIX)
-                && !decode_update_key(key).is_ok_and(|seq| delete_bearing.contains(&seq))
+                && !decode_update_key(&key).is_ok_and(|seq| delete_bearing.contains(&seq))
             {
                 keys_to_delete.push(key.to_vec());
             }
@@ -364,7 +364,7 @@ impl SyncQueue {
             .prefix_iter(&rtxn, UPDATE_PREFIX)?;
         for result in iter {
             let (key, value) = result?;
-            match validate_update_row(key, value) {
+            match validate_update_row(&key, &value) {
                 Ok(_) => count += 1,
                 Err(Error::CorruptedIndex(_)) => continue,
                 Err(err) => return Err(err),
@@ -405,9 +405,9 @@ impl SyncQueue {
             .prefix_iter(&rtxn, UPDATE_PREFIX)?;
         for result in iter {
             let (key, value) = result?;
-            match validate_update_row(key, value) {
+            match validate_update_row(&key, &value) {
                 Ok(())
-                    if !decode_update_key(key).is_ok_and(|seq| delete_bearing.contains(&seq)) =>
+                    if !decode_update_key(&key).is_ok_and(|seq| delete_bearing.contains(&seq)) =>
                 {
                     count += 1;
                 }
@@ -434,7 +434,7 @@ impl SyncQueue {
             .store
             .sync_queue
             .get(wtxn, LAST_UPDATE_SEQ_KEY)?
-            .and_then(|raw| decode_last_update_seq_metadata(raw).ok());
+            .and_then(|raw| decode_last_update_seq_metadata(&raw).ok());
         let max_valid_seq = max_valid_update_seq_in_txn(&self.vault, wtxn)?;
         Ok(metadata_seq.unwrap_or(0).max(max_valid_seq))
     }
@@ -466,7 +466,7 @@ impl SyncQueue {
             let Some(value) = self.vault.store.sync_queue.get(&wtxn, key)? else {
                 continue;
             };
-            if decode(key, value).is_err() {
+            if decode(key, &value).is_err() {
                 self.vault.store.sync_queue.delete(&mut wtxn, key)?;
                 // Sidecar invariant (ONE-1135 review item 15): a `d:{seq}`
                 // marker must never outlive its `q:{seq}` row — a stale
@@ -499,7 +499,7 @@ pub(crate) fn push_embed_job_in_txn(
 ) -> Result<()> {
     let key = encode_embed_key(entity_id);
     let (priority, queued_at) = match store.sync_queue.get(wtxn, &key)? {
-        Some(existing) => match decode_embed_job_value(existing) {
+        Some(existing) => match decode_embed_job_value(&existing) {
             Ok((existing_priority, existing_queued_at)) if existing_priority <= priority => {
                 (existing_priority, existing_queued_at)
             }
@@ -518,7 +518,7 @@ pub(crate) fn delete_embed_job_in_txn(
     entity_id: &EntityId,
 ) -> Result<bool> {
     let key = encode_embed_key(entity_id);
-    Ok(store.sync_queue.delete(wtxn, &key)?)
+    store.sync_queue.delete(wtxn, &key)
 }
 
 // ─── Delete-path transaction helpers (ONE-1135) ─────────────────────────────
@@ -555,7 +555,7 @@ fn ensure_last_update_seq_metadata_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
     let metadata = match vault.store.sync_queue.get(&*wtxn, LAST_UPDATE_SEQ_KEY)? {
-        Some(raw) => decode_last_update_seq_metadata(raw).ok(),
+        Some(raw) => decode_last_update_seq_metadata(&raw).ok(),
         None => None,
     };
     let max_valid_seq = max_valid_update_seq_in_txn(vault, wtxn)?;
@@ -584,7 +584,7 @@ fn max_valid_update_seq_in_txn(vault: &Vault, wtxn: &heed::RwTxn<'_>) -> Result<
     let iter = vault.store.sync_queue.prefix_iter(wtxn, UPDATE_PREFIX)?;
     for result in iter {
         let (key, _) = result?;
-        if let Ok(seq) = decode_update_key(key) {
+        if let Ok(seq) = decode_update_key(&key) {
             max_valid_seq = max_valid_seq.max(seq);
         }
     }
@@ -594,7 +594,7 @@ fn max_valid_update_seq_in_txn(vault: &Vault, wtxn: &heed::RwTxn<'_>) -> Result<
         .prefix_iter(wtxn, DELETE_BEARING_PREFIX)?
     {
         let (key, _) = result?;
-        if let Some(seq) = decode_delete_bearing_key(key) {
+        if let Some(seq) = decode_delete_bearing_key(&key) {
             max_valid_seq = max_valid_seq.max(seq);
         }
     }
@@ -611,7 +611,7 @@ fn delete_bearing_seqs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Ha
         .prefix_iter(txn, DELETE_BEARING_PREFIX)?
     {
         let (key, _) = row?;
-        if let Some(seq) = decode_delete_bearing_key(key) {
+        if let Some(seq) = decode_delete_bearing_key(&key) {
             seqs.insert(seq);
         }
     }
@@ -668,14 +668,14 @@ pub(crate) fn scrub_window_updates_in_txn(
     let mut doomed = Vec::new();
     for row in vault.store.sync_queue.prefix_iter(&*wtxn, UPDATE_PREFIX)? {
         let (key, value) = row?;
-        let Ok(seq) = decode_update_key(key) else {
+        let Ok(seq) = decode_update_key(&key) else {
             doomed.push(key.to_vec());
             continue;
         };
         if delete_bearing.contains(&seq) {
             continue;
         }
-        match decode_update_value_parts(value) {
+        match decode_update_value_parts(&value) {
             Ok((row_window, _)) if row_window == window_key => doomed.push(key.to_vec()),
             Ok(_) => {}
             // Fail-closed: a row that cannot prove which window it belongs
@@ -702,14 +702,14 @@ pub(crate) fn scrub_outbox_for_off_record_fence_in_txn(
     let mut affected_windows = HashSet::new();
     for row in vault.store.sync_queue.prefix_iter(&*wtxn, UPDATE_PREFIX)? {
         let (key, value) = row?;
-        let Ok(seq) = decode_update_key(key) else {
+        let Ok(seq) = decode_update_key(&key) else {
             doomed.push(key.to_vec());
             continue;
         };
         if delete_bearing.contains(&seq) {
             continue;
         }
-        if let Ok((window_key, _)) = decode_update_value_parts(value) {
+        if let Ok((window_key, _)) = decode_update_value_parts(&value) {
             affected_windows.insert(window_key.to_owned());
         }
         doomed.push(key.to_vec());

@@ -1970,7 +1970,7 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Ok(None);
         }
@@ -2138,7 +2138,7 @@ impl Vault {
             }
             return Ok((false, had_vector));
         };
-        let header = EntityMetadataHeader::parse(entity_record)
+        let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
         let mut cleanup = VadAnnotationCleanup::default();
@@ -2776,9 +2776,9 @@ impl Vault {
             .get(&*wtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY)?
         {
             Some(raw) if raw.len() == 8 => {
-                Some(u64::from_le_bytes(raw.try_into().map_err(|_| {
-                    Error::CorruptedIndex("hard erase sweep metadata")
-                })?))
+                Some(u64::from_le_bytes(raw.as_ref().try_into().map_err(
+                    |_| Error::CorruptedIndex("hard erase sweep metadata"),
+                )?))
             }
             Some(_) => return Err(Error::CorruptedIndex("hard erase sweep metadata")),
             None => None,
@@ -2829,7 +2829,7 @@ impl Vault {
             .prefix_iter(wtxn, HARD_ERASE_SWEEP_PREFIX)?
         {
             let (key, _) = row?;
-            if let Some(seq) = decode_hard_erase_sweep_seq(key) {
+            if let Some(seq) = decode_hard_erase_sweep_seq(&key) {
                 max_seq = max_seq.max(seq);
             }
         }
@@ -2944,7 +2944,7 @@ impl Vault {
         if let Some(value) = self.store.sync_state.get(&rtxn, pending_key.as_str())? {
             return Ok(Some(Self::deletion_metadata_from_tombstone_value(
                 HydratedShortIdDeletionSource::PendingTombstone,
-                value,
+                &value,
             )));
         }
         drop(rtxn);

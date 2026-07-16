@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use heed::types::Bytes;
-use heed::{Database, RoTxn};
+use heed::RoTxn;
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
@@ -23,6 +22,7 @@ use crate::edge::{EDGE_KEY_LEN, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::fusion;
+use crate::overlay_db::OverlayDb;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -2848,12 +2848,12 @@ fn blended_retrieval_scores(
 
         if needs_claim_body && let Some(raw) = store.entities.get(rtxn, input.id.as_bytes())? {
             if config.salience
-                && let Some(salience) = fusion::decode_msgpack_float(raw, crate::claim::KEY_SAL)
+                && let Some(salience) = fusion::decode_msgpack_float(&raw, crate::claim::KEY_SAL)
             {
                 input.salience = salience;
             }
             if config.confidence
-                && let Some(confidence) = fusion::decode_msgpack_float(raw, crate::claim::KEY_CONF)
+                && let Some(confidence) = fusion::decode_msgpack_float(&raw, crate::claim::KEY_CONF)
             {
                 input.confidence = confidence;
             }
@@ -2977,8 +2977,10 @@ fn claim_status_gate_allows(
     let decision = store
         .entities
         .get(rtxn, id.as_bytes())?
-        .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
-        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        .and_then(|raw| {
+            raw.get(ENTITY_METADATA_HEADER_LEN..)
+                .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        })
         .filter(claim_surfaceable);
     let allowed = decision.is_some();
     gate.decisions.insert(*id, decision);
@@ -3171,7 +3173,7 @@ fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(None);
     };
     if header.entity_type != ENTITY_TYPE_CLAIM {
@@ -3413,7 +3415,7 @@ fn collect_temporal_candidates(
             ),
         )? {
             let (key, value) = entry?;
-            let (id, occurred_start, _) = decode_long_interval_row(key, value)?;
+            let (id, occurred_start, _) = decode_long_interval_row(&key, &value)?;
             if occurred_start >= occurred_window_start {
                 continue;
             }
@@ -3528,7 +3530,7 @@ fn collect_occurred_candidates(
 }
 
 fn collect_index_candidates(
-    db: &Database<Bytes, Bytes>,
+    db: &OverlayDb,
     store: &Store,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext,
@@ -3602,13 +3604,13 @@ fn collect_index_candidates(
 
 fn next_temporal_index_row<'a, I>(iter: &mut I) -> Result<Option<TemporalIndexRow>>
 where
-    I: Iterator<Item = std::result::Result<(&'a [u8], &'a [u8]), heed::Error>>,
+    I: Iterator<Item = Result<(std::borrow::Cow<'a, [u8]>, std::borrow::Cow<'a, [u8]>)>>,
 {
     let Some(entry) = iter.next() else {
         return Ok(None);
     };
     let (key, _) = entry?;
-    decode_temporal_index_row(key).map(Some)
+    decode_temporal_index_row(&key).map(Some)
 }
 
 fn decode_temporal_index_row(key: &[u8]) -> Result<TemporalIndexRow> {
@@ -3638,7 +3640,7 @@ fn collect_temporal_index_rows<'a, I>(
     off_record_fences_present: bool,
 ) -> Result<Vec<TemporalIndexRow>>
 where
-    I: Iterator<Item = std::result::Result<(&'a [u8], &'a [u8]), heed::Error>>,
+    I: Iterator<Item = Result<(std::borrow::Cow<'a, [u8]>, std::borrow::Cow<'a, [u8]>)>>,
 {
     let mut rows = Vec::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
     let scan_budget = temporal_fence_scan_budget(cap, off_record_fences_present);
@@ -3661,7 +3663,7 @@ where
 }
 
 fn normalize_backward_boundary_bucket(
-    db: &Database<Bytes, Bytes>,
+    db: &OverlayDb,
     store: &Store,
     rtxn: &RoTxn<'_>,
     rows: &mut Vec<TemporalIndexRow>,
@@ -4248,7 +4250,7 @@ fn read_entity_metadata(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(None);
     };
 

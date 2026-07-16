@@ -1321,7 +1321,7 @@ impl<'a> DreamerRunnerStore<'a> {
         else {
             return Ok(None);
         };
-        decode_home_node_designation(raw).map(Some)
+        decode_home_node_designation(&raw).map(Some)
     }
 
     /// Enqueues a Dreamer attempt and records its private run-tree parent row in
@@ -1813,7 +1813,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 "dreamer budget reservation missing counter",
             ));
         };
-        let mut budget = decode_budget_record(raw_budget)?;
+        let mut budget = decode_budget_record(&raw_budget)?;
         if budget.budget_id != input.budget_id {
             return Err(invalid_dreamer_runner("dreamer budget key/body mismatch"));
         }
@@ -1956,7 +1956,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
         };
-        decode_budget_record(raw).map(Some)
+        decode_budget_record(&raw).map(Some)
     }
 
     /// Reads the remaining units in a private Dreamer budget row.
@@ -1977,7 +1977,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
         };
-        decode_budget_reservation(raw).map(Some)
+        decode_budget_reservation(&raw).map(Some)
     }
 
     /// Reads a private Dreamer run-tree row.
@@ -1987,7 +1987,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
         };
-        decode_run_tree_record(raw).map(Some)
+        decode_run_tree_record(&raw).map(Some)
     }
 
     /// Parks a Dreamer attempt in private runner state without changing the
@@ -2016,7 +2016,7 @@ impl<'a> DreamerRunnerStore<'a> {
             .store
             .vault_meta
             .get(&wtxn, &key)?
-            .map(decode_parked_record)
+            .map(|raw| decode_parked_record(&raw))
             .transpose()?;
         if let Some(existing) = existing
             && existing.park_owner != record.park_owner
@@ -2092,7 +2092,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let Some(raw) = self.vault.store.vault_meta.get(wtxn, &key)? else {
             return Ok(None);
         };
-        let record = decode_parked_record(raw)?;
+        let record = decode_parked_record(&raw)?;
         if record.park_owner != park_owner {
             return Err(invalid_dreamer_runner(
                 "dreamer parked row is owned by a different parker",
@@ -2115,7 +2115,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
         };
-        decode_parked_record(raw).map(Some)
+        decode_parked_record(&raw).map(Some)
     }
 
     /// Returns the latest active/approved durable milestone for `attempt_id`.
@@ -2273,7 +2273,7 @@ fn home_node_designation_in_txn(
     else {
         return Ok(None);
     };
-    decode_home_node_designation(raw).map(Some)
+    decode_home_node_designation(&raw).map(Some)
 }
 
 fn elect_home_node_designation(
@@ -2501,7 +2501,7 @@ fn read_or_initialize_budget_in_txn(
             updated_at: now,
         });
     };
-    let record = decode_budget_record(raw)?;
+    let record = decode_budget_record(&raw)?;
     if record.budget_id != budget_id {
         return Err(invalid_dreamer_runner("dreamer budget key/body mismatch"));
     }
@@ -2529,7 +2529,7 @@ fn read_budget_reservation_in_txn(
     let Some(raw) = vault.store.vault_meta.get(txn, &reservation_key)? else {
         return Ok(None);
     };
-    let reservation = decode_budget_reservation(raw)?;
+    let reservation = decode_budget_reservation(&raw)?;
     if reservation.budget_id != budget_id || reservation.attempt_id != child_attempt {
         return Err(invalid_dreamer_runner(
             "dreamer budget reservation key/body mismatch",
@@ -2942,7 +2942,7 @@ fn milestone_claim_envelope_writer_kind(
     let Some(raw) = store.entities.get(txn, actor_ref.as_bytes())? else {
         return Ok(None);
     };
-    Ok(EntityMetadataHeader::parse(raw).map(|header| header.entity_type))
+    Ok(EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
 }
 
 /// Reads the actor entity id stamped into a claim's write-envelope evidence.
@@ -2986,7 +2986,11 @@ pub(crate) fn deindex_dreamer_milestone_claim(
     claim_id: &EntityId,
 ) -> Result<()> {
     let claim_key = dreamer_milestone_claim_key(claim_id);
-    let Some(candidate_key) = store.vault_meta.get(wtxn, &claim_key)?.map(<[u8]>::to_vec) else {
+    let Some(candidate_key) = store
+        .vault_meta
+        .get(wtxn, &claim_key)?
+        .map(|value| value.to_vec())
+    else {
         return Ok(());
     };
     store.vault_meta.delete(wtxn, &candidate_key)?;
@@ -3003,7 +3007,7 @@ fn latest_indexed_dreamer_milestone(
     let mut latest: Option<DreamerDurableMilestone> = None;
     for row in store.vault_meta.prefix_iter(rtxn, &prefix)? {
         let (key, _value) = row?;
-        let Some(milestone) = indexed_dreamer_milestone_if_current(store, rtxn, key, attempt_id)?
+        let Some(milestone) = indexed_dreamer_milestone_if_current(store, rtxn, &key, attempt_id)?
         else {
             continue;
         };
@@ -3028,7 +3032,7 @@ fn indexed_dreamer_milestone_if_current(
     let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(None);
     };
     if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() == ENTITY_METADATA_HEADER_LEN {
@@ -3061,12 +3065,12 @@ fn backfill_dreamer_milestone_index(
     for row in store.entities.iter(&*wtxn)? {
         let (key, raw) = row?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() == ENTITY_METADATA_HEADER_LEN {
             continue;
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        let Ok(key_bytes) = <[u8; 16]>::try_from(key) else {
+        let Ok(key_bytes) = <[u8; 16]>::try_from(key.as_ref()) else {
             continue;
         };
         let Ok(claim_id) = EntityId::from_bytes(key_bytes) else {

@@ -511,7 +511,7 @@ fn attempt_queue_enqueue_uses_blake3_advisory_dedupe_key() -> Result<()> {
         .attempt_dedupe
         .get(&rtxn, &index_key)?
         .expect("dedupe row");
-    assert_eq!(AttemptId::from_bytes(stored_id)?, attempt.id);
+    assert_eq!(AttemptId::from_bytes(&stored_id)?, attempt.id);
 
     Ok(())
 }
@@ -551,7 +551,7 @@ fn attempt_queue_enqueue_self_heals_legacy_dedupe_index_key() -> Result<()> {
         .attempt_dedupe
         .get(&rtxn, &blake3_key)?
         .expect("self-healed BLAKE3 dedupe row");
-    assert_eq!(AttemptId::from_bytes(stored_id)?, attempt.id);
+    assert_eq!(AttemptId::from_bytes(&stored_id)?, attempt.id);
     assert!(
         vault
             .store

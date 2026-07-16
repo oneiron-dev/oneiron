@@ -85,7 +85,7 @@ fn read_dt_marker(vault: &Vault, id: &EntityId) -> Option<Vec<u8>> {
         .sync_state
         .get(&rtxn, &crate::deletion::local_hard_delete_key(id))
         .unwrap()
-        .map(<[u8]>::to_vec)
+        .map(|value| value.to_vec())
 }
 
 fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {

@@ -1,8 +1,6 @@
 use core::assert_matches;
 use std::collections::{BTreeMap, HashMap};
 
-use heed::types::Bytes;
-
 use crate::config::{HnswConfig, VaultConfig};
 
 use super::*;
@@ -226,7 +224,7 @@ fn scored(id: EntityId, score: f32) -> ScoredEntity {
     ScoredEntity { id, score }
 }
 
-fn count_entries(db: &heed::Database<Bytes, Bytes>, vault: &Vault) -> Result<usize> {
+fn count_entries(db: &crate::overlay_db::OverlayDb, vault: &Vault) -> Result<usize> {
     let rtxn = vault.store.env.read_txn()?;
     let mut count = 0;
     for entry in db.iter(&rtxn)? {
@@ -1797,7 +1795,7 @@ fn retrieval_telemetry_does_not_mutate_short_id_counters() -> Result<()> {
             .store
             .vault_meta
             .get(&rtxn, &counter_key)?
-            .map(<[u8]>::to_vec)
+            .map(|value| value.to_vec())
     };
 
     let results = vault.query().search_text("counter", 10).run()?;
@@ -1810,7 +1808,7 @@ fn retrieval_telemetry_does_not_mutate_short_id_counters() -> Result<()> {
             .store
             .vault_meta
             .get(&rtxn, &counter_key)?
-            .map(<[u8]>::to_vec)
+            .map(|value| value.to_vec())
     };
     assert_eq!(before, after);
     Ok(())

@@ -787,7 +787,7 @@ fn remote_lease_window_uses_rung_duration() -> Result<()> {
         .sync_state
         .get(&rtxn, pending_embedding_lease_key(&allowed).as_str())?
         .expect("remote lease row");
-    let remote_lease = decode_pending_embedding_lease(remote_raw).expect("decode remote lease");
+    let remote_lease = decode_pending_embedding_lease(&remote_raw).expect("decode remote lease");
     assert_eq!(
         remote_lease.expires_at_ms,
         1 + DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS
@@ -798,7 +798,7 @@ fn remote_lease_window_uses_rung_duration() -> Result<()> {
         .sync_state
         .get(&rtxn, pending_embedding_lease_key(&held_back).as_str())?
         .expect("local lease row");
-    let local_lease = decode_pending_embedding_lease(local_raw).expect("decode local lease");
+    let local_lease = decode_pending_embedding_lease(&local_raw).expect("decode local lease");
     assert_eq!(
         local_lease.expires_at_ms,
         1 + DEFAULT_PENDING_EMBEDDING_LEASE_MS

@@ -511,7 +511,7 @@ impl<'a> CritiqueArtifactStore<'a> {
         let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
         };
-        decode_stored_critique_artifact(raw).map(Some)
+        decode_stored_critique_artifact(&raw).map(Some)
     }
 
     pub fn list_branch(&self, branch_attempt: AttemptId) -> Result<Vec<CritiqueArtifact>> {
@@ -520,7 +520,7 @@ impl<'a> CritiqueArtifactStore<'a> {
         let mut artifacts = Vec::new();
         for row in self.vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (_key, raw) = row?;
-            artifacts.push(decode_stored_critique_artifact(raw)?);
+            artifacts.push(decode_stored_critique_artifact(&raw)?);
         }
         artifacts.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
         Ok(artifacts)

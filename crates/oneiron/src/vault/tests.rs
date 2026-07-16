@@ -531,7 +531,13 @@ fn rank_profile_change_does_not_require_reindex() -> Result<()> {
         let rtxn = vault.store.env.read_txn()?;
         let mut rows = Vec::with_capacity(HANDSHAKE_KEYS.len());
         for key in HANDSHAKE_KEYS {
-            rows.push(vault.store.vault_meta.get(&rtxn, key)?.map(<[u8]>::to_vec));
+            rows.push(
+                vault
+                    .store
+                    .vault_meta
+                    .get(&rtxn, key)?
+                    .map(|value| value.to_vec()),
+            );
         }
         Ok(rows)
     }

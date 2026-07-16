@@ -44,7 +44,7 @@ pub fn persist_imported_window_update(
         let seq_key = format!("m:u_seq:w:{key}");
         let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
             None => 0,
-            Some(raw) if raw.len() == 4 => u32::from_le_bytes(raw.try_into().unwrap()),
+            Some(raw) if raw.len() == 4 => u32::from_le_bytes(raw.as_ref().try_into().unwrap()),
             Some(_) => return Err(Error::CorruptedIndex("imported update u_seq row")),
         };
         let next_seq = seq
@@ -149,12 +149,12 @@ pub fn load_root_from_state(vault: &Vault) -> Result<Option<LoroDoc>> {
     let Some(state) = vault.store.sync_state.get(&rtxn, "d:root")? else {
         return Ok(None);
     };
-    let doc = doc_from_snapshot(state)?;
+    let doc = doc_from_snapshot(&state)?;
 
     let iter = vault.store.sync_state.prefix_iter(&rtxn, "u:root:")?;
     for entry in iter {
         let (_k, v) = entry?;
-        import_doc(&doc, v)?;
+        import_doc(&doc, &v)?;
     }
 
     Ok(Some(doc))

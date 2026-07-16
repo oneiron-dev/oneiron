@@ -229,12 +229,12 @@ fn raw_edge_values(vault: &Vault, edge: &EdgeRef) -> Result<RawEdgeValuePair> {
         .store
         .edges_out
         .get(&rtxn, &key_out)?
-        .map(<[u8]>::to_vec);
+        .map(|value| value.to_vec());
     let inn = vault
         .store
         .edges_in
         .get(&rtxn, &key_in)?
-        .map(<[u8]>::to_vec);
+        .map(|value| value.to_vec());
     Ok((out, inn))
 }
 
@@ -466,7 +466,7 @@ fn raw_pending_embedding_marker(vault: &Vault, id: &EntityId) -> Result<Option<V
         .store
         .sync_state
         .get(&rtxn, key.as_str())?
-        .map(<[u8]>::to_vec))
+        .map(|value| value.to_vec()))
 }
 
 fn overwrite_pending_embedding_marker(vault: &Vault, id: &EntityId, token: &[u8]) -> Result<()> {
@@ -2702,7 +2702,7 @@ fn authority_first_seen_for_test(vault: &Vault, key: &str) -> Result<Option<u64>
         .store
         .sync_state
         .get(&rtxn, key)?
-        .and_then(crate::authority::decode_authority_first_seen_secs))
+        .and_then(|raw| crate::authority::decode_authority_first_seen_secs(&raw)))
 }
 
 #[cfg(feature = "sync")]

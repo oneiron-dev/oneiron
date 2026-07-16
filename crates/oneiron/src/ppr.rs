@@ -364,7 +364,7 @@ fn run_ppr_rounds(
                 let mut groups = HashMap::<EdgeKind, Vec<GatedEdge>>::new();
                 for entry in db.prefix_iter(context.txn, node.as_bytes())? {
                     let (key, value) = entry?;
-                    if let Some(edge) = gate_edge(context.store, context.txn, key, value, hops)? {
+                    if let Some(edge) = gate_edge(context.store, context.txn, &key, &value, hops)? {
                         groups.entry(edge.kind).or_default().push(edge);
                     }
                 }
@@ -522,7 +522,7 @@ fn inbound_mentions_count(store: &Store, txn: &RoTxn<'_>, seed: &EntityId) -> Re
     let mut count = 0_u64;
     for entry in store.edges_in.prefix_iter(txn, seed.as_bytes())? {
         let (key, _) = entry?;
-        let (_, kind, _) = parse_strict_edge_record_key(key)?;
+        let (_, kind, _) = parse_strict_edge_record_key(&key)?;
         if kind == EdgeKind::Mentions {
             count = count
                 .checked_add(1)
@@ -565,7 +565,7 @@ fn recency_tiered_cache_ttl_secs(
         let Some(raw) = store.entities.get(txn, seed.as_bytes())? else {
             continue;
         };
-        let Some(header) = EntityMetadataHeader::parse(raw) else {
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Ok(CACHE_TTL_ACTIVE_SECS);
         };
         max_learned_at =
@@ -771,7 +771,7 @@ fn read_servable_cache_row(
     let Some(raw) = context.store.ppr_cache.get(context.txn, seed_hash)? else {
         return Ok(None);
     };
-    let (computed_at, cached_graph_version, stale) = parse_cache_header(raw)?;
+    let (computed_at, cached_graph_version, stale) = parse_cache_header(&raw)?;
     if stale != 0 || cached_graph_version != context.current_graph_version {
         return Ok(None);
     }
@@ -867,7 +867,7 @@ pub(crate) fn cleanup_ppr_cache(
             continue;
         }
 
-        let (computed_at, _, stale) = match parse_cache_header(value) {
+        let (computed_at, _, stale) = match parse_cache_header(&value) {
             Ok(header) => header,
             Err(Error::CorruptedIndex(_)) => {
                 cache_keys_to_delete.push(seed_hash_key.to_vec());
@@ -881,7 +881,7 @@ pub(crate) fn cleanup_ppr_cache(
         }
 
         let mut seed_hash = [0_u8; SEED_HASH_LEN];
-        seed_hash.copy_from_slice(seed_hash_key);
+        seed_hash.copy_from_slice(&seed_hash_key);
         cache_seed_hashes.insert(seed_hash);
     }
 
@@ -901,7 +901,7 @@ pub(crate) fn cleanup_ppr_cache(
             continue;
         }
 
-        let (entity_id, seed_hash) = match decode_dep_key(dep_key) {
+        let (entity_id, seed_hash) = match decode_dep_key(&dep_key) {
             Ok(decoded) => decoded,
             Err(Error::CorruptedIndex(_)) => {
                 dep_keys_to_delete.push(dep_key.to_vec());
@@ -1200,7 +1200,7 @@ fn entity_is_lexical_query_hint_claim(
     let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
         return Ok(false);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity header"));
     };
     if header.entity_type != ENTITY_TYPE_CLAIM {
@@ -1473,7 +1473,7 @@ fn read_graph_version(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
     let Some(raw) = store.hnsw_meta.get(txn, GRAPH_VERSION_KEY)? else {
         return Ok(0);
     };
-    decode_u64(raw, "ppr graph version")
+    decode_u64(&raw, "ppr graph version")
 }
 
 fn decode_u64(raw: &[u8], context: &'static str) -> Result<u64> {

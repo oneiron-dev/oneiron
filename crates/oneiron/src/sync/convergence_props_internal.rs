@@ -123,7 +123,7 @@ fn read_u64_meta(vault: &Vault, key: &[u8]) -> Option<u64> {
         .hnsw_meta
         .get(&rtxn, key)
         .unwrap()
-        .map(|raw| u64::from_le_bytes(raw.try_into().expect("8-byte version value")))
+        .map(|raw| u64::from_le_bytes(raw.as_ref().try_into().expect("8-byte version value")))
 }
 
 /// Spec 2(c), internal half: importing the SAME update bytes twice leaves

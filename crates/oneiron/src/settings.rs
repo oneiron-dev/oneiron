@@ -1,11 +1,11 @@
 //! Persisted customization settings and Eiri-visible change events.
 
-use heed::types::Bytes;
-use heed::{Database, RoTxn, RwTxn};
+use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::overlay_db::OverlayDb;
 use crate::{Vault, unix_seconds_now};
 
 pub mod model_versioning;
@@ -406,32 +406,29 @@ impl Vault {
 }
 
 fn customization_settings_in_read_txn(
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
     rtxn: &RoTxn<'_>,
 ) -> Result<CustomizationSettings> {
     let Some(raw) = vault_meta.get(rtxn, CUSTOMIZATION_SETTINGS_KEY)? else {
         return Ok(CustomizationSettings::default());
     };
-    decode_customization_settings(raw)
+    decode_customization_settings(&raw)
 }
 
 fn customization_settings_in_write_txn(
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
     wtxn: &RwTxn<'_>,
 ) -> Result<CustomizationSettings> {
     let Some(raw) = vault_meta.get(wtxn, CUSTOMIZATION_SETTINGS_KEY)? else {
         return Ok(CustomizationSettings::default());
     };
-    decode_customization_settings(raw)
+    decode_customization_settings(&raw)
 }
 
-fn next_customization_event_sequence(
-    vault_meta: &Database<Bytes, Bytes>,
-    wtxn: &mut RwTxn<'_>,
-) -> Result<u64> {
+fn next_customization_event_sequence(vault_meta: &OverlayDb, wtxn: &mut RwTxn<'_>) -> Result<u64> {
     let next = match vault_meta.get(&*wtxn, CUSTOMIZATION_EVENT_SEQUENCE_KEY)? {
         Some(raw) => {
-            let current = decode_sequence(raw)?;
+            let current = decode_sequence(&raw)?;
             current
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("customization event sequence"))?
@@ -443,7 +440,7 @@ fn next_customization_event_sequence(
 }
 
 fn customization_events_after_in_txn(
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
     rtxn: &RoTxn<'_>,
     after_sequence: u64,
     limit: usize,
@@ -451,14 +448,14 @@ fn customization_events_after_in_txn(
     let mut events = Vec::new();
     for row in vault_meta.prefix_iter(rtxn, CUSTOMIZATION_EVENT_KEY_PREFIX)? {
         let (key, raw) = row?;
-        let sequence = customization_event_sequence_from_key(key)?;
+        let sequence = customization_event_sequence_from_key(&key)?;
         if sequence <= after_sequence {
             continue;
         }
         if events.len() >= limit {
             break;
         }
-        let event = decode_customization_event(raw)?;
+        let event = decode_customization_event(&raw)?;
         if event.sequence != sequence {
             return Err(Error::CorruptedIndex("customization settings event"));
         }

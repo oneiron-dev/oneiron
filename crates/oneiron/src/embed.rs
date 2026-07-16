@@ -400,7 +400,7 @@ impl PendingEmbeddingReconciler {
 
                 let key = pending_embedding_lease_key(&job.entity_id);
                 if let Some(existing) = self.vault.store.sync_state.get(wtxn, key.as_str())?
-                    && let Some(lease) = decode_pending_embedding_lease(existing)
+                    && let Some(lease) = decode_pending_embedding_lease(&existing)
                     && lease.token == input.pending_embedding_token
                     && lease.expires_at_ms > now_ms
                 {
@@ -528,7 +528,7 @@ fn pending_input_in_txn(
     let Some(raw) = vault.store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    let header = crate::batch::EntityMetadataHeader::parse(raw)
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
@@ -573,7 +573,7 @@ fn clear_pending_embedding_lease_if_any(
     id: &EntityId,
 ) -> Result<bool> {
     let key = pending_embedding_lease_key(id);
-    Ok(vault.store.sync_state.delete(wtxn, key.as_str())?)
+    vault.store.sync_state.delete(wtxn, key.as_str())
 }
 
 #[cfg(feature = "sync")]
@@ -590,7 +590,7 @@ fn clear_pending_embedding_lease_if_matches(
     if current != expected {
         return Ok(false);
     }
-    Ok(vault.store.sync_state.delete(wtxn, key.as_str())?)
+    vault.store.sync_state.delete(wtxn, key.as_str())
 }
 
 #[cfg(feature = "sync")]

@@ -989,17 +989,32 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     {
         let rtxn = vault.store.env.read_txn().unwrap();
         assert_eq!(
-            vault.store.sync_queue.get(&rtxn, &q_key).unwrap(),
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &q_key)
+                .unwrap()
+                .as_deref(),
             Some([1u8].as_slice()),
             "q: update rows are out of scope"
         );
         assert_eq!(
-            vault.store.sync_queue.get(&rtxn, &d_key).unwrap(),
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &d_key)
+                .unwrap()
+                .as_deref(),
             Some([1u8].as_slice()),
             "d: delete-bearing sidecars are out of scope (delete safety)"
         );
         assert_eq!(
-            vault.store.sync_queue.get(&rtxn, &h_key).unwrap(),
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &h_key)
+                .unwrap()
+                .as_deref(),
             Some([7u8].as_slice()),
             "h: hard-erase sweep rows are out of scope (delete safety)"
         );

@@ -219,7 +219,7 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
             .prefix_iter(&rtxn, HARD_ERASE_SWEEP_PREFIX)?
         {
             let (key, value) = row?;
-            if decode_hard_erase_sweep_seq(key).is_none() {
+            if decode_hard_erase_sweep_seq(&key).is_none() {
                 // Not the pinned `h:` + seq u64 BE shape — fail closed: the
                 // row is kept (it may still be an obligation) and reported.
                 tracing::error!(
@@ -229,7 +229,7 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
                 run.jobs_deferred += 1;
                 continue;
             }
-            match decode_hard_erase_sweep_job(value) {
+            match decode_hard_erase_sweep_job(&value) {
                 Ok(job) => jobs.push((key.to_vec(), job)),
                 Err(_) => {
                     // An undecodable obligation can be neither executed nor
@@ -237,7 +237,7 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
                     // audit pass below will also flag any receipt this row
                     // was covering.
                     tracing::error!(
-                        seq = ?decode_hard_erase_sweep_seq(key),
+                        seq = ?decode_hard_erase_sweep_seq(&key),
                         "sweep: undecodable h: job row — obligation kept, cannot execute"
                     );
                     run.jobs_deferred += 1;
@@ -587,12 +587,12 @@ fn compact_window(
             .store
             .sync_state
             .get(&rtxn, &format!("d:w:{key}"))?
-            .map(<[u8]>::to_vec);
+            .map(|value| value.to_vec());
         let mut rows: Vec<(String, Vec<u8>)> = Vec::new();
         let prefix = format!("u:w:{key}:");
         for entry in vault.store.sync_state.prefix_iter(&rtxn, &prefix)? {
             let (k, v) = entry?;
-            rows.push((k.to_owned(), v.to_vec()));
+            rows.push((k.to_string(), v.to_vec()));
         }
         (snapshot, rows)
     };
@@ -663,7 +663,7 @@ fn compact_window(
             .store
             .sync_state
             .get(&*wtxn, &dw_key)?
-            .map(<[u8]>::to_vec);
+            .map(|value| value.to_vec());
         if current_snapshot != snapshot_bytes {
             raced.set(true);
             return Err(Error::sync_protocol(
@@ -681,7 +681,7 @@ fn compact_window(
         let mut current_keys: BTreeSet<String> = BTreeSet::new();
         for entry in vault.store.sync_state.prefix_iter(&*wtxn, &prefix)? {
             let (k, _) = entry?;
-            current_keys.insert(k.to_owned());
+            current_keys.insert(k.to_string());
         }
         if current_keys != merged_keys {
             raced.set(true);
@@ -1048,10 +1048,10 @@ fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
         .prefix_iter(&rtxn, HARD_ERASE_SWEEP_PREFIX)?
     {
         let (key, value) = row?;
-        if decode_hard_erase_sweep_seq(key).is_none() {
+        if decode_hard_erase_sweep_seq(&key).is_none() {
             continue;
         }
-        if let Ok(job) = decode_hard_erase_sweep_job(value) {
+        if let Ok(job) = decode_hard_erase_sweep_job(&value) {
             job_scopes.push(job.scope.entity_ids.iter().cloned().collect());
         }
         // Undecodable rows were already reported by the inventory pass; a

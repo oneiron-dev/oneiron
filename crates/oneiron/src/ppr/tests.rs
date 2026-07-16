@@ -1,4 +1,3 @@
-use heed::types::Bytes;
 use tempfile::tempdir;
 
 use super::*;
@@ -126,7 +125,7 @@ fn graph_version(vault: &Vault) -> Result<u64> {
     read_graph_version(&vault.store, &rtxn)
 }
 
-fn count_entries(db: &heed::Database<Bytes, Bytes>, vault: &Vault) -> Result<usize> {
+fn count_entries(db: &crate::overlay_db::OverlayDb, vault: &Vault) -> Result<usize> {
     let rtxn = vault.store.env.read_txn()?;
     let mut count = 0;
     for entry in db.iter(&rtxn)? {
@@ -1054,7 +1053,7 @@ fn batch_noop_delete_edge_does_not_bump_version_or_stale_cache() -> Result<()> {
         .ppr_cache
         .get(&rtxn, &seed_hash)?
         .ok_or(Error::InvalidKey)?;
-    let (_, _, stale) = parse_cache_header(raw)?;
+    let (_, _, stale) = parse_cache_header(&raw)?;
     assert_eq!(stale, 0);
     Ok(())
 }
@@ -1107,7 +1106,7 @@ fn direct_delete_edge_increments_graph_version_and_stales_cache() -> Result<()> 
         .ppr_cache
         .get(&rtxn, &seed_hash)?
         .ok_or(Error::InvalidKey)?;
-    let (_, _, stale) = parse_cache_header(raw)?;
+    let (_, _, stale) = parse_cache_header(&raw)?;
     assert_eq!(stale, 1);
     Ok(())
 }
@@ -1147,7 +1146,7 @@ fn batch_delete_edge_cleans_inbound_orphans_without_staling_cache() -> Result<()
         .ppr_cache
         .get(&rtxn, &seed_hash)?
         .ok_or(Error::EntityNotFound)?;
-    let (_, _, stale) = parse_cache_header(raw)?;
+    let (_, _, stale) = parse_cache_header(&raw)?;
     assert_eq!(stale, 0);
     Ok(())
 }
@@ -1991,7 +1990,7 @@ fn search_ppr_pipeline_applies_specificity_seeding() -> Result<()> {
         .ppr_cache
         .get(&rtxn, &specificity_hash)?
         .ok_or(Error::EntityNotFound)?;
-    assert_eq!(raw, raw_after, "cache row must be reused, not rewritten");
+    assert_eq!(*raw, *raw_after, "cache row must be reused, not rewritten");
     Ok(())
 }
 

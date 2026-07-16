@@ -188,7 +188,7 @@ fn corrupt_code_revision_frontier_fold(vault: &Vault, session_id: &EntityId) -> 
         .vault_meta
         .get(&wtxn, &key)?
         .ok_or(Error::EntityNotFound)?;
-    let mut frontier = decode_code_revision_frontier_record(raw)?;
+    let mut frontier = decode_code_revision_frontier_record(&raw)?;
     frontier.revision_fold[0] ^= 0x80;
     let encoded = encode_code_revision_frontier_record(&frontier)?;
     vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
@@ -243,7 +243,7 @@ fn corrupt_code_revision_parent_fold_self_consistent(
         .vault_meta
         .get(&wtxn, &key)?
         .ok_or(Error::EntityNotFound)?;
-    let mut record = decode_code_revision_integrity_record(raw)?;
+    let mut record = decode_code_revision_integrity_record(&raw)?;
     let parent_fold = record
         .parent_fold
         .as_mut()
@@ -274,7 +274,7 @@ fn read_code_revision_integrity_record(
         .vault_meta
         .get(&rtxn, &code_revision_integrity_key(revision_id))?
         .ok_or(Error::EntityNotFound)?;
-    decode_code_revision_integrity_record(raw)
+    decode_code_revision_integrity_record(&raw)
 }
 
 fn replace_code_revision_record_unchecked(vault: &Vault, revision: &CodeRevision) -> Result<()> {
@@ -316,7 +316,7 @@ fn corrupt_code_revision_frontier_session(
         .vault_meta
         .get(&wtxn, &key)?
         .ok_or(Error::EntityNotFound)?;
-    let mut frontier = decode_code_revision_frontier_record(raw)?;
+    let mut frontier = decode_code_revision_frontier_record(&raw)?;
     frontier.session_id = corrupt_session_id;
     let encoded = encode_code_revision_frontier_record(&frontier)?;
     vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;

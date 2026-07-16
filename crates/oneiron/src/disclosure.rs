@@ -665,7 +665,7 @@ impl Vault {
             .get(&wtxn, contact_id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -701,7 +701,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        decode_disclosure_scope_body(bytes).map(Some)
+        decode_disclosure_scope_body(&bytes).map(Some)
     }
 
     /// Owner-marks an entity Tier A (design §7 rule 5): meta row plus the
@@ -750,7 +750,7 @@ impl Vault {
         let claim_id = disclosure_tier_claim_id(id)?;
         if let Some(raw) = self.store.entities.get(&wtxn, claim_id.as_bytes())? {
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type == ENTITY_TYPE_CLAIM
                 && let Some(payload) = raw.get(ENTITY_METADATA_HEADER_LEN..)
                 && let Ok(mut body) = decode_claim_body(payload, true)

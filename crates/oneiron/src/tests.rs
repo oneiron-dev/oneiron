@@ -298,7 +298,7 @@ fn read_meta_u16(vault: &Vault, key: &[u8]) -> Result<Option<u16>> {
     let Some(raw) = vault.store.vault_meta.get(&rtxn, key)? else {
         return Ok(None);
     };
-    let bytes: [u8; 2] = raw.try_into().map_err(|_| Error::InvalidKey)?;
+    let bytes: [u8; 2] = raw.as_ref().try_into().map_err(|_| Error::InvalidKey)?;
     Ok(Some(u16::from_le_bytes(bytes)))
 }
 
@@ -650,7 +650,7 @@ fn read_hnsw_meta_u64(vault: &Vault, key: &[u8]) -> Result<u64> {
         return Ok(0);
     };
     Ok(u64::from_le_bytes(
-        raw.try_into().map_err(|_| Error::InvalidKey)?,
+        raw.as_ref().try_into().map_err(|_| Error::InvalidKey)?,
     ))
 }
 
@@ -996,7 +996,8 @@ fn hard_delete_sweep_sequence_self_heals_stale_cursor_on_collision() -> Result<(
         vault
             .store
             .sync_queue
-            .get(&rtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY)?,
+            .get(&rtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY)?
+            .as_deref(),
         Some(repaired_seq.to_le_bytes().as_slice())
     );
     assert!(
@@ -1100,7 +1101,11 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
 
 fn sync_state_value(vault: &Vault, key: &str) -> Result<Option<Vec<u8>>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(vault.store.sync_state.get(&rtxn, key)?.map(<[u8]>::to_vec))
+    Ok(vault
+        .store
+        .sync_state
+        .get(&rtxn, key)?
+        .map(|value| value.to_vec()))
 }
 
 fn sync_state_keys_with_prefix_raw(vault: &Vault, prefix: &str) -> Result<Vec<String>> {
@@ -1108,7 +1113,7 @@ fn sync_state_keys_with_prefix_raw(vault: &Vault, prefix: &str) -> Result<Vec<St
     let mut keys = Vec::new();
     for row in vault.store.sync_state.prefix_iter(&rtxn, prefix)? {
         let (key, _) = row?;
-        keys.push(key.to_owned());
+        keys.push(key.to_string());
     }
     Ok(keys)
 }
@@ -2213,7 +2218,11 @@ fn hard_delete_with_far_future_learned_at_tombstones_into_valid_window() -> Resu
 fn pending_tombstone_row(vault: &Vault, window: &str, id: &EntityId) -> Result<Option<Vec<u8>>> {
     let rtxn = vault.store.env.read_txn()?;
     let key = format!("pt:{window}:{}", id.to_hex());
-    Ok(vault.store.sync_state.get(&rtxn, &key)?.map(<[u8]>::to_vec))
+    Ok(vault
+        .store
+        .sync_state
+        .get(&rtxn, &key)?
+        .map(|value| value.to_vec()))
 }
 
 /// ONE-1132 OWNER-DECISION (cfg-off durability): a build WITHOUT the `sync`
@@ -2343,7 +2352,12 @@ fn put_vector_routes_through_hnsw_insert() -> Result<()> {
         .hnsw_meta
         .get(&rtxn, b"count")?
         .ok_or(Error::EntityNotFound)?;
-    let count = u64::from_le_bytes(count_raw.try_into().map_err(|_| Error::InvalidKey)?);
+    let count = u64::from_le_bytes(
+        count_raw
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?,
+    );
     assert_eq!(count, 1);
 
     let entry_point = vault
@@ -2351,7 +2365,7 @@ fn put_vector_routes_through_hnsw_insert() -> Result<()> {
         .hnsw_meta
         .get(&rtxn, b"entry_point")?
         .ok_or(Error::EntityNotFound)?;
-    assert_eq!(entry_point, id.as_bytes());
+    assert_eq!(entry_point.as_ref(), id.as_bytes());
 
     assert!(
         vault
@@ -2713,7 +2727,12 @@ fn hnsw_recall_at_10_after_refresh_churn() -> Result<()> {
             .hnsw_meta
             .get(&rtxn, b"count")?
             .ok_or(Error::EntityNotFound)?;
-        let count = u64::from_le_bytes(count_raw.try_into().map_err(|_| Error::InvalidKey)?);
+        let count = u64::from_le_bytes(
+            count_raw
+                .as_ref()
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        );
         assert_eq!(count, NODE_COUNT as u64);
     }
 
@@ -2845,7 +2864,7 @@ fn batch_put_writes_type_index() -> Result<()> {
     let mut hits = 0_usize;
     for entry in vault.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
         let (found_key, _) = entry?;
-        if found_key == key {
+        if *found_key == key {
             hits += 1;
         }
     }
@@ -2956,7 +2975,7 @@ fn batch_put_writes_long_interval_index_by_end_time() -> Result<()> {
         .get(&rtxn, &key)?
         .ok_or(Error::EntityNotFound)?;
     assert_eq!(
-        u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+        u64::from_be_bytes(value.as_ref().try_into().map_err(|_| Error::InvalidKey)?),
         1_000
     );
     Ok(())
@@ -3005,7 +3024,8 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
             vault
                 .store
                 .temporal_long_intervals
-                .get(&rtxn, &over_long_key)?,
+                .get(&rtxn, &over_long_key)?
+                .as_deref(),
             Some(&start.to_be_bytes()[..]),
             "span > LONG_INTERVAL_THRESHOLD_SECS must be indexed"
         );
@@ -3033,7 +3053,8 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
             vault
                 .store
                 .temporal_long_intervals
-                .get(&rtxn, &exact_long_key)?,
+                .get(&rtxn, &exact_long_key)?
+                .as_deref(),
             Some(&exact_sentinel[..]),
             "exact-threshold re-put must not run the old/new long-interval branches"
         );
@@ -3059,7 +3080,8 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
             vault
                 .store
                 .temporal_long_intervals
-                .get(&rtxn, &exact_long_key)?,
+                .get(&rtxn, &exact_long_key)?
+                .as_deref(),
             Some(&exact_sentinel[..]),
             "deindex_entity must not treat an exact-threshold span as long"
         );
@@ -3096,7 +3118,8 @@ fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
         vault
             .store
             .temporal_occurred_end
-            .get(&rtxn, &point_end_key)?,
+            .get(&rtxn, &point_end_key)?
+            .as_deref(),
         Some(&point_sentinel[..]),
         "point re-put must not run the old range-end delete branch"
     );
@@ -3158,7 +3181,7 @@ fn open_migrates_legacy_long_interval_rows() -> Result<()> {
         .get(&rtxn, &new_key)?
         .ok_or(Error::EntityNotFound)?;
     assert_eq!(
-        u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+        u64::from_be_bytes(value.as_ref().try_into().map_err(|_| Error::InvalidKey)?),
         1_000
     );
     Ok(())
@@ -3319,7 +3342,7 @@ fn batch_put_short_id_round_trips_both_directions() -> Result<()> {
         .short_ids
         .get(&rtxn, &forward_key)?
         .ok_or(Error::EntityNotFound)?;
-    assert_eq!(forward, id.as_bytes());
+    assert_eq!(forward.as_ref(), id.as_bytes());
 
     // A stale forward probe (wrong content hash) must NOT resolve: the hash
     // is part of the key, so it acts as a staleness check on resolution.
@@ -3438,13 +3461,13 @@ fn short_id_counters_live_in_vault_meta_not_short_ids() -> Result<()> {
         .vault_meta
         .get(&rtxn, b"sid_counter:\x01")?
         .expect("TURN counter must live in vault_meta");
-    assert_eq!(turn_counter, 2_u64.to_le_bytes());
+    assert_eq!(*turn_counter, 2_u64.to_le_bytes());
     let session_counter = vault
         .store
         .vault_meta
         .get(&rtxn, b"sid_counter:\x02")?
         .expect("SESSION counter must live in vault_meta");
-    assert_eq!(session_counter, 1_u64.to_le_bytes());
+    assert_eq!(*session_counter, 1_u64.to_le_bytes());
     Ok(())
 }
 
@@ -3475,7 +3498,7 @@ fn short_id_content_hash_is_xxh32_of_data_mod_256() -> Result<()> {
     forward_key.push(EXPECTED_CONTENT_HASH);
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
-        vault.store.short_ids.get(&rtxn, &forward_key)?,
+        vault.store.short_ids.get(&rtxn, &forward_key)?.as_deref(),
         Some(id.as_bytes().as_slice())
     );
     Ok(())
@@ -3813,7 +3836,11 @@ fn batch_put_updates_content_hash_on_reput() -> Result<()> {
         "stale forward short_ids row must be deleted on content update"
     );
     assert_eq!(
-        vault.store.short_ids.get(&rtxn, &fresh_forward_key)?,
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &fresh_forward_key)?
+            .as_deref(),
         Some(id.as_bytes().as_slice())
     );
     Ok(())
@@ -4022,7 +4049,7 @@ fn reput_rekeys_long_interval_index_and_drops_shortened_range() -> Result<()> {
             .get(&rtxn, &new_key)?
             .ok_or(Error::EntityNotFound)?;
         assert_eq!(
-            u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+            u64::from_be_bytes(value.as_ref().try_into().map_err(|_| Error::InvalidKey)?),
             5_000
         );
     }
@@ -4071,7 +4098,7 @@ fn batch_phonetic_index() -> Result<()> {
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
     assert_eq!(
-        decode_forward_codes(forward)?,
+        decode_forward_codes(&forward)?,
         vec!["SMT".to_owned(), "SMTH".to_owned()]
     );
     Ok(())
@@ -4108,7 +4135,7 @@ fn phonetic_dedup_on_reindex() -> Result<()> {
         .phonetic_forward
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
-    assert_eq!(decode_forward_codes(forward)?, vec!["ABC".to_owned()]);
+    assert_eq!(decode_forward_codes(&forward)?, vec!["ABC".to_owned()]);
     Ok(())
 }
 
@@ -4141,7 +4168,7 @@ fn phonetic_dedups_duplicate_codes_within_single_batch() -> Result<()> {
         .phonetic_forward
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
-    assert_eq!(decode_forward_codes(forward)?, vec!["ABC".to_owned()]);
+    assert_eq!(decode_forward_codes(&forward)?, vec!["ABC".to_owned()]);
     Ok(())
 }
 
@@ -4174,7 +4201,7 @@ fn phonetic_reindex_remains_additive() -> Result<()> {
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
     assert_eq!(
-        decode_forward_codes(forward)?,
+        decode_forward_codes(&forward)?,
         vec!["ABC".to_owned(), "DEF".to_owned()]
     );
     Ok(())
@@ -4207,7 +4234,7 @@ fn phonetic_reindex_repairs_missing_forward_codes() -> Result<()> {
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
     assert_eq!(
-        decode_forward_codes(forward)?,
+        decode_forward_codes(&forward)?,
         vec!["ABC".to_owned(), "DEF".to_owned()]
     );
     drop(rtxn);
@@ -7053,7 +7080,7 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
         .vault_meta
         .get(&rtxn, &short_id_counter_key(72))?
         .expect("dynamic type short-id counter must live in vault_meta");
-    assert_eq!(counter, 1_u64.to_le_bytes());
+    assert_eq!(*counter, 1_u64.to_le_bytes());
     Ok(())
 }
 
@@ -7178,7 +7205,7 @@ fn entity_value_envelope_matches_arch_0002_layout() -> Result<()> {
     );
     assert_eq!(&raw[ENTITY_BODY_OFFSET..], body.as_slice());
 
-    let header = EntityMetadataHeader::parse(raw).expect("parse entity header");
+    let header = EntityMetadataHeader::parse(&raw).expect("parse entity header");
     assert_eq!(header.entity_type, entity_type);
     assert_eq!(header.occurred_start, occurred.start);
     assert_eq!(header.occurred_end, occurred.end);
@@ -7936,7 +7963,7 @@ fn entity_header(vault: &Vault, id: &EntityId) -> Result<EntityMetadataHeader> {
         .entities
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
-    EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))
+    EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))
 }
 
 fn coping_outcome_fixture_body(
@@ -11399,7 +11426,7 @@ fn assert_no_entity_state(vault: &Vault, id: &EntityId) -> Result<()> {
         for entry in db.iter(&rtxn)? {
             let (key, value) = entry?;
             assert!(
-                !slice_contains(key, id.as_bytes()) && !slice_contains(value, id.as_bytes()),
+                !slice_contains(&key, id.as_bytes()) && !slice_contains(&value, id.as_bytes()),
                 "{name} row references rejected entity"
             );
         }
@@ -11483,14 +11510,14 @@ fn find_short_id_any_schema(vault: &Vault, id: &EntityId) -> Result<Option<Strin
         for entry in db.iter(&rtxn)? {
             let (key, value) = entry?;
             // Orientation 1: entity_id -> short_id (+ hash).
-            if key == id.as_bytes()
-                && let Some(short_id) = parse_with_optional_hash(value)
+            if *key == *id.as_bytes()
+                && let Some(short_id) = parse_with_optional_hash(&value)
             {
                 return Ok(Some(short_id));
             }
             // Orientation 2: short_id (+ hash) -> entity_id.
-            if value == id.as_bytes()
-                && let Some(short_id) = parse_with_optional_hash(key)
+            if *value == *id.as_bytes()
+                && let Some(short_id) = parse_with_optional_hash(&key)
             {
                 return Ok(Some(short_id));
             }
@@ -12642,12 +12669,12 @@ fn raw_edge_values(vault: &Vault, edge: &EdgeRef) -> Result<RawEdgeValuePair> {
         .store
         .edges_out
         .get(&rtxn, &key_out)?
-        .map(<[u8]>::to_vec);
+        .map(|value| value.to_vec());
     let inn = vault
         .store
         .edges_in
         .get(&rtxn, &key_in)?
-        .map(<[u8]>::to_vec);
+        .map(|value| value.to_vec());
     Ok((out, inn))
 }
 
@@ -12826,7 +12853,7 @@ fn put_edge_provenance_atomic_write_restamps_and_indexes() -> Result<()> {
         .temporal_long_intervals
         .get(&rtxn, &end_key)?
         .expect("open validity window must index as a long interval");
-    assert_eq!(long_row, learned_at.to_be_bytes());
+    assert_eq!(*long_row, learned_at.to_be_bytes());
     drop(rtxn);
 
     // A SECOND provenance claim restamps only the two flag bytes
@@ -13455,7 +13482,7 @@ fn supersede_claim_rehomes_temporal_long_interval_row() -> Result<()> {
             .get(&rtxn, &stale_key)?
             .ok_or(Error::EntityNotFound)?;
         assert_eq!(
-            u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+            u64::from_be_bytes(value.as_ref().try_into().map_err(|_| Error::InvalidKey)?),
             1_000,
             "fixture must pre-index the long interval (value = occurred_start BE)"
         );
@@ -13485,7 +13512,7 @@ fn supersede_claim_rehomes_temporal_long_interval_row() -> Result<()> {
         .get(&rtxn, &rehomed_key)?
         .expect("long-interval row must be re-homed to the refreshed occurred_end");
     assert_eq!(
-        u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+        u64::from_be_bytes(value.as_ref().try_into().map_err(|_| Error::InvalidKey)?),
         1_000,
         "re-homed long-interval value must keep occurred_start"
     );
@@ -15612,7 +15639,11 @@ fn corrupt_type_0_body_fails_the_delete_closed_with_zero_residue() -> Result<()>
         // Zero residue: the corrupt record's stored bytes are untouched…
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(
-            vault.store.entities.get(&rtxn, corrupt.as_bytes())?,
+            vault
+                .store
+                .entities
+                .get(&rtxn, corrupt.as_bytes())?
+                .as_deref(),
             Some(raw.as_slice()),
             "{reason:?}: the aborted delete must leave the record byte-identical"
         );
@@ -16171,7 +16202,7 @@ fn text_forward_row(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
         .store
         .text_forward
         .get(&rtxn, id.as_bytes())?
-        .map(<[u8]>::to_vec)
+        .map(|value| value.to_vec())
         .ok_or(Error::CorruptedIndex("missing text_forward row"))
 }
 
@@ -16223,7 +16254,7 @@ fn assert_empty_text_corpus_after_deindex(vault: &Vault) -> Result<()> {
         "the zeroed per-field stats row must be deleted, not kept at 0/0"
     );
     assert_eq!(
-        vault.store.text_meta.get(&rtxn, &[0u8; 16])?,
+        vault.store.text_meta.get(&rtxn, &[0u8; 16])?.as_deref(),
         Some(&0u32.to_le_bytes()[..]),
         "TOTAL_DOCS must be decremented in the same txn as the overwrite"
     );
@@ -16550,7 +16581,7 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_same_txn() -> Res
     // TOTAL_DOCS sentinel ([0x00; 16] key in text_meta, u32 LE value): the
     // corpus count is decremented back to 0, never left dangling at 1.
     assert_eq!(
-        vault.store.text_meta.get(&rtxn, &[0u8; 16])?,
+        vault.store.text_meta.get(&rtxn, &[0u8; 16])?.as_deref(),
         Some(&0u32.to_le_bytes()[..]),
         "TOTAL_DOCS must be decremented in the same txn as the overwrite"
     );
@@ -16584,7 +16615,7 @@ fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
             .store
             .text_forward
             .get(&rtxn, id.as_bytes())?
-            .map(<[u8]>::to_vec)
+            .map(|value| value.to_vec())
             .expect("precondition: forward row exists for the indexed doc")
     };
 
@@ -16607,7 +16638,7 @@ fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
                 .store
                 .text_forward
                 .get(&rtxn, id.as_bytes())?
-                .map(<[u8]>::to_vec),
+                .map(|value| value.to_vec()),
             Some(forward_before),
             "the forward row must be byte-identical after a same-bytes replay"
         );

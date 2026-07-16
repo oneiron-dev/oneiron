@@ -1,13 +1,13 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use heed::types::Bytes;
-use heed::{Database, RoTxn, RwTxn};
+use heed::{RoTxn, RwTxn};
 
 use crate::config::VaultConfig;
 use crate::distance::cosine_distance;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 use crate::error::{Error, Result};
+use crate::overlay_db::OverlayDb;
 use crate::pipeline::ScoredEntity;
 use crate::store::Store;
 use crate::store::VECTOR_VERSION_KEY;
@@ -88,7 +88,7 @@ pub(crate) enum LinkDiscipline {
 fn read_link_discipline(store: &Store, txn: &RoTxn<'_>) -> Result<LinkDiscipline> {
     match store.hnsw_meta.get(txn, SYMMETRIC_LINKS_KEY)? {
         None => Ok(LinkDiscipline::Legacy),
-        Some([SYMMETRIC_LINKS_ENABLED]) => Ok(LinkDiscipline::Symmetric),
+        Some(raw) if *raw == [SYMMETRIC_LINKS_ENABLED] => Ok(LinkDiscipline::Symmetric),
         Some(_) => Err(Error::CorruptedIndex(ERR_SYMMETRIC_MARKER_BYTES)),
     }
 }
@@ -108,6 +108,7 @@ pub(crate) fn read_refresh_fallback_rebuilds(store: &Store, txn: &RoTxn<'_>) -> 
         return Ok(0);
     };
     let bytes: [u8; 8] = raw
+        .as_ref()
         .try_into()
         .map_err(|_| Error::CorruptedIndex(ERR_FALLBACK_COUNTER_BYTES))?;
     Ok(u64::from_le_bytes(bytes))
@@ -128,6 +129,7 @@ pub(crate) fn read_legacy_snapshot_rebuilds(store: &Store, txn: &RoTxn<'_>) -> R
         return Ok(0);
     };
     let bytes: [u8; 8] = raw
+        .as_ref()
         .try_into()
         .map_err(|_| Error::CorruptedIndex(ERR_LEGACY_REBUILDS_BYTES))?;
     Ok(u64::from_le_bytes(bytes))
@@ -175,7 +177,7 @@ fn read_one_way_exception_holders(
     target: &EntityId,
 ) -> Result<Vec<EntityId>> {
     match store.hnsw_meta.get(txn, &one_way_exception_key(target))? {
-        Some(raw) => decode_exception_holders(raw),
+        Some(raw) => decode_exception_holders(&raw),
         None => Ok(Vec::new()),
     }
 }
@@ -584,7 +586,7 @@ fn detach_reverse_link(
     let Some(raw) = store.hnsw_neighbors.get(&*wtxn, victim.as_bytes())? else {
         return Ok(());
     };
-    let list = decode_neighbors(raw, false)?;
+    let list = decode_neighbors(&raw, false)?;
     if !list.contains(from) {
         return Ok(());
     }
@@ -629,7 +631,7 @@ fn hnsw_refresh_localized(
         let Some(raw) = store.hnsw_neighbors.get(&*wtxn, neighbor_id.as_bytes())? else {
             continue;
         };
-        let list = decode_neighbors(raw, false)?;
+        let list = decode_neighbors(&raw, false)?;
         if !list.contains(id) {
             // One-way protected link (id → neighbor without the reverse):
             // nothing to detach on the neighbor's side.
@@ -658,7 +660,7 @@ fn hnsw_refresh_localized(
             .first(&*wtxn)?
             .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
         entry_point =
-            parse_entity_id(replacement_key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
+            parse_entity_id(&replacement_key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
                 Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
                 other => other,
             })?;
@@ -702,7 +704,7 @@ fn hnsw_refresh_localized(
         let Some(raw) = store.hnsw_neighbors.get(&*wtxn, orphan.as_bytes())? else {
             continue;
         };
-        if !decode_neighbors(raw, false)?.is_empty() {
+        if !decode_neighbors(&raw, false)?.is_empty() {
             continue;
         }
         let Some(orphan_vector) = load_vector(store, &*wtxn, &orphan)? else {
@@ -887,14 +889,16 @@ pub(crate) fn read_vector_version(store: &Store, txn: &RoTxn<'_>) -> Result<u64>
     };
 
     let bytes: [u8; 8] = raw
+        .as_ref()
         .try_into()
         .map_err(|_| Error::CorruptedIndex(ERR_VECTOR_VERSION_BYTES))?;
     Ok(u64::from_le_bytes(bytes))
 }
 
-pub(crate) fn has_population(hnsw_meta: &Database<Bytes, Bytes>, txn: &RoTxn<'_>) -> Result<bool> {
+pub(crate) fn has_population(hnsw_meta: &OverlayDb, txn: &RoTxn<'_>) -> Result<bool> {
     if let Some(raw) = hnsw_meta.get(txn, COUNT_KEY)? {
         let bytes: [u8; 8] = raw
+            .as_ref()
             .try_into()
             .map_err(|_| Error::CorruptedIndex(ERR_COUNT_BYTES))?;
         if u64::from_le_bytes(bytes) > 0 {
@@ -1038,7 +1042,7 @@ pub(crate) fn hnsw_deindex_probed(
 ) -> Result<()> {
     *ops += 1;
     let own_neighbors = match store.hnsw_neighbors.get(&*wtxn, id.as_bytes())? {
-        Some(raw) => decode_neighbors(raw, false)?,
+        Some(raw) => decode_neighbors(&raw, false)?,
         None => return Ok(()),
     };
     let discipline = read_link_discipline(store, &*wtxn)?;
@@ -1086,7 +1090,7 @@ pub(crate) fn hnsw_deindex_probed(
             .first(&*wtxn)?
             .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
         let replacement =
-            parse_entity_id(replacement_key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
+            parse_entity_id(&replacement_key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
                 Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
                 other => other,
             })?;
@@ -1357,7 +1361,7 @@ fn collect_vector_ids(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
     for entry in store.vectors.iter(txn)? {
         let (key, _) = entry?;
         vector_ids.push(
-            parse_entity_id(key, ERR_VECTOR_KEY_BYTES).map_err(|e| match e {
+            parse_entity_id(&key, ERR_VECTOR_KEY_BYTES).map_err(|e| match e {
                 Error::InvalidKey => Error::CorruptedIndex(ERR_VECTOR_KEY_BYTES),
                 other => other,
             })?,
@@ -1698,6 +1702,7 @@ fn read_count(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
     };
 
     let bytes: [u8; 8] = raw
+        .as_ref()
         .try_into()
         .map_err(|_| Error::CorruptedIndex(ERR_COUNT_BYTES))?;
     Ok(u64::from_le_bytes(bytes))
@@ -1712,7 +1717,7 @@ fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> 
         return Ok(None);
     };
 
-    parse_entity_id(raw, ERR_ENTRY_POINT_BYTES)
+    parse_entity_id(&raw, ERR_ENTRY_POINT_BYTES)
         .map_err(|e| match e {
             Error::InvalidKey => Error::CorruptedIndex(ERR_ENTRY_POINT_BYTES),
             other => other,
@@ -1747,7 +1752,7 @@ fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<E
         return Ok(Vec::new());
     };
 
-    decode_neighbors(raw, false)
+    decode_neighbors(&raw, false)
 }
 
 fn load_neighbors_lenient(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
@@ -1755,7 +1760,7 @@ fn load_neighbors_lenient(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Resu
         return Ok(Vec::new());
     };
 
-    decode_neighbors(raw, true)
+    decode_neighbors(&raw, true)
 }
 
 fn write_neighbors(
@@ -1779,7 +1784,7 @@ fn load_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<V
     };
 
     let mut vector = Vec::new();
-    decode_vector_into(raw, &mut vector)?;
+    decode_vector_into(&raw, &mut vector)?;
     Ok(Some(vector))
 }
 
@@ -1793,7 +1798,7 @@ fn load_vector_into<'a>(
         return Ok(None);
     };
 
-    decode_vector_into(raw, scratch).map(Some)
+    decode_vector_into(&raw, scratch).map(Some)
 }
 
 fn load_required_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<f32>> {
@@ -1860,7 +1865,7 @@ fn collect_backlink_targets(
     for entry in store.hnsw_neighbors.iter(txn)? {
         *ops += 1;
         let (key, raw) = entry?;
-        let node_id = parse_entity_id(key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
+        let node_id = parse_entity_id(&key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
             Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
             other => other,
         })?;
@@ -1868,7 +1873,7 @@ fn collect_backlink_targets(
             continue;
         }
 
-        if !neighbor_bytes_contain(raw, id)? {
+        if !neighbor_bytes_contain(&raw, id)? {
             continue;
         }
         targets.push(node_id);
@@ -1888,7 +1893,7 @@ fn scrub_backlinks_in_place(
         let Some(raw) = store.hnsw_neighbors.get(&*wtxn, node_id.as_bytes())? else {
             continue;
         };
-        let Some(scrubbed) = scrub_neighbor_bytes(raw, id)? else {
+        let Some(scrubbed) = scrub_neighbor_bytes(&raw, id)? else {
             continue;
         };
         store

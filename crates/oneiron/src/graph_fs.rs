@@ -908,7 +908,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 return Ok((out.into_bytes(), next_cursor, total));
             }
             let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(key)?;
+            let temporal = temporal_cursor_from_key(&key)?;
             last_scanned = Some(temporal);
             if !self
                 .scoped_read
@@ -971,7 +971,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 return Ok((out.into_bytes(), next_cursor, total));
             }
             let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(key)?;
+            let temporal = temporal_cursor_from_key(&key)?;
             last_scanned = Some(temporal);
             if !self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id)? {
                 continue;
@@ -1105,7 +1105,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(Some(header.entity_type))
     }
 
@@ -1353,7 +1353,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 break;
             }
             let (key, _) = entry?;
-            let cursor = temporal_cursor_from_key(key)?;
+            let cursor = temporal_cursor_from_key(&key)?;
             last_scanned = Some(cursor);
             if !self
                 .scoped_read
@@ -1456,7 +1456,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 break;
             }
             let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(key)?;
+            let temporal = temporal_cursor_from_key(&key)?;
             last_scanned = Some(temporal);
             if !self
                 .scoped_read
@@ -1516,8 +1516,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if !key.starts_with(prefix) {
                 break;
             }
-            let cursor = edge_cursor_from_key(key)?;
-            let edge = crate::vault::parse_edge_record(key, value)?;
+            let cursor = edge_cursor_from_key(&key)?;
+            let edge = crate::vault::parse_edge_record(&key, &value)?;
             if !self
                 .scoped_read
                 .is_entity_readable_with_policy_in(&rtxn, &policy, &edge.target)?
@@ -1564,7 +1564,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 break;
             }
             let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(key)?;
+            let temporal = temporal_cursor_from_key(&key)?;
             if !self
                 .scoped_read
                 .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
@@ -1628,7 +1628,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 break;
             }
             let (key, _) = entry?;
-            let temporal = temporal_cursor_from_key(key)?;
+            let temporal = temporal_cursor_from_key(&key)?;
             last_scanned = Some(temporal);
             if !self
                 .scoped_read
@@ -2037,7 +2037,7 @@ fn claim_matches_world_in(
     let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
         return Ok(false);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(false);
     }
