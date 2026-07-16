@@ -16032,6 +16032,7 @@ fn put_edge_provenance_substrate_and_effort_round_trip_with_model_gate() -> Resu
                 data: b"forged-model".to_vec(),
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
+                hub_sync_imported: false,
             }],
             true,
             false,

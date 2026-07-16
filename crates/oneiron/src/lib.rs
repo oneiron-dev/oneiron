@@ -88,6 +88,7 @@ pub mod serialize;
 pub mod session_lifecycle;
 pub mod settings;
 pub mod skill;
+pub mod skill_hub;
 pub mod speculative;
 pub mod store;
 pub mod surface_event;
@@ -719,6 +720,15 @@ pub use crate::skill::{
     SKILL_TREE_PATH_MAX_BYTES, SKILL_VERSION_MAX_BYTES, SkillContentHash, SkillDependency,
     SkillLifecycle, SkillRecord, canonical_skill_tree_hash, cross_check_declared_content_hash,
     decode_skill_record, encode_skill_record,
+};
+pub use crate::skill_hub::{
+    GitSkillHubAdapter, HUB_PIN_KEYS, HUB_REF_KEYS, HttpIndexSkillHubAdapter,
+    HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef,
+    HubSyncDisposition, HubSyncPolicy, LocalDirSkillHubAdapter, PREDICATE_SKILL_HUB_PROVENANCE,
+    PREDICATE_SKILL_HUB_UPDATE_PROPOSAL, PREDICATE_SKILL_SCAN_VERDICT, SKILL_HUB_BODY_KEYS,
+    ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillGovernance,
+    SkillHubAdapter, SkillHubKind, SkillHubRecord, SkillHubTrustTier, SkillScanReceipt,
+    TrackedHubRef, decode_skill_hub_record, encode_skill_hub_record,
 };
 pub use crate::speculative::{
     SPECULATIVE_FIRE_CAP_DEFAULT, SPECULATIVE_FIRE_LIMIT_DEFAULT, SpeculativeFinal,

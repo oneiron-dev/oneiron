@@ -1931,10 +1931,25 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Transaction-composable [`Vault::put_claim`]. The caller owns commit;
+    /// the CLAIM body and its `claim_of` edge are applied to the same `wtxn`.
+    pub(crate) fn put_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
         let data = encode_claim_body(body)?;
         // Public-path gate: full structural validation + reserved-namespace
-        // rejection before any transaction is opened. `apply_ops` re-runs
-        // the same validator at the write chokepoint.
+        // rejection. `apply_ops` re-runs it at the write chokepoint.
         validate_claim_body_bytes(&data, false)?;
 
         let mut ops = vec![BatchOp::Put {
@@ -1945,16 +1960,11 @@ impl Vault {
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
+            hub_sync_imported: false,
         }];
 
-        let mut wtxn = self.store.env.write_txn()?;
         if let ClaimSubject::Entity(subject) = body.subject {
-            if self
-                .store
-                .entities
-                .get(&wtxn, subject.as_bytes())?
-                .is_none()
-            {
+            if self.store.entities.get(wtxn, subject.as_bytes())?.is_none() {
                 return Err(Error::EntityNotFound);
             }
             ops.push(BatchOp::Edge {
@@ -1969,15 +1979,13 @@ impl Vault {
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            wtxn,
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )?;
-        wtxn.commit()?;
-        Ok(())
+        )
     }
 
     pub(crate) fn put_claim_candidate_without_lexical_query_reconcile(
@@ -2082,6 +2090,7 @@ impl Vault {
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
+                    hub_sync_imported: false,
                 },
                 BatchOp::EdgeWithCreatedAt {
                     src: *new_id,
@@ -2485,6 +2494,7 @@ impl Vault {
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
+                hub_sync_imported: false,
             },
             BatchOp::EdgeWithCreatedAt {
                 src: *new_id,
@@ -2593,6 +2603,7 @@ impl Vault {
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
+            hub_sync_imported: false,
         }];
         apply_ops(
             &self.store,

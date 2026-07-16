@@ -4515,6 +4515,7 @@ impl Vault {
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
+                hub_sync_imported: false,
             }],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),

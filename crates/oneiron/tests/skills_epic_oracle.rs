@@ -23,7 +23,9 @@
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
-    Result, SkillContentHash, SkillLifecycle, SkillRecord, TimeRange, Vault, VaultConfig,
+    HubDependencyResolution, HubFile, HubPackage, HubPin, HubRef, HubSyncPolicy, Result,
+    ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillContentHash,
+    SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
     canonical_skill_tree_hash, cross_check_declared_content_hash,
 };
 use rmpv::Value;
@@ -146,15 +148,27 @@ fn map_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 /// (mirrors the claude-marketplace source union). One ref per pin type
 /// must be constructible; the `none` pin carries no value.
 #[test]
-#[ignore = "armed by ONE-1736: structured hub_ref shapes via the SKILL_HUB adapter API"]
 fn sk02_hub_ref_is_structured_with_five_way_pin() {
     const HUB_REF_KEYS: [&str; 3] = ["hubId", "refString", "pin"];
     const PIN_KEYS: [&str; 2] = ["type", "value"];
     const PIN_TYPES: [&str; 5] = ["semver", "tag", "commit", "content_hash", "none"];
 
-    // ARM(ONE-1736): build one structured hub_ref per pin type through the
-    // landed hub_ref constructor/encoder and push their wire Values here.
-    let hub_refs: Vec<Value> = Vec::new();
+    let hub_id = EntityId::now();
+    let hub_refs: Vec<Value> = [
+        HubPin::Semver("^1.0".to_owned()),
+        HubPin::Tag("stable".to_owned()),
+        HubPin::Commit("0123456789abcdef".to_owned()),
+        HubPin::ContentHash(fixture_tree_hash().to_hex()),
+        HubPin::None,
+    ]
+    .into_iter()
+    .map(|pin| {
+        HubRef::new(hub_id, "skills/oracle", pin)
+            .expect("structured hub ref")
+            .to_value()
+            .expect("structured hub ref encodes")
+    })
+    .collect();
 
     assert_eq!(
         hub_refs.len(),
@@ -221,7 +235,6 @@ fn sk02_hub_ref_is_structured_with_five_way_pin() {
 /// content change, whatever the approval stamp; ONE-1736's hub-sync door
 /// is the ONLY inlet that re-opens the same/narrower lane.)
 #[test]
-#[ignore = "armed by ONE-1736: rug-pull capability diff + hub-sync policy door"]
 fn sk02_update_widening_capability_surface_requires_reconsent() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -237,11 +250,52 @@ fn sk02_update_widening_capability_surface_requires_reconsent() -> Result<()> {
         .update_skill_record(&skill_entity, &silent, t(20), 21)
         .expect_err("silent imported overwrite must stay banned");
 
-    // ARM(ONE-1736): sync a SAME/NARROWER-surface upstream update through
-    // the hub-sync door with an auto-allowing policy, then a WIDER-surface
-    // update (new bin in requires.bins) through the same door.
-    let narrower_applied = false;
-    let widening_landed_as = Option::<ClaimApprovalStatus>::None;
+    let hub_ref = HubRef::new(EntityId::now(), "skills/oracle-rugpull", HubPin::None)?;
+    let mut narrower_record = vault
+        .get_skill_record(&skill_entity)?
+        .expect("active imported skill");
+    narrower_record.version = "1.1.0".to_owned();
+    let narrower_package = HubPackage::new(
+        narrower_record,
+        vec![HubFile::new(
+            "SKILL.md",
+            b"# oracle fixture skill\n".to_vec(),
+        )],
+        SkillCapabilitySurface::default(),
+    );
+    let narrower_applied = vault
+        .sync_skill_from_hub(
+            &skill_entity,
+            &hub_ref,
+            &narrower_package,
+            HubSyncPolicy::MirrorOfHub,
+            t(22),
+            23,
+        )?
+        .applied();
+
+    let mut wider_record = vault
+        .get_skill_record(&skill_entity)?
+        .expect("narrower update landed");
+    wider_record.version = "1.2.0".to_owned();
+    let wider_package = HubPackage::new(
+        wider_record,
+        vec![HubFile::new(
+            "SKILL.md",
+            b"# oracle fixture skill\n".to_vec(),
+        )],
+        SkillCapabilitySurface::default().with_bin("new-required-bin"),
+    );
+    let widening_landed_as = vault
+        .sync_skill_from_hub(
+            &skill_entity,
+            &hub_ref,
+            &wider_package,
+            HubSyncPolicy::MirrorOfHub,
+            t(24),
+            25,
+        )?
+        .approval_status();
 
     assert!(
         narrower_applied,
@@ -268,17 +322,63 @@ fn sk02_update_widening_capability_surface_requires_reconsent() -> Result<()> {
 /// hash resets them (zero rows). Provider disagreement is N independent
 /// rows, never one merged enum.
 #[test]
-#[ignore = "armed by ONE-1736: adapter scan-verdict ingestion keyed on (content_hash, provider, time)"]
 fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
     put_active_imported_skill(&vault, &skill_entity, "oracle.skill.verdicts")?;
 
-    // ARM(ONE-1736): ingest scan results for THIS content hash from three
-    // disagreeing providers (e.g. one malicious verdict, two clean), then
-    // re-ingest the SAME hash discovered via a second hub ref, then
-    // register the alternate hash with zero scans.
-    let ingested = false;
+    let content_hash = fixture_tree_hash();
+    let receipts = [
+        SkillScanReceipt::new(
+            "provider-a",
+            20,
+            ScanVerdict::Malicious,
+            ScanRiskLevel::Critical,
+            ScanCompleteness::Complete,
+            SkillGovernance::Prohibited,
+        )?,
+        SkillScanReceipt::new(
+            "provider-b",
+            21,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?,
+        SkillScanReceipt::new(
+            "provider-c",
+            22,
+            ScanVerdict::Suspicious,
+            ScanRiskLevel::Medium,
+            ScanCompleteness::Partial,
+            SkillGovernance::Discouraged,
+        )?,
+    ];
+    for (offset, receipt) in receipts.iter().enumerate() {
+        let at = 20 + offset as u64;
+        vault.ingest_skill_scan_verdict(&skill_entity, content_hash, receipt, t(at), at + 1)?;
+    }
+    let second_hub_ref = HubRef::new(
+        EntityId::now(),
+        "skills/oracle-verdicts-mirror",
+        HubPin::None,
+    )?;
+    let second_hub_package = HubPackage::new(
+        vault
+            .get_skill_record(&skill_entity)?
+            .expect("same-hash skill persists before second-hub import"),
+        vec![HubFile::new(
+            "SKILL.md",
+            b"# oracle fixture skill\n".to_vec(),
+        )],
+        SkillCapabilitySurface::default(),
+    );
+    vault.import_skill_from_hub(&second_hub_ref, &second_hub_package, t(24), 25)?;
+    for (offset, receipt) in receipts.iter().enumerate() {
+        let at = 26 + offset as u64;
+        vault.ingest_skill_scan_verdict(&skill_entity, content_hash, receipt, t(at), at + 1)?;
+    }
+    let ingested = true;
     assert!(
         ingested,
         "armed by ONE-1736: scan-verdict ingestion not built yet"
@@ -337,16 +437,24 @@ fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
 /// entity with TWO provenance rows (the mutable alias layer), never two
 /// entities.
 #[test]
-#[ignore = "armed by ONE-1736: hub import door with content-hash dedup"]
 fn sk02_same_content_via_two_hubs_is_one_entity_two_provenance_rows() -> Result<()> {
     let (_tmp, vault) = temp_vault();
 
-    // ARM(ONE-1736): import the SAME fixture tree through two hub refs
-    // (different hub_id + ref_string, identical canonical hash) and record
-    // the entity id each import resolved to plus the provenance row count
-    // the alias layer holds for that entity.
-    let import_results: Vec<EntityId> = Vec::new();
-    let provenance_rows: usize = 0;
+    let first_ref = HubRef::new(EntityId::now(), "skills/oracle-first", HubPin::None)?;
+    let second_ref = HubRef::new(EntityId::now(), "skills/oracle-second", HubPin::None)?;
+    let package = HubPackage::new(
+        imported_candidate("oracle.skill.dedup", fixture_tree_hash()),
+        vec![HubFile::new(
+            "SKILL.md",
+            b"# oracle fixture skill\n".to_vec(),
+        )],
+        SkillCapabilitySurface::default(),
+    );
+    let import_results = [
+        vault.import_skill_from_hub(&first_ref, &package, t(10), 11)?,
+        vault.import_skill_from_hub(&second_ref, &package, t(12), 13)?,
+    ];
+    let provenance_rows = vault.skill_hub_provenance_count(&import_results[0])?;
 
     assert_eq!(
         import_results.len(),
@@ -374,7 +482,6 @@ fn sk02_same_content_via_two_hubs_is_one_entity_two_provenance_rows() -> Result<
 /// trust tier — resolution refuses (fail closed) and materializes no
 /// entity.
 #[test]
-#[ignore = "armed by ONE-1736: refusal-first cross-hub dependency resolution"]
 fn sk02_cross_hub_dependency_inherits_nothing_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -382,9 +489,24 @@ fn sk02_cross_hub_dependency_inherits_nothing_fails_closed() -> Result<()> {
     // The entity the dependency WOULD materialize as, if trust chained.
     let dep_entity = EntityId::now();
 
-    // ARM(ONE-1736): resolve a dependency of the imported skill that names
-    // a ref in a DIFFERENT hub; capture whether resolution refused.
-    let resolution_refused = false;
+    let importing_ref = HubRef::new(EntityId::now(), "skills/oracle-parent", HubPin::None)?;
+    let dependency_ref = HubRef::new(EntityId::now(), "skills/oracle-dependency", HubPin::None)?;
+    let dependency_package = HubPackage::new(
+        imported_candidate("oracle.skill.cross-hub-dependency", alternate_tree_hash()),
+        vec![HubFile::new("SKILL.md", b"# a different tree\n".to_vec())],
+        SkillCapabilitySurface::default(),
+    );
+    let resolution_refused = matches!(
+        vault.resolve_hub_dependency(
+            &importing_ref,
+            &dependency_ref,
+            &dep_entity,
+            Some(&dependency_package),
+            t(20),
+            21,
+        )?,
+        HubDependencyResolution::RefusedCrossHub
+    );
 
     assert!(
         resolution_refused,

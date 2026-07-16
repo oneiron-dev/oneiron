@@ -504,6 +504,26 @@ pub(crate) fn is_legacy_opaque_skill_body(bytes: &[u8]) -> bool {
 }
 
 pub(crate) fn validate_skill_update(prior: &SkillRecord, updated: &SkillRecord) -> Result<()> {
+    validate_skill_update_for_door(prior, updated, false)
+}
+
+pub(crate) fn validate_hub_sync_skill_update(
+    prior: &SkillRecord,
+    updated: &SkillRecord,
+) -> Result<()> {
+    if prior.source != ClaimSource::Imported || updated.source != ClaimSource::Imported {
+        return Err(Error::InvalidSkillBody(
+            "hub sync only updates imported skills",
+        ));
+    }
+    validate_skill_update_for_door(prior, updated, true)
+}
+
+fn validate_skill_update_for_door(
+    prior: &SkillRecord,
+    updated: &SkillRecord,
+    allow_imported_content: bool,
+) -> Result<()> {
     validate_skill_record(updated)?;
     if prior == updated {
         return Ok(());
@@ -572,7 +592,7 @@ pub(crate) fn validate_skill_update(prior: &SkillRecord, updated: &SkillRecord) 
         // update lands through the hub-sync door's own policy-checked
         // inlet (ONE-1736), which mints proposal artifacts / new
         // revisions instead of mutating this one.
-        if prior.source == ClaimSource::Imported {
+        if prior.source == ClaimSource::Imported && !allow_imported_content {
             return Err(Error::InvalidSkillBody(
                 "imported skill content never changes in place; local edits fork and upstream updates land through the hub-sync door",
             ));
@@ -1158,9 +1178,38 @@ impl Vault {
             ));
         }
         validate_skill_update(&existing, record)?;
-        self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data)?;
+        self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    pub(crate) fn apply_hub_sync_skill_record(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        record: &SkillRecord,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_skill_record(record)?;
+        self.apply_skill_record_body(wtxn, id, occurred, learned_at, data, true)
+    }
+
+    pub(crate) fn apply_hub_import_skill_record(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        record: &SkillRecord,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        if record.source != ClaimSource::Imported {
+            return Err(Error::InvalidSkillBody(
+                "hub import package must carry imported source",
+            ));
+        }
+        let data = encode_skill_record(record)?;
+        self.apply_skill_record_body(wtxn, id, occurred, learned_at, data, false)
     }
 
     pub fn get_skill_record(&self, id: &EntityId) -> Result<Option<SkillRecord>> {
@@ -1175,7 +1224,7 @@ impl Vault {
         decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
-    fn read_skill_record_in_txn(
+    pub(crate) fn read_skill_record_in_txn(
         &self,
         txn: &heed::RwTxn<'_>,
         id: &EntityId,
@@ -1200,6 +1249,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         data: Vec<u8>,
+        hub_sync_imported: bool,
     ) -> Result<()> {
         apply_ops(
             &self.store,
@@ -1214,6 +1264,7 @@ impl Vault {
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
+                hub_sync_imported,
             }],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),

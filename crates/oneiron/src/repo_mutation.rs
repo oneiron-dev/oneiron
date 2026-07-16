@@ -1652,6 +1652,7 @@ fn put_engine_repo_conflict_claim(
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
+                hub_sync_imported: false,
             },
             BatchOp::Edge {
                 src: claim_id,
@@ -1745,6 +1746,7 @@ fn supersede_repo_conflict_claim(
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
+                hub_sync_imported: false,
             },
             BatchOp::EdgeWithCreatedAt {
                 src: new_id,

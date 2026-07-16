@@ -110,6 +110,7 @@ fn put_policy_manifest(vault: &crate::Vault, id: EntityId, data: Vec<u8>) -> Res
         data,
         allow_maintenance: true,
         allow_reserved_predicate: false,
+        hub_sync_imported: false,
     }];
     let mut wtxn = vault.store.env.write_txn()?;
     apply_ops(
@@ -218,6 +219,7 @@ fn large_day_shard_returns_first_page_and_more_under_byte_cap() -> Result<()> {
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
+            hub_sync_imported: false,
         });
     }
     let mut wtxn = vault.store.env.write_txn()?;

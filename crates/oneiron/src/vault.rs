@@ -104,6 +104,7 @@ fn seed_default_policy_manifest(
         data: crate::gate::default_policy_manifest(),
         allow_maintenance: true,
         allow_reserved_predicate: false,
+        hub_sync_imported: false,
     }];
     let mut wtxn = store.env.write_txn()?;
     apply_ops(

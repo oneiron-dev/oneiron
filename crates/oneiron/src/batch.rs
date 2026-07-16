@@ -205,6 +205,11 @@ pub(crate) enum BatchOp {
         /// (`put_replicated` on both builders, via `replicated_put_op`) set
         /// it.
         allow_reserved_predicate: bool,
+        /// Narrow ONE-1736 inlet for an imported SKILL body accepted by the
+        /// hub-sync policy door. This changes only the SKILL update validator;
+        /// all materialization and index maintenance still run through the
+        /// normal Put chokepoint.
+        hub_sync_imported: bool,
     },
     ClaimCandidate {
         id: EntityId,
@@ -316,6 +321,7 @@ fn replicated_put_op(
         data: data.to_vec(),
         allow_maintenance: true,
         allow_reserved_predicate: true,
+        hub_sync_imported: false,
     }
 }
 
@@ -366,6 +372,7 @@ impl<'a> BatchBuilder<'a> {
             data: data.to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: false,
+            hub_sync_imported: false,
         });
         self
     }
@@ -984,6 +991,7 @@ impl<'a> TxnBatchBuilder<'a> {
             data: data.to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: false,
+            hub_sync_imported: false,
         });
         self
     }
@@ -1178,6 +1186,7 @@ impl<'a> TxnBatchBuilder<'a> {
             data: data.to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: true,
+            hub_sync_imported: false,
         });
         self
     }
@@ -1695,7 +1704,17 @@ pub(crate) fn apply_ops_with_gate_mode(
                 data,
                 allow_maintenance,
                 allow_reserved_predicate,
+                hub_sync_imported,
             } => {
+                if hub_sync_imported
+                    && (entity_type != ENTITY_TYPE_SKILL
+                        || allow_maintenance
+                        || allow_reserved_predicate)
+                {
+                    return Err(Error::InvariantViolation(
+                        "hub-sync imported flag is only valid for a local SKILL Put",
+                    ));
+                }
                 // Public writes reject the engine-authored maintenance band via
                 // the public entity-type gate; the sync rematerialization path
                 // sets `allow_maintenance` so REDACTION_AUDIT (120) receipts
@@ -1733,6 +1752,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     // `apply_put` deindexes the loser's BM25F postings on a
                     // body-changing overwrite, same-txn (ARCH-0031 amendment).
                     allow_maintenance && allow_reserved_predicate,
+                    hub_sync_imported,
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
                     None,
@@ -2474,6 +2494,7 @@ fn apply_claim_candidate(
         &data,
         false,
         false,
+        false,
         has_later_covering_text_op,
         write_policy,
         Some(envelope),
@@ -2572,6 +2593,7 @@ fn apply_put(
     data: &[u8],
     allow_reserved_predicate: bool,
     replicated: bool,
+    hub_sync_imported: bool,
     has_later_covering_text_op: bool,
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
     write_envelope: Option<&WriteEnvelope>,
@@ -2856,6 +2878,9 @@ fn apply_put(
                 .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
             let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
             match crate::skill::decode_skill_record(prior_body) {
+                Ok(prior) if hub_sync_imported => {
+                    crate::skill::validate_hub_sync_skill_update(&prior, updated)?;
+                }
                 Ok(prior) => crate::skill::validate_skill_update(&prior, updated)?,
                 Err(error)
                     if error.kind() == ErrorKind::InvalidSkillBody

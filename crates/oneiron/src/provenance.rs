@@ -1366,6 +1366,7 @@ impl Vault {
             data: body,
             allow_maintenance: true,
             allow_reserved_predicate: false,
+            hub_sync_imported: false,
         }];
         apply_ops(
             &self.store,
