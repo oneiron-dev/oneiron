@@ -250,6 +250,7 @@ enum OverlayMutation {
     Delete {
         keyspace: OverlayKeyspace,
         key: Vec<u8>,
+        base_backed: bool,
     },
     DeleteDuplicate {
         keyspace: OverlayKeyspace,
@@ -630,9 +631,19 @@ impl SessionOverlay {
     }
 
     pub(crate) fn delete(self: &Arc<Self>, keyspace: OverlayKeyspace, key: &[u8]) -> Result<()> {
+        self.delete_with_base_backing(keyspace, key, true)
+    }
+
+    pub(crate) fn delete_with_base_backing(
+        self: &Arc<Self>,
+        keyspace: OverlayKeyspace,
+        key: &[u8],
+        base_backed: bool,
+    ) -> Result<()> {
         let mutation = OverlayMutation::Delete {
             keyspace,
             key: key.to_vec(),
+            base_backed,
         };
         self.preflight_segment_mutation(&mutation)?;
         self.stage_mutation(mutation)
@@ -1027,8 +1038,18 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
         (KeyspaceState::Single { rows, .. }, OverlayMutation::Put { key, value, .. }) => {
             rows.insert(key.clone(), OverlayValue::Present(value.clone()));
         }
-        (KeyspaceState::Single { rows, .. }, OverlayMutation::Delete { key, .. }) => {
-            rows.insert(key.clone(), OverlayValue::Tombstone);
+        (
+            KeyspaceState::Single { clear_base, rows },
+            OverlayMutation::Delete {
+                key, base_backed, ..
+            },
+        ) => {
+            let effective_base_backed = *base_backed && !*clear_base;
+            if !effective_base_backed && matches!(rows.get(key), Some(OverlayValue::Present(_))) {
+                rows.remove(key);
+            } else {
+                rows.insert(key.clone(), OverlayValue::Tombstone);
+            }
         }
         (KeyspaceState::DupSort { rows, .. }, OverlayMutation::Put { key, value, .. }) => {
             let identity = duplicate_identity(value);
@@ -1137,6 +1158,7 @@ mod tests {
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
+            hub_sync_imported: false,
         }
     }
 
@@ -1672,6 +1694,37 @@ mod tests {
         }
         assert_eq!(overlay.snapshot()?.bytes_used(), 1);
         segment.commit()?;
+        Ok(())
+    }
+
+    #[test]
+    fn delete_removes_overlay_only_rows_but_retains_base_masks() -> Result<()> {
+        let keyspace = OverlayKeyspace::Entities;
+        let key = b"key";
+
+        let overlay_only = SessionOverlay::new(64);
+        let segment = overlay_only.install_txn_segment()?;
+        overlay_only.put(keyspace, key, b"overlay")?;
+        overlay_only.delete_with_base_backing(keyspace, key, false)?;
+        segment.commit()?;
+        let snapshot = overlay_only.snapshot()?;
+        assert_eq!(snapshot.bytes_used(), 0);
+        assert_eq!(snapshot.row_count(keyspace), 0);
+
+        // delete -> re-put -> delete on a base-backed key must still end tombstoned:
+        // base backing is read from the base row, not the intervening overlay Present.
+        let base_backed = SessionOverlay::new(64);
+        let segment = base_backed.install_txn_segment()?;
+        base_backed.delete_with_base_backing(keyspace, key, true)?;
+        base_backed.put(keyspace, key, b"replacement")?;
+        base_backed.delete_with_base_backing(keyspace, key, true)?;
+        segment.commit()?;
+        let snapshot = base_backed.snapshot()?;
+        assert_eq!(snapshot.bytes_used(), key.len());
+        assert_eq!(
+            snapshot.merge_rows(keyspace, vec![(key.to_vec(), b"base".to_vec())]),
+            Vec::<(Vec<u8>, Vec<u8>)>::new()
+        );
         Ok(())
     }
 

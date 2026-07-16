@@ -115,7 +115,10 @@ impl OverlayDb {
         };
         let existed = self.get(txn, key)?.is_some();
         if existed {
-            overlay.live.delete(overlay.keyspace, key)?;
+            let base_backed = self.base.get(txn, key)?.is_some();
+            overlay
+                .live
+                .delete_with_base_backing(overlay.keyspace, key, base_backed)?;
         }
         Ok(existed)
     }
@@ -372,7 +375,10 @@ impl OverlayStrDb {
         };
         let existed = self.get(txn, key)?.is_some();
         if existed {
-            overlay.live.delete(overlay.keyspace, key.as_bytes())?;
+            let base_backed = self.base.get(txn, key)?.is_some();
+            overlay
+                .live
+                .delete_with_base_backing(overlay.keyspace, key.as_bytes(), base_backed)?;
         }
         Ok(existed)
     }
