@@ -1101,7 +1101,12 @@ fn apply_projector_rule_in_txn(
                     occurred_at,
                 };
                 let claim_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
-                if let Some(boundary) = latest_transition.filter(|boundary| occurred_at < *boundary)
+                // Deterministic tie-breaker: at equal occurred_at a join loses to
+                // the boundary (a same-time leave/transition), so equal-time
+                // opposing thread events converge to non-membership regardless of
+                // projection order (restrictive-wins-tie, symmetric with LeaveThread).
+                if let Some(boundary) =
+                    latest_transition.filter(|boundary| occurred_at <= *boundary)
                 {
                     vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
                 }
@@ -1149,12 +1154,18 @@ fn put_comm_claim_in_txn(
     let data = encode_claim_body(&body)?;
     let id = EntityId::now();
     let subject = value.party_ref();
-    if vault
+    // A comm.* claim's subject must be a PERSON party. A replicated event can
+    // name any existing entity as party_ref; a subject that is absent or not a
+    // PERSON is rejected so the projector fail-soft skips it (see
+    // run_comm_projector) rather than attaching communication state to an
+    // arbitrary TASK/CLAIM/etc. entity outside the party-indexed contact APIs.
+    let subject_is_person = vault
         .store
         .entities
         .get(&*wtxn, subject.as_bytes())?
-        .is_none()
-    {
+        .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
+        == Some(ENTITY_TYPE_PERSON);
+    if !subject_is_person {
         return Err(CommError::Engine(Error::EntityNotFound));
     }
     apply_ops(

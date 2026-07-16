@@ -6,9 +6,10 @@ use crate::claim::{
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_PERSON, EntityClassification,
-    TypeByteBand, entity_type_registry_entry,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
+    EntityClassification, TypeByteBand, entity_type_registry_entry,
 };
+use crate::temporal::TimeRange;
 
 fn entity(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("valid entity id")
@@ -1003,6 +1004,101 @@ fn party_absent_event_does_not_wedge_later_projection() -> CommResult<()> {
             "party-after-missing",
             "email",
         )?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn equal_time_join_and_leave_converge_to_non_membership_either_order() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    // Order A: join then leave at the same occurred_at.
+    record_comm_thread_event(&vault, "thread-tie-a", "party-tie-a", true, 100)?;
+    record_comm_thread_event(&vault, "thread-tie-a", "party-tie-a", false, 100)?;
+    // Order B: leave then join at the same occurred_at.
+    record_comm_thread_event(&vault, "thread-tie-b", "party-tie-b", false, 100)?;
+    record_comm_thread_event(&vault, "thread-tie-b", "party-tie-b", true, 100)?;
+    run_comm_projector(&vault)?;
+    // Restrictive-wins-tie: equal-time opposing thread events converge to
+    // non-membership regardless of which was projected first.
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-tie-a", "party-tie-a")?,
+        0
+    );
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-tie-b", "party-tie-b")?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn non_person_party_ref_is_skipped_without_wedging_projection() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    // A valid PERSON party whose send must still project (no wedge).
+    record_comm_send_receipt(&vault, "valid-person", "email", 20)?;
+
+    // An existing NON-PERSON entity (a MACHINE) named as party_ref by a
+    // replicated event: comm.* claims must not attach to it.
+    let non_person = entity(0xC3);
+    vault.put_entity(
+        &non_person,
+        ENTITY_TYPE_MACHINE,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"machine",
+    )?;
+    assert_eq!(
+        vault.get_entity_type(&non_person)?,
+        Some(ENTITY_TYPE_MACHINE)
+    );
+
+    let bad_event_id = EntityId::now();
+    let bad_event = CommRecord::Event {
+        sequence: 0,
+        kind: CommEventKind::SendSucceeded,
+        party_ref: non_person,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| {
+        put_comm_record_in_txn(&vault, wtxn, bad_event_id, &bad_event)
+    })?;
+
+    run_comm_projector(&vault)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    // The non-PERSON event is skipped (left unprojected), not marked done.
+    let records = comm_records_in_txn(&vault, &rtxn)?;
+    let (_, retained) = records
+        .iter()
+        .find(|(id, _)| *id == bad_event_id)
+        .ok_or(CommError::InvalidRecord)?;
+    assert!(matches!(
+        retained,
+        CommRecord::Event {
+            projected: false,
+            ..
+        }
+    ));
+    // No comm.* claim was attached to the non-PERSON subject.
+    let attached = matching_claims_in_txn(
+        &vault,
+        &rtxn,
+        non_person,
+        PREDICATE_COMM_LAST_TOUCH,
+        Some("email"),
+        None,
+        false,
+    )?;
+    assert!(attached.is_empty());
+    drop(rtxn);
+
+    // The valid PERSON party's send still projected — no wedge.
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "valid-person", "email")?,
         1
     );
     Ok(())
