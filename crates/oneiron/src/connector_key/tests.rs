@@ -114,6 +114,53 @@ fn suggested_budget_codec_round_trips_and_old_body_defaults_empty() -> Result<()
 }
 
 #[test]
+fn connector_key_codec_accepts_v1_body_without_suggested_budgets() -> Result<()> {
+    let record = ConnectorKeyRecord::active("peer_link", None, Vec::new(), 1_000);
+    let encoded = encode_connector_key_body(&record)?;
+    let mut cursor = std::io::Cursor::new(encoded);
+    let mut value = rmpv::decode::read_value(&mut cursor).expect("decode fixture");
+    let rmpv::Value::Map(entries) = &mut value else {
+        panic!("connector key body must be a map");
+    };
+    let (_, schema_version) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("schema_version"))
+        .expect("schema_version key");
+    *schema_version = rmpv::Value::from(1);
+    entries.retain(|(key, _)| key.as_str() != Some("suggested_budgets"));
+    let mut old_body = Vec::new();
+    rmpv::encode::write_value(&mut old_body, &value).expect("encode v1 fixture");
+
+    let decoded = decode_connector_key_body(&old_body)?;
+    assert!(decoded.suggested_budgets.is_empty());
+    Ok(())
+}
+
+#[test]
+fn connector_key_codec_rejects_an_unsupported_version() -> Result<()> {
+    let record = ConnectorKeyRecord::active("peer_link", None, Vec::new(), 1_000);
+    let encoded = encode_connector_key_body(&record)?;
+    let mut cursor = std::io::Cursor::new(encoded);
+    let mut value = rmpv::decode::read_value(&mut cursor).expect("decode fixture");
+    let rmpv::Value::Map(entries) = &mut value else {
+        panic!("connector key body must be a map");
+    };
+    let (_, schema_version) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("schema_version"))
+        .expect("schema_version key");
+    *schema_version = rmpv::Value::from(3);
+    let mut unsupported_body = Vec::new();
+    rmpv::encode::write_value(&mut unsupported_body, &value).expect("encode unsupported fixture");
+
+    assert!(matches!(
+        decode_connector_key_body(&unsupported_body),
+        Err(Error::InvalidConnectorKeyBody("unsupported schema version"))
+    ));
+    Ok(())
+}
+
+#[test]
 fn connector_key_codec_rejects_missing_required_body_key() -> Result<()> {
     let record = ConnectorKeyRecord::active("peer_link", None, Vec::new(), 1_000);
     let encoded = encode_connector_key_body(&record)?;
@@ -190,6 +237,48 @@ fn unbudgeted_mint_normalizes_and_owner_add_enforces() -> Result<()> {
     assert!(matches!(
         vault.add_connector_key_budget(&full_id, EffectorBudget::rate(1, 60), 1_000),
         Err(Error::InvalidConnectorKeyBody("too many budget rows"))
+    ));
+    Ok(())
+}
+
+#[test]
+fn dispatch_batch_surfaces_budget_ladder_events() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xAE);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer", None, vec![EffectorBudget::rate(3, 60)], 1_000),
+    )?;
+
+    let below_threshold = vault.admit_connector_key_dispatches(&id, "peer", 1, 1_000)?;
+    assert!(below_threshold.ladder_events.is_empty());
+
+    let threshold_crossing = vault.admit_connector_key_dispatches(&id, "peer", 1, 1_000)?;
+    assert_eq!(threshold_crossing.ladder_events.len(), 1);
+    assert_eq!(
+        threshold_crossing.ladder_events[0].threshold,
+        BudgetThreshold::Silent50
+    );
+    Ok(())
+}
+
+#[test]
+fn oversized_dispatch_batch_is_rejected() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xAD);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer", None, Vec::new(), 1_000),
+    )?;
+
+    assert!(matches!(
+        vault.admit_connector_key_dispatches(
+            &id,
+            "peer",
+            CONNECTOR_KEY_MAX_DISPATCH_BATCH + 1,
+            1_000,
+        ),
+        Err(Error::InvalidConnectorKeyBody("dispatch batch too large"))
     ));
     Ok(())
 }

@@ -28,7 +28,7 @@ use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 
 /// Current ConnectorKeyRecord body schema version.
-pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 1;
+pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 2;
 
 /// Pinned on-disk MessagePack key set for ConnectorKeyRecord bodies.
 pub const CONNECTOR_KEY_BODY_KEYS: [&str; 11] = [
@@ -93,6 +93,9 @@ const COMPILED_POLICY_KEYS: [&str; 2] = ["never_list", "channel_caps"];
 
 /// Maximum number of budget rows on one key (and compiled caps on one charter).
 pub const CONNECTOR_KEY_MAX_BUDGET_ROWS: usize = 16;
+
+/// Upper bound on one admit batch — keeps a single LMDB write txn bounded.
+pub const CONNECTOR_KEY_MAX_DISPATCH_BATCH: u64 = 4096;
 
 /// Compiled-charter cap usage rows live at `0x8000 | i` (GOV-10); key budget
 /// rows live at `0..=15`.
@@ -1294,7 +1297,8 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
     };
     validate_connector_key_body_keys(entries)?;
 
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(CONNECTOR_KEY_SCHEMA_VERSION) {
+    let schema_version = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64();
+    if !matches!(schema_version, Some(1..=CONNECTOR_KEY_SCHEMA_VERSION)) {
         return Err(invalid_body("unsupported schema version"));
     }
 
@@ -1890,10 +1894,11 @@ pub struct EffectorBudgetCharge {
 
 /// Aggregate result of applying connector-key admission to a sequential batch
 /// of send-like dispatches.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorKeyDispatchTally {
     pub admitted: u64,
     pub refused: u64,
+    pub ladder_events: Vec<BudgetLadderEvent>,
 }
 
 /// Outcome of one budget-stage evaluation over a key's matched rows.
@@ -2611,18 +2616,22 @@ impl Vault {
         if effect_channel.is_empty() {
             return Err(invalid_body("effect channel must not be blank"));
         }
+        if count > CONNECTOR_KEY_MAX_DISPATCH_BATCH {
+            return Err(invalid_body("dispatch batch too large"));
+        }
         let mut wtxn = self.store.env.write_txn()?;
         let mut record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
         let mut tally = ConnectorKeyDispatchTally {
             admitted: 0,
             refused: 0,
+            ladder_events: Vec::new(),
         };
 
-        for _ in 0..count {
+        for i in 0..count {
             if record.status != ConnectorKeyStatus::Active {
-                tally.refused = tally.refused.saturating_add(1);
-                continue;
+                tally.refused = tally.refused.saturating_add(count - i);
+                break;
             }
             match charge_effector_budgets(
                 &self.store,
@@ -2633,16 +2642,16 @@ impl Vault {
                 true,
                 now,
             )? {
-                EffectorBudgetChargeOutcome::NoRows(_)
-                | EffectorBudgetChargeOutcome::Charged(_) => {
+                EffectorBudgetChargeOutcome::NoRows(charge)
+                | EffectorBudgetChargeOutcome::Charged(charge) => {
                     tally.admitted = tally.admitted.saturating_add(1);
+                    tally.ladder_events.extend(charge.ladder_events);
                 }
                 EffectorBudgetChargeOutcome::Exhausted {
                     row_index,
                     on_exhaust,
-                    ..
+                    charge,
                 } => {
-                    tally.refused = tally.refused.saturating_add(1);
                     if on_exhaust == EffectorBudgetOnExhaust::Suspend {
                         record = suspend_connector_key_in_txn(
                             &self.store,
@@ -2663,6 +2672,9 @@ impl Vault {
                             now,
                         )?;
                     }
+                    tally.ladder_events.extend(charge.ladder_events);
+                    tally.refused = tally.refused.saturating_add(count - i);
+                    break;
                 }
             }
         }
