@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::dreamer_consolidation::{
-    ConsolidationPartitionPlan, advance_watermark_in_txn, count_dirty_turns_in_txn,
+    ConsolidationPartitionPlan, advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
     enqueue_partition_attempts_in_txn, read_watermark_in_txn,
 };
 use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore};
@@ -211,9 +211,10 @@ pub struct SessionEndWake {
     /// re-reads the watermark and skips the enqueue + advance when it
     /// moved — another planner already owns those turns.
     pub planned_watermark: u64,
-    /// Number of admissible dirty turns in the planned watermark window.
-    /// The transaction re-counts this set before settling the round.
-    pub planned_dirty_count: usize,
+    /// Admissible dirty-turn IDs in the planned watermark window, in
+    /// deterministic `(learned_at, id)` scan order. The transaction
+    /// re-collects and exactly compares this identity set before settling.
+    pub planned_turn_ids: Vec<EntityId>,
     /// Where the watermark advances after the enqueue (the scan's max
     /// `learned_at`), if the scan found dirty turns.
     pub advance_watermark_to: Option<u64>,
@@ -226,7 +227,7 @@ impl SessionEndWake {
         Self {
             plans: Vec::new(),
             planned_watermark,
-            planned_dirty_count: 0,
+            planned_turn_ids: Vec::new(),
             advance_watermark_to: None,
         }
     }
@@ -600,13 +601,14 @@ impl Vault {
             if current.last_learned_at == wake.planned_watermark {
                 let dirty_snapshot_matches = match wake.advance_watermark_to {
                     Some(advance_to) => {
-                        count_dirty_turns_in_txn(
+                        let in_txn_ids = collect_dirty_turn_ids_in_txn(
                             self,
                             wtxn,
                             scope,
                             wake.planned_watermark,
                             advance_to,
-                        )? == wake.planned_dirty_count
+                        )?;
+                        in_txn_ids.as_slice() == wake.planned_turn_ids.as_slice()
                     }
                     None => true,
                 };

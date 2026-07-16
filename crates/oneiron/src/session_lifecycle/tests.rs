@@ -99,12 +99,12 @@ fn meso_wake(vault: &Vault) -> SessionEndWake {
     let watermark = read_watermark(vault, scope).expect("watermark");
     let dirty = scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
     let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
-    let planned_dirty_count = dirty.len();
+    let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
     let plans = plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
     SessionEndWake {
         plans,
         planned_watermark: watermark.last_learned_at,
-        planned_dirty_count,
+        planned_turn_ids,
         advance_watermark_to,
     }
 }
@@ -264,7 +264,11 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
 
     let wake = meso_wake(&vault);
     assert_eq!(wake.plans.len(), 1, "one dirty conversation, one partition");
-    assert_eq!(wake.planned_dirty_count, 1, "one dirty turn was planned");
+    assert_eq!(
+        wake.planned_turn_ids,
+        vec![turn],
+        "one dirty turn was planned"
+    );
     let ended = vault
         .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)
         .expect("end")
@@ -318,11 +322,15 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
 fn an_in_range_dirty_turn_that_races_the_close_defers_the_whole_round() {
     let (_dir, vault) = open_vault();
     let conversation = seed_conversation(&vault, 0x55);
-    seed_dirty_turn(&vault, &conversation, 900);
+    let planned = seed_dirty_turn(&vault, &conversation, 900);
     let id = minted(vault.mint_session(1_000).expect("mint"));
 
     let wake = meso_wake(&vault);
-    assert_eq!(wake.planned_dirty_count, 1, "one dirty turn was planned");
+    assert_eq!(
+        wake.planned_turn_ids,
+        vec![planned],
+        "one dirty turn was planned"
+    );
     assert_eq!(wake.advance_watermark_to, Some(900));
 
     // Same-second arrival is inside the planned watermark window while the
@@ -356,6 +364,73 @@ fn an_in_range_dirty_turn_that_races_the_close_defers_the_whole_round() {
         dirty.iter().filter(|turn| turn.turn_id == injected).count(),
         1,
         "the injected turn remains in the dirty set"
+    );
+}
+
+#[test]
+fn a_same_count_delete_and_insert_race_defers_the_whole_round_by_identity() {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_conversation(&vault, 0x56);
+    seed_dirty_turn(&vault, &conversation, 900);
+    seed_dirty_turn(&vault, &conversation, 900);
+    let id = minted(vault.mint_session(1_000).expect("mint"));
+
+    let wake = meso_wake(&vault);
+    assert_eq!(
+        wake.planned_turn_ids.len(),
+        2,
+        "two dirty turns were planned"
+    );
+    let deleted = wake.planned_turn_ids[0];
+    let surviving = wake.planned_turn_ids[1];
+
+    assert!(
+        vault
+            .delete_entity(&deleted)
+            .expect("hard-delete planned turn")
+    );
+    let inserted = seed_dirty_turn(&vault, &conversation, 900);
+    vault
+        .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)
+        .expect("end")
+        .expect("the close itself still commits");
+
+    assert_eq!(
+        meso_attempt_count(&vault),
+        0,
+        "identity mismatch enqueues none of the stale round"
+    );
+    let watermark = read_watermark(&vault, DreamerConsolidationScope::Meso)
+        .expect("watermark after deferred round");
+    assert_eq!(
+        watermark.last_learned_at, wake.planned_watermark,
+        "the stale round must not advance the watermark"
+    );
+    let dirty = scan_dirty_turns(
+        &vault,
+        DreamerConsolidationScope::Meso,
+        &watermark,
+        usize::MAX,
+    )
+    .expect("fresh dirty scan");
+    assert_eq!(dirty.len(), 2, "net dirty count remains unchanged");
+    assert_eq!(
+        dirty
+            .iter()
+            .filter(|turn| turn.turn_id == surviving)
+            .count(),
+        1,
+        "the surviving planned turn remains dirty"
+    );
+    assert_eq!(
+        dirty.iter().filter(|turn| turn.turn_id == inserted).count(),
+        1,
+        "the inserted turn remains dirty"
+    );
+    assert_eq!(
+        dirty.iter().filter(|turn| turn.turn_id == deleted).count(),
+        0,
+        "the hard-deleted turn is absent"
     );
 }
 

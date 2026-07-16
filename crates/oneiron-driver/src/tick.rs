@@ -13,8 +13,9 @@
 //! [`HybridTick`] selects over both with deadline priority: when a deadline
 //! and a push are ready in the same poll, the deadline wins. Push bursts
 //! coalesce (capacity 1 per wake lane and plain-hint slot; session hints
-//! ride a bounded ORDERED queue that coalesces only adjacent Activity
-//! hints — lifecycle causality is never reordered) into follow-up passes,
+//! ride a bounded ORDERED queue that coalesces only adjacent Activity hints
+//! arriving within the configured idle floor — lifecycle causality is never
+//! reordered) into follow-up passes,
 //! while a missed deadline can never be dropped — deadlines are never
 //! buffered here, they are re-read from the attempt queue on every cycle, so
 //! a deadline that lost one race simply re-surfaces on the next call.
@@ -366,7 +367,8 @@ fn scope_lane(scope: DreamerConsolidationScope) -> usize {
 /// Bound of the ordered SESSION-hint queue. Arrival order IS lifecycle
 /// causality (end-then-open is a reopen; open-end-open is two sittings), so
 /// session hints are queued in order and NEVER reordered; only ADJACENT
-/// Activity hints coalesce (a typing burst is one endpoint-preserving period).
+/// Activity hints inside the idle floor coalesce (a typing burst is one
+/// endpoint-preserving period).
 /// Boundary hints never coalesce or evict: overflow sheds only Activity, and
 /// reports [`TickPushError::QueueFull`] when a full all-boundary queue receives
 /// another boundary.
@@ -388,6 +390,7 @@ struct PushShared {
     pushers: AtomicUsize,
     receiver_alive: AtomicBool,
     now_ms: NowMillis,
+    coalesce_floor_ms: u64,
 }
 
 impl fmt::Debug for PushShared {
@@ -427,8 +430,8 @@ impl std::error::Error for TickPushError {}
 /// one wake slot per consolidation lane (drained first with a rotating scan
 /// start so a lane that refills every pass cannot starve older buffered
 /// wakes), an ORDERED bounded session-hint queue (arrival order preserved;
-/// only adjacent Activity hints coalesce — lifecycle causality is never
-/// rewritten), and one coalescing slot for the plain advisory hint. Bursts
+/// only adjacent Activity hints inside the idle floor coalesce — lifecycle
+/// causality is never rewritten), and one coalescing slot for the plain advisory hint. Bursts
 /// therefore collapse while distinct signals keep their order.
 pub struct PushTick {
     shared: Arc<PushShared>,
@@ -449,19 +452,24 @@ impl PushTick {
     /// [`WakePusher::to_hint_pusher`]). There is no other way to write into
     /// the channel.
     #[must_use]
-    pub fn channel() -> (Self, WakePusher, HintPusher) {
-        Self::channel_with_clock(Arc::new(system_now_ms))
+    pub fn channel(coalesce_floor_ms: u64) -> (Self, WakePusher, HintPusher) {
+        Self::channel_with_clock(Arc::new(system_now_ms), coalesce_floor_ms)
     }
 
-    /// Builds a push channel over an injected arrival clock (tests).
+    /// Builds a push channel over an injected arrival clock and idle-floor
+    /// coalescing bound.
     #[must_use]
-    pub fn channel_with_clock(now_ms: NowMillis) -> (Self, WakePusher, HintPusher) {
+    pub fn channel_with_clock(
+        now_ms: NowMillis,
+        coalesce_floor_ms: u64,
+    ) -> (Self, WakePusher, HintPusher) {
         let shared = Arc::new(PushShared {
             state: Mutex::new(PushState::default()),
             notify: Notify::new(),
             pushers: AtomicUsize::new(2),
             receiver_alive: AtomicBool::new(true),
             now_ms,
+            coalesce_floor_ms,
         });
         (
             Self {
@@ -661,7 +669,8 @@ impl HintPusher {
     /// Pushes a session-lifecycle hint (ONE-1685) onto the bounded ORDERED
     /// queue. Arrival order is preserved end-to-end — lifecycle causality
     /// (open → end → open is two sittings) is never rewritten by
-    /// coalescing; only ADJACENT Activity hints aggregate (with both endpoint
+    /// coalescing; only ADJACENT Activity hints whose arrivals are separated
+    /// by less than the channel's idle floor aggregate (with both endpoint
     /// stamps and a count). On overflow only Activity is loss-tolerant;
     /// boundaries are never evicted. Carrying a lifecycle fact grants NO pass-shaping
     /// authority — the driver's session policy decides what, if anything,
@@ -680,6 +689,7 @@ impl HintPusher {
             if hint == SessionHint::Activity
                 && let Some(last) = state.session_hints.back_mut()
                 && last.hint == SessionHint::Activity
+                && arrival_ms.saturating_sub(last.last.arrival_ms) < self.shared.coalesce_floor_ms
             {
                 last.aggregate_activity(claimed_ms, arrival_ms);
             } else {
@@ -816,6 +826,9 @@ mod tests {
 
     use super::*;
 
+    const COALESCE_FLOOR_MS: u64 =
+        crate::session::DEFAULT_SESSION_IDLE_FLOOR_SECS.saturating_mul(1_000);
+
     struct ScriptedDeadlines {
         deadlines: Vec<Option<CommitmentDeadline>>,
     }
@@ -839,7 +852,7 @@ mod tests {
 
     #[test]
     fn push_coalesces_same_lane_wakes() {
-        let (mut receiver, wake, _hint) = PushTick::channel();
+        let (mut receiver, wake, _hint) = PushTick::channel(COALESCE_FLOOR_MS);
         for _ in 0..3 {
             wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
                 .expect("open channel");
@@ -856,7 +869,7 @@ mod tests {
 
     #[test]
     fn distinct_lane_wakes_never_collapse() {
-        let (mut receiver, wake, _hint) = PushTick::channel();
+        let (mut receiver, wake, _hint) = PushTick::channel(COALESCE_FLOOR_MS);
         wake.push_wake(WakeTrigger::Timer, DreamerConsolidationScope::Macro)
             .expect("open channel");
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
@@ -882,7 +895,7 @@ mod tests {
 
     #[test]
     fn wake_drains_before_hint() {
-        let (mut receiver, wake, hint) = PushTick::channel();
+        let (mut receiver, wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
         hint.push_hint().expect("open channel");
         hint.push_hint().expect("open channel");
         wake.push_wake(WakeTrigger::SessionEnd, DreamerConsolidationScope::Meso)
@@ -904,7 +917,7 @@ mod tests {
 
     #[test]
     fn session_hints_preserve_arrival_order_and_coalesce_only_adjacent_same_kind() {
-        let (mut receiver, _wake, hint) = PushTick::channel();
+        let (mut receiver, _wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
         // Arrival sequence: open, a typing burst (adjacent → ONE bump),
         // end, REOPEN, plain advisory. The second AppOpen is same-kind but
         // NOT adjacent to the first — collapsing them would erase a whole
@@ -943,10 +956,12 @@ mod tests {
 
     #[test]
     fn adjacent_session_hint_coalescing_retains_the_activity_period() {
+        const COALESCE_FLOOR_MS: u64 = 100;
+
         let now = Arc::new(AtomicU64::new(10));
         let clock_now = Arc::clone(&now);
         let clock: NowMillis = Arc::new(move || clock_now.load(Ordering::Acquire));
-        let (mut receiver, _wake, hint) = PushTick::channel_with_clock(clock);
+        let (mut receiver, _wake, hint) = PushTick::channel_with_clock(clock, COALESCE_FLOOR_MS);
 
         hint.push_session_hint(SessionHint::Activity, None)
             .expect("open channel");
@@ -973,8 +988,49 @@ mod tests {
     }
 
     #[test]
+    fn adjacent_activity_hints_across_the_idle_floor_remain_two_carriers() {
+        const COALESCE_FLOOR_MS: u64 = 100;
+        const FIRST_ARRIVAL_MS: u64 = 10;
+        const WITHIN_FLOOR_ARRIVAL_MS: u64 = FIRST_ARRIVAL_MS + COALESCE_FLOOR_MS - 1;
+        const ACROSS_FLOOR_ARRIVAL_MS: u64 = WITHIN_FLOOR_ARRIVAL_MS + COALESCE_FLOOR_MS + 25;
+
+        let now = Arc::new(AtomicU64::new(FIRST_ARRIVAL_MS));
+        let clock_now = Arc::clone(&now);
+        let clock: NowMillis = Arc::new(move || clock_now.load(Ordering::Acquire));
+        let (mut receiver, _wake, hint) = PushTick::channel_with_clock(clock, COALESCE_FLOOR_MS);
+
+        hint.push_session_hint(SessionHint::Activity, Some(1))
+            .expect("first activity");
+        now.store(WITHIN_FLOOR_ARRIVAL_MS, Ordering::Release);
+        hint.push_session_hint(SessionHint::Activity, Some(2))
+            .expect("within-floor activity");
+        now.store(ACROSS_FLOOR_ARRIVAL_MS, Ordering::Release);
+        hint.push_session_hint(SessionHint::Activity, Some(3))
+            .expect("across-floor activity");
+
+        let first = receiver
+            .take_buffered_session_hint_carrier()
+            .expect("first carrier");
+        let second = receiver
+            .take_buffered_session_hint_carrier()
+            .expect("second carrier");
+        assert_eq!(first.hint, SessionHint::Activity);
+        assert_eq!(first.first.claimed_ms, Some(1));
+        assert_eq!(first.first.arrival_ms, FIRST_ARRIVAL_MS);
+        assert_eq!(first.last.claimed_ms, Some(2));
+        assert_eq!(first.last.arrival_ms, WITHIN_FLOOR_ARRIVAL_MS);
+        assert_eq!(first.count, 2);
+        assert_eq!(second.hint, SessionHint::Activity);
+        assert_eq!(second.first, second.last);
+        assert_eq!(second.first.claimed_ms, Some(3));
+        assert_eq!(second.first.arrival_ms, ACROSS_FLOOR_ARRIVAL_MS);
+        assert_eq!(second.count, 1);
+        assert_eq!(receiver.take_buffered_session_hint_carrier(), None);
+    }
+
+    #[test]
     fn session_hint_queue_overflow_preserves_boundaries_and_evicts_only_activity() {
-        let (mut receiver, _wake, hint) = PushTick::channel();
+        let (mut receiver, _wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
         // A full all-boundary queue rejects another boundary for producer
         // retry; all eight durable points remain present and ordered.
         for index in 0..SESSION_HINT_QUEUE_CAP {
@@ -1011,7 +1067,7 @@ mod tests {
 
         // With a mixed full queue, accepting a new boundary removes the
         // oldest Activity period and no boundary.
-        let (mut mixed, _wake, hint) = PushTick::channel();
+        let (mut mixed, _wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
         let initial = [
             SessionHint::AppOpen,
             SessionHint::Activity,
@@ -1066,7 +1122,7 @@ mod tests {
         // refilled micro slot first, so a buffered macro/meso wake never
         // returned under continuous micro push. Rotating scan start after
         // each returned wake drains every occupied lane within N=3 takes.
-        let (mut receiver, wake, _hint) = PushTick::channel();
+        let (mut receiver, wake, _hint) = PushTick::channel(COALESCE_FLOOR_MS);
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
             .expect("open channel");
         wake.push_wake(WakeTrigger::Timer, DreamerConsolidationScope::Macro)
@@ -1101,7 +1157,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_recv_ends_when_producers_drop() {
-        let (mut receiver, wake, hint) = PushTick::channel();
+        let (mut receiver, wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
         wake.push_wake(WakeTrigger::Event, DreamerConsolidationScope::Micro)
             .expect("open channel");
         drop(wake);
@@ -1119,7 +1175,7 @@ mod tests {
         // pushers (store-before-decrement). The re-check closes the window
         // either way. Concurrent push+drop while recv is waiting (and the
         // sequential push-then-drop case) both deliver exactly one signal.
-        let (mut receiver, wake, hint) = PushTick::channel();
+        let (mut receiver, wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
         // Drop the unused hint first so the last producer can race alone.
         drop(hint);
 
@@ -1152,7 +1208,7 @@ mod tests {
 
     #[test]
     fn push_after_receiver_drop_is_rejected() {
-        let (receiver, wake, hint) = PushTick::channel();
+        let (receiver, wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
         drop(receiver);
         assert_eq!(
             wake.push_wake(WakeTrigger::Event, DreamerConsolidationScope::Micro),
@@ -1171,7 +1227,7 @@ mod tests {
             ScriptedDeadlines::new(vec![Some(deadline), None]),
             frozen_clock(0),
         );
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
         drop(wake);
         drop(hint);
         let mut hybrid = HybridTick::new(timer, push);
@@ -1187,7 +1243,7 @@ mod tests {
         // waiting for a push, not stop permanently. Bare TimerTick is no
         // longer a TickSource precisely because it cannot express this.
         let timer = TimerTick::with_clock(ScriptedDeadlines::new(vec![None]), frozen_clock(0));
-        let (push, wake, _hint) = PushTick::channel();
+        let (push, wake, _hint) = PushTick::channel(COALESCE_FLOOR_MS);
         let mut hybrid = HybridTick::new(timer, push);
 
         let mut next = pin!(hybrid.next_tick());
@@ -1354,7 +1410,7 @@ mod tests {
             ScriptedDeadlines::new(vec![Some(deadline)]),
             frozen_clock(1_000),
         );
-        let (push, wake, _hint) = PushTick::channel();
+        let (push, wake, _hint) = PushTick::channel(COALESCE_FLOOR_MS);
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
             .expect("open channel");
         let mut hybrid = HybridTick::new(timer, push);
@@ -1377,7 +1433,7 @@ mod tests {
             ScriptedDeadlines::new(vec![Some(deadline), Some(deadline)]),
             frozen_clock(0),
         );
-        let (push, wake, _hint) = PushTick::channel();
+        let (push, wake, _hint) = PushTick::channel(COALESCE_FLOOR_MS);
         wake.push_wake(WakeTrigger::SessionEnd, DreamerConsolidationScope::Meso)
             .expect("open channel");
         let mut hybrid = HybridTick::new(timer, push);
@@ -1393,7 +1449,7 @@ mod tests {
     #[tokio::test]
     async fn hybrid_ends_when_no_deadline_and_no_producers() {
         let timer = TimerTick::with_clock(ScriptedDeadlines::new(vec![None]), frozen_clock(0));
-        let (push, wake, hint) = PushTick::channel();
+        let (push, wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
         drop(wake);
         drop(hint);
         let mut hybrid = HybridTick::new(timer, push);

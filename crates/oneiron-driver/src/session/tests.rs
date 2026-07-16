@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use oneiron::attempt_queue::{
@@ -9,7 +9,8 @@ use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use oneiron::{
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DreamerAttemptPayload, DreamerRunnerStore, EdgeKind,
-    SessionEndReason, TimeRange, VaultConfig, WakeTrigger, decode_partition_payload, request_wake,
+    SessionEndReason, SessionMintOutcome, TimeRange, VaultConfig, WakeTrigger,
+    decode_partition_payload, request_wake,
 };
 
 use super::*;
@@ -144,12 +145,12 @@ fn meso_wake(vault: &Vault) -> SessionEndWake {
     let watermark = read_watermark(vault, scope).expect("watermark");
     let dirty = scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
     let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
-    let planned_dirty_count = dirty.len();
+    let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
     let plans = plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
     SessionEndWake {
         plans,
         planned_watermark: watermark.last_learned_at,
-        planned_dirty_count,
+        planned_turn_ids,
         advance_watermark_to,
     }
 }
@@ -786,6 +787,53 @@ fn tokio_clock(base_ms: u64) -> NowMillis {
     Arc::new(move || base_ms + u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX))
 }
 
+#[tokio::test]
+async fn session_expiry_wins_an_exact_poll_tie_with_an_inner_tick() {
+    const STARTED_AT_SECS: u64 = 1_000_000;
+    const DUE_AT_MS: u64 = (STARTED_AT_SECS + FLOOR) * 1_000;
+
+    let (_dir, vault) = open_vault();
+    let SessionMintOutcome::Minted(id) = vault.mint_session(STARTED_AT_SECS).expect("mint") else {
+        panic!("expected a fresh mint");
+    };
+    let clock_reads = Arc::new(AtomicUsize::new(0));
+    let clock_read_count = Arc::clone(&clock_reads);
+    let clock: NowMillis = Arc::new(move || {
+        if clock_read_count.fetch_add(1, Ordering::AcqRel) == 0 {
+            DUE_AT_MS - 1
+        } else {
+            DUE_AT_MS
+        }
+    });
+    let lifecycle = driver(
+        &vault,
+        SessionLifecycleConfig::new(FLOOR, CEILING),
+        Arc::clone(&clock),
+    );
+    let (push, _wake, hint) = PushTick::channel_with_clock(clock, FLOOR * 1_000);
+    hint.push_hint().expect("ready inner hint");
+    let mut ticks = SessionTicks::new(push, lifecycle);
+
+    assert_eq!(
+        ticks.next_tick().await,
+        Some(Tick::Hint(crate::tick::HintSignal::default())),
+        "the level-ready inner hint survives the expiry-first tie"
+    );
+    assert_eq!(vault.open_session().expect("open session read"), None);
+    let record = vault
+        .session_lifecycle_record(&id)
+        .expect("record read")
+        .expect("record retained");
+    assert_eq!(record.end_reason, Some(SessionEndReason::IdleFloor));
+    assert_eq!(record.ended_at, Some(STARTED_AT_SECS + FLOOR));
+    assert_eq!(
+        meso_attempt_count(&vault),
+        0,
+        "zero dirty turns enqueue none"
+    );
+    assert_eq!(clock_reads.load(Ordering::Acquire), 3);
+}
+
 #[tokio::test(start_paused = true)]
 async fn session_ticks_close_the_idle_session_and_surface_the_meso_deadline() {
     let (_dir, vault) = open_vault();
@@ -797,7 +845,7 @@ async fn session_ticks_close_the_idle_session_and_surface_the_meso_deadline() {
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x44);
     seed_dirty_turn(&vault, &conversation, 999_999);
@@ -850,7 +898,7 @@ async fn session_ticks_explicit_end_reaches_the_meso_deadline_without_a_micro_pa
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x45);
     seed_dirty_turn(&vault, &conversation, 999_999);
@@ -893,7 +941,7 @@ async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x62);
     seed_dirty_turn(&vault, &conversation, 999_999);
@@ -967,7 +1015,7 @@ async fn open_end_open_burst_from_closed_state_makes_two_distinct_sittings() {
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
 
     hint.push_session_hint(SessionHint::AppOpen, None)
@@ -1017,7 +1065,7 @@ async fn adjacent_app_opens_straddling_the_floor_both_survive_and_reopen() {
         SessionLifecycleConfig::new(FLOOR, CEILING),
         Arc::clone(&clock),
     );
-    let (push, _wake, hint) = PushTick::channel_with_clock(clock);
+    let (push, _wake, hint) = PushTick::channel_with_clock(clock, FLOOR * 1_000);
     let mut ticks = SessionTicks::new(push, lifecycle);
 
     hint.push_session_hint(SessionHint::AppOpen, None)
@@ -1076,7 +1124,7 @@ async fn buffered_activity_at_the_deadline_beats_the_idle_expiry() {
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x63);
     seed_dirty_turn(&vault, &conversation, 999_999);
@@ -1128,7 +1176,7 @@ async fn adjacent_activity_burst_is_stored_as_one_endpoint_preserving_period() {
     else {
         panic!("expected mint");
     };
-    let (push, _wake, hint) = PushTick::channel_with_clock(clock);
+    let (push, _wake, hint) = PushTick::channel_with_clock(clock, FLOOR * 1_000);
     let mut ticks = SessionTicks::new(push, lifecycle);
 
     let first_arrival_ms = 1_010_250;
@@ -1173,7 +1221,7 @@ async fn awaited_session_hint_keeps_its_pre_expiry_arrival_stamp_after_suspend()
         SessionLifecycleConfig::new(FLOOR, CEILING),
         Arc::clone(&clock),
     );
-    let (push, _wake, hint) = PushTick::channel_with_clock(clock);
+    let (push, _wake, hint) = PushTick::channel_with_clock(clock, FLOOR * 1_000);
     let mut ticks = SessionTicks::new(push, lifecycle);
 
     hint.push_session_hint(SessionHint::AppOpen, None)
@@ -1221,7 +1269,7 @@ async fn retry_slot_applies_before_newer_buffered_hints() {
     else {
         panic!("expected A to mint");
     };
-    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     now.store(1_001_000, Ordering::Release);
     hint.push_session_hint(SessionHint::AppOpen, None)
         .expect("buffer newer reopen");
@@ -1263,7 +1311,7 @@ async fn ready_meso_deadline_beats_an_applied_pending_hint() {
     let conversation = seed_conversation(&vault, 0x72);
     seed_dirty_turn(&vault, &conversation, 999_999);
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
 
     hint.push_session_hint(SessionHint::Activity, None)
@@ -1305,7 +1353,7 @@ async fn ready_wake_beats_an_applied_pending_hint() {
         apply_now(&lifecycle, SessionHint::AppOpen),
         Ok(SessionHintEffect::Minted(_))
     ));
-    let (push, wake, hint) = PushTick::channel_with_clock(clock);
+    let (push, wake, hint) = PushTick::channel_with_clock(clock, FLOOR * 1_000);
     let mut ticks = SessionTicks::new(push, lifecycle);
 
     hint.push_session_hint(SessionHint::Activity, None)
@@ -1355,7 +1403,7 @@ async fn sustained_session_hints_cannot_starve_a_due_meso_deadline() {
     assert_eq!(meso_attempt_count(&vault), 1);
 
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let mut observed = Vec::new();
     for _ in 0..CYCLES {
@@ -1391,7 +1439,7 @@ async fn app_open_arriving_past_the_idle_floor_mints_a_replacement_sitting() {
         Arc::clone(&clock),
     );
     let timer = TimerTick::with_clock(AttemptQueueDeadlines::new(&vault, 1), Arc::clone(&clock));
-    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock));
+    let (push, _wake, hint) = PushTick::channel_with_clock(Arc::clone(&clock), FLOOR * 1_000);
     let mut ticks = SessionTicks::new(HybridTick::new(timer, push), lifecycle);
     let conversation = seed_conversation(&vault, 0x74);
     seed_dirty_turn(&vault, &conversation, 999_999);

@@ -51,9 +51,10 @@ use crate::tick::{
 /// the session. A floor, not a cap (H-S4).
 pub const DEFAULT_SESSION_IDLE_FLOOR_SECS: u64 = 20 * 60;
 
-/// Stored Activity periods separated by less than one second are rolled up.
-/// This is tiny beside the 20-minute idle floor while bounding high-frequency
-/// typing storage; hosts can select zero for lossless per-delivery periods.
+/// Adjacent Activity arrivals separated by less than one second are rolled up
+/// in the push queue and durable period storage. This is tiny beside the
+/// 20-minute idle floor while bounding high-frequency typing storage; hosts
+/// can select zero for lossless per-delivery periods.
 pub const DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS: u64 = 1_000;
 
 const HINT_RETRY_BACKOFF_BASE_MS: u64 = 1;
@@ -91,8 +92,9 @@ pub struct SessionLifecycleConfig {
     /// Hard wall-clock lifetime ceiling, measured from `started_at` and
     /// INDEPENDENT of activity hints. Must exceed the idle floor.
     pub lifetime_ceiling_secs: u64,
-    /// Storage-only Activity-period rollup gap in milliseconds. This never
-    /// participates in expiry or ordering decisions.
+    /// Activity-period rollup gap in milliseconds for durable period storage.
+    /// This never participates in expiry, queue coalescing, or ordering
+    /// decisions.
     pub activity_rollup_gap_ms: u64,
 }
 
@@ -106,8 +108,8 @@ impl SessionLifecycleConfig {
         }
     }
 
-    /// Overrides the storage-only Activity period rollup gap. `0` retains
-    /// every delivered period without cross-delivery merging.
+    /// Overrides the Activity period rollup gap. `0` retains every delivery
+    /// without storage merging.
     #[must_use]
     pub fn with_activity_rollup_gap_ms(mut self, activity_rollup_gap_ms: u64) -> Self {
         self.activity_rollup_gap_ms = activity_rollup_gap_ms;
@@ -396,12 +398,12 @@ impl<'v> SessionLifecycleDriver<'v> {
             dirty
         };
         let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
-        let planned_dirty_count = dirty.len();
+        let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
         let plans = plan_partitions(self.vault, scope, &dirty, &watermark)?;
         let wake = SessionEndWake {
             plans,
             planned_watermark: watermark.last_learned_at,
-            planned_dirty_count,
+            planned_turn_ids,
             advance_watermark_to,
         };
         self.vault
@@ -601,25 +603,18 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                     let clock = self.lifecycle.clock();
                     tokio::select! {
                         biased;
-                        tick = self.inner.next_tick() => Some(tick),
                         () = sleep_until_due(&clock, due_at_ms) => None,
+                        tick = self.inner.next_tick() => Some(tick),
                     }
                 }
                 None => Some(self.inner.next_tick().await),
             };
 
             match tick {
-                // Expiry fired: loop — the close at the top runs, enqueues
-                // the durable meso attempt, and the inner deadline lane
-                // surfaces it as a due Tick::Deadline on the next read.
-                None => {
-                    if let Some(due_at_ms) = expiry
-                        && let Err(error) = self.lifecycle.close_due_session_at(due_at_ms)
-                    {
-                        tracing::error!(?error, "session close failed at due instant");
-                    }
-                    continue;
-                }
+                // Expiry fired: loop so buffered pre-expiry hints are drained
+                // before the top closes anything still due at its exact
+                // instant. A genuine idle then closes at that same top.
+                None => continue,
                 Some(Some(Tick::Hint(signal))) => {
                     let Some(hint) = signal.session else {
                         return Some(Tick::Hint(signal));

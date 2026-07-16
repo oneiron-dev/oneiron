@@ -354,19 +354,20 @@ pub fn scan_dirty_turns(
     Ok(out)
 }
 
-/// Counts admissible dirty turns in a bounded learned-at window through a
-/// caller-owned write transaction. This intentionally mirrors only Pass 1 of
-/// [`scan_dirty_turns`]: conversation edges are irrelevant to snapshot fencing.
-pub(crate) fn count_dirty_turns_in_txn(
+/// Collects admissible dirty-turn IDs in a bounded learned-at window through
+/// a caller-owned write transaction. This intentionally mirrors only Pass 1
+/// of [`scan_dirty_turns`]: conversation edges are irrelevant to snapshot
+/// fencing. The temporal index yields deterministic `(learned_at, id)` order.
+pub(crate) fn collect_dirty_turn_ids_in_txn(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
     lower_exclusive: u64,
     upper_inclusive: u64,
-) -> Result<usize> {
+) -> Result<Vec<EntityId>> {
     let _ = scope; // selection is scope-independent; scope identifies the fenced round
     if lower_exclusive >= upper_inclusive {
-        return Ok(0);
+        return Ok(Vec::new());
     }
 
     let mut lower = [0_u8; 24];
@@ -374,7 +375,7 @@ pub(crate) fn count_dirty_turns_in_txn(
     let mut upper = [u8::MAX; 24];
     upper[..8].copy_from_slice(&upper_inclusive.to_be_bytes());
 
-    let mut count = 0;
+    let mut turn_ids = Vec::new();
     for entry in vault.store.temporal_learned.range(
         wtxn,
         &(
@@ -404,10 +405,10 @@ pub(crate) fn count_dirty_turns_in_txn(
         let body = decode_turn_body(&raw[ENTITY_METADATA_HEADER_LEN..]);
         let role = dreamer_turn_role(body.speaker.as_deref());
         if dreamer_extraction_role_admissible(role) {
-            count += 1;
+            turn_ids.push(turn_id);
         }
     }
-    Ok(count)
+    Ok(turn_ids)
 }
 
 struct TurnBodyFacts {
