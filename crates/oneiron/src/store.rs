@@ -303,6 +303,10 @@ const CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX: &[u8] = b"channel_identity_lifecycl
 /// Maps a scheduled outbound attempt id to the gate surface its first dispatch
 /// produced, so an idempotent replay can re-surface the original decision.
 const OUTBOUND_GATE_BINDING_KEY_PREFIX: &[u8] = b"outbound_gate_binding:v0:";
+/// Additive durable connector-send receipt rows. This keyspace is independent
+/// of the ABI-pinned Gate decision ledger and carries its own record version.
+pub(crate) const SEND_RECEIPT_RECORD_VERSION: u8 = 0;
+const SEND_RECEIPT_KEY_PREFIX: &[u8] = b"send_receipt:v0:";
 const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
 const GATE_RECEIPT_REASON_MAX_LEN: usize = 128;
 const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
@@ -2250,6 +2254,47 @@ impl Store {
             .map(|value| value.to_vec()))
     }
 
+    /// Inserts one connector-send receipt keyed by its originating TASK.
+    /// Existing rows are left intact so executor retries cannot duplicate the
+    /// transport record.
+    pub(crate) fn put_send_receipt_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        task_id: &EntityId,
+        value: &[u8],
+    ) -> Result<bool> {
+        let key = send_receipt_key(task_id);
+        if self.vault_meta.get(&*wtxn, &key)?.is_some() {
+            return Ok(false);
+        }
+        self.vault_meta.put(wtxn, &key, value)?;
+        Ok(true)
+    }
+
+    /// Reads one connector-send receipt directly by its originating TASK.
+    pub(crate) fn get_send_receipt_by_task(&self, task_id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let key = send_receipt_key(task_id);
+        let rtxn = self.env.read_txn()?;
+        Ok(self
+            .vault_meta
+            .get(&rtxn, &key)?
+            .map(|value| value.into_owned()))
+    }
+
+    /// Returns all opaque connector-send receipt rows in TASK-id order.
+    pub(crate) fn send_receipt_rows(&self) -> Result<Vec<([u8; 16], Vec<u8>)>> {
+        let rtxn = self.env.read_txn()?;
+        let mut rows = Vec::new();
+        for row in self
+            .vault_meta
+            .prefix_iter(&rtxn, SEND_RECEIPT_KEY_PREFIX)?
+        {
+            let (key, value) = row?;
+            rows.push((send_receipt_task_id_from_key(&key)?, value.into_owned()));
+        }
+        Ok(rows)
+    }
+
     pub(crate) fn gate_decision_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -3664,6 +3709,20 @@ fn outbound_gate_binding_key(attempt_id: &[u8; 16]) -> Vec<u8> {
     key.extend_from_slice(OUTBOUND_GATE_BINDING_KEY_PREFIX);
     key.extend_from_slice(attempt_id);
     key
+}
+
+fn send_receipt_key(task_id: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SEND_RECEIPT_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(SEND_RECEIPT_KEY_PREFIX);
+    key.extend_from_slice(task_id.as_bytes());
+    key
+}
+
+fn send_receipt_task_id_from_key(key: &[u8]) -> Result<[u8; 16]> {
+    key.strip_prefix(SEND_RECEIPT_KEY_PREFIX)
+        .ok_or(Error::CorruptedIndex("send receipt ledger"))?
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("send receipt ledger"))
 }
 
 fn gate_decision_id_from_key(key: &[u8]) -> Result<GateDecisionId> {

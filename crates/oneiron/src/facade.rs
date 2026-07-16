@@ -58,7 +58,8 @@ use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest,
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
-    OutboundIntentDraft, OutboundIntentTrigger, outbound_verb_contract,
+    OutboundIntentDraft, OutboundIntentTrigger, connector_send_attempt_payload,
+    outbound_verb_contract, put_connector_send_task_in_txn,
 };
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::registry::{
@@ -2419,12 +2420,13 @@ impl MemoryFacade<'_> {
         Ok(self.commit_all(claims, false, Some(ClaimApprovalStatus::Proposed)))
     }
 
-    /// Schedules one outbound intent through the OF-327 chokepoint. The
-    /// bridge never delivers: the intent is durably enqueued (facade-level
-    /// idempotency over the generic attempt queue's dedupe index) and then
-    /// gate-checked via `dispatch_outbound_intent` under a `Hold` window,
-    /// so the gate decision persists as the queryable receipt while no
-    /// channel adapter is ever invoked from this surface.
+    /// Schedules one connector-send TASK through the OF-327 chokepoint. The
+    /// bridge never delivers: the shared TASK and its execution attempt are
+    /// durably co-committed (facade-level idempotency over the generic attempt
+    /// queue's dedupe index) and then gate-checked via
+    /// `dispatch_outbound_intent` under a `Hold` window, so the gate decision
+    /// persists as the queryable governance receipt while no channel adapter
+    /// is ever invoked from this surface.
     pub fn schedule_outbound(
         &self,
         draft: &OutboundDraftInput,
@@ -2446,6 +2448,8 @@ impl MemoryFacade<'_> {
             Some(job_ref) => trigger.job_ref(job_ref.clone()),
             None => trigger,
         };
+        let originating_session_ref =
+            (draft.trigger == "agent_immediate").then(|| draft.trigger_ref.clone());
         let now = draft.occurred_at.unwrap_or_else(crate::unix_seconds_now);
 
         // Pre-validate the channel/verb capability BEFORE the durable enqueue.
@@ -2459,44 +2463,6 @@ impl MemoryFacade<'_> {
                 &["Use a registered channel/verb pair from the connector manifest."],
             )
         })?;
-
-        // Durable idempotency: the dispatch chokepoint performs no dedupe,
-        // so the schedule rides the attempt queue's kind-scoped dedupe index.
-        let queue = AttemptQueue::new(self.vault);
-        let payload = serde_json::to_vec(draft)
-            .map_err(|_| FacadeError::bad_request("outbound draft is not serializable"))?;
-        let outcome = self.with_verified_actor_write_txn(|wtxn| {
-            queue
-                .enqueue_in_txn(
-                    wtxn,
-                    EnqueueAttempt {
-                        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
-                        payload,
-                        dedupe_key: draft.idempotency_key.clone(),
-                        run_id: draft.job_ref.clone(),
-                        now,
-                    },
-                )
-                .map_err(FacadeError::from)
-        })?;
-        let attempt = match outcome {
-            EnqueueOutcome::Enqueued(attempt) => attempt,
-            EnqueueOutcome::Existing(attempt) => {
-                // Re-surface the ORIGINAL gate decision the first dispatch
-                // persisted, keyed by attempt id, so an idempotent retry recovers
-                // gate_decision_ref instead of an empty gate result (#484b).
-                let binding = self.outbound_gate_binding(attempt.id);
-                return Ok(OutboundIntentReceipt {
-                    intent_ref: outbound_intent_ref(attempt.id),
-                    outcome: "already_scheduled".to_owned(),
-                    gate_outcome: binding.as_ref().map(|b| b.gate_outcome.clone()),
-                    gate_decision_ref: binding.as_ref().and_then(|b| b.gate_decision_ref.clone()),
-                    gate_reason_codes: binding.map(|b| b.gate_reason_codes).unwrap_or_default(),
-                    deduped: true,
-                });
-            }
-        };
-        let intent_ref = outbound_intent_ref(attempt.id);
 
         let mut intent_draft = OutboundIntentDraft::new(
             self.actor.to_hex(),
@@ -2517,6 +2483,58 @@ impl MemoryFacade<'_> {
             intent_draft = intent_draft.dedupe_key(dedupe_key.clone());
         }
         let intent = OutboundIntent::from_trigger(intent_draft, trigger);
+
+        // Durable idempotency: the dispatch chokepoint performs no dedupe,
+        // so the schedule rides the attempt queue's kind-scoped dedupe index.
+        let queue = AttemptQueue::new(self.vault);
+        let task_ref = EntityId::now();
+        let payload = connector_send_attempt_payload(task_ref).map_err(FacadeError::from)?;
+        let outcome = self.with_verified_actor_write_txn(|wtxn| {
+            let outcome = queue
+                .enqueue_in_txn(
+                    wtxn,
+                    EnqueueAttempt {
+                        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+                        payload,
+                        dedupe_key: draft.idempotency_key.clone(),
+                        run_id: draft.job_ref.clone(),
+                        now,
+                    },
+                )
+                .map_err(FacadeError::from)?;
+            if matches!(&outcome, EnqueueOutcome::Enqueued(_)) {
+                put_connector_send_task_in_txn(
+                    self.vault,
+                    wtxn,
+                    task_ref,
+                    &intent,
+                    self.actor,
+                    self.actor_class,
+                    originating_session_ref.as_deref(),
+                    now,
+                )
+                .map_err(FacadeError::from)?;
+            }
+            Ok(outcome)
+        })?;
+        let attempt = match outcome {
+            EnqueueOutcome::Enqueued(attempt) => attempt,
+            EnqueueOutcome::Existing(attempt) => {
+                // Re-surface the ORIGINAL gate decision the first dispatch
+                // persisted, keyed by attempt id, so an idempotent retry recovers
+                // gate_decision_ref instead of an empty gate result (#484b).
+                let binding = self.outbound_gate_binding(attempt.id);
+                return Ok(OutboundIntentReceipt {
+                    intent_ref: outbound_intent_ref(attempt.id),
+                    outcome: "already_scheduled".to_owned(),
+                    gate_outcome: binding.as_ref().map(|b| b.gate_outcome.clone()),
+                    gate_decision_ref: binding.as_ref().and_then(|b| b.gate_decision_ref.clone()),
+                    gate_reason_codes: binding.map(|b| b.gate_reason_codes).unwrap_or_default(),
+                    deduped: true,
+                });
+            }
+        };
+        let intent_ref = outbound_intent_ref(attempt.id);
         let actor = OutboundDispatchActor {
             actor_class: self.actor_class.gate_actor_class().to_owned(),
             actor_ref: Some(self.actor.to_hex()),
@@ -2543,17 +2561,23 @@ impl MemoryFacade<'_> {
         ) {
             Ok(result) => result,
             Err(err) => {
-                // Dispatch failed AFTER the durable enqueue. Best-effort cancel
-                // clears the ready + dedupe entries so a clean retry can
-                // re-enqueue instead of wedging on EnqueueOutcome::Existing
-                // with no gate decision, forever (#484a).
-                let _ = queue.intervene(InterveneAttempt {
-                    id: attempt.id,
-                    kind: AttemptInterventionKind::Cancel,
-                    actor: self.actor.to_hex(),
-                    note: Some("outbound dispatch failed before gate decision".to_owned()),
-                    now,
-                });
+                // Dispatch failed after the durable enqueue. Remove both
+                // lifecycle rows before surfacing the error so a clean retry
+                // cannot inherit either a dedupe entry or an orphan TASK.
+                queue
+                    .intervene(InterveneAttempt {
+                        id: attempt.id,
+                        kind: AttemptInterventionKind::Cancel,
+                        actor: self.actor.to_hex(),
+                        note: Some("outbound dispatch failed before gate decision".to_owned()),
+                        now,
+                    })
+                    .map_err(FacadeError::from)?;
+                self.vault
+                    .batch()
+                    .delete(&task_ref)
+                    .commit()
+                    .map_err(FacadeError::from)?;
                 return Err(facade_error_from_outbound_dispatch(err));
             }
         };

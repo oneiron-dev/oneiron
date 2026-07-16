@@ -34,7 +34,7 @@ use crate::registry::{
 };
 use crate::store::{
     ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, GateSystemNoticeRecord,
-    PendingGateConsentRecord,
+    PendingGateConsentRecord, SEND_RECEIPT_RECORD_VERSION,
 };
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
@@ -66,6 +66,10 @@ const FIELD_JOB_REF: &str = "job_ref";
 const FIELD_BRIEF_REF: &str = "brief_ref";
 const FIELD_RUN_REF: &str = "run_ref";
 const FIELD_INTENT_REF: &str = "intent_ref";
+/// Originating connector-send TASK carried by durable outbound receipts.
+pub const FIELD_TASK_REF: &str = "task_ref";
+/// Durable proof that the connector execution sink was reached successfully.
+pub const FIELD_TRANSPORT_DISPATCHED: &str = "transport_dispatched";
 const FIELD_PARENT_REF: &str = "parent_ref";
 const FIELD_COUNTERPARTY_REF: &str = "counterparty_ref";
 const FIELD_IDENTITY_REF: &str = "identity_ref";
@@ -300,6 +304,14 @@ pub struct ReceiptRecord {
     pub policy_trace: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fields: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DurableSendReceipt {
+    version: u8,
+    task_ref: String,
+    transport_dispatched: bool,
+    receipt: ReceiptRecord,
 }
 
 /// Minimal OF-367/RCPT-3 seam for consumers that render receipts.
@@ -852,6 +864,62 @@ impl Vault {
     ) -> Result<StandingOutboundGrantsLens> {
         standing_outbound_grants_lens(self, query)
     }
+}
+
+/// Persists the outbound pipeline receipt as the sole durable record of a
+/// connector send. The TASK id is both lineage and the idempotency key.
+pub(crate) fn persist_send_receipt(
+    vault: &Vault,
+    task_ref: EntityId,
+    mut receipt: ReceiptRecord,
+    transport_dispatched: bool,
+) -> Result<bool> {
+    receipt
+        .fields
+        .insert(FIELD_TASK_REF.to_owned(), task_ref.to_hex());
+    receipt.fields.insert(
+        FIELD_TRANSPORT_DISPATCHED.to_owned(),
+        transport_dispatched.to_string(),
+    );
+    let durable = DurableSendReceipt {
+        version: SEND_RECEIPT_RECORD_VERSION,
+        task_ref: task_ref.to_hex(),
+        transport_dispatched,
+        receipt,
+    };
+    let encoded = rmp_serde::to_vec_named(&durable)
+        .map_err(|_| Error::InvariantViolation("send receipt encode failed"))?;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .put_send_receipt_in_txn(wtxn, &task_ref, &encoded)
+    })
+}
+
+fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+    vault
+        .store
+        .send_receipt_rows()?
+        .into_iter()
+        .map(|(task_id, raw)| {
+            let durable: DurableSendReceipt = rmp_serde::from_slice(&raw)
+                .map_err(|_| Error::CorruptedIndex("send receipt ledger"))?;
+            if durable.version != SEND_RECEIPT_RECORD_VERSION
+                || durable.task_ref != crate::entity_id::bytes_to_hex_lower(&task_id)
+                || durable.receipt.receipt_kind != ReceiptKind::Outbound
+                || durable.receipt.fields.get(FIELD_TASK_REF) != Some(&durable.task_ref)
+                || durable
+                    .receipt
+                    .fields
+                    .get(FIELD_TRANSPORT_DISPATCHED)
+                    .and_then(|value| value.parse::<bool>().ok())
+                    != Some(durable.transport_dispatched)
+            {
+                return Err(Error::CorruptedIndex("send receipt ledger"));
+            }
+            Ok(durable.receipt)
+        })
+        .collect()
 }
 
 /// Builds an outbound receipt row from the OF-327 intent spine.
@@ -1668,6 +1736,13 @@ fn receipt_family_query(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Recei
 
 fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let mut records = Vec::new();
+    if query.includes_kind(ReceiptKind::Outbound) {
+        records.extend(
+            durable_send_receipts(vault)?
+                .into_iter()
+                .filter(|receipt| query.matches(receipt)),
+        );
+    }
     if query.includes_kind(ReceiptKind::Gate) {
         records.extend(gate_receipts(vault, query)?);
     }

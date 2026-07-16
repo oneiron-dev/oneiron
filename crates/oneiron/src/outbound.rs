@@ -12,6 +12,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::Vault;
+use crate::attempt_queue::{
+    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, FailAttempt,
+    RetryAttempt,
+};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::connector_key::EffectorBudgetRead;
 use crate::delivery_window::{
@@ -19,16 +24,21 @@ use crate::delivery_window::{
     DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
     DeliveryWindowVerbClass, is_delivery_window_claim_predicate,
 };
-use crate::edge::EdgeActorClass;
+use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
     self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles,
 };
+use crate::habit::TaskRole;
 use crate::linkedin_connector::{LinkedInSeatPolicyAction, LinkedInSeatSandboxPolicy};
 use crate::llm::BudgetLadderEvent;
-use crate::receipt::{ContextReceiptFields, ReceiptRecord, outbound_intent_receipt};
+use crate::receipt::{
+    ContextReceiptFields, ReceiptRecord, outbound_intent_receipt, persist_send_receipt,
+};
+use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
+use crate::temporal::TimeRange;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
@@ -66,6 +76,14 @@ pub const COMMON_OUTBOUND_VERB_KINDS: &[&str] = &[
 
 /// Version for the intent field contract consumed by the later dispatcher.
 pub const OUTBOUND_INTENT_SCHEMA_VERSION: &str = "outbound.intent.v1";
+
+/// TASK-body subkind for sends executed by a connector actor.
+pub const CONNECTOR_SEND_TASK_SUBKIND: &str = "connector_send";
+const CONNECTOR_SEND_TASK_SCHEMA_VERSION: u8 = 0;
+const CONNECTOR_ACTOR_SCHEMA_VERSION: u8 = 0;
+const CONNECTOR_ACTOR_KIND: &str = "connector_actor";
+const CONNECTOR_ASSIGNMENT_WEIGHT: f32 = 1.0;
+const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
 
 /// Outbound intent spine shared by OF-327 dispatch and receipt projection.
 ///
@@ -110,6 +128,179 @@ impl OutboundIntent {
             job_ref: trigger.job_ref,
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct ConnectorSendTaskBody {
+    role: u8,
+    schema_version: u8,
+    subkind: String,
+    actor_ref: String,
+    actor_class: String,
+    verb: String,
+    channel: String,
+    target: String,
+    on_behalf_of: Option<String>,
+    content_ref: Option<String>,
+    idempotency_key: Option<String>,
+    dedupe_key: Option<String>,
+    intent_source: String,
+    trigger_ref: String,
+    job_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    originating_session_ref: Option<String>,
+    occurred_at: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct ConnectorActorBody {
+    schema_version: u8,
+    actor_kind: String,
+    connector_class: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ConnectorSendAttemptPayload {
+    pub(crate) task_ref: String,
+}
+
+/// Hydrated shared TASK row that represents one scheduled connector send.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConnectorSendTask {
+    pub task_ref: EntityId,
+    pub assignee_ref: EntityId,
+    pub actor_ref: EntityId,
+    pub actor_class: EdgeActorClass,
+    pub intent: OutboundIntent,
+    pub originating_session_ref: Option<String>,
+    pub occurred_at: u64,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectorTaskExecutorError {
+    #[error(transparent)]
+    Engine(#[from] Error),
+    #[error(transparent)]
+    Dispatch(#[from] OutboundDispatchError),
+    #[error("invalid connector-send TASK: {0}")]
+    InvalidTask(&'static str),
+    #[error("connector-send TASK dispatch did not reach the transport")]
+    NotDispatched,
+}
+
+/// Deterministic MACHINE assignee for one normalized connector class.
+pub fn connector_actor_id(connector_class: &str) -> Result<EntityId, Error> {
+    let connector_class = normalize_key(connector_class);
+    if connector_class.is_empty() {
+        return Err(Error::InvariantViolation(
+            "connector class must not be empty",
+        ));
+    }
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron.connector_actor.v0\0");
+    hash.update(connector_class.as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    EntityId::from_bytes(bytes)
+}
+
+pub(crate) fn connector_send_attempt_payload(task_ref: EntityId) -> Result<Vec<u8>, Error> {
+    serde_json::to_vec(&ConnectorSendAttemptPayload {
+        task_ref: task_ref.to_hex(),
+    })
+    .map_err(|_| Error::InvariantViolation("connector task payload encode failed"))
+}
+
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn put_connector_send_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    intent: &OutboundIntent,
+    actor_ref: EntityId,
+    actor_class: EdgeActorClass,
+    originating_session_ref: Option<&str>,
+    occurred_at: u64,
+) -> Result<(), Error> {
+    let connector_class = normalize_key(&intent.channel);
+    let assignee_ref = connector_actor_id(&connector_class)?;
+    let task_body = ConnectorSendTaskBody {
+        role: TaskRole::Task.role_byte(),
+        schema_version: CONNECTOR_SEND_TASK_SCHEMA_VERSION,
+        subkind: CONNECTOR_SEND_TASK_SUBKIND.to_owned(),
+        actor_ref: actor_ref.to_hex(),
+        actor_class: actor_class.gate_actor_class().to_owned(),
+        verb: intent.verb.clone(),
+        channel: intent.channel.clone(),
+        target: intent.target.clone(),
+        on_behalf_of: intent.on_behalf_of.clone(),
+        content_ref: intent.content_ref.clone(),
+        idempotency_key: intent.idempotency_key.clone(),
+        dedupe_key: intent.dedupe_key.clone(),
+        intent_source: intent.intent_source.clone(),
+        trigger_ref: intent.trigger_ref.clone(),
+        job_ref: intent.job_ref.clone(),
+        originating_session_ref: originating_session_ref.map(str::to_owned),
+        occurred_at,
+    };
+    let task_body = rmp_serde::to_vec_named(&task_body)
+        .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
+    let connector_body = ConnectorActorBody {
+        schema_version: CONNECTOR_ACTOR_SCHEMA_VERSION,
+        actor_kind: CONNECTOR_ACTOR_KIND.to_owned(),
+        connector_class: connector_class.clone(),
+    };
+    let connector_body = rmp_serde::to_vec_named(&connector_body)
+        .map_err(|_| Error::InvariantViolation("connector actor body encode failed"))?;
+    let occurred = TimeRange {
+        start: occurred_at,
+        end: occurred_at,
+    };
+    let mut batch = vault.batch_in().put(
+        &task_ref,
+        ENTITY_TYPE_TASK,
+        occurred,
+        occurred_at,
+        &task_body,
+    );
+    match vault.get_entity_type_in_txn(&*wtxn, &assignee_ref)? {
+        None => {
+            batch = batch.put(
+                &assignee_ref,
+                ENTITY_TYPE_MACHINE,
+                occurred,
+                occurred_at,
+                &connector_body,
+            );
+        }
+        Some(ENTITY_TYPE_MACHINE) => {
+            let raw = vault
+                .store
+                .entities
+                .get(&*wtxn, assignee_ref.as_bytes())?
+                .ok_or(Error::CorruptedIndex("connector actor entity"))?;
+            if !connector_actor_raw_matches(&raw, &connector_class)? {
+                return Err(Error::InvariantViolation(
+                    "connector actor id is occupied by a different machine",
+                ));
+            }
+        }
+        Some(_) => {
+            return Err(Error::InvariantViolation(
+                "connector actor id is occupied by another entity type",
+            ));
+        }
+    }
+    batch
+        .edge(
+            &task_ref,
+            EdgeKind::AssignedTo,
+            &assignee_ref,
+            CONNECTOR_ASSIGNMENT_WEIGHT,
+        )
+        .apply(wtxn)
 }
 
 /// Intent fields shared by all trigger sources.
@@ -494,6 +685,9 @@ impl OutboundDispatchRequest {
 pub struct OutboundExecutionRequest<'a> {
     pub intent_ref: &'a str,
     pub intent: &'a OutboundIntent,
+    /// Provider idempotency closes the wire-before-receipt crash window; raw
+    /// transports without it remain at-least-once.
+    pub idempotency_key: Option<&'a str>,
     pub verb_contract: &'static OutboundVerbContract,
     pub channel_identity_ref: Option<EntityId>,
     pub counterparty_ref: Option<&'a str>,
@@ -1176,6 +1370,305 @@ impl Vault {
             actor_class,
         )
     }
+
+    /// Hydrates one shared TASK when it is the connector-send subkind and has
+    /// the deterministic connector actor assignment required by that subkind.
+    pub fn connector_send_task(
+        &self,
+        task_ref: &EntityId,
+    ) -> Result<Option<ConnectorSendTask>, Error> {
+        let Some(raw) = self.get_raw(task_ref)? else {
+            return Ok(None);
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            return Err(Error::CorruptedIndex("connector task entity header"));
+        };
+        if header.entity_type != ENTITY_TYPE_TASK {
+            return Ok(None);
+        }
+        let body_bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if !has_connector_send_subkind(body_bytes)? {
+            return Ok(None);
+        }
+        if crate::habit::task_role_from_body_bytes(body_bytes)? != TaskRole::Task {
+            return Err(Error::InvalidTaskBody(
+                "connector send must use the Task role",
+            ));
+        }
+        let body: ConnectorSendTaskBody = rmp_serde::from_slice(body_bytes)
+            .map_err(|_| Error::InvalidTaskBody("invalid connector send body"))?;
+        if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
+            || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
+        {
+            return Err(Error::InvalidTaskBody(
+                "unsupported connector send body version",
+            ));
+        }
+        let actor_ref = EntityId::from_hex(&body.actor_ref)
+            .map_err(|_| Error::InvalidTaskBody("invalid connector send actor"))?;
+        let actor_class = match body.actor_class.as_str() {
+            "human" => EdgeActorClass::Human,
+            "agent" => EdgeActorClass::Agent,
+            "system" => EdgeActorClass::System,
+            _ => {
+                return Err(Error::InvalidTaskBody("invalid connector send actor class"));
+            }
+        };
+        let assignee_ref = connector_actor_id(&body.channel)?;
+        let assigned = self
+            .edges_out(task_ref)?
+            .into_iter()
+            .any(|edge| edge.kind == EdgeKind::AssignedTo && edge.target == assignee_ref);
+        if !assigned || !connector_actor_matches(self, assignee_ref, &body.channel)? {
+            return Ok(None);
+        }
+        Ok(Some(ConnectorSendTask {
+            task_ref: *task_ref,
+            assignee_ref,
+            actor_ref,
+            actor_class,
+            intent: OutboundIntent {
+                actor: body.actor_ref,
+                on_behalf_of: body.on_behalf_of,
+                verb: body.verb,
+                channel: body.channel,
+                target: body.target,
+                content_ref: body.content_ref,
+                idempotency_key: body.idempotency_key,
+                dedupe_key: body.dedupe_key,
+                intent_source: body.intent_source,
+                trigger_ref: body.trigger_ref,
+                job_ref: body.job_ref,
+            },
+            originating_session_ref: body.originating_session_ref,
+            occurred_at: body.occurred_at,
+        }))
+    }
+
+    /// Lists the shared TASK rows that are valid connector-send tasks.
+    pub fn connector_send_tasks(&self) -> Result<Vec<ConnectorSendTask>, Error> {
+        let mut tasks = Vec::new();
+        for task_ref in self.entities_by_type(ENTITY_TYPE_TASK)? {
+            if let Some(task) = self.connector_send_task(&task_ref)? {
+                tasks.push(task);
+            }
+        }
+        Ok(tasks)
+    }
+
+    /// Counts bridge outbound rows that are not reparented through a valid
+    /// connector-send TASK. A newly scheduled send contributes zero.
+    pub fn standalone_outbound_intent_count(&self) -> Result<usize, Error> {
+        let mut standalone = 0_usize;
+        for attempt in AttemptQueue::new(self).list()? {
+            if attempt.kind != crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND {
+                continue;
+            }
+            let payload = serde_json::from_slice::<ConnectorSendAttemptPayload>(&attempt.payload);
+            let reparented = match payload {
+                Ok(payload) => EntityId::from_hex(&payload.task_ref)
+                    .ok()
+                    .and_then(|task_ref| self.connector_send_task(&task_ref).ok().flatten())
+                    .is_some(),
+                Err(_) => false,
+            };
+            if !reparented {
+                standalone = standalone.saturating_add(1);
+            }
+        }
+        Ok(standalone)
+    }
+
+    /// Claims pending connector-send TASK attempts and runs each through the
+    /// existing outbound dispatch pipeline with a real delivery window.
+    pub fn run_connector_task_executor<S: OutboundExecutionSink>(
+        &self,
+        sink: &mut S,
+        now: u64,
+    ) -> std::result::Result<usize, ConnectorTaskExecutorError> {
+        let queue = AttemptQueue::new(self);
+        let mut executed = 0_usize;
+        loop {
+            let attempt = match queue.claim_kind(
+                crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                    now,
+                },
+            )? {
+                ClaimOutcome::Empty => break,
+                ClaimOutcome::Claimed(attempt) => attempt,
+            };
+            let payload: ConnectorSendAttemptPayload =
+                match serde_json::from_slice(&attempt.payload) {
+                    Ok(payload) => payload,
+                    Err(_) => {
+                        fail_connector_task_attempt(
+                            &queue,
+                            &attempt,
+                            now,
+                            "invalid_attempt_payload",
+                        )?;
+                        continue;
+                    }
+                };
+            let task_ref = match EntityId::from_hex(&payload.task_ref) {
+                Ok(task_ref) => task_ref,
+                Err(_) => {
+                    fail_connector_task_attempt(&queue, &attempt, now, "invalid_task_ref")?;
+                    continue;
+                }
+            };
+
+            if send_receipt_exists_for_task(self, task_ref)? {
+                complete_connector_task_attempt(&queue, &attempt, now)?;
+                continue;
+            }
+
+            let task = match self.connector_send_task(&task_ref) {
+                Ok(Some(task)) => task,
+                Ok(None) | Err(_) => {
+                    fail_connector_task_attempt(&queue, &attempt, now, "invalid_connector_task")?;
+                    continue;
+                }
+            };
+            let actor = OutboundDispatchActor {
+                actor_class: task.actor_class.gate_actor_class().to_owned(),
+                actor_ref: Some(task.actor_ref.to_hex()),
+                actor_entity_ref: Some(task.actor_ref),
+            };
+            let originating_session_ref = task.originating_session_ref.clone();
+            let mut request = OutboundDispatchRequest::new(
+                format!("outbound:task:{}", task_ref.to_hex()),
+                format!("intent:task:{}", task_ref.to_hex()),
+                task.intent,
+                actor,
+                OutboundDispatchGate::allow_when_policy_grants(),
+                now,
+                OutboundDeliveryWindowDecision::DeliverNow,
+            );
+            if let Some(session_ref) = originating_session_ref {
+                request = request.originating_session(session_ref);
+            }
+            let result = match self.dispatch_outbound_intent_with_verified_actor(
+                request,
+                sink,
+                task.actor_ref,
+                task.actor_class,
+            ) {
+                Ok(result) => result,
+                Err(_) => {
+                    fail_connector_task_attempt(&queue, &attempt, now, "dispatch_rejected")?;
+                    continue;
+                }
+            };
+            match result.outcome {
+                OutboundDispatchOutcome::DeliveredToChannel => {
+                    if persist_send_receipt(self, task_ref, result.receipt, true)? {
+                        executed = executed.saturating_add(1);
+                    }
+                    complete_connector_task_attempt(&queue, &attempt, now)?;
+                }
+                OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
+                    retry_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
+                }
+                OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
+                    fail_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
+                }
+                OutboundDispatchOutcome::Failed => {
+                    fail_connector_task_attempt(&queue, &attempt, now, "transport_failed")?;
+                }
+            }
+        }
+        Ok(executed)
+    }
+}
+
+fn has_connector_send_subkind(body: &[u8]) -> Result<bool, Error> {
+    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
+        .map_err(|_| Error::InvalidTaskBody("body is not valid MessagePack"))?;
+    Ok(value.as_map().is_some_and(|entries| {
+        entries.iter().any(|(key, value)| {
+            key.as_str() == Some("subkind") && value.as_str() == Some(CONNECTOR_SEND_TASK_SUBKIND)
+        })
+    }))
+}
+
+fn connector_actor_matches(
+    vault: &Vault,
+    actor_ref: EntityId,
+    connector_class: &str,
+) -> Result<bool, Error> {
+    let Some(raw) = vault.get_raw(&actor_ref)? else {
+        return Ok(false);
+    };
+    connector_actor_raw_matches(&raw, connector_class)
+}
+
+fn connector_actor_raw_matches(raw: &[u8], connector_class: &str) -> Result<bool, Error> {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex("connector actor entity header"));
+    };
+    if header.entity_type != ENTITY_TYPE_MACHINE {
+        return Ok(false);
+    }
+    let body: ConnectorActorBody = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map_err(|_| Error::CorruptedIndex("connector actor body"))?;
+    Ok(body.schema_version == CONNECTOR_ACTOR_SCHEMA_VERSION
+        && body.actor_kind == CONNECTOR_ACTOR_KIND
+        && body.connector_class == normalize_key(connector_class))
+}
+
+fn send_receipt_exists_for_task(vault: &Vault, task_ref: EntityId) -> Result<bool, Error> {
+    Ok(vault.store.get_send_receipt_by_task(&task_ref)?.is_some())
+}
+
+fn complete_connector_task_attempt(
+    queue: &AttemptQueue<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    now: u64,
+) -> Result<(), Error> {
+    match queue.complete(CompleteAttempt {
+        id: attempt.id,
+        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+        attempt_count: attempt.attempt_count,
+        now,
+    })? {
+        CompleteOutcome::Completed(_) | CompleteOutcome::AlreadyCompleted(_) => Ok(()),
+    }
+}
+
+fn fail_connector_task_attempt(
+    queue: &AttemptQueue<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    now: u64,
+    reason: &str,
+) -> Result<(), Error> {
+    queue.fail(FailAttempt {
+        id: attempt.id,
+        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+        attempt_count: attempt.attempt_count,
+        reason: reason.to_owned(),
+        now,
+    })?;
+    Ok(())
+}
+
+fn retry_connector_task_attempt(
+    queue: &AttemptQueue<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    now: u64,
+    reason: &str,
+) -> Result<(), Error> {
+    queue.retry(RetryAttempt {
+        id: attempt.id,
+        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+        attempt_count: attempt.attempt_count,
+        backoff_until: now.saturating_add(1),
+        last_error: Some(reason.to_owned()),
+        now,
+    })?;
+    Ok(())
 }
 
 fn execute_outbound_request<S: OutboundExecutionSink>(
@@ -1186,6 +1679,7 @@ fn execute_outbound_request<S: OutboundExecutionSink>(
     let execution_request = OutboundExecutionRequest {
         intent_ref: &request.intent_ref,
         intent: &request.intent,
+        idempotency_key: request.intent.idempotency_key.as_deref(),
         verb_contract,
         channel_identity_ref: request.channel_identity_ref,
         counterparty_ref: request.counterparty_ref.as_deref(),

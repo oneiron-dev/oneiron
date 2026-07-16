@@ -80,6 +80,8 @@ struct DispatchTally {
 /// the ticket that must replace it with the real engine API.
 #[allow(dead_code)]
 mod seam {
+    use std::cell::Cell;
+
     use super::{
         AutoGateRuling, ClearOptOutOutcome, ConnectorKeyRecord, ConnectorKeyStatus,
         DecisionHistoryEntry, DispatchTally, EffectorBudget, EffectorBudgetDimension,
@@ -87,44 +89,128 @@ mod seam {
     };
     use std::cell::Cell;
 
+    thread_local! {
+        static ORACLE_SEND_INVOCATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
     // ---- ONE-1715 (ES-02): OutboundIntent -> TASK subkind ----
 
     /// Schedules one outbound send for `party` over `channel`.
-    pub(crate) fn schedule_send(_vault: &Vault, _party: &str, _channel: &str) {
-        unimplemented!("armed by ONE-1715: schedule a send as TASK{{assignee: connector actor}}")
+    pub(crate) fn schedule_send(vault: &Vault, party: &str, channel: &str) {
+        ORACLE_SEND_INVOCATIONS.set(0);
+        let actor = oneiron::EntityId::from_bytes([0x71; 16]).expect("connector-task actor id");
+        if vault.get_entity_type(&actor).expect("read actor").is_none() {
+            vault
+                .put_entity(
+                    &actor,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    oneiron::temporal::TimeRange {
+                        start: 100,
+                        end: 100,
+                    },
+                    100,
+                    b"effect-spine actor",
+                )
+                .expect("put actor");
+        }
+        vault
+            .memory_facade(actor, oneiron::EdgeActorClass::Human)
+            .schedule_outbound(&oneiron::OutboundDraftInput {
+                verb: "send".to_owned(),
+                channel: channel.to_owned(),
+                target: party.to_owned(),
+                on_behalf_of: None,
+                content_ref: None,
+                idempotency_key: Some(format!("es02:{channel}:{party}")),
+                dedupe_key: None,
+                trigger: "agent_immediate".to_owned(),
+                trigger_ref: "effect-spine:es02".to_owned(),
+                job_ref: None,
+                occurred_at: Some(100),
+            })
+            .expect("schedule connector-send task");
+        let grant_id = oneiron::EntityId::from_bytes([0x72; 16]).expect("grant id");
+        vault
+            .mint_standing_outbound_grant(
+                &grant_id,
+                &oneiron::GrantMintIntent {
+                    principal_ref: actor.to_hex(),
+                    origin_component_id: "effect_spine_oracle".to_owned(),
+                    origin_action_id: "execute_connector_send".to_owned(),
+                    origin_receipt_ref: None,
+                    scope: oneiron::GrantMintIntentScope::Channel {
+                        channel: channel.to_owned(),
+                    },
+                },
+                100,
+            )
+            .expect("mint executor grant");
     }
 
     /// TASK rows whose assignee is a connector actor (doc 13 §1).
-    pub(crate) fn count_connector_assigned_tasks(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1715: count connector-assigned TASK rows")
+    pub(crate) fn count_connector_assigned_tasks(vault: &Vault) -> usize {
+        vault
+            .connector_send_tasks()
+            .expect("query connector-send tasks")
+            .len()
     }
 
     /// Standalone outbound-intent rows that are NOT task subkinds (must
     /// reach zero for new sends once the reparent lands).
-    pub(crate) fn count_standalone_outbound_intents(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1715: count non-task outbound intents")
+    pub(crate) fn count_standalone_outbound_intents(vault: &Vault) -> usize {
+        vault
+            .standalone_outbound_intent_count()
+            .expect("count standalone outbound intents")
     }
 
     /// Runs the ONE-1499 dispatch pipeline as the executor for
     /// connector-assigned tasks; returns how many tasks it executed.
-    pub(crate) fn run_connector_task_executor(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1715: ONE-1499 pipeline as connector-task executor")
+    pub(crate) fn run_connector_task_executor(vault: &Vault) -> usize {
+        struct OracleSendSink;
+        impl oneiron::OutboundExecutionSink for OracleSendSink {
+            fn execute(
+                &mut self,
+                _request: &oneiron::OutboundExecutionRequest<'_>,
+            ) -> oneiron::OutboundExecutionOutcome {
+                let count = ORACLE_SEND_INVOCATIONS.get();
+                ORACLE_SEND_INVOCATIONS.set(count.saturating_add(1));
+                oneiron::OutboundExecutionOutcome::delivered_to_channel("oracle:wire-send")
+            }
+        }
+        vault
+            .run_connector_task_executor(&mut OracleSendSink, 101)
+            .expect("execute connector-send tasks")
     }
 
     /// Send receipts recorded for executed connector tasks.
-    pub(crate) fn count_send_receipts(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1715: count send receipts")
+    pub(crate) fn count_send_receipts(vault: &Vault) -> usize {
+        vault
+            .receipts(oneiron::ReceiptQuery::new(100).with_kind(oneiron::ReceiptKind::Outbound))
+            .expect("query send receipts")
+            .len()
     }
 
     /// Send receipts that carry lineage back to their originating TASK.
-    pub(crate) fn count_send_receipts_with_task_lineage(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1715: count receipts with TASK lineage")
+    pub(crate) fn count_send_receipts_with_task_lineage(vault: &Vault) -> usize {
+        vault
+            .receipts(oneiron::ReceiptQuery::new(100).with_kind(oneiron::ReceiptKind::Outbound))
+            .expect("query send receipts")
+            .into_iter()
+            .filter(|receipt| {
+                receipt
+                    .fields
+                    .get(oneiron::FIELD_TASK_REF)
+                    .and_then(|task_ref| oneiron::EntityId::from_hex(task_ref).ok())
+                    .and_then(|task_ref| vault.connector_send_task(&task_ref).ok().flatten())
+                    .is_some()
+            })
+            .count()
     }
 
     /// Sends actually dispatched over the wire (transport-level), regardless
     /// of receipt bookkeeping — must stay zero until the executor runs.
     pub(crate) fn count_dispatched_sends(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1715: count transport-dispatched sends")
+        ORACLE_SEND_INVOCATIONS.get()
     }
 
     // ---- ONE-1716 (ES-03): comm.* projector + contact-record demotion ----
@@ -532,7 +618,6 @@ mod seam {
 /// send creates exactly one connector-assigned TASK and zero standalone
 /// (non-task) outbound intents — the semantic twin dies.
 #[test]
-#[ignore = "armed by ONE-1715"]
 fn es02_send_becomes_exactly_one_connector_assigned_task() {
     let (_dir, vault) = open_vault();
     seam::schedule_send(&vault, "party-yura", "email");
@@ -545,7 +630,6 @@ fn es02_send_becomes_exactly_one_connector_assigned_task() {
 /// receipt, and that receipt carries TASK lineage (spine: RECEIPT is the
 /// only record).
 #[test]
-#[ignore = "armed by ONE-1715"]
 fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
     let (_dir, vault) = open_vault();
     seam::schedule_send(&vault, "party-yura", "email");
