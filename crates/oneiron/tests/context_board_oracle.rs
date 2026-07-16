@@ -368,13 +368,30 @@ mod cb_t {
     /// ONE-1695 fixture: one TASK entity with 2 realizing jobs; drive the
     /// jobs through the three terminal mixes and observe the folded status.
     fn arm_job_status_fold_up() -> FoldUpOutcomes {
-        unimplemented!("armed by ONE-1695: job-status fold-up to owning task status")
+        use oneiron::context_board::{JobPresence, TaskBoardStatus, fold_up_status};
+
+        let fold = |statuses: [TaskBoardStatus; 2]| {
+            let jobs = statuses.map(|status| JobPresence {
+                id: "job".to_owned(),
+                kind: "sync".to_owned(),
+                status,
+            });
+            fold_up_status(&jobs)
+                .expect("two realizing jobs must fold to one status")
+                .as_str()
+                .to_owned()
+        };
+
+        FoldUpOutcomes {
+            status_one_running: fold([TaskBoardStatus::Done, TaskBoardStatus::Running]),
+            status_all_done: fold([TaskBoardStatus::Done, TaskBoardStatus::Done]),
+            status_one_failed: fold([TaskBoardStatus::Done, TaskBoardStatus::Failed]),
+        }
     }
 
     /// ONE-1695 · 08b §3/§9: job statuses fold up into the owning task's
     /// board status.
     #[test]
-    #[ignore = "armed by ONE-1695"]
     fn job_statuses_fold_up_to_owning_task_status() {
         let fold = arm_job_status_fold_up();
         assert_eq!(fold.status_one_running, "running");
@@ -398,16 +415,114 @@ mod cb_t {
     /// ONE-1695 fixture: `tasks`-layer TASK entity `tk_owner` realized by one
     /// JobQueue job carrying `task_ref`; produce a sync export and count both
     /// layers; observe the job's stored `task_ref` value.
+    #[cfg(feature = "sync")]
     fn arm_task_job_storage_split() -> TaskJobStorageSplit {
-        unimplemented!("armed by ONE-1695: task_ref backlink; layers never merge at storage")
+        use loro::{ExportMode, LoroDoc};
+        use oneiron::attempt_queue::{AttemptQueue, EnqueueAttempt};
+        use oneiron::habit::TaskRole;
+        use oneiron::registry::ENTITY_TYPE_TASK;
+        use oneiron::sync::schema::create_window_doc;
+        use oneiron::sync::types::WindowKey;
+        use oneiron::sync::window::reverse_rematerialize;
+        use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+        use rmpv::Value;
+
+        let temp = tempfile::tempdir().expect("temporary vault directory");
+        let vault = Vault::open(temp.path(), VaultConfig::device()).expect("open fixture vault");
+        let task_id = EntityId::from_bytes([0x74; 16]).expect("task id from 16 bytes");
+        let learned_at = 1_772_400_000;
+        // ENTITY_TYPE_TASK bodies are validated as a `{ "role": <byte> }` map; the
+        // node-local backlink lives on the job below, not in this entity body.
+        let mut task_body = Vec::new();
+        rmpv::encode::write_value(
+            &mut task_body,
+            &Value::Map(vec![(
+                Value::from("role"),
+                Value::from(TaskRole::Task.role_byte()),
+            )]),
+        )
+        .expect("encode owning task body");
+        vault
+            .put_entity(
+                &task_id,
+                ENTITY_TYPE_TASK,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                &task_body,
+            )
+            .expect("store owning task entity");
+
+        let queue = AttemptQueue::new(&vault);
+        queue
+            .enqueue_with_task_ref(
+                EnqueueAttempt {
+                    kind: "sync".to_owned(),
+                    payload: b"local-job".to_vec(),
+                    dedupe_key: None,
+                    run_id: None,
+                    now: learned_at,
+                },
+                Some("tk_owner".to_owned()),
+            )
+            .expect("enqueue realizing job");
+
+        let window_key = WindowKey::new("2026-03");
+        let sync_doc = create_window_doc("test-user", &window_key);
+        reverse_rematerialize(&vault, &sync_doc, &window_key)
+            .expect("mirror local entities into sync document");
+        let snapshot = sync_doc
+            .export(ExportMode::Snapshot)
+            .expect("export sync snapshot");
+        // Node-local proof: the job's `task_ref` backlink must never appear anywhere
+        // in the sync export — jobs live in a db the mirror never enumerates.
+        let backlink: &[u8] = b"tk_owner";
+        assert!(
+            !snapshot
+                .windows(backlink.len())
+                .any(|window| window == backlink),
+            "node-local task_ref leaked into the sync export",
+        );
+        let exported_doc = LoroDoc::from_snapshot(&snapshot).expect("read sync snapshot");
+
+        let exported_entities = exported_doc.get_map("entities");
+        let synced_task_entities = vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("list local task entities")
+            .iter()
+            .filter(|id| exported_entities.get(id.to_hex().as_str()).is_some())
+            .count();
+        let mut synced_job_rows = 0;
+        exported_doc
+            .get_map("attempt_records")
+            .for_each(|_, _| synced_job_rows += 1);
+
+        let local_jobs = queue.list().expect("list local jobs");
+        let local_jobs_with_task_ref = local_jobs
+            .iter()
+            .filter(|job| job.task_ref.is_some())
+            .count();
+        let job_task_ref = local_jobs
+            .first()
+            .and_then(|job| job.task_ref.clone())
+            .expect("realizing job carries owning task backlink");
+
+        TaskJobStorageSplit {
+            synced_task_entities,
+            synced_job_rows,
+            local_jobs_with_task_ref,
+            job_task_ref,
+        }
     }
 
     /// ONE-1695 · 08b §3: consolidation at the interface, never at storage —
     /// the TASK entity syncs, the lease-bearing job does not; the link is the
     /// `task_ref` backlink on the job, pointing at its OWNER (ticket: "jobs
     /// carry `task_ref`, and job statuses fold up into the owning task").
+    #[cfg(feature = "sync")]
     #[test]
-    #[ignore = "armed by ONE-1695"]
     fn task_syncs_job_stays_node_local_linked_by_task_ref() {
         let split = arm_task_job_storage_split();
         assert_eq!(split.synced_task_entities, 1);
