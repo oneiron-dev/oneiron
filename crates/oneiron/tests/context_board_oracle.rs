@@ -388,11 +388,11 @@ mod cb_a {
         use oneiron::run_tree::{RunTreeNode, RunTreeStatus, RunTreeTimestamps};
 
         let node = RunTreeNode {
-            attempt_id: "attempt_child_a".to_owned(),
+            attempt_id: "child_a".to_owned(),
             run_id: None,
             parent_id: None,
-            worker_kind: "agent.dispatch".to_owned(),
-            agent_id: Some("child_a".to_owned()),
+            worker_kind: oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+            agent_id: None,
             status: RunTreeStatus::Running,
             timestamps: RunTreeTimestamps {
                 created_at: 1,
@@ -408,6 +408,7 @@ mod cb_a {
             ChildAgentPresence {
                 id: "child_b".to_owned(),
                 status: RunTreeStatus::Running,
+                label: None,
             },
         ];
         let peers = [
