@@ -510,7 +510,17 @@ impl<'a> AgentDispatcher<'a> {
                 proposer: *killer_attempt,
             }));
         }
-        decode_agent_dispatch_input(&killer_payload.input)?;
+        // Unlike the target/envelope decodes above (corruption-only), a live
+        // agent-dispatch row can carry caller-supplied input that fails the codec —
+        // `enqueue` validates only the attempt-type string, never the input — so a
+        // malformed killer is an unauthorized killer, not a data-integrity error:
+        // fail closed to a proposal like the other non-real-killer cases.
+        if decode_agent_dispatch_input(&killer_payload.input).is_err() {
+            return Ok(KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: *spawn_attempt_id,
+                proposer: *killer_attempt,
+            }));
+        }
 
         if payload.parent_attempt != Some(*killer_attempt) {
             return Ok(KillOutcome::Proposed(KillProposal {
@@ -844,6 +854,55 @@ mod one_1698_tests {
             KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: child.attempt.id,
                 proposer: non_agent.id,
+            })
+        );
+        assert_eq!(
+            queue.get(child.attempt.id)?.expect("child exists").state,
+            AttemptState::Queued
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_agent_dispatch_killer_proposes() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let queue = AttemptQueue::new(&vault);
+        // A caller can enqueue a live "agent.dispatch" row carrying arbitrary input:
+        // enqueue validates only the attempt-type string, never the dispatch codec.
+        let EnqueueOutcome::Enqueued(malformed_killer) = queue.enqueue(EnqueueAttempt {
+            kind: crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
+            payload: crate::dreamer_runner::encode_dreamer_attempt_payload(
+                &DreamerAttemptPayload {
+                    attempt_type: AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
+                    input: Value::Nil,
+                    parent_attempt: None,
+                },
+            )?,
+            dedupe_key: None,
+            run_id: None,
+            now: 1,
+        })?
+        else {
+            panic!("expected fresh malformed agent-dispatch attempt");
+        };
+        let dispatcher = AgentDispatcher::new(&vault);
+        let child = dispatch_child(
+            &dispatcher,
+            AgentDispatchTarget::System(SystemAgentPreset::Scout),
+            malformed_killer.id,
+            2,
+        )?;
+
+        // The killer is the child's named parent, but its input never decodes as a
+        // valid agent dispatch, so it cannot be confirmed as a real killer. The old
+        // `?` aborted with InvalidAgentDispatchInput; it must fail closed to Proposed
+        // with the target left alive.
+        let outcome = dispatcher.kill_spawn(&child.attempt.id, &malformed_killer.id, 3)?;
+        assert_eq!(
+            outcome,
+            KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: child.attempt.id,
+                proposer: malformed_killer.id,
             })
         );
         assert_eq!(
