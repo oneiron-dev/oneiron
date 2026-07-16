@@ -619,6 +619,7 @@ impl SessionOverlay {
         key: &[u8],
         value: &[u8],
     ) -> Result<()> {
+        self.reject_unbudgetable_payload(key, value)?;
         let mutation = OverlayMutation::Put {
             keyspace,
             key: key.to_vec(),
@@ -643,6 +644,7 @@ impl SessionOverlay {
         key: &[u8],
         value: &[u8],
     ) -> Result<()> {
+        self.reject_unbudgetable_payload(key, value)?;
         let mutation = OverlayMutation::DeleteDuplicate {
             keyspace,
             key: key.to_vec(),
@@ -689,6 +691,21 @@ impl SessionOverlay {
     }
 
     pub(crate) fn close(self: &Arc<Self>) -> Result<()> {
+        // A close nested inside this thread's own active segment would wait on a lease
+        // that only this stack can release (the guard drops when it unwinds past here).
+        // Fail fast — in the single-writer model close is a session-lifecycle op, never
+        // nested inside an active write segment — leaving the overlay Live and usable.
+        let holds_active_segment = ACTIVE_SEGMENT.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .is_some_and(|segment| Arc::ptr_eq(&segment.overlay, self))
+        });
+        if holds_active_segment {
+            return Err(Error::InvariantViolation(
+                "session overlay close called while this thread holds an active txn segment",
+            ));
+        }
+
         let mut lifecycle = self
             .lifecycle
             .lock()
@@ -696,6 +713,10 @@ impl SessionOverlay {
         match lifecycle.state {
             OverlayLifecycleState::Live => {
                 lifecycle.state = OverlayLifecycleState::Closing;
+                // Wake every installer parked on the segment permit so each re-checks the
+                // terminal lifecycle state and returns the closed error instead of sleeping;
+                // release_segment_writer's notify_one only ever wakes a single waiter.
+                self.segment_available.notify_all();
             }
             OverlayLifecycleState::Closing | OverlayLifecycleState::Gone => {
                 return Err(Error::OffRecordOverlayLeaseClosed {
@@ -904,6 +925,26 @@ impl SessionOverlay {
         self.ensure_budget(current_bytes, net_increase)
     }
 
+    /// Reject a payload whose own bytes exceed the entire budget before it is cloned
+    /// into an owned mutation. Any such mutation is unconditionally rejected by the
+    /// net-delta preflight anyway (a single key of that size alone exceeds the budget),
+    /// so this only fast-paths the guaranteed rejection while capping transient
+    /// allocation at the budget. Admittable mutations have payload <= budget and are
+    /// unaffected, so shrink/overwrite-at-cap admission is preserved.
+    fn reject_unbudgetable_payload(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let payload_bytes = key
+            .len()
+            .checked_add(value.len())
+            .ok_or(Error::ArithmeticOverflow("overlay payload byte count"))?;
+        if payload_bytes > self.budget_bytes {
+            return Err(Error::OffRecordOverlayFull {
+                budget_bytes: self.budget_bytes,
+                attempted_bytes: payload_bytes,
+            });
+        }
+        Ok(())
+    }
+
     fn ensure_budget(&self, current_bytes: usize, incoming_bytes: usize) -> Result<()> {
         let attempted_bytes = current_bytes
             .checked_add(incoming_bytes)
@@ -1083,7 +1124,7 @@ mod tests {
     use super::*;
     use crate::temporal::TimeRange;
     use std::sync::mpsc::{RecvTimeoutError, sync_channel};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     const CONCURRENCY_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -1195,6 +1236,152 @@ mod tests {
         let snapshot = overlay.snapshot()?;
         assert_eq!(snapshot.row_count(OverlayKeyspace::Entities), 1);
         assert_eq!(snapshot.bytes_used(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn close_wakes_all_blocked_segment_installers() -> Result<()> {
+        let overlay = SessionOverlay::new(64);
+        let (active_installed_tx, active_installed_rx) = sync_channel(0);
+        let (release_active_tx, release_active_rx) = sync_channel(0);
+        let active_overlay = overlay.clone();
+        let active = std::thread::spawn(move || -> Result<()> {
+            let segment = active_overlay.install_txn_segment()?;
+            active_installed_tx
+                .send(())
+                .expect("active install receiver remains live");
+            release_active_rx
+                .recv()
+                .expect("active release sender remains live");
+            drop(segment);
+            Ok(())
+        });
+        active_installed_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("active segment installs");
+
+        let (first_attempting_tx, first_attempting_rx) = sync_channel(0);
+        let (first_result_tx, first_result_rx) = sync_channel(0);
+        let first_overlay = overlay.clone();
+        let first_waiter = std::thread::spawn(move || {
+            first_attempting_tx
+                .send(())
+                .expect("first attempt receiver remains live");
+            let result = match first_overlay.install_txn_segment() {
+                Err(Error::OffRecordOverlayLeaseClosed { .. }) => Ok(()),
+                Err(other) => Err(other),
+                Ok(segment) => {
+                    drop(segment);
+                    Err(Error::InvariantViolation(
+                        "first blocked installer acquired a closing overlay",
+                    ))
+                }
+            };
+            first_result_tx
+                .send(result)
+                .expect("first result receiver remains live");
+        });
+
+        let (second_attempting_tx, second_attempting_rx) = sync_channel(0);
+        let (second_result_tx, second_result_rx) = sync_channel(0);
+        let second_overlay = overlay.clone();
+        let second_waiter = std::thread::spawn(move || {
+            second_attempting_tx
+                .send(())
+                .expect("second attempt receiver remains live");
+            let result = match second_overlay.install_txn_segment() {
+                Err(Error::OffRecordOverlayLeaseClosed { .. }) => Ok(()),
+                Err(other) => Err(other),
+                Ok(segment) => {
+                    drop(segment);
+                    Err(Error::InvariantViolation(
+                        "second blocked installer acquired a closing overlay",
+                    ))
+                }
+            };
+            second_result_tx
+                .send(result)
+                .expect("second result receiver remains live");
+        });
+
+        first_attempting_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("first waiter reaches install");
+        second_attempting_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("second waiter reaches install");
+
+        let (close_result_tx, close_result_rx) = sync_channel(0);
+        let closing_overlay = overlay.clone();
+        let closer = std::thread::spawn(move || {
+            close_result_tx
+                .send(closing_overlay.close())
+                .expect("close result receiver remains live");
+        });
+
+        let closing_deadline = Instant::now() + CONCURRENCY_TIMEOUT;
+        loop {
+            let state = overlay
+                .lifecycle
+                .lock()
+                .expect("overlay lifecycle remains available")
+                .state;
+            if state == OverlayLifecycleState::Closing {
+                break;
+            }
+            assert!(
+                Instant::now() < closing_deadline,
+                "closer did not transition the overlay to Closing"
+            );
+            std::thread::yield_now();
+        }
+
+        release_active_tx
+            .send(())
+            .expect("active segment remains live until release");
+        first_result_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("first blocked installer wakes on close")?;
+        second_result_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("second blocked installer wakes on close")?;
+        close_result_rx
+            .recv_timeout(CONCURRENCY_TIMEOUT)
+            .expect("closer returns after the active segment drains")?;
+
+        active
+            .join()
+            .expect("active segment thread does not panic")?;
+        first_waiter
+            .join()
+            .expect("first blocked installer does not panic");
+        second_waiter
+            .join()
+            .expect("second blocked installer does not panic");
+        closer.join().expect("closer thread does not panic");
+        Ok(())
+    }
+
+    #[test]
+    fn close_while_holding_own_segment_fails_fast() -> Result<()> {
+        let overlay = SessionOverlay::new(64);
+        let segment = overlay.install_txn_segment()?;
+
+        match overlay.close() {
+            Err(Error::InvariantViolation(message)) => assert_eq!(
+                message,
+                "session overlay close called while this thread holds an active txn segment"
+            ),
+            Err(other) => panic!("unexpected close error: {other}"),
+            Ok(()) => panic!("same-thread close unexpectedly succeeded"),
+        }
+
+        drop(segment);
+        let fresh_segment = overlay.install_txn_segment()?;
+        let snapshot = overlay.snapshot()?;
+        assert_eq!(snapshot.bytes_used(), 0);
+        drop(snapshot);
+        drop(fresh_segment);
         Ok(())
     }
 
@@ -1377,6 +1564,48 @@ mod tests {
             Ok(()) => panic!("budget-plus-one put unexpectedly staged"),
         }
         assert_eq!(overlay.snapshot()?.bytes_used(), 0);
+        drop(segment);
+        Ok(())
+    }
+
+    #[test]
+    fn payload_larger_than_budget_is_rejected_before_cloning() -> Result<()> {
+        let budget = 8;
+        let overlay = SessionOverlay::new(budget);
+        let segment = overlay.install_txn_segment()?;
+        let value = vec![0_u8; 64];
+
+        match overlay.put(OverlayKeyspace::Entities, b"k", &value) {
+            Err(Error::OffRecordOverlayFull {
+                budget_bytes,
+                attempted_bytes,
+            }) => {
+                assert_eq!(budget_bytes, budget);
+                assert_eq!(attempted_bytes, 65);
+            }
+            Err(other) => panic!("unexpected put error: {other}"),
+            Ok(()) => panic!("unbudgetable put unexpectedly staged"),
+        }
+        let snapshot = overlay.snapshot()?;
+        assert_eq!(snapshot.bytes_used(), 0);
+        assert_eq!(snapshot.row_count(OverlayKeyspace::Entities), 0);
+        drop(snapshot);
+
+        match overlay.delete_duplicate(OverlayKeyspace::TextPostings, b"k", &value) {
+            Err(Error::OffRecordOverlayFull {
+                budget_bytes,
+                attempted_bytes,
+            }) => {
+                assert_eq!(budget_bytes, budget);
+                assert_eq!(attempted_bytes, 65);
+            }
+            Err(other) => panic!("unexpected delete-duplicate error: {other}"),
+            Ok(()) => panic!("unbudgetable delete-duplicate unexpectedly staged"),
+        }
+        let snapshot = overlay.snapshot()?;
+        assert_eq!(snapshot.bytes_used(), 0);
+        assert_eq!(snapshot.row_count(OverlayKeyspace::TextPostings), 0);
+        drop(snapshot);
         drop(segment);
         Ok(())
     }
