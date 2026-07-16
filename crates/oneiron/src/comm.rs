@@ -104,6 +104,10 @@ pub enum CommError {
     /// The ruling principal is not human.
     #[error("comm consent widening requires a human principal")]
     HumanApprovalRequired,
+    /// A restrictive event re-asserted the opt-out at or after the pending
+    /// clear gate was created, so the clear must fail closed.
+    #[error("comm opt-out clear superseded by a later restrictive event")]
+    PendingClearSupersededByStop,
 }
 
 impl From<heed::Error> for CommError {
@@ -762,7 +766,12 @@ pub fn approve_pending_opt_out_clear(
     let Some(party_ref) = resolve_party(vault, party)? else {
         return Err(CommError::PendingGateNotFound);
     };
-    let cleared = vault.try_with_write_txn(|wtxn| {
+    enum ClearRuling {
+        Cleared,
+        NoActiveOptOut,
+        Superseded,
+    }
+    let ruling = vault.try_with_write_txn(|wtxn| {
         // Authorize the approving actor from the write transaction's view so a
         // concurrent delete/recreate cannot leave the gate consumed under a
         // stale authorization decision (TOCTOU).
@@ -814,6 +823,45 @@ pub fn approve_pending_opt_out_clear(
         )?;
         require_at_most_one(&active)?;
         let live_claim = active.into_iter().next();
+        // Fail-closed on a stale gate: if a projected InboundStop re-asserted
+        // this (party, channel) opt-out at or after the gate was created AND
+        // strictly after the live opt-out head this gate would clear, the
+        // opt-out was re-asserted after the clear was requested — consume the
+        // stale gate (no receipt) and refuse. This is the approve-time half of
+        // the restrictive-wins rule the projector enforces at :1013 (there the
+        // STOP is projected while a gate is pending; here the STOP is projected
+        // before a backdated/late gate arrives). The `> head_valid_from` bound
+        // excludes the STOP that established the head being cleared.
+        if let Some((_, matched)) = &live_claim {
+            let head_valid_from = matched.valid_from.unwrap_or(0);
+            let superseding_records = comm_records_in_txn(vault, &*wtxn)?;
+            let superseded = superseding_records.iter().any(|(_, record)| {
+                matches!(record, CommRecord::Event {
+                    kind: CommEventKind::InboundStop,
+                    party_ref: event_party,
+                    channel_class: Some(event_channel),
+                    occurred_at,
+                    projected: true,
+                    ..
+                } if *event_party == party_ref
+                    && event_channel == channel_class
+                    && *occurred_at >= created_at
+                    && *occurred_at > head_valid_from)
+            });
+            if superseded {
+                let consumed = CommRecord::Gate {
+                    party_ref,
+                    channel_class: channel_class.to_owned(),
+                    claim_ref,
+                    created_at,
+                    pending: false,
+                };
+                put_comm_record_in_txn(vault, wtxn, gate_id, &consumed)?;
+                // Commit the consumed gate, then refuse after the txn — returning
+                // Err here would roll the consume back.
+                return Ok(ClearRuling::Superseded);
+            }
+        }
         if let Some((live_claim_ref, matched)) = &live_claim {
             let close_at = ruled_at.max(matched.valid_from.unwrap_or(ruled_at));
             vault.retract_claim_in_txn(wtxn, live_claim_ref, close_at)?;
@@ -836,12 +884,16 @@ pub fn approve_pending_opt_out_clear(
             };
             put_comm_record_in_txn(vault, wtxn, EntityId::now(), &receipt)?;
         }
-        Ok(live_claim.is_some())
+        Ok(if live_claim.is_some() {
+            ClearRuling::Cleared
+        } else {
+            ClearRuling::NoActiveOptOut
+        })
     })?;
-    if cleared {
-        Ok(())
-    } else {
-        Err(CommError::ActiveOptOutNotFound)
+    match ruling {
+        ClearRuling::Cleared => Ok(()),
+        ClearRuling::NoActiveOptOut => Err(CommError::ActiveOptOutNotFound),
+        ClearRuling::Superseded => Err(CommError::PendingClearSupersededByStop),
     }
 }
 

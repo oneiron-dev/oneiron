@@ -1227,6 +1227,37 @@ fn stale_non_person_cached_party_is_reminted_before_reuse() -> CommResult<()> {
 }
 
 #[test]
+fn backdated_gate_after_later_stop_is_refused_and_consumed() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-superseded", "email", 10)?;
+    run_comm_projector(&vault)?;
+    // A later restrictive STOP is projected while no clear gate exists yet, so
+    // the projection-side consume (:1013) does not fire.
+    record_comm_inbound_stop(&vault, "party-superseded", "email", 30)?;
+    run_comm_projector(&vault)?;
+    // A clear gate whose created_at predates the projected STOP@30 (backdated / late).
+    assert_eq!(
+        request_opt_out_clear(&vault, "party-superseded", "email", 20)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 1);
+
+    let party_ref = resolve_party(&vault, "party-superseded")?.ok_or(CommError::InvalidRecord)?;
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    let error = approve_pending_opt_out_clear(&vault, "party-superseded", "email", human, 40)
+        .expect_err("clear superseded by a later restrictive STOP");
+    assert!(matches!(error, CommError::PendingClearSupersededByStop));
+    // Stale gate consumed, opt-out intact, no receipt written.
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-superseded", "email")?,
+        1
+    );
+    assert_eq!(count_opt_out_clear_receipts(&vault, "party-superseded")?, 0);
+    Ok(())
+}
+
+#[test]
 fn deleted_indexed_party_is_reminted_before_projector_reuse() -> CommResult<()> {
     let (_dir, vault) = open_vault();
     record_comm_send_receipt(&vault, "party-reminted", "email", 10)?;
