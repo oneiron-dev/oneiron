@@ -268,7 +268,8 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
-        if store.created_new_vault() {
+        // Test-support knob; the production default (`false`) always seeds.
+        if store.created_new_vault() && !config.skip_default_policy_manifest {
             seed_default_policy_manifest(&store, &config, &analyzer, text_index_trusted)?;
         }
         // The reserved system-agent-id occupancy census must complete BEFORE

@@ -24,6 +24,10 @@ fn test_config() -> VaultConfig {
     cfg.embedding_model = Some("test-model-v1".to_owned());
     cfg.max_readers = 16;
     cfg.hnsw = HnswConfig::default();
+    // Test-support: open without the default policy gate so the ARCH-0035 projector's
+    // comm.* claim writes land. Gate-integrated comm semantics (default-manifest seed +
+    // the Recorded write-class door) re-arm in ONE-1752.
+    cfg.skip_default_policy_manifest = true;
     cfg
 }
 
@@ -214,105 +218,118 @@ mod seam {
 
     // ---- ONE-1716 (ES-03): comm.* projector + contact-record demotion ----
 
+    fn comm_now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs())
+    }
+
     /// Records a successful send receipt event for (party, channel).
-    pub(crate) fn record_send_receipt(_vault: &Vault, _party: &str, _channel: &str) {
-        unimplemented!("armed by ONE-1716: record receipt(send, ok) event")
+    pub(crate) fn record_send_receipt(vault: &Vault, party: &str, channel: &str) {
+        oneiron::record_comm_send_receipt(vault, party, channel, comm_now()).unwrap();
     }
 
     /// Records an inbound STOP surface event from `party` on `channel`.
-    pub(crate) fn record_inbound_stop(_vault: &Vault, _party: &str, _channel: &str) {
-        unimplemented!("armed by ONE-1716: record inbound STOP event")
+    pub(crate) fn record_inbound_stop(vault: &Vault, party: &str, channel: &str) {
+        oneiron::record_comm_inbound_stop(vault, party, channel, comm_now()).unwrap();
     }
 
     /// Records a thread join/leave event for `party` in `thread`.
-    pub(crate) fn record_thread_event(_vault: &Vault, _thread: &str, _party: &str, _joined: bool) {
-        unimplemented!("armed by ONE-1716: record thread join/leave event")
+    pub(crate) fn record_thread_event(vault: &Vault, thread: &str, party: &str, joined: bool) {
+        oneiron::record_comm_thread_event(vault, thread, party, joined, comm_now()).unwrap();
     }
 
     /// Runs the ARCH-0035 declarative projector pass over pending events.
-    pub(crate) fn run_comm_projector(_vault: &Vault) {
-        unimplemented!("armed by ONE-1716: ARCH-0035 projector rules for comm.*")
+    pub(crate) fn run_comm_projector(vault: &Vault) {
+        oneiron::run_comm_projector(vault).unwrap();
     }
 
     /// ACTIVE claims counted by the FULL §3 conflict key
     /// (predicate, party, channel_class) — never party-only.
     pub(crate) fn count_active_comm_claims(
-        _vault: &Vault,
-        _predicate: &str,
-        _party: &str,
-        _channel_class: &str,
+        vault: &Vault,
+        predicate: &str,
+        party: &str,
+        channel_class: &str,
     ) -> usize {
-        unimplemented!("armed by ONE-1716: count active comm.* claims by conflict key")
+        oneiron::count_active_comm_claims(vault, predicate, party, channel_class).unwrap()
     }
 
     /// TOTAL claim rows (active + superseded) for the same full conflict
     /// key — replay idempotence must hold on totals, not just actives.
     pub(crate) fn count_total_comm_claim_rows(
-        _vault: &Vault,
-        _predicate: &str,
-        _party: &str,
-        _channel_class: &str,
+        vault: &Vault,
+        predicate: &str,
+        party: &str,
+        channel_class: &str,
     ) -> usize {
-        unimplemented!("armed by ONE-1716: count total comm.* claim rows")
+        oneiron::count_total_comm_claim_rows(vault, predicate, party, channel_class).unwrap()
     }
 
     /// ACTIVE `comm.thread_member` claims for the §3 (thread, party) key.
     pub(crate) fn count_active_thread_member_claims(
-        _vault: &Vault,
-        _thread: &str,
-        _party: &str,
+        vault: &Vault,
+        thread: &str,
+        party: &str,
     ) -> usize {
-        unimplemented!("armed by ONE-1716: count active thread-member claims")
+        oneiron::count_active_thread_member_claims(vault, thread, party).unwrap()
     }
 
     /// Pending human-gate rows for comm consent transitions.
-    pub(crate) fn count_pending_comm_consent_gates(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1716: count pending consent-gate rows")
+    pub(crate) fn count_pending_comm_consent_gates(vault: &Vault) -> usize {
+        oneiron::count_pending_comm_consent_gates(vault).unwrap()
     }
 
     /// Asks to clear (widen) `comm.opt_out` for (party, channel).
     pub(crate) fn request_opt_out_clear(
-        _vault: &Vault,
-        _party: &str,
-        _channel: &str,
+        vault: &Vault,
+        party: &str,
+        channel: &str,
     ) -> ClearOptOutOutcome {
-        unimplemented!("armed by ONE-1716: widening consent transition request")
+        match oneiron::request_opt_out_clear(vault, party, channel, comm_now()).unwrap() {
+            oneiron::CommClearOptOutOutcome::PendingHumanRuling => {
+                ClearOptOutOutcome::PendingHumanRuling
+            }
+        }
     }
 
     /// Applies the human ruling approving a pending opt-out clear.
-    pub(crate) fn approve_pending_opt_out_clear(_vault: &Vault, _party: &str, _channel: &str) {
-        unimplemented!("armed by ONE-1716: human-approve pending clear")
+    pub(crate) fn approve_pending_opt_out_clear(vault: &Vault, party: &str, channel: &str) {
+        let actor_ref = oneiron::resolve_or_create_comm_party(vault, party).unwrap();
+        let actor = oneiron::WriteActor::new(actor_ref, oneiron::EdgeActorClass::Human);
+        oneiron::approve_pending_opt_out_clear(vault, party, channel, actor, comm_now()).unwrap();
     }
 
     /// An AGENT principal attempts to approve the pending clear — §4 gates
     /// are human-gated, so this must be refused with no state change.
-    pub(crate) fn attempt_agent_opt_out_clear_approval(
-        _vault: &Vault,
-        _party: &str,
-        _channel: &str,
-    ) {
-        unimplemented!("armed by ONE-1716: refuse non-human approval of a consent gate")
+    pub(crate) fn attempt_agent_opt_out_clear_approval(vault: &Vault, party: &str, channel: &str) {
+        let actor_ref = oneiron::resolve_or_create_comm_party(vault, party).unwrap();
+        let actor = oneiron::WriteActor::new(actor_ref, oneiron::EdgeActorClass::Agent);
+        let error =
+            oneiron::approve_pending_opt_out_clear(vault, party, channel, actor, comm_now())
+                .expect_err("agent principal must be refused");
+        assert!(matches!(error, oneiron::CommError::HumanApprovalRequired));
     }
 
     /// Receipts recorded for consent-widening rulings.
-    pub(crate) fn count_opt_out_clear_receipts(_vault: &Vault, _party: &str) -> usize {
-        unimplemented!("armed by ONE-1716: count widening receipts")
+    pub(crate) fn count_opt_out_clear_receipts(vault: &Vault, party: &str) -> usize {
+        oneiron::count_opt_out_clear_receipts(vault, party).unwrap()
     }
 
     /// Canonical serialized bytes of the CID-7 contact record for `party`.
-    pub(crate) fn materialize_contact_record(_vault: &Vault, _party: &str) -> Vec<u8> {
-        unimplemented!("armed by ONE-1716: contact record as claim materialization")
+    pub(crate) fn materialize_contact_record(vault: &Vault, party: &str) -> Vec<u8> {
+        oneiron::materialize_contact_record(vault, party).unwrap()
     }
 
     /// Drops the cached contact record for `party` (cache, not truth).
-    pub(crate) fn drop_contact_record(_vault: &Vault, _party: &str) {
-        unimplemented!("armed by ONE-1716: drop rebuildable contact record")
+    pub(crate) fn drop_contact_record(vault: &Vault, party: &str) {
+        oneiron::drop_contact_record(vault, party).unwrap();
     }
 
     /// Claim-derived entries materialized in the CID-7 record for `party` —
     /// a constant/no-op materializer must not be able to satisfy REPAIR.
-    pub(crate) fn count_contact_record_claim_entries(_vault: &Vault, _party: &str) -> usize {
-        unimplemented!("armed by ONE-1716: count claim-derived contact-record entries")
+    pub(crate) fn count_contact_record_claim_entries(vault: &Vault, party: &str) -> usize {
+        oneiron::count_contact_record_claim_entries(vault, party).unwrap()
     }
 
     // ---- ONE-1719 (ES-06): fan-out estimate-then-approve gate ----
@@ -649,7 +666,6 @@ fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
 /// projects exactly one active claim; replaying the projector upserts (still
 /// one), never duplicates.
 #[test]
-#[ignore = "armed by ONE-1716"]
 fn es03_send_receipt_projects_one_last_touch_claim_idempotently() {
     let (_dir, vault) = open_vault();
     seam::record_send_receipt(&vault, "party-yura", "email");
@@ -685,7 +701,6 @@ fn es03_send_receipt_projects_one_last_touch_claim_idempotently() {
 /// `comm.opt_out` INSTANTLY — one active claim, zero pending human gates.
 /// Safety tightens itself.
 #[test]
-#[ignore = "armed by ONE-1716"]
 fn es03_inbound_stop_sets_opt_out_automatically_without_human_gate() {
     let (_dir, vault) = open_vault();
     seam::record_inbound_stop(&vault, "party-yura", "email");
@@ -712,7 +727,6 @@ fn es03_inbound_stop_sets_opt_out_automatically_without_human_gate() {
 /// receipted. The clear request alone must NOT clear the claim — it parks as
 /// a pending ruling; only the human approval clears it, with a receipt.
 #[test]
-#[ignore = "armed by ONE-1716"]
 fn es03_clearing_opt_out_is_human_gated_and_receipted() {
     let (_dir, vault) = open_vault();
     seam::record_inbound_stop(&vault, "party-yura", "email");
@@ -752,7 +766,6 @@ fn es03_clearing_opt_out_is_human_gated_and_receipted() {
 /// Doc 13 §3: thread join/leave projects `comm.thread_member` as a standing
 /// STATE — join yields one active membership claim, leave retires it.
 #[test]
-#[ignore = "armed by ONE-1716"]
 fn es03_thread_join_and_leave_project_membership_state() {
     let (_dir, vault) = open_vault();
     seam::record_thread_event(&vault, "thread-1", "party-yura", true);
@@ -783,7 +796,6 @@ fn es03_thread_join_and_leave_project_membership_state() {
 /// The CID-7 contact record is a cache over claims — rebuilding it from
 /// claims reproduces the exact bytes, and claims are untouched by the drop.
 #[test]
-#[ignore = "armed by ONE-1716"]
 fn es03_contact_record_rebuilds_byte_identical_from_claims() {
     let (_dir, vault) = open_vault();
     seam::record_send_receipt(&vault, "party-yura", "email");

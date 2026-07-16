@@ -1,0 +1,497 @@
+use super::*;
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
+    validate_claim_body_and_decode,
+};
+use crate::config::VaultConfig;
+use crate::error::ErrorKind;
+use crate::registry::{
+    ENTITY_TYPE_COMM_RECORD, EntityClassification, TypeByteBand, entity_type_registry_entry,
+};
+
+fn entity(seed: u8) -> EntityId {
+    EntityId::from_bytes([seed; 16]).expect("valid entity id")
+}
+
+fn open_vault() -> (tempfile::TempDir, Vault) {
+    let mut config = VaultConfig::device();
+    config.map_size = 16 * 1024 * 1024;
+    config.dimensions = 4;
+    config.embedding_model = None;
+    crate::test_util::open_test_vault_with(config)
+}
+
+fn validate_through_chokepoint(body: &ClaimBody) -> Result<ClaimBody> {
+    let encoded = encode_claim_body(body)?;
+    validate_claim_body_and_decode(&encoded, false)
+}
+
+fn standing_channel_claim_id(
+    vault: &Vault,
+    party_ref: EntityId,
+    predicate: &str,
+    channel_class: &str,
+) -> CommResult<EntityId> {
+    let rtxn = vault.store.env.read_txn()?;
+    let claims = matching_claims_in_txn(
+        vault,
+        &rtxn,
+        party_ref,
+        predicate,
+        Some(channel_class),
+        None,
+        true,
+    )?;
+    assert_eq!(claims.len(), 1);
+    Ok(claims[0].0)
+}
+
+fn put_malformed_comm_record(vault: &Vault) -> CommResult<()> {
+    let id = EntityId::now();
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 1);
+    payload.push(ENTITY_TYPE_COMM_RECORD);
+    payload.extend_from_slice(&0_u64.to_be_bytes());
+    payload.extend_from_slice(&0_u64.to_be_bytes());
+    payload.extend_from_slice(&0_u64.to_be_bytes());
+    payload.push(0xC1);
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .entities
+        .put(&mut wtxn, id.as_bytes(), &payload)?;
+    let type_key = crate::store::Store::encode_type_key(ENTITY_TYPE_COMM_RECORD, &id);
+    vault.store.type_index.put(&mut wtxn, &type_key, &[])?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+#[test]
+fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Result<()> {
+    let party = entity(0xA1);
+    let well_formed = [
+        CommClaimValue::OptOut {
+            party_ref: party,
+            channel_class: "email".to_owned(),
+            reason: OPT_OUT_REASON_STOP.to_owned(),
+            occurred_at: 10,
+        },
+        CommClaimValue::LastTouch {
+            party_ref: party,
+            channel_class: "email".to_owned(),
+            occurred_at: 11,
+        },
+        CommClaimValue::ThreadMember {
+            party_ref: party,
+            thread_ref: "thread-1".to_owned(),
+            occurred_at: 12,
+        },
+        CommClaimValue::ReachableVia {
+            party_ref: party,
+            channel_class: "email".to_owned(),
+            reachable: true,
+        },
+    ];
+    let accepted = well_formed
+        .iter()
+        .map(CommClaimValue::claim_body)
+        .map(|body| validate_through_chokepoint(&body))
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(accepted.len(), 4);
+
+    let mut missing_channel = well_formed[0].claim_body();
+    let Value::Map(entries) = &mut missing_channel.value else {
+        unreachable!("fixture value is a map")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some(KEY_CHANNEL_CLASS));
+    let missing_error =
+        validate_through_chokepoint(&missing_channel).expect_err("missing channel_class rejected");
+    assert_eq!(missing_error.kind(), ErrorKind::InvalidClaimBody);
+
+    let mut wrong_shape = well_formed[1].claim_body();
+    wrong_shape.value = Value::from("email");
+    let shape_error =
+        validate_through_chokepoint(&wrong_shape).expect_err("non-map value rejected");
+    assert_eq!(shape_error.kind(), ErrorKind::InvalidClaimBody);
+
+    let one_segment = ClaimBody::new(
+        "comm",
+        ClaimSubject::Entity(party),
+        Value::Map(Vec::new()),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    let predicate_error =
+        validate_through_chokepoint(&one_segment).expect_err("one-segment predicate rejected");
+    assert_eq!(predicate_error.kind(), ErrorKind::InvalidPredicate);
+
+    let entry = entity_type_registry_entry(ENTITY_TYPE_COMM_RECORD).expect("comm registry row");
+    assert_eq!(ENTITY_TYPE_COMM_RECORD, 136);
+    assert_eq!(entry.kind, "COMM_RECORD");
+    assert_eq!(entry.classification, EntityClassification::Maintenance);
+    assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+    Ok(())
+}
+
+#[test]
+fn projector_replay_preserves_active_and_total_counts() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-a", "email", 10)?;
+    record_comm_inbound_stop(&vault, "party-a", "sms", 11)?;
+    record_comm_thread_event(&vault, "thread-a", "party-a", true, 12)?;
+
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-a", "email")?,
+        0
+    );
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-a", "sms")?,
+        0
+    );
+    assert_eq!(
+        count_active_thread_member_claims(&vault, "thread-a", "party-a")?,
+        0
+    );
+
+    for pass in 1..=3 {
+        run_comm_projector(&vault)?;
+        assert_eq!(
+            count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-a", "email")?,
+            1,
+            "active last_touch after pass {pass}"
+        );
+        assert_eq!(
+            count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-a", "email")?,
+            1,
+            "total last_touch after pass {pass}"
+        );
+        assert_eq!(
+            count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-a", "sms")?,
+            1,
+            "active opt_out after pass {pass}"
+        );
+        assert_eq!(
+            count_total_comm_claim_rows(&vault, PREDICATE_COMM_OPT_OUT, "party-a", "sms")?,
+            1,
+            "total opt_out after pass {pass}"
+        );
+        assert_eq!(
+            count_active_thread_member_claims(&vault, "thread-a", "party-a")?,
+            1,
+            "active membership after pass {pass}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn consent_refusal_and_one_shot_human_approval_preserve_exact_counts() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-a", "email", 10)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        request_opt_out_clear(&vault, "party-a", "email", 11)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+
+    let party_ref = resolve_or_create_comm_party(&vault, "party-a")?;
+    let agent = WriteActor::new(party_ref, EdgeActorClass::Agent);
+    let before_agent = (
+        count_pending_comm_consent_gates(&vault)?,
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-a", "email")?,
+        count_opt_out_clear_receipts(&vault, "party-a")?,
+    );
+    let agent_error = approve_pending_opt_out_clear(&vault, "party-a", "email", agent, 12)
+        .expect_err("agent approval rejected");
+    assert!(matches!(agent_error, CommError::HumanApprovalRequired));
+    let after_agent = (
+        count_pending_comm_consent_gates(&vault)?,
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-a", "email")?,
+        count_opt_out_clear_receipts(&vault, "party-a")?,
+    );
+    assert_eq!(before_agent, (1, 1, 0));
+    assert_eq!(after_agent, before_agent);
+
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    approve_pending_opt_out_clear(&vault, "party-a", "email", human, 13)?;
+    let after_human = (
+        count_pending_comm_consent_gates(&vault)?,
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-a", "email")?,
+        count_opt_out_clear_receipts(&vault, "party-a")?,
+    );
+    assert_eq!(after_human, (0, 0, 1));
+
+    let second_error = approve_pending_opt_out_clear(&vault, "party-a", "email", human, 14)
+        .expect_err("consumed gate rejects second ruling");
+    assert!(matches!(second_error, CommError::PendingGateNotFound));
+    let after_second = (
+        count_pending_comm_consent_gates(&vault)?,
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-a", "email")?,
+        count_opt_out_clear_receipts(&vault, "party-a")?,
+    );
+    assert_eq!(after_second, after_human);
+    Ok(())
+}
+
+#[test]
+fn contact_materialization_is_deterministic_without_intervening_writes() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-a", "email", 10)?;
+    record_comm_inbound_stop(&vault, "party-a", "email", 11)?;
+    run_comm_projector(&vault)?;
+
+    let first = materialize_contact_record(&vault, "party-a")?;
+    let second = materialize_contact_record(&vault, "party-a")?;
+    assert_eq!(first, second);
+    assert_eq!(count_contact_record_claim_entries(&vault, "party-a")?, 2);
+    assert!(!first.is_empty());
+    Ok(())
+}
+
+#[test]
+fn finding_1_future_dated_claims_are_standing_and_materialize_deterministically() -> CommResult<()>
+{
+    let (_dir, vault) = open_vault();
+    let future = 4_000_000_000;
+    record_comm_send_receipt(&vault, "party-f1", "email", future)?;
+    run_comm_projector(&vault)?;
+
+    let first = materialize_contact_record(&vault, "party-f1")?;
+    let second = materialize_contact_record(&vault, "party-f1")?;
+    assert_eq!(first, second);
+    assert_eq!(count_contact_record_claim_entries(&vault, "party-f1")?, 1);
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f1", "email")?,
+        1
+    );
+
+    record_comm_send_receipt(&vault, "party-f1", "email", future + 1)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f1", "email")?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f1", "email")?,
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn finding_2_contact_view_is_purely_claim_derived() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-f2", "email", 10)?;
+    record_comm_inbound_stop(&vault, "party-f2", "email", 11)?;
+    run_comm_projector(&vault)?;
+
+    let first = materialize_contact_record(&vault, "party-f2")?;
+    drop_contact_record(&vault, "party-f2")?;
+    let rebuilt = materialize_contact_record(&vault, "party-f2")?;
+    assert_eq!(first, rebuilt);
+    assert!(!rebuilt.is_empty());
+    assert_eq!(count_contact_record_claim_entries(&vault, "party-f2")?, 2);
+
+    let party_ref = resolve_or_create_comm_party(&vault, "party-f2")?;
+    let old_id = standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_OPT_OUT, "email")?;
+    vault.try_with_write_txn(|wtxn| -> CommResult<()> {
+        let replacement = CommClaimValue::OptOut {
+            party_ref,
+            channel_class: "email".to_owned(),
+            reason: OPT_OUT_REASON_STOP.to_owned(),
+            occurred_at: 12,
+        };
+        let new_id = put_comm_claim_in_txn(&vault, wtxn, &replacement, 12)?;
+        vault.supersede_claim_in_txn(wtxn, &new_id, &old_id, 12)?;
+        Ok(())
+    })?;
+
+    let refreshed = materialize_contact_record(&vault, "party-f2")?;
+    assert_ne!(refreshed, first);
+    assert_eq!(count_contact_record_claim_entries(&vault, "party-f2")?, 2);
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-f2", "email")?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_OPT_OUT, "party-f2", "email")?,
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn finding_3_approval_clears_the_live_replacement_opt_out_head() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-f3", "email", 10)?;
+    run_comm_projector(&vault)?;
+    request_opt_out_clear(&vault, "party-f3", "email", 11)?;
+
+    let party_ref = resolve_or_create_comm_party(&vault, "party-f3")?;
+    let stale_gate_head =
+        standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_OPT_OUT, "email")?;
+    vault.retract_claim(&stale_gate_head, 12)?;
+    record_comm_inbound_stop(&vault, "party-f3", "email", 13)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-f3", "email")?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_OPT_OUT, "party-f3", "email")?,
+        2
+    );
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 1);
+    assert_eq!(count_opt_out_clear_receipts(&vault, "party-f3")?, 0);
+
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    approve_pending_opt_out_clear(&vault, "party-f3", "email", human, 14)?;
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-f3", "email")?,
+        0
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_OPT_OUT, "party-f3", "email")?,
+        2
+    );
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
+    assert_eq!(count_opt_out_clear_receipts(&vault, "party-f3")?, 1);
+    Ok(())
+}
+
+#[test]
+fn finding_3_backdated_ruling_is_typed_and_has_no_state_change() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-f3-time", "email", 10)?;
+    run_comm_projector(&vault)?;
+    request_opt_out_clear(&vault, "party-f3-time", "email", 20)?;
+
+    let party_ref = resolve_or_create_comm_party(&vault, "party-f3-time")?;
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    let before = (
+        count_pending_comm_consent_gates(&vault)?,
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-f3-time", "email")?,
+        count_opt_out_clear_receipts(&vault, "party-f3-time")?,
+    );
+    let error = approve_pending_opt_out_clear(&vault, "party-f3-time", "email", human, 19)
+        .expect_err("backdated ruling rejected");
+    assert!(matches!(error, CommError::RulingPredatesGate));
+    let after = (
+        count_pending_comm_consent_gates(&vault)?,
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-f3-time", "email")?,
+        count_opt_out_clear_receipts(&vault, "party-f3-time")?,
+    );
+    assert_eq!(before, (1, 1, 0));
+    assert_eq!(after, before);
+    Ok(())
+}
+
+#[test]
+fn finding_3_missing_live_head_consumes_gate_without_receipt() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_inbound_stop(&vault, "party-f3-empty", "email", 10)?;
+    run_comm_projector(&vault)?;
+    request_opt_out_clear(&vault, "party-f3-empty", "email", 11)?;
+
+    let party_ref = resolve_or_create_comm_party(&vault, "party-f3-empty")?;
+    let claim_id = standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_OPT_OUT, "email")?;
+    vault.retract_claim(&claim_id, 12)?;
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    let error = approve_pending_opt_out_clear(&vault, "party-f3-empty", "email", human, 13)
+        .expect_err("missing live head reports a typed outcome");
+    assert!(matches!(error, CommError::ActiveOptOutNotFound));
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-f3-empty", "email")?,
+        0
+    );
+    assert_eq!(count_opt_out_clear_receipts(&vault, "party-f3-empty")?, 0);
+
+    let second_error = approve_pending_opt_out_clear(&vault, "party-f3-empty", "email", human, 14)
+        .expect_err("consumed gate is one-shot");
+    assert!(matches!(second_error, CommError::PendingGateNotFound));
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
+    assert_eq!(count_opt_out_clear_receipts(&vault, "party-f3-empty")?, 0);
+    Ok(())
+}
+
+#[test]
+fn finding_4_out_of_order_last_touch_events_do_not_wedge_projection() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-f4", "email", 100)?;
+    run_comm_projector(&vault)?;
+    record_comm_send_receipt(&vault, "party-f4", "email", 50)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f4", "email")?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f4", "email")?,
+        2
+    );
+
+    record_comm_send_receipt(&vault, "party-f4", "email", 25)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f4", "email")?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f4", "email")?,
+        3
+    );
+    Ok(())
+}
+
+#[test]
+fn finding_5_malformed_comm_record_does_not_wedge_family_operations() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-f5", "email", 10)?;
+    put_malformed_comm_record(&vault)?;
+    run_comm_projector(&vault)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(comm_records_in_txn(&vault, &rtxn)?.len(), 1);
+    drop(rtxn);
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f5", "email")?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-f5", "email")?,
+        1
+    );
+    let materialized = materialize_contact_record(&vault, "party-f5")?;
+    assert!(!materialized.is_empty());
+    assert_eq!(count_contact_record_claim_entries(&vault, "party-f5")?, 1);
+    Ok(())
+}
+
+#[test]
+fn finding_6_opt_out_reason_is_pinned_to_machine_tokens() -> Result<()> {
+    let party = entity(0xA2);
+    let accepted = [CommClaimValue::OptOut {
+        party_ref: party,
+        channel_class: "email".to_owned(),
+        reason: OPT_OUT_REASON_STOP.to_owned(),
+        occurred_at: 10,
+    }]
+    .iter()
+    .map(CommClaimValue::claim_body)
+    .map(|body| validate_through_chokepoint(&body))
+    .collect::<Result<Vec<_>>>()?;
+    assert_eq!(accepted.len(), 1);
+
+    let invalid = CommClaimValue::OptOut {
+        party_ref: party,
+        channel_class: "email".to_owned(),
+        reason: "please stop".to_owned(),
+        occurred_at: 11,
+    }
+    .claim_body();
+    let error = validate_through_chokepoint(&invalid).expect_err("free-form reason rejected");
+    assert_eq!(error.kind(), ErrorKind::InvalidClaimBody);
+    Ok(())
+}
