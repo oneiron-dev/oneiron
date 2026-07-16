@@ -680,7 +680,11 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    // Only ppr/tests.rs still composes an edge through the owned-batch form;
+    // the sync forward-remat healing write moved to the TxnBatchBuilder twin
+    // below to share its mandate-check txn (ARCH-0055), leaving this dead in
+    // non-test builds.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn edge_with_value_fields(
         mut self,
         src: &EntityId,
@@ -1279,6 +1283,32 @@ impl<'a> TxnBatchBuilder<'a> {
             weight,
             created_at,
             vad,
+        });
+        self
+    }
+
+    /// Internal edge upsert carrying every value field, mirroring
+    /// [`BatchBuilder::edge_with_value_fields`] for callers composing writes in
+    /// an externally-owned transaction (the ARCH-0055 forward-remat shell-edge
+    /// healing write shares the mandate-check txn). Pushes the INTERNAL
+    /// [`BatchOp::EdgeWithCreatedAt`] — no reserved-kind gate, because the sole
+    /// caller has already proven the ledger mandates this exact shell edge.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn edge_with_value_fields(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        value: EdgeValueFields,
+    ) -> Self {
+        self.ops.push(BatchOp::EdgeWithCreatedAt {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight: value.weight,
+            created_at: value.created_at,
+            vad: value.vad,
+            provenance: value.provenance,
         });
         self
     }

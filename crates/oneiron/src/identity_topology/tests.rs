@@ -1860,6 +1860,72 @@ fn reassignment_map_wire_rejects_unsorted_and_duplicate_rows() {
 }
 
 #[test]
+fn type_76_decoder_rejects_noncanonical_map_fields() {
+    let record = StoredIdentityOpEvent {
+        seq: 1,
+        at: 100,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Split {
+            entity: id(0x61),
+            heads: vec![id(0x62)],
+            reassignment: ReassignmentMap {
+                entries: vec![ReassignmentEntry {
+                    item: ClaimSubject::Entity(id(0x63)),
+                    target: ReassignmentTarget::Head(id(0x62)),
+                }],
+            },
+        },
+    };
+    let canonical = encode_identity_topology_event_body(&record).expect("encode canonical body");
+    let expected = record.clone();
+    assert_eq!(
+        decode_identity_topology_event_body(&canonical).expect("canonical body decodes"),
+        expected
+    );
+
+    #[allow(clippy::type_complexity)]
+    let tamper_row = |mutate: &dyn Fn(&mut Vec<(Value, Value)>)| -> Vec<u8> {
+        let Value::Map(mut event_fields) = record.encode_value() else {
+            panic!("event encodes as map");
+        };
+        for (key, value) in &mut event_fields {
+            if key.as_str() == Some(BODY_KEY_MAP)
+                && let Value::Array(rows) = value
+                && let Value::Map(fields) = &mut rows[0]
+            {
+                mutate(fields);
+            }
+        }
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &Value::Map(event_fields))
+            .expect("encode tampered body");
+        bytes
+    };
+
+    let noncanonical_order = tamper_row(&|fields| fields.swap(0, 1));
+    let duplicate_key = tamper_row(&|fields| fields.push(fields[0].clone()));
+    let unknown_key = tamper_row(&|fields| {
+        fields.push((Value::from("unknown"), Value::from(true)));
+    });
+    for (name, bytes) in [
+        ("noncanonical field order", noncanonical_order),
+        ("duplicate field", duplicate_key),
+        ("unknown field", unknown_key),
+    ] {
+        let err = decode_identity_topology_event_body(&bytes)
+            .expect_err("noncanonical body must fail admission");
+        assert!(
+            matches!(err, Error::InvalidIdentityTopologyEventBody(_)),
+            "{name}: {err:?}"
+        );
+    }
+}
+
+#[test]
 fn seq_clock_joins_ingested_history_before_local_allocation() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x61);
@@ -1968,7 +2034,7 @@ fn reconcile_materializes_and_tears_shell_edges_from_the_fold() {
     vault
         .with_write_txn(|wtxn| {
             vault.advance_identity_topology_seq_in_txn(wtxn, merge_record.seq)?;
-            vault.reconcile_identity_topology_edges_in_txn(wtxn, &merge_record)
+            vault.reconcile_identity_topology_edges_in_txn(wtxn)
         })
         .expect("reconcile ingested merge");
     assert_eq!(
@@ -2000,7 +2066,7 @@ fn reconcile_materializes_and_tears_shell_edges_from_the_fold() {
     vault
         .with_write_txn(|wtxn| {
             vault.advance_identity_topology_seq_in_txn(wtxn, undo_record.seq)?;
-            vault.reconcile_identity_topology_edges_in_txn(wtxn, &undo_record)
+            vault.reconcile_identity_topology_edges_in_txn(wtxn)
         })
         .expect("reconcile ingested undo");
     assert!(
@@ -2013,6 +2079,122 @@ fn reconcile_materializes_and_tears_shell_edges_from_the_fold() {
         vault.entity_lifecycle_state(&loser).expect("loser state"),
         EntityLifecycleState::Active
     );
+}
+
+#[test]
+fn out_of_order_ingest_reconciles_every_changed_shell_source() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x61);
+    let b = put_person(&vault, 0x62);
+    let c = put_person(&vault, 0x63);
+
+    let later_id = id(0x72);
+    let later = replicated_merge_record(vec![b], a, 2);
+    put_identity_event_record(&vault, later_id, &later);
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .expect("reconcile later event first");
+    assert!(
+        vault
+            .edge_exists(&b, EdgeKind::MergedInto, &a)
+            .expect("read initial shell"),
+        "precondition: seq=2 initially shells B into A"
+    );
+
+    let earlier_id = id(0x71);
+    let earlier = replicated_merge_record(vec![a], c, 1);
+    put_identity_event_record(&vault, earlier_id, &earlier);
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let expected = fold_identity_topology_log(
+        &vault
+            .identity_topology_events_in_txn(&rtxn)
+            .expect("fold event family"),
+    );
+    let expected_b = expected
+        .states
+        .get(&b)
+        .copied()
+        .unwrap_or(EntityLifecycleState::Active);
+    assert_eq!(expected_b, EntityLifecycleState::Active);
+    drop(rtxn);
+
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .expect("reconcile out-of-order insert");
+    assert_eq!(
+        vault.entity_lifecycle_state(&b).expect("B lifecycle"),
+        expected_b,
+        "the shell projection must match the full seq-ordered fold"
+    );
+    assert!(
+        !vault
+            .edge_exists(&b, EdgeKind::MergedInto, &a)
+            .expect("read stale shell"),
+        "the now-rejected seq=2 event must not leave B->A live"
+    );
+}
+
+#[test]
+fn idempotent_reconcile_repairs_both_mandated_edge_values() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+    let event_id = id(0x70);
+    let record = replicated_merge_record(vec![loser], survivor, 50);
+    put_identity_event_record(&vault, event_id, &record);
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .expect("initial reconcile");
+
+    let out_key = crate::store::Store::encode_edge_key(&loser, EdgeKind::MergedInto, &survivor);
+    let in_key = crate::store::Store::encode_edge_key(&survivor, EdgeKind::MergedInto, &loser);
+    let forged = crate::edge::encode_edge_value(
+        EdgeKind::MergedInto,
+        0.0,
+        record.at,
+        crate::affect::Vad::NEUTRAL,
+        None,
+    )
+    .expect("encode forged edge");
+    vault
+        .with_write_txn(|wtxn| {
+            vault.store.edges_out.put(wtxn, &out_key, &forged)?;
+            vault.store.edges_in.put(wtxn, &in_key, &forged)?;
+            Ok(())
+        })
+        .expect("plant forged pair values");
+
+    let expected = crate::edge::encode_edge_value(
+        EdgeKind::MergedInto,
+        EdgeKind::MergedInto.default_weight().expect("shell weight"),
+        record.at,
+        crate::affect::Vad::NEUTRAL,
+        None,
+    )
+    .expect("encode canonical edge");
+    assert_ne!(
+        forged, expected,
+        "precondition: stored value is noncanonical"
+    );
+
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .expect("idempotent record replay reconciles values");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let repaired_out = vault
+        .store
+        .edges_out
+        .get(&rtxn, &out_key)
+        .expect("read out value")
+        .expect("out value exists");
+    let repaired_in = vault
+        .store
+        .edges_in
+        .get(&rtxn, &in_key)
+        .expect("read in value")
+        .expect("in value exists");
+    assert_eq!(repaired_out, expected.as_slice());
+    assert_eq!(repaired_in, expected.as_slice());
 }
 
 #[test]
@@ -2030,7 +2212,7 @@ fn undo_of_ingested_merge_orders_after_it_in_the_fold() {
     vault
         .with_write_txn(|wtxn| {
             vault.advance_identity_topology_seq_in_txn(wtxn, merge_record.seq)?;
-            vault.reconcile_identity_topology_edges_in_txn(wtxn, &merge_record)
+            vault.reconcile_identity_topology_edges_in_txn(wtxn)
         })
         .expect("ingest merge");
 

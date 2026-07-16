@@ -2338,15 +2338,6 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
-        if let Some(header) = self.read_entity_header(id)?
-            && crate::registry::is_delete_protected_engine_record(header.entity_type)
-        {
-            return Ok(ReplayedTombstoneOutcome::HardPurged {
-                erased: false,
-                receipt_id: None,
-                sweep_key: None,
-            });
-        }
         self.apply_replayed_tombstone(id, raw_value)
     }
 

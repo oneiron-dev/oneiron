@@ -2124,3 +2124,96 @@ fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Result<()> {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let event_id = EntityId::from_bytes([0x70; 16])?;
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![EntityId::from_bytes([0x61; 16])?],
+            survivor: EntityId::from_bytes([0x62; 16])?,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record)?;
+    let event_blob = make_entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        record.at,
+        &body,
+    );
+    let doc = create_window_doc("remote", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &event_id.to_hex(), &event_blob)?;
+    map_insert_bytes(
+        &doc.get_map("tombstones"),
+        &event_id.to_hex(),
+        &record.at.to_be_bytes(),
+    )?;
+    doc.commit();
+
+    let expected_event = record.clone();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        vault.identity_topology_event(&event_id)?,
+        Some(expected_event),
+        "the protected entity blob must materialize despite its hostile concurrent tombstone"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &crate::deletion::local_hard_delete_key(&event_id))?
+            .is_none(),
+        "a protected-record tombstone must not mint a permanent dt: poison marker"
+    );
+    drop(rtxn);
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Tombstones);
+    assert_eq!(quarantined[0].1.reason_code, "MaintenanceKindNotWritable");
+
+    // A replica that ran the pre-fix headerless tombstone path may already
+    // carry a permanent `dt:` marker. Protected event arrival must bypass
+    // that stale poison marker as well; the marker remains presence-only
+    // local history but has no authority over delete-protected kinds.
+    let (_poison_dir, poisoned_vault) = test_vault();
+    let poisoned_id = EntityId::from_bytes([0x71; 16])?;
+    poisoned_vault.with_write_txn(|wtxn| {
+        poisoned_vault.store.sync_state.put(
+            wtxn,
+            &crate::deletion::local_hard_delete_key(&poisoned_id),
+            &[0_u8; crate::deletion::TOMBSTONE_VALUE_V2_LEN],
+        )?;
+        Ok(())
+    })?;
+    let poisoned_doc = create_window_doc("remote-poisoned", &window_key);
+    map_insert_bytes(
+        &poisoned_doc.get_map("entities"),
+        &poisoned_id.to_hex(),
+        &event_blob,
+    )?;
+    poisoned_doc.commit();
+    let expected_poisoned_event = record;
+    forward_rematerialize(
+        &poisoned_vault,
+        &poisoned_doc,
+        &Materializer::new(),
+        &window_key,
+    )?;
+    assert_eq!(
+        poisoned_vault.identity_topology_event(&poisoned_id)?,
+        Some(expected_poisoned_event),
+        "a preexisting dt: marker must not suppress a later protected event"
+    );
+    Ok(())
+}

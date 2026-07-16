@@ -475,7 +475,7 @@ fn materialize_entities_from_delta(
                     // the engine's own rows is never conflated with a bad
                     // remote blob (LOCAL corruption = typed error, never
                     // quarantine-and-continue).
-                    if EntityMetadataHeader::parse(blob).is_none() {
+                    let Some(header) = EntityMetadataHeader::parse(blob) else {
                         quarantine_rejected_op_in_txn(
                             vault,
                             wtxn,
@@ -486,7 +486,7 @@ fn materialize_entities_from_delta(
                             blob,
                         )?;
                         continue;
-                    }
+                    };
                     let id = match EntityId::from_hex(key.as_ref()) {
                         Ok(id) => id,
                         Err(_) => {
@@ -530,7 +530,9 @@ fn materialize_entities_from_delta(
                     // tombstone key still names this id). Presence is
                     // value-agnostic (a non-binary tombstone decodes HARD
                     // downstream).
-                    if tombstone_map_contains_id(&tombstones_map, &id) {
+                    let delete_protected =
+                        crate::deletion::is_delete_protected_engine_record(header.entity_type);
+                    if !delete_protected && tombstone_map_contains_id(&tombstones_map, &id) {
                         tracing::debug!(
                             entity = %key,
                             "observer-b: entity update suppressed by tombstone (delete wins)"
@@ -544,7 +546,9 @@ fn materialize_entities_from_delta(
                     // the body. A failed marker read fails CLOSED
                     // (suppress); a refusal is the crafted-removal attack
                     // signal, surfaced at WARN.
-                    let locally_hard_deleted =
+                    let locally_hard_deleted = if delete_protected {
+                        false
+                    } else {
                         match vault.local_hard_delete_marker_exists_in_txn(wtxn, &id) {
                             Ok(present) => present,
                             Err(e) => {
@@ -555,7 +559,8 @@ fn materialize_entities_from_delta(
                                 );
                                 true
                             }
-                        };
+                        }
+                    };
                     if locally_hard_deleted {
                         tracing::warn!(
                             entity = %key,
@@ -764,7 +769,8 @@ fn materialize_edges_from_delta(
                     // the CRDT map to re-admit at the next forward
                     // rematerialization once the ledger justifies them
                     // (the OD-10 lazy re-admission shape).
-                    if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+                    let reserved_rejection = crate::edge::validate_public_edge_kind(kind).err();
+                    if let Some(reserved) = &reserved_rejection {
                         let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
                             &*wtxn, &src, kind, &tgt,
                         )?;
@@ -779,7 +785,7 @@ fn materialize_edges_from_delta(
                                 window_key,
                                 QuarantineContainer::Edges,
                                 key.as_ref(),
-                                &reserved,
+                                reserved,
                                 buf,
                             )?;
                             continue;
@@ -893,6 +899,33 @@ fn materialize_edges_from_delta(
                                 QuarantineContainer::Edges,
                                 key.as_ref(),
                                 &e,
+                                buf,
+                            )?;
+                            continue;
+                        }
+                    }
+
+                    // Endpoint hydration above may be the moment a deferred
+                    // type-76 participant becomes available. Re-run the
+                    // shared fold mandate after hydration and before queuing
+                    // the edge op; a newly revealed CLAIM/FACET must make
+                    // the event inert in this same transaction.
+                    if let Some(reserved) = &reserved_rejection {
+                        let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
+                            &*wtxn, &src, kind, &tgt,
+                        )?;
+                        let door_echo = mandated_at.is_some_and(|at| {
+                            decoded.created_at == at
+                                && kind.default_weight() == Some(decoded.weight)
+                        });
+                        if !door_echo {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key.as_ref(),
+                                reserved,
                                 buf,
                             )?;
                             continue;
@@ -1431,12 +1464,13 @@ fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
 /// Observer B failure", entity-scoped) so maintain/doctor retries it
 /// durably (ONE-1124 AC4) — a GDPR SLA breach signal until drained.
 fn materialize_tombstones_from_delta(
-    _doc: &LoroDoc,
+    doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
     _lease_vault_id: u64,
 ) {
+    let entities_map = doc.get_map("entities");
     for (key, new_val) in &delta.updated {
         match new_val {
             Some(value) => {
@@ -1476,6 +1510,35 @@ fn materialize_tombstones_from_delta(
                     _ => &[],
                 };
 
+                // Protection must not depend on observer callback order.
+                // A concurrent engine-authored blob may not have reached
+                // LMDB yet, so inspect its envelope directly and quarantine
+                // the tombstone before the headerless hard-delete path can
+                // mint a permanent `dt:` marker.
+                if matches!(vault.read_entity_header(&id), Ok(None))
+                    && let Some(entity_blob) = map_get_bytes(&entities_map, &id.to_hex())
+                    && let Some(header) = EntityMetadataHeader::parse(&entity_blob)
+                    && crate::deletion::is_delete_protected_engine_record(header.entity_type)
+                {
+                    let rejection = Error::MaintenanceKindNotWritable(header.entity_type);
+                    if let Err(quarantine_err) = quarantine_rejected_op(
+                        vault,
+                        window_key,
+                        QuarantineContainer::Tombstones,
+                        key.as_ref(),
+                        &rejection,
+                        raw_value,
+                    ) {
+                        tracing::error!(
+                            tombstone = %key,
+                            window = %window_key,
+                            error = %quarantine_err,
+                            "observer-b: failed to quarantine concurrent protected-record tombstone"
+                        );
+                    }
+                    continue;
+                }
+
                 let hard_tombstone = crate::deletion::decode_tombstone_value(raw_value).is_hard();
                 match quarantine::apply_replayed_tombstone_for_sync(vault, &id, raw_value) {
                     Ok(_) if hard_tombstone => {
@@ -1503,6 +1566,23 @@ fn materialize_tombstones_from_delta(
                         }
                     }
                     Ok(_) => {}
+                    Err(e) if quarantine::remote_rejection_reason(&e).is_some() => {
+                        if let Err(quarantine_err) = quarantine_rejected_op(
+                            vault,
+                            window_key,
+                            QuarantineContainer::Tombstones,
+                            key.as_ref(),
+                            &e,
+                            raw_value,
+                        ) {
+                            tracing::error!(
+                                tombstone = %key,
+                                window = %window_key,
+                                error = %quarantine_err,
+                                "observer-b: failed to quarantine rejected protected-record tombstone"
+                            );
+                        }
+                    }
                     Err(e) => {
                         tracing::error!(
                             tombstone = %key,
@@ -1603,6 +1683,10 @@ fn materialize_entity_blob_in_txn(
     lease_vault_id: u64,
 ) -> Result<bool> {
     let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
+    let Some(header) = EntityMetadataHeader::parse(blob) else {
+        return Err(crate::Error::CorruptedIndex("entity metadata"));
+    };
+    let delete_protected = crate::deletion::is_delete_protected_engine_record(header.entity_type);
 
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
     // "If tombstoned in CRDT → never resurrect"; contracts.ts
@@ -1614,7 +1698,7 @@ fn materialize_entity_blob_in_txn(
     // tombstone deltas only fire when the tombstones map CHANGES.
     // Presence is ANY-value (fail closed): non-binary tombstones gate too —
     // and entity-canonical: a case-shifted hex key still names this id.
-    if tombstone_map_contains_id(tombstones_map, &id) {
+    if !delete_protected && tombstone_map_contains_id(tombstones_map, &id) {
         tracing::debug!(entity = %key, "observer-b: entity tombstoned in CRDT, skipping put");
         return Ok(false);
     }
@@ -1627,7 +1711,7 @@ fn materialize_entity_blob_in_txn(
     // SECOND (LMDB point read) only when the in-memory map says absent.
     // PRESENCE-ONLY — never decode the value. Canonical lowercase hex via
     // the parsed id, so a case-shifted map key cannot dodge the point read.
-    if vault.local_hard_delete_marker_exists_in_txn(wtxn, &id)? {
+    if !delete_protected && vault.local_hard_delete_marker_exists_in_txn(wtxn, &id)? {
         tracing::warn!(
             entity = %key,
             "observer-b: entity locally hard-deleted (dt: marker), refusing materialization"
@@ -1635,9 +1719,6 @@ fn materialize_entity_blob_in_txn(
         return Ok(false);
     }
 
-    let Some(header) = EntityMetadataHeader::parse(blob) else {
-        return Err(crate::Error::CorruptedIndex("entity metadata"));
-    };
     let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
         &blob[ENTITY_METADATA_HEADER_LEN..]
     } else {
@@ -1790,6 +1871,7 @@ fn materialize_entity_blob_in_txn(
         }
         return Err(err);
     }
+    vault.reconcile_identity_topology_for_materialized_entity_in_txn(wtxn, &id)?;
     Ok(true)
 }
 
@@ -1832,8 +1914,9 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
             // never a rejectable remote input.
             let record = crate::identity_topology::decode_identity_topology_event_body(data)
                 .map_err(|_| crate::Error::CorruptedIndex("identity topology event body"))?;
+            validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, &record)?;
             vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
-            vault.reconcile_identity_topology_edges_in_txn(wtxn, &record)?;
+            vault.reconcile_identity_topology_edges_in_txn(wtxn)?;
             return Ok(false);
         }
         Some(false) => {
@@ -1842,6 +1925,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         None => {}
     }
     let record = crate::identity_topology::decode_identity_topology_event_body(data)?;
+    validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, &record)?;
     let quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
         vault,
         wtxn,
@@ -1868,8 +1952,30 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         return Err(err);
     }
     vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
-    vault.reconcile_identity_topology_edges_in_txn(wtxn, &record)?;
+    vault.reconcile_identity_topology_edges_in_txn(wtxn)?;
     Ok(true)
+}
+
+/// Maps the shared local-door participant rejection into the existing
+/// type-76 remote-input class. This runs before quota, put, seq join, or
+/// reconciliation, so quarantine-and-continue can never commit a rejected
+/// event row as a side effect of handling the rejection.
+fn validate_replicated_identity_topology_record_before_mutation(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    record: &crate::identity_topology::StoredIdentityOpEvent,
+) -> Result<()> {
+    vault
+        .validate_replicated_identity_topology_event_in_txn(rtxn, record)
+        .map_err(|err| match err {
+            Error::IdentityTopologyRejected(
+                crate::identity_topology::IdentityTopologyRejection::NotStructural { .. }
+                | crate::identity_topology::IdentityTopologyRejection::FacetMerge { .. },
+            ) => Error::InvalidIdentityTopologyEventBody(
+                "identity topology event participant is not merge-eligible structural state",
+            ),
+            other => other,
+        })
 }
 
 fn ensure_companion_register_kind_for_entity_delta(
