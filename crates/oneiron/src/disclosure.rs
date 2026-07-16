@@ -816,6 +816,7 @@ impl Vault {
             data,
             allow_maintenance: false,
             allow_reserved_predicate: true,
+            hub_sync_imported: false,
         }];
         if let ClaimSubject::Entity(subject) = body.subject {
             ops.push(BatchOp::Edge {

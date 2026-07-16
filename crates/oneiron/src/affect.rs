@@ -1179,6 +1179,7 @@ impl Vault {
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
+                    hub_sync_imported: false,
                 });
                 ops.push(BatchOp::Edge {
                     src: state_claim_id,
@@ -1308,6 +1309,7 @@ impl Vault {
                 data: closed_data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
+                hub_sync_imported: false,
             });
             if let Some(successor) = successor {
                 ops.push(BatchOp::EdgeWithCreatedAt {
@@ -1642,6 +1644,7 @@ impl Vault {
                     data: closed_data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
+                    hub_sync_imported: false,
                 },
                 BatchOp::Put {
                     id: new_claim_id,
@@ -1654,6 +1657,7 @@ impl Vault {
                     data: updated_data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
+                    hub_sync_imported: false,
                 },
                 BatchOp::Edge {
                     src: new_claim_id,
@@ -1729,6 +1733,7 @@ impl Vault {
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
+                    hub_sync_imported: false,
                 },
                 BatchOp::Edge {
                     src: claim_id,

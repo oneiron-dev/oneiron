@@ -1,0 +1,1641 @@
+//! Skill-hub records, provenance aliases, adapter contracts, and update gates.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Cursor;
+
+use rmpv::Value;
+
+use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_SKILL;
+use crate::skill::{
+    SkillContentHash, SkillLifecycle, SkillRecord, canonical_skill_tree_hash, decode_skill_record,
+    encode_skill_record,
+};
+use crate::temporal::TimeRange;
+
+/// Pinned MessagePack key set for a SKILL_HUB body.
+pub const SKILL_HUB_BODY_KEYS: [&str; 4] = ["kind", "endpoint", "trust_tier", "sync_policy"];
+
+/// Pinned MessagePack key set for the structured hub provenance pointer.
+pub const HUB_REF_KEYS: [&str; 3] = ["hubId", "refString", "pin"];
+
+/// Pinned MessagePack key set for a hub-ref pin.
+pub const HUB_PIN_KEYS: [&str; 2] = ["type", "value"];
+
+/// Claim predicate for mutable hub aliases attached to canonical skill identity.
+pub const PREDICATE_SKILL_HUB_PROVENANCE: &str = "skill.hub_provenance";
+
+/// Claim predicate for scanner receipts attached to a canonical content hash.
+pub const PREDICATE_SKILL_SCAN_VERDICT: &str = "skill.scan_verdict";
+
+/// Claim predicate for capability-widening update proposals.
+pub const PREDICATE_SKILL_HUB_UPDATE_PROPOSAL: &str = "skill.hub_update_proposal";
+
+const CAPABILITY_STATE_PREFIX: &[u8] = b"skill_hub/capability/v1\0";
+const MAX_HUB_TEXT_BYTES: usize = 4096;
+const MAX_CAPABILITY_ENTRIES: usize = 256;
+const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
+const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_HUB_SKILL_SCAN_ENTRIES: usize = 100_000;
+
+/// Generic adapter kind stored on a SKILL_HUB record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SkillHubKind {
+    Git,
+    HttpIndex,
+    LocalDir,
+}
+
+impl SkillHubKind {
+    /// Pinned wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Git => "git",
+            Self::HttpIndex => "http-index",
+            Self::LocalDir => "local-dir",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "git" => Some(Self::Git),
+            "http-index" => Some(Self::HttpIndex),
+            "local-dir" => Some(Self::LocalDir),
+            _ => None,
+        }
+    }
+}
+
+/// Friction tier for one configurable hub endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SkillHubTrustTier {
+    Untrusted,
+    Community,
+    Verified,
+}
+
+impl SkillHubTrustTier {
+    /// Pinned wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Untrusted => "untrusted",
+            Self::Community => "community",
+            Self::Verified => "verified",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "untrusted" => Some(Self::Untrusted),
+            "community" => Some(Self::Community),
+            "verified" => Some(Self::Verified),
+            _ => None,
+        }
+    }
+}
+
+/// Default hub policy, overridden by the policy stored with each tracked ref.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HubSyncPolicy {
+    PinnedRef,
+    PinnedCommit,
+    ContentHashFrozen,
+    MirrorOfHub,
+}
+
+impl HubSyncPolicy {
+    /// Pinned wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PinnedRef => "pinned-ref",
+            Self::PinnedCommit => "pinned-commit",
+            Self::ContentHashFrozen => "content-hash-frozen",
+            Self::MirrorOfHub => "mirror-of-hub",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pinned-ref" => Some(Self::PinnedRef),
+            "pinned-commit" => Some(Self::PinnedCommit),
+            "content-hash-frozen" => Some(Self::ContentHashFrozen),
+            "mirror-of-hub" => Some(Self::MirrorOfHub),
+            _ => None,
+        }
+    }
+
+    const fn allows_automatic_update(self) -> bool {
+        matches!(self, Self::PinnedRef | Self::MirrorOfHub)
+    }
+}
+
+/// Engine-authored maintenance record describing one configurable skill hub.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillHubRecord {
+    pub kind: SkillHubKind,
+    pub endpoint: String,
+    pub trust_tier: SkillHubTrustTier,
+    pub sync_policy: HubSyncPolicy,
+}
+
+impl SkillHubRecord {
+    /// Constructs and validates a hub record. The endpoint is always caller data.
+    pub fn new(
+        kind: SkillHubKind,
+        endpoint: impl Into<String>,
+        trust_tier: SkillHubTrustTier,
+        sync_policy: HubSyncPolicy,
+    ) -> Result<Self> {
+        let record = Self {
+            kind,
+            endpoint: endpoint.into(),
+            trust_tier,
+            sync_policy,
+        };
+        record.validate()?;
+        Ok(record)
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_text(
+            &self.endpoint,
+            MAX_HUB_TEXT_BYTES,
+            "skill hub endpoint must be non-empty configurable data",
+        )
+    }
+}
+
+/// Encodes a SKILL_HUB body in canonical key order.
+pub fn encode_skill_hub_record(record: &SkillHubRecord) -> Result<Vec<u8>> {
+    record.validate()?;
+    encode_value(
+        &Value::Map(vec![
+            (
+                Value::from(SKILL_HUB_BODY_KEYS[0]),
+                Value::from(record.kind.as_str()),
+            ),
+            (
+                Value::from(SKILL_HUB_BODY_KEYS[1]),
+                Value::from(record.endpoint.as_str()),
+            ),
+            (
+                Value::from(SKILL_HUB_BODY_KEYS[2]),
+                Value::from(record.trust_tier.as_str()),
+            ),
+            (
+                Value::from(SKILL_HUB_BODY_KEYS[3]),
+                Value::from(record.sync_policy.as_str()),
+            ),
+        ]),
+        "SKILL_HUB record MessagePack encode failed",
+    )
+}
+
+/// Decodes a SKILL_HUB body, rejecting unknown, missing, or duplicate keys.
+pub fn decode_skill_hub_record(bytes: &[u8]) -> Result<SkillHubRecord> {
+    let value = decode_value(bytes, "SKILL_HUB body is not valid MessagePack")?;
+    let entries = exact_map(&value, &SKILL_HUB_BODY_KEYS, "invalid SKILL_HUB body")?;
+    SkillHubRecord::new(
+        required_value(entries, SKILL_HUB_BODY_KEYS[0], "invalid SKILL_HUB body")?
+            .as_str()
+            .and_then(SkillHubKind::parse)
+            .ok_or(Error::InvalidSkillBody("invalid SKILL_HUB kind"))?,
+        required_text(
+            entries,
+            SKILL_HUB_BODY_KEYS[1],
+            MAX_HUB_TEXT_BYTES,
+            "invalid SKILL_HUB endpoint",
+        )?,
+        required_value(entries, SKILL_HUB_BODY_KEYS[2], "invalid SKILL_HUB body")?
+            .as_str()
+            .and_then(SkillHubTrustTier::parse)
+            .ok_or(Error::InvalidSkillBody("invalid SKILL_HUB trust tier"))?,
+        required_value(entries, SKILL_HUB_BODY_KEYS[3], "invalid SKILL_HUB body")?
+            .as_str()
+            .and_then(HubSyncPolicy::parse)
+            .ok_or(Error::InvalidSkillBody("invalid SKILL_HUB sync policy"))?,
+    )
+}
+
+/// Five-way provenance pin carried by a structured hub ref.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum HubPin {
+    Semver(String),
+    Tag(String),
+    Commit(String),
+    ContentHash(String),
+    None,
+}
+
+impl HubPin {
+    /// Pinned wire discriminator.
+    #[must_use]
+    pub const fn pin_type(&self) -> &'static str {
+        match self {
+            Self::Semver(_) => "semver",
+            Self::Tag(_) => "tag",
+            Self::Commit(_) => "commit",
+            Self::ContentHash(_) => "content_hash",
+            Self::None => "none",
+        }
+    }
+
+    fn value(&self) -> Option<&str> {
+        match self {
+            Self::Semver(value)
+            | Self::Tag(value)
+            | Self::Commit(value)
+            | Self::ContentHash(value) => Some(value),
+            Self::None => None,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        match self {
+            Self::ContentHash(value) => {
+                SkillContentHash::parse_hex(value)?;
+            }
+            Self::Semver(value) | Self::Tag(value) | Self::Commit(value) => {
+                validate_text(value, MAX_HUB_TEXT_BYTES, "hub pin value must be non-empty")?;
+            }
+            Self::None => {}
+        }
+        Ok(())
+    }
+}
+
+/// Mutable provenance pointer from one hub alias to canonical skill content.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HubRef {
+    pub hub_id: EntityId,
+    pub ref_string: String,
+    pub pin: HubPin,
+}
+
+impl HubRef {
+    /// Constructs a validated structured hub ref.
+    pub fn new(hub_id: EntityId, ref_string: impl Into<String>, pin: HubPin) -> Result<Self> {
+        let hub_ref = Self {
+            hub_id,
+            ref_string: ref_string.into(),
+            pin,
+        };
+        hub_ref.validate()?;
+        Ok(hub_ref)
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_text(
+            &self.ref_string,
+            MAX_HUB_TEXT_BYTES,
+            "hub ref string must be non-empty",
+        )?;
+        self.pin.validate()
+    }
+
+    /// Encodes the exact `{hubId, refString, pin}` wire shape.
+    pub fn to_value(&self) -> Result<Value> {
+        self.validate()?;
+        Ok(Value::Map(vec![
+            (
+                Value::from(HUB_REF_KEYS[0]),
+                Value::from(self.hub_id.to_hex()),
+            ),
+            (
+                Value::from(HUB_REF_KEYS[1]),
+                Value::from(self.ref_string.as_str()),
+            ),
+            (
+                Value::from(HUB_REF_KEYS[2]),
+                Value::Map(vec![
+                    (
+                        Value::from(HUB_PIN_KEYS[0]),
+                        Value::from(self.pin.pin_type()),
+                    ),
+                    (
+                        Value::from(HUB_PIN_KEYS[1]),
+                        self.pin.value().map_or(Value::Nil, Value::from),
+                    ),
+                ]),
+            ),
+        ]))
+    }
+
+    /// Decodes the exact structured wire shape.
+    pub fn from_value(value: &Value) -> Result<Self> {
+        let entries = exact_map(value, &HUB_REF_KEYS, "invalid hub ref")?;
+        let hub_id = required_value(entries, HUB_REF_KEYS[0], "invalid hub ref")?
+            .as_str()
+            .ok_or(Error::InvalidSkillBody("hubId must be an entity id"))?;
+        let hub_id = EntityId::from_hex(hub_id)
+            .map_err(|_| Error::InvalidSkillBody("hubId must be an entity id"))?;
+        let ref_string = required_text(
+            entries,
+            HUB_REF_KEYS[1],
+            MAX_HUB_TEXT_BYTES,
+            "refString must be non-empty",
+        )?;
+        let pin_entries = exact_map(
+            required_value(entries, HUB_REF_KEYS[2], "invalid hub ref")?,
+            &HUB_PIN_KEYS,
+            "invalid hub pin",
+        )?;
+        let pin_type = required_value(pin_entries, HUB_PIN_KEYS[0], "invalid hub pin")?
+            .as_str()
+            .ok_or(Error::InvalidSkillBody("invalid hub pin type"))?;
+        let pin_value = required_value(pin_entries, HUB_PIN_KEYS[1], "invalid hub pin")?;
+        let text_pin = |constructor: fn(String) -> HubPin| -> Result<HubPin> {
+            let value = pin_value
+                .as_str()
+                .ok_or(Error::InvalidSkillBody("hub pin value must be text"))?;
+            validate_text(value, MAX_HUB_TEXT_BYTES, "hub pin value must be non-empty")?;
+            Ok(constructor(value.to_owned()))
+        };
+        let pin = match pin_type {
+            "semver" => text_pin(HubPin::Semver)?,
+            "tag" => text_pin(HubPin::Tag)?,
+            "commit" => text_pin(HubPin::Commit)?,
+            "content_hash" => text_pin(HubPin::ContentHash)?,
+            "none" if matches!(pin_value, Value::Nil) => HubPin::None,
+            "none" => return Err(Error::InvalidSkillBody("none hub pin value must be nil")),
+            _ => return Err(Error::InvalidSkillBody("invalid hub pin type")),
+        };
+        Self::new(hub_id, ref_string, pin)
+    }
+}
+
+/// Per-ref sync state. Seen and trusted observations never overwrite one another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackedHubRef {
+    pub hub_ref: HubRef,
+    pub sync_policy: HubSyncPolicy,
+    pub latest_seen: Option<String>,
+    pub latest_trusted: Option<String>,
+}
+
+impl TrackedHubRef {
+    /// Starts tracking one ref under its per-ref policy.
+    #[must_use]
+    pub fn new(hub_ref: HubRef, sync_policy: HubSyncPolicy) -> Self {
+        Self {
+            hub_ref,
+            sync_policy,
+            latest_seen: None,
+            latest_trusted: None,
+        }
+    }
+
+    /// Records the newest observed upstream revision without trusting it.
+    pub fn observe(&mut self, revision: impl Into<String>) -> Result<()> {
+        let revision = revision.into();
+        validate_text(
+            &revision,
+            MAX_HUB_TEXT_BYTES,
+            "latest seen revision must be non-empty",
+        )?;
+        self.latest_seen = Some(revision);
+        Ok(())
+    }
+
+    /// Records the newest independently trusted revision.
+    pub fn trust(&mut self, revision: impl Into<String>) -> Result<()> {
+        let revision = revision.into();
+        validate_text(
+            &revision,
+            MAX_HUB_TEXT_BYTES,
+            "latest trusted revision must be non-empty",
+        )?;
+        self.latest_trusted = Some(revision);
+        Ok(())
+    }
+}
+
+/// One file in a fetched, exportable skill package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HubFile {
+    pub path: String,
+    pub content: Vec<u8>,
+}
+
+impl HubFile {
+    /// Constructs an owned package file.
+    #[must_use]
+    pub fn new(path: impl Into<String>, content: impl Into<Vec<u8>>) -> Self {
+        Self {
+            path: path.into(),
+            content: content.into(),
+        }
+    }
+}
+
+/// Capability surface used by the rug-pull widening diff.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SkillCapabilitySurface {
+    pub bins: BTreeSet<String>,
+    pub env: BTreeSet<String>,
+    pub mcp: BTreeSet<String>,
+    pub allowed_tools: BTreeSet<String>,
+}
+
+impl SkillCapabilitySurface {
+    /// Adds a required binary.
+    #[must_use]
+    pub fn with_bin(mut self, value: impl Into<String>) -> Self {
+        self.bins.insert(value.into());
+        self
+    }
+
+    /// Adds a required environment key.
+    #[must_use]
+    pub fn with_env(mut self, value: impl Into<String>) -> Self {
+        self.env.insert(value.into());
+        self
+    }
+
+    /// Adds a required MCP capability.
+    #[must_use]
+    pub fn with_mcp(mut self, value: impl Into<String>) -> Self {
+        self.mcp.insert(value.into());
+        self
+    }
+
+    /// Adds an allowed tool.
+    #[must_use]
+    pub fn with_allowed_tool(mut self, value: impl Into<String>) -> Self {
+        self.allowed_tools.insert(value.into());
+        self
+    }
+
+    fn validate(&self) -> Result<()> {
+        for entries in [&self.bins, &self.env, &self.mcp, &self.allowed_tools] {
+            if entries.len() > MAX_CAPABILITY_ENTRIES {
+                return Err(Error::InvalidSkillBody(
+                    "capability surface has too many entries",
+                ));
+            }
+            for entry in entries {
+                validate_text(
+                    entry,
+                    MAX_CAPABILITY_TEXT_BYTES,
+                    "capability entries must be non-empty",
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn is_same_or_narrower_than(&self, prior: &Self) -> bool {
+        self.bins.is_subset(&prior.bins)
+            && self.env.is_subset(&prior.env)
+            && self.mcp.is_subset(&prior.mcp)
+            && self.allowed_tools.is_subset(&prior.allowed_tools)
+    }
+}
+
+/// Offline package fetched by an adapter or supplied directly to a vault door.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HubPackage {
+    pub record: SkillRecord,
+    pub files: Vec<HubFile>,
+    pub capabilities: SkillCapabilitySurface,
+}
+
+impl HubPackage {
+    /// Constructs a package. Tree validation runs when its canonical hash is read.
+    #[must_use]
+    pub fn new(
+        record: SkillRecord,
+        files: Vec<HubFile>,
+        capabilities: SkillCapabilitySurface,
+    ) -> Self {
+        Self {
+            record,
+            files,
+            capabilities,
+        }
+    }
+
+    /// Recomputes canonical identity from the package tree.
+    pub fn content_hash(&self) -> Result<SkillContentHash> {
+        self.capabilities.validate()?;
+        if self
+            .files
+            .iter()
+            .any(|file| file.content.len() > MAX_HUB_FILE_BYTES)
+        {
+            return Err(Error::InvalidSkillBody(
+                "hub package file exceeds the maximum size",
+            ));
+        }
+        canonical_skill_tree_hash(
+            self.files
+                .iter()
+                .map(|file| (file.path.as_str(), file.content.as_slice())),
+        )
+    }
+
+    /// Returns a clean, path-sorted folder independent of package origin.
+    pub fn export_files(&self) -> Result<Vec<HubFile>> {
+        self.content_hash()?;
+        let mut files = self.files.clone();
+        files.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
+        Ok(files)
+    }
+}
+
+/// One http-index discovery row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HubIndexEntry {
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub content_hash: SkillContentHash,
+    pub ref_string: String,
+}
+
+/// Pluggable package-fetch boundary behind the hub doors.
+pub trait SkillHubAdapter {
+    /// Adapter kind compatible with the hub record.
+    fn kind(&self) -> SkillHubKind;
+
+    /// Fetches a package for a structured ref.
+    fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage>;
+
+    /// Returns discovery rows when the adapter exposes an index.
+    fn discover(&self) -> Result<Vec<HubIndexEntry>> {
+        Ok(Vec::new())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct AdapterPackageStore {
+    packages: BTreeMap<String, HubPackage>,
+}
+
+impl AdapterPackageStore {
+    fn insert(&mut self, ref_string: impl Into<String>, package: HubPackage) {
+        self.packages.insert(ref_string.into(), package);
+    }
+
+    fn fetch(&self, hub_ref: &HubRef) -> Result<HubPackage> {
+        self.packages
+            .get(&hub_ref.ref_string)
+            .cloned()
+            .ok_or(Error::InvalidSkillBody("hub ref package was not found"))
+    }
+}
+
+macro_rules! package_adapter {
+    ($name:ident, $kind:expr) => {
+        #[doc = "In-process package source for the generic adapter boundary."]
+        #[derive(Debug, Clone)]
+        pub struct $name {
+            hub_id: EntityId,
+            store: AdapterPackageStore,
+        }
+
+        impl $name {
+            /// Constructs an empty adapter bound to one hub entity.
+            #[must_use]
+            pub fn new(hub_id: EntityId) -> Self {
+                Self {
+                    hub_id,
+                    store: AdapterPackageStore::default(),
+                }
+            }
+
+            /// Adds a fetchable offline package.
+            pub fn insert_package(&mut self, ref_string: impl Into<String>, package: HubPackage) {
+                self.store.insert(ref_string, package);
+            }
+        }
+
+        impl SkillHubAdapter for $name {
+            fn kind(&self) -> SkillHubKind {
+                $kind
+            }
+
+            fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage> {
+                if hub_ref.hub_id != self.hub_id {
+                    return Err(Error::InvalidSkillBody(
+                        "adapter cannot fetch a ref from another hub",
+                    ));
+                }
+                self.store.fetch(hub_ref)
+            }
+        }
+    };
+}
+
+package_adapter!(GitSkillHubAdapter, SkillHubKind::Git);
+package_adapter!(LocalDirSkillHubAdapter, SkillHubKind::LocalDir);
+
+/// Generic discovery-index adapter with injected index and package data.
+#[derive(Debug, Clone)]
+pub struct HttpIndexSkillHubAdapter {
+    hub_id: EntityId,
+    index: Vec<HubIndexEntry>,
+    store: AdapterPackageStore,
+}
+
+impl HttpIndexSkillHubAdapter {
+    /// Constructs an adapter bound to one hub entity.
+    #[must_use]
+    pub fn new(hub_id: EntityId, index: Vec<HubIndexEntry>) -> Self {
+        Self {
+            hub_id,
+            index,
+            store: AdapterPackageStore::default(),
+        }
+    }
+
+    /// Adds a package fetchable from an index row's ref string.
+    pub fn insert_package(&mut self, ref_string: impl Into<String>, package: HubPackage) {
+        self.store.insert(ref_string, package);
+    }
+}
+
+impl SkillHubAdapter for HttpIndexSkillHubAdapter {
+    fn kind(&self) -> SkillHubKind {
+        SkillHubKind::HttpIndex
+    }
+
+    fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage> {
+        if hub_ref.hub_id != self.hub_id {
+            return Err(Error::InvalidSkillBody(
+                "adapter cannot fetch a ref from another hub",
+            ));
+        }
+        self.store.fetch(hub_ref)
+    }
+
+    fn discover(&self) -> Result<Vec<HubIndexEntry>> {
+        Ok(self.index.clone())
+    }
+}
+
+/// Result of a policy-checked hub sync.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HubSyncDisposition {
+    Applied,
+    Proposed {
+        proposal_id: EntityId,
+        approval: ClaimApprovalStatus,
+    },
+    RefusedByPolicy,
+}
+
+impl HubSyncDisposition {
+    /// Approval carried by a proposal disposition.
+    #[must_use]
+    pub const fn approval_status(&self) -> Option<ClaimApprovalStatus> {
+        match self {
+            Self::Proposed { approval, .. } => Some(*approval),
+            Self::Applied | Self::RefusedByPolicy => None,
+        }
+    }
+
+    /// Whether the incoming package landed as canon.
+    #[must_use]
+    pub const fn applied(&self) -> bool {
+        matches!(self, Self::Applied)
+    }
+}
+
+/// Independent scanner verdict axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanVerdict {
+    Clean,
+    Suspicious,
+    Malicious,
+    Unknown,
+}
+
+impl ScanVerdict {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Clean => "clean",
+            Self::Suspicious => "suspicious",
+            Self::Malicious => "malicious",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Scanner-reported risk level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanRiskLevel {
+    None,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl ScanRiskLevel {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+/// Scanner coverage completeness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanCompleteness {
+    Partial,
+    Complete,
+}
+
+impl ScanCompleteness {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Partial => "partial",
+            Self::Complete => "complete",
+        }
+    }
+}
+
+/// Governance axis stored separately from scanner signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillGovernance {
+    Recommended,
+    Discouraged,
+    Prohibited,
+}
+
+impl SkillGovernance {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Recommended => "recommended",
+            Self::Discouraged => "discouraged",
+            Self::Prohibited => "prohibited",
+        }
+    }
+}
+
+/// One provider receipt attached to a canonical content hash and scan time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillScanReceipt {
+    pub provider: String,
+    pub scanned_at: u64,
+    pub verdict: ScanVerdict,
+    pub risk_level: ScanRiskLevel,
+    pub completeness: ScanCompleteness,
+    pub governance: SkillGovernance,
+}
+
+impl SkillScanReceipt {
+    /// Constructs a scanner receipt with an orthogonal governance value.
+    pub fn new(
+        provider: impl Into<String>,
+        scanned_at: u64,
+        verdict: ScanVerdict,
+        risk_level: ScanRiskLevel,
+        completeness: ScanCompleteness,
+        governance: SkillGovernance,
+    ) -> Result<Self> {
+        let receipt = Self {
+            provider: provider.into(),
+            scanned_at,
+            verdict,
+            risk_level,
+            completeness,
+            governance,
+        };
+        validate_text(
+            &receipt.provider,
+            MAX_HUB_TEXT_BYTES,
+            "scan provider must be non-empty",
+        )?;
+        Ok(receipt)
+    }
+}
+
+/// Refusal-first dependency resolution result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HubDependencyResolution {
+    Materialized(EntityId),
+    RefusedCrossHub,
+    RefusedMissingPackage,
+}
+
+impl Vault {
+    /// Imports a package directly through the offline hub door.
+    pub fn import_skill_from_hub(
+        &self,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        self.import_skill_from_hub_with_id(hub_ref, package, EntityId::now(), occurred, learned_at)
+    }
+
+    /// Fetches through an adapter and enters the same import door.
+    pub fn import_skill_from_adapter<A: SkillHubAdapter>(
+        &self,
+        adapter: &A,
+        hub_ref: &HubRef,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        let package = adapter.fetch_package(hub_ref)?;
+        self.import_skill_from_hub(hub_ref, &package, occurred, learned_at)
+    }
+
+    fn import_skill_from_hub_with_id(
+        &self,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        preferred_id: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        hub_ref.validate()?;
+        encode_skill_record(&package.record)?;
+        let content_hash = package.content_hash()?;
+        if package
+            .record
+            .content_hash
+            .is_some_and(|declared| declared != content_hash)
+        {
+            return Err(Error::InvalidSkillBody(
+                "package content hash does not match its canonical file tree",
+            ));
+        }
+        if package.record.source != ClaimSource::Imported {
+            return Err(Error::InvalidSkillBody(
+                "hub import package must carry imported source",
+            ));
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let entity = match self.skill_entity_for_content_hash_in_txn(&wtxn, content_hash)? {
+            Some(existing) => existing,
+            None => {
+                let mut candidate = package.record.clone();
+                candidate.lifecycle_status = SkillLifecycle::Candidate;
+                candidate.content_hash = Some(content_hash);
+                self.apply_hub_import_skill_record(
+                    &mut wtxn,
+                    &preferred_id,
+                    &candidate,
+                    occurred,
+                    learned_at,
+                )?;
+                self.write_admitted_capability_surface_in_txn(
+                    &mut wtxn,
+                    &preferred_id,
+                    &package.capabilities,
+                )?;
+                preferred_id
+            }
+        };
+
+        if self
+            .read_admitted_capability_surface_in_txn(&wtxn, &entity)?
+            .is_none()
+        {
+            self.write_admitted_capability_surface_in_txn(
+                &mut wtxn,
+                &entity,
+                &package.capabilities,
+            )?;
+        }
+        self.append_hub_provenance_in_txn(
+            &mut wtxn,
+            &entity,
+            content_hash,
+            hub_ref,
+            occurred,
+            learned_at,
+        )?;
+        wtxn.commit()?;
+        Ok(entity)
+    }
+
+    /// Counts active mutable provenance aliases for one skill entity.
+    pub fn skill_hub_provenance_count(&self, entity: &EntityId) -> Result<usize> {
+        Ok(self
+            .active_claims_for_predicate(entity, PREDICATE_SKILL_HUB_PROVENANCE)?
+            .len())
+    }
+
+    /// Applies same/narrower updates and proposes capability widening.
+    pub fn sync_skill_from_hub(
+        &self,
+        entity: &EntityId,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        sync_policy: HubSyncPolicy,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<HubSyncDisposition> {
+        hub_ref.validate()?;
+        encode_skill_record(&package.record)?;
+        let content_hash = package.content_hash()?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let current = self.read_skill_record_in_txn(&wtxn, entity)?;
+        if current.source != ClaimSource::Imported
+            || package.record.source != ClaimSource::Imported
+            || current.skill_id != package.record.skill_id
+        {
+            return Err(Error::InvalidSkillBody(
+                "hub sync package must match an imported skill",
+            ));
+        }
+        if package
+            .record
+            .content_hash
+            .is_some_and(|declared| declared != content_hash)
+        {
+            return Err(Error::InvalidSkillBody(
+                "package content hash does not match its canonical file tree",
+            ));
+        }
+        if sync_policy == HubSyncPolicy::ContentHashFrozen {
+            let HubPin::ContentHash(frozen_pin) = &hub_ref.pin else {
+                return Err(Error::InvalidSkillBody(
+                    "content-hash-frozen policy requires a content_hash pin",
+                ));
+            };
+            if SkillContentHash::parse_hex(frozen_pin)? != content_hash {
+                return Err(Error::InvalidSkillBody("content-hash-frozen ref drifted"));
+            }
+        }
+        if !sync_policy.allows_automatic_update() {
+            return Ok(HubSyncDisposition::RefusedByPolicy);
+        }
+
+        let admitted = self
+            .read_admitted_capability_surface_in_txn(&wtxn, entity)?
+            .unwrap_or_default();
+        if !package.capabilities.is_same_or_narrower_than(&admitted) {
+            let proposal_id = EntityId::now();
+            let mut proposal = ClaimBody::new(
+                PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
+                ClaimSubject::Entity(*entity),
+                Value::Map(vec![
+                    (Value::from("hubRef"), hub_ref.to_value()?),
+                    (
+                        Value::from("version"),
+                        Value::from(package.record.version.as_str()),
+                    ),
+                    (
+                        Value::from("contentHash"),
+                        Value::from(content_hash.to_hex()),
+                    ),
+                    (
+                        Value::from("capabilities"),
+                        encode_capability_surface_value(&package.capabilities),
+                    ),
+                ]),
+                1.0,
+                ClaimApprovalStatus::Proposed,
+                ClaimLifecycleStatus::Active,
+            );
+            proposal.source = Some(ClaimSource::Imported);
+            self.put_claim_in_txn(&mut wtxn, &proposal_id, &proposal, occurred, learned_at)?;
+            wtxn.commit()?;
+            return Ok(HubSyncDisposition::Proposed {
+                proposal_id,
+                approval: ClaimApprovalStatus::Proposed,
+            });
+        }
+
+        let mut updated = package.record.clone();
+        // Hub sync mutates content fields; canonical approval/lifecycle state stays local.
+        updated.approval_status = current.approval_status;
+        updated.lifecycle_status = current.lifecycle_status;
+        updated.content_hash = Some(content_hash);
+        self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
+        self.write_admitted_capability_surface_in_txn(&mut wtxn, entity, &package.capabilities)?;
+        wtxn.commit()?;
+        Ok(HubSyncDisposition::Applied)
+    }
+
+    /// Ingests a scanner receipt, superseding the prior active row for the
+    /// same `(content_hash, provider)` without gating admission.
+    pub fn ingest_skill_scan_verdict(
+        &self,
+        entity: &EntityId,
+        content_hash: SkillContentHash,
+        receipt: &SkillScanReceipt,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        validate_text(
+            &receipt.provider,
+            MAX_HUB_TEXT_BYTES,
+            "scan provider must be non-empty",
+        )?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let skill = self.read_skill_record_in_txn(&wtxn, entity)?;
+        if skill.content_hash != Some(content_hash) {
+            return Err(Error::InvalidSkillBody(
+                "scan receipt content hash does not match the skill",
+            ));
+        }
+        let hash_hex = content_hash.to_hex();
+        let mut prior_rows = Vec::new();
+        for (id, body, occurred_start) in
+            self.active_claims_for_predicate_in_txn(&wtxn, entity, PREDICATE_SKILL_SCAN_VERDICT)?
+        {
+            if map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
+                && map_text(&body.value, "provider") == Some(receipt.provider.as_str())
+            {
+                prior_rows.push((id, occurred_start));
+            }
+        }
+
+        let claim_id = EntityId::now();
+        let mut body = ClaimBody::new(
+            PREDICATE_SKILL_SCAN_VERDICT,
+            ClaimSubject::Entity(*entity),
+            Value::Map(vec![
+                (Value::from("contentHash"), Value::from(hash_hex)),
+                (
+                    Value::from("provider"),
+                    Value::from(receipt.provider.as_str()),
+                ),
+                (Value::from("scannedAt"), Value::from(receipt.scanned_at)),
+                (
+                    Value::from("verdict"),
+                    Value::from(receipt.verdict.as_str()),
+                ),
+                (
+                    Value::from("riskLevel"),
+                    Value::from(receipt.risk_level.as_str()),
+                ),
+                (
+                    Value::from("completeness"),
+                    Value::from(receipt.completeness.as_str()),
+                ),
+                (
+                    Value::from("governance"),
+                    Value::from(receipt.governance.as_str()),
+                ),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(ClaimSource::Observed);
+        self.put_claim_in_txn(&mut wtxn, &claim_id, &body, occurred, learned_at)?;
+        for (prior_id, prior_start) in prior_rows {
+            let superseded_at = learned_at.max(prior_start);
+            self.supersede_claim_in_txn(&mut wtxn, &claim_id, &prior_id, superseded_at)?;
+        }
+        wtxn.commit()?;
+        Ok(claim_id)
+    }
+
+    /// Refuses cross-hub dependencies before any package can materialize.
+    pub fn resolve_hub_dependency(
+        &self,
+        importing_ref: &HubRef,
+        dependency_ref: &HubRef,
+        dependency_entity: &EntityId,
+        package: Option<&HubPackage>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<HubDependencyResolution> {
+        importing_ref.validate()?;
+        dependency_ref.validate()?;
+        if importing_ref.hub_id != dependency_ref.hub_id {
+            return Ok(HubDependencyResolution::RefusedCrossHub);
+        }
+        let Some(package) = package else {
+            return Ok(HubDependencyResolution::RefusedMissingPackage);
+        };
+        self.import_skill_from_hub_with_id(
+            dependency_ref,
+            package,
+            *dependency_entity,
+            occurred,
+            learned_at,
+        )
+        .map(HubDependencyResolution::Materialized)
+    }
+
+    fn skill_entity_for_content_hash_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        content_hash: SkillContentHash,
+    ) -> Result<Option<EntityId>> {
+        for (scanned, entry) in self
+            .store
+            .type_index
+            .prefix_iter(rtxn, &[ENTITY_TYPE_SKILL])?
+            .enumerate()
+        {
+            if scanned >= MAX_HUB_SKILL_SCAN_ENTRIES {
+                return Err(Error::IndexOverflow("skill_entity_for_content_hash"));
+            }
+            let (key, _) = entry?;
+            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let raw = self
+                .store
+                .entities
+                .get(rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("skill type index"))?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_SKILL {
+                return Err(Error::CorruptedIndex("skill type index"));
+            }
+            let record = decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if record.content_hash == Some(content_hash) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    fn append_hub_provenance_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        content_hash: SkillContentHash,
+        hub_ref: &HubRef,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let hub_value = hub_ref.to_value()?;
+        for (_, body, _) in
+            self.active_claims_for_predicate_in_txn(&*wtxn, entity, PREDICATE_SKILL_HUB_PROVENANCE)?
+        {
+            if map_value(&body.value, "hubRef") == Some(&hub_value) {
+                return Ok(());
+            }
+        }
+        let mut body = ClaimBody::new(
+            PREDICATE_SKILL_HUB_PROVENANCE,
+            ClaimSubject::Entity(*entity),
+            Value::Map(vec![
+                (
+                    Value::from("contentHash"),
+                    Value::from(content_hash.to_hex()),
+                ),
+                (Value::from("hubRef"), hub_value),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(ClaimSource::Observed);
+        self.put_claim_in_txn(wtxn, &EntityId::now(), &body, occurred, learned_at)
+    }
+
+    fn active_claims_for_predicate(
+        &self,
+        entity: &EntityId,
+        predicate: &str,
+    ) -> Result<Vec<(EntityId, ClaimBody)>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.active_claims_for_predicate_in_txn(&rtxn, entity, predicate)
+            .map(|rows| rows.into_iter().map(|(id, body, _)| (id, body)).collect())
+    }
+
+    fn active_claims_for_predicate_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        predicate: &str,
+    ) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
+        let mut rows = Vec::new();
+        for id in self.claims_for_subject_in_txn(rtxn, entity)? {
+            let Some(body) = self.get_claim_in_txn(rtxn, &id)? else {
+                continue;
+            };
+            if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active {
+                let raw = self
+                    .store
+                    .entities
+                    .get(rtxn, id.as_bytes())?
+                    .ok_or(Error::CorruptedIndex("claim_of edge"))?;
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("entity header"))?;
+                rows.push((id, body, header.occurred_start));
+            }
+        }
+        Ok(rows)
+    }
+
+    fn read_admitted_capability_surface_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+    ) -> Result<Option<SkillCapabilitySurface>> {
+        let key = capability_state_key(entity);
+        self.store
+            .vault_meta
+            .get(rtxn, &key)?
+            .map(|bytes| decode_capability_surface(&bytes))
+            .transpose()
+    }
+
+    fn write_admitted_capability_surface_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        surface: &SkillCapabilitySurface,
+    ) -> Result<()> {
+        surface.validate()?;
+        let value = encode_value(
+            &encode_capability_surface_value(surface),
+            "capability surface MessagePack encode failed",
+        )?;
+        let key = capability_state_key(entity);
+        self.store.vault_meta.put(wtxn, &key, &value)?;
+        Ok(())
+    }
+}
+
+fn capability_state_key(entity: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(CAPABILITY_STATE_PREFIX.len() + 16);
+    key.extend_from_slice(CAPABILITY_STATE_PREFIX);
+    key.extend_from_slice(entity.as_bytes());
+    key
+}
+
+fn encode_capability_surface_value(surface: &SkillCapabilitySurface) -> Value {
+    Value::Map(vec![
+        (Value::from("bins"), string_set_value(&surface.bins)),
+        (Value::from("env"), string_set_value(&surface.env)),
+        (Value::from("mcp"), string_set_value(&surface.mcp)),
+        (
+            Value::from("allowedTools"),
+            string_set_value(&surface.allowed_tools),
+        ),
+    ])
+}
+
+fn decode_capability_surface(bytes: &[u8]) -> Result<SkillCapabilitySurface> {
+    const KEYS: [&str; 4] = ["bins", "env", "mcp", "allowedTools"];
+    let value = decode_value(bytes, "invalid admitted capability surface")?;
+    let entries = exact_map(&value, &KEYS, "invalid admitted capability surface")?;
+    let surface = SkillCapabilitySurface {
+        bins: decode_string_set(required_value(
+            entries,
+            KEYS[0],
+            "invalid admitted capability surface",
+        )?)?,
+        env: decode_string_set(required_value(
+            entries,
+            KEYS[1],
+            "invalid admitted capability surface",
+        )?)?,
+        mcp: decode_string_set(required_value(
+            entries,
+            KEYS[2],
+            "invalid admitted capability surface",
+        )?)?,
+        allowed_tools: decode_string_set(required_value(
+            entries,
+            KEYS[3],
+            "invalid admitted capability surface",
+        )?)?,
+    };
+    surface.validate()?;
+    Ok(surface)
+}
+
+fn string_set_value(values: &BTreeSet<String>) -> Value {
+    Value::Array(
+        values
+            .iter()
+            .map(|value| Value::from(value.as_str()))
+            .collect(),
+    )
+}
+
+fn decode_string_set(value: &Value) -> Result<BTreeSet<String>> {
+    let Value::Array(values) = value else {
+        return Err(Error::InvalidSkillBody(
+            "capability entries must be an array",
+        ));
+    };
+    let mut decoded = BTreeSet::new();
+    for value in values {
+        let text = value
+            .as_str()
+            .ok_or(Error::InvalidSkillBody("capability entry must be text"))?;
+        validate_text(
+            text,
+            MAX_CAPABILITY_TEXT_BYTES,
+            "capability entries must be non-empty",
+        )?;
+        if !decoded.insert(text.to_owned()) {
+            return Err(Error::InvalidSkillBody("duplicate capability entry"));
+        }
+    }
+    Ok(decoded)
+}
+
+fn exact_map<'a>(
+    value: &'a Value,
+    keys: &[&str],
+    context: &'static str,
+) -> Result<&'a [(Value, Value)]> {
+    let Value::Map(entries) = value else {
+        return Err(Error::InvalidSkillBody(context));
+    };
+    let mut seen = vec![false; keys.len()];
+    for (key, _) in entries {
+        let key = key.as_str().ok_or(Error::InvalidSkillBody(context))?;
+        let Some(index) = keys.iter().position(|known| *known == key) else {
+            return Err(Error::InvalidSkillBody(context));
+        };
+        if seen[index] {
+            return Err(Error::InvalidSkillBody(context));
+        }
+        seen[index] = true;
+    }
+    if seen.into_iter().all(|present| present) {
+        Ok(entries)
+    } else {
+        Err(Error::InvalidSkillBody(context))
+    }
+}
+
+fn required_value<'a>(
+    entries: &'a [(Value, Value)],
+    key: &str,
+    context: &'static str,
+) -> Result<&'a Value> {
+    entries
+        .iter()
+        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
+        .ok_or(Error::InvalidSkillBody(context))
+}
+
+fn required_text(
+    entries: &[(Value, Value)],
+    key: &str,
+    max_bytes: usize,
+    context: &'static str,
+) -> Result<String> {
+    let text = required_value(entries, key, context)?
+        .as_str()
+        .ok_or(Error::InvalidSkillBody(context))?;
+    validate_text(text, max_bytes, context)?;
+    Ok(text.to_owned())
+}
+
+fn validate_text(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
+    if text.trim().is_empty() || text.len() > max_bytes {
+        return Err(Error::InvalidSkillBody(context));
+    }
+    Ok(())
+}
+
+fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value).map_err(|_| Error::InvariantViolation(context))?;
+    Ok(bytes)
+}
+
+fn decode_value(bytes: &[u8], context: &'static str) -> Result<Value> {
+    let mut cursor = Cursor::new(bytes);
+    let value =
+        rmpv::decode::read_value(&mut cursor).map_err(|_| Error::InvalidSkillBody(context))?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(Error::InvalidSkillBody(context));
+    }
+    Ok(value)
+}
+
+fn map_value<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    value
+        .as_map()?
+        .iter()
+        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
+}
+
+fn map_text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    map_value(value, key)?.as_str()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn t(at: u64) -> TimeRange {
+        TimeRange { start: at, end: at }
+    }
+
+    fn fixture_hash() -> SkillContentHash {
+        canonical_skill_tree_hash([("SKILL.md", b"# fixture\n".as_slice())]).expect("fixture hash")
+    }
+
+    fn candidate(skill_id: &str) -> SkillRecord {
+        SkillRecord::new(
+            skill_id,
+            "fixture description",
+            "1.0.0",
+            ClaimApprovalStatus::Approved,
+            SkillLifecycle::Candidate,
+            ClaimSource::Imported,
+            1.0,
+            false,
+            true,
+            Vec::new(),
+            Value::Map(vec![(Value::from("source"), Value::from("fixture"))]),
+        )
+        .with_content_hash(fixture_hash())
+    }
+
+    fn package(record: SkillRecord, capabilities: SkillCapabilitySurface) -> HubPackage {
+        HubPackage::new(
+            record,
+            vec![HubFile::new("SKILL.md", b"# fixture\n".to_vec())],
+            capabilities,
+        )
+    }
+
+    fn hub_ref(pin: HubPin) -> HubRef {
+        HubRef::new(EntityId::now(), "skills/example", pin).expect("hub ref")
+    }
+
+    fn open_vault() -> (tempfile::TempDir, Vault) {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(temp.path(), crate::VaultConfig::default()).expect("open vault");
+        (temp, vault)
+    }
+
+    #[test]
+    fn hub_ref_round_trips_all_five_pin_types() {
+        let pins = [
+            HubPin::Semver("^1.0".to_owned()),
+            HubPin::Tag("stable".to_owned()),
+            HubPin::Commit("0123456789abcdef".to_owned()),
+            HubPin::ContentHash(fixture_hash().to_hex()),
+            HubPin::None,
+        ];
+        let mut round_tripped = Vec::new();
+        for pin in pins {
+            let original = hub_ref(pin);
+            let encoded = original.to_value().expect("encode hub ref");
+            round_tripped.push(HubRef::from_value(&encoded).expect("decode hub ref"));
+            assert_eq!(round_tripped.last(), Some(&original));
+        }
+        assert_eq!(round_tripped.len(), 5);
+
+        let invalid = HubRef {
+            hub_id: EntityId::now(),
+            ref_string: String::new(),
+            pin: HubPin::None,
+        };
+        assert!(invalid.to_value().is_err());
+    }
+
+    #[test]
+    fn skill_hub_record_round_trips_exact_body() {
+        let record = SkillHubRecord::new(
+            SkillHubKind::HttpIndex,
+            "configured-endpoint",
+            SkillHubTrustTier::Community,
+            HubSyncPolicy::MirrorOfHub,
+        )
+        .expect("hub record");
+        let bytes = encode_skill_hub_record(&record).expect("encode");
+        assert_eq!(decode_skill_hub_record(&bytes).expect("decode"), record);
+    }
+
+    #[test]
+    fn hub_sync_applies_narrowing_and_proposes_widening() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let initial_surface = SkillCapabilitySurface::default().with_bin("existing-bin");
+        let initial = package(candidate("fixture.sync"), initial_surface);
+        let reference = hub_ref(HubPin::None);
+        assert_eq!(
+            vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?,
+            entity
+        );
+        let mut invalid_record = candidate("fixture.sync");
+        invalid_record.version.clear();
+        let invalid = package(invalid_record, SkillCapabilitySurface::default());
+        vault
+            .import_skill_from_hub(&hub_ref(HubPin::None), &invalid, t(2), 3)
+            .expect_err("invalid dedup package must be rejected");
+        assert_eq!(vault.skill_hub_provenance_count(&entity)?, 1);
+        let mut active = vault.get_skill_record(&entity)?.expect("candidate");
+        active.lifecycle_status = SkillLifecycle::Active;
+        vault.update_skill_record(&entity, &active, t(3), 4)?;
+
+        let mut narrower_record = candidate("fixture.sync");
+        narrower_record.version = "1.1.0".to_owned();
+        narrower_record.confidence = 0.75;
+        let narrower = package(narrower_record, SkillCapabilitySurface::default());
+        let narrowed = vault.sync_skill_from_hub(
+            &entity,
+            &reference,
+            &narrower,
+            HubSyncPolicy::MirrorOfHub,
+            t(5),
+            6,
+        )?;
+        assert_eq!(narrowed, HubSyncDisposition::Applied);
+        let narrowed_record = vault.get_skill_record(&entity)?.expect("narrowed record");
+        assert_eq!(narrowed_record.confidence, 0.75);
+
+        let mut frozen_record = candidate("fixture.sync");
+        frozen_record.version = "1.1.1".to_owned();
+        let frozen = package(frozen_record, SkillCapabilitySurface::default());
+        let frozen_ref = hub_ref(HubPin::ContentHash(fixture_hash().to_hex()));
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &entity,
+                &frozen_ref,
+                &frozen,
+                HubSyncPolicy::ContentHashFrozen,
+                t(7),
+                8,
+            )?,
+            HubSyncDisposition::RefusedByPolicy
+        );
+        assert_eq!(
+            vault
+                .get_skill_record(&entity)?
+                .expect("still narrowed")
+                .version,
+            "1.1.0"
+        );
+
+        let mut wider_record = candidate("fixture.sync");
+        wider_record.version = "1.2.0".to_owned();
+        let wider = package(
+            wider_record,
+            SkillCapabilitySurface::default().with_bin("new-bin"),
+        );
+        let widened = vault.sync_skill_from_hub(
+            &entity,
+            &reference,
+            &wider,
+            HubSyncPolicy::MirrorOfHub,
+            t(9),
+            10,
+        )?;
+        assert_eq!(
+            widened.approval_status(),
+            Some(ClaimApprovalStatus::Proposed)
+        );
+        assert_eq!(
+            vault.get_skill_record(&entity)?.expect("stored").version,
+            "1.1.0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scan_verdict_supersedes_same_hash_and_provider() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let reference = hub_ref(HubPin::None);
+        let imported = package(candidate("fixture.scan"), SkillCapabilitySurface::default());
+        vault.import_skill_from_hub_with_id(&reference, &imported, entity, t(1), 2)?;
+        let receipt = SkillScanReceipt::new(
+            "provider-a",
+            3,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?;
+        vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(3), 4)?;
+        vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(2), 2)?;
+        let rows = vault.active_claims_for_predicate(&entity, PREDICATE_SKILL_SCAN_VERDICT)?;
+        assert_eq!(rows.len(), 1);
+        let mut superseded = 0;
+        for id in vault.claims_for_subject(&entity)? {
+            let Some(body) = vault.get_claim(&id)? else {
+                continue;
+            };
+            if body.predicate == PREDICATE_SKILL_SCAN_VERDICT
+                && body.lifecycle == ClaimLifecycleStatus::Superseded
+            {
+                superseded += 1;
+            }
+        }
+        assert_eq!(superseded, 1);
+        Ok(())
+    }
+}
