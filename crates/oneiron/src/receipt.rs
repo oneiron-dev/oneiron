@@ -371,7 +371,7 @@ impl ContextReceiptFields {
     ///
     /// `persona_compile_stamp` records the compile id of the resolved
     /// standing-block prompt in effect; `activated_memory_ids` and
-    /// `board_state_ref` record the assembled memory board as shown.
+    /// `board_state_ref` record the assembled context board as shown.
     pub fn from_assembly(persona: &PromptRecompileStamp, board: &EiriMemoryBoard) -> Result<Self> {
         Ok(Self {
             persona_compile_stamp: format!(
@@ -463,7 +463,7 @@ impl ContextReceiptFields {
 /// recorded receipts keep the ref captured at their emit.
 pub fn eiri_memory_board_state_ref(board: &EiriMemoryBoard) -> Result<String> {
     let bytes = rmp_serde::to_vec_named(board)
-        .map_err(|_| Error::InvariantViolation("memory board state ref encode failed"))?;
+        .map_err(|_| Error::InvariantViolation("context board state ref encode failed"))?;
     Ok(format!(
         "{BOARD_STATE_REF_PREFIX}{}",
         hex_lower(blake3::hash(&bytes).as_bytes())
