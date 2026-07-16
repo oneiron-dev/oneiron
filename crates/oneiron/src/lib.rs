@@ -59,6 +59,7 @@ pub mod habit;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub mod identity_reputation;
+pub mod identity_topology;
 pub mod inbox;
 pub mod ingest;
 pub mod interlocutor;
@@ -522,6 +523,15 @@ pub use crate::identity_reputation::{
     PREDICATE_IDENTITY_REPUTATION_SPAM_LABEL_OBSERVATIONS,
     PREDICATE_IDENTITY_REPUTATION_UPDATED_AT, PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
     WARMUP_COLD_DAILY_CAP, WARMUP_WARMING_DAILY_CAP, is_identity_reputation_claim_predicate,
+};
+pub use crate::identity_topology::{
+    AssertDistinctOp, EntityLifecycleState, FacetOp, FacetSpec, IdentityOpEvidence,
+    IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyEvent,
+    IdentityTopologyFold, IdentityTopologyOp, IdentityTopologyRejection, MergeOp,
+    PREDICATE_ENTITY_DISTINCT_FROM, PREDICATE_IDENTITY_TOPOLOGY_OP, ReassignmentEntry,
+    ReassignmentMap, ReassignmentTarget, SplitOp, StoredIdentityOpAction, StoredIdentityOpEvent,
+    SurvivorshipPlan, distinct_pair_key, evaluate_transition, fold_identity_topology_log,
+    merge_lifecycle_states,
 };
 pub use crate::inbox::{
     INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,

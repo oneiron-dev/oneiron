@@ -283,6 +283,8 @@ pub enum ErrorKind {
     ReceiptLeaseUnknown,
     #[cfg(feature = "sync")]
     ReceiptLeaseRevoked,
+    IdentityTopologyRejected,
+    IdentityTopologyUnarmed,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1402,6 +1404,16 @@ pub enum Error {
     #[cfg(feature = "sync")]
     #[error("redaction audit receipt claims revoked client {client_id:016x}")]
     ReceiptLeaseRevoked { client_id: u64 },
+    /// An ARCH-0055 identity-topology op was rejected by the (state, op)
+    /// transition table, its storage guards, or undo-currency evaluation.
+    #[error("identity topology op rejected: {0:?}")]
+    IdentityTopologyRejected(crate::identity_topology::IdentityTopologyRejection),
+    /// The identity-topology apply door for this op kind is declared but not
+    /// armed yet (facet minting arms in ONE-1745; distinct_from assertion in
+    /// ONE-1746). Fail-closed so no ledger event records an op that had no
+    /// effect.
+    #[error("identity topology op is not armed yet: {0}")]
+    IdentityTopologyUnarmed(&'static str),
 }
 
 impl Error {
@@ -1631,6 +1643,8 @@ impl Error {
             Self::ReceiptLeaseUnknown { .. } => ErrorKind::ReceiptLeaseUnknown,
             #[cfg(feature = "sync")]
             Self::ReceiptLeaseRevoked { .. } => ErrorKind::ReceiptLeaseRevoked,
+            Self::IdentityTopologyRejected(_) => ErrorKind::IdentityTopologyRejected,
+            Self::IdentityTopologyUnarmed(_) => ErrorKind::IdentityTopologyUnarmed,
         }
     }
 

@@ -1,0 +1,817 @@
+//! Identity-topology forward test oracle (ARCH-0055, ONE-1742 epic) —
+//! authored by the ONE-1743 path opener.
+//!
+//! Every test here is a CONTRACT from a downstream MS ticket's acceptance
+//! criteria plus the ratified ARCH-0055 ruling it cites, and is parked
+//! behind `#[ignore = "armed by ONE-XXXX"]`. Arming discipline (board
+//! ruling): the arming ticket removes the ignore, swaps the `seam` stubs
+//! below for the real engine APIs, and adapts signatures — it NEVER
+//! weakens, widens, or deletes an assert. Counts stay counts.
+//!
+//! The `seam` module is the thinnest plausible surface each ticket must
+//! provide; every stub is `unimplemented!` so an armed-but-unbuilt contract
+//! fails RED instead of vacuously passing. MS-01 surfaces (merge/split
+//! apply, lifecycle reads, ledger events) are exercised through the REAL
+//! public API.
+
+use oneiron::{
+    ClaimSource, ClaimSubject, EntityId, HnswConfig, IdentityOpEvidence, IdentityOpWrite,
+    IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan, Vault, VaultConfig,
+};
+
+fn test_config() -> VaultConfig {
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = Some("test-model-v1".to_owned());
+    cfg.max_readers = 16;
+    cfg.hnsw = HnswConfig::default();
+    cfg
+}
+
+fn open_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    (dir, vault)
+}
+
+fn put_person(vault: &Vault, byte: u8) -> EntityId {
+    let id = EntityId::from_bytes([byte; 16]).expect("fixture id");
+    vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::temporal::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"oracle person fixture",
+        )
+        .expect("put person");
+    id
+}
+
+/// Applies a REAL MS-01 merge (auto by default, r3) and returns its ledger
+/// event id.
+fn real_merge(vault: &Vault, sources: Vec<EntityId>, survivor: EntityId, now: u64) -> EntityId {
+    vault
+        .apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources,
+                survivor,
+                evidence: IdentityOpEvidence {
+                    refs: Vec::new(),
+                    rationale: "oracle fixture merge".to_owned(),
+                },
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            now,
+        )
+        .expect("apply merge")
+        .event
+}
+
+/// Applies a REAL MS-01 split (≥1 head) and returns its ledger event id.
+fn real_split(vault: &Vault, entity: EntityId, heads: Vec<EntityId>, now: u64) -> EntityId {
+    vault
+        .apply_identity_topology_op(
+            &IdentityTopologyOp::Split(SplitOp {
+                entity,
+                heads,
+                reassignment: ReassignmentMap::default(),
+                evidence: IdentityOpEvidence {
+                    refs: Vec::new(),
+                    rationale: "oracle fixture split".to_owned(),
+                },
+            }),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            now,
+        )
+        .expect("apply split")
+        .event
+}
+
+/// Proposal ruling a human (or the propose lane) applies to a parked
+/// identity-topology proposal (ARCH-0055 r7 outcome vocabulary).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProposalRuling<'a> {
+    /// Approve exactly as proposed.
+    Approve,
+    /// Amend with the given delta payload, then approve.
+    AmendThenApprove(&'a [u8]),
+    /// Reject.
+    Reject,
+}
+
+/// Resolved-proposal outcome states (r7: exactly three).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProposalOutcome {
+    ApprovedUntouched,
+    ApprovedAmended,
+    Rejected,
+}
+
+/// Thinnest plausible seams for the downstream MS tickets. Each stub names
+/// the ticket that must replace it with the real engine API.
+#[allow(dead_code)]
+mod seam {
+    use super::{EntityId, ProposalOutcome, ProposalRuling, Vault};
+
+    // ---- ONE-1744 (MS-02): redirect projection + read-time resolution ----
+
+    /// Resolves an entity id through the redirect projection to its current
+    /// head set (r6 read-time canonicalization; Senzing 0/1/N semantics).
+    pub(crate) fn resolve_entity(_vault: &Vault, _id: &EntityId) -> Vec<EntityId> {
+        unimplemented!("armed by ONE-1744: redirect-projection resolution")
+    }
+
+    /// Splits an entity into ZERO heads (r2 "gone" semantics) — MS-01
+    /// rejects the zero-head form (`EmptyHeads`) because only the redirect
+    /// projection can express an empty resolution set; ONE-1744 lifts it.
+    pub(crate) fn split_into_zero_heads(_vault: &Vault, _entity: &EntityId) {
+        unimplemented!("armed by ONE-1744: zero-head split")
+    }
+
+    /// Drops the materialized redirect projection (cache, never truth).
+    pub(crate) fn drop_redirect_projection(_vault: &Vault) {
+        unimplemented!("armed by ONE-1744: drop rebuildable projection")
+    }
+
+    /// Rebuilds the redirect projection from the `merged_into` /
+    /// `split_into` edges ALONE (CID-7 / ARCH-0035 rebuildability).
+    pub(crate) fn rebuild_redirect_projection_from_edges(_vault: &Vault) {
+        unimplemented!("armed by ONE-1744: rebuild projection from edges")
+    }
+
+    /// Writes a claim whose subject is `subject`; returns the claim id.
+    pub(crate) fn write_note_claim_about(_vault: &Vault, _subject: &EntityId) -> EntityId {
+        unimplemented!("armed by ONE-1744: oracle claim-fixture writer")
+    }
+
+    // ---- ONE-1745 (MS-03): reassignment application + FACET minting ----
+
+    /// Applies a split whose reassignment map assigns each listed claim to
+    /// a head (`None` = explicit residue), and APPLIES the map (r2).
+    pub(crate) fn apply_split_with_map(
+        _vault: &Vault,
+        _entity: &EntityId,
+        _heads: &[EntityId],
+        _assignments: &[(EntityId, Option<EntityId>)],
+    ) {
+        unimplemented!("armed by ONE-1745: reassignment-map application")
+    }
+
+    /// Claims that read through `head` after a split (assigned + residue
+    /// read-through per r2).
+    pub(crate) fn count_claims_assigned_to_head(_vault: &Vault, _head: &EntityId) -> usize {
+        unimplemented!("armed by ONE-1745: per-head claim assignment count")
+    }
+
+    /// Claims still stored on the split original.
+    pub(crate) fn count_claims_on_original(_vault: &Vault, _entity: &EntityId) -> usize {
+        unimplemented!("armed by ONE-1745: original-entity claim count")
+    }
+
+    /// Claims on the original explicitly marked ambiguous residue (r2:
+    /// never force-assigned).
+    pub(crate) fn count_ambiguous_residue_claims(_vault: &Vault, _entity: &EntityId) -> usize {
+        unimplemented!("armed by ONE-1745: ambiguous-residue marker count")
+    }
+
+    /// Applies a facet op: mints one FACET entity per label and backfills
+    /// `facet_of` scoping per `assignments` (claim id → facet index).
+    /// Returns the minted FACET entity ids, in label order.
+    pub(crate) fn apply_facet(
+        _vault: &Vault,
+        _entity: &EntityId,
+        _labels: &[&str],
+        _assignments: &[(EntityId, u32)],
+    ) -> Vec<EntityId> {
+        unimplemented!("armed by ONE-1745: facet minting")
+    }
+
+    /// FACET (type-13) entities attached to `entity`.
+    pub(crate) fn count_facet_entities_of(_vault: &Vault, _entity: &EntityId) -> usize {
+        unimplemented!("armed by ONE-1745: facet entity count")
+    }
+
+    /// Behavioral claims scoped to `facet` via `facet_of`.
+    pub(crate) fn count_facet_of_scoped_claims(_vault: &Vault, _facet: &EntityId) -> usize {
+        unimplemented!("armed by ONE-1745: facet_of scoping count")
+    }
+
+    /// Total entities of one registry type byte (base-id conservation
+    /// probe: facet ops mint no non-FACET ids, r6).
+    pub(crate) fn count_entities_of_type(_vault: &Vault, _type_byte: u8) -> usize {
+        unimplemented!("armed by ONE-1745: entity-type census")
+    }
+
+    // ---- ONE-1746 (MS-04): entity.distinct_from + re-proposal suppression ----
+
+    /// Asserts the anti-merge claim for (a, b) (§9 G.1 row).
+    pub(crate) fn assert_distinct(_vault: &Vault, _a: &EntityId, _b: &EntityId) {
+        unimplemented!("armed by ONE-1746: entity.distinct_from write")
+    }
+
+    /// ACTIVE `entity.distinct_from` claims keyed by the normalized
+    /// symmetric pair.
+    pub(crate) fn count_active_distinct_claims(
+        _vault: &Vault,
+        _a: &EntityId,
+        _b: &EntityId,
+    ) -> usize {
+        unimplemented!("armed by ONE-1746: distinct-claim count by pair key")
+    }
+
+    /// Surfaces a merge proposal for (a, b) from any producer.
+    pub(crate) fn propose_merge(_vault: &Vault, _a: &EntityId, _b: &EntityId) {
+        unimplemented!("armed by ONE-1746: merge proposal intake")
+    }
+
+    /// Open (non-suppressed) merge proposals for the pair.
+    pub(crate) fn count_open_merge_proposals(
+        _vault: &Vault,
+        _a: &EntityId,
+        _b: &EntityId,
+    ) -> usize {
+        unimplemented!("armed by ONE-1746: open merge-proposal count")
+    }
+
+    // ---- ONE-1747 (MS-05): proposal-outcome receipts + reserved delta ----
+
+    /// Parks an identity-topology proposal for the pair; returns a handle.
+    pub(crate) fn submit_merge_proposal(_vault: &Vault, _a: &EntityId, _b: &EntityId) -> u64 {
+        unimplemented!("armed by ONE-1747: proposal parking")
+    }
+
+    /// Applies a ruling to a parked proposal; returns the outcome state and
+    /// a receipt handle.
+    pub(crate) fn resolve_proposal(
+        _vault: &Vault,
+        _proposal: u64,
+        _ruling: ProposalRuling<'_>,
+    ) -> (ProposalOutcome, u64) {
+        unimplemented!("armed by ONE-1747: proposal-outcome receipts")
+    }
+
+    /// The receipt's amendment-delta payload, verbatim (r7: reserved slot,
+    /// opaque until ARCH-0056/ONE-1757 consumes it).
+    pub(crate) fn receipt_delta_payload(_vault: &Vault, _receipt: u64) -> Option<Vec<u8>> {
+        unimplemented!("armed by ONE-1747: reserved delta field")
+    }
+
+    /// Field names the receipt projects (for the reserved-not-built probe).
+    pub(crate) fn receipt_field_names(_vault: &Vault, _receipt: u64) -> Vec<String> {
+        unimplemented!("armed by ONE-1747: receipt field projection")
+    }
+
+    // ---- ONE-1748 (MS-06): consent-graduation ramp ----
+
+    /// Resolves the ramp scope handle for the exact tuple
+    /// (op kind × target class × skill/agent) — a DEC-0006 bound.
+    pub(crate) fn ramp_scope(
+        _vault: &Vault,
+        _op_kind: &str,
+        _target_class: &str,
+        _agent: &str,
+    ) -> u64 {
+        unimplemented!("armed by ONE-1748: ramp scope tuple")
+    }
+
+    /// Records one outcome receipt on a propose-lane scope.
+    pub(crate) fn record_outcome_receipt(_vault: &Vault, _scope: u64, _outcome: ProposalOutcome) {
+        unimplemented!("armed by ONE-1748: per-scope outcome receipts")
+    }
+
+    /// Standing graduation OFFERS currently surfaced (proposed
+    /// `create_standing_grant(bound)` rows — DEC-0006 invariant 5).
+    pub(crate) fn count_graduation_offers(_vault: &Vault) -> usize {
+        unimplemented!("armed by ONE-1748: graduation offers")
+    }
+
+    /// Standing grants actually in force.
+    pub(crate) fn count_standing_grants(_vault: &Vault) -> usize {
+        unimplemented!("armed by ONE-1748: standing grants")
+    }
+
+    /// The owner taps the surfaced graduation offer.
+    pub(crate) fn accept_graduation_offer(_vault: &Vault) {
+        unimplemented!("armed by ONE-1748: one-tap graduation")
+    }
+
+    /// The agent self-demotes an auto scope back to propose (r7: its own
+    /// judgment, said out loud, receipted).
+    pub(crate) fn demote_scope_to_propose(_vault: &Vault, _scope: u64) {
+        unimplemented!("armed by ONE-1748: transparent self-demotion")
+    }
+
+    /// Receipts recorded for self-demotions (never silent).
+    pub(crate) fn count_demotion_receipts(_vault: &Vault) -> usize {
+        unimplemented!("armed by ONE-1748: demotion receipts")
+    }
+
+    /// Whether an op kind's scopes sit on the propose→auto ramp at all.
+    pub(crate) fn scope_is_on_ramp(_vault: &Vault, _op_kind: &str) -> bool {
+        unimplemented!("armed by ONE-1748: ramp membership probe")
+    }
+
+    /// Pending ramp proposal rows for an op kind.
+    pub(crate) fn count_ramp_proposals_for(_vault: &Vault, _op_kind: &str) -> usize {
+        unimplemented!("armed by ONE-1748: pending ramp proposals")
+    }
+
+    // ---- ONE-1749 (MS-07): redirect-aware HardErase ----
+
+    /// HardErases an entity through the ARCH-0038 path.
+    pub(crate) fn hard_erase_entity(_vault: &Vault, _id: &EntityId) {
+        unimplemented!("armed by ONE-1749: redirect-aware HardErase")
+    }
+
+    /// Readable payload bytes still reachable for `id` after erasure
+    /// (body, indexes, projections — anything that would leak content).
+    pub(crate) fn readable_payload_bytes(_vault: &Vault, _id: &EntityId) -> usize {
+        unimplemented!("armed by ONE-1749: post-erase payload probe")
+    }
+
+    /// The ARCH-0038 carrier-class enumeration.
+    pub(crate) fn arch0038_carrier_classes(_vault: &Vault) -> Vec<String> {
+        unimplemented!("armed by ONE-1749: carrier enumeration read")
+    }
+
+    /// The carrier-class name the redirect table registers under.
+    pub(crate) fn redirect_carrier_class() -> String {
+        unimplemented!("armed by ONE-1749: redirect carrier class")
+    }
+
+    /// Dangling redirect payloads after erase + projection rebuild.
+    pub(crate) fn count_dangling_redirect_payloads(_vault: &Vault) -> usize {
+        unimplemented!("armed by ONE-1749: dangling-payload census")
+    }
+}
+
+// ===== ONE-1744 (MS-02) — redirect projection + read-time resolution =====
+
+/// r2/§4: a split into ZERO heads makes the original resolve to the EMPTY
+/// set — the id is "gone" but the ledger event and shell remain.
+#[test]
+#[ignore = "armed by ONE-1744"]
+fn ms02_redirect_zero_heads_resolves_to_empty_set() {
+    let (_dir, vault) = open_vault();
+    let entity = put_person(&vault, 0x21);
+    seam::split_into_zero_heads(&vault, &entity);
+    assert_eq!(seam::resolve_entity(&vault, &entity).len(), 0);
+}
+
+/// r1/§3: after merge(B → A), B resolves to exactly ONE canonical head.
+#[test]
+#[ignore = "armed by ONE-1744"]
+fn ms02_redirect_one_head_resolves_to_single_survivor() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x21);
+    let loser = put_person(&vault, 0x22);
+    real_merge(&vault, vec![loser], survivor, 200);
+    assert_eq!(seam::resolve_entity(&vault, &loser), vec![survivor]);
+}
+
+/// r2/§4: a split into N heads resolves the original to the EXACT set of
+/// N heads (residue claims read through all heads).
+#[test]
+#[ignore = "armed by ONE-1744"]
+fn ms02_redirect_n_heads_resolves_to_exact_head_set() {
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x21);
+    let head_a = put_person(&vault, 0x22);
+    let head_b = put_person(&vault, 0x23);
+    real_split(&vault, original, vec![head_a, head_b], 200);
+    let mut resolved = seam::resolve_entity(&vault, &original);
+    resolved.sort();
+    let mut expected = vec![head_a, head_b];
+    expected.sort();
+    assert_eq!(resolved.len(), 2);
+    assert_eq!(resolved, expected);
+}
+
+/// r1/§3 + CID-7/ARCH-0035: the redirect table is a rebuildable projection
+/// — dropping it and rebuilding from the `merged_into`/`split_into` edges
+/// ALONE yields identical resolution. Edges are the sole truth; the
+/// projection is never authoritative.
+#[test]
+#[ignore = "armed by ONE-1744"]
+fn ms02_redirect_table_rebuilds_identically_from_edges_alone() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x21);
+    let loser = put_person(&vault, 0x22);
+    real_merge(&vault, vec![loser], survivor, 200);
+
+    let before = seam::resolve_entity(&vault, &loser);
+    seam::drop_redirect_projection(&vault);
+    seam::rebuild_redirect_projection_from_edges(&vault);
+    let after = seam::resolve_entity(&vault, &loser);
+    assert_eq!(before, after);
+    assert_eq!(after, vec![survivor]);
+}
+
+/// [NEG] r6/§9: claim subjects keep original entity ids FOREVER. After
+/// merge(B → A) the stored subject is still B — provenance truth; the
+/// redirect resolves B → A only at read time. An eager reference-rewrite
+/// implementation (the Wikidata unmerge killer) must fail here.
+#[test]
+#[ignore = "armed by ONE-1744"]
+fn ms02_refs_never_rewritten_after_merge() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x21);
+    let loser = put_person(&vault, 0x22);
+    let note = seam::write_note_claim_about(&vault, &loser);
+    real_merge(&vault, vec![loser], survivor, 200);
+
+    let stored = vault
+        .get_claim(&note)
+        .expect("read note")
+        .expect("note exists");
+    assert_eq!(stored.subject, ClaimSubject::Entity(loser));
+    assert_eq!(seam::resolve_entity(&vault, &loser), vec![survivor]);
+}
+
+// ===== ONE-1745 (MS-03) — reassignment map + FACET minting =====
+
+/// r2/§4: the reassignment map assigns each claim of the split entity to a
+/// specific head — exact per-head counts, nothing lost, nothing doubled.
+#[test]
+#[ignore = "armed by ONE-1745"]
+fn ms03_reassignment_assigns_each_claim_to_a_head() {
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x21);
+    let head_a = put_person(&vault, 0x22);
+    let head_b = put_person(&vault, 0x23);
+    let claim_1 = seam::write_note_claim_about(&vault, &original);
+    let claim_2 = seam::write_note_claim_about(&vault, &original);
+    let claim_3 = seam::write_note_claim_about(&vault, &original);
+
+    seam::apply_split_with_map(
+        &vault,
+        &original,
+        &[head_a, head_b],
+        &[
+            (claim_1, Some(head_a)),
+            (claim_2, Some(head_a)),
+            (claim_3, Some(head_b)),
+        ],
+    );
+    assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_a), 2);
+    assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_b), 1);
+}
+
+/// [NEG] r2/§4: unattributable residue is NEVER force-assigned — it stays
+/// on the original entity marked ambiguous. A force-assign-everything
+/// implementation must fail here.
+#[test]
+#[ignore = "armed by ONE-1745"]
+fn ms03_reassignment_residue_stays_ambiguous_on_original() {
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x21);
+    let head_a = put_person(&vault, 0x22);
+    let head_b = put_person(&vault, 0x23);
+    let assigned = seam::write_note_claim_about(&vault, &original);
+    let residue = seam::write_note_claim_about(&vault, &original);
+
+    seam::apply_split_with_map(
+        &vault,
+        &original,
+        &[head_a, head_b],
+        &[(assigned, Some(head_a)), (residue, None)],
+    );
+    assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_a), 1);
+    assert_eq!(seam::count_claims_assigned_to_head(&vault, &head_b), 0);
+    assert_eq!(seam::count_claims_on_original(&vault, &original), 1);
+    assert_eq!(seam::count_ambiguous_residue_claims(&vault, &original), 1);
+}
+
+/// r5/§5: facet(entity, facets[]) mints exactly N ARCH-0022 FACET
+/// (type-13) entities.
+#[test]
+#[ignore = "armed by ONE-1745"]
+fn ms03_facet_mints_exactly_n_type13_entities() {
+    let (_dir, vault) = open_vault();
+    let person = put_person(&vault, 0x21);
+    let minted = seam::apply_facet(&vault, &person, &["reg-a", "reg-b"], &[]);
+    assert_eq!(minted.len(), 2);
+    assert_ne!(minted[0], minted[1]);
+    assert_eq!(seam::count_facet_entities_of(&vault, &person), 2);
+}
+
+/// r5/r6: the facet op backfills `facet_of` scoping on the named
+/// behavioral claims and mints NO new base entity ids — facet ops touch no
+/// entity ids beyond the FACET entities themselves.
+#[test]
+#[ignore = "armed by ONE-1745"]
+fn ms03_facet_backfills_scoping_and_mints_no_base_ids() {
+    let (_dir, vault) = open_vault();
+    let person = put_person(&vault, 0x21);
+    let people_before = seam::count_entities_of_type(&vault, oneiron::registry::ENTITY_TYPE_PERSON);
+    let claim_1 = seam::write_note_claim_about(&vault, &person);
+    let claim_2 = seam::write_note_claim_about(&vault, &person);
+
+    let minted = seam::apply_facet(
+        &vault,
+        &person,
+        &["reg-a", "reg-b"],
+        &[(claim_1, 0), (claim_2, 1)],
+    );
+    assert_eq!(minted.len(), 2);
+    assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[0]), 1);
+    assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[1]), 1);
+    assert_eq!(
+        seam::count_entities_of_type(&vault, oneiron::registry::ENTITY_TYPE_PERSON),
+        people_before
+    );
+}
+
+/// [NEG] r5/§5 + ARCH-0022 no-merge canon: a facet op never blends
+/// behavioral profiles across masks — a claim scoped to one facet is not
+/// readable as the other facet's profile.
+#[test]
+#[ignore = "armed by ONE-1745"]
+fn ms03_facet_never_blends_profiles_across_masks() {
+    let (_dir, vault) = open_vault();
+    let person = put_person(&vault, 0x21);
+    let claim_a = seam::write_note_claim_about(&vault, &person);
+    let claim_b = seam::write_note_claim_about(&vault, &person);
+
+    let minted = seam::apply_facet(
+        &vault,
+        &person,
+        &["reg-a", "reg-b"],
+        &[(claim_a, 0), (claim_b, 1)],
+    );
+    // Exactly one claim per mask; a blending implementation reads 2.
+    assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[0]), 1);
+    assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[1]), 1);
+}
+
+// ===== ONE-1746 (MS-04) — entity.distinct_from =====
+
+/// §9 G.1 row: the pair key is the normalized symmetric order
+/// `(min(a,b), max(a,b))` — asserting both directions yields exactly ONE
+/// claim.
+#[test]
+#[ignore = "armed by ONE-1746"]
+fn ms04_assert_distinct_is_symmetric_single_claim() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    seam::assert_distinct(&vault, &a, &b);
+    seam::assert_distinct(&vault, &b, &a);
+    assert_eq!(seam::count_active_distinct_claims(&vault, &a, &b), 1);
+    assert_eq!(seam::count_active_distinct_claims(&vault, &b, &a), 1);
+}
+
+/// §6: after assert_distinct(a, b), a merge proposal for (a, b) is
+/// suppressed — rejections route, they don't dead-end into re-asks
+/// (Wikidata P1889 semantics).
+#[test]
+#[ignore = "armed by ONE-1746"]
+fn ms04_distinct_from_suppresses_merge_reproposal() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    seam::assert_distinct(&vault, &a, &b);
+    seam::propose_merge(&vault, &a, &b);
+    assert_eq!(seam::count_open_merge_proposals(&vault, &a, &b), 0);
+}
+
+/// [NEG] §6: distinct_from(a, b) suppresses ONLY the asserted pair — a
+/// proposal for (a, c) still surfaces. A suppress-everything-touching-a
+/// implementation must fail here.
+#[test]
+#[ignore = "armed by ONE-1746"]
+fn ms04_distinct_from_does_not_suppress_unrelated_pairs() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+    seam::assert_distinct(&vault, &a, &b);
+    seam::propose_merge(&vault, &a, &c);
+    assert_eq!(seam::count_open_merge_proposals(&vault, &a, &c), 1);
+}
+
+// ===== ONE-1747 (MS-05) — proposal-outcome receipts + reserved delta =====
+
+/// r7/§7: a resolved proposal yields exactly one of approved-untouched /
+/// approved-amended / rejected.
+#[test]
+#[ignore = "armed by ONE-1747"]
+fn ms05_proposal_outcome_has_exactly_three_states() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+    let d = put_person(&vault, 0x24);
+
+    let untouched = seam::submit_merge_proposal(&vault, &a, &b);
+    let (outcome, _) = seam::resolve_proposal(&vault, untouched, ProposalRuling::Approve);
+    assert_eq!(outcome, ProposalOutcome::ApprovedUntouched);
+
+    let amended = seam::submit_merge_proposal(&vault, &a, &c);
+    let (outcome, _) = seam::resolve_proposal(
+        &vault,
+        amended,
+        ProposalRuling::AmendThenApprove(b"narrow-to-work-claims"),
+    );
+    assert_eq!(outcome, ProposalOutcome::ApprovedAmended);
+
+    let rejected = seam::submit_merge_proposal(&vault, &a, &d);
+    let (outcome, _) = seam::resolve_proposal(&vault, rejected, ProposalRuling::Reject);
+    assert_eq!(outcome, ProposalOutcome::Rejected);
+}
+
+/// r7/§7: an approved-amended outcome carries a present, non-empty
+/// amendment-delta payload; approved-untouched and rejected carry none.
+#[test]
+#[ignore = "armed by ONE-1747"]
+fn ms05_amended_receipt_carries_delta_others_do_not() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+    let d = put_person(&vault, 0x24);
+
+    let amended = seam::submit_merge_proposal(&vault, &a, &b);
+    let (_, amended_receipt) = seam::resolve_proposal(
+        &vault,
+        amended,
+        ProposalRuling::AmendThenApprove(b"narrow-to-work-claims"),
+    );
+    assert_eq!(
+        seam::receipt_delta_payload(&vault, amended_receipt),
+        Some(b"narrow-to-work-claims".to_vec())
+    );
+
+    let untouched = seam::submit_merge_proposal(&vault, &a, &c);
+    let (_, untouched_receipt) = seam::resolve_proposal(&vault, untouched, ProposalRuling::Approve);
+    assert_eq!(seam::receipt_delta_payload(&vault, untouched_receipt), None);
+
+    let rejected = seam::submit_merge_proposal(&vault, &a, &d);
+    let (_, rejected_receipt) = seam::resolve_proposal(&vault, rejected, ProposalRuling::Reject);
+    assert_eq!(seam::receipt_delta_payload(&vault, rejected_receipt), None);
+}
+
+/// [NEG] r7 + ARCH-0056 boundary: the delta field is a RESERVED
+/// forward-compatible slot, not the built Δ schema. It round-trips an
+/// opaque payload byte-exact (a shaped struct cannot), and the receipt
+/// does NOT project the six eventual ARCH-0056 §2 field names — building
+/// them here would over-build the ED-epic's surface (ONE-1757 consumes).
+#[test]
+#[ignore = "armed by ONE-1747"]
+fn ms05_delta_field_is_reserved_opaque_not_built() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+
+    let opaque: &[u8] = &[0x00, 0xFF, 0x13, 0x37, 0x00];
+    let proposal = seam::submit_merge_proposal(&vault, &a, &b);
+    let (_, receipt) =
+        seam::resolve_proposal(&vault, proposal, ProposalRuling::AmendThenApprove(opaque));
+    assert_eq!(
+        seam::receipt_delta_payload(&vault, receipt),
+        Some(opaque.to_vec())
+    );
+
+    let fields = seam::receipt_field_names(&vault, receipt);
+    for reserved in [
+        "proposed_ref",
+        "final_ref",
+        "source",
+        "d_norm",
+        "ops_summary",
+        "engine_ver",
+    ] {
+        assert!(
+            !fields.iter().any(|field| field.as_str() == reserved),
+            "receipt must not project the ARCH-0056 Δ field {reserved:?} yet"
+        );
+    }
+}
+
+// ===== ONE-1748 (MS-06) — consent-graduation ramp =====
+
+/// r7/§7: a ramp scope keys on the EXACT tuple
+/// (op kind × target class × skill/agent) — two scopes differing only in
+/// agent are distinct; identical tuples resolve to the same scope.
+#[test]
+#[ignore = "armed by ONE-1748"]
+fn ms06_ramp_scope_keys_on_op_class_agent_tuple() {
+    let (_dir, vault) = open_vault();
+    let scope_a = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    let scope_b = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-b");
+    let scope_a_again = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    assert_ne!(scope_a, scope_b);
+    assert_eq!(scope_a, scope_a_again);
+}
+
+/// r7/§7 + DEC-0006 invariant 5: a streak of approved-untouched receipts
+/// produces a graduation OFFER (a proposed create_standing_grant) — the
+/// system offers, it NEVER auto-grants; the grant lands only on the tap.
+#[test]
+#[ignore = "armed by ONE-1748"]
+fn ms06_streak_offers_standing_grant_never_auto_grants() {
+    let (_dir, vault) = open_vault();
+    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    for _ in 0..12 {
+        seam::record_outcome_receipt(&vault, scope, ProposalOutcome::ApprovedUntouched);
+    }
+    assert_eq!(seam::count_graduation_offers(&vault), 1);
+    assert_eq!(seam::count_standing_grants(&vault), 0);
+
+    seam::accept_graduation_offer(&vault);
+    assert_eq!(seam::count_standing_grants(&vault), 1);
+}
+
+/// r7/§7: an auto scope accumulating amendments may be SELF-DEMOTED by the
+/// agent — said out loud and receipted, never a silent capability
+/// reduction.
+#[test]
+#[ignore = "armed by ONE-1748"]
+fn ms06_self_demotion_is_receipted_never_silent() {
+    let (_dir, vault) = open_vault();
+    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    for _ in 0..3 {
+        seam::record_outcome_receipt(&vault, scope, ProposalOutcome::ApprovedAmended);
+    }
+    assert_eq!(seam::count_demotion_receipts(&vault), 0);
+    seam::demote_scope_to_propose(&vault, scope);
+    assert_eq!(seam::count_demotion_receipts(&vault), 1);
+}
+
+/// [NEG] r7: merge/split are AUTO day one — they are never placed on the
+/// propose→auto ramp. The ramp is only the exit path for scopes that
+/// honestly start at propose (external effects, cross-person, tinkerer
+/// dials). A ramp-everything implementation must fail here.
+#[test]
+#[ignore = "armed by ONE-1748"]
+fn ms06_merge_split_never_gated_by_ramp() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x21);
+    let loser = put_person(&vault, 0x22);
+    // MS-01 ground truth: the merge applies immediately, auto by default.
+    real_merge(&vault, vec![loser], survivor, 200);
+    assert!(
+        vault
+            .entity_lifecycle_state(&loser)
+            .expect("loser state")
+            .is_redirect_shell()
+    );
+
+    assert!(!seam::scope_is_on_ramp(&vault, "merge"));
+    assert!(!seam::scope_is_on_ramp(&vault, "split"));
+    assert_eq!(seam::count_ramp_proposals_for(&vault, "merge"), 0);
+    assert_eq!(seam::count_ramp_proposals_for(&vault, "split"), 0);
+}
+
+// ===== ONE-1749 (MS-07) — redirect-aware HardErase =====
+
+/// r6/§9: HardErase of a canonical survivor erases its redirect shells'
+/// payloads too — a readable shell would leak what erasure hid.
+#[test]
+#[ignore = "armed by ONE-1749"]
+fn ms07_harderase_of_head_cascades_to_redirect_shells() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x21);
+    let loser = put_person(&vault, 0x22);
+    real_merge(&vault, vec![loser], survivor, 200);
+
+    seam::hard_erase_entity(&vault, &survivor);
+    assert_eq!(seam::readable_payload_bytes(&vault, &survivor), 0);
+    assert_eq!(seam::readable_payload_bytes(&vault, &loser), 0);
+}
+
+/// r6/§9: the redirect table joins the ARCH-0038 carrier enumeration —
+/// membership assert against the sweep's carrier classes.
+#[test]
+#[ignore = "armed by ONE-1749"]
+fn ms07_redirect_table_is_an_arch0038_carrier() {
+    let (_dir, vault) = open_vault();
+    let classes = seam::arch0038_carrier_classes(&vault);
+    let redirect_class = seam::redirect_carrier_class();
+    assert!(
+        classes.contains(&redirect_class),
+        "ARCH-0038 carrier enumeration must include the redirect table \
+         (got {classes:?})"
+    );
+}
+
+/// [NEG] r6/§9: after HardErase of the head and a redirect-projection
+/// rebuild, exactly ZERO dangling redirect payloads remain.
+#[test]
+#[ignore = "armed by ONE-1749"]
+fn ms07_no_dangling_payload_after_erase_and_rebuild() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x21);
+    let loser = put_person(&vault, 0x22);
+    real_merge(&vault, vec![loser], survivor, 200);
+
+    seam::hard_erase_entity(&vault, &survivor);
+    seam::rebuild_redirect_projection_from_edges(&vault);
+    assert_eq!(seam::count_dangling_redirect_payloads(&vault), 0);
+}

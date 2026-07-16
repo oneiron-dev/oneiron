@@ -1836,6 +1836,7 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     let rtxn = vault.store.env.read_txn()?;
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
         records.extend(companion_lifecycle_receipts(vault, &rtxn, query)?);
+        records.extend(identity_topology_receipts(vault, &rtxn, query)?);
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
@@ -2089,6 +2090,91 @@ fn companion_lifecycle_receipt(
         outcome: event.kind.as_str().to_owned(),
         job_ref: None,
         trigger_ref: Some(format!("entity:{}", id.to_hex())),
+        policy_trace: Vec::new(),
+        fields,
+    }
+}
+
+/// Projects ARCH-0055 identity-topology ledger events (merge / split / undo
+/// counter-events) into `IdentityLifecycle` receipts. Reads through the
+/// rebuildable `idtop:` vault_meta index; the event CLAIM rows stay the
+/// single truth (rows that no longer decode are skipped, never guessed).
+fn identity_topology_receipts(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    query: &ReceiptQuery,
+) -> Result<Vec<ReceiptRecord>> {
+    let mut receipts = Vec::new();
+    for event_id in vault.identity_topology_event_refs_in_txn(rtxn, MAX_RECEIPT_QUERY_SCAN)? {
+        let Some(body) = vault.get_claim_in_txn(rtxn, &event_id)? else {
+            continue;
+        };
+        if body.predicate != crate::identity_topology::PREDICATE_IDENTITY_TOPOLOGY_OP {
+            continue;
+        }
+        let Ok(event) = crate::identity_topology::StoredIdentityOpEvent::decode(&body.value) else {
+            continue;
+        };
+        let receipt = identity_topology_receipt(&event_id, &body, &event);
+        if query.matches(&receipt) {
+            receipts.push(receipt);
+        }
+    }
+    Ok(receipts)
+}
+
+fn identity_topology_receipt(
+    event_id: &EntityId,
+    body: &crate::claim::ClaimBody,
+    event: &crate::identity_topology::StoredIdentityOpEvent,
+) -> ReceiptRecord {
+    use crate::identity_topology::StoredIdentityOpAction;
+
+    let mut fields = BTreeMap::new();
+    fields.insert("approval".to_owned(), body.approval.as_str().to_owned());
+    if let Some(source) = body.source {
+        fields.insert("source".to_owned(), source.as_str().to_owned());
+    }
+    if let Some(actor) = event.actor {
+        fields.insert(
+            "actor_class".to_owned(),
+            actor.actor_class().gate_actor_class().to_owned(),
+        );
+    }
+    let subject = match body.subject {
+        crate::claim::ClaimSubject::Entity(id) => Some(id),
+        crate::claim::ClaimSubject::Edge { .. } => None,
+    };
+    match &event.action {
+        StoredIdentityOpAction::Merge { sources, survivor } => {
+            fields.insert("survivor".to_owned(), survivor.to_hex());
+            fields.insert("source_count".to_owned(), sources.len().to_string());
+        }
+        StoredIdentityOpAction::Split {
+            entity,
+            heads,
+            assigned,
+            residue,
+        } => {
+            fields.insert("entity".to_owned(), entity.to_hex());
+            fields.insert("head_count".to_owned(), heads.len().to_string());
+            fields.insert("assigned".to_owned(), assigned.to_string());
+            fields.insert("residue".to_owned(), residue.to_string());
+        }
+        StoredIdentityOpAction::Undo { target } => {
+            fields.insert("undo_of".to_owned(), target.to_hex());
+        }
+    }
+
+    ReceiptRecord {
+        receipt_id: format!("identity_topology:{}", event_id.to_hex()),
+        receipt_kind: ReceiptKind::IdentityLifecycle,
+        occurred_at: event.at,
+        actor: event.actor.map(|actor| actor.entity_ref().to_hex()),
+        on_behalf_of: None,
+        outcome: event.action.kind_str().to_owned(),
+        job_ref: None,
+        trigger_ref: subject.map(|id| format!("entity:{}", id.to_hex())),
         policy_trace: Vec::new(),
         fields,
     }
