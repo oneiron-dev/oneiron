@@ -1087,6 +1087,13 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
             if effective_base_backed {
                 delta.deleted.insert(value.clone());
             }
+            // An overlay-only delete can empty the delta; a bare row still charges
+            // key.len() toward the budget, so drop it (matches the Single path).
+            let delta_is_empty =
+                delta.present.is_empty() && delta.deleted.is_empty() && !delta.delete_base;
+            if delta_is_empty {
+                rows.remove(key);
+            }
         }
         (KeyspaceState::Single { .. }, OverlayMutation::DeleteDuplicate { .. }) => {
             return Err(Error::InvariantViolation(
@@ -1790,12 +1797,11 @@ mod tests {
         else {
             panic!("text postings overlay is not DUP_SORT");
         };
-        let delta = rows
-            .get(key.as_slice())
-            .expect("term delta remains allocated");
-        assert!(delta.present.is_empty());
-        assert!(delta.deleted.is_empty());
-        assert_eq!(snapshot.bytes_used(), key.len());
+        assert!(
+            rows.get(key.as_slice()).is_none(),
+            "an emptied overlay-only delta is dropped, not left as a bare row"
+        );
+        assert_eq!(snapshot.bytes_used(), 0);
         assert!(snapshot.merge_plan(keyspace, |_| true).rows.is_empty());
 
         let view = OverlayDb::composed(base, overlay, Arc::new(snapshot), keyspace);
