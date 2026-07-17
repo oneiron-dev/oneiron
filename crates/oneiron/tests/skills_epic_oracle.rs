@@ -23,10 +23,11 @@
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
-    HubDependencyResolution, HubFile, HubPackage, HubPin, HubRef, HubSyncPolicy, Result,
-    ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillContentHash,
-    SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
-    canonical_skill_tree_hash, cross_check_declared_content_hash,
+    HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
+    LocalDirSkillHubAdapter, Result, ScanCompleteness, ScanRiskLevel, ScanVerdict,
+    SkillCapabilitySurface, SkillContentHash, SkillGovernance, SkillLifecycle, SkillRecord,
+    SkillScanReceipt, TimeRange, Vault, VaultConfig, canonical_skill_tree_hash,
+    cross_check_declared_content_hash,
 };
 use rmpv::Value;
 
@@ -529,7 +530,6 @@ fn sk02_cross_hub_dependency_inherits_nothing_fails_closed() -> Result<()> {
 /// `cross_check_declared_content_hash` — the adapter must route through
 /// it.)
 #[test]
-#[ignore = "armed by ONE-1741: native adapter ingest wiring the ONE-1735 hash cross-check"]
 fn sk03_adapter_rejects_declared_hash_mismatch_fail_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let target = EntityId::now();
@@ -543,7 +543,34 @@ fn sk03_adapter_rejects_declared_hash_mismatch_fail_closed() -> Result<()> {
     // ARM(ONE-1741): run the adapter ingest against a fixture package
     // whose hub-declared hash does NOT match the recomputed canonical
     // hash, targeting `target`; capture whether ingest refused.
-    let ingest_refused = false;
+    let hub_id = EntityId::now();
+    let ref_string = "skills/oracle-hashcheck";
+    let package = HubPackage::new(
+        imported_candidate("oracle.skill.hashcheck", fixture_tree_hash()),
+        vec![HubFile::new(
+            "SKILL.md",
+            b"# oracle fixture skill\n".to_vec(),
+        )],
+        SkillCapabilitySurface::default(),
+    );
+    let mut adapter = LocalDirSkillHubAdapter::new(hub_id);
+    adapter.insert_package(
+        ref_string,
+        HubPin::ContentHash(alternate_tree_hash().to_hex()),
+        package.clone(),
+    );
+    let mismatched_entry = HubIndexEntry {
+        name: "oracle-hashcheck".to_owned(),
+        description: "oracle fixture".to_owned(),
+        version: "1.0.0".to_owned(),
+        content_hash: alternate_tree_hash(),
+        ref_string: ref_string.to_owned(),
+    };
+    let ingest_refused = vault
+        .ingest_skill_from_adapter_checked(&adapter, &mismatched_entry, target, t(20), 21)
+        .is_err()
+        && vault.get_skill_record(&target)?.is_none()
+        && total_claims(&vault, &target)? == 0;
 
     assert!(
         ingest_refused,
@@ -559,8 +586,22 @@ fn sk03_adapter_rejects_declared_hash_mismatch_fail_closed() -> Result<()> {
     // Acceptance leg (review C12): a reject-all adapter must not pass.
     // ARM(ONE-1741): ingest the SAME fixture package with the CORRECT
     // declared hash and record the entity id it landed at.
-    let accepted: Option<EntityId> = unarmed();
-    let accepted_id = accepted.expect("armed by ONE-1741: matching-hash ingest not built yet");
+    adapter.insert_package(
+        ref_string,
+        HubPin::ContentHash(fixture_tree_hash().to_hex()),
+        package,
+    );
+    let matching_entry = HubIndexEntry {
+        content_hash: fixture_tree_hash(),
+        ..mismatched_entry
+    };
+    let accepted_id = vault.ingest_skill_from_adapter_checked(
+        &adapter,
+        &matching_entry,
+        target,
+        t(22),
+        23,
+    )?;
     let landed = vault
         .get_skill_record(&accepted_id)?
         .expect("accepted package lands as a SKILL record");
@@ -584,7 +625,6 @@ fn sk03_adapter_rejects_declared_hash_mismatch_fail_closed() -> Result<()> {
 /// and the scanner is SIGNAL, never the gate: the record's lifecycle does
 /// not move.
 #[test]
-#[ignore = "armed by ONE-1741: multi-provider audit endpoint ingestion"]
 fn sk03_provider_audit_verdicts_are_independent_rows_signal_not_gate() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -592,7 +632,39 @@ fn sk03_provider_audit_verdicts_are_independent_rows_signal_not_gate() -> Result
 
     // ARM(ONE-1741): ingest an audit-endpoint fixture carrying verdicts
     // from three providers, exactly one of them flagging malicious.
-    let ingested = false;
+    let receipts = [
+        SkillScanReceipt::new(
+            "alpha",
+            20,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?,
+        SkillScanReceipt::new(
+            "beta",
+            20,
+            ScanVerdict::Malicious,
+            ScanRiskLevel::Critical,
+            ScanCompleteness::Complete,
+            SkillGovernance::Prohibited,
+        )?,
+        SkillScanReceipt::new(
+            "gamma",
+            20,
+            ScanVerdict::Suspicious,
+            ScanRiskLevel::Medium,
+            ScanCompleteness::Partial,
+            SkillGovernance::Discouraged,
+        )?,
+    ];
+    let ingested = vault.ingest_skill_audit_verdicts(
+        &skill_entity,
+        fixture_tree_hash(),
+        &receipts,
+        t(20),
+        21,
+    )? == 3;
     assert!(
         ingested,
         "armed by ONE-1741: audit-endpoint ingestion not built yet"

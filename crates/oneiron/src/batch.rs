@@ -2836,8 +2836,22 @@ fn apply_put(
     };
 
     let mut body_changed = true;
+    let mut previous_skill_content_hash = None;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
+        if old_type == ENTITY_TYPE_SKILL {
+            let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+            previous_skill_content_hash = match crate::skill::decode_skill_record(prior_body) {
+                Ok(record) => record.content_hash,
+                Err(error)
+                    if error.kind() == ErrorKind::InvalidSkillBody
+                        && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+        }
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -2995,6 +3009,15 @@ fn apply_put(
     payload.extend_from_slice(data);
 
     store.entities.put(wtxn, id.as_bytes(), &payload)?;
+    if let Some(record) = new_skill_record.as_ref() {
+        crate::skill_hub::maintain_skill_content_hash_index_for_put(
+            store,
+            wtxn,
+            &id,
+            previous_skill_content_hash,
+            record.content_hash,
+        )?;
+    }
     if let Some(body) = decoded_claim_body.as_ref() {
         crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
             store, wtxn, &id, body, learned_at,
