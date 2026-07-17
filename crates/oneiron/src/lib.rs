@@ -96,6 +96,7 @@ pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod task_verb;
 pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
@@ -747,6 +748,10 @@ pub use crate::surface_event::{
     INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
     InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
     SurfaceCounterpartyStamp, SurfaceEvent,
+};
+pub use crate::task_verb::{
+    DEFAULT_TASK_CANCEL_MODE, TASKS_VERBS, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt,
+    TaskCancelTarget, TaskCreateRateLimit, TaskCreateReceipt, TaskCreateSpec, TasksVerb,
 };
 pub use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
 pub use crate::thread_lens::{

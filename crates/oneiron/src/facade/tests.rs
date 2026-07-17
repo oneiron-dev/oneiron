@@ -1184,6 +1184,55 @@ fn put_habit_checkin_appends_child_with_pinned_role() {
 }
 
 #[test]
+fn put_structural_mints_but_never_overwrites_task_entities() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xD2);
+    let facade = facade_for(&vault, actor);
+    let task = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "TASK".to_owned(),
+            body: serde_json::json!({"role": 4, "content": "original"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 810,
+            learned_at: None,
+        })
+        .expect("fresh task mint");
+    let task_ref = EntityId::from_hex(&task.id_hex).expect("task id");
+    let before = vault
+        .get_raw(&task_ref)
+        .expect("read task before")
+        .expect("task exists");
+
+    let error = facade
+        .put_structural(&StructuralPutInput {
+            id: Some(task.id_hex),
+            kind: "TASK".to_owned(),
+            body: serde_json::json!({"role": 1, "owner_ref": actor.to_hex()}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 811,
+            learned_at: None,
+        })
+        .expect_err("TASK overwrite must be refused");
+    let after = vault
+        .get_raw(&task_ref)
+        .expect("read task after")
+        .expect("task remains");
+
+    assert_eq!(error.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(usize::from(before == after), 1);
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("task entities")
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn put_companion_record_creates_and_optionally_retires() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0xE1);
