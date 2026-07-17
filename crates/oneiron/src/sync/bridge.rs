@@ -755,45 +755,7 @@ fn materialize_edges_from_delta(
                         }
                     };
 
-                    // ARCH-0055 reserved-kind gate: `merged_into` /
-                    // `split_into` carry redirect-shell lifecycle meaning,
-                    // and the raw edges CRDT map is peer-controlled input
-                    // with no write authority over them. The edge is
-                    // admitted ONLY as the BYTE-EXACT echo of a door
-                    // side-effect: the local validated type-76 ledger must
-                    // mandate exactly this pair AND the value must carry
-                    // the door-written bytes (default weight, the event's
-                    // `at` as `created_at`) — peer-chosen bytes on a
-                    // mandated pair are still a forgery (weight 0 drops
-                    // the shell's PPR mass, unledgered). Anything else
-                    // quarantines-and-continues: the record may simply not
-                    // have arrived yet, and the quarantined bytes stay in
-                    // the CRDT map to re-admit at the next forward
-                    // rematerialization once the ledger justifies them
-                    // (the OD-10 lazy re-admission shape).
                     let reserved_rejection = crate::edge::validate_public_edge_kind(kind).err();
-                    if let Some(reserved) = &reserved_rejection {
-                        let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
-                            &*wtxn, &src, kind, &tgt,
-                        )?;
-                        let door_echo = mandated_at.is_some_and(|at| {
-                            decoded.created_at == at
-                                && kind.default_weight() == Some(decoded.weight)
-                        });
-                        if !door_echo {
-                            quarantine_rejected_op_in_txn(
-                                vault,
-                                wtxn,
-                                window_key,
-                                QuarantineContainer::Edges,
-                                key.as_ref(),
-                                reserved,
-                                buf,
-                            )?;
-                            continue;
-                        }
-                    }
-
                     let src_ready = ensure_entity_materialized_from_crdt(
                         vault,
                         wtxn,
@@ -832,6 +794,44 @@ fn materialize_edges_from_delta(
                     if matches!(&tgt_ready, Ok(EndpointHydration::LocalOnly)) {
                         pending_companion_scrubs.push(CompanionCrdtScrub::new(tgt.to_hex(), tgt));
                     }
+
+                    // ARCH-0055 reserved-kind gate: `merged_into` /
+                    // `split_into` carry redirect-shell lifecycle meaning,
+                    // and the raw edges CRDT map is peer-controlled input
+                    // with no write authority over them. Hydrate BOTH
+                    // endpoints first: a successful endpoint put retriggers
+                    // the shared deferred-topology reconciliation, so this
+                    // mandate read sees the participant types the edge delta
+                    // just revealed. The edge is then admitted ONLY as the
+                    // BYTE-EXACT echo of a door side-effect: the local
+                    // validated type-76 ledger must mandate exactly this
+                    // pair AND the value must carry the door-written bytes
+                    // (default weight, the event's `at` as `created_at`). A
+                    // missing mandate or peer-chosen bytes remain a
+                    // quarantine-and-continue rejection; no reserved edge
+                    // lands merely because hydration ran first.
+                    if let Some(reserved) = &reserved_rejection {
+                        let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
+                            &*wtxn, &src, kind, &tgt,
+                        )?;
+                        let door_echo = mandated_at.is_some_and(|at| {
+                            decoded.created_at == at
+                                && kind.default_weight() == Some(decoded.weight)
+                        });
+                        if !door_echo {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key.as_ref(),
+                                reserved,
+                                buf,
+                            )?;
+                            continue;
+                        }
+                    }
+
                     match (src_ready, tgt_ready) {
                         // Both endpoints present — already there (`Ready`) or
                         // just hydrated this batch (`Hydrated`): the edge may
@@ -903,33 +903,6 @@ fn materialize_edges_from_delta(
                                 QuarantineContainer::Edges,
                                 key.as_ref(),
                                 &e,
-                                buf,
-                            )?;
-                            continue;
-                        }
-                    }
-
-                    // Endpoint hydration above may be the moment a deferred
-                    // type-76 participant becomes available. Re-run the
-                    // shared fold mandate after hydration and before queuing
-                    // the edge op; a newly revealed CLAIM/FACET must make
-                    // the event inert in this same transaction.
-                    if let Some(reserved) = &reserved_rejection {
-                        let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
-                            &*wtxn, &src, kind, &tgt,
-                        )?;
-                        let door_echo = mandated_at.is_some_and(|at| {
-                            decoded.created_at == at
-                                && kind.default_weight() == Some(decoded.weight)
-                        });
-                        if !door_echo {
-                            quarantine_rejected_op_in_txn(
-                                vault,
-                                wtxn,
-                                window_key,
-                                QuarantineContainer::Edges,
-                                key.as_ref(),
-                                reserved,
                                 buf,
                             )?;
                             continue;

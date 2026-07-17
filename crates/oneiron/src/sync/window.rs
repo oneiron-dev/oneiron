@@ -1924,8 +1924,6 @@ pub fn forward_rematerialize(
 ///
 /// Returns the number of entities newly mirrored into the CRDT.
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
-    scrub_off_record_fenced_carriers(vault, window_key, doc)?;
-
     let start_ts = window_key
         .start_timestamp()
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
@@ -1941,6 +1939,63 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     let mut count = 0u32;
     let mut wrote_any = false;
+    let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
+    let mut protected_tombstones = HashSet::new();
+    let mut entity_tombstones = Vec::new();
+
+    // Type-classify entity-keyed tombstones BEFORE any CRDT edge-key scan.
+    // A hostile tombstone naming a locally available protected engine row
+    // cannot be sent through the edge-key parser (its grammar is just the
+    // entity hex), and cannot suppress the carrier before reverse recovery
+    // sees its type. Ordinary and out-of-window rows are untouched here and
+    // retain the existing delete-wins handling in the main loop below.
+    map_for_each_tombstone_value(&tombstones_map, |key, tombstone| {
+        if let Ok(id) = EntityId::from_hex(key)
+            && entities_in_range_set.contains(&id)
+        {
+            entity_tombstones.push((id, key.to_owned(), tombstone.to_vec()));
+        }
+    });
+    for (id, key, tombstone) in entity_tombstones {
+        if vault.is_turn_off_record_fenced(&id)? {
+            continue;
+        }
+        let Some(raw) = vault.get_raw(&id)? else {
+            continue;
+        };
+        if reverse_remat_skip_policy_manifest_mirror(&raw) {
+            continue;
+        }
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            continue;
+        };
+        if !crate::deletion::is_delete_protected_engine_record(header.entity_type) {
+            continue;
+        }
+
+        let rejection = Error::MaintenanceKindNotWritable(header.entity_type);
+        quarantine::quarantine_rejected_op(
+            vault,
+            window_key.as_str(),
+            QuarantineContainer::Tombstones,
+            &key,
+            &rejection,
+            &tombstone,
+        )?;
+        protected_tombstones.insert(id);
+        let hex_id = id.to_hex();
+        if !map_contains_binary(&entities_map, &hex_id) {
+            map_insert_bytes(&entities_map, &hex_id, &raw)?;
+            wrote_any = true;
+            count += 1;
+        }
+    }
+
+    // The protected-tombstone prepass above intentionally precedes this
+    // privacy scrub because the scrub discovers fenced candidates by parsing
+    // CRDT edge keys. Protected entity tombstones have already been
+    // classified and restored before that different key grammar is touched.
+    scrub_off_record_fenced_carriers(vault, window_key, doc)?;
 
     for id in &entities_in_range {
         let hex_id = id.to_hex();
@@ -1966,8 +2021,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         // protected engine record from outbound recovery; quarantine it and
         // restore the carrier. Ordinary rows retain delete-wins semantics,
         // including non-binary values and case-shifted aliases.
-        let protected_tombstone =
-            quarantine_outbound_protected_tombstones(vault, window_key, &tombstones_map, id, &raw)?;
+        let protected_tombstone = protected_tombstones.contains(id);
         if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
             continue;
         }
