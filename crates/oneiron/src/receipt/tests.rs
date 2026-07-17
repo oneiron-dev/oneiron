@@ -1473,13 +1473,15 @@ fn disclosure_stamp_rides_emit_receipts_and_reads_optionally() {
     assert_eq!(read_back.disclosure_stamp, None);
 }
 
-/// MS-01 (ARCH-0055): the type-76 receipt scan walks UUID mint order, not
-/// `at` order — pre-fix, a flood of newer-minted BACKDATED `Proposed`
-/// events (`at` below the query window) consumed the whole scan cap and
-/// starved an older-minted in-window receipt. Out-of-window rows must not
-/// charge the cap.
+/// MS-01 (ARCH-0055) SPEC-CONTRADICTION: the earlier perimeter regression
+/// claimed out-of-window rows must not charge the cap. That contract was the
+/// bug: it capped candidates, not WORK, and allowed an unbounded ledger walk.
+/// The ruled security property caps every visited row. Because UUID mint
+/// order is not `at` order, the bounded scan can starve the older-minted
+/// in-window receipt below; an `at`-ordered index or cursor pagination is a
+/// separate deferred design item.
 #[test]
-fn identity_topology_receipt_scan_charges_only_in_window_rows() -> Result<()> {
+fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
     use crate::identity_topology::{
         IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
     };
@@ -1533,12 +1535,9 @@ fn identity_topology_receipt_scan_charges_only_in_window_rows() -> Result<()> {
             .with_kind(ReceiptKind::IdentityLifecycle)
             .with_time_bounds(Some(500), Some(2_000)),
     )?;
-    assert_eq!(
-        receipts.len(),
-        1,
-        "the in-window merge receipt must not be starved by backdated mints"
+    assert!(
+        receipts.is_empty(),
+        "the visited-row work cap must stop before an older-minted receipt hidden by the flood"
     );
-    assert_eq!(receipts[0].outcome, "merge");
-    assert_eq!(receipts[0].occurred_at, 1_000);
     Ok(())
 }

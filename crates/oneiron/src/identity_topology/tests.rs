@@ -1593,6 +1593,119 @@ fn replicated_merge_record(
 }
 
 #[test]
+fn partial_multi_participant_merge_authorizes_no_shell_until_complete() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let present_source = put_person(&vault, 0x62);
+    let missing_source = id(0x63);
+    let event_id = id(0x70);
+    let record = replicated_merge_record(vec![present_source, missing_source], survivor, 50);
+    put_identity_event_record(&vault, event_id, &record);
+
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .expect("reconcile partially materialized merge");
+    assert!(
+        !vault
+            .edge_exists(&present_source, EdgeKind::MergedInto, &survivor)
+            .expect("read present-source shell"),
+        "one absent participant must defer the whole event, not authorize a partial shell"
+    );
+
+    put_person(&vault, 0x63);
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .expect("reconcile complete merge");
+    for source in [present_source, missing_source] {
+        assert!(
+            vault
+                .edge_exists(&source, EdgeKind::MergedInto, &survivor)
+                .expect("read complete shell"),
+            "every shell becomes authorized together once all participants materialize"
+        );
+    }
+}
+
+#[test]
+fn partial_multi_head_split_authorizes_no_shell_until_complete() {
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x61);
+    let present_head = put_person(&vault, 0x62);
+    let missing_head = id(0x63);
+    let event_id = id(0x70);
+    put_identity_event_record(
+        &vault,
+        event_id,
+        &StoredIdentityOpEvent {
+            seq: 50,
+            at: 200,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: StoredIdentityOpAction::Split {
+                entity: original,
+                heads: vec![present_head, missing_head],
+                reassignment: ReassignmentMap::default(),
+            },
+        },
+    );
+
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .expect("reconcile partially materialized split");
+    assert!(
+        !vault
+            .edge_exists(&original, EdgeKind::SplitInto, &present_head)
+            .expect("read present-head shell"),
+        "one absent head must defer the whole split, not authorize a partial shell"
+    );
+
+    put_person(&vault, 0x63);
+    for head in [present_head, missing_head] {
+        assert!(
+            vault
+                .edge_exists(&original, EdgeKind::SplitInto, &head)
+                .expect("read complete split shell"),
+            "every split shell becomes authorized together once all heads materialize"
+        );
+    }
+}
+
+#[test]
+fn plain_local_put_retriggers_deferred_topology_at_shared_boundary() {
+    let (_dir, vault) = open_vault();
+    let survivor = id(0x61);
+    let source = id(0x62);
+    let event_id = id(0x70);
+    put_identity_event_record(
+        &vault,
+        event_id,
+        &replicated_merge_record(vec![source], survivor, 50),
+    );
+
+    put_person(&vault, 0x62);
+    assert!(
+        !vault
+            .edge_exists(&source, EdgeKind::MergedInto, &survivor)
+            .expect("read deferred shell"),
+        "the first ordinary put leaves the whole event deferred"
+    );
+    put_person(&vault, 0x61);
+    assert!(
+        vault
+            .edge_exists(&source, EdgeKind::MergedInto, &survivor)
+            .expect("read reconciled shell"),
+        "the shared successful-put boundary must reconcile when the final participant lands"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&source).expect("source state"),
+        EntityLifecycleState::Merged
+    );
+}
+
+#[test]
 fn operational_setters_leave_live_shell_edges_intact() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x61);
@@ -1926,6 +2039,33 @@ fn type_76_decoder_rejects_noncanonical_map_fields() {
 }
 
 #[test]
+fn replicated_event_caps_reject_oversized_participant_and_body_work() {
+    let participant_ids = (1..=MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS + 1)
+        .map(|index| {
+            let mut bytes = [0_u8; 16];
+            bytes[8..].copy_from_slice(&(index as u64).to_be_bytes());
+            EntityId::from_bytes(bytes).expect("participant id")
+        })
+        .collect::<Vec<_>>();
+    let over_participant_cap = replicated_merge_record(participant_ids, id(0x61), 1);
+    let bytes = encode_identity_topology_event_body(&over_participant_cap).expect("encode record");
+    let err = decode_identity_topology_event_body(&bytes)
+        .expect_err("over-cap participant fan-out must reject before storage");
+    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+
+    let mut over_body_cap = replicated_merge_record(vec![id(0x62)], id(0x61), 1);
+    over_body_cap.evidence = Some(IdentityOpEvidence {
+        refs: Vec::new(),
+        rationale: "x".repeat(MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES + 1),
+    });
+    let bytes = encode_identity_topology_event_body(&over_body_cap).expect("encode large record");
+    assert!(bytes.len() > MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES);
+    let err = decode_identity_topology_event_body(&bytes)
+        .expect_err("over-cap body must reject before MessagePack decode");
+    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+}
+
+#[test]
 fn seq_clock_joins_ingested_history_before_local_allocation() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x61);
@@ -1953,6 +2093,49 @@ fn seq_clock_joins_ingested_history_before_local_allocation() {
     assert_eq!(
         record.seq, 51,
         "local allocation must order AFTER ingested history"
+    );
+}
+
+#[test]
+fn local_sequence_allocator_refuses_the_replicated_terminal_band() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let loser = put_person(&vault, 0x62);
+    let last_network_sequence = IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING - 1;
+    vault
+        .with_write_txn(|wtxn| {
+            vault.advance_identity_topology_seq_in_txn(wtxn, last_network_sequence)
+        })
+        .expect("join the last network-admissible sequence");
+    let events_before = event_count(&vault);
+
+    let err = vault
+        .apply_identity_topology_op(
+            &merge_op(vec![loser], survivor),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            200,
+        )
+        .expect_err("local allocation must not enter the peer-rejected terminal band");
+    assert!(matches!(
+        err,
+        Error::InvalidIdentityTopologyEventBody(
+            "identity topology event seq is in the reserved terminal range"
+        )
+    ));
+    assert_eq!(event_count(&vault), events_before, "no event was minted");
+    assert!(
+        !vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .expect("read shell"),
+        "a refused allocation has zero topology effects"
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert_eq!(
+        vault
+            .read_identity_topology_seq_in_txn(&rtxn)
+            .expect("read seq clock"),
+        last_network_sequence,
+        "the failed allocation must not advance the clock"
     );
 }
 

@@ -47,9 +47,29 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, is_structural_kind};
+use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static FULL_RECONCILIATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    pub(crate) fn reset_full_reconciliations() {
+        FULL_RECONCILIATIONS.store(0, Ordering::SeqCst);
+    }
+
+    pub(crate) fn full_reconciliations() -> usize {
+        FULL_RECONCILIATIONS.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn note_full_reconciliation() {
+        FULL_RECONCILIATIONS.fetch_add(1, Ordering::SeqCst);
+    }
+}
 
 /// Predicate of the anti-merge claim (ARCH-0055 §9 G.1 row): symmetric
 /// `entity.distinct_from` pair, conflict-set keyed by [`distinct_pair_key`].
@@ -70,6 +90,12 @@ pub(crate) const IDENTITY_TOPOLOGY_SEQ_KEY: &[u8] = b"m:identity_topology_seq";
 /// headroom for undo/counter-events instead of allowing one terminal peer
 /// record to wedge every future local topology write.
 pub(crate) const IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING: u64 = u64::MAX - 1_023;
+
+/// Hard per-record limits for the append-only replicated family. The body
+/// limit bounds decode/allocation work before MessagePack parsing; the
+/// participant limit bounds per-event fold and reconciliation fan-out.
+pub(crate) const MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS: usize = 256;
 
 const BODY_KEY_KIND: &str = "kind";
 const BODY_KEY_SEQ: &str = "seq";
@@ -1009,6 +1035,11 @@ pub(crate) fn encode_identity_topology_event_body(
 /// Decodes a type-76 record body from its pinned MessagePack bytes,
 /// fail-closed on trailing bytes or any malformed field.
 pub(crate) fn decode_identity_topology_event_body(data: &[u8]) -> Result<StoredIdentityOpEvent> {
+    if data.len() > MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event body exceeds the size limit",
+        ));
+    }
     let mut cursor = data;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
         Error::InvalidIdentityTopologyEventBody("identity topology event bytes are malformed")
@@ -1024,7 +1055,45 @@ pub(crate) fn decode_identity_topology_event_body(data: &[u8]) -> Result<StoredI
             "identity topology event body is not canonical",
         ));
     }
+    validate_identity_topology_event_stateless(&record)?;
     Ok(record)
+}
+
+/// Timeless replicated-record admission checks. These are exactly the
+/// invariants a local door can enforce without consulting lifecycle state:
+/// sequence/consent legality, bounded fan-out, and operation shape. They run
+/// during body decode, before quota, storage, clock join, or reconciliation.
+fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) -> Result<()> {
+    if record.seq == 0 {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event seq must be nonzero",
+        ));
+    }
+    if record.seq >= IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event seq is in the reserved terminal range",
+        ));
+    }
+    if record.approval == ClaimApprovalStatus::Rejected {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "rejected identity topology decisions are not stored",
+        ));
+    }
+
+    let IdentityTopologyAction::Apply(op) = record.action.to_fold_action() else {
+        return Ok(());
+    };
+    if op.participants().len() > MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event has too many participants",
+        ));
+    }
+    evaluate_transition(&BTreeMap::new(), &op).map_err(|_| {
+        Error::InvalidIdentityTopologyEventBody(
+            "identity topology event operation shape is invalid",
+        )
+    })?;
+    Ok(())
 }
 
 /// D18 body validator for the type-76 maintenance kind, run at the shared
@@ -1319,10 +1388,352 @@ pub enum IdentityOpOutcome {
     Noop,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdentityTopologyParticipantValidation {
+    Complete,
+    Deferred,
+    Invalid(IdentityTopologyRejection),
+}
+
 fn shell_edge_weight(kind: EdgeKind) -> Result<f32> {
     kind.default_weight().ok_or(Error::InvariantViolation(
         "identity topology edge missing default weight",
     ))
+}
+
+fn identity_topology_entity_type_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<u8>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    Ok(Some(header.entity_type))
+}
+
+fn identity_topology_event_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<StoredIdentityOpEvent>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return Err(Error::InvalidEntityType(header.entity_type));
+    }
+    decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map(Some)
+        .map_err(|_| Error::CorruptedIndex("identity topology event body"))
+}
+
+fn identity_topology_events_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<IdentityTopologyEvent>> {
+    let mut events = Vec::new();
+    for entry in store
+        .type_index
+        .prefix_iter(rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+    {
+        let (key, _) = entry?;
+        let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
+        let record = identity_topology_event_for_store_in_txn(store, rtxn, &event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        events.push(IdentityTopologyEvent {
+            event_id,
+            seq: record.seq,
+            approval: record.approval,
+            action: record.action.to_fold_action(),
+        });
+    }
+    Ok(events)
+}
+
+fn validate_identity_op_participants_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    op: &IdentityTopologyOp,
+) -> Result<IdentityTopologyParticipantValidation> {
+    let is_merge = matches!(op, IdentityTopologyOp::Merge(_));
+    let mut validation = IdentityTopologyParticipantValidation::Complete;
+    for participant in op.participants() {
+        let Some(entity_type) =
+            identity_topology_entity_type_for_store_in_txn(store, rtxn, &participant)?
+        else {
+            validation = IdentityTopologyParticipantValidation::Deferred;
+            continue;
+        };
+        if !is_structural_kind(entity_type) {
+            return Ok(IdentityTopologyParticipantValidation::Invalid(
+                IdentityTopologyRejection::NotStructural {
+                    entity: participant,
+                },
+            ));
+        }
+        if is_merge && entity_type == ENTITY_TYPE_FACET {
+            return Ok(IdentityTopologyParticipantValidation::Invalid(
+                IdentityTopologyRejection::FacetMerge {
+                    entity: participant,
+                },
+            ));
+        }
+    }
+    Ok(validation)
+}
+
+fn identity_topology_actor_complete_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    record: &StoredIdentityOpEvent,
+) -> Result<bool> {
+    let Some(actor) = record.actor else {
+        return Ok(true);
+    };
+    let Some(actor_type) =
+        identity_topology_entity_type_for_store_in_txn(store, rtxn, &actor.entity_ref())?
+    else {
+        return Ok(false);
+    };
+    crate::provenance::validate_actor_class(actor_type, actor.actor_class())?;
+    Ok(true)
+}
+
+fn fold_effective_identity_topology_events_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<IdentityTopologyEvent>> {
+    let events = identity_topology_events_for_store_in_txn(store, rtxn)?;
+    let mut effective = Vec::with_capacity(events.len());
+    for event in events {
+        let references_complete = match &event.action {
+            IdentityTopologyAction::Apply(op) => matches!(
+                validate_identity_op_participants_for_store_in_txn(store, rtxn, op)?,
+                IdentityTopologyParticipantValidation::Complete
+            ),
+            IdentityTopologyAction::Undo { target } => {
+                identity_topology_entity_type_for_store_in_txn(store, rtxn, target)?
+                    .is_some_and(|kind| kind == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+            }
+        };
+        let record = identity_topology_event_for_store_in_txn(store, rtxn, &event.event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        let actor_complete =
+            match identity_topology_actor_complete_for_store_in_txn(store, rtxn, &record) {
+                Ok(complete) => complete,
+                Err(Error::ActorClassMismatch { .. }) => false,
+                Err(err) => return Err(err),
+            };
+        if references_complete && actor_complete {
+            effective.push(event);
+        }
+    }
+    Ok(effective)
+}
+
+fn desired_shell_edges_for_store_entity_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    fold: &IdentityTopologyFold,
+    entity: &EntityId,
+) -> Result<Vec<(EdgeKind, EntityId, u64)>> {
+    let state = fold
+        .states
+        .get(entity)
+        .copied()
+        .unwrap_or(EntityLifecycleState::Active);
+    if state == EntityLifecycleState::Active {
+        return Ok(Vec::new());
+    }
+    let event_id = fold
+        .current_event
+        .get(entity)
+        .ok_or(Error::CorruptedIndex("identity topology fold"))?;
+    let record = identity_topology_event_for_store_in_txn(store, rtxn, event_id)?
+        .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+    Ok(match (&record.action, state) {
+        (StoredIdentityOpAction::Merge { survivor, .. }, EntityLifecycleState::Merged) => {
+            vec![(EdgeKind::MergedInto, *survivor, record.at)]
+        }
+        (StoredIdentityOpAction::Split { heads, .. }, EntityLifecycleState::Split) => heads
+            .iter()
+            .map(|head| (EdgeKind::SplitInto, *head, record.at))
+            .collect(),
+        _ => return Err(Error::CorruptedIndex("identity topology fold")),
+    })
+}
+
+fn identity_topology_shell_peers_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    kind: EdgeKind,
+) -> Result<Vec<EntityId>> {
+    let prefix = crate::vault::edge_kind_prefix(entity, kind);
+    let mut peers = Vec::new();
+    for (scanned, entry) in store.edges_out.prefix_iter(rtxn, &prefix)?.enumerate() {
+        if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+            return Err(Error::IndexOverflow("identity topology"));
+        }
+        let (key, value) = entry?;
+        peers.push(crate::edge::parse_strict_edge_record(&key, &value)?.target);
+    }
+    Ok(peers)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reconcile_identity_topology_edges_for_store_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_index_trusted: bool,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    #[cfg(test)]
+    test_hooks::note_full_reconciliation();
+    let stored_events = identity_topology_events_for_store_in_txn(store, &*wtxn)?;
+    let mut touched = BTreeSet::new();
+    for event in &stored_events {
+        match &event.action {
+            IdentityTopologyAction::Apply(IdentityTopologyOp::Merge(merge)) => {
+                touched.extend(merge.sources.iter().copied());
+            }
+            IdentityTopologyAction::Apply(IdentityTopologyOp::Split(split)) => {
+                touched.insert(split.entity);
+            }
+            IdentityTopologyAction::Apply(
+                IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_),
+            )
+            | IdentityTopologyAction::Undo { .. } => {}
+        }
+    }
+    if touched.is_empty() {
+        return Ok(());
+    }
+
+    let effective_events = fold_effective_identity_topology_events_for_store_in_txn(store, &*wtxn)?;
+    let fold = fold_identity_topology_log(&effective_events);
+    let mut ops = Vec::new();
+    for entity in &touched {
+        let desired = desired_shell_edges_for_store_entity_in_txn(store, &*wtxn, &fold, entity)?;
+        for kind in [EdgeKind::MergedInto, EdgeKind::SplitInto] {
+            let existing =
+                identity_topology_shell_peers_for_store_in_txn(store, &*wtxn, entity, kind)?;
+            for peer in &existing {
+                if !desired
+                    .iter()
+                    .any(|(desired_kind, target, _)| *desired_kind == kind && target == peer)
+                {
+                    ops.push(BatchOp::DeleteEdge {
+                        src: *entity,
+                        kind,
+                        tgt: *peer,
+                    });
+                }
+            }
+            for (desired_kind, target, created_at) in &desired {
+                if *desired_kind != kind {
+                    continue;
+                }
+                if store.entities.get(&*wtxn, entity.as_bytes())?.is_none()
+                    || store.entities.get(&*wtxn, target.as_bytes())?.is_none()
+                {
+                    continue;
+                }
+                let weight = shell_edge_weight(kind)?;
+                let canonical = crate::edge::encode_edge_value(
+                    kind,
+                    weight,
+                    *created_at,
+                    crate::affect::Vad::NEUTRAL,
+                    None,
+                )?;
+                let out_key = Store::encode_edge_key(entity, kind, target);
+                let in_key = Store::encode_edge_key(target, kind, entity);
+                let out_matches = store
+                    .edges_out
+                    .get(&*wtxn, &out_key)?
+                    .is_some_and(|value| value == canonical.as_slice());
+                let in_matches = store
+                    .edges_in
+                    .get(&*wtxn, &in_key)?
+                    .is_some_and(|value| value == canonical.as_slice());
+                if out_matches && in_matches {
+                    continue;
+                }
+                ops.push(BatchOp::EdgeWithCreatedAt {
+                    src: *entity,
+                    kind,
+                    tgt: *target,
+                    weight,
+                    created_at: *created_at,
+                    vad: crate::affect::Vad::NEUTRAL,
+                    provenance: None,
+                });
+            }
+        }
+    }
+    if ops.is_empty() {
+        return Ok(());
+    }
+    apply_ops(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        false,
+        true,
+    )
+}
+
+/// Shared successful-put boundary for every `apply_ops` caller. All puts in
+/// one batch are considered together and trigger at most one full topology
+/// reconciliation; no pending-participant index is introduced.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_index_trusted: bool,
+    wtxn: &mut heed::RwTxn<'_>,
+    materialized: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if materialized.is_empty() {
+        return Ok(());
+    }
+    let events = identity_topology_events_for_store_in_txn(store, &*wtxn)?;
+    for event in events {
+        let action_relevant = match &event.action {
+            IdentityTopologyAction::Apply(op) => op
+                .participants()
+                .iter()
+                .any(|participant| materialized.contains(participant)),
+            // Type-76 targets are engine-authored and their replicated ingest
+            // door performs the full reconciliation after the seq join. Do
+            // not duplicate that pass from the generic put hook.
+            IdentityTopologyAction::Undo { .. } => false,
+        };
+        let record = identity_topology_event_for_store_in_txn(store, &*wtxn, &event.event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        let actor_relevant = record
+            .actor
+            .is_some_and(|actor| materialized.contains(&actor.entity_ref()));
+        if action_relevant || actor_relevant {
+            return reconcile_identity_topology_edges_for_store_in_txn(
+                store,
+                config,
+                analyzer,
+                text_index_trusted,
+                wtxn,
+            );
+        }
+    }
+    Ok(())
 }
 
 impl Vault {
@@ -1409,7 +1820,15 @@ impl Vault {
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
         let participants = op.participants();
-        self.validate_identity_op_participants_in_txn(&*wtxn, op, false)?;
+        match self.validate_identity_op_participants_in_txn(&*wtxn, op)? {
+            IdentityTopologyParticipantValidation::Complete => {}
+            IdentityTopologyParticipantValidation::Deferred => {
+                return Err(Error::EntityNotFound);
+            }
+            IdentityTopologyParticipantValidation::Invalid(rejection) => {
+                return Err(Error::IdentityTopologyRejected(rejection));
+            }
+        }
         let mut states = BTreeMap::new();
         for participant in &participants {
             states.insert(
@@ -1646,39 +2065,39 @@ impl Vault {
     }
 
     /// Shared participant/storage validator for both the local topology
-    /// door and replicated type-76 admission. Sync may defer an absent
-    /// participant, but every participant already available locally must
-    /// be a structural kind and merge participants may never be FACETs.
+    /// door and replicated type-76 admission. Completeness is event-wide:
+    /// one absent participant defers the WHOLE event, so a multi-source
+    /// merge or multi-head split can never authorize a partial shell.
+    /// Available participants must be structural and merge participants
+    /// may never be FACETs.
     fn validate_identity_op_participants_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         op: &IdentityTopologyOp,
-        allow_missing: bool,
-    ) -> Result<()> {
+    ) -> Result<IdentityTopologyParticipantValidation> {
         let is_merge = matches!(op, IdentityTopologyOp::Merge(_));
+        let mut validation = IdentityTopologyParticipantValidation::Complete;
         for participant in op.participants() {
             let Some(entity_type) = self.get_entity_type_in_txn(rtxn, &participant)? else {
-                if allow_missing {
-                    continue;
-                }
-                return Err(Error::EntityNotFound);
+                validation = IdentityTopologyParticipantValidation::Deferred;
+                continue;
             };
             if !is_structural_kind(entity_type) {
-                return Err(Error::IdentityTopologyRejected(
+                return Ok(IdentityTopologyParticipantValidation::Invalid(
                     IdentityTopologyRejection::NotStructural {
                         entity: participant,
                     },
                 ));
             }
             if is_merge && entity_type == ENTITY_TYPE_FACET {
-                return Err(Error::IdentityTopologyRejected(
+                return Ok(IdentityTopologyParticipantValidation::Invalid(
                     IdentityTopologyRejection::FacetMerge {
                         entity: participant,
                     },
                 ));
             }
         }
-        Ok(())
+        Ok(validation)
     }
 
     /// Pre-mutation validation for one replicated record. Missing apply
@@ -1697,9 +2116,18 @@ impl Vault {
                 "identity topology event seq is in the reserved terminal range",
             ));
         }
+        // An absent actor is a reference deferral, just like an absent
+        // participant: the immutable event may land, but the effective fold
+        // excludes it until the actor materializes and its class can be
+        // checked. An available mismatched actor rejects before mutation.
+        self.validate_replicated_identity_topology_actor_in_txn(rtxn, record)?;
         match record.action.to_fold_action() {
             IdentityTopologyAction::Apply(op) => {
-                self.validate_identity_op_participants_in_txn(rtxn, &op, true)?;
+                if let IdentityTopologyParticipantValidation::Invalid(rejection) =
+                    self.validate_identity_op_participants_in_txn(rtxn, &op)?
+                {
+                    return Err(Error::IdentityTopologyRejected(rejection));
+                }
             }
             IdentityTopologyAction::Undo { target } => {
                 let Some(entity_type) = self.get_entity_type_in_txn(rtxn, &target)? else {
@@ -1711,8 +2139,11 @@ impl Vault {
                 let target_record = self
                     .identity_topology_event_in_txn(rtxn, &target)?
                     .ok_or(Error::CorruptedIndex("identity topology event index"))?;
-                if let IdentityTopologyAction::Apply(op) = target_record.action.to_fold_action() {
-                    self.validate_identity_op_participants_in_txn(rtxn, &op, true)?;
+                if let IdentityTopologyAction::Apply(op) = target_record.action.to_fold_action()
+                    && let IdentityTopologyParticipantValidation::Invalid(rejection) =
+                        self.validate_identity_op_participants_in_txn(rtxn, &op)?
+                {
+                    return Err(Error::IdentityTopologyRejected(rejection));
                 }
             }
         }
@@ -1731,26 +2162,47 @@ impl Vault {
         let events = self.identity_topology_events_in_txn(rtxn)?;
         let mut effective = Vec::with_capacity(events.len());
         for event in events {
-            let eligible = match &event.action {
-                IdentityTopologyAction::Apply(op) => {
-                    match self.validate_identity_op_participants_in_txn(rtxn, op, true) {
-                        Ok(_) => true,
-                        Err(Error::IdentityTopologyRejected(
-                            IdentityTopologyRejection::NotStructural { .. }
-                            | IdentityTopologyRejection::FacetMerge { .. },
-                        )) => false,
+            let references_complete = match &event.action {
+                IdentityTopologyAction::Apply(op) => matches!(
+                    self.validate_identity_op_participants_in_txn(rtxn, op)?,
+                    IdentityTopologyParticipantValidation::Complete
+                ),
+                IdentityTopologyAction::Undo { target } => self
+                    .get_entity_type_in_txn(rtxn, target)?
+                    .is_some_and(|entity_type| entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT),
+            };
+            let actor_complete = match self.identity_topology_event_in_txn(rtxn, &event.event_id)? {
+                Some(record) => {
+                    match self.validate_replicated_identity_topology_actor_in_txn(rtxn, &record) {
+                        Ok(complete) => complete,
+                        Err(Error::ActorClassMismatch { .. }) => false,
                         Err(err) => return Err(err),
                     }
                 }
-                IdentityTopologyAction::Undo { target } => self
-                    .get_entity_type_in_txn(rtxn, target)?
-                    .is_none_or(|entity_type| entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT),
+                None => return Err(Error::CorruptedIndex("identity topology event index")),
             };
-            if eligible {
+            if references_complete && actor_complete {
                 effective.push(event);
             }
         }
         Ok(effective)
+    }
+
+    /// `true` when an event's optional actor is available and class-valid;
+    /// `false` when the actor reference is absent and therefore deferred.
+    fn validate_replicated_identity_topology_actor_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        record: &StoredIdentityOpEvent,
+    ) -> Result<bool> {
+        let Some(actor) = record.actor else {
+            return Ok(true);
+        };
+        let Some(actor_type) = self.get_entity_type_in_txn(rtxn, &actor.entity_ref())? else {
+            return Ok(false);
+        };
+        crate::provenance::validate_actor_class(actor_type, actor.actor_class())?;
+        Ok(true)
     }
 
     fn validate_identity_op_actor_in_txn(
@@ -1788,6 +2240,11 @@ impl Vault {
         let next = previous
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("identity topology seq"))?;
+        if next >= IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING {
+            return Err(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event seq is in the reserved terminal range",
+            ));
+        }
         self.store
             .vault_meta
             .put(wtxn, IDENTITY_TOPOLOGY_SEQ_KEY, &next.to_be_bytes())?;
@@ -1902,144 +2359,14 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> Result<()> {
-        let stored_events = self.identity_topology_events_in_txn(&*wtxn)?;
-        // Reconcile the union of every possible shell source, not merely
-        // the incoming event's participants. Inserting an older seq can
-        // change a later event from applied to rejected (or vice versa), so
-        // the before/after fold delta can include sources named only by an
-        // already-stored record.
-        let mut touched = BTreeSet::new();
-        for event in &stored_events {
-            match &event.action {
-                IdentityTopologyAction::Apply(IdentityTopologyOp::Merge(merge)) => {
-                    touched.extend(merge.sources.iter().copied());
-                }
-                IdentityTopologyAction::Apply(IdentityTopologyOp::Split(split)) => {
-                    touched.insert(split.entity);
-                }
-                IdentityTopologyAction::Apply(
-                    IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_),
-                )
-                | IdentityTopologyAction::Undo { .. } => {}
-            }
-        }
-        if touched.is_empty() {
-            return Ok(());
-        }
-
-        let effective_events = self.fold_effective_identity_topology_events_in_txn(&*wtxn)?;
-        let fold = fold_identity_topology_log(&effective_events);
-        let mut ops = Vec::new();
-        for entity in &touched {
-            let desired = self.desired_shell_edges_for_entity_in_txn(&*wtxn, &fold, entity)?;
-            for kind in [EdgeKind::MergedInto, EdgeKind::SplitInto] {
-                let existing = self.filtered_edge_peers(
-                    &*wtxn,
-                    &self.store.edges_out,
-                    entity,
-                    kind,
-                    None,
-                    "identity topology",
-                )?;
-                for peer in &existing {
-                    if !desired
-                        .iter()
-                        .any(|(desired_kind, target, _)| *desired_kind == kind && target == peer)
-                    {
-                        ops.push(BatchOp::DeleteEdge {
-                            src: *entity,
-                            kind,
-                            tgt: *peer,
-                        });
-                    }
-                }
-                for (desired_kind, target, created_at) in &desired {
-                    if *desired_kind != kind {
-                        continue;
-                    }
-                    if self
-                        .store
-                        .entities
-                        .get(&*wtxn, entity.as_bytes())?
-                        .is_none()
-                        || self
-                            .store
-                            .entities
-                            .get(&*wtxn, target.as_bytes())?
-                            .is_none()
-                    {
-                        continue;
-                    }
-                    let weight = shell_edge_weight(kind)?;
-                    let canonical = crate::edge::encode_edge_value(
-                        kind,
-                        weight,
-                        *created_at,
-                        crate::affect::Vad::NEUTRAL,
-                        None,
-                    )?;
-                    let out_key = crate::store::Store::encode_edge_key(entity, kind, target);
-                    let in_key = crate::store::Store::encode_edge_key(target, kind, entity);
-                    let out_matches = self
-                        .store
-                        .edges_out
-                        .get(&*wtxn, &out_key)?
-                        .is_some_and(|value| value == canonical.as_slice());
-                    let in_matches = self
-                        .store
-                        .edges_in
-                        .get(&*wtxn, &in_key)?
-                        .is_some_and(|value| value == canonical.as_slice());
-                    if out_matches && in_matches {
-                        continue;
-                    }
-                    ops.push(BatchOp::EdgeWithCreatedAt {
-                        src: *entity,
-                        kind,
-                        tgt: *target,
-                        weight,
-                        created_at: *created_at,
-                        vad: crate::affect::Vad::NEUTRAL,
-                        provenance: None,
-                    });
-                }
-            }
-        }
-        if ops.is_empty() {
-            return Ok(());
-        }
-        apply_ops(
+        reconcile_identity_topology_edges_for_store_in_txn(
             &self.store,
             &self.config,
             &self.analyzer,
-            wtxn,
-            ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
+            wtxn,
         )
-    }
-
-    /// Existing-index-free deferral re-trigger for sync materialization.
-    /// The type-76 family is quota-bounded, so scanning it when a newly
-    /// materialized entity is actually named by an event is the ruled
-    /// model-conserving recovery path; no pending marker/index is needed.
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(crate) fn reconcile_identity_topology_for_materialized_entity_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        materialized: &EntityId,
-    ) -> Result<()> {
-        let events = self.identity_topology_events_in_txn(&*wtxn)?;
-        let relevant = events.iter().any(|event| match &event.action {
-            IdentityTopologyAction::Apply(op) => op.participants().contains(materialized),
-            IdentityTopologyAction::Undo { .. } => false,
-        });
-        if relevant {
-            self.reconcile_identity_topology_edges_in_txn(wtxn)?;
-        }
-        Ok(())
     }
 
     /// Stamps `seq`, writes the type-76 event record plus the staged edge

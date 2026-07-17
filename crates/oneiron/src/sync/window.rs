@@ -831,12 +831,13 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             continue;
         }
 
-        // Check if tombstoned in CRDT — value-agnostic, entity-canonical
-        // presence: a non-binary tombstone still decodes HARD downstream
-        // and a case-shifted hex alias still names this id, so both must
-        // suppress the mirror exactly like a canonical binary one (fail
-        // closed).
-        if tombstone_map_contains_id(&tombstones_map, id) {
+        // Type-classify the local carrier BEFORE granting the CRDT
+        // tombstone delete authority. Engine-authored protected rows keep
+        // their carrier and quarantine the hostile tombstone; ordinary rows
+        // retain the value-agnostic, entity-canonical delete-wins gate.
+        let protected_tombstone =
+            quarantine_outbound_protected_tombstones(vault, window_key, &tombstones_map, id, &raw)?;
+        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
                 Ok(())
@@ -1153,10 +1154,9 @@ pub fn forward_rematerialize(
             // (inside the same write txn as their lease verification and
             // replicated put, so a stale long-lived `rtxn` cannot hide a
             // mid-flight finalized/divergent receipt) and ARCH-0055
-            // type-76 events (whose door heals the seq-clock join and the
-            // shell edges even on byte-identical replay — remat is the
-            // rebuild pass that repairs rows ingested before those side
-            // effects existed).
+            // type-76 events (whose door preserves immutable divergence and
+            // seq-clock checks on byte-identical replay while short-circuiting
+            // before the full-family reconciliation DoS surface).
             let byte_compare_in_door = matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_REDACTION_AUDIT
@@ -1332,7 +1332,6 @@ pub fn forward_rematerialize(
                             data,
                         )
                         .apply(wtxn)?;
-                    vault.reconcile_identity_topology_for_materialized_entity_in_txn(wtxn, &id)?;
                     Ok(true)
                 })
             } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
@@ -1372,7 +1371,6 @@ pub fn forward_rematerialize(
                             data,
                         )
                         .apply(wtxn)?;
-                    vault.reconcile_identity_topology_for_materialized_entity_in_txn(wtxn, &id)?;
                     Ok(true)
                 })
             } else if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
@@ -1410,7 +1408,6 @@ pub fn forward_rematerialize(
                             data,
                         )
                         .apply(wtxn)?;
-                    vault.reconcile_identity_topology_for_materialized_entity_in_txn(wtxn, &id)?;
                     Ok(true)
                 })
             };
@@ -1956,21 +1953,22 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        // Value-agnostic, entity-canonical tombstone presence (fail
-        // closed): a non-binary tombstone decodes HARD on replay and a
-        // case-shifted hex alias still names this id, so reverse remat
-        // must never re-insert the still-live local body over either —
-        // that would ship a hard-deleted payload fleet-wide. Entities-map
-        // check below stays Binary-only by design.
-        if tombstone_map_contains_id(&tombstones_map, id) {
-            continue;
-        }
-
         let Some(raw) = vault.get_raw(id)? else {
             continue;
         };
 
         if reverse_remat_skip_policy_manifest_mirror(&raw) {
+            continue;
+        }
+
+        // Read and type-classify the local row BEFORE granting the CRDT
+        // tombstone delete authority. A hostile tombstone cannot suppress a
+        // protected engine record from outbound recovery; quarantine it and
+        // restore the carrier. Ordinary rows retain delete-wins semantics,
+        // including non-binary values and case-shifted aliases.
+        let protected_tombstone =
+            quarantine_outbound_protected_tombstones(vault, window_key, &tombstones_map, id, &raw)?;
+        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
             continue;
         }
 
@@ -2053,6 +2051,43 @@ fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
     }
     decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
         .map(|record| record.export_classification == CompanionExportClassification::LocalOnly)
+}
+
+/// Quarantines every CRDT tombstone aliasing a locally available,
+/// delete-protected engine record. Returns `true` only when tombstone
+/// authority was denied, allowing the caller to preserve or restore the
+/// entity carrier through the ordinary outbound mirror path.
+fn quarantine_outbound_protected_tombstones(
+    vault: &Vault,
+    window_key: &WindowKey,
+    tombstones_map: &LoroMap,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Ok(false);
+    };
+    if !crate::deletion::is_delete_protected_engine_record(header.entity_type) {
+        return Ok(false);
+    }
+
+    let tombstones = tombstone_values_for_id(tombstones_map, id);
+    if tombstones.is_empty() {
+        return Ok(false);
+    }
+
+    let rejection = Error::MaintenanceKindNotWritable(header.entity_type);
+    for tombstone in &tombstones {
+        quarantine::quarantine_rejected_op(
+            vault,
+            window_key.as_str(),
+            QuarantineContainer::Tombstones,
+            &id.to_hex(),
+            &rejection,
+            tombstone,
+        )?;
+    }
+    Ok(true)
 }
 
 fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<bool> {

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::str;
 
 pub mod export;
@@ -1743,6 +1743,7 @@ pub(crate) fn apply_ops_with_gate_mode(
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
+    let mut materialized_entity_ids = BTreeSet::new();
     let mut text_manifest_checked = false;
     let later_text_coverage_by_op = text_coverage_after_op(&ops);
     let write_policy = if contains_local_claim_put(&ops) && !claim_gate_prechecked {
@@ -1912,6 +1913,13 @@ pub(crate) fn apply_ops_with_gate_mode(
                     )?;
                     had_graph_mutation |= materialized;
                 }
+                // Type-76 rows are never legal participants/actors. Their
+                // dedicated ingest door reconciles after the seq join, so
+                // feeding event ids into the generic participant hook would
+                // enumerate the append-only family once per appended event.
+                if entity_type != crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+                    materialized_entity_ids.insert(id);
+                }
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -1959,6 +1967,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     #[cfg(feature = "sync")]
                     pending_embedding_enqueue_priorities.remove(&id);
                 }
+                materialized_entity_ids.insert(id);
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
                 let keep: HashSet<EntityId> = keep.into_iter().collect();
@@ -2110,6 +2119,15 @@ pub(crate) fn apply_ops_with_gate_mode(
             }
         }
     }
+
+    crate::identity_topology::reconcile_identity_topology_for_materialized_entities_in_txn(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &materialized_entity_ids,
+    )?;
 
     #[cfg(feature = "sync")]
     for (id, token) in &pending_embedding_tokens_written {

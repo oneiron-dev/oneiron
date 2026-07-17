@@ -2099,11 +2099,14 @@ fn companion_lifecycle_receipt(
 /// counter-events, effective AND parked) into `IdentityLifecycle` receipts.
 ///
 /// Scans the type-76 record family NEWEST-FIRST (reverse type-index walk;
-/// UUIDv7 ids order by mint time) and charges the scan cap ONLY for rows
-/// inside the query's `[start_at, end_at]` window, so the cap can never
-/// starve an in-window receipt behind a backlog of old — or newer-minted
-/// backdated — ones. The family is engine-authored and door-validated: an
-/// undecodable row is corruption, never skipped.
+/// UUIDv7 ids order by mint time) and caps EVERY visited row, including rows
+/// outside the query's `[start_at, end_at]` window. This is a bound on query
+/// work, not merely on returned candidates: an attacker-controlled backlog
+/// cannot force an unbounded ledger walk. Because mint order is not `at`
+/// order, this bounded scan can starve an older-minted in-window receipt;
+/// avoiding that requires an `at`-ordered index or cursor pagination. The
+/// family is engine-authored and door-validated: an undecodable row is
+/// corruption, never skipped.
 fn identity_topology_receipts(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -2116,26 +2119,21 @@ fn identity_topology_receipts(
         std::ops::Bound::Excluded(&end[..]),
     );
     let mut receipts = Vec::new();
-    let mut scanned = 0_usize;
-    for entry in vault.store.type_index.rev_range(rtxn, &bounds)? {
+    for entry in vault
+        .store
+        .type_index
+        .rev_range(rtxn, &bounds)?
+        .take(MAX_RECEIPT_QUERY_SCAN)
+    {
         let (key, _) = entry?;
         let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
         let record = vault
             .identity_topology_event_in_txn(rtxn, &event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
-        // Rows outside the query window — above its upper bound OR below
-        // its lower bound — must not consume the scan cap: UUID mint order
-        // is not `at` order, so a flood of newer-minted BACKDATED rows
-        // (`at` below the window) would otherwise exhaust the cap before
-        // the scan reaches an older-minted in-window receipt.
         if query.end_at.is_some_and(|end_at| record.at > end_at)
             || query.start_at.is_some_and(|start_at| record.at < start_at)
         {
             continue;
-        }
-        scanned += 1;
-        if scanned > MAX_RECEIPT_QUERY_SCAN {
-            break;
         }
         let receipt = identity_topology_receipt(&event_id, &record);
         if query.matches(&receipt) {

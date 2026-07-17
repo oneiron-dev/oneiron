@@ -24,6 +24,7 @@ use tokio::sync::mpsc;
 
 use super::loro_support::{
     map_delete, map_for_each_bytes, map_get_bytes, tombstone_map_contains_id,
+    tombstone_values_for_id,
 };
 use super::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op, quarantine_rejected_op_in_txn,
@@ -577,6 +578,7 @@ fn materialize_entities_from_delta(
                         vault,
                         wtxn,
                         &tombstones_map,
+                        window_key,
                         key.as_ref(),
                         blob,
                         lease_vault_id,
@@ -797,6 +799,7 @@ fn materialize_edges_from_delta(
                         wtxn,
                         &entities_map,
                         &tombstones_map,
+                        window_key,
                         &src,
                         lease_vault_id,
                     );
@@ -805,6 +808,7 @@ fn materialize_edges_from_delta(
                         wtxn,
                         &entities_map,
                         &tombstones_map,
+                        window_key,
                         &tgt,
                         lease_vault_id,
                     );
@@ -1678,6 +1682,7 @@ fn materialize_entity_blob_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     tombstones_map: &LoroMap,
+    window_key: &str,
     key: &str,
     blob: &[u8],
     lease_vault_id: u64,
@@ -1801,6 +1806,14 @@ fn materialize_entity_blob_in_txn(
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())?
             && *existing == *blob
         {
+            quarantine_and_neutralize_protected_tombstone_in_txn(
+                vault,
+                wtxn,
+                tombstones_map,
+                window_key,
+                &id,
+                header.entity_type,
+            )?;
             return Ok(false);
         }
         let validation = crate::batch::validate_replicated_authority_log_for_local_vault(
@@ -1825,7 +1838,7 @@ fn materialize_entity_blob_in_txn(
         // seq-clock join, shell-edge reconciliation) — the same door
         // forward rematerialization uses, so no sync entry point admits
         // the byte outside the ruled trust model.
-        return ingest_replicated_identity_topology_event_in_txn(
+        let materialized = ingest_replicated_identity_topology_event_in_txn(
             vault,
             wtxn,
             &id,
@@ -1833,7 +1846,16 @@ fn materialize_entity_blob_in_txn(
             blob,
             data,
             lease_vault_id,
-        );
+        )?;
+        quarantine_and_neutralize_protected_tombstone_in_txn(
+            vault,
+            wtxn,
+            tombstones_map,
+            window_key,
+            &id,
+            header.entity_type,
+        )?;
+        return Ok(materialized);
     } else {
         None
     };
@@ -1871,8 +1893,42 @@ fn materialize_entity_blob_in_txn(
         }
         return Err(err);
     }
-    vault.reconcile_identity_topology_for_materialized_entity_in_txn(wtxn, &id)?;
+    if delete_protected {
+        quarantine_and_neutralize_protected_tombstone_in_txn(
+            vault,
+            wtxn,
+            tombstones_map,
+            window_key,
+            &id,
+            header.entity_type,
+        )?;
+    }
     Ok(true)
+}
+
+fn quarantine_and_neutralize_protected_tombstone_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    tombstones_map: &LoroMap,
+    window_key: &str,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<()> {
+    let rejection = Error::MaintenanceKindNotWritable(entity_type);
+    let crdt_key = id.to_hex();
+    for tombstone in tombstone_values_for_id(tombstones_map, id) {
+        quarantine_rejected_op_in_txn(
+            vault,
+            wtxn,
+            window_key,
+            QuarantineContainer::Tombstones,
+            &crdt_key,
+            &rejection,
+            &tombstone,
+        )?;
+    }
+    vault.neutralize_delete_protected_marker_in_txn(wtxn, id, entity_type)?;
+    Ok(())
 }
 
 /// Shared fail-closed ingest door for replicated type-76 identity-topology
@@ -1880,9 +1936,10 @@ fn materialize_entity_blob_in_txn(
 /// shape). Observer B's entity pass and forward rematerialization BOTH
 /// route here, so every sync entry point enforces the same trust model:
 ///
-/// * byte-identical replay → idempotent skip that STILL joins the seq
-///   clock and reconciles shell edges (replay/rebuild is the healing pass
-///   for rows ingested before those side effects existed);
+/// * byte-identical replay → idempotent short-circuit after validation and
+///   seq-clock join, before quota or full-family reconciliation; derived
+///   shell healing rides the bounded edge echo/materialization paths rather
+///   than making unchanged startup replay quadratic;
 /// * divergent bytes for an existing id → typed
 ///   [`crate::Error::IdentityTopologyEventDivergence`] (equivocation on an
 ///   immutable single-writer record: local bytes win; callers quarantine
@@ -1916,7 +1973,11 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
                 .map_err(|_| crate::Error::CorruptedIndex("identity topology event body"))?;
             validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, &record)?;
             vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
-            vault.reconcile_identity_topology_edges_in_txn(wtxn)?;
+            vault.neutralize_delete_protected_marker_in_txn(
+                wtxn,
+                id,
+                crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            )?;
             return Ok(false);
         }
         Some(false) => {
@@ -1953,6 +2014,11 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
     }
     vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
     vault.reconcile_identity_topology_edges_in_txn(wtxn)?;
+    vault.neutralize_delete_protected_marker_in_txn(
+        wtxn,
+        id,
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+    )?;
     Ok(true)
 }
 
@@ -1973,6 +2039,9 @@ fn validate_replicated_identity_topology_record_before_mutation(
                 | crate::identity_topology::IdentityTopologyRejection::FacetMerge { .. },
             ) => Error::InvalidIdentityTopologyEventBody(
                 "identity topology event participant is not merge-eligible structural state",
+            ),
+            Error::ActorClassMismatch { .. } => Error::InvalidIdentityTopologyEventBody(
+                "identity topology event actor class does not match the available actor",
             ),
             other => other,
         })
@@ -2122,6 +2191,7 @@ fn ensure_entity_materialized_from_crdt(
     wtxn: &mut heed::RwTxn<'_>,
     entities_map: &LoroMap,
     tombstones_map: &LoroMap,
+    window_key: &str,
     id: &EntityId,
     lease_vault_id: u64,
 ) -> Result<EndpointHydration> {
@@ -2187,8 +2257,15 @@ fn ensure_entity_materialized_from_crdt(
     if companion_register_blob_is_local_only(&blob)? {
         return Ok(EndpointHydration::LocalOnly);
     }
-    if !materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob, lease_vault_id)?
-    {
+    if !materialize_entity_blob_in_txn(
+        vault,
+        wtxn,
+        tombstones_map,
+        window_key,
+        &hex_id,
+        &blob,
+        lease_vault_id,
+    )? {
         return Ok(EndpointHydration::Deferred);
     }
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the

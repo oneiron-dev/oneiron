@@ -33,6 +33,48 @@ fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
     blob
 }
 
+fn put_local_type_76_event(
+    vault: &Vault,
+    learned_at: u64,
+    participant_seed: u8,
+) -> Result<(EntityId, Vec<u8>)> {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        SurvivorshipPlan,
+    };
+
+    let source = EntityId::from_bytes([participant_seed; 16])?;
+    let survivor = EntityId::from_bytes([participant_seed.wrapping_add(1); 16])?;
+    for id in [&source, &survivor] {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"protected outbound fixture",
+        )?;
+    }
+    let outcome = vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![source],
+            survivor,
+            evidence: IdentityOpEvidence {
+                refs: Vec::new(),
+                rationale: "protected outbound tombstone fixture".to_owned(),
+            },
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        learned_at,
+    )?;
+    let event = match outcome {
+        IdentityOpOutcome::Applied { event, .. } => event,
+        other => panic!("fixture merge must apply, got {other:?}"),
+    };
+    let raw = vault.get_raw(&event)?.expect("type-76 event carrier");
+    Ok((event, raw))
+}
+
 fn commit_entity(window: &LoadedWindow, learned_at: u64, data: &[u8]) -> EntityId {
     let id = EntityId::now();
     map_insert_bytes(
@@ -2265,6 +2307,77 @@ fn forward_rematerialization_admits_byte_exact_mandated_shell_echo() -> Result<(
 }
 
 #[test]
+fn reverse_rematerialization_restores_protected_row_against_hostile_tombstone() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let (event, raw) = put_local_type_76_event(&vault, learned_at, 0xA1)?;
+    let tombstone = learned_at.to_be_bytes();
+
+    // Model a hostile peer update that retained only delete authority in the
+    // window. Reverse recovery must type-classify the local row before that
+    // tombstone can suppress its carrier fleet-wide.
+    let doc = create_window_doc("hostile-reverse", &window_key);
+    map_insert_bytes(&doc.get_map("tombstones"), &event.to_hex(), &tombstone)?;
+    doc.commit();
+
+    assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 1);
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &event.to_hex()),
+        Some(raw),
+        "reverse recovery must restore the protected type-76 carrier"
+    );
+    assert!(
+        tombstone_map_contains_id(&doc.get_map("tombstones"), &event),
+        "recovery denies delete authority without rewriting remote history"
+    );
+    let quarantined = quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Tombstones);
+    assert_eq!(quarantined[0].1.reason_code, "MaintenanceKindNotWritable");
+    assert_eq!(
+        quarantined[0].1.payload_hash,
+        quarantine::payload_hash(&tombstone)
+    );
+    Ok(())
+}
+
+#[test]
+fn pending_mirror_replays_protected_row_against_hostile_tombstone() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let (event, raw) = put_local_type_76_event(&vault, learned_at, 0xB1)?;
+    let marker = format!("pm:{window_key}:{}", event.to_hex());
+    vault.sync_state_put(&marker, &[1])?;
+    let tombstone = learned_at.to_be_bytes();
+
+    let doc = create_window_doc("hostile-pending", &window_key);
+    map_insert_bytes(&doc.get_map("tombstones"), &event.to_hex(), &tombstone)?;
+    doc.commit();
+
+    assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 1);
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &event.to_hex()),
+        Some(raw),
+        "pending recovery must mirror the protected type-76 carrier"
+    );
+    assert!(
+        vault.sync_state_get(&marker)?.is_none(),
+        "the pending marker clears only after the protected carrier is mirrored"
+    );
+    let quarantined = quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Tombstones);
+    assert_eq!(quarantined[0].1.reason_code, "MaintenanceKindNotWritable");
+    assert_eq!(
+        quarantined[0].1.payload_hash,
+        quarantine::payload_hash(&tombstone)
+    );
+    Ok(())
+}
+
+#[test]
 fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Result<()> {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
@@ -2322,9 +2435,9 @@ fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Resul
     assert_eq!(quarantined[0].1.reason_code, "MaintenanceKindNotWritable");
 
     // A replica that ran the pre-fix headerless tombstone path may already
-    // carry a permanent `dt:` marker. Protected event arrival must bypass
-    // that stale poison marker as well; the marker remains presence-only
-    // local history but has no authority over delete-protected kinds.
+    // carry a `dt:` marker. Protected event arrival must bypass AND
+    // neutralize that stale poison: it never represented valid delete
+    // authority for a type-76 row.
     let (_poison_dir, poisoned_vault) = test_vault();
     let poisoned_id = EntityId::from_bytes([0x71; 16])?;
     poisoned_vault.with_write_txn(|wtxn| {
@@ -2353,6 +2466,15 @@ fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Resul
         poisoned_vault.identity_topology_event(&poisoned_id)?,
         Some(expected_poisoned_event),
         "a preexisting dt: marker must not suppress a later protected event"
+    );
+    let rtxn = poisoned_vault.store.env.read_txn()?;
+    assert!(
+        poisoned_vault
+            .store
+            .sync_state
+            .get(&rtxn, &crate::deletion::local_hard_delete_key(&poisoned_id))?
+            .is_none(),
+        "protected event admission must neutralize a preexisting dt: poison marker"
     );
     Ok(())
 }
