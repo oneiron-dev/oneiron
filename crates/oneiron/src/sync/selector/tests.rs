@@ -111,7 +111,7 @@ fn edge_provenance_claim_blob() -> Vec<u8> {
         ClaimSubject::Edge {
             source: entity_id(0xA5),
             kind: EdgeKind::Mentions,
-            target: entity_id(0xA6),
+            target: entity_id(0xD6),
         },
         encode_edge_provenance_value(&record),
         confidence,

@@ -1393,7 +1393,7 @@ fn companion_relationship_end_scrubs_private_memory_preserves_data_and_enqueues_
         person_ref,
         persona_ref,
         Value::Map(vec![(Value::from("note"), Value::from(private_note))]),
-        provenance(0xA6),
+        provenance(0xD6),
         CompanionExportClassification::LocalOnly,
     );
     vault.create_companion_record(&relationship_id, &record, 10)?;
