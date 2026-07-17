@@ -235,12 +235,17 @@ impl Vault {
     }
 
     /// Opens a vault WITHOUT seeding the default policy manifest. TEST-SUPPORT
-    /// ONLY: compiled only under the `test-support` feature (enabled via this
-    /// crate's own dev-dependency for the effect-spine integration oracle) and
-    /// reachable only by explicitly calling this test-named function. Because
-    /// the production `open` above hardcodes seeding, an unseeded vault is
-    /// unreachable through the public API even when the feature is enabled.
+    /// ONLY — never call this from production code. It is compiled only under
+    /// the `test-support` feature (enabled via this crate's own dev-dependency
+    /// for the effect-spine integration oracle), hidden from the public docs,
+    /// and named so it cannot be reached by accident. The production `open`
+    /// above hardcodes seeding, so the normal, default way to open a vault can
+    /// never skip the policy/consent gate; this explicit, doc-hidden, test-named
+    /// opener is the only way to obtain an unseeded vault, and only when the test
+    /// feature is deliberately enabled — the standard Rust `test-util`-feature
+    /// pattern (cf. tokio's `test-util`).
     #[cfg(feature = "test-support")]
+    #[doc(hidden)]
     pub fn open_unseeded_for_test(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
         Self::open_seeded(path, config, false)
     }

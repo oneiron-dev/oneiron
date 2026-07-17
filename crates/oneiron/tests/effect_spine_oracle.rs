@@ -57,10 +57,16 @@ fn es03_production_open_seeds_the_default_policy_gate() {
     let vault = oneiron::Vault::open(dir.path(), test_config()).unwrap();
     oneiron::record_comm_inbound_stop(&vault, "party-seed-proof", "email", 10).unwrap();
     // Seeded: the projector's Auto comm.opt_out CLAIM write is floored by the
-    // default gate, so the pass returns an error instead of a live standing head.
+    // default policy gate (criticality floor), so the pass returns that specific
+    // gate rejection rather than any error.
     assert!(
-        oneiron::run_comm_projector(&vault).is_err(),
-        "production Vault::open must seed the default policy gate"
+        matches!(
+            oneiron::run_comm_projector(&vault),
+            Err(oneiron::CommError::Engine(
+                oneiron::Error::GateWriteRejected { .. }
+            ))
+        ),
+        "production Vault::open must seed the default policy gate (comm claim write must be gate-rejected)"
     );
 }
 
