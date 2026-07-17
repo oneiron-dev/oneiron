@@ -23,15 +23,29 @@ use crate::vault::Vault;
 
 /// Thinnest plausible seam for machinery the arming tickets own.
 ///
-/// Every function panics with the owning ticket. These signatures exist ONLY
-/// so the oracle compiles red; the arming ticket replaces each call site with
-/// the real API and deletes the shim it armed. Do NOT grow logic here.
+/// Unarmed functions panic with the owning ticket. These signatures exist
+/// ONLY so the oracle compiles red; each arming ticket replaces its shim with
+/// the real API. Do NOT grow logic here.
 mod seam {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use heed::types::Bytes;
+    use heed::{DatabaseFlags, Env, EnvOpenOptions, RwTxn};
+
     use super::*;
+    use crate::batch::BatchOp;
+    use crate::error::Error;
+    use crate::overlay_db::OverlayDb;
+    use crate::session_overlay::{
+        DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES, JournalScope, OverlayKeyspace, SessionOverlay,
+    };
 
     /// Session write-overlay handle (ONE-1726 owns the real substrate type;
     /// ONE-1727 owns the vault-level session handle that wraps it).
-    pub(super) struct SessionVault;
+    pub(super) struct SessionVault {
+        overlay: Arc<SessionOverlay>,
+    }
 
     /// One (key, value) row as the model oracle sees it.
     pub(super) type ModelRow = (Vec<u8>, Vec<u8>);
@@ -75,10 +89,32 @@ mod seam {
     }
 
     impl SessionVault {
-        /// ONE-1727: `Vault::off_record_session_vault(session_ref)` on the
-        /// in-process registry (non-durable; crash = evaporation).
+        /// ONE-1726 test seam: construct one unregistered session overlay.
+        /// ONE-1727 replaces this with the vault-level registry entry path.
+        #[allow(
+            clippy::unnecessary_wraps,
+            reason = "ONE-1726's no-registry seam is infallible; ONE-1727 retains the typed result"
+        )]
         pub(super) fn enter(_vault: &Vault, _session_ref: &str) -> SeamResult<Self> {
-            unimplemented!("armed by ONE-1727: enter via in-process session registry")
+            Ok(Self {
+                overlay: SessionOverlay::new(DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES),
+            })
+        }
+
+        /// ONE-1726 budget-oracle seam: the passed session owns the requested
+        /// overlay budget so rejection and close exercise the same handle.
+        #[allow(
+            clippy::unnecessary_wraps,
+            reason = "ONE-1726's no-registry seam is infallible; ONE-1727 retains the typed result"
+        )]
+        pub(super) fn enter_with_budget(
+            _vault: &Vault,
+            _session_ref: &str,
+            budget: usize,
+        ) -> SeamResult<Self> {
+            Ok(Self {
+                overlay: SessionOverlay::new(budget),
+            })
         }
 
         /// ONE-1727: enter with the kill-switch config disabled.
@@ -107,12 +143,11 @@ mod seam {
             unimplemented!("armed by ONE-1727: mode-aware routing")
         }
 
-        /// ONE-1727: close = drain leases, drop overlay, consume the
-        /// SessionLocalReceiptLog. Returns the close outcome counts
-        /// (transcript rows deleted, context receipts deleted, floor
-        /// receipts kept).
+        /// ONE-1726 test seam: drain leases and drop the overlay. ONE-1727
+        /// adds SessionLocalReceiptLog outcome counts.
         pub(super) fn close(self) -> Result<(usize, usize, usize)> {
-            unimplemented!("armed by ONE-1727: close = drop overlay")
+            self.overlay.close()?;
+            Ok((0, 0, 0))
         }
 
         /// ONE-1730: promote exactly one turn; returns the replayed closure
@@ -151,46 +186,138 @@ mod seam {
     /// script to a SessionOverlay keyspace over the given base rows and to a
     /// `BTreeMap` model, then returns both sides' full iteration for the
     /// requested window so tests can assert exact sequence equality.
-    pub(super) struct OverlayModelHarness;
+    pub(super) struct OverlayModelHarness {
+        env: Env,
+        _dir: tempfile::TempDir,
+        rows: OverlayDb,
+        duplicates: OverlayDb,
+        model: BTreeMap<Vec<u8>, Vec<u8>>,
+    }
 
     impl OverlayModelHarness {
-        pub(super) fn new(_base_rows: &[ModelRow], _overlay_script: &[OverlayOp]) -> Self {
-            unimplemented!("armed by ONE-1726: SessionOverlay substrate")
+        pub(super) fn new(base_rows: &[ModelRow], overlay_script: &[OverlayOp]) -> Self {
+            let dir = tempfile::tempdir().expect("overlay harness temp dir");
+            // SAFETY: the harness owns a unique temporary path and keeps its
+            // sole environment handle alive until before the TempDir drops.
+            let env = unsafe {
+                EnvOpenOptions::new()
+                    .map_size(10 * 1024 * 1024)
+                    .max_dbs(2)
+                    .open(dir.path())
+                    .expect("open overlay harness env")
+            };
+            let mut wtxn = env.write_txn().expect("open overlay harness write txn");
+            let base = env
+                .create_database::<Bytes, Bytes>(&mut wtxn, Some("rows"))
+                .expect("create harness row database");
+            let duplicate_base = env
+                .database_options()
+                .types::<Bytes, Bytes>()
+                .name("duplicates")
+                .flags(DatabaseFlags::DUP_SORT)
+                .create(&mut wtxn)
+                .expect("create harness DUP_SORT database");
+            for (key, value) in base_rows {
+                base.put(&mut wtxn, key, value)
+                    .expect("seed harness row database");
+                duplicate_base
+                    .put(&mut wtxn, key, value)
+                    .expect("seed harness DUP_SORT database");
+            }
+            wtxn.commit().expect("commit harness base rows");
+
+            let overlay = SessionOverlay::new(DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES);
+            apply_overlay_script(&overlay, overlay_script).expect("apply overlay harness script");
+            let snapshot = Arc::new(
+                overlay
+                    .snapshot()
+                    .expect("capture overlay harness snapshot"),
+            );
+
+            let mut model = base_rows.iter().cloned().collect::<BTreeMap<_, _>>();
+            for op in overlay_script {
+                match op {
+                    OverlayOp::Put(key, value) => {
+                        model.insert(key.clone(), value.clone());
+                    }
+                    OverlayOp::Delete(key) => {
+                        model.remove(key);
+                    }
+                    OverlayOp::DupAppend(_, _) => {}
+                }
+            }
+
+            Self {
+                env,
+                _dir: dir,
+                rows: OverlayDb::composed(
+                    base,
+                    overlay.clone(),
+                    snapshot.clone(),
+                    OverlayKeyspace::Entities,
+                ),
+                duplicates: OverlayDb::composed(
+                    duplicate_base,
+                    overlay,
+                    snapshot,
+                    OverlayKeyspace::TextPostings,
+                ),
+                model,
+            }
         }
 
-        pub(super) fn prefix_iter(&self, _prefix: &[u8]) -> Result<Vec<ModelRow>> {
-            unimplemented!("armed by ONE-1726: merged prefix iteration")
+        pub(super) fn prefix_iter(&self, prefix: &[u8]) -> Result<Vec<ModelRow>> {
+            let rtxn = self.env.read_txn()?;
+            self.rows
+                .prefix_iter(&rtxn, prefix)?
+                .map(|row| row.map(|(key, value)| (key.into_owned(), value.into_owned())))
+                .collect()
         }
 
         pub(super) fn rev_range(
             &self,
-            _bounds: (Bound<&[u8]>, Bound<&[u8]>),
+            bounds: (Bound<&[u8]>, Bound<&[u8]>),
         ) -> Result<Vec<ModelRow>> {
-            unimplemented!("armed by ONE-1726: merged reverse range iteration")
+            let rtxn = self.env.read_txn()?;
+            self.rows
+                .rev_range(&rtxn, &bounds)?
+                .map(|row| row.map(|(key, value)| (key.into_owned(), value.into_owned())))
+                .collect()
         }
 
-        pub(super) fn model_prefix_iter(&self, _prefix: &[u8]) -> Vec<ModelRow> {
-            unimplemented!("armed by ONE-1726: BTreeMap model oracle")
+        pub(super) fn model_prefix_iter(&self, prefix: &[u8]) -> Vec<ModelRow> {
+            self.model
+                .iter()
+                .filter(|(key, _)| key.starts_with(prefix))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
         }
 
         pub(super) fn model_rev_range(
             &self,
-            _bounds: (Bound<&[u8]>, Bound<&[u8]>),
+            bounds: (Bound<&[u8]>, Bound<&[u8]>),
         ) -> Vec<ModelRow> {
-            unimplemented!("armed by ONE-1726: BTreeMap model oracle")
+            self.model
+                .iter()
+                .filter(|(key, _)| key_in_bounds(key, bounds))
+                .rev()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
         }
 
         /// Merged DUP_SORT duplicate items for one `text_postings` term key.
-        pub(super) fn dup_items(&self, _term: &[u8]) -> Result<Vec<Vec<u8>>> {
-            unimplemented!("armed by ONE-1726: DUP_SORT merge iterator")
+        pub(super) fn dup_items(&self, term: &[u8]) -> Result<Vec<Vec<u8>>> {
+            let rtxn = self.env.read_txn()?;
+            let Some(iter) = self.duplicates.get_duplicates(&rtxn, term)? else {
+                return Ok(Vec::new());
+            };
+            iter.map(|row| row.map(|(_, value)| value.into_owned()))
+                .collect()
         }
     }
 
     /// ONE-1726 overlay mutation script entries.
-    #[expect(
-        dead_code,
-        reason = "fields are consumed by the armed SessionOverlay harness (ONE-1726)"
-    )]
+    #[derive(Clone)]
     pub(super) enum OverlayOp {
         Put(Vec<u8>, Vec<u8>),
         Delete(Vec<u8>),
@@ -202,49 +329,202 @@ mod seam {
     /// read-through txn segment; `probe` runs under the same live txn and
     /// must observe read-your-writes; returns what the probe read.
     pub(super) fn with_txn_segment_read_back(
-        _vault: &Vault,
-        _session: &SessionVault,
-        _script: &[OverlayOp],
-        _probe_key: &[u8],
+        vault: &Vault,
+        session: &SessionVault,
+        script: &[OverlayOp],
+        probe_key: &[u8],
     ) -> Result<Option<Vec<u8>>> {
-        unimplemented!("armed by ONE-1726: thread-local read-through txn segments")
+        let mut wtxn = vault.store.env.write_txn()?;
+        let segment = session.overlay.install_txn_segment()?;
+        let view = vault
+            .store
+            .entities
+            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
+        apply_view_script(&view, &mut wtxn, script)?;
+        let read_view = vault
+            .store
+            .entities
+            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
+        let read_back = read_view
+            .get(&wtxn, probe_key)?
+            .map(|value| value.into_owned());
+        wtxn.commit()?;
+        segment.commit()?;
+        Ok(read_back)
     }
 
     /// ONE-1726: abort the base txn after staging `script`; returns
     /// (overlay rows visible afterwards, typed-journal entries afterwards).
     pub(super) fn stage_then_abort(
-        _vault: &Vault,
-        _session: &SessionVault,
-        _script: &[OverlayOp],
+        vault: &Vault,
+        session: &SessionVault,
+        script: &[OverlayOp],
     ) -> Result<(usize, usize)> {
-        unimplemented!("armed by ONE-1726: segment drops on abort (journal atomicity)")
+        let mut wtxn = vault.store.env.write_txn()?;
+        let segment = session.overlay.install_txn_segment()?;
+        let view = vault
+            .store
+            .entities
+            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
+        apply_view_script(&view, &mut wtxn, script)?;
+        let scope = JournalScope::new(EntityId::now(), EntityId::now());
+        session.overlay.stage_journal(
+            scope,
+            BatchOp::Delete {
+                id: EntityId::now(),
+            },
+        )?;
+        drop(segment);
+        drop(wtxn);
+
+        let snapshot = session.overlay.snapshot()?;
+        Ok((
+            snapshot.row_count(OverlayKeyspace::Entities),
+            snapshot.journal_ops(scope).len(),
+        ))
     }
 
     /// ONE-1726: byte budget configured to `budget` bytes; returns the typed
     /// error produced by the first over-budget insert.
     pub(super) fn overflow_budget(
-        _vault: &Vault,
-        _session: &SessionVault,
-        _budget: usize,
+        vault: &Vault,
+        session: &SessionVault,
+        budget: usize,
     ) -> SeamError {
-        unimplemented!("armed by ONE-1726: pre-insert byte budget (OffRecordOverlayFull)")
+        let mut wtxn = vault
+            .store
+            .env
+            .write_txn()
+            .expect("open budget oracle write txn");
+        let segment = session
+            .overlay
+            .install_txn_segment()
+            .expect("install budget oracle segment");
+        let view = vault
+            .store
+            .entities
+            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)
+            .expect("capture budget oracle view");
+        let value = vec![0_u8; budget.max(session.overlay.budget_bytes())];
+        let error = match view.put(&mut wtxn, b"overflow", &value) {
+            Err(error) => map_overlay_error(error),
+            Ok(()) => panic!("over-budget overlay insert unexpectedly succeeded"),
+        };
+        drop(segment);
+        drop(wtxn);
+        error
     }
 
     /// ONE-1726: take a read snapshot, apply `script` concurrently, then
     /// finish iterating the snapshot; returns (rows seen by the snapshot,
     /// rows a fresh read sees).
     pub(super) fn snapshot_vs_concurrent_apply(
-        _vault: &Vault,
-        _session: &SessionVault,
-        _script: &[OverlayOp],
-        _prefix: &[u8],
+        vault: &Vault,
+        session: &SessionVault,
+        script: &[OverlayOp],
+        prefix: &[u8],
     ) -> Result<(Vec<ModelRow>, Vec<ModelRow>)> {
-        unimplemented!("armed by ONE-1726: per-read Arc snapshots (no torn union)")
+        let rtxn = vault.store.env.read_txn()?;
+        let view = vault
+            .store
+            .entities
+            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
+        let snapshot_iter = view.prefix_iter(&rtxn, prefix)?;
+        let apply_result = std::thread::scope(|scope| {
+            scope
+                .spawn(|| apply_overlay_script(&session.overlay, script))
+                .join()
+                .expect("overlay apply thread panicked")
+        });
+        apply_result?;
+        let snapshot_rows = snapshot_iter
+            .map(|row| row.map(|(key, value)| (key.into_owned(), value.into_owned())))
+            .collect::<Result<Vec<_>>>()?;
+        let fresh_view = vault
+            .store
+            .entities
+            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
+        let fresh_rows = fresh_view
+            .prefix_iter(&rtxn, prefix)?
+            .map(|row| row.map(|(key, value)| (key.into_owned(), value.into_owned())))
+            .collect::<Result<Vec<_>>>()?;
+        Ok((snapshot_rows, fresh_rows))
     }
 
     /// ONE-1726: close the overlay, then attempt a lease-holding read.
-    pub(super) fn read_after_close(_vault: &Vault, _session_ref: &str) -> SeamError {
-        unimplemented!("armed by ONE-1726: generation-stamped leases refuse after close")
+    pub(super) fn read_after_close(vault: &Vault, session_ref: &str) -> SeamError {
+        let session = SessionVault::enter(vault, session_ref).expect("enter session");
+        let overlay = session.overlay.clone();
+        session.close().expect("close session");
+        match vault
+            .store
+            .entities
+            .with_overlay(overlay, OverlayKeyspace::Entities)
+        {
+            Err(error) => map_overlay_error(error),
+            Ok(_) => panic!("closed overlay unexpectedly granted a read lease"),
+        }
+    }
+
+    fn apply_view_script(
+        view: &OverlayDb,
+        wtxn: &mut RwTxn<'_>,
+        script: &[OverlayOp],
+    ) -> Result<()> {
+        for op in script {
+            match op {
+                OverlayOp::Put(key, value) => view.put(wtxn, key, value)?,
+                OverlayOp::Delete(key) => {
+                    view.delete(wtxn, key)?;
+                }
+                OverlayOp::DupAppend(_, _) => {
+                    return Err(Error::InvariantViolation(
+                        "DUP_SORT op used with a single-value oracle view",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_overlay_script(overlay: &Arc<SessionOverlay>, script: &[OverlayOp]) -> Result<()> {
+        let segment = overlay.install_txn_segment()?;
+        for op in script {
+            match op {
+                OverlayOp::Put(key, value) => {
+                    overlay.put(OverlayKeyspace::Entities, key, value)?;
+                }
+                OverlayOp::Delete(key) => {
+                    overlay.delete(OverlayKeyspace::Entities, key)?;
+                }
+                OverlayOp::DupAppend(key, value) => {
+                    overlay.put(OverlayKeyspace::TextPostings, key, value)?;
+                }
+            }
+        }
+        segment.commit()
+    }
+
+    fn key_in_bounds(key: &[u8], bounds: (Bound<&[u8]>, Bound<&[u8]>)) -> bool {
+        let above_start = match bounds.0 {
+            Bound::Included(start) => key >= start,
+            Bound::Excluded(start) => key > start,
+            Bound::Unbounded => true,
+        };
+        let below_end = match bounds.1 {
+            Bound::Included(end) => key <= end,
+            Bound::Excluded(end) => key < end,
+            Bound::Unbounded => true,
+        };
+        above_start && below_end
+    }
+
+    fn map_overlay_error(error: Error) -> SeamError {
+        match error {
+            Error::OffRecordOverlayFull { .. } => SeamError::OverlayFull,
+            Error::OffRecordOverlayLeaseClosed { .. } => SeamError::LeaseClosed,
+            other => panic!("unexpected overlay error: {other}"),
+        }
     }
 
     /// ONE-1727: simulated crash — drop every session handle WITHOUT close,
@@ -366,7 +646,6 @@ fn full_db_census(vault: &Vault) -> Result<[u64; 28]> {
 /// sequence (boundaries included; delete-markers subtract; overlay wins on
 /// key collision).
 #[test]
-#[ignore = "armed by ONE-1726"]
 fn overlay_prefix_iter_matches_model_order_and_boundaries() -> Result<()> {
     let base: Vec<seam::ModelRow> = vec![
         (b"p:a".to_vec(), b"base-a".to_vec()),
@@ -394,7 +673,6 @@ fn overlay_prefix_iter_matches_model_order_and_boundaries() -> Result<()> {
 /// model — Included/Excluded/Unbounded each pinned as an exact ordered
 /// sequence (codex F4: `(start, end)` slices could not express the edges).
 #[test]
-#[ignore = "armed by ONE-1726"]
 fn overlay_rev_range_matches_model_direction_and_bounds() -> Result<()> {
     let row = |k: &[u8], v: &[u8]| (k.to_vec(), v.to_vec());
     let base: Vec<seam::ModelRow> = vec![row(b"k1", b"v1"), row(b"k3", b"v3"), row(b"k5", b"v5")];
@@ -453,7 +731,6 @@ fn overlay_rev_range_matches_model_direction_and_bounds() -> Result<()> {
 /// hard-errors the whole query on any violation, so this is availability,
 /// not ranking quality.
 #[test]
-#[ignore = "armed by ONE-1726"]
 fn text_postings_merge_keeps_per_term_ascending_entity_id_order() -> Result<()> {
     // Base carries entities 02 and 04 for the term; overlay adds 01, 03, 05
     // — interleaved on both sides of every base item.
@@ -484,7 +761,6 @@ fn text_postings_merge_keeps_per_term_ascending_entity_id_order() -> Result<()> 
 /// D1 (txn segments): a write staged in the thread-local segment is visible
 /// to reads under the SAME live base txn (segment -> snapshot -> base).
 #[test]
-#[ignore = "armed by ONE-1726"]
 fn overlay_read_your_writes_inside_txn_segment() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let session = seam::SessionVault::enter(&vault, "oracle-ryw").expect("enter session");
@@ -504,7 +780,6 @@ fn overlay_read_your_writes_inside_txn_segment() -> Result<()> {
 /// D1 (journal atomicity): a segment dropped on base-txn abort leaves ZERO
 /// overlay rows and ZERO typed-journal entries.
 #[test]
-#[ignore = "armed by ONE-1726"]
 fn overlay_segment_and_journal_drop_together_on_abort() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let session = seam::SessionVault::enter(&vault, "oracle-abort").expect("enter session");
@@ -524,11 +799,11 @@ fn overlay_segment_and_journal_drop_together_on_abort() -> Result<()> {
 /// D1 (vault-safety fence): budget overflow returns the typed error, the
 /// base vault is untouched, and the session stays alive for promote/close.
 #[test]
-#[ignore = "armed by ONE-1726"]
 fn overlay_budget_rejection_is_typed_and_never_crashes_vault() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let base_before = full_db_census(&vault)?;
-    let session = seam::SessionVault::enter(&vault, "oracle-budget").expect("enter session");
+    let session =
+        seam::SessionVault::enter_with_budget(&vault, "oracle-budget", 64).expect("enter session");
     let error = seam::overflow_budget(&vault, &session, 64);
     assert_eq!(
         error,
@@ -550,7 +825,6 @@ fn overlay_budget_rejection_is_typed_and_never_crashes_vault() -> Result<()> {
 /// D1 (snapshot isolation): a logical read iterates its Arc snapshot; a
 /// concurrent overlay apply is invisible to it and visible to a fresh read.
 #[test]
-#[ignore = "armed by ONE-1726"]
 fn overlay_snapshot_read_never_sees_torn_union() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let session = seam::SessionVault::enter(&vault, "oracle-snapshot").expect("enter session");
@@ -569,7 +843,6 @@ fn overlay_snapshot_read_never_sees_torn_union() -> Result<()> {
 
 /// D1 (close finality): generation-stamped leases refuse typed after close.
 #[test]
-#[ignore = "armed by ONE-1726"]
 fn overlay_lease_refused_after_close() {
     let (_tmp, vault) = temp_vault();
     assert_eq!(

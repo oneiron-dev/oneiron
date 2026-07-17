@@ -268,6 +268,8 @@ pub enum ErrorKind {
     OffRecordSessionAlreadyExists,
     OffRecordSessionNotFound,
     OffRecordSessionClosing,
+    OffRecordOverlayFull,
+    OffRecordOverlayLeaseClosed,
     OffRecordTurnNotFenced,
     OffRecordFencedTurnWriteRejected,
     OffRecordTalkOnly,
@@ -1315,6 +1317,19 @@ pub enum Error {
     /// mutation. Nothing was written; the session is evaporating.
     #[error("off-record session {session_ref} is closing: the record is frozen")]
     OffRecordSessionClosing { session_ref: String },
+    /// An in-memory session overlay insert would exceed its configured hard
+    /// byte budget. The candidate mutation is not published.
+    #[error(
+        "off-record overlay is full: budget {budget_bytes} bytes, attempted {attempted_bytes} bytes"
+    )]
+    OffRecordOverlayFull {
+        budget_bytes: usize,
+        attempted_bytes: usize,
+    },
+    /// A generation-stamped session overlay lease was requested or used
+    /// after the overlay began closing or was cleared.
+    #[error("off-record overlay generation {generation} is closed")]
+    OffRecordOverlayLeaseClosed { generation: u64 },
     /// Promote (OF-326) targeted a turn that is not fenced by this
     /// off-record session — promote lifts exactly one live fence.
     #[error("turn {turn_ref} is not fenced by off-record session {session_ref}")]
@@ -1594,6 +1609,8 @@ impl Error {
             Self::OffRecordSessionAlreadyExists { .. } => ErrorKind::OffRecordSessionAlreadyExists,
             Self::OffRecordSessionNotFound { .. } => ErrorKind::OffRecordSessionNotFound,
             Self::OffRecordSessionClosing { .. } => ErrorKind::OffRecordSessionClosing,
+            Self::OffRecordOverlayFull { .. } => ErrorKind::OffRecordOverlayFull,
+            Self::OffRecordOverlayLeaseClosed { .. } => ErrorKind::OffRecordOverlayLeaseClosed,
             Self::OffRecordTurnNotFenced { .. } => ErrorKind::OffRecordTurnNotFenced,
             Self::OffRecordFencedTurnWriteRejected { .. } => {
                 ErrorKind::OffRecordFencedTurnWriteRejected
