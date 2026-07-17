@@ -505,7 +505,7 @@ fn finding_2_contact_view_is_purely_claim_derived() -> CommResult<()> {
 }
 
 #[test]
-fn finding_3_approval_clears_the_live_replacement_opt_out_head() -> CommResult<()> {
+fn finding_3_approval_refuses_when_replacement_head_postdates_the_request() -> CommResult<()> {
     let (_dir, vault) = open_vault();
     record_comm_inbound_stop(&vault, "party-f3", "email", 10)?;
     run_comm_projector(&vault)?;
@@ -529,17 +529,20 @@ fn finding_3_approval_clears_the_live_replacement_opt_out_head() -> CommResult<(
     assert_eq!(count_opt_out_clear_receipts(&vault, "party-f3")?, 0);
 
     let human = WriteActor::new(party_ref, EdgeActorClass::Human);
-    approve_pending_opt_out_clear(&vault, "party-f3", "email", human, 14)?;
+    // Canon: a clear requested before the opt-out's establishing STOP is stale — refused and consumed (L0 sweep-8 ruling).
+    let error = approve_pending_opt_out_clear(&vault, "party-f3", "email", human, 14)
+        .expect_err("replacement head postdates the request");
+    assert!(matches!(error, CommError::PendingClearSupersededByStop));
     assert_eq!(
         count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-f3", "email")?,
-        0
+        1
     );
     assert_eq!(
         count_total_comm_claim_rows(&vault, PREDICATE_COMM_OPT_OUT, "party-f3", "email")?,
         2
     );
     assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
-    assert_eq!(count_opt_out_clear_receipts(&vault, "party-f3")?, 1);
+    assert_eq!(count_opt_out_clear_receipts(&vault, "party-f3")?, 0);
     Ok(())
 }
 
@@ -701,7 +704,7 @@ fn stale_leave_before_an_active_join_is_ignored() -> CommResult<()> {
 }
 
 #[test]
-fn backdated_opt_out_clear_clamps_to_the_live_claim_start() -> CommResult<()> {
+fn backdated_clear_before_the_head_stop_is_refused_and_consumed() -> CommResult<()> {
     let (_dir, vault) = open_vault();
     record_comm_inbound_stop(&vault, "party-opt-out-clamp", "email", 100)?;
     run_comm_projector(&vault)?;
@@ -713,7 +716,10 @@ fn backdated_opt_out_clear_clamps_to_the_live_claim_start() -> CommResult<()> {
     let party_ref =
         resolve_party(&vault, "party-opt-out-clamp")?.ok_or(CommError::InvalidRecord)?;
     let human = WriteActor::new(party_ref, EdgeActorClass::Human);
-    approve_pending_opt_out_clear(&vault, "party-opt-out-clamp", "email", human, 50)?;
+    // Canon: a clear requested before the opt-out's establishing STOP is stale — refused and consumed (L0 sweep-8 ruling).
+    let error = approve_pending_opt_out_clear(&vault, "party-opt-out-clamp", "email", human, 50)
+        .expect_err("backdated clear is superseded");
+    assert!(matches!(error, CommError::PendingClearSupersededByStop));
 
     assert_eq!(
         count_active_comm_claims(
@@ -722,7 +728,7 @@ fn backdated_opt_out_clear_clamps_to_the_live_claim_start() -> CommResult<()> {
             "party-opt-out-clamp",
             "email",
         )?,
-        0
+        1
     );
     assert_eq!(
         count_total_comm_claim_rows(
@@ -736,7 +742,7 @@ fn backdated_opt_out_clear_clamps_to_the_live_claim_start() -> CommResult<()> {
     assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
     assert_eq!(
         count_opt_out_clear_receipts(&vault, "party-opt-out-clamp")?,
-        1
+        0
     );
     Ok(())
 }

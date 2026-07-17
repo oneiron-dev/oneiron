@@ -823,31 +823,35 @@ pub fn approve_pending_opt_out_clear(
         )?;
         require_at_most_one(&active)?;
         let live_claim = active.into_iter().next();
-        // Fail-closed on a stale gate: if a projected InboundStop re-asserted
-        // this (party, channel) opt-out at or after the gate was created AND
-        // strictly after the live opt-out head this gate would clear, the
-        // opt-out was re-asserted after the clear was requested — consume the
-        // stale gate (no receipt) and refuse. This is the approve-time half of
-        // the restrictive-wins rule the projector enforces at :1013 (there the
-        // STOP is projected while a gate is pending; here the STOP is projected
-        // before a backdated/late gate arrives). The `> head_valid_from` bound
-        // excludes the STOP that established the head being cleared.
+        // Fail-closed on a stale gate. The gate records a clear REQUEST;
+        // approval authorizes that request, not the current state — a request
+        // that predates the party's restrictive assertion is stale, and the
+        // restriction forces a fresh request. Refuse (consume the stale gate,
+        // no receipt) if the opt-out was (re-)asserted at or after the request:
+        //   (a) the STOP that established the live head postdates the request
+        //       (gate.created_at < head_valid_from), or
+        //   (b) a later projected InboundStop re-asserted this (party, channel)
+        //       past the head, at or after the request.
+        // This is the approve-time half of the restrictive-wins rule the
+        // projector enforces at :1013.
         if let Some((_, matched)) = &live_claim {
             let head_valid_from = matched.valid_from.unwrap_or(0);
-            let superseding_records = comm_records_in_txn(vault, &*wtxn)?;
-            let superseded = superseding_records.iter().any(|(_, record)| {
-                matches!(record, CommRecord::Event {
-                    kind: CommEventKind::InboundStop,
-                    party_ref: event_party,
-                    channel_class: Some(event_channel),
-                    occurred_at,
-                    projected: true,
-                    ..
-                } if *event_party == party_ref
-                    && event_channel == channel_class
-                    && *occurred_at >= created_at
-                    && *occurred_at > head_valid_from)
-            });
+            let superseded = created_at < head_valid_from
+                || comm_records_in_txn(vault, &*wtxn)?
+                    .iter()
+                    .any(|(_, record)| {
+                        matches!(record, CommRecord::Event {
+                        kind: CommEventKind::InboundStop,
+                        party_ref: event_party,
+                        channel_class: Some(event_channel),
+                        occurred_at,
+                        projected: true,
+                        ..
+                    } if *event_party == party_ref
+                        && event_channel == channel_class
+                        && *occurred_at >= created_at
+                        && *occurred_at > head_valid_from)
+                    });
             if superseded {
                 let consumed = CommRecord::Gate {
                     party_ref,
