@@ -962,8 +962,11 @@ fn record_event(
     if let Some(thread_ref) = thread_ref {
         validate_key_string(thread_ref).map_err(|_| CommError::InvalidRecord)?;
     }
-    let party_ref = resolve_or_create_party(vault, party)?;
     vault.try_with_write_txn(|wtxn| {
+        // Resolve/create the party in the SAME transaction as the event so a
+        // concurrent party deletion cannot leave the event bound to a missing
+        // PERSON (which the projector would then skip forever as EntityNotFound).
+        let party_ref = resolve_or_create_party_in_txn(vault, wtxn, party)?;
         let sequence = next_event_sequence_in_txn(vault, wtxn)?;
         let record = CommRecord::Event {
             sequence,
@@ -1478,61 +1481,72 @@ fn build_contact_view_in_txn(
 }
 
 fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
+    vault.try_with_write_txn(|wtxn| resolve_or_create_party_in_txn(vault, wtxn, party))
+}
+
+/// Resolves (or mints) the PERSON party for `party` inside an existing write
+/// transaction, so a caller can make party creation atomic with the write that
+/// references it (e.g. recording an event). Doing the resolve in a separate
+/// prior transaction lets a concurrent party deletion land in between, leaving
+/// the event bound to a missing PERSON.
+fn resolve_or_create_party_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party: &str,
+) -> CommResult<EntityId> {
     validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
     let index_key = party_index_key(party);
-    vault.try_with_write_txn(|wtxn| {
-        if let Some(raw) = vault.store.vault_meta.get(&*wtxn, &index_key)? {
-            let id = decode_entity_id(&raw)?;
-            // Only reuse the cached party id if it still resolves to a PERSON
-            // row. If the entity was deleted (or its explicit id reused by
-            // another entity type), the cache is stale — fall through to remint
-            // and rebind, otherwise new comm events would be minted against a
-            // non-PERSON subject and wedge at the projector's PERSON check.
-            let cached_is_person = vault
-                .store
-                .entities
-                .get(&*wtxn, id.as_bytes())?
-                .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
-                == Some(ENTITY_TYPE_PERSON);
-            if cached_is_person {
-                return Ok(id);
-            }
-        }
-        let id = EntityId::now();
-        let body = encode_value(&Value::Map(vec![
-            (
-                Value::from(KEY_SCHEMA_VERSION),
-                Value::from(COMM_SCHEMA_VERSION),
-            ),
-            (Value::from("party_key"), Value::from(party)),
-        ]))?;
-        apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            vec![BatchOp::Put {
-                id,
-                entity_type: ENTITY_TYPE_PERSON,
-                occurred: TimeRange { start: 0, end: 0 },
-                learned_at: crate::unix_seconds_now(),
-                data: body,
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
-        vault
+    if let Some(raw) = vault.store.vault_meta.get(&*wtxn, &index_key)? {
+        let id = decode_entity_id(&raw)?;
+        // Only reuse the cached party id if it still resolves to a PERSON row.
+        // If the entity was deleted (or its explicit id reused by another entity
+        // type), the cache is stale — fall through to remint and rebind,
+        // otherwise new comm events would be minted against a non-PERSON subject
+        // and wedge at the projector's PERSON check.
+        let cached_is_person = vault
             .store
-            .vault_meta
-            .put(wtxn, &index_key, id.as_bytes())?;
-        Ok(id)
-    })
+            .entities
+            .get(&*wtxn, id.as_bytes())?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
+            == Some(ENTITY_TYPE_PERSON);
+        if cached_is_person {
+            return Ok(id);
+        }
+    }
+    let id = EntityId::now();
+    let body = encode_value(&Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(COMM_SCHEMA_VERSION),
+        ),
+        (Value::from("party_key"), Value::from(party)),
+    ]))?;
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        vec![BatchOp::Put {
+            id,
+            entity_type: ENTITY_TYPE_PERSON,
+            occurred: TimeRange { start: 0, end: 0 },
+            learned_at: crate::unix_seconds_now(),
+            data: body,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        true,
+    )?;
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, &index_key, id.as_bytes())?;
+    Ok(id)
 }
 
 fn resolve_party(vault: &Vault, party: &str) -> CommResult<Option<EntityId>> {
