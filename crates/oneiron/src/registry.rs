@@ -88,6 +88,10 @@ pub const ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT: u8 = 134;
 /// with `MaintenanceKindNotWritable` (structural "no anonymous connectors").
 /// Short-ID prefix `ck`.
 pub const ENTITY_TYPE_CONNECTOR_KEY: u8 = 135;
+/// ARCH-0035 communication projector record. Engine-authored maintenance
+/// kind for source events, consent transitions, ruling receipts, and the
+/// rebuildable contact-view cache.
+pub const ENTITY_TYPE_COMM_RECORD: u8 = 136;
 
 /// Registry classification mirroring the contracts.ts §1
 /// `EntityClassification` enum: `"semantic" | "core" | "pack" | "maintenance"`.
@@ -102,7 +106,8 @@ pub const ENTITY_TYPE_CONNECTOR_KEY: u8 = 135;
 /// StructuralKinds. CHANNEL_IDENTITY=131 and COUNTERPARTY_CONTACT=132 are
 /// engine-authored maintenance kinds for OF-347; OUTBOUND_GRANT=133 is the
 /// OF-367 standing consent-grant substrate; CONNECTOR_KEY=135 is the OF-277
-/// connector-key registry substrate.
+/// connector-key registry substrate; COMM_RECORD=136 is the ARCH-0035
+/// communication projection substrate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityClassification {
     /// `"semantic"` — CLAIM, the single subject·predicate·value type.
@@ -143,7 +148,7 @@ pub enum TypeByteBand {
     /// reserved, DIAGNOSTIC=126 reserved, FEDERATION_KEY_ENVELOPE=127
     /// reserved, ACCESS_GRANT=128, PSYCH_PROFILE=129, SUSPICIOUS_WAKE=130
     /// reserved, CHANNEL_IDENTITY=131, COUNTERPARTY_CONTACT=132,
-    /// OUTBOUND_GRANT=133, CONNECTOR_KEY=135, runtime-induced and
+    /// OUTBOUND_GRANT=133, CONNECTOR_KEY=135, COMM_RECORD=136, runtime-induced and
     /// tenant-custom kinds).
     InducedDynamicMaintenance,
 }
@@ -197,7 +202,7 @@ pub const fn band_of(type_byte: u8) -> TypeByteBand {
 /// DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127 reserved,
 /// ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130 reserved,
 /// CHANNEL_IDENTITY = 131, COUNTERPARTY_CONTACT = 132, OUTBOUND_GRANT = 133,
-/// CONNECTOR_KEY = 135) are not StructuralKinds either. The reserved bytes
+/// CONNECTOR_KEY = 135, COMM_RECORD = 136) are not StructuralKinds either. The reserved bytes
 /// are unregistered. Only registered `core` and `pack` kinds qualify.
 /// Unregistered bytes return `false` here AND remain rejected by
 /// `validate_entity_type` on every write path (unchanged behavior).
@@ -492,6 +497,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         classification: EntityClassification::Maintenance,
         band: TypeByteBand::InducedDynamicMaintenance,
     },
+    EntityTypeRegistryEntry {
+        kind: "COMM_RECORD",
+        type_byte: ENTITY_TYPE_COMM_RECORD,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
+    },
 ];
 
 /// Returns the short ID prefix for an entity type byte.
@@ -532,7 +544,7 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 /// reserved, DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127
 /// reserved, ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130
 /// reserved, CHANNEL_IDENTITY = 131, COUNTERPARTY_CONTACT = 132,
-/// OUTBOUND_GRANT = 133, CONNECTOR_KEY = 135) are engine-authored
+/// OUTBOUND_GRANT = 133, CONNECTOR_KEY = 135, COMM_RECORD = 136) are engine-authored
 /// maintenance records or reserved maintenance substrates.
 /// Reserved bytes are not registered yet.
 pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
@@ -542,7 +554,8 @@ pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
 /// Genuinely unknown bytes fail with [`Error::InvalidEntityType`]; registered
 /// maintenance-band kinds (type byte ≥ 120: REDACTION_AUDIT, MODEL,
 /// POLICY_MANIFEST, FEDERATION_GRANT, ACCESS_GRANT, PSYCH_PROFILE,
-/// CHANNEL_IDENTITY, COUNTERPARTY_CONTACT, OUTBOUND_GRANT, CONNECTOR_KEY)
+/// CHANNEL_IDENTITY, COUNTERPARTY_CONTACT, OUTBOUND_GRANT, CONNECTOR_KEY,
+/// COMM_RECORD)
 /// fail with the distinct
 /// [`Error::MaintenanceKindNotWritable`]. Reserved-unregistered
 /// maintenance bytes (AUTHORITY_LOG = 122, CONNECTION_RECORD = 125,

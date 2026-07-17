@@ -23,6 +23,7 @@ pub mod code_run;
 pub mod code_sandbox;
 pub mod code_symbol;
 pub mod codebase;
+pub mod comm;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
@@ -271,6 +272,17 @@ pub use crate::codebase::{
     CodebaseSnapshot, HostedMediaHashMatchDecision, HostedMediaHashMatchInput,
     HostedMediaHashMatchProvider, NoopHostedMediaHashMatchProvider, RepoIngestConfig,
     RepoIngestResult, RepoRef, decode_codebase_snapshot, encode_codebase_snapshot,
+};
+pub use crate::comm::{
+    COMM_CLAIM_PREDICATES, COMM_SCHEMA_VERSION, CommClaim, CommClaimValue, CommClearOptOutOutcome,
+    CommError, CommResult, PREDICATE_COMM_LAST_TOUCH, PREDICATE_COMM_OPT_OUT,
+    PREDICATE_COMM_REACHABLE_VIA, PREDICATE_COMM_THREAD_MEMBER, approve_pending_opt_out_clear,
+    count_active_comm_claims, count_active_thread_member_claims,
+    count_contact_record_claim_entries, count_opt_out_clear_receipts,
+    count_pending_comm_consent_gates, count_total_comm_claim_rows, drop_contact_record,
+    is_comm_claim_predicate, materialize_contact_record, record_comm_inbound_stop,
+    record_comm_send_receipt, record_comm_thread_event, request_opt_out_clear,
+    resolve_or_create_comm_party, run_comm_projector,
 };
 pub use crate::companion::{
     COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS,
@@ -680,9 +692,10 @@ pub use crate::recovery::{
 };
 pub use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
-    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
-    ENTITY_TYPE_PSYCH_PROFILE, StructuralKindRegistration, TypeByteBand,
+    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COMM_RECORD,
+    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, StructuralKindRegistration,
+    TypeByteBand,
 };
 pub use crate::repo_mutation::{
     REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION, REPO_CONFLICT_OPEN_VALUE_KEYS,

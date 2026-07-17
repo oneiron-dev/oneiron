@@ -3146,6 +3146,7 @@ dependencies = [
  "libc",
  "lindera",
  "loro",
+ "oneiron",
  "p256",
  "postcard",
  "proptest",
