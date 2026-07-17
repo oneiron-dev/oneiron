@@ -782,13 +782,51 @@ mod cb_a {
     /// plain task prompt; observe the RESOLVED preset id of the spawned child
     /// and, separately, the registered system-default base preset id.
     fn arm_zero_config_spawn() -> DefaultPresetSpawn {
-        unimplemented!("armed by ONE-1698: generic DEFAULT base preset, zero-config spawn")
+        use oneiron::agent_def::SystemAgentPreset;
+        use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher};
+        use oneiron::dreamer_runner::{
+            DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload,
+        };
+        use oneiron::{AttemptQueue, Vault, VaultConfig};
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut config = VaultConfig::device();
+        config.map_size = 16 * 1024 * 1024;
+        config.dimensions = 4;
+        config.embedding_model = None;
+        let vault = Vault::open(dir.path(), config).expect("open vault");
+        let dispatcher = AgentDispatcher::new(&vault);
+        let AgentDispatchOutcome::Dispatched(status) = dispatcher
+            .dispatch_default_base(None, None, None, 1)
+            .expect("zero-config dispatch")
+        else {
+            panic!("expected one fresh spawn");
+        };
+        let AgentDispatchTarget::System(resolved) = status.input.target else {
+            panic!("default dispatch must resolve to a system preset");
+        };
+        let spawned_children = AttemptQueue::new(&vault)
+            .list()
+            .expect("observe dispatch attempts")
+            .into_iter()
+            .filter(|attempt| {
+                attempt.kind == DREAMER_RUNNER_ATTEMPT_KIND
+                    && decode_dreamer_attempt_payload(&attempt.payload).is_ok_and(|payload| {
+                        payload.attempt_type == oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+                    })
+            })
+            .count();
+
+        DefaultPresetSpawn {
+            spawned_children,
+            resolved_preset_id: resolved.preset_id().to_owned(),
+            system_default_preset_id: SystemAgentPreset::default_base().preset_id().to_owned(),
+        }
     }
 
     /// ONE-1698 · 08b §4.1 (r8): one generic default base preset — spawn
     /// works with zero definition; the spawned child resolves to THAT preset.
     #[test]
-    #[ignore = "armed by ONE-1698"]
     fn spawn_with_zero_definition_uses_default_base_preset() {
         let spawn = arm_zero_config_spawn();
         assert_eq!(spawn.spawned_children, 1);
@@ -812,13 +850,107 @@ mod cb_a {
     /// class); A kills X and Y; unrelated agent B attempts to kill a third
     /// spawn of A's.
     fn arm_kill_matrix() -> KillMatrix {
-        unimplemented!("armed by ONE-1698: spawner-kills-own-spawns semantics in agents.kill")
+        use oneiron::agent_def::SystemAgentPreset;
+        use oneiron::agent_dispatch::{
+            AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher,
+            DispatchAgent, KillOutcome,
+        };
+        use oneiron::{AttemptQueue, AttemptState, EntityId, TimeRange, Vault, VaultConfig};
+
+        fn dispatched(outcome: AgentDispatchOutcome) -> AgentDispatchStatus {
+            let AgentDispatchOutcome::Dispatched(status) = outcome else {
+                panic!("expected fresh dispatch");
+            };
+            status
+        }
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut config = VaultConfig::device();
+        config.map_size = 16 * 1024 * 1024;
+        config.dimensions = 4;
+        config.embedding_model = None;
+        let vault = Vault::open(dir.path(), config).expect("open vault");
+        let custom_id = EntityId::from_bytes([0x61; 16]).expect("custom agent id");
+        vault
+            .fork_system_agent(
+                &custom_id,
+                SystemAgentPreset::Keeper,
+                "custom",
+                TimeRange { start: 1, end: 1 },
+                1,
+            )
+            .expect("store custom definition");
+
+        let dispatcher = AgentDispatcher::new(&vault);
+        let spawner = dispatched(
+            dispatcher
+                .dispatch_default_base(None, None, None, 2)
+                .expect("dispatch spawner A"),
+        );
+        let non_spawner = dispatched(
+            dispatcher
+                .dispatch_default_base(None, None, None, 3)
+                .expect("dispatch non-spawner B"),
+        );
+        let spawn = |target, now| {
+            dispatched(
+                dispatcher
+                    .dispatch(DispatchAgent {
+                        target,
+                        parent_attempt: Some(spawner.attempt.id),
+                        dedupe_key: None,
+                        run_id: None,
+                        now,
+                    })
+                    .expect("dispatch child"),
+            )
+        };
+        let system_child = spawn(AgentDispatchTarget::System(SystemAgentPreset::Scout), 4);
+        let custom_child = spawn(AgentDispatchTarget::Custom(custom_id), 5);
+        let proposed_child = spawn(AgentDispatchTarget::System(SystemAgentPreset::Creative), 6);
+
+        dispatcher
+            .kill_spawn(&system_child.attempt.id, &spawner.attempt.id, 7)
+            .expect("spawner kills system child");
+        dispatcher
+            .kill_spawn(&custom_child.attempt.id, &spawner.attempt.id, 8)
+            .expect("spawner kills custom child");
+        let non_spawner_outcome = dispatcher
+            .kill_spawn(&proposed_child.attempt.id, &non_spawner.attempt.id, 9)
+            .expect("non-spawner kill proposes");
+        let non_spawner_kill_proposals =
+            usize::from(matches!(non_spawner_outcome, KillOutcome::Proposed(_)));
+        let queue = AttemptQueue::new(&vault);
+        let observed_state = |id| {
+            queue
+                .get(id)
+                .expect("read child")
+                .expect("child exists")
+                .state
+        };
+        let spawner_kill_effects =
+            usize::from(observed_state(system_child.attempt.id) == AttemptState::Cancelled);
+        let cross_class_spawner_kill_effects =
+            usize::from(observed_state(custom_child.attempt.id) == AttemptState::Cancelled);
+        let non_spawner_kill_effects =
+            usize::from(observed_state(proposed_child.attempt.id) == AttemptState::Cancelled);
+
+        assert_eq!(
+            observed_state(proposed_child.attempt.id),
+            AttemptState::Queued
+        );
+
+        KillMatrix {
+            spawner_kill_effects,
+            cross_class_spawner_kill_effects,
+            non_spawner_kill_effects,
+            non_spawner_kill_proposals,
+        }
     }
 
     /// ONE-1698 · 08b §4.1 (owner r1): the spawner kills its own spawns,
     /// regardless of class; others' kill fails closed into a proposal.
     #[test]
-    #[ignore = "armed by ONE-1698"]
     fn spawner_kills_own_spawns_non_spawner_fails_closed() {
         let matrix = arm_kill_matrix();
         assert_eq!(matrix.spawner_kill_effects, 1);

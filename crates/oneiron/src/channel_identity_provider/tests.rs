@@ -516,7 +516,7 @@ fn line_oa_adapter_manual_fulfillment_and_inbound_stamping() -> Result<()> {
         LineOfficialAccountAdapterConfig::new(LINE_DESTINATION, LineOfficialAccountPlanTier::Free)?;
     let adapter = LineOfficialAccountAdapter::new(config);
     let identity_id = entity(0x61);
-    let agent_ref = entity(0xA6);
+    let agent_ref = entity(0xD6);
     let source_user_id = LINE_USER_A;
     let address = adapter.address_for_line_user(source_user_id)?;
 

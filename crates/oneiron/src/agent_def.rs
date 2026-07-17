@@ -221,12 +221,12 @@ impl AgentCeiling {
 /// forks are snapshots that keep the version they forked from.
 pub const SYSTEM_AGENT_PRESET_VERSION: &str = "1";
 
-/// The five code-shipped system-agent presets (OF-334 / EF-155).
+/// The code-shipped system-agent presets (OF-334 / EF-155).
 ///
 /// Presets are compiled-in templates, never stored as vault entities —
 /// "editing a system agent" is impossible by construction; the only mutation
 /// path is [`Vault::fork_system_agent`]. At the gate they are keyed by the
-/// pinned actor entity ids (`[0xA1; 16]`..`[0xA5; 16]`), never by labels.
+/// pinned actor entity ids (`[0xA1; 16]`..`[0xA6; 16]`), never by labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SystemAgentPreset {
     Scout,
@@ -234,6 +234,7 @@ pub enum SystemAgentPreset {
     Creative,
     Herald,
     Guide,
+    Default,
 }
 
 impl SystemAgentPreset {
@@ -247,18 +248,25 @@ impl SystemAgentPreset {
             Self::Creative => "sys.creative",
             Self::Herald => "sys.herald",
             Self::Guide => "sys.guide",
+            Self::Default => "sys.default",
         }
     }
 
-    /// Parses a pinned preset id (exact match on the five ids).
+    /// Parses a pinned preset id.
     #[must_use]
     pub fn parse(id: &str) -> Option<Self> {
+        if id == Self::Default.preset_id() {
+            return Some(Self::Default);
+        }
         Self::all()
             .into_iter()
             .find(|preset| preset.preset_id() == id)
     }
 
-    /// Deterministic roster order (declaration order).
+    /// Deterministic domain-preset roster order (declaration order).
+    ///
+    /// The default base stays outside this domain roster and its five-bit
+    /// census; its reserved id has a separate additive census.
     #[must_use]
     pub const fn all() -> [SystemAgentPreset; 5] {
         [
@@ -270,6 +278,12 @@ impl SystemAgentPreset {
         ]
     }
 
+    /// The always-available generic base used by zero-configuration dispatch.
+    #[must_use]
+    pub const fn default_base() -> SystemAgentPreset {
+        SystemAgentPreset::Default
+    }
+
     /// The preset's compiled ceiling bound. Herald (external effector: email)
     /// and Guide (policy/consent surfaces) self-limit to Proposed — no fork of
     /// either can ever re-widen to Auto; the inward-facing memory workers do
@@ -278,7 +292,7 @@ impl SystemAgentPreset {
     #[must_use]
     pub const fn ceiling(self) -> AgentCeiling {
         match self {
-            Self::Scout | Self::Keeper | Self::Creative => AgentCeiling::Auto,
+            Self::Scout | Self::Keeper | Self::Creative | Self::Default => AgentCeiling::Auto,
             Self::Herald | Self::Guide => AgentCeiling::Proposed,
         }
     }
@@ -290,6 +304,7 @@ impl SystemAgentPreset {
             Self::Creative => 0xA3,
             Self::Herald => 0xA4,
             Self::Guide => 0xA5,
+            Self::Default => 0xA6,
         }
     }
 
@@ -304,9 +319,12 @@ impl SystemAgentPreset {
             .expect("pinned system agent actor id is non-reserved")
     }
 
-    /// Reverse lookup for the five pinned actor ids.
+    /// Reverse lookup for the pinned actor ids.
     #[must_use]
     pub fn from_actor_entity_id(id: &EntityId) -> Option<Self> {
+        if id.as_bytes() == &[Self::Default.actor_id_byte(); 16] {
+            return Some(Self::Default);
+        }
         Self::all()
             .into_iter()
             .find(|preset| id.as_bytes() == &[preset.actor_id_byte(); 16])
@@ -345,6 +363,7 @@ impl SystemAgentPreset {
                 Vec::new(),
                 Vec::new(),
             ),
+            Self::Default => ("default", Vec::new(), Vec::new()),
         };
         AgentDefinition::new(
             self.preset_id(),
@@ -1208,19 +1227,19 @@ fn system_agent_toggle_key(preset: SystemAgentPreset) -> Vec<u8> {
     key
 }
 
-/// The durable reserved-id occupancy census (`vault_meta`, ONE key, ONE byte).
+/// The durable five-domain-preset occupancy census (`vault_meta`, one byte).
 ///
 /// The value is a bitmask over [`SystemAgentPreset::all`] declaration order:
 /// bit `i` is set iff preset `i`'s pinned actor id was occupied by a stored
 /// entity when the census ran. The KEY's PRESENCE means the census completed.
 ///
-/// Modelling the census as a SINGLE atomic write (rather than per-id markers
-/// plus a separate completion flag) makes the fail-closed guarantee
-/// structural, not an argument about write ordering across keys: the write
-/// either commits in full or not at all, so a "completed but with occupancy
-/// missing" state is UNREACHABLE. If the write fails, the key is absent and
-/// the resolver withholds ALL preset Auto (fail closed).
+/// Default uses a separate additive one-byte completion/occupancy key. The
+/// resolver requires both keys and combines them only in memory.
 const SYSTEM_AGENT_RESERVED_CENSUS_KEY: &[u8] = b"agent_def:reserved_actor_census:v2";
+const SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_KEY: &[u8] =
+    b"agent_def:default_reserved_actor_census:v1";
+const SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_OCCUPIED: u8 = 0x01;
+const SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_SENTINEL: u8 = 1 << 5;
 
 const fn reserved_preset_bit(preset: SystemAgentPreset) -> u8 {
     match preset {
@@ -1229,77 +1248,114 @@ const fn reserved_preset_bit(preset: SystemAgentPreset) -> u8 {
         SystemAgentPreset::Creative => 1 << 2,
         SystemAgentPreset::Herald => 1 << 3,
         SystemAgentPreset::Guide => 1 << 4,
+        SystemAgentPreset::Default => 0,
     }
 }
 
-/// The completed census bitmask, or `None` when the census has not durably
-/// completed (key absent) OR its read fails — both fail closed, so the
-/// resolver withholds preset Auto rather than granting it on missing state.
+/// The combined in-memory census, or `None` unless both durable censuses are
+/// valid and complete. The stored five-bit v2 byte is never changed.
 pub(crate) fn reserved_actor_census(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Option<u8> {
-    match store.vault_meta.get(txn, SYSTEM_AGENT_RESERVED_CENSUS_KEY) {
-        Ok(Some(raw)) if raw.len() == 1 => Some(raw[0]),
-        Ok(Some(_)) | Ok(None) => None,
+    let mut census = match store.vault_meta.get(txn, SYSTEM_AGENT_RESERVED_CENSUS_KEY) {
+        Ok(Some(raw)) if raw.len() == 1 => raw[0],
+        Ok(Some(_)) | Ok(None) => return None,
         Err(error) => {
             tracing::warn!(
                 %error,
                 "reserved system agent census read failed; failing closed",
             );
-            None
+            return None;
         }
+    };
+    let default_census = match store
+        .vault_meta
+        .get(txn, SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_KEY)
+    {
+        Ok(Some(raw)) if *raw == [0x00] || *raw == [0x01] => raw[0],
+        Ok(Some(_)) | Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "default system agent census read failed; failing closed",
+            );
+            return None;
+        }
+    };
+    if default_census == SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_OCCUPIED {
+        census |= SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_SENTINEL;
     }
+    Some(census)
 }
 
 /// True when the completed census recorded this reserved id as occupied
 /// (now or at census time). `census` is the mask from [`reserved_actor_census`].
 #[must_use]
 pub(crate) fn reserved_actor_id_was_occupied(census: u8, preset: SystemAgentPreset) -> bool {
-    census & reserved_preset_bit(preset) != 0
+    if preset == SystemAgentPreset::Default {
+        census & SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_SENTINEL != 0
+    } else {
+        census & reserved_preset_bit(preset) != 0
+    }
 }
 
-/// One-time census of ALL five reserved system-agent actor ids, committed as
-/// ONE atomic `vault_meta` value (the occupancy bitmask; see
-/// [`SYSTEM_AGENT_RESERVED_CENSUS_KEY`]).
+/// One-time census of the five domain ids and separate Default reserved id.
 ///
-/// Runs solely from the write door every entity materialization funnels
-/// through (`batch.rs::apply_put`) — never on the read/gate path, so the
-/// ceiling resolver stays read-only. `Vault::open` writes the default policy
-/// manifest through `apply_put`, so the census runs — observing any on-disk
-/// legacy occupant — before any caller holds the vault handle; and no NEW
-/// occupant can appear afterward because `apply_put` reserves the write door
-/// for these ids. A census write failure aborts the transaction (open fails,
-/// or the triggering write fails) and leaves the key absent — fail closed.
-/// Idempotent; steady-state cost is one `vault_meta` read.
+/// Runs during `Vault::open` and from `batch.rs::apply_put`; the gate stays
+/// read-only. Open observes legacy occupants before returning a vault handle,
+/// while `apply_put` reserves the ids. Both census writes share one transaction.
 pub(crate) fn scan_reserved_actor_ids_once(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
-    if store
+    let domain_completed = store
         .vault_meta
         .get(wtxn, SYSTEM_AGENT_RESERVED_CENSUS_KEY)?
-        .is_some()
-    {
+        .is_some();
+    let default_completed = store
+        .vault_meta
+        .get(wtxn, SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_KEY)?
+        .is_some();
+    if domain_completed && default_completed {
         return Ok(());
     }
-    let mut mask = 0_u8;
-    for preset in SystemAgentPreset::all() {
+    if !domain_completed {
+        let mut mask = 0_u8;
+        for preset in SystemAgentPreset::all() {
+            let id = preset.actor_entity_id();
+            if store.entities.get(wtxn, id.as_bytes())?.is_some() {
+                tracing::warn!(
+                    actor_entity_id = %id.to_hex(),
+                    preset = preset.preset_id(),
+                    "reserved system agent actor id is occupied by a legacy entity; \
+                     recording durable occupancy in the census",
+                );
+                mask |= reserved_preset_bit(preset);
+            }
+        }
+        store
+            .vault_meta
+            .put(wtxn, SYSTEM_AGENT_RESERVED_CENSUS_KEY, &[mask])?;
+    }
+    if !default_completed {
+        let preset = SystemAgentPreset::Default;
         let id = preset.actor_entity_id();
-        if store.entities.get(wtxn, id.as_bytes())?.is_some() {
+        let occupied = store.entities.get(wtxn, id.as_bytes())?.is_some();
+        if occupied {
             tracing::warn!(
                 actor_entity_id = %id.to_hex(),
                 preset = preset.preset_id(),
                 "reserved system agent actor id is occupied by a legacy entity; \
                  recording durable occupancy in the census",
             );
-            mask |= reserved_preset_bit(preset);
         }
+        store.vault_meta.put(
+            wtxn,
+            SYSTEM_AGENT_DEFAULT_RESERVED_CENSUS_KEY,
+            &[u8::from(occupied)],
+        )?;
     }
-    // ONE write: the census (occupancy + completion) commits atomically.
-    store
-        .vault_meta
-        .put(wtxn, SYSTEM_AGENT_RESERVED_CENSUS_KEY, &[mask])?;
     Ok(())
 }
 
@@ -1364,8 +1420,11 @@ impl Vault {
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
-    /// Writes the per-vault toggle byte for a system-agent preset.
+    /// Writes a per-vault preset toggle. Default ignores toggle requests.
     pub fn set_system_agent_enabled(&self, preset: SystemAgentPreset, enabled: bool) -> Result<()> {
+        if preset == SystemAgentPreset::Default {
+            return Ok(());
+        }
         let key = system_agent_toggle_key(preset);
         let mut wtxn = self.store.env.write_txn()?;
         self.store
@@ -1375,10 +1434,12 @@ impl Vault {
         Ok(())
     }
 
-    /// Reads the per-vault toggle for a system-agent preset. Absent key =
-    /// enabled (presets ship on); any stored byte other than `0x00`/`0x01`
-    /// is an invariant violation.
+    /// Reads a preset toggle. Default is unconditional; other absent keys are
+    /// enabled, and malformed stored bytes are invariant violations.
     pub fn system_agent_enabled(&self, preset: SystemAgentPreset) -> Result<bool> {
+        if preset == SystemAgentPreset::Default {
+            return Ok(true);
+        }
         let key = system_agent_toggle_key(preset);
         let rtxn = self.store.env.read_txn()?;
         match self.store.vault_meta.get(&rtxn, key.as_slice())? {
@@ -1477,6 +1538,61 @@ impl Vault {
             false,
             true,
         )
+    }
+}
+
+#[cfg(test)]
+mod one_1698_tests {
+    use super::{SystemAgentPreset, scan_reserved_actor_ids_once};
+    use crate::edge::EdgeActorClass;
+    use crate::gate::PolicyApprovalCeiling;
+    use crate::{VaultConfig, WriteActor};
+
+    #[test]
+    fn default_base_preset_round_trips_without_joining_domain_census() {
+        let preset = SystemAgentPreset::default_base();
+        assert_eq!(preset.preset_id(), "sys.default");
+        assert_eq!(SystemAgentPreset::parse("sys.default"), Some(preset));
+        assert_eq!(preset.actor_entity_id().as_bytes(), &[0xA6; 16]);
+        assert_eq!(
+            SystemAgentPreset::from_actor_entity_id(&preset.actor_entity_id()),
+            Some(preset)
+        );
+        assert_eq!(SystemAgentPreset::all().len(), 5);
+    }
+
+    #[test]
+    fn recorded_default_id_occupancy_resolves_proposed_after_delete() -> crate::Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let preset = SystemAgentPreset::Default;
+        let id = preset.actor_entity_id();
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .delete(wtxn, b"agent_def:default_reserved_actor_census:v1")?;
+            vault.store.entities.put(wtxn, id.as_bytes(), &[0x01])?;
+            scan_reserved_actor_ids_once(&vault.store, wtxn)?;
+            vault.store.entities.delete(wtxn, id.as_bytes())?;
+            Ok(())
+        })?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let ceiling = crate::gate::agent_definition_ceiling_for_actor(
+            &vault.store,
+            &rtxn,
+            WriteActor::new(id, EdgeActorClass::Agent),
+        );
+        assert_eq!(ceiling, Some(PolicyApprovalCeiling::Proposed));
+        Ok(())
+    }
+
+    #[test]
+    fn default_toggle_is_ignored() -> crate::Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        vault.set_system_agent_enabled(SystemAgentPreset::Default, false)?;
+        assert!(vault.system_agent_enabled(SystemAgentPreset::Default)?);
+        Ok(())
     }
 }
 

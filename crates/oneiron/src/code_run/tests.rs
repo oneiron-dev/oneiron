@@ -1003,7 +1003,7 @@ fn code_run_edge_and_supersede_traps_force_generated_source_into_g2() -> Result<
 #[test]
 fn code_run_immediate_write_traps_reject_pending_gate() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let actor = seed_person(&vault, 0xA6);
+    let actor = seed_person(&vault, 0xD6);
     let src = seed_person(&vault, 0xB6);
     let tgt = seed_person(&vault, 0xC6);
     let dispatcher = HostSelfDispatcher::new(

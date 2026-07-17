@@ -2611,8 +2611,9 @@ fn apply_put(
     // and closed fences reject before any validation or side effect can mint
     // an index row, gate receipt, or late entity body.
     crate::off_record::guard_off_record_entity_put(store, wtxn, &id, replicated)?;
-    // The five pinned system-agent actor ids ([0xA1; 16]..[0xA5; 16]) are
-    // write-door-reserved (design-pass 2026-07-10 §7a): a definition stored at
+    // The six pinned system-agent actor ids ([0xA1; 16]..[0xA6; 16]) are
+    // write-door-reserved (design-pass 2026-07-10 §7a; the sixth, [0xA6; 16], is
+    // the always-available default base preset): a definition stored at
     // one of them would resolve at the gate as a system preset with its
     // compiled ceiling — an authority-bearing identity collision. Guarded here
     // at the one choke point every entity materialization funnels through

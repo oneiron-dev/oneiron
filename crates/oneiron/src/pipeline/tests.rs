@@ -431,7 +431,7 @@ fn single_channel_noop() {
 fn metric_counts_dampened() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let ghost_a = entity_id(0x95);
-    let ghost_b = entity_id(0xA6);
+    let ghost_b = entity_id(0xD6);
     let lexical = entity_id(0xA7);
     let low_similarity = entity_id(0xA8);
 

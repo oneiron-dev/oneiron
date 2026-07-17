@@ -186,7 +186,7 @@ fn inbound_requested_and_pending_fulfillment_reject_as_inactive() -> Result<()> 
     )?;
 
     let pending_ref = entity(0x16);
-    let pending_agent = entity(0xA6);
+    let pending_agent = entity(0xD6);
     let mut pending = identity(
         "pending@example.com",
         pending_agent,

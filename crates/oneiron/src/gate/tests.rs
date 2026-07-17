@@ -3598,7 +3598,7 @@ fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Res
         &mut data,
         actor_ceiling_row(LOCAL_WRITE_ACTOR_CLASS, "auto"),
     );
-    put_policy_manifest_bytes(&vault, 0xA6, &data)?;
+    put_policy_manifest_bytes(&vault, 0xD6, &data)?;
 
     let id = test_id(0xA7);
     let mut proposed = source_trust_claim(ClaimSource::Generated);
@@ -4228,7 +4228,7 @@ fn gate_chokepoint_edge_provenance_supersede_checks_closed_prior_before_reput() 
     // actor ids (ONE-1444).
     let src = test_id(0x94);
     let tgt = test_id(0x95);
-    let human_actor = test_id(0xA6);
+    let human_actor = test_id(0xD6);
     let agent_actor = test_id(0xA7);
     let prior_claim_id = test_id(0xA8);
     let new_claim_id = test_id(0xA9);
