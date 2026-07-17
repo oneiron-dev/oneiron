@@ -227,6 +227,29 @@ impl Vault {
     /// Every gate fails closed: the first failing gate returns its typed
     /// [`Error`] and no usable `Vault` handle is constructed.
     pub fn open(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
+        // Production open always seeds the default policy manifest — the seed
+        // decision is a compile-time `true` here, not a config field, so no
+        // consumer build (including `--all-features`) can open a vault that
+        // skips the default consent/policy gate.
+        Self::open_seeded(path, config, true)
+    }
+
+    /// Opens a vault WITHOUT seeding the default policy manifest. TEST-SUPPORT
+    /// ONLY: compiled only under the `test-support` feature (enabled via this
+    /// crate's own dev-dependency for the effect-spine integration oracle) and
+    /// reachable only by explicitly calling this test-named function. Because
+    /// the production `open` above hardcodes seeding, an unseeded vault is
+    /// unreachable through the public API even when the feature is enabled.
+    #[cfg(feature = "test-support")]
+    pub fn open_unseeded_for_test(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
+        Self::open_seeded(path, config, false)
+    }
+
+    fn open_seeded(
+        path: impl AsRef<Path>,
+        config: VaultConfig,
+        seed_default_manifest: bool,
+    ) -> Result<Self> {
         if config.dimensions == 0 {
             return Err(Error::InvalidConfig(
                 "dimensions must be greater than zero".to_owned(),
@@ -268,13 +291,11 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
-        // Test-support knob: it can only skip seeding when the crate is built
-        // with the `test-support` feature (enabled via a dev-dependency for the
-        // effect-spine oracle). In a production build the bypass is compiled
-        // out, so an unseeded vault is unreachable regardless of the field.
-        let skip_default_manifest =
-            cfg!(feature = "test-support") && config.skip_default_policy_manifest;
-        if store.created_new_vault() && !skip_default_manifest {
+        // Seed the default policy manifest for a fresh vault unless this is the
+        // test-only open_unseeded_for_test path (seed_default_manifest = false).
+        // Production `open` passes `true`, so seeding is never skippable through
+        // the public API.
+        if store.created_new_vault() && seed_default_manifest {
             seed_default_policy_manifest(&store, &config, &analyzer, text_index_trusted)?;
         }
         // The reserved system-agent-id occupancy census must complete BEFORE

@@ -41,10 +41,27 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 /// pipeline, later-armed tests) keep the seeded manifest via open_vault().
 fn open_comm_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
-    let mut cfg = test_config();
-    cfg.skip_default_policy_manifest = true;
-    let vault = Vault::open(dir.path(), cfg).unwrap();
+    let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
     (dir, vault)
+}
+
+/// PROOF (ONE-1716 sweep-11): the production `Vault::open` path ALWAYS seeds the
+/// default policy manifest — even with `test-support` compiled in — so an
+/// unseeded vault is reachable ONLY through the explicit open_unseeded_for_test
+/// seam, never through `open()` or a config field. Here a normally-opened vault
+/// gates the comm projector's opt_out claim write under the default policy,
+/// unlike `open_comm_vault` above.
+#[test]
+fn es03_production_open_seeds_the_default_policy_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), test_config()).unwrap();
+    oneiron::record_comm_inbound_stop(&vault, "party-seed-proof", "email", 10).unwrap();
+    // Seeded: the projector's Auto comm.opt_out CLAIM write is floored by the
+    // default gate, so the pass returns an error instead of a live standing head.
+    assert!(
+        oneiron::run_comm_projector(&vault).is_err(),
+        "production Vault::open must seed the default policy gate"
+    );
 }
 
 /// Outcome of asking to CLEAR a `comm.opt_out` claim (doc 13 §4).

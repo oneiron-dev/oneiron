@@ -98,11 +98,11 @@ sync = [
 # test in `oneiron-server`). No production effect; enabled only by
 # downstream crates' dev-dependencies.
 test-hooks = []
-# Gates the `VaultConfig::skip_default_policy_manifest` bypass so it can only
-# skip seeding the default policy manifest in test builds (the effect-spine
-# oracle opens an unseeded vault). Compiled out of production builds — enabled
-# only via the self dev-dependency below — so an unseeded vault is unreachable
-# through the public config field in production.
+# Compiles in `Vault::open_unseeded_for_test` — the only way to open a vault
+# without seeding the default policy manifest (the effect-spine oracle needs
+# it). Enabled only via the self dev-dependency below. Even under
+# `--all-features` the production `Vault::open` path always seeds; the unseeded
+# opener is an explicit test-named function, not a silent config field.
 test-support = []
 
 [dev-dependencies]

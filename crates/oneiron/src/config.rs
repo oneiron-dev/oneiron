@@ -107,10 +107,6 @@ pub struct VaultConfig {
     /// callers that go through the same internal trust gate)
     /// returns [`crate::Error::CorruptedIndex`] until the clear commits.
     pub skip_text_index_manifest_check: bool,
-    /// TEST-SUPPORT ONLY: Skip seeding the default policy manifest at
-    /// [`crate::Vault::open`]. Production callers must leave this `false`.
-    #[doc(hidden)]
-    pub skip_default_policy_manifest: bool,
 }
 
 /// Text analyzer configuration. Kept minimal in v1 — the full analyzer
@@ -297,7 +293,6 @@ impl VaultConfig {
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
             skip_text_index_manifest_check: false,
-            skip_default_policy_manifest: false,
         }
     }
 
@@ -314,7 +309,6 @@ impl VaultConfig {
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
             skip_text_index_manifest_check: false,
-            skip_default_policy_manifest: false,
         }
     }
 }

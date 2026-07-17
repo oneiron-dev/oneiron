@@ -25,7 +25,6 @@ fn test_config() -> VaultConfig {
         text_analyzer: TextAnalyzerConfig::default(),
         dict_search_paths: Vec::<PathBuf>::new(),
         skip_text_index_manifest_check: false,
-        skip_default_policy_manifest: false,
     }
 }
 
