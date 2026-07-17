@@ -6655,6 +6655,13 @@ fn all_entity_type_prefixes() {
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
+        (
+            "COMM_RECORD",
+            crate::registry::ENTITY_TYPE_COMM_RECORD,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
     let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY
@@ -12631,6 +12638,50 @@ fn replicated_door_fails_closed_on_invalid_federation_grant_policy() -> Result<(
         .commit()
         .expect_err("batch replay door must reject role/preset mismatches");
     assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
+    assert_no_entity_state(&vault, &bad_batch)?;
+    Ok(())
+}
+
+/// FED-001: COMM_RECORD (type 136) is a registered maintenance kind, so the
+/// replicated doors admit it — malformed bodies must fail typed at the
+/// boundary instead of persisting bytes the comm projector silently skips.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_door_fails_closed_on_malformed_comm_record_body() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let malformed = b"not a comm record body";
+
+    let bad_txn = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &bad_txn,
+                    crate::registry::ENTITY_TYPE_COMM_RECORD,
+                    test_time_range(1, 1),
+                    2,
+                    malformed,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("txn replay door must reject malformed comm records");
+    assert_eq!(err.kind(), ErrorKind::InvalidCommRecordBody);
+    assert_no_entity_state(&vault, &bad_txn)?;
+
+    let bad_batch = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(
+            &bad_batch,
+            crate::registry::ENTITY_TYPE_COMM_RECORD,
+            test_time_range(1, 1),
+            2,
+            malformed,
+        )
+        .commit()
+        .expect_err("batch replay door must reject malformed comm records");
+    assert_eq!(err.kind(), ErrorKind::InvalidCommRecordBody);
     assert_no_entity_state(&vault, &bad_batch)?;
     Ok(())
 }

@@ -31,9 +31,9 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -2780,6 +2780,8 @@ fn apply_put(
         crate::channel_identity::validate_channel_identity_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
+    } else if entity_type == ENTITY_TYPE_COMM_RECORD {
+        crate::comm::validate_comm_record_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
