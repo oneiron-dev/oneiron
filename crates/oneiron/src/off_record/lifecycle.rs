@@ -3,12 +3,9 @@
 //! A no-write, evaporating session mode. The seam is four verbs plus one
 //! standing law:
 //!
-//! * **Enter is explicit** — [`Vault::enter_off_record_session`] mints a
-//!   durable session record; both parties know (the caller injects
-//!   [`off_record_context_marker`] into the agent context, and the marker's
-//!   backend-relative disclosure line keeps the evaporation claim honest:
-//!   local = real evaporation; cloud/BYO = this engine persists nothing but
-//!   provider retention applies to what transited their API).
+//! * **Enter is explicit** — [`Vault::enter_off_record_session`] creates an
+//!   in-process session record. The engine exposes mode and backend-class
+//!   enums; the host owns all user-facing marker composition.
 //! * **THE FENCE** — turns tagged via [`Vault::tag_turn_off_record`] carry a
 //!   per-entity fence row that the retrieval/extraction candidate filter
 //!   consults unconditionally (`off_record_fence_active`, wired into
@@ -64,7 +61,7 @@
 //! here, not silently absent:
 //!
 //! * **Whole-vault export refuses while a session is live.** The export seam
-//!   checks the durable session family before it writes an artifact, returning
+//!   checks the in-process registry before it writes an artifact, returning
 //!   a typed error naming the open session rather than producing a bundle that
 //!   could outlive close with fenced content.
 //! * **Context-receipt registration is caller discipline.** See the MUST
@@ -72,41 +69,37 @@
 //!   retrieval-telemetry seam (e.g. a session ref on `PipelineBuilder`)
 //!   that does not exist today.
 
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, MutexGuard};
+
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::receipt::SessionLocalReceiptLog;
-use crate::store::{RetrievalRunId, Store};
+use crate::receipt::{ReceiptRecord, SessionLocalReceiptLog};
+use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+use crate::session_overlay::SessionOverlay;
+use crate::store::{GateDecisionRecord, RetrievalRunId, Store};
 
-/// `vault_meta` key prefix for off-record session records.
-const OFF_RECORD_SESSION_KEY_PREFIX: &[u8] = b"offrecord_session:v0:";
 /// `vault_meta` key prefix for per-entity fence rows (value = session ref).
 const OFF_RECORD_FENCE_KEY_PREFIX: &[u8] = b"offrecord_fence:v0:";
-/// `vault_meta` key prefix for durable promote receipts (survive close).
-const OFF_RECORD_PROMOTE_KEY_PREFIX: &[u8] = b"offrecord_promote:v0:";
 /// Value replacing a tag-before-write fence after close. An empty value can
 /// never be a live session ref (`vet_off_record_session_ref` rejects empty),
 /// so it preserves the closed write door without retaining session metadata.
 const OFF_RECORD_CLOSED_FENCE_VALUE: &[u8] = b"";
 
 const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
-const OFF_RECORD_PROMOTE_RECEIPT_VERSION: u8 = 0;
 
-/// Longest accepted session ref, in bytes (session refs are caller-supplied
-/// opaque ids; they become `vault_meta` key suffixes).
+/// Longest accepted caller-supplied opaque session ref, in bytes.
 const OFF_RECORD_SESSION_REF_MAX_LEN: usize = 256;
 /// Hard cap on fenced turns tracked by one session record.
 const OFF_RECORD_MAX_FENCED_TURNS: usize = 65_536;
 /// Hard cap on session-local context receipts tracked by one session record.
 const OFF_RECORD_MAX_CONTEXT_RECEIPTS: usize = 65_536;
-
-/// The mode line injected into the agent context so both parties know the
-/// session is off-record (OF-326: no secret recording either way).
-pub const OFF_RECORD_SESSION_MARKER_LINE: &str = "This session is OFF-RECORD: nothing said here is written to memory, and the transcript is deleted when the session closes. Outbound actions and commitments are disabled while off-record; taking an action requires exiting off-record mode. The user may explicitly promote a single turn into memory.";
 
 /// Current tagging mode of an off-record session.
 ///
@@ -133,33 +126,7 @@ pub enum OffRecordBackendClass {
     RemoteProvider,
 }
 
-impl OffRecordBackendClass {
-    /// The honesty line the mode surfaces for this backend.
-    #[must_use]
-    pub const fn disclosure_line(self) -> &'static str {
-        match self {
-            Self::Local => {
-                "Evaporation is real on this backend: inference is local, nothing leaves this device, and nothing is retained after close."
-            }
-            Self::RemoteProvider => {
-                "This engine persists nothing after close, but inference transits a cloud provider; the provider's own retention policy applies to what crossed its API."
-            }
-        }
-    }
-}
-
-/// Builds the full agent-context marker for an off-record session: the mode
-/// line plus the backend-relative disclosure line.
-#[must_use]
-pub fn off_record_context_marker(backend: OffRecordBackendClass) -> String {
-    format!(
-        "{OFF_RECORD_SESSION_MARKER_LINE}\n{}",
-        backend.disclosure_line()
-    )
-}
-
-/// Durable state of one off-record session, keyed by the caller's opaque
-/// session ref. Deleted (with its fence rows) at close.
+/// Read-only projection of one in-process off-record session record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OffRecordSessionRecord {
     pub version: u8,
@@ -180,19 +147,6 @@ pub struct OffRecordSessionRecord {
     /// could hard-delete a just-promoted, user-consented turn).
     #[serde(default)]
     pub closing: bool,
-}
-
-/// Durable, user-initiated receipt minted by promote. Survives close: it is
-/// the provenance for why one turn outlived the evaporated room. Carries
-/// opaque ids only — never turn content.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OffRecordPromoteReceipt {
-    pub version: u8,
-    pub session_ref: String,
-    pub turn: [u8; 16],
-    pub promoted_at: u64,
-    /// Always `"user"`: promote exists only as an explicit user consent act.
-    pub initiator: String,
 }
 
 /// What close deleted and what it kept.
@@ -220,46 +174,199 @@ pub struct OffRecordCloseOutcome {
     pub redaction_receipt_ids: Vec<EntityId>,
 }
 
-fn off_record_session_key(session_ref: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(OFF_RECORD_SESSION_KEY_PREFIX.len() + session_ref.len());
-    key.extend_from_slice(OFF_RECORD_SESSION_KEY_PREFIX);
-    key.extend_from_slice(session_ref.as_bytes());
-    key
+mod floor_writes_seal {
+    pub(super) struct Seal;
 }
 
-fn off_record_fence_key(id: &EntityId) -> Vec<u8> {
+/// The only durable writer surface made available to session lifecycle code.
+/// Its constructor and seal are crate-private, and it exposes exactly the
+/// three floor operations allowed by ARCH-0052.
+pub(crate) struct FloorWrites<'store> {
+    pub(super) store: &'store Store,
+    _seal: floor_writes_seal::Seal,
+}
+
+impl<'store> FloorWrites<'store> {
+    pub(crate) fn new(store: &'store Store) -> Self {
+        Self {
+            store,
+            _seal: floor_writes_seal::Seal,
+        }
+    }
+
+    /// Floor operation 1/3: append one evaluated egress gate decision.
+    pub(crate) fn append_egress_gate_decision(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<()> {
+        self.store.append_gate_decision_in_txn(wtxn, record)
+    }
+
+    /// Floor operation 2/3: append one REDACTION_AUDIT entity and its exact
+    /// ordinary entity-index footprint.
+    pub(crate) fn append_redaction_audit(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        receipt_id: &EntityId,
+        learned_at: u64,
+        body: &[u8],
+    ) -> Result<()> {
+        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+        payload.extend_from_slice(&crate::deletion::receipt_envelope_header(learned_at));
+        payload.extend_from_slice(body);
+        self.store
+            .entities
+            .put(wtxn, receipt_id.as_bytes(), &payload)?;
+
+        let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, receipt_id);
+        self.store.type_index.put(wtxn, &type_key, &[])?;
+        let temporal_key = Store::encode_temporal_key(learned_at, receipt_id);
+        self.store
+            .temporal_occurred_start
+            .put(wtxn, &temporal_key, &[])?;
+        self.store.temporal_learned.put(wtxn, &temporal_key, &[])?;
+        Ok(())
+    }
+}
+
+/// Vault-scoped, in-process source of truth for live off-record sessions.
+/// No registry row is ever serialized into the base vault.
+#[derive(Default)]
+pub(crate) struct OffRecordSessionRegistry {
+    sessions: Mutex<BTreeMap<String, Arc<OffRecordSessionEntry>>>,
+}
+
+pub(super) struct OffRecordSessionEntry {
+    pub(super) overlay: Arc<SessionOverlay>,
+    pub(super) state: Mutex<OffRecordSessionEntryState>,
+}
+
+pub(super) struct OffRecordSessionEntryState {
+    pub(super) record: OffRecordSessionRecord,
+    pub(super) receipt_log: Option<SessionLocalReceiptLog>,
+    pub(super) overlay_closed: bool,
+    pub(super) gone: bool,
+}
+
+impl OffRecordSessionRegistry {
+    fn sessions(&self) -> Result<MutexGuard<'_, BTreeMap<String, Arc<OffRecordSessionEntry>>>> {
+        self.sessions
+            .lock()
+            .map_err(|_| Error::InvariantViolation("off-record session registry mutex poisoned"))
+    }
+
+    pub(super) fn enter(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        budget_bytes: usize,
+    ) -> Result<Arc<OffRecordSessionEntry>> {
+        let mut sessions = self.sessions()?;
+        if sessions.contains_key(session_ref) {
+            return Err(Error::OffRecordSessionAlreadyExists {
+                session_ref: session_ref.to_owned(),
+            });
+        }
+        let entry = Arc::new(OffRecordSessionEntry {
+            overlay: SessionOverlay::new(budget_bytes),
+            state: Mutex::new(OffRecordSessionEntryState {
+                record: OffRecordSessionRecord {
+                    version: OFF_RECORD_SESSION_RECORD_VERSION,
+                    session_ref: session_ref.to_owned(),
+                    mode: OffRecordMode::OffRecord,
+                    backend,
+                    entered_at: crate::unix_seconds_now(),
+                    fenced_turns: Vec::new(),
+                    promoted_turns: Vec::new(),
+                    context_receipt_runs: Vec::new(),
+                    closing: false,
+                },
+                receipt_log: Some(SessionLocalReceiptLog::off_record(session_ref)),
+                overlay_closed: false,
+                gone: false,
+            }),
+        });
+        sessions.insert(session_ref.to_owned(), entry.clone());
+        Ok(entry)
+    }
+
+    pub(super) fn entry(&self, session_ref: &str) -> Result<Option<Arc<OffRecordSessionEntry>>> {
+        Ok(self.sessions()?.get(session_ref).cloned())
+    }
+
+    pub(crate) fn record(&self, session_ref: &str) -> Result<Option<OffRecordSessionRecord>> {
+        let Some(entry) = self.entry(session_ref)? else {
+            return Ok(None);
+        };
+        let state = entry
+            .state
+            .lock()
+            .map_err(|_| Error::InvariantViolation("off-record session mutex poisoned"))?;
+        Ok((!state.gone).then(|| state.record.clone()))
+    }
+
+    pub(crate) fn first_session_ref(&self) -> Result<Option<String>> {
+        Ok(self.sessions()?.keys().next().cloned())
+    }
+
+    pub(crate) fn contains_entity(&self, id: &EntityId) -> Result<bool> {
+        let entries: Vec<Arc<OffRecordSessionEntry>> = self.sessions()?.values().cloned().collect();
+        for entry in entries {
+            let state = entry
+                .state
+                .lock()
+                .map_err(|_| Error::InvariantViolation("off-record session mutex poisoned"))?;
+            if !state.gone && entry.overlay.contains_entity(id)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn has_overlay_entities(&self) -> Result<bool> {
+        let entries: Vec<Arc<OffRecordSessionEntry>> = self.sessions()?.values().cloned().collect();
+        for entry in entries {
+            let state = entry
+                .state
+                .lock()
+                .map_err(|_| Error::InvariantViolation("off-record session mutex poisoned"))?;
+            if !state.gone && entry.overlay.has_entities()? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub(super) fn remove_if_same(
+        &self,
+        session_ref: &str,
+        expected: &Arc<OffRecordSessionEntry>,
+    ) -> Result<()> {
+        let mut sessions = self.sessions()?;
+        match sessions.get(session_ref) {
+            Some(current) if Arc::ptr_eq(current, expected) => {
+                sessions.remove(session_ref);
+                Ok(())
+            }
+            Some(_) => Err(Error::InvariantViolation(
+                "off-record session registry entry changed during close",
+            )),
+            None => Err(Error::OffRecordSessionNotFound {
+                session_ref: session_ref.to_owned(),
+            }),
+        }
+    }
+}
+
+pub(super) fn off_record_fence_key(id: &EntityId) -> Vec<u8> {
     let mut key = Vec::with_capacity(OFF_RECORD_FENCE_KEY_PREFIX.len() + 16);
     key.extend_from_slice(OFF_RECORD_FENCE_KEY_PREFIX);
     key.extend_from_slice(id.as_bytes());
     key
 }
 
-fn off_record_promote_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(OFF_RECORD_PROMOTE_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(OFF_RECORD_PROMOTE_KEY_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
-fn encode_off_record_session(record: &OffRecordSessionRecord) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(record)
-        .map_err(|_| Error::InvariantViolation("off-record session record encode failed"))
-}
-
-fn decode_off_record_session(bytes: &[u8]) -> Result<OffRecordSessionRecord> {
-    rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("off-record session record"))
-}
-
-fn encode_off_record_promote(receipt: &OffRecordPromoteReceipt) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(receipt)
-        .map_err(|_| Error::InvariantViolation("off-record promote receipt encode failed"))
-}
-
-fn decode_off_record_promote(bytes: &[u8]) -> Result<OffRecordPromoteReceipt> {
-    rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("off-record promote receipt"))
-}
-
-fn vet_off_record_session_ref(session_ref: &str) -> Result<()> {
+pub(super) fn vet_off_record_session_ref(session_ref: &str) -> Result<()> {
     if session_ref.is_empty() || session_ref.len() > OFF_RECORD_SESSION_REF_MAX_LEN {
         return Err(Error::InvalidConfig(format!(
             "off-record session ref must be 1..={OFF_RECORD_SESSION_REF_MAX_LEN} bytes, got {}",
@@ -278,6 +385,9 @@ pub(crate) fn off_record_fence_active(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    if store.off_record_sessions.contains_entity(id)? {
+        return Ok(true);
+    }
     const PREFIX_LEN: usize = OFF_RECORD_FENCE_KEY_PREFIX.len();
     let mut key = [0_u8; PREFIX_LEN + 16];
     key[..PREFIX_LEN].copy_from_slice(OFF_RECORD_FENCE_KEY_PREFIX);
@@ -289,57 +399,15 @@ pub(crate) fn off_record_fence_active(
 /// this once-per-query probe to preserve their fence-free fast path before
 /// checking returned candidates individually.
 pub(crate) fn off_record_fences_present(store: &Store, rtxn: &RoTxn<'_>) -> Result<bool> {
+    if store.off_record_sessions.has_overlay_entities()? {
+        return Ok(true);
+    }
     Ok(store
         .vault_meta
         .prefix_iter(rtxn, OFF_RECORD_FENCE_KEY_PREFIX)?
         .next()
         .transpose()?
         .is_some())
-}
-
-fn session_record_in_txn(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    session_ref: &str,
-) -> Result<Option<OffRecordSessionRecord>> {
-    let Some(bytes) = store
-        .vault_meta
-        .get(rtxn, &off_record_session_key(session_ref))?
-    else {
-        return Ok(None);
-    };
-    let record = decode_off_record_session(&bytes)?;
-    if record.session_ref != session_ref {
-        return Err(Error::CorruptedIndex("off-record session record"));
-    }
-    Ok(Some(record))
-}
-
-/// Returns the first durable off-record session ref, if any. Session rows are
-/// the source of truth for the export gate: a session remains open until its
-/// close transaction removes the row, including while the close `closing`
-/// flag is stamped. LMDB's key ordering makes the result deterministic when a
-/// caller has (incorrectly) left more than one session open.
-fn first_open_off_record_session_in_txn(store: &Store, rtxn: &RoTxn<'_>) -> Result<Option<String>> {
-    if let Some(row) = store
-        .vault_meta
-        .prefix_iter(rtxn, OFF_RECORD_SESSION_KEY_PREFIX)?
-        .next()
-    {
-        let (key, bytes) = row?;
-        let suffix = key
-            .as_ref()
-            .strip_prefix(OFF_RECORD_SESSION_KEY_PREFIX)
-            .ok_or(Error::CorruptedIndex("off-record session key"))?;
-        let session_ref = std::str::from_utf8(suffix)
-            .map_err(|_| Error::CorruptedIndex("off-record session key"))?;
-        let record = decode_off_record_session(&bytes)?;
-        if record.session_ref != session_ref {
-            return Err(Error::CorruptedIndex("off-record session record"));
-        }
-        return Ok(Some(session_ref.to_owned()));
-    }
-    Ok(None)
 }
 
 /// Fail-closed entity materialization door for off-record fences.
@@ -357,21 +425,24 @@ pub(crate) fn guard_off_record_entity_put(
     id: &EntityId,
     replicated: bool,
 ) -> Result<()> {
+    let rejected = || Error::OffRecordFencedTurnWriteRejected {
+        turn_ref: id.to_hex(),
+    };
+    if store.off_record_sessions.contains_entity(id)? {
+        return Err(rejected());
+    }
     let fence_key = off_record_fence_key(id);
     let Some(fence_value) = store.vault_meta.get(wtxn, &fence_key)? else {
         return Ok(());
     };
 
-    let rejected = || Error::OffRecordFencedTurnWriteRejected {
-        turn_ref: id.to_hex(),
-    };
     let Some(session_ref) = std::str::from_utf8(&fence_value)
         .ok()
         .filter(|session_ref| !session_ref.is_empty())
     else {
         return Err(rejected());
     };
-    let Some(record) = session_record_in_txn(store, wtxn, session_ref)? else {
+    let Some(record) = store.off_record_sessions.record(session_ref)? else {
         return Err(rejected());
     };
     if replicated || record.closing || !record.fenced_turns.contains(id.as_bytes()) {
@@ -380,34 +451,151 @@ pub(crate) fn guard_off_record_entity_put(
     Ok(())
 }
 
-/// Loads the record for a mutator: errors when the session is unknown, and
-/// rejects typed once close has stamped the closing flag — no record
-/// mutation may interleave with close's multi-transaction deletion pass.
-fn mutable_session_record_in_txn(
+pub(super) fn session_entry_state(
+    entry: &OffRecordSessionEntry,
+) -> Result<MutexGuard<'_, OffRecordSessionEntryState>> {
+    entry
+        .state
+        .lock()
+        .map_err(|_| Error::InvariantViolation("off-record session mutex poisoned"))
+}
+
+pub(super) fn live_session_entry(
     store: &Store,
-    rtxn: &RoTxn<'_>,
     session_ref: &str,
-) -> Result<OffRecordSessionRecord> {
-    let record = session_record_in_txn(store, rtxn, session_ref)?.ok_or_else(|| {
-        Error::OffRecordSessionNotFound {
+) -> Result<Arc<OffRecordSessionEntry>> {
+    store
+        .off_record_sessions
+        .entry(session_ref)?
+        .ok_or_else(|| Error::OffRecordSessionNotFound {
             session_ref: session_ref.to_owned(),
-        }
-    })?;
-    if record.closing {
-        return Err(Error::OffRecordSessionClosing {
+        })
+}
+
+/// Vault-bound factory for explicit off-record session entry.
+pub struct OffRecordSessionVault<'vault> {
+    vault: &'vault Vault,
+}
+
+/// Live session handle. Its borrow of the owning [`Vault`] makes it
+/// impossible for safe Rust to retain a session across `StoreOwner::drop`.
+pub struct OffRecordSession<'vault> {
+    vault: &'vault Vault,
+    session_ref: String,
+    entry: Arc<OffRecordSessionEntry>,
+}
+
+impl<'vault> OffRecordSessionVault<'vault> {
+    pub fn enter(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+    ) -> Result<OffRecordSession<'vault>> {
+        let entry = self.vault.enter_off_record_session_entry(
+            session_ref,
+            backend,
+            self.vault.config.off_record_overlay_budget_bytes,
+        )?;
+        Ok(OffRecordSession {
+            vault: self.vault,
             session_ref: session_ref.to_owned(),
-        });
+            entry,
+        })
     }
-    Ok(record)
+
+    /// Explicit budget override used by bounded hosts and the byte-exact
+    /// overlay budget contract.
+    pub fn enter_with_budget(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        budget_bytes: usize,
+    ) -> Result<OffRecordSession<'vault>> {
+        let entry =
+            self.vault
+                .enter_off_record_session_entry(session_ref, backend, budget_bytes)?;
+        Ok(OffRecordSession {
+            vault: self.vault,
+            session_ref: session_ref.to_owned(),
+            entry,
+        })
+    }
+}
+
+impl OffRecordSession<'_> {
+    #[must_use]
+    pub fn session_ref(&self) -> &str {
+        &self.session_ref
+    }
+
+    pub fn mode(&self) -> Result<OffRecordMode> {
+        Ok(session_entry_state(&self.entry)?.record.mode)
+    }
+
+    pub fn backend_class(&self) -> Result<OffRecordBackendClass> {
+        Ok(session_entry_state(&self.entry)?.record.backend)
+    }
+
+    /// Captures one snapshot for all 28 accessors. The returned view borrows
+    /// this handle, so `close(self)` is unavailable until the view is dropped.
+    #[allow(
+        dead_code,
+        reason = "ONE-1727 completes the session view contract; ONE-1728 witness/retrieval is its first lib-target caller"
+    )]
+    pub(crate) fn read_view(&self) -> Result<crate::store::SessionStoreView<'_>> {
+        self.vault.store.session_view(self.entry.overlay.clone())
+    }
+
+    #[allow(
+        dead_code,
+        reason = "ONE-1726 oracle access; production overlay writes arrive with ONE-1728 witness"
+    )]
+    pub(crate) fn overlay(&self) -> Arc<SessionOverlay> {
+        self.entry.overlay.clone()
+    }
+
+    pub fn flip_on_record(&self) -> Result<()> {
+        self.vault
+            .set_off_record_session_mode(&self.session_ref, OffRecordMode::OnRecord)?;
+        Ok(())
+    }
+
+    /// Records one emit-adjacent receipt in the registry-owned log consumed
+    /// by the single close path.
+    pub fn record_emit_receipt(&self, receipt: ReceiptRecord) -> Result<()> {
+        let mut state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            });
+        }
+        state
+            .receipt_log
+            .as_mut()
+            .ok_or(Error::InvariantViolation(
+                "live off-record session is missing its receipt log",
+            ))?
+            .record(receipt)
+    }
+
+    pub fn close(self) -> Result<OffRecordCloseOutcome> {
+        self.vault.close_off_record_session(
+            &self.session_ref,
+            SessionLocalReceiptLog::off_record(&self.session_ref),
+        )
+    }
 }
 
 impl Vault {
-    /// Refuses whole-vault export while any off-record session row remains
-    /// live. The row is retained through the close `closing` phase, so an
-    /// export cannot race a partially completed delete-at-close pass.
+    #[must_use]
+    pub fn off_record_session_vault(&self) -> OffRecordSessionVault<'_> {
+        OffRecordSessionVault { vault: self }
+    }
+
+    /// Refuses whole-vault export while any in-process session registry entry
+    /// remains live, including throughout its closing state.
     pub(crate) fn ensure_no_open_off_record_session(&self) -> Result<()> {
-        let rtxn = self.store.env.read_txn()?;
-        if let Some(session_ref) = first_open_off_record_session_in_txn(&self.store, &rtxn)? {
+        if let Some(session_ref) = self.store.off_record_sessions.first_session_ref()? {
             return Err(Error::OffRecordExportRefused { session_ref });
         }
         Ok(())
@@ -422,30 +610,36 @@ impl Vault {
         session_ref: &str,
         backend: OffRecordBackendClass,
     ) -> Result<OffRecordSessionRecord> {
-        vet_off_record_session_ref(session_ref)?;
-        let record = OffRecordSessionRecord {
-            version: OFF_RECORD_SESSION_RECORD_VERSION,
-            session_ref: session_ref.to_owned(),
-            mode: OffRecordMode::OffRecord,
+        self.enter_off_record_session_with_budget(
+            session_ref,
             backend,
-            entered_at: crate::unix_seconds_now(),
-            fenced_turns: Vec::new(),
-            promoted_turns: Vec::new(),
-            context_receipt_runs: Vec::new(),
-            closing: false,
-        };
-        let key = off_record_session_key(session_ref);
-        let value = encode_off_record_session(&record)?;
-        self.with_write_txn(|wtxn| {
-            if self.store.vault_meta.get(wtxn, &key)?.is_some() {
-                return Err(Error::OffRecordSessionAlreadyExists {
-                    session_ref: session_ref.to_owned(),
-                });
-            }
-            self.store.vault_meta.put(wtxn, &key, &value)?;
-            Ok(())
-        })?;
-        Ok(record)
+            self.config.off_record_overlay_budget_bytes,
+        )
+    }
+
+    pub(super) fn enter_off_record_session_with_budget(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        budget_bytes: usize,
+    ) -> Result<OffRecordSessionRecord> {
+        let entry = self.enter_off_record_session_entry(session_ref, backend, budget_bytes)?;
+        Ok(session_entry_state(&entry)?.record.clone())
+    }
+
+    fn enter_off_record_session_entry(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        budget_bytes: usize,
+    ) -> Result<Arc<OffRecordSessionEntry>> {
+        if !self.config.off_record_enabled {
+            return Err(Error::KillSwitchDisabled);
+        }
+        vet_off_record_session_ref(session_ref)?;
+        self.store
+            .off_record_sessions
+            .enter(session_ref, backend, budget_bytes)
     }
 
     /// Reads the off-record session record for `session_ref`, if any. A ref
@@ -456,8 +650,7 @@ impl Vault {
         if vet_off_record_session_ref(session_ref).is_err() {
             return Ok(None);
         }
-        let rtxn = self.store.env.read_txn()?;
-        session_record_in_txn(&self.store, &rtxn, session_ref)
+        self.store.off_record_sessions.record(session_ref)
     }
 
     /// Flips the session's tagging mode (e.g. back on-record mid-session).
@@ -469,16 +662,29 @@ impl Vault {
         mode: OffRecordMode,
     ) -> Result<OffRecordSessionRecord> {
         vet_off_record_session_ref(session_ref)?;
-        self.with_write_txn(|wtxn| {
-            let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
-            record.mode = mode;
-            self.store.vault_meta.put(
-                wtxn,
-                &off_record_session_key(session_ref),
-                &encode_off_record_session(&record)?,
-            )?;
-            Ok(record)
-        })
+        let entry = live_session_entry(&self.store, session_ref)?;
+        let mut state = session_entry_state(&entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: session_ref.to_owned(),
+            });
+        }
+        if state.record.mode == mode {
+            return Ok(state.record.clone());
+        }
+        match (state.record.mode, mode) {
+            (OffRecordMode::OffRecord, OffRecordMode::OnRecord) => {
+                entry.overlay.seal_writes()?;
+                state.record.mode = OffRecordMode::OnRecord;
+            }
+            (OffRecordMode::OnRecord, OffRecordMode::OffRecord) => {
+                return Err(Error::InvariantViolation(
+                    "a sealed off-record overlay cannot be reopened for writes",
+                ));
+            }
+            _ => unreachable!("equal modes returned above"),
+        }
+        Ok(state.record.clone())
     }
 
     /// Tags one turn off-record: writes the fence row and adds the turn to
@@ -489,20 +695,25 @@ impl Vault {
     /// extraction pass. Idempotent for a turn already fenced by this session.
     pub fn tag_turn_off_record(&self, session_ref: &str, turn_id: &EntityId) -> Result<()> {
         vet_off_record_session_ref(session_ref)?;
+        let entry = live_session_entry(&self.store, session_ref)?;
+        let mut state = session_entry_state(&entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: session_ref.to_owned(),
+            });
+        }
+        if state.record.mode != OffRecordMode::OffRecord {
+            return Err(Error::InvariantViolation(
+                "off-record tag requires the session to be in off-record mode",
+            ));
+        }
+        if state.record.promoted_turns.contains(turn_id.as_bytes()) {
+            return Err(Error::InvariantViolation(
+                "off-record tag targeted a promoted turn",
+            ));
+        }
+        let mut next_record = state.record.clone();
         self.with_write_txn(|wtxn| {
-            let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
-            if record.mode != OffRecordMode::OffRecord {
-                return Err(Error::InvariantViolation(
-                    "off-record tag requires the session to be in off-record mode",
-                ));
-            }
-            // A promoted turn's durable receipt pins its survival past
-            // close; silently re-fencing it would let close delete it.
-            if record.promoted_turns.contains(turn_id.as_bytes()) {
-                return Err(Error::InvariantViolation(
-                    "off-record tag targeted a promoted turn",
-                ));
-            }
             // Fail early on entity kinds the close-path PolicyDelete would
             // refuse anyway (delete-protected engine records).
             if let Some(raw) = self.store.entities.get(wtxn, turn_id.as_bytes())?
@@ -522,24 +733,20 @@ impl Vault {
                     "off-record fence already held by another session",
                 ));
             }
-            if record.fenced_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
+            if next_record.fenced_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
                 return Err(Error::InvariantViolation(
                     "off-record session fenced-turn capacity exceeded",
                 ));
             }
-            record.fenced_turns.push(*turn_id.as_bytes());
+            next_record.fenced_turns.push(*turn_id.as_bytes());
             self.store
                 .vault_meta
                 .put(wtxn, &fence_key, session_ref.as_bytes())?;
-            self.store.vault_meta.put(
-                wtxn,
-                &off_record_session_key(session_ref),
-                &encode_off_record_session(&record)?,
-            )?;
             #[cfg(feature = "sync")]
             crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
             Ok(())
         })?;
+        state.record = next_record;
 
         // The fence is durable before touching the CRDT. If this turn was
         // already present in a registry-owned window, scrub its body and
@@ -589,142 +796,30 @@ impl Vault {
         run_id: RetrievalRunId,
     ) -> Result<()> {
         vet_off_record_session_ref(session_ref)?;
-        self.with_write_txn(|wtxn| {
-            let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
-            // Mirrors the tag mode-check: after a flip back on-record the
-            // session's retrieval runs belong to on-record turns whose
-            // receipts must persist — registering them for delete-at-close
-            // would erase the audit trail of surviving emits.
-            if record.mode != OffRecordMode::OffRecord {
-                return Err(Error::InvariantViolation(
-                    "off-record context receipt requires the session to be in off-record mode",
-                ));
-            }
-            if record.context_receipt_runs.contains(&run_id) {
-                return Ok(());
-            }
-            if record.context_receipt_runs.len() >= OFF_RECORD_MAX_CONTEXT_RECEIPTS {
-                return Err(Error::InvariantViolation(
-                    "off-record session context-receipt capacity exceeded",
-                ));
-            }
-            record.context_receipt_runs.push(run_id);
-            self.store.vault_meta.put(
-                wtxn,
-                &off_record_session_key(session_ref),
-                &encode_off_record_session(&record)?,
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Promotes exactly ONE fenced turn into witness on explicit user
-    /// consent: lifts its fence row (extraction may now see it), moves it
-    /// out of the delete-at-close set, and mints a durable user-initiated
-    /// [`OffRecordPromoteReceipt`] — all in one write transaction.
-    pub fn promote_off_record_turn(
-        &self,
-        session_ref: &str,
-        turn_id: &EntityId,
-    ) -> Result<OffRecordPromoteReceipt> {
-        vet_off_record_session_ref(session_ref)?;
-        let receipt = self.with_write_txn(|wtxn| {
-            let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
-            let position = record
-                .fenced_turns
-                .iter()
-                .position(|bytes| bytes == turn_id.as_bytes())
-                .ok_or_else(|| Error::OffRecordTurnNotFenced {
-                    session_ref: session_ref.to_owned(),
-                    turn_ref: turn_id.to_hex(),
-                })?;
-            record.fenced_turns.remove(position);
-            record.promoted_turns.push(*turn_id.as_bytes());
-            let receipt = OffRecordPromoteReceipt {
-                version: OFF_RECORD_PROMOTE_RECEIPT_VERSION,
+        let entry = live_session_entry(&self.store, session_ref)?;
+        let mut state = session_entry_state(&entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
                 session_ref: session_ref.to_owned(),
-                turn: *turn_id.as_bytes(),
-                promoted_at: crate::unix_seconds_now(),
-                initiator: "user".to_owned(),
-            };
-            self.store
-                .vault_meta
-                .delete(wtxn, &off_record_fence_key(turn_id))?;
-            self.store.vault_meta.put(
-                wtxn,
-                &off_record_promote_key(turn_id),
-                &encode_off_record_promote(&receipt)?,
-            )?;
-            self.store.vault_meta.put(
-                wtxn,
-                &off_record_session_key(session_ref),
-                &encode_off_record_session(&record)?,
-            )?;
-            Ok(receipt)
-        })?;
-
-        // A window that was already open deferred this turn's `pm:` marker
-        // while its fence was active. Refresh that registry-owned doc after
-        // the durable fence lift so the explicit promotion is visible to sync
-        // immediately, rather than only after the window is unloaded and
-        // opened again. The receipt/fence transaction is authoritative and
-        // already committed here; a refresh failure leaves the `pm:` marker
-        // durable for normal open-time recovery, so it must not turn a
-        // completed user promotion into an ambiguous error response.
-        #[cfg(feature = "sync")]
-        if let Err(error) = self.refresh_promoted_turn_in_live_window(turn_id) {
-            tracing::warn!(
-                turn = %turn_id.to_hex(),
-                error = %error,
-                "off-record promotion committed but live-window sync refresh deferred to recovery"
-            );
+            });
         }
-
-        Ok(receipt)
-    }
-
-    /// Catches a promoted turn up in its already-loaded sync window, if any.
-    ///
-    /// The live window is a registry lookup only: promotion must never fault
-    /// an older month into memory. `pm:` replay comes before reverse
-    /// re-materialization, matching the pinned open-time recovery order.
-    #[cfg(feature = "sync")]
-    fn refresh_promoted_turn_in_live_window(&self, turn_id: &EntityId) -> Result<()> {
-        use crate::sync::window::{replay_pending_mirrors, reverse_rematerialize};
-
-        // The promoted body lives in its learned-at window, but incident
-        // edges are packed by SOURCE window. Refresh every window that is
-        // already live so a cross-month source edge appears immediately;
-        // closed windows remain untouched and recover through normal open.
-        for window in self.live_windows() {
-            let replayed = replay_pending_mirrors(self, &window.doc, &window.key)?;
-            let mirrored = reverse_rematerialize(self, &window.doc, &window.key)?;
-            tracing::debug!(
-                turn = %turn_id.to_hex(),
-                window = %window.key,
-                replayed,
-                mirrored,
-                "off-record promotion refreshed live sync window"
-            );
+        // After a flip, telemetry routes to base and must not be registered
+        // for deletion with the pre-flip overlay.
+        if state.record.mode != OffRecordMode::OffRecord {
+            return Err(Error::InvariantViolation(
+                "off-record context receipt requires the session to be in off-record mode",
+            ));
         }
+        if state.record.context_receipt_runs.contains(&run_id) {
+            return Ok(());
+        }
+        if state.record.context_receipt_runs.len() >= OFF_RECORD_MAX_CONTEXT_RECEIPTS {
+            return Err(Error::InvariantViolation(
+                "off-record session context-receipt capacity exceeded",
+            ));
+        }
+        state.record.context_receipt_runs.push(run_id);
         Ok(())
-    }
-
-    /// Reads the durable promote receipt for `turn_id`, if the turn was ever
-    /// promoted out of an off-record session.
-    pub fn off_record_promote_receipt(
-        &self,
-        turn_id: &EntityId,
-    ) -> Result<Option<OffRecordPromoteReceipt>> {
-        let rtxn = self.store.env.read_txn()?;
-        let Some(bytes) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &off_record_promote_key(turn_id))?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(decode_off_record_promote(&bytes)?))
     }
 
     /// Opens the session-local emit receipt log bound to a live off-record
@@ -786,28 +881,38 @@ impl Vault {
                 "off-record close requires an off-record receipt log",
             ));
         }
-        // Txn 1: stamp the closing flag. From here on the record is frozen
-        // (mutators reject), so the snapshot below cannot go stale. A retry
-        // of an interrupted close re-enters here idempotently.
-        let record =
-            self.with_write_txn(|wtxn| {
-                let mut record = session_record_in_txn(&self.store, wtxn, session_ref)?
-                    .ok_or_else(|| Error::OffRecordSessionNotFound {
-                        session_ref: session_ref.to_owned(),
-                    })?;
-                if !record.closing {
-                    record.closing = true;
-                    self.store.vault_meta.put(
-                        wtxn,
-                        &off_record_session_key(session_ref),
-                        &encode_off_record_session(&record)?,
-                    )?;
-                }
-                Ok(record)
-            })?;
+        // Freeze the in-process entry under its per-session lock. No mutator
+        // can interleave from here; retries observe the same frozen record.
+        let entry = live_session_entry(&self.store, session_ref)?;
+        let (record, internal_receipt_log) = {
+            let mut state = session_entry_state(&entry)?;
+            if state.gone {
+                return Err(Error::OffRecordSessionNotFound {
+                    session_ref: session_ref.to_owned(),
+                });
+            }
+            state.record.closing = true;
+            if !state.overlay_closed {
+                // Session handles lend composed views from `&self`, so safe
+                // callers must drop all read views before consuming close.
+                entry.overlay.close()?;
+                state.overlay_closed = true;
+            }
+            (state.record.clone(), state.receipt_log.take())
+        };
         let receipt_close = receipt_log.close();
-        debug_assert!(receipt_close.retained.is_empty());
-        let emit_receipts_deleted = receipt_close.deleted;
+        assert!(receipt_close.retained.is_empty());
+        let internal_receipt_close = internal_receipt_log.map(SessionLocalReceiptLog::close);
+        let emit_receipts_deleted = receipt_close
+            .deleted
+            .checked_add(
+                internal_receipt_close
+                    .as_ref()
+                    .map_or(0, |close| close.deleted),
+            )
+            .ok_or(Error::ArithmeticOverflow(
+                "off-record deleted emit receipt count",
+            ))?;
 
         let mut turns_deleted = 0_usize;
         let mut missing_turns: Vec<[u8; 16]> = Vec::new();
@@ -846,24 +951,23 @@ impl Vault {
         }
         let context_receipts_deleted = record.context_receipt_runs.len();
 
-        // Final txn: re-read and fail closed on drift (defense-in-depth —
-        // the closing flag already blocks mutators), then remove fence rows
-        // for DELETED turns only and drop the record. A missing turn keeps a
-        // sessionless marker so every late entity write is rejected.
+        // Final cleanup validates the frozen in-process record, removes only
+        // legacy fence rows, then drops the registry entry. The session
+        // record itself never had a durable row to remove.
+        let mut state = session_entry_state(&entry)?;
+        if !state.record.closing
+            || state.record.fenced_turns != record.fenced_turns
+            || state.record.promoted_turns != record.promoted_turns
+            || state.record.context_receipt_runs != record.context_receipt_runs
+        {
+            return Err(Error::InvariantViolation(
+                "off-record session record drifted during close",
+            ));
+        }
         self.with_write_txn(|wtxn| {
-            let current =
-                session_record_in_txn(&self.store, wtxn, session_ref)?.ok_or_else(|| {
-                    Error::OffRecordSessionNotFound {
-                        session_ref: session_ref.to_owned(),
-                    }
-                })?;
-            if !current.closing
-                || current.fenced_turns != record.fenced_turns
-                || current.promoted_turns != record.promoted_turns
-                || current.context_receipt_runs != record.context_receipt_runs
-            {
+            if state.gone {
                 return Err(Error::InvariantViolation(
-                    "off-record session record drifted during close",
+                    "off-record session disappeared during close",
                 ));
             }
             for bytes in &record.fenced_turns {
@@ -890,11 +994,13 @@ impl Vault {
                     .vault_meta
                     .delete(wtxn, &off_record_fence_key(&id))?;
             }
-            self.store
-                .vault_meta
-                .delete(wtxn, &off_record_session_key(session_ref))?;
             Ok(())
         })?;
+        state.gone = true;
+        drop(state);
+        self.store
+            .off_record_sessions
+            .remove_if_same(session_ref, &entry)?;
 
         Ok(OffRecordCloseOutcome {
             turns_deleted,
@@ -909,4 +1015,5 @@ impl Vault {
 }
 
 #[cfg(test)]
+#[path = "tests.rs"]
 mod tests;

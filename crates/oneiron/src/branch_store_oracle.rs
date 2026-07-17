@@ -35,16 +35,15 @@ mod seam {
 
     use super::*;
     use crate::batch::BatchOp;
+    use crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES;
     use crate::error::Error;
     use crate::overlay_db::OverlayDb;
-    use crate::session_overlay::{
-        DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES, JournalScope, OverlayKeyspace, SessionOverlay,
-    };
+    use crate::session_overlay::{JournalScope, OverlayKeyspace, SessionOverlay};
 
     /// Session write-overlay handle (ONE-1726 owns the real substrate type;
     /// ONE-1727 owns the vault-level session handle that wraps it).
-    pub(super) struct SessionVault {
-        overlay: Arc<SessionOverlay>,
+    pub(super) struct SessionVault<'vault> {
+        session: crate::off_record::OffRecordSession<'vault>,
     }
 
     /// One (key, value) row as the model oracle sees it.
@@ -88,33 +87,31 @@ mod seam {
         pub(super) short_id_mapping: Vec<(String, String)>,
     }
 
-    impl SessionVault {
-        /// ONE-1726 test seam: construct one unregistered session overlay.
-        /// ONE-1727 replaces this with the vault-level registry entry path.
-        #[allow(
-            clippy::unnecessary_wraps,
-            reason = "ONE-1726's no-registry seam is infallible; ONE-1727 retains the typed result"
-        )]
-        pub(super) fn enter(_vault: &Vault, _session_ref: &str) -> SeamResult<Self> {
-            Ok(Self {
-                overlay: SessionOverlay::new(DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES),
-            })
+    impl<'vault> SessionVault<'vault> {
+        pub(super) fn enter(vault: &'vault Vault, session_ref: &str) -> SeamResult<Self> {
+            vault
+                .off_record_session_vault()
+                .enter(session_ref, crate::off_record::OffRecordBackendClass::Local)
+                .map(|session| Self { session })
+                .map_err(map_session_error)
         }
 
         /// ONE-1726 budget-oracle seam: the passed session owns the requested
         /// overlay budget so rejection and close exercise the same handle.
-        #[allow(
-            clippy::unnecessary_wraps,
-            reason = "ONE-1726's no-registry seam is infallible; ONE-1727 retains the typed result"
-        )]
         pub(super) fn enter_with_budget(
-            _vault: &Vault,
+            vault: &'vault Vault,
             _session_ref: &str,
             budget: usize,
         ) -> SeamResult<Self> {
-            Ok(Self {
-                overlay: SessionOverlay::new(budget),
-            })
+            vault
+                .off_record_session_vault()
+                .enter_with_budget(
+                    _session_ref,
+                    crate::off_record::OffRecordBackendClass::Local,
+                    budget,
+                )
+                .map(|session| Self { session })
+                .map_err(map_session_error)
         }
 
         /// ONE-1727: enter with the kill-switch config disabled.
@@ -122,7 +119,27 @@ mod seam {
             _vault: &Vault,
             _session_ref: &str,
         ) -> SeamResult<Self> {
-            unimplemented!("armed by ONE-1727: off_record_enabled=false fails closed")
+            let dir = tempfile::tempdir().expect("kill-switch oracle temp dir");
+            let config = VaultConfig {
+                off_record_enabled: false,
+                ..Default::default()
+            };
+            let disabled = Vault::open(dir.path(), config).expect("open kill-switch oracle vault");
+            let refusal = disabled.off_record_session_vault().enter(
+                _session_ref,
+                crate::off_record::OffRecordBackendClass::Local,
+            );
+            assert!(
+                disabled
+                    .off_record_session(_session_ref)
+                    .expect("inspect kill-switch registry")
+                    .is_none(),
+                "kill-switch refusal must not leave a registry entry"
+            );
+            match refusal {
+                Err(error) => Err(map_session_error(error)),
+                Ok(_) => panic!("kill-switch-disabled session enter unexpectedly succeeded"),
+            }
         }
 
         /// ONE-1727: witness one turn (+ PartOf MESSAGE, DerivedFrom SUMMARY)
@@ -140,14 +157,18 @@ mod seam {
 
         /// ONE-1727: mode flip (OffRecord <-> OnRecord).
         pub(super) fn flip_on_record(&self) -> Result<()> {
-            unimplemented!("armed by ONE-1727: mode-aware routing")
+            self.session.flip_on_record()
         }
 
         /// ONE-1726 test seam: drain leases and drop the overlay. ONE-1727
         /// adds SessionLocalReceiptLog outcome counts.
         pub(super) fn close(self) -> Result<(usize, usize, usize)> {
-            self.overlay.close()?;
-            Ok((0, 0, 0))
+            let outcome = self.session.close()?;
+            Ok((
+                outcome.turns_deleted,
+                outcome.context_receipts_deleted + outcome.emit_receipts_deleted,
+                outcome.redaction_receipt_ids.len(),
+            ))
         }
 
         /// ONE-1730: promote exactly one turn; returns the replayed closure
@@ -330,22 +351,18 @@ mod seam {
     /// must observe read-your-writes; returns what the probe read.
     pub(super) fn with_txn_segment_read_back(
         vault: &Vault,
-        session: &SessionVault,
+        session: &SessionVault<'_>,
         script: &[OverlayOp],
         probe_key: &[u8],
     ) -> Result<Option<Vec<u8>>> {
         let mut wtxn = vault.store.env.write_txn()?;
-        let segment = session.overlay.install_txn_segment()?;
-        let view = vault
-            .store
-            .entities
-            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
-        apply_view_script(&view, &mut wtxn, script)?;
-        let read_view = vault
-            .store
-            .entities
-            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
+        let overlay = session.session.overlay();
+        let segment = overlay.install_txn_segment()?;
+        let view = session.session.read_view()?;
+        apply_view_script(&view.entities, &mut wtxn, script)?;
+        let read_view = session.session.read_view()?;
         let read_back = read_view
+            .entities
             .get(&wtxn, probe_key)?
             .map(|value| value.into_owned());
         wtxn.commit()?;
@@ -357,18 +374,16 @@ mod seam {
     /// (overlay rows visible afterwards, typed-journal entries afterwards).
     pub(super) fn stage_then_abort(
         vault: &Vault,
-        session: &SessionVault,
+        session: &SessionVault<'_>,
         script: &[OverlayOp],
     ) -> Result<(usize, usize)> {
         let mut wtxn = vault.store.env.write_txn()?;
-        let segment = session.overlay.install_txn_segment()?;
-        let view = vault
-            .store
-            .entities
-            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
-        apply_view_script(&view, &mut wtxn, script)?;
+        let overlay = session.session.overlay();
+        let segment = overlay.install_txn_segment()?;
+        let view = session.session.read_view()?;
+        apply_view_script(&view.entities, &mut wtxn, script)?;
         let scope = JournalScope::new(EntityId::now(), EntityId::now());
-        session.overlay.stage_journal(
+        overlay.stage_journal(
             scope,
             BatchOp::Delete {
                 id: EntityId::now(),
@@ -377,9 +392,54 @@ mod seam {
         drop(segment);
         drop(wtxn);
 
-        let snapshot = session.overlay.snapshot()?;
+        let snapshot = overlay.snapshot()?;
         Ok((
             snapshot.row_count(OverlayKeyspace::Entities),
+            snapshot.journal_ops(scope).len(),
+        ))
+    }
+
+    /// ONE-1727-native crash payload: populate multiple manifest slots and
+    /// the typed journal through the substrate directly, without the
+    /// ONE-1728 witness/retrieval surface.
+    pub(super) fn stage_direct_crash_payload(
+        session: &SessionVault<'_>,
+    ) -> Result<(usize, usize, usize, usize)> {
+        let overlay = session.session.overlay();
+        let conversation = EntityId::now();
+        let turn_a = EntityId::now();
+        let turn_b = EntityId::now();
+        let scope = JournalScope::new(conversation, turn_a);
+        let segment = overlay.install_txn_segment()?;
+        overlay.put(
+            OverlayKeyspace::Entities,
+            turn_a.as_bytes(),
+            b"session entity a",
+        )?;
+        overlay.put(
+            OverlayKeyspace::Entities,
+            turn_b.as_bytes(),
+            b"session entity b",
+        )?;
+        overlay.put(
+            OverlayKeyspace::TypeIndex,
+            b"session:type:turn",
+            turn_a.as_bytes(),
+        )?;
+        overlay.put(
+            OverlayKeyspace::TextForward,
+            turn_a.as_bytes(),
+            b"session-only text",
+        )?;
+        overlay.stage_journal(scope, BatchOp::Delete { id: turn_a })?;
+        overlay.stage_journal(scope, BatchOp::Delete { id: turn_b })?;
+        segment.commit()?;
+
+        let snapshot = overlay.snapshot()?;
+        Ok((
+            snapshot.row_count(OverlayKeyspace::Entities),
+            snapshot.row_count(OverlayKeyspace::TypeIndex),
+            snapshot.row_count(OverlayKeyspace::TextForward),
             snapshot.journal_ops(scope).len(),
         ))
     }
@@ -388,7 +448,7 @@ mod seam {
     /// error produced by the first over-budget insert.
     pub(super) fn overflow_budget(
         vault: &Vault,
-        session: &SessionVault,
+        session: &SessionVault<'_>,
         budget: usize,
     ) -> SeamError {
         let mut wtxn = vault
@@ -396,17 +456,16 @@ mod seam {
             .env
             .write_txn()
             .expect("open budget oracle write txn");
-        let segment = session
-            .overlay
+        let overlay = session.session.overlay();
+        let segment = overlay
             .install_txn_segment()
             .expect("install budget oracle segment");
-        let view = vault
-            .store
-            .entities
-            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)
+        let view = session
+            .session
+            .read_view()
             .expect("capture budget oracle view");
-        let value = vec![0_u8; budget.max(session.overlay.budget_bytes())];
-        let error = match view.put(&mut wtxn, b"overflow", &value) {
+        let value = vec![0_u8; budget.max(overlay.budget_bytes())];
+        let error = match view.entities.put(&mut wtxn, b"overflow", &value) {
             Err(error) => map_overlay_error(error),
             Ok(()) => panic!("over-budget overlay insert unexpectedly succeeded"),
         };
@@ -420,19 +479,17 @@ mod seam {
     /// rows a fresh read sees).
     pub(super) fn snapshot_vs_concurrent_apply(
         vault: &Vault,
-        session: &SessionVault,
+        session: &SessionVault<'_>,
         script: &[OverlayOp],
         prefix: &[u8],
     ) -> Result<(Vec<ModelRow>, Vec<ModelRow>)> {
         let rtxn = vault.store.env.read_txn()?;
-        let view = vault
-            .store
-            .entities
-            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
-        let snapshot_iter = view.prefix_iter(&rtxn, prefix)?;
+        let view = session.session.read_view()?;
+        let snapshot_iter = view.entities.prefix_iter(&rtxn, prefix)?;
+        let overlay = session.session.overlay();
         let apply_result = std::thread::scope(|scope| {
             scope
-                .spawn(|| apply_overlay_script(&session.overlay, script))
+                .spawn(|| apply_overlay_script(&overlay, script))
                 .join()
                 .expect("overlay apply thread panicked")
         });
@@ -440,11 +497,9 @@ mod seam {
         let snapshot_rows = snapshot_iter
             .map(|row| row.map(|(key, value)| (key.into_owned(), value.into_owned())))
             .collect::<Result<Vec<_>>>()?;
-        let fresh_view = vault
-            .store
-            .entities
-            .with_overlay(session.overlay.clone(), OverlayKeyspace::Entities)?;
+        let fresh_view = session.session.read_view()?;
         let fresh_rows = fresh_view
+            .entities
             .prefix_iter(&rtxn, prefix)?
             .map(|row| row.map(|(key, value)| (key.into_owned(), value.into_owned())))
             .collect::<Result<Vec<_>>>()?;
@@ -454,7 +509,7 @@ mod seam {
     /// ONE-1726: close the overlay, then attempt a lease-holding read.
     pub(super) fn read_after_close(vault: &Vault, session_ref: &str) -> SeamError {
         let session = SessionVault::enter(vault, session_ref).expect("enter session");
-        let overlay = session.overlay.clone();
+        let overlay = session.session.overlay();
         session.close().expect("close session");
         match vault
             .store
@@ -527,14 +582,22 @@ mod seam {
         }
     }
 
-    /// ONE-1727: simulated crash — drop every session handle WITHOUT close,
-    /// then reopen the vault from disk. Returns the reopened vault.
+    fn map_session_error(error: Error) -> SeamError {
+        match error {
+            Error::KillSwitchDisabled => SeamError::KillSwitchDisabled,
+            Error::OffRecordSessionAlreadyExists { .. } => SeamError::SessionRefLive,
+            other => panic!("unexpected session error: {other}"),
+        }
+    }
+
+    /// ONE-1728: simulated crash after witness population — drop every
+    /// session handle WITHOUT close, then reopen the vault from disk.
     pub(super) fn crash_and_reopen(
         _dir: &std::path::Path,
-        _vault: Vault,
-        _session: SessionVault,
+        _vault: &Vault,
+        _session: SessionVault<'_>,
     ) -> Result<Vault> {
-        unimplemented!("armed by ONE-1727: crash = evaporation (no durable session rows)")
+        unimplemented!("armed by ONE-1728: witness-backed crash evaporation")
     }
 
     /// ONE-1728: submit a BASE batch containing one op referencing
@@ -854,9 +917,42 @@ fn overlay_lease_refused_after_close() {
 
 // ─── P3 · ONE-1727 — session lifecycle ────────────────────────────────────
 
+/// R1: direct substrate writes and typed-journal entries are process-local.
+/// Dropping every handle without close simulates a crash: reopening the same
+/// path must show exact census equality across all 28 base DBs, and the
+/// process-local session ref must be free for reuse.
+#[test]
+fn direct_substrate_crash_evaporation_leaves_zero_base_residue() -> Result<()> {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    let census_before = full_db_census(&vault)?;
+    let session = seam::SessionVault::enter(&vault, "oracle-native-crash").expect("enter session");
+    assert_eq!(
+        seam::stage_direct_crash_payload(&session)?,
+        (2, 1, 1, 2),
+        "the crash fixture must contain exact overlay rows and journal ops"
+    );
+
+    drop(session);
+    drop(vault);
+
+    let reopened = Vault::open(tmp.path(), VaultConfig::default()).expect("reopen vault");
+    assert_eq!(
+        full_db_census(&reopened)?,
+        census_before,
+        "direct session writes must leave zero residue in all 28 base databases"
+    );
+    assert!(
+        seam::SessionVault::enter(&reopened, "oracle-native-crash").is_ok(),
+        "the evaporated session ref must read as free after reopen"
+    );
+    Ok(())
+}
+
 /// §4 master close test: transcript + context receipts deleted, floor
 /// receipts kept (RECEIPTS-FOLLOW-TRANSCRIPT).
 #[test]
+// Attestation: needs ONE-1728 witness_turn/search_text before this can run.
 #[ignore = "armed by ONE-1727"]
 fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -883,6 +979,7 @@ fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -
 /// ZERO residue in any of the 28 base databases; the session reads as
 /// not-found after reopen.
 #[test]
+// Attestation: needs ONE-1728 witness_turn/search_text before this can run.
 #[ignore = "armed by ONE-1727"]
 fn crash_evaporation_leaves_zero_base_residue() -> Result<()> {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -890,7 +987,7 @@ fn crash_evaporation_leaves_zero_base_residue() -> Result<()> {
     let census_before = full_db_census(&vault)?;
     let session = seam::SessionVault::enter(&vault, "oracle-crash").expect("enter session");
     let (_turn, _msg, _summary) = session.witness_turn("evaporates")?;
-    let reopened = seam::crash_and_reopen(tmp.path(), vault, session)?;
+    let reopened = seam::crash_and_reopen(tmp.path(), &vault, session)?;
     assert_eq!(
         full_db_census(&reopened)?,
         census_before,
@@ -906,7 +1003,6 @@ fn crash_evaporation_leaves_zero_base_residue() -> Result<()> {
 /// R10 kill-switch: `off_record_enabled = false` makes enter fail closed
 /// with a typed error; no registry entry is created.
 #[test]
-#[ignore = "armed by ONE-1727"]
 fn kill_switch_makes_enter_fail_closed() {
     let (_tmp, vault) = temp_vault();
     let refused = seam::SessionVault::enter_with_kill_switch_off(&vault, "oracle-kill");
@@ -919,7 +1015,6 @@ fn kill_switch_makes_enter_fail_closed() {
 
 /// §1a enter is single-shot per live session ref.
 #[test]
-#[ignore = "armed by ONE-1727"]
 fn enter_is_single_shot_per_session_ref() {
     let (_tmp, vault) = temp_vault();
     let _first = seam::SessionVault::enter(&vault, "oracle-single").expect("first enter");

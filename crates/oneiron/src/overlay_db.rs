@@ -5,11 +5,6 @@
 //! the live transaction segment. Merged scans stream the base cursor and the
 //! bounded overlay delta together, preserving page-borrowed base values.
 
-// The Merged iterator variants wrap a per-query streaming-merge state that is
-// intentionally larger than the passthrough Base variant; these enums are
-// heap-lived per query, so boxing would only add indirection to the merge loop.
-#![allow(clippy::large_enum_variant)]
-
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -51,7 +46,6 @@ impl OverlayDb {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn composed(
         base: Database<Bytes, Bytes>,
         overlay: Arc<SessionOverlay>,
@@ -68,7 +62,10 @@ impl OverlayDb {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "ONE-1726 single-accessor oracle helper; production sessions use Store::session_view"
+    )]
     pub(crate) fn with_overlay(
         &self,
         overlay: Arc<SessionOverlay>,
@@ -181,7 +178,10 @@ impl OverlayDb {
         })
     }
 
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "completed composed accessor; first session caller lands with ONE-1728 retrieval"
+    )]
     pub(crate) fn is_empty(&self, txn: &RoTxn<'_>) -> Result<bool> {
         if self.overlay.is_none() {
             return self.base.is_empty(txn).map_err(Error::from);
@@ -208,12 +208,12 @@ impl OverlayDb {
             return Ok(OverlayIter::Base(self.base.iter(txn)?));
         };
         let plan = overlay.snapshot.merge_plan(overlay.keyspace, |_| true);
-        Ok(OverlayIter::Merged(MergedRows::new(
+        Ok(OverlayIter::Merged(Box::new(MergedRows::new(
             Some(self.base.iter(txn)?),
             plan,
             Direction::Forward,
             overlay.snapshot.clone(),
-        )))
+        ))))
     }
 
     pub(crate) fn rev_iter<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<OverlayRevIter<'txn>> {
@@ -221,12 +221,12 @@ impl OverlayDb {
             return Ok(OverlayRevIter::Base(self.base.rev_iter(txn)?));
         };
         let plan = overlay.snapshot.merge_plan(overlay.keyspace, |_| true);
-        Ok(OverlayRevIter::Merged(MergedRows::new(
+        Ok(OverlayRevIter::Merged(Box::new(MergedRows::new(
             Some(self.base.rev_iter(txn)?),
             plan,
             Direction::Reverse,
             overlay.snapshot.clone(),
-        )))
+        ))))
     }
 
     pub(crate) fn prefix_iter<'txn>(
@@ -240,14 +240,14 @@ impl OverlayDb {
         let plan = overlay
             .snapshot
             .merge_plan(overlay.keyspace, |key| key.starts_with(prefix));
-        Ok(OverlayPrefix::Merged(MergedPrefixRows::new(
+        Ok(OverlayPrefix::Merged(Box::new(MergedPrefixRows::new(
             MergedRows::new(
                 Some(self.base.prefix_iter(txn, prefix)?),
                 plan,
                 Direction::Forward,
                 overlay.snapshot.clone(),
             ),
-        )))
+        ))))
     }
 
     pub(crate) fn range<'txn, R>(
@@ -264,12 +264,12 @@ impl OverlayDb {
         let plan = overlay
             .snapshot
             .merge_plan(overlay.keyspace, |key| key_in_range(key, range));
-        Ok(OverlayRange::Merged(MergedRows::new(
+        Ok(OverlayRange::Merged(Box::new(MergedRows::new(
             Some(self.base.range(txn, range)?),
             plan,
             Direction::Forward,
             overlay.snapshot.clone(),
-        )))
+        ))))
     }
 
     pub(crate) fn rev_range<'txn, R>(
@@ -286,12 +286,12 @@ impl OverlayDb {
         let plan = overlay
             .snapshot
             .merge_plan(overlay.keyspace, |key| key_in_range(key, range));
-        Ok(OverlayRevRange::Merged(MergedRows::new(
+        Ok(OverlayRevRange::Merged(Box::new(MergedRows::new(
             Some(self.base.rev_range(txn, range)?),
             plan,
             Direction::Reverse,
             overlay.snapshot.clone(),
-        )))
+        ))))
     }
 
     pub(crate) fn get_duplicates<'txn>(
@@ -318,11 +318,13 @@ impl OverlayDb {
             return Ok(None);
         };
         let first = first?;
-        Ok(Some(OverlayDupValues::Merged(PrefetchedMergedRows {
-            first: Some(first),
-            inner: merged,
-            last_duplicate_identity: None,
-        })))
+        Ok(Some(OverlayDupValues::Merged(Box::new(
+            PrefetchedMergedRows {
+                first: Some(first),
+                inner: merged,
+                last_duplicate_identity: None,
+            },
+        ))))
     }
 }
 
@@ -339,7 +341,10 @@ impl OverlayStrDb {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "constructed by the complete 28-accessor session view; first sync-state caller lands after ONE-1727"
+    )]
     pub(crate) fn composed(
         base: Database<Str, Bytes>,
         overlay: Arc<SessionOverlay>,
@@ -395,18 +400,21 @@ impl OverlayStrDb {
         Ok(existed)
     }
 
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "completed composed accessor; first session sync-state scan lands after ONE-1727"
+    )]
     pub(crate) fn iter<'txn>(&self, txn: &'txn RoTxn<'_>) -> Result<OverlayStrIter<'txn>> {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayStrIter::Base(self.base.iter(txn)?));
         };
         let plan = overlay.snapshot.merge_plan(overlay.keyspace, |_| true);
-        Ok(OverlayStrIter::Merged(StrMergedRows::new(
+        Ok(OverlayStrIter::Merged(Box::new(StrMergedRows::new(
             self.base.iter(txn)?,
             plan,
             Direction::Forward,
             overlay.snapshot.clone(),
-        )))
+        ))))
     }
 
     pub(crate) fn prefix_iter<'txn>(
@@ -420,12 +428,12 @@ impl OverlayStrDb {
         let plan = overlay
             .snapshot
             .merge_plan(overlay.keyspace, |key| key.starts_with(prefix.as_bytes()));
-        Ok(OverlayStrPrefix::Merged(StrMergedRows::new(
+        Ok(OverlayStrPrefix::Merged(Box::new(StrMergedRows::new(
             self.base.prefix_iter(txn, prefix)?,
             plan,
             Direction::Forward,
             overlay.snapshot.clone(),
-        )))
+        ))))
     }
 }
 
@@ -777,7 +785,7 @@ fn convert_str_pair<'txn>(row: heed::Result<(&'txn str, &'txn [u8])>) -> Result<
 
 pub(crate) enum OverlayIter<'txn> {
     Base(RoIter<'txn, Bytes, Bytes>),
-    Merged(MergedRows<'txn, RoIter<'txn, Bytes, Bytes>>),
+    Merged(Box<MergedRows<'txn, RoIter<'txn, Bytes, Bytes>>>),
 }
 
 impl<'txn> Iterator for OverlayIter<'txn> {
@@ -793,7 +801,7 @@ impl<'txn> Iterator for OverlayIter<'txn> {
 
 pub(crate) enum OverlayRevIter<'txn> {
     Base(RoRevIter<'txn, Bytes, Bytes>),
-    Merged(MergedRows<'txn, RoRevIter<'txn, Bytes, Bytes>>),
+    Merged(Box<MergedRows<'txn, RoRevIter<'txn, Bytes, Bytes>>>),
 }
 
 impl<'txn> Iterator for OverlayRevIter<'txn> {
@@ -809,7 +817,7 @@ impl<'txn> Iterator for OverlayRevIter<'txn> {
 
 pub(crate) enum OverlayRange<'txn> {
     Base(RoRange<'txn, Bytes, Bytes>),
-    Merged(MergedRows<'txn, RoRange<'txn, Bytes, Bytes>>),
+    Merged(Box<MergedRows<'txn, RoRange<'txn, Bytes, Bytes>>>),
 }
 
 impl<'txn> Iterator for OverlayRange<'txn> {
@@ -825,7 +833,7 @@ impl<'txn> Iterator for OverlayRange<'txn> {
 
 pub(crate) enum OverlayRevRange<'txn> {
     Base(RoRevRange<'txn, Bytes, Bytes>),
-    Merged(MergedRows<'txn, RoRevRange<'txn, Bytes, Bytes>>),
+    Merged(Box<MergedRows<'txn, RoRevRange<'txn, Bytes, Bytes>>>),
 }
 
 impl<'txn> Iterator for OverlayRevRange<'txn> {
@@ -842,7 +850,7 @@ impl<'txn> Iterator for OverlayRevRange<'txn> {
 pub(crate) enum OverlayPrefix<'txn> {
     Base(RoPrefix<'txn, Bytes, Bytes, DefaultComparator>),
     BaseBetweenKeys(RoPrefix<'txn, Bytes, Bytes, DefaultComparator, MoveBetweenKeys>),
-    Merged(MergedPrefixRows<'txn>),
+    Merged(Box<MergedPrefixRows<'txn>>),
 }
 
 impl OverlayPrefix<'_> {
@@ -850,7 +858,7 @@ impl OverlayPrefix<'_> {
         match self {
             Self::Base(inner) => Self::BaseBetweenKeys(inner.move_between_keys()),
             Self::BaseBetweenKeys(inner) => Self::BaseBetweenKeys(inner),
-            Self::Merged(inner) => Self::Merged(inner.move_between_keys()),
+            Self::Merged(inner) => Self::Merged(Box::new((*inner).move_between_keys())),
         }
     }
 }
@@ -869,7 +877,7 @@ impl<'txn> Iterator for OverlayPrefix<'txn> {
 
 pub(crate) enum OverlayDupValues<'txn> {
     Base(RoIter<'txn, Bytes, Bytes, MoveOnCurrentKeyDuplicates>),
-    Merged(PrefetchedMergedRows<'txn, RoIter<'txn, Bytes, Bytes, MoveOnCurrentKeyDuplicates>>),
+    Merged(Box<PrefetchedMergedRows<'txn, RoIter<'txn, Bytes, Bytes, MoveOnCurrentKeyDuplicates>>>),
 }
 
 impl<'txn> Iterator for OverlayDupValues<'txn> {
@@ -883,10 +891,13 @@ impl<'txn> Iterator for OverlayDupValues<'txn> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "returned by the completed OverlayStrDb::iter accessor; first session sync-state scan lands after ONE-1727"
+)]
 pub(crate) enum OverlayStrIter<'txn> {
     Base(RoIter<'txn, Str, Bytes>),
-    Merged(StrMergedRows<'txn, RoIter<'txn, Str, Bytes>>),
+    Merged(Box<StrMergedRows<'txn, RoIter<'txn, Str, Bytes>>>),
 }
 
 impl<'txn> Iterator for OverlayStrIter<'txn> {
@@ -902,7 +913,7 @@ impl<'txn> Iterator for OverlayStrIter<'txn> {
 
 pub(crate) enum OverlayStrPrefix<'txn> {
     Base(RoPrefix<'txn, Str, Bytes, DefaultComparator>),
-    Merged(StrMergedRows<'txn, RoPrefix<'txn, Str, Bytes, DefaultComparator>>),
+    Merged(Box<StrMergedRows<'txn, RoPrefix<'txn, Str, Bytes, DefaultComparator>>>),
 }
 
 impl<'txn> Iterator for OverlayStrPrefix<'txn> {

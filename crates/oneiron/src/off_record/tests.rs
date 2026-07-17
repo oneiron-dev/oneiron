@@ -35,6 +35,17 @@ fn seed_turn(vault: &Vault, at: u64) -> EntityId {
     id
 }
 
+fn put_live_overlay_entity(session: &OffRecordSession<'_>, id: &EntityId) -> Result<()> {
+    let overlay = session.overlay();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(
+        crate::session_overlay::OverlayKeyspace::Entities,
+        id.as_bytes(),
+        b"live session overlay entity",
+    )?;
+    segment.commit()
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn off_record_tag_scrubs_offline_updates_and_preserves_ordinary_state() {
@@ -166,14 +177,177 @@ fn off_record_enter_is_explicit_marked_and_single_shot() {
         ErrorKind::OffRecordSessionAlreadyExists
     );
 
-    // Disclosure honesty is backend-relative and rides the marker.
-    let local = off_record_context_marker(OffRecordBackendClass::Local);
-    let remote = off_record_context_marker(OffRecordBackendClass::RemoteProvider);
-    assert!(local.contains(OFF_RECORD_SESSION_MARKER_LINE));
-    assert!(remote.contains(OFF_RECORD_SESSION_MARKER_LINE));
-    assert!(local.contains(OffRecordBackendClass::Local.disclosure_line()));
-    assert!(remote.contains(OffRecordBackendClass::RemoteProvider.disclosure_line()));
+    // Marker content is entirely host-supplied; the engine exposes only the
+    // two enums a host uses to select its own text.
+    let render = |mode, backend, supplied: &str| (mode, backend, supplied.to_owned());
+    let (local_mode, local_backend, local) = render(
+        OffRecordMode::OffRecord,
+        OffRecordBackendClass::Local,
+        "host:0",
+    );
+    let (remote_mode, remote_backend, remote) = render(
+        OffRecordMode::OffRecord,
+        OffRecordBackendClass::RemoteProvider,
+        "host:1",
+    );
+    assert_eq!(local_mode, OffRecordMode::OffRecord);
+    assert_eq!(remote_mode, OffRecordMode::OffRecord);
+    assert_eq!(local_backend, OffRecordBackendClass::Local);
+    assert_eq!(remote_backend, OffRecordBackendClass::RemoteProvider);
     assert_ne!(local, remote);
+}
+
+#[test]
+fn off_record_registry_evaporates_without_base_residue_on_reopen() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+    let base_rows_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.vault_meta.len(&rtxn)?
+    };
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-crash-registry", OffRecordBackendClass::Local)?;
+    assert!(vault.off_record_session("sess-crash-registry")?.is_some());
+    let base_rows_during = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.vault_meta.len(&rtxn)?
+    };
+    assert_eq!(
+        base_rows_during, base_rows_before,
+        "enter must not create a durable session row"
+    );
+    drop(session);
+    drop(vault);
+
+    let reopened = Vault::open(tmp.path(), VaultConfig::default())?;
+    assert!(
+        reopened
+            .off_record_session("sess-crash-registry")?
+            .is_none()
+    );
+    assert!(
+        reopened
+            .off_record_session_vault()
+            .enter("sess-crash-registry", OffRecordBackendClass::Local)
+            .is_ok()
+    );
+    Ok(())
+}
+
+#[test]
+fn live_overlay_membership_is_hidden_by_retrieval_fence() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let hidden = seed_turn(&vault, 1000);
+    let visible = seed_turn(&vault, 1001);
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-overlay-retrieval-fence", OffRecordBackendClass::Local)?;
+    put_live_overlay_entity(&session, &hidden)?;
+
+    let surfaced = surfaced_turns(&vault);
+    assert!(
+        !surfaced.contains(&hidden),
+        "retrieval must consult live overlay membership before the durable fence backstop"
+    );
+    assert!(
+        surfaced.contains(&visible),
+        "an ordinary base turn must remain visible"
+    );
+
+    session.close()?;
+    assert!(
+        surfaced_turns(&vault).contains(&hidden),
+        "dropping live overlay membership must release this fence-free base control"
+    );
+    Ok(())
+}
+
+#[test]
+fn entity_put_guard_rejects_live_overlay_membership() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = EntityId::now();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-overlay-put-guard", OffRecordBackendClass::Local)?;
+    put_live_overlay_entity(&session, &id)?;
+
+    let error = vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: 1000,
+                end: 1000,
+            },
+            1000,
+            b"must not couple overlay content into base",
+        )
+        .expect_err("a base entity put must reject a live overlay member");
+    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(matches!(
+        error,
+        Error::OffRecordFencedTurnWriteRejected { turn_ref } if turn_ref == id.to_hex()
+    ));
+    assert_eq!(
+        vault.get_raw(&id)?,
+        None,
+        "the rejected put must leave no durable entity row"
+    );
+
+    session.close()?;
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: 1000,
+            end: 1000,
+        },
+        1000,
+        b"ordinary base content after membership evaporates",
+    )?;
+    assert!(
+        vault.get_raw(&id)?.is_some(),
+        "the guard must be keyed to live overlay membership"
+    );
+    Ok(())
+}
+
+#[test]
+fn mode_flip_seals_overlay_writes_but_keeps_composed_reads() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = EntityId::now();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-mode-route", OffRecordBackendClass::Local)?;
+    let overlay = session.overlay();
+    let mut wtxn = vault.store.env.write_txn()?;
+    let segment = overlay.install_txn_segment()?;
+    let view = session.read_view()?;
+    view.entities
+        .put(&mut wtxn, id.as_bytes(), b"session-row")?;
+    drop(view);
+    wtxn.commit()?;
+    segment.commit()?;
+
+    session.flip_on_record()?;
+    let sealed = match overlay.install_txn_segment() {
+        Err(error) => error,
+        Ok(_) => panic!("mode flip must seal overlay writes"),
+    };
+    assert_eq!(sealed.kind(), ErrorKind::OffRecordOverlayLeaseClosed);
+    let rtxn = vault.store.env.read_txn()?;
+    let read_view = session.read_view()?;
+    assert_eq!(
+        read_view.entities.get(&rtxn, id.as_bytes())?.as_deref(),
+        Some(&b"session-row"[..]),
+        "mode flip keeps pre-flip overlay rows in the composed read view"
+    );
+    drop(read_view);
+    drop(rtxn);
+    assert_eq!(vault.get_raw(&id)?, None, "pre-flip row never reached base");
+    session.close()?;
+    Ok(())
 }
 
 #[test]
@@ -434,6 +608,59 @@ fn off_record_promote_writes_exactly_one_turn() {
     assert_eq!(persisted, receipt);
 }
 
+#[test]
+fn off_record_close_and_promote_are_serialized_by_registry_lock() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    vault
+        .enter_off_record_session("sess-close-promote", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-close-promote", &turn)
+        .expect("tag");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let (close_result, promote_result) = std::thread::scope(|scope| {
+        let close_barrier = barrier.clone();
+        let close_vault = &vault;
+        let close = scope.spawn(move || {
+            close_barrier.wait();
+            close_vault.close_off_record_session(
+                "sess-close-promote",
+                SessionLocalReceiptLog::off_record("sess-close-promote"),
+            )
+        });
+        let promote_barrier = barrier.clone();
+        let promote_vault = &vault;
+        let promote = scope.spawn(move || {
+            promote_barrier.wait();
+            promote_vault.promote_off_record_turn("sess-close-promote", &turn)
+        });
+        barrier.wait();
+        (
+            close.join().expect("close thread"),
+            promote.join().expect("promote thread"),
+        )
+    });
+    let close = close_result.expect("close must complete");
+    match promote_result {
+        Ok(receipt) => {
+            assert_eq!(receipt.turn, *turn.as_bytes());
+            assert_eq!(close.turns_deleted, 0);
+            assert_eq!(close.promoted_turns_kept, 1);
+            assert!(vault.get(&turn).expect("read promoted").is_some());
+        }
+        Err(error) => {
+            assert!(matches!(
+                error.kind(),
+                ErrorKind::OffRecordSessionClosing | ErrorKind::OffRecordSessionNotFound
+            ));
+            assert_eq!(close.turns_deleted, 1);
+            assert_eq!(close.promoted_turns_kept, 0);
+            assert!(vault.get(&turn).expect("read closed").is_none());
+        }
+    }
+}
+
 /// Simulates close-in-flight by stamping the closing flag exactly as
 /// close's first transaction does, then interleaves every mutator at
 /// the seam. The promote rejection is the load-bearing one: without the
@@ -451,20 +678,17 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
         .tag_turn_off_record("sess-toctou", &fenced)
         .expect("tag");
 
-    // Stamp the closing flag the way close's txn 1 does.
-    vault
-        .with_write_txn(|wtxn| {
-            let mut record =
-                session_record_in_txn(&vault.store, wtxn, "sess-toctou")?.expect("session record");
-            record.closing = true;
-            vault.store.vault_meta.put(
-                wtxn,
-                &off_record_session_key("sess-toctou"),
-                &encode_off_record_session(&record)?,
-            )?;
-            Ok(())
-        })
-        .expect("stamp closing");
+    // Stamp the in-process closing state exactly as close does.
+    let entry = vault
+        .store
+        .off_record_sessions
+        .entry("sess-toctou")
+        .expect("registry")
+        .expect("session record");
+    session_entry_state(&entry)
+        .expect("session state")
+        .record
+        .closing = true;
 
     let tag = vault
         .tag_turn_off_record("sess-toctou", &late)
@@ -646,19 +870,16 @@ fn off_record_close_retry_keeps_completed_delete_out_of_missing_counts() {
     // Reproduce the interruption boundary: close's first transaction froze
     // the session, then PolicyDelete completed, but final fence cleanup did
     // not run before the process stopped.
-    vault
-        .with_write_txn(|wtxn| {
-            let mut record = session_record_in_txn(&vault.store, wtxn, "sess-close-retry")?
-                .expect("session record");
-            record.closing = true;
-            vault.store.vault_meta.put(
-                wtxn,
-                &off_record_session_key("sess-close-retry"),
-                &encode_off_record_session(&record)?,
-            )?;
-            Ok(())
-        })
-        .expect("freeze close");
+    let entry = vault
+        .store
+        .off_record_sessions
+        .entry("sess-close-retry")
+        .expect("registry")
+        .expect("session record");
+    session_entry_state(&entry)
+        .expect("session state")
+        .record
+        .closing = true;
     let first_delete = vault
         .delete_entity_with_reason(&fenced, crate::deletion::DeleteReason::PolicyDelete)
         .expect("PolicyDelete before interruption");

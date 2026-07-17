@@ -30,9 +30,8 @@ pub struct ResolvedPrompt {
 pub struct SessionPromptParts {
     pub activated_memory: Vec<String>,
     pub history: Vec<LlmMessage>,
-    /// OF-326: when the session is off-record, the marker (see
-    /// `off_record::off_record_context_marker`) is rendered as its own
-    /// system-prompt section so both parties know the mode is on.
+    /// Host-supplied off-record marker rendered as its own system-prompt
+    /// section. The engine never authors this text.
     pub off_record_marker: Option<String>,
 }
 
