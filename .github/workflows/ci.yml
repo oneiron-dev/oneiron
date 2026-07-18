@@ -111,8 +111,9 @@ jobs:
     # PR -> merge -> release lifecycle. cargo-deny/clippy/package stay x86.
     # 4vcpu on both lanes: the suite's wall time stops scaling past ~4
     # cores (full x86 suite, 2026-07 spend audit: ~361s at 8vcpu vs ~360s
-    # at 4vcpu; arm A/B on this PR: 296-309s at 4vcpu vs ~218s warm at
-    # 8vcpu), so 8vcpu bills ~2x the vcpu-seconds for no latency gain.
+    # at 4vcpu; arm A/B on this PR: 285-309s at 4vcpu vs ~218s warm at
+    # 8vcpu), so 8vcpu bills ~2x the vcpu-seconds to win nothing on x86
+    # and only ~80s of wall on the arm PR lane.
     runs-on: ${{ github.event_name == 'pull_request' && 'blacksmith-4vcpu-ubuntu-2404-arm' || 'blacksmith-4vcpu-ubuntu-2404' }}
     needs: changes
     # PRs: rust diffs only. Main pushes: rust diffs too (the changes job
