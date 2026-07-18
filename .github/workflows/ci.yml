@@ -108,7 +108,11 @@ jobs:
     # the production arch. Both hand-written SIMD paths (AVX2 on x86, NEON on
     # arm — crates/oneiron/src/distance.rs) thus get CI coverage across the
     # PR -> merge -> release lifecycle. cargo-deny/clippy/package stay x86.
-    runs-on: ${{ github.event_name == 'pull_request' && 'blacksmith-8vcpu-ubuntu-2404-arm' || 'blacksmith-8vcpu-ubuntu-2404' }}
+    # 4vcpu on the PR lane: the suite's wall time stops scaling past ~4
+    # cores (full x86 suite measured 2026-07-19: ~361s at 8vcpu vs ~360s at
+    # 4vcpu), so 8vcpu bills ~2x the vcpu-seconds for no latency gain.
+    # Revert to 8vcpu-arm if warm PR runs come in over ~2x the old ~220s.
+    runs-on: ${{ github.event_name == 'pull_request' && 'blacksmith-4vcpu-ubuntu-2404-arm' || 'blacksmith-8vcpu-ubuntu-2404' }}
     needs: changes
     # Always on main pushes (record of truth) — always() keeps that true
     # even if the detector job itself fails; on PRs only for rust diffs.
