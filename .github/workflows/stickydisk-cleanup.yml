@@ -22,7 +22,9 @@ jobs:
     steps:
       # Registry disk is small (~GBs) but every job pays its cold re-download
       # after a delete — clear it on the Sunday sweep (and manual runs) only;
-      # the midweek sweep clears just the fat target disks.
+      # the midweek sweep clears just the fat target disks. The cron string
+      # in this if-gate must stay in sync with the Sunday entry in
+      # on.schedule above (github.event.schedule carries the matched cron).
       - name: Delete cargo registry disk
         if: github.event_name != 'schedule' || github.event.schedule == '0 18 * * 0'
         continue-on-error: true
