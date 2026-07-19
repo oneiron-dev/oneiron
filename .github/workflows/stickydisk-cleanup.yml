@@ -1,13 +1,16 @@
-name: Sticky disk weekly cleanup
+name: Sticky disk cleanup
 
-# Sticky disks are billed per GB/mo and grow with stale cargo artifacts.
-# Weekly delete keeps steady-state cost low; Monday's first CI run
-# re-hydrates cold (one slow run per week, by design).
+# Sticky disks are billed per GB/mo and grow with stale cargo artifacts —
+# the target disks reached ~80GB (~$1.4/day) between weekly sweeps during
+# the 2026-07 PR waves, after the arm PR lane added a fourth target disk.
+# Twice-weekly delete keeps steady-state cost low; the first CI run after
+# each sweep re-hydrates cold (two slow runs per week, by design).
 # Also manually triggerable (workflow_dispatch) after heavy PR waves.
 
 on:
   schedule:
     - cron: '0 18 * * 0' # Sunday 18:00 UTC = Monday 03:00 JST, before the week's runs
+    - cron: '0 18 * * 3' # Wednesday 18:00 UTC = Thursday 03:00 JST, midweek sweep
   workflow_dispatch:
 
 permissions:
@@ -17,7 +20,13 @@ jobs:
   delete:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
+      # Registry disk is small (~GBs) but every job pays its cold re-download
+      # after a delete — clear it on the Sunday sweep (and manual runs) only;
+      # the midweek sweep clears just the fat target disks. The cron string
+      # in this if-gate must stay in sync with the Sunday entry in
+      # on.schedule above (github.event.schedule carries the matched cron).
       - name: Delete cargo registry disk
+        if: github.event_name != 'schedule' || github.event.schedule == '0 18 * * 0'
         continue-on-error: true
         uses: useblacksmith/stickydisk-delete@b41313d28b8647d72114c9ba3c96bb04061562b6 # v1
         with:
