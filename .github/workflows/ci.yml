@@ -18,10 +18,11 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Cost layout (2026-07-09): Rust jobs are gated off PRs whose diff can't
-# change their outcome (refactor manifests/tooling, docs). fmt/clippy run
-# PR-only; Test runs on PRs (rust diffs) AND every main push as the record
-# of truth; package (publish-integrity) runs on main pushes only. deny and
+# Cost layout (2026-07-19): Rust jobs are gated off PRs AND main pushes
+# whose diff can't change their outcome (refactor manifests/tooling,
+# docs). fmt/clippy run PR-only; Test runs on rust-diff PRs and rust-diff
+# main pushes (fail-open on push if the detector breaks; tag pushes always
+# run); package (publish-integrity) runs on release tags only. deny and
 # typos are seconds — they run on every PR unfiltered.
 jobs:
   changes:
@@ -108,11 +109,27 @@ jobs:
     # the production arch. Both hand-written SIMD paths (AVX2 on x86, NEON on
     # arm — crates/oneiron/src/distance.rs) thus get CI coverage across the
     # PR -> merge -> release lifecycle. cargo-deny/clippy/package stay x86.
-    runs-on: ${{ github.event_name == 'pull_request' && 'blacksmith-8vcpu-ubuntu-2404-arm' || 'blacksmith-8vcpu-ubuntu-2404' }}
+    # 4vcpu on both lanes: the suite's wall time stops scaling past ~4
+    # cores (full x86 suite, 2026-07 spend audit: ~361s at 8vcpu vs ~360s
+    # at 4vcpu; arm A/B on this PR: 285-309s at 4vcpu vs ~218s warm at
+    # 8vcpu), so 8vcpu bills ~2x the vcpu-seconds to win nothing on x86
+    # and only ~80s of wall on the arm PR lane.
+    runs-on: ${{ github.event_name == 'pull_request' && 'blacksmith-4vcpu-ubuntu-2404-arm' || 'blacksmith-4vcpu-ubuntu-2404' }}
     needs: changes
-    # Always on main pushes (record of truth) — always() keeps that true
-    # even if the detector job itself fails; on PRs only for rust diffs.
-    if: always() && (github.event_name == 'push' || needs.changes.outputs.rust == 'true')
+    # PRs: rust diffs only. Main pushes: rust diffs too (the changes job
+    # runs the same filter on push), but fail OPEN — if the detector job
+    # didn't succeed, run anyway so a filter hiccup can't skip the record
+    # of truth. Tag pushes always run (release validation — the filter has
+    # no sane diff base on a tag event).
+    if: >-
+      always() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true')
+        || (github.event_name == 'push' && (
+          startsWith(github.ref, 'refs/tags/')
+          || needs.changes.outputs.rust == 'true'
+          || needs.changes.result != 'success'
+        ))
+      )
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
