@@ -116,6 +116,22 @@ fn tier_rule_1_live_overlay_membership_is_tier_a() -> Result<()> {
 }
 
 #[test]
+fn tier_rule_1_durable_fence_backstop_is_tier_a() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let fenced = test_id(0x15);
+    put_turn(&vault, &fenced);
+    vault.enter_off_record_session("room-durable-fence", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("room-durable-fence", &fenced)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        disclosure_tier(&vault.store, &rtxn, &fenced, ENTITY_TYPE_TURN, None)?,
+        DisclosureTier::TierA
+    );
+    Ok(())
+}
+
+#[test]
 fn tier_rule_2_governance_type_bytes_are_tier_a() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let rtxn = vault.store.env.read_txn()?;

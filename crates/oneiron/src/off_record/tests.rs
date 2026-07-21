@@ -162,11 +162,19 @@ fn talk_only_request(session_ref: &str) -> OutboundDispatchRequest {
 #[test]
 fn off_record_enter_is_explicit_marked_and_single_shot() {
     let (_tmp, vault) = temp_vault();
-    let record = vault
-        .enter_off_record_session("sess-enter", OffRecordBackendClass::Local)
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-enter", OffRecordBackendClass::Local)
         .expect("enter");
-    assert_eq!(record.mode, OffRecordMode::OffRecord);
-    assert_eq!(record.backend, OffRecordBackendClass::Local);
+    assert_eq!(session.mode().expect("read mode"), OffRecordMode::OffRecord);
+    assert_eq!(
+        session.backend_class().expect("read backend class"),
+        OffRecordBackendClass::Local
+    );
+    let record = vault
+        .off_record_session("sess-enter")
+        .expect("read record")
+        .expect("live record");
     assert!(record.fenced_turns.is_empty());
 
     let double_enter = vault
@@ -177,24 +185,20 @@ fn off_record_enter_is_explicit_marked_and_single_shot() {
         ErrorKind::OffRecordSessionAlreadyExists
     );
 
-    // Marker content is entirely host-supplied; the engine exposes only the
-    // two enums a host uses to select its own text.
-    let render = |mode, backend, supplied: &str| (mode, backend, supplied.to_owned());
-    let (local_mode, local_backend, local) = render(
-        OffRecordMode::OffRecord,
-        OffRecordBackendClass::Local,
-        "host:0",
+    let remote_session = vault
+        .off_record_session_vault()
+        .enter("sess-enter-remote", OffRecordBackendClass::RemoteProvider)
+        .expect("enter remote session");
+    assert_eq!(
+        remote_session.mode().expect("read remote mode"),
+        OffRecordMode::OffRecord
     );
-    let (remote_mode, remote_backend, remote) = render(
-        OffRecordMode::OffRecord,
-        OffRecordBackendClass::RemoteProvider,
-        "host:1",
+    assert_eq!(
+        remote_session
+            .backend_class()
+            .expect("read remote backend class"),
+        OffRecordBackendClass::RemoteProvider
     );
-    assert_eq!(local_mode, OffRecordMode::OffRecord);
-    assert_eq!(remote_mode, OffRecordMode::OffRecord);
-    assert_eq!(local_backend, OffRecordBackendClass::Local);
-    assert_eq!(remote_backend, OffRecordBackendClass::RemoteProvider);
-    assert_ne!(local, remote);
 }
 
 #[test]

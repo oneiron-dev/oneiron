@@ -953,7 +953,7 @@ fn direct_substrate_crash_evaporation_leaves_zero_base_residue() -> Result<()> {
 /// receipts kept (RECEIPTS-FOLLOW-TRANSCRIPT).
 #[test]
 // Attestation: needs ONE-1728 witness_turn/search_text before this can run.
-#[ignore = "armed by ONE-1727"]
+#[ignore = "armed by ONE-1728"]
 fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let base_before = full_db_census(&vault)?;
@@ -980,7 +980,7 @@ fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -
 /// not-found after reopen.
 #[test]
 // Attestation: needs ONE-1728 witness_turn/search_text before this can run.
-#[ignore = "armed by ONE-1727"]
+#[ignore = "armed by ONE-1728"]
 fn crash_evaporation_leaves_zero_base_residue() -> Result<()> {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");

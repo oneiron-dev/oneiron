@@ -12,6 +12,8 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
+use arc_swap::ArcSwap;
+
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -517,7 +519,7 @@ static NEXT_OVERLAY_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// Persistent-COW in-memory overlay shared by one live session.
 pub(crate) struct SessionOverlay {
-    state: Mutex<Arc<OverlayState>>,
+    state: ArcSwap<OverlayState>,
     lifecycle: Mutex<Lifecycle>,
     lease_drained: Condvar,
     segment_available: Condvar,
@@ -527,7 +529,7 @@ pub(crate) struct SessionOverlay {
 impl SessionOverlay {
     pub(crate) fn new(budget_bytes: usize) -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new(Arc::new(OverlayState::empty())),
+            state: ArcSwap::from_pointee(OverlayState::empty()),
             lifecycle: Mutex::new(Lifecycle {
                 state: OverlayLifecycleState::Live,
                 generation: NEXT_OVERLAY_GENERATION.fetch_add(1, Ordering::Relaxed),
@@ -548,15 +550,12 @@ impl SessionOverlay {
         self.budget_bytes
     }
 
-    /// Read-only taint-set membership exported to the vault-level session
-    /// registry. The registry holds the per-session lifecycle lock while
-    /// calling this, so close cannot clear the overlay between membership
-    /// classification and its gate decision.
+    /// Lock-free taint-set membership exported through the registry's
+    /// immutable session snapshot. Closed overlays retain this immutable
+    /// state until the registry drops them, so close cannot create a false
+    /// negative between classification and the write-door decision.
     pub(crate) fn contains_entity(&self, id: &EntityId) -> Result<bool> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))?;
+        let state = self.state.load();
         let KeyspaceState::Single { rows, .. } =
             state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
         else {
@@ -571,10 +570,7 @@ impl SessionOverlay {
     }
 
     pub(crate) fn has_entities(&self) -> Result<bool> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))?;
+        let state = self.state.load();
         let KeyspaceState::Single { rows, .. } =
             state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
         else {
@@ -647,11 +643,7 @@ impl SessionOverlay {
         }
 
         let lease = self.acquire_read_lease()?;
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))?
-            .clone();
+        let state = self.state.load_full();
         Ok(OverlaySnapshot {
             state,
             _lease: lease,
@@ -674,15 +666,7 @@ impl SessionOverlay {
 
         let lease = self.acquire_segment_lease()?;
         let generation = lease.generation;
-        let snapshot = match self.state.lock() {
-            Ok(state) => state.clone(),
-            Err(_) => {
-                self.release_segment_writer();
-                return Err(Error::InvariantViolation(
-                    "session overlay state mutex poisoned",
-                ));
-            }
-        };
+        let snapshot = self.state.load_full();
         let segment = TxnSegment {
             overlay: self.clone(),
             generation,
@@ -851,11 +835,9 @@ impl SessionOverlay {
                 Error::InvariantViolation("session overlay lifecycle mutex poisoned")
             })?;
         }
-        *self
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))? =
-            Arc::new(OverlayState::empty());
+        // Retain the immutable state as the registry's fail-closed membership
+        // snapshot until the entry itself is unpublished. No read lease can
+        // observe it after the lifecycle reaches Gone.
         lifecycle.generation = lifecycle
             .generation
             .checked_add(1)
@@ -1020,12 +1002,9 @@ impl SessionOverlay {
                 generation: segment.generation,
             });
         }
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))?;
-        *state =
-            Self::apply_preflighted_to_state(state.clone(), &segment.mutations, &segment.journal)?;
+        let state = self.state.load_full();
+        let next = Self::apply_preflighted_to_state(state, &segment.mutations, &segment.journal)?;
+        self.state.store(next);
         Ok(())
     }
 

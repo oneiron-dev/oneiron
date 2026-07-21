@@ -74,13 +74,16 @@ impl Vault {
     ) -> Result<OffRecordPromoteReceipt> {
         vet_off_record_session_ref(session_ref)?;
         let entry = live_session_entry(&self.store, session_ref)?;
-        let mut state = session_entry_state(&entry)?;
-        if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
-                session_ref: session_ref.to_owned(),
-            });
-        }
-        let mut next_record = state.record.clone();
+        let record = {
+            let state = session_entry_state(&entry)?;
+            if state.record.closing || state.gone {
+                return Err(Error::OffRecordSessionClosing {
+                    session_ref: session_ref.to_owned(),
+                });
+            }
+            state.record.clone()
+        };
+        let mut next_record = record.clone();
         let position = next_record
             .fenced_turns
             .iter()
@@ -101,7 +104,21 @@ impl Vault {
         self.with_write_txn(|wtxn| {
             FloorWrites::new(&self.store).commit_promote(wtxn, turn_id, &receipt)
         })?;
-        state.record = next_record;
+        {
+            let mut state = session_entry_state(&entry)?;
+            if state.record.closing || state.gone {
+                return Err(Error::OffRecordSessionClosing {
+                    session_ref: session_ref.to_owned(),
+                });
+            }
+            if state.record != record {
+                return Err(Error::InvariantViolation(
+                    "off-record session record drifted during promote",
+                ));
+            }
+            state.record = next_record.clone();
+            entry.publish_state(&state);
+        }
 
         #[cfg(feature = "sync")]
         if let Err(error) = self.refresh_promoted_turn_in_live_window(turn_id) {
@@ -110,6 +127,20 @@ impl Vault {
                 error = %error,
                 "off-record promotion committed but live-window sync refresh deferred to recovery"
             );
+        }
+        #[cfg(feature = "sync")]
+        {
+            let state = session_entry_state(&entry)?;
+            if state.record.closing || state.gone {
+                return Err(Error::OffRecordSessionClosing {
+                    session_ref: session_ref.to_owned(),
+                });
+            }
+            if state.record != next_record {
+                return Err(Error::InvariantViolation(
+                    "off-record session record drifted during live-window promote refresh",
+                ));
+            }
         }
 
         Ok(receipt)

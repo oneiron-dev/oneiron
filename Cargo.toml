@@ -14,6 +14,7 @@ keywords = ["retrieval", "vector-search", "lmdb", "crdt"]
 categories = ["database", "command-line-utilities"]
 
 [workspace.dependencies]
+arc-swap = "1.9"
 heed = "0.20"
 uuid = { version = "1", features = ["v7"] }
 # ONE-1140 (OD-1): receipt origin attestation, pinned to the 2.2.x line.

@@ -72,6 +72,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use arc_swap::{ArcSwap, ArcSwapOption};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
@@ -232,14 +233,15 @@ impl<'store> FloorWrites<'store> {
 
 /// Vault-scoped, in-process source of truth for live off-record sessions.
 /// No registry row is ever serialized into the base vault.
-#[derive(Default)]
 pub(crate) struct OffRecordSessionRegistry {
     sessions: Mutex<BTreeMap<String, Arc<OffRecordSessionEntry>>>,
+    published: ArcSwap<BTreeMap<String, Arc<OffRecordSessionEntry>>>,
 }
 
 pub(super) struct OffRecordSessionEntry {
     pub(super) overlay: Arc<SessionOverlay>,
     pub(super) state: Mutex<OffRecordSessionEntryState>,
+    published_record: ArcSwapOption<OffRecordSessionRecord>,
 }
 
 pub(super) struct OffRecordSessionEntryState {
@@ -247,6 +249,22 @@ pub(super) struct OffRecordSessionEntryState {
     pub(super) receipt_log: Option<SessionLocalReceiptLog>,
     pub(super) overlay_closed: bool,
     pub(super) gone: bool,
+}
+
+impl Default for OffRecordSessionRegistry {
+    fn default() -> Self {
+        Self {
+            sessions: Mutex::new(BTreeMap::new()),
+            published: ArcSwap::from_pointee(BTreeMap::new()),
+        }
+    }
+}
+
+impl OffRecordSessionEntry {
+    pub(super) fn publish_state(&self, state: &OffRecordSessionEntryState) {
+        let record = (!state.gone).then(|| Arc::new(state.record.clone()));
+        self.published_record.store(record);
+    }
 }
 
 impl OffRecordSessionRegistry {
@@ -268,26 +286,29 @@ impl OffRecordSessionRegistry {
                 session_ref: session_ref.to_owned(),
             });
         }
+        let record = OffRecordSessionRecord {
+            version: OFF_RECORD_SESSION_RECORD_VERSION,
+            session_ref: session_ref.to_owned(),
+            mode: OffRecordMode::OffRecord,
+            backend,
+            entered_at: crate::unix_seconds_now(),
+            fenced_turns: Vec::new(),
+            promoted_turns: Vec::new(),
+            context_receipt_runs: Vec::new(),
+            closing: false,
+        };
         let entry = Arc::new(OffRecordSessionEntry {
             overlay: SessionOverlay::new(budget_bytes),
             state: Mutex::new(OffRecordSessionEntryState {
-                record: OffRecordSessionRecord {
-                    version: OFF_RECORD_SESSION_RECORD_VERSION,
-                    session_ref: session_ref.to_owned(),
-                    mode: OffRecordMode::OffRecord,
-                    backend,
-                    entered_at: crate::unix_seconds_now(),
-                    fenced_turns: Vec::new(),
-                    promoted_turns: Vec::new(),
-                    context_receipt_runs: Vec::new(),
-                    closing: false,
-                },
+                record: record.clone(),
                 receipt_log: Some(SessionLocalReceiptLog::off_record(session_ref)),
                 overlay_closed: false,
                 gone: false,
             }),
+            published_record: ArcSwapOption::from(Some(Arc::new(record))),
         });
         sessions.insert(session_ref.to_owned(), entry.clone());
+        self.published.store(Arc::new(sessions.clone()));
         Ok(entry)
     }
 
@@ -295,15 +316,14 @@ impl OffRecordSessionRegistry {
         Ok(self.sessions()?.get(session_ref).cloned())
     }
 
-    pub(crate) fn record(&self, session_ref: &str) -> Result<Option<OffRecordSessionRecord>> {
-        let Some(entry) = self.entry(session_ref)? else {
-            return Ok(None);
-        };
-        let state = entry
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("off-record session mutex poisoned"))?;
-        Ok((!state.gone).then(|| state.record.clone()))
+    pub(crate) fn record(&self, session_ref: &str) -> Option<OffRecordSessionRecord> {
+        let sessions = self.published.load();
+        sessions.get(session_ref).and_then(|entry| {
+            entry
+                .published_record
+                .load_full()
+                .map(|record| record.as_ref().clone())
+        })
     }
 
     pub(crate) fn first_session_ref(&self) -> Result<Option<String>> {
@@ -311,13 +331,9 @@ impl OffRecordSessionRegistry {
     }
 
     pub(crate) fn contains_entity(&self, id: &EntityId) -> Result<bool> {
-        let entries: Vec<Arc<OffRecordSessionEntry>> = self.sessions()?.values().cloned().collect();
-        for entry in entries {
-            let state = entry
-                .state
-                .lock()
-                .map_err(|_| Error::InvariantViolation("off-record session mutex poisoned"))?;
-            if !state.gone && entry.overlay.contains_entity(id)? {
+        let sessions = self.published.load();
+        for entry in sessions.values() {
+            if entry.published_record.load().is_some() && entry.overlay.contains_entity(id)? {
                 return Ok(true);
             }
         }
@@ -325,13 +341,9 @@ impl OffRecordSessionRegistry {
     }
 
     pub(crate) fn has_overlay_entities(&self) -> Result<bool> {
-        let entries: Vec<Arc<OffRecordSessionEntry>> = self.sessions()?.values().cloned().collect();
-        for entry in entries {
-            let state = entry
-                .state
-                .lock()
-                .map_err(|_| Error::InvariantViolation("off-record session mutex poisoned"))?;
-            if !state.gone && entry.overlay.has_entities()? {
+        let sessions = self.published.load();
+        for entry in sessions.values() {
+            if entry.published_record.load().is_some() && entry.overlay.has_entities()? {
                 return Ok(true);
             }
         }
@@ -347,6 +359,7 @@ impl OffRecordSessionRegistry {
         match sessions.get(session_ref) {
             Some(current) if Arc::ptr_eq(current, expected) => {
                 sessions.remove(session_ref);
+                self.published.store(Arc::new(sessions.clone()));
                 Ok(())
             }
             Some(_) => Err(Error::InvariantViolation(
@@ -378,8 +391,9 @@ pub(super) fn vet_off_record_session_ref(session_ref: &str) -> Result<()> {
 
 /// THE FENCE probe consulted by the retrieval/extraction candidate filter:
 /// `true` means the entity is tagged off-record and must never surface,
-/// regardless of the owning session's current mode. Hot path — the key is
-/// built on the stack (no per-candidate heap allocation).
+/// regardless of the owning session's current mode. Live-overlay membership
+/// reads immutable published snapshots without registry or entry locks; the
+/// durable fence key is built on the stack.
 pub(crate) fn off_record_fence_active(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -442,7 +456,7 @@ pub(crate) fn guard_off_record_entity_put(
     else {
         return Err(rejected());
     };
-    let Some(record) = store.off_record_sessions.record(session_ref)? else {
+    let Some(record) = store.off_record_sessions.record(session_ref) else {
         return Err(rejected());
     };
     if replicated || record.closing || !record.fenced_turns.contains(id.as_bytes()) {
@@ -650,7 +664,7 @@ impl Vault {
         if vet_off_record_session_ref(session_ref).is_err() {
             return Ok(None);
         }
-        self.store.off_record_sessions.record(session_ref)
+        Ok(self.store.off_record_sessions.record(session_ref))
     }
 
     /// Flips the session's tagging mode (e.g. back on-record mid-session).
@@ -663,27 +677,39 @@ impl Vault {
     ) -> Result<OffRecordSessionRecord> {
         vet_off_record_session_ref(session_ref)?;
         let entry = live_session_entry(&self.store, session_ref)?;
+        let record = {
+            let state = session_entry_state(&entry)?;
+            if state.record.closing || state.gone {
+                return Err(Error::OffRecordSessionClosing {
+                    session_ref: session_ref.to_owned(),
+                });
+            }
+            if state.record.mode == mode {
+                return Ok(state.record.clone());
+            }
+            if state.record.mode == OffRecordMode::OnRecord {
+                return Err(Error::InvariantViolation(
+                    "a sealed off-record overlay cannot be reopened for writes",
+                ));
+            }
+            state.record.clone()
+        };
+
+        entry.overlay.seal_writes()?;
+
         let mut state = session_entry_state(&entry)?;
         if state.record.closing || state.gone {
             return Err(Error::OffRecordSessionClosing {
                 session_ref: session_ref.to_owned(),
             });
         }
-        if state.record.mode == mode {
-            return Ok(state.record.clone());
+        if state.record != record {
+            return Err(Error::InvariantViolation(
+                "off-record session record drifted during mode seal",
+            ));
         }
-        match (state.record.mode, mode) {
-            (OffRecordMode::OffRecord, OffRecordMode::OnRecord) => {
-                entry.overlay.seal_writes()?;
-                state.record.mode = OffRecordMode::OnRecord;
-            }
-            (OffRecordMode::OnRecord, OffRecordMode::OffRecord) => {
-                return Err(Error::InvariantViolation(
-                    "a sealed off-record overlay cannot be reopened for writes",
-                ));
-            }
-            _ => unreachable!("equal modes returned above"),
-        }
+        state.record.mode = OffRecordMode::OnRecord;
+        entry.publish_state(&state);
         Ok(state.record.clone())
     }
 
@@ -696,23 +722,26 @@ impl Vault {
     pub fn tag_turn_off_record(&self, session_ref: &str, turn_id: &EntityId) -> Result<()> {
         vet_off_record_session_ref(session_ref)?;
         let entry = live_session_entry(&self.store, session_ref)?;
-        let mut state = session_entry_state(&entry)?;
-        if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
-                session_ref: session_ref.to_owned(),
-            });
-        }
-        if state.record.mode != OffRecordMode::OffRecord {
-            return Err(Error::InvariantViolation(
-                "off-record tag requires the session to be in off-record mode",
-            ));
-        }
-        if state.record.promoted_turns.contains(turn_id.as_bytes()) {
-            return Err(Error::InvariantViolation(
-                "off-record tag targeted a promoted turn",
-            ));
-        }
-        let mut next_record = state.record.clone();
+        let record = {
+            let state = session_entry_state(&entry)?;
+            if state.record.closing || state.gone {
+                return Err(Error::OffRecordSessionClosing {
+                    session_ref: session_ref.to_owned(),
+                });
+            }
+            if state.record.mode != OffRecordMode::OffRecord {
+                return Err(Error::InvariantViolation(
+                    "off-record tag requires the session to be in off-record mode",
+                ));
+            }
+            if state.record.promoted_turns.contains(turn_id.as_bytes()) {
+                return Err(Error::InvariantViolation(
+                    "off-record tag targeted a promoted turn",
+                ));
+            }
+            state.record.clone()
+        };
+        let mut next_record = record.clone();
         self.with_write_txn(|wtxn| {
             // Fail early on entity kinds the close-path PolicyDelete would
             // refuse anyway (delete-protected engine records).
@@ -746,7 +775,23 @@ impl Vault {
             crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
             Ok(())
         })?;
-        state.record = next_record;
+        {
+            let mut state = session_entry_state(&entry)?;
+            if state.record.closing || state.gone {
+                return Err(Error::OffRecordSessionClosing {
+                    session_ref: session_ref.to_owned(),
+                });
+            }
+            if state.record != record && state.record != next_record {
+                return Err(Error::InvariantViolation(
+                    "off-record session record drifted during tag",
+                ));
+            }
+            if state.record == record {
+                state.record = next_record.clone();
+                entry.publish_state(&state);
+            }
+        }
 
         // The fence is durable before touching the CRDT. If this turn was
         // already present in a registry-owned window, scrub its body and
@@ -761,6 +806,20 @@ impl Vault {
                 error = %error,
                 "off-record fence committed but live-window carrier scrub deferred to export"
             );
+        }
+        #[cfg(feature = "sync")]
+        {
+            let state = session_entry_state(&entry)?;
+            if state.record.closing || state.gone {
+                return Err(Error::OffRecordSessionClosing {
+                    session_ref: session_ref.to_owned(),
+                });
+            }
+            if state.record != next_record {
+                return Err(Error::InvariantViolation(
+                    "off-record session record drifted during live-window tag scrub",
+                ));
+            }
         }
 
         Ok(())
@@ -819,6 +878,7 @@ impl Vault {
             ));
         }
         state.record.context_receipt_runs.push(run_id);
+        entry.publish_state(&state);
         Ok(())
     }
 
@@ -881,10 +941,12 @@ impl Vault {
                 "off-record close requires an off-record receipt log",
             ));
         }
-        // Freeze the in-process entry under its per-session lock. No mutator
-        // can interleave from here; retries observe the same frozen record.
+        // Freeze the in-process record under its short per-session lock, then
+        // release it before draining overlay leases. Mutators observe the
+        // published closing bit and reject while close reconciles the frozen
+        // record after every blocking phase.
         let entry = live_session_entry(&self.store, session_ref)?;
-        let (record, internal_receipt_log) = {
+        let (record, close_overlay) = {
             let mut state = session_entry_state(&entry)?;
             if state.gone {
                 return Err(Error::OffRecordSessionNotFound {
@@ -892,13 +954,30 @@ impl Vault {
                 });
             }
             state.record.closing = true;
-            if !state.overlay_closed {
-                // Session handles lend composed views from `&self`, so safe
-                // callers must drop all read views before consuming close.
-                entry.overlay.close()?;
+            entry.publish_state(&state);
+            (state.record.clone(), !state.overlay_closed)
+        };
+        if close_overlay {
+            // Session handles lend composed views from `&self`, so safe
+            // callers must drop all read views before consuming close.
+            entry.overlay.close()?;
+        }
+        let internal_receipt_log = {
+            let mut state = session_entry_state(&entry)?;
+            if state.gone || state.record != record {
+                return Err(Error::InvariantViolation(
+                    "off-record session record drifted during overlay close",
+                ));
+            }
+            if close_overlay {
                 state.overlay_closed = true;
             }
-            (state.record.clone(), state.receipt_log.take())
+            if !state.overlay_closed {
+                return Err(Error::InvariantViolation(
+                    "off-record overlay remained live during close",
+                ));
+            }
+            state.receipt_log.take()
         };
         let receipt_close = receipt_log.close();
         assert!(receipt_close.retained.is_empty());
@@ -954,22 +1033,15 @@ impl Vault {
         // Final cleanup validates the frozen in-process record, removes only
         // legacy fence rows, then drops the registry entry. The session
         // record itself never had a durable row to remove.
-        let mut state = session_entry_state(&entry)?;
-        if !state.record.closing
-            || state.record.fenced_turns != record.fenced_turns
-            || state.record.promoted_turns != record.promoted_turns
-            || state.record.context_receipt_runs != record.context_receipt_runs
         {
-            return Err(Error::InvariantViolation(
-                "off-record session record drifted during close",
-            ));
-        }
-        self.with_write_txn(|wtxn| {
-            if state.gone {
+            let state = session_entry_state(&entry)?;
+            if state.gone || state.record != record {
                 return Err(Error::InvariantViolation(
-                    "off-record session disappeared during close",
+                    "off-record session record drifted during close",
                 ));
             }
+        }
+        self.with_write_txn(|wtxn| {
             for bytes in &record.fenced_turns {
                 let id = EntityId::from_bytes(*bytes)?;
                 if missing_turns.contains(bytes) {
@@ -996,8 +1068,16 @@ impl Vault {
             }
             Ok(())
         })?;
-        state.gone = true;
-        drop(state);
+        {
+            let mut state = session_entry_state(&entry)?;
+            if state.gone || state.record != record {
+                return Err(Error::InvariantViolation(
+                    "off-record session record drifted during close cleanup",
+                ));
+            }
+            state.gone = true;
+            entry.publish_state(&state);
+        }
         self.store
             .off_record_sessions
             .remove_if_same(session_ref, &entry)?;
