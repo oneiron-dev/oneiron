@@ -276,7 +276,9 @@ fn off_record_crash_orphaned_fence_is_gated_then_swept_on_reopen() -> Result<()>
 
         // Registry leg: a live session refuses whole-vault export.
         match vault.whole_vault_export_manifest_artifact(secrets_nulled) {
-            Err(Error::OffRecordExportRefused { session_ref: refused }) => {
+            Err(Error::OffRecordExportRefused {
+                session_ref: refused,
+            }) => {
                 assert_eq!(refused, session_ref);
             }
             other => panic!("live off-record session must refuse export, got {other:?}"),
@@ -294,7 +296,11 @@ fn off_record_crash_orphaned_fence_is_gated_then_swept_on_reopen() -> Result<()>
             .off_record_sessions
             .remove_if_same(session_ref, &entry)?;
         assert!(
-            vault.store.off_record_sessions.first_session_ref()?.is_none(),
+            vault
+                .store
+                .off_record_sessions
+                .first_session_ref()?
+                .is_none(),
             "the registry entry must be gone so only the durable backstop can fire"
         );
 

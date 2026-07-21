@@ -645,9 +645,7 @@ impl Vault {
         // or a re-driven close, lifts the row and re-permits export. Fail closed
         // on either leg.
         let rtxn = self.store.env.read_txn()?;
-        if let Some(session_ref) =
-            off_record_orphaned_live_fence_session_ref(&self.store, &rtxn)?
-        {
+        if let Some(session_ref) = off_record_orphaned_live_fence_session_ref(&self.store, &rtxn)? {
             return Err(Error::OffRecordExportRefused { session_ref });
         }
         Ok(())
