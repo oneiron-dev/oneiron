@@ -25,7 +25,7 @@ use crate::edge::EdgeKind;
 use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{Error, Result};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
@@ -2093,6 +2093,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        self.prepare_skill_scan_verdict_departure_for_delete_in_txn(wtxn, id, unix_seconds_now())?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -2141,32 +2142,12 @@ impl Vault {
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
-        // Extract the SKILL content hash (owned) from `entity_record` BEFORE any
-        // mutable use of `wtxn`: `entity_record` borrows `wtxn` immutably, so its
-        // borrow must end before the content-hash index delete below (which needs
-        // `&mut wtxn`). Zero behavior change from the inline form.
-        let skill_content_hash = if header.entity_type == ENTITY_TYPE_SKILL {
-            let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
-            match crate::skill::decode_skill_record(body) {
-                Ok(record) => record.content_hash,
-                Err(error)
-                    if error.kind() == ErrorKind::InvalidSkillBody
-                        && crate::skill::is_legacy_opaque_skill_body(body) =>
-                {
-                    None
-                }
-                Err(error) => return Err(error),
-            }
-        } else {
-            None
-        };
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
-        if let Some(content_hash) = skill_content_hash {
-            crate::skill_hub::maintain_skill_content_hash_index_for_delete(
-                &self.store,
+        if header.entity_type == ENTITY_TYPE_SKILL {
+            self.prepare_skill_scan_verdict_departure_for_delete_in_txn(
                 wtxn,
                 id,
-                content_hash,
+                unix_seconds_now(),
             )?;
         }
         let mut cleanup = VadAnnotationCleanup::default();

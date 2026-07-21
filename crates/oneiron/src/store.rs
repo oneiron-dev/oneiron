@@ -51,10 +51,8 @@
 //!    model → [`InvalidConfig`].
 //! 7. `migrate_temporal_long_intervals_if_needed`
 //!    (`hnsw_meta["temporal_long_intervals_schema_version"]`), then the
-//!    independent skill content-hash index sentinel migration
-//!    (`vault_meta["skill_hub/content_hash_index_schema_version"]`), then
-//!    the persist-if-missing writes for the HNSW config / model id validated
-//!    above (each re-checks under its own write transaction).
+//!    persist-if-missing writes for the HNSW config / model id validated above
+//!    (each re-checks under its own write transaction).
 //!
 //! `Vault::open` — after `Store::open` returns:
 //!
@@ -67,10 +65,15 @@
 //!    → [`IncompatibleAnalyzer`]; a diverged BM25F field schema →
 //!    [`Bm25FieldSchemaChanged`]. The
 //!    [`VaultConfig::skip_text_index_manifest_check`] escape hatch sits HERE
-//!    and only here: it bypasses this final gate so
+//!    and only here: it bypasses this analyzer gate so
 //!    `MaintenanceBuilder::clear_text_index` can run; on a populated index it
 //!    marks the text index untrusted so text reads/writes fail closed with
 //!    `Error::CorruptedIndex` until the clear commits.
+//! 9. The independent skill content-hash index sentinel migration
+//!    (`vault_meta["skill_hub/content_hash_index_schema_version"]`) runs after
+//!    the Vault claim doors are assembled, so pre-global scan verdicts can be
+//!    reconciled transactionally. It still finishes before `Vault::open`
+//!    returns a handle.
 //!
 //! # Compat-key homes (ONE-1097 owner decision: documented, not consolidated)
 //!
@@ -1522,7 +1525,6 @@ impl Store {
             &store.hnsw_meta,
             &store.temporal_long_intervals,
         )?;
-        crate::skill_hub::backfill_content_hash_index_if_needed(&store)?;
 
         if should_persist_hnsw_config {
             persist_hnsw_config_if_missing(

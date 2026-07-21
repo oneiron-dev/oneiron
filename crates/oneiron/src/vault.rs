@@ -217,8 +217,9 @@ impl Vault {
     /// the top of [`crate::store`]: `Store::open` runs the storage gates
     /// (`vault_meta` created first → ABI gate → schema gate → DB-manifest set
     /// → DB opens → HNSW/dimension preflight → embedding-model preflight),
-    /// then this function runs the final analyzer / BM25F text-index
-    /// handshake against `vault_meta`. The
+    /// then this function runs the analyzer / BM25F text-index handshake and
+    /// the self-contained SKILL content-hash migration against `vault_meta`.
+    /// The
     /// [`VaultConfig::skip_text_index_manifest_check`] escape hatch bypasses
     /// only that final handshake (and marks a populated text index untrusted
     /// so text reads/writes fail closed until
@@ -318,7 +319,7 @@ impl Vault {
             wtxn.commit()?;
         }
 
-        Ok(Self {
+        let vault = Self {
             store,
             config,
             analyzer,
@@ -327,7 +328,12 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
-        })
+        };
+        // This self-contained SKILL index migration can reconcile reserved
+        // scan-verdict Claims only after the existing Vault claim doors exist.
+        // It still completes before any caller receives a usable handle.
+        crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        Ok(vault)
     }
 
     /// Registers the production window manager as the live-window delete
