@@ -36,7 +36,6 @@ use crate::provenance::downgrade_edge_to_bare;
 use crate::provenance::restamp_edge_flags;
 use crate::provenance::winner_index;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::unix_seconds_now;
 
