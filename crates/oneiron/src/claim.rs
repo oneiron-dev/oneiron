@@ -1445,6 +1445,9 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::channel_identity::validate_channel_identity_claim_structure(&body)?;
     } else if crate::identity_reputation::is_identity_reputation_claim_predicate(&body.predicate) {
         crate::identity_reputation::validate_identity_reputation_claim_structure(&body)?;
+    } else if crate::provider_confidence::is_actor_confidence_prior_claim_predicate(&body.predicate)
+    {
+        crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)
     {
         crate::counterparty_contact::validate_counterparty_contact_claim_structure(&body)?;

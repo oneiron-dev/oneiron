@@ -610,54 +610,49 @@ mod seam {
     /// Writes `actor.confidence_prior = prior` as a claim on the provider
     /// actor, carrying `evidence` provenance (evidence-carrying, superseding
     /// — doc 13 §7).
-    pub(crate) fn write_provider_prior(
-        _vault: &Vault,
-        _provider: &str,
-        _prior: f32,
-        _evidence: &str,
-    ) {
-        unimplemented!("armed by ONE-1722: actor.confidence_prior claim write")
+    pub(crate) fn write_provider_prior(vault: &Vault, provider: &str, prior: f32, evidence: &str) {
+        oneiron::write_provider_prior(vault, provider, prior, evidence).unwrap();
     }
 
     /// Writes one enrichment claim from `provider` with stored `confidence`;
     /// returns the claim ref.
-    pub(crate) fn write_enrichment_claim(
-        _vault: &Vault,
-        _provider: &str,
-        _confidence: f32,
-    ) -> String {
-        unimplemented!("armed by ONE-1722: provider enrichment claim write")
+    pub(crate) fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) -> String {
+        oneiron::write_enrichment_claim(vault, provider, confidence)
+            .unwrap()
+            .to_hex()
     }
 
     /// Read-time confidence: f(claim confidence, actor.confidence_prior).
-    pub(crate) fn effective_confidence(_vault: &Vault, _claim_ref: &str) -> f32 {
-        unimplemented!("armed by ONE-1722: read-time confidence wiring")
+    pub(crate) fn effective_confidence(vault: &Vault, claim_ref: &str) -> f32 {
+        let claim_ref = oneiron::EntityId::from_hex(claim_ref).unwrap();
+        oneiron::effective_confidence(vault, &claim_ref).unwrap()
     }
 
     /// Stored (unmodified) claim confidence — read-time wiring must never
     /// rewrite the claim row.
-    pub(crate) fn stored_confidence(_vault: &Vault, _claim_ref: &str) -> f32 {
-        unimplemented!("armed by ONE-1722: stored confidence read")
+    pub(crate) fn stored_confidence(vault: &Vault, claim_ref: &str) -> f32 {
+        let claim_ref = oneiron::EntityId::from_hex(claim_ref).unwrap();
+        oneiron::stored_confidence(vault, &claim_ref).unwrap()
     }
 
     /// ACTIVE `actor.confidence_prior` claims for the provider actor.
-    pub(crate) fn count_active_prior_claims(_vault: &Vault, _provider: &str) -> usize {
-        unimplemented!("armed by ONE-1722: count active prior claims")
+    pub(crate) fn count_active_prior_claims(vault: &Vault, provider: &str) -> usize {
+        oneiron::count_active_prior_claims(vault, provider).unwrap()
     }
 
     /// SUPERSEDED `actor.confidence_prior` claims (history stays free).
-    pub(crate) fn count_superseded_prior_claims(_vault: &Vault, _provider: &str) -> usize {
-        unimplemented!("armed by ONE-1722: count superseded prior claims")
+    pub(crate) fn count_superseded_prior_claims(vault: &Vault, provider: &str) -> usize {
+        oneiron::count_superseded_prior_claims(vault, provider).unwrap()
     }
 
     /// ACTIVE `actor.confidence_prior` claims carrying exactly `evidence` —
     /// §7 priors are evidence-attached, never bare numbers.
     pub(crate) fn count_active_prior_claims_with_evidence(
-        _vault: &Vault,
-        _provider: &str,
-        _evidence: &str,
+        vault: &Vault,
+        provider: &str,
+        evidence: &str,
     ) -> usize {
-        unimplemented!("armed by ONE-1722: count evidence-attached prior claims")
+        oneiron::count_active_prior_claims_with_evidence(vault, provider, evidence).unwrap()
     }
 }
 
@@ -1267,7 +1262,6 @@ fn es08_handshake_cap_suggestion_prefills_but_never_activates_itself() {
 /// confidences orders by claim confidence. No stored row is rewritten, and
 /// priors carry their evidence (§7 evidence-attached priors).
 #[test]
-#[ignore = "armed by ONE-1722"]
 fn es09_read_time_confidence_composes_claim_confidence_and_prior() {
     let (_dir, vault) = open_vault();
     seam::write_provider_prior(&vault, "provider_clearbit", 0.72, "evidence:audit-2026-07");
@@ -1319,7 +1313,6 @@ fn es09_read_time_confidence_composes_claim_confidence_and_prior() {
 /// 0.65 (06-30)"). After superseding 0.65 -> 0.72, reads use the NEW prior,
 /// exactly one prior claim is active and exactly one superseded.
 #[test]
-#[ignore = "armed by ONE-1722"]
 fn es09_superseding_a_prior_changes_subsequent_reads() {
     let (_dir, vault) = open_vault();
     seam::write_provider_prior(
