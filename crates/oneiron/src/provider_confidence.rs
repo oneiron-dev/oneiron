@@ -60,6 +60,13 @@ pub(crate) fn validate_actor_confidence_prior_claim_structure(body: &ClaimBody) 
             "actor confidence prior approval must be auto",
         ));
     }
+    // Local-only trust boundary (ES-09): priors are same-owner beliefs. Same-owner
+    // multi-device sync preserves source=Observed, so a user's own priors replicate
+    // and materialize. The cross-vault federation door restamps foreign claims
+    // source->Imported; this pin then rejects them at materialization — the intended
+    // injection defense (a peer's conf=1.0/Auto prior must never set this vault's
+    // provider trust multiplier). Do NOT relax this to accept Imported; that opens
+    // the hole. (Foreign-prior terminal quarantine is the audit trail, not a break.)
     if body.source != Some(ClaimSource::Observed) {
         return Err(Error::InvalidClaimBody(
             "actor confidence prior source must be observed",
@@ -136,21 +143,62 @@ pub fn write_provider_prior(
     })
 }
 
-/// Writes an ordinary provider-attributed enrichment claim with an unmodified
-/// stored confidence and returns its durable claim id.
-pub fn write_enrichment_claim(
-    vault: &Vault,
-    provider: &str,
-    confidence: f32,
-) -> Result<EntityId> {
+/// Mints a fresh stand-in enriched entity for the [`write_enrichment_claim`]
+/// oracle seam. Not indexed — the claim references it by subject only.
+#[cfg(feature = "test-support")]
+fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<EntityId> {
+    let id = EntityId::now();
+    let body = encode_value(&Value::Map(vec![(
+        Value::from("enriched"),
+        Value::Boolean(true),
+    )]))?;
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        vec![BatchOp::Put {
+            id,
+            entity_type: ENTITY_TYPE_PERSON,
+            occurred: TimeRange { start: 0, end: 0 },
+            learned_at: crate::unix_seconds_now(),
+            data: body,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        true,
+    )?;
+    Ok(id)
+}
+
+/// Oracle/reference seam: writes a minimal provider-attributed enrichment claim
+/// with an unmodified stored confidence and returns its durable claim id.
+///
+/// The claim is subject-ed to a freshly-minted stand-in ENRICHED entity, never
+/// to the provider actor — the provider actor holds only `actor.confidence_prior`
+/// beliefs, so prior lookups never scan enrichment volume. Provider attribution
+/// lives in the value map (`provider` key) per the CID-5 template.
+///
+/// Production enrichment writes do NOT call this: they subject the claim to the
+/// real enriched entity they are enriching (via the generic claim API) and never
+/// mint per event. This seam is `test-support`-gated so it cannot become a
+/// production entity-spam path.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) -> Result<EntityId> {
     validate_provider_key(provider)?;
     let now = crate::unix_seconds_now();
     vault.with_write_txn(|wtxn| {
-        let actor = resolve_or_create_provider_actor_in_txn(vault, wtxn, provider)?;
+        let enriched = mint_enriched_entity_in_txn(vault, wtxn)?;
         let claim_id = EntityId::now();
         let mut body = ClaimBody::new(
             PREDICATE_PROVIDER_ENRICHMENT,
-            ClaimSubject::Entity(actor),
+            ClaimSubject::Entity(enriched),
             Value::Map(vec![(
                 Value::from(PROVIDER_VALUE_KEY),
                 Value::from(provider),
@@ -238,23 +286,48 @@ fn count_prior_claims(
         .count())
 }
 
+/// The active prior for `actor`, or `None` (neutral) if it has none.
+///
+/// Tolerance vs authorization — two devices can concurrently write a prior for
+/// the same provider; under CRDT replay both land ACTIVE until the next
+/// `write_provider_prior` supersedes. That is a legitimate convergence state,
+/// not corruption, so we pick the newest head deterministically (by
+/// `valid_from`, then claim id) rather than bricking every read with an error.
+///
+/// KNOWN HOLE (authorization, not convergence): a policy-authorized generic
+/// `put_claim` can plant an `actor.confidence_prior` head that this read then
+/// honors (newest silently wins trust) instead of rejecting it. The
+/// authorization boundary is predicate reservation — `actor.confidence_prior`
+/// is trust-bearing and joins the reserved-predicate namespace (door-only
+/// writes) alongside {edge, skill} once ONE-1741's generalization lands. It is
+/// NOT closed on this branch.
 fn active_provider_prior(vault: &Vault, actor: &EntityId) -> Result<Option<f32>> {
-    let mut active = prior_claim_bodies(vault, actor)?
-        .into_iter()
-        .filter(|body| body.lifecycle == ClaimLifecycleStatus::Active);
-    let Some(body) = active.next() else {
-        return Ok(None);
-    };
-    if active.next().is_some() {
-        return Err(Error::InvalidClaimBody(
-            "provider actor has multiple active confidence priors",
-        ));
-    }
-    unit_interval_f32(&body.value)
-        .map(Some)
-        .ok_or(Error::InvalidClaimBody(
+    let rtxn = vault.store.env.read_txn()?;
+    let mut best: Option<(u64, EntityId, f32)> = None;
+    for claim_id in vault.claims_for_subject_in_txn(&rtxn, actor)? {
+        let Some(body) = vault.get_claim_in_txn(&rtxn, &claim_id)? else {
+            continue;
+        };
+        if !is_actor_confidence_prior_claim_predicate(&body.predicate)
+            || body.lifecycle != ClaimLifecycleStatus::Active
+        {
+            continue;
+        }
+        let value = unit_interval_f32(&body.value).ok_or(Error::InvalidClaimBody(
             "active provider confidence prior must be in 0..1",
-        ))
+        ))?;
+        let valid_from = body.valid_from.unwrap_or(0);
+        let newer = match &best {
+            None => true,
+            Some((best_vf, best_id, _)) => {
+                valid_from > *best_vf || (valid_from == *best_vf && claim_id > *best_id)
+            }
+        };
+        if newer {
+            best = Some((valid_from, claim_id, value));
+        }
+    }
+    Ok(best.map(|(_, _, value)| value))
 }
 
 fn claim_body(vault: &Vault, claim_ref: &EntityId) -> Result<ClaimBody> {
@@ -393,9 +466,7 @@ fn provider_actor_index_key(provider: &str) -> Vec<u8> {
 }
 
 fn validate_provider_key(provider: &str) -> Result<()> {
-    if provider.trim() != provider
-        || provider.is_empty()
-        || provider.len() > MAX_PROVIDER_KEY_BYTES
+    if provider.trim() != provider || provider.is_empty() || provider.len() > MAX_PROVIDER_KEY_BYTES
     {
         return Err(Error::InvalidClaimBody(
             "provider key must be trimmed, non-empty, and at most 512 bytes",

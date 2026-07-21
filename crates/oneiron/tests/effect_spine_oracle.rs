@@ -610,22 +610,13 @@ mod seam {
     /// Writes `actor.confidence_prior = prior` as a claim on the provider
     /// actor, carrying `evidence` provenance (evidence-carrying, superseding
     /// — doc 13 §7).
-    pub(crate) fn write_provider_prior(
-        vault: &Vault,
-        provider: &str,
-        prior: f32,
-        evidence: &str,
-    ) {
+    pub(crate) fn write_provider_prior(vault: &Vault, provider: &str, prior: f32, evidence: &str) {
         oneiron::write_provider_prior(vault, provider, prior, evidence).unwrap();
     }
 
     /// Writes one enrichment claim from `provider` with stored `confidence`;
     /// returns the claim ref.
-    pub(crate) fn write_enrichment_claim(
-        vault: &Vault,
-        provider: &str,
-        confidence: f32,
-    ) -> String {
+    pub(crate) fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) -> String {
         oneiron::write_enrichment_claim(vault, provider, confidence)
             .unwrap()
             .to_hex()

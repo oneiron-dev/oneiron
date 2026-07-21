@@ -672,11 +672,12 @@ pub use crate::provenance::{
     SupersessionStatus, decode_edge_provenance_body, derive_confirmation_status,
     validate_actor_class,
 };
+#[cfg(feature = "test-support")]
+pub use crate::provider_confidence::write_enrichment_claim;
 pub use crate::provider_confidence::{
     PREDICATE_ACTOR_CONFIDENCE_PRIOR, count_active_prior_claims,
     count_active_prior_claims_with_evidence, count_superseded_prior_claims, effective_confidence,
-    is_actor_confidence_prior_claim_predicate, stored_confidence, write_enrichment_claim,
-    write_provider_prior,
+    is_actor_confidence_prior_claim_predicate, stored_confidence, write_provider_prior,
 };
 pub use crate::psych_profile::{
     PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
