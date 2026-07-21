@@ -91,6 +91,8 @@ pub enum IntentLedgerError {
     Canonical(#[from] serde_json::Error),
     #[error("invalid outbound intent input: {0}")]
     InvalidInput(&'static str),
+    #[error("the verified outbound actor is no longer valid")]
+    InvalidBoundActor,
     #[error("invalid outbound intent ledger record: {0}")]
     InvalidRecord(&'static str),
     #[error("invalid outbound intent transition: {from:?} -> {to:?}")]
@@ -260,9 +262,12 @@ impl IntentEscalationReason {
     }
 }
 
-/// Typed scrubbed terminal outcome returned verbatim on replay.
+/// Typed scrubbed outcome persisted for replay decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RecordedOutboundOutcome {
+    /// The last transport attempt certainly did not deliver. This is a
+    /// non-terminal retry permit, not a completion.
+    DefiniteNonDelivery,
     Acked,
     Abandoned(IntentEscalationReason),
 }
@@ -1139,9 +1144,13 @@ pub(crate) fn transition_record(
             RecordedOutboundOutcome::Abandoned(IntentEscalationReason::PreviouslyAbandoned)
         }
         IntentState::Pending => {
-            return Err(IntentLedgerError::InvalidRecord(
-                "terminal transition cannot target Pending",
-            ));
+            let record = read_intent_record(vault, &id)?.ok_or(
+                IntentLedgerError::InvalidRecord("transition target is missing"),
+            )?;
+            return Err(IntentLedgerError::InvalidTransition {
+                from: record.state,
+                to: IntentState::Pending,
+            });
         }
     };
     transition_record_with_outcome(vault, id, next, outcome, now_ms)
@@ -1174,6 +1183,65 @@ pub(crate) fn abandon_record(
         RecordedOutboundOutcome::Abandoned(reason),
         now_ms,
     )
+}
+
+pub(crate) fn record_definite_non_delivery(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    update_pending_recorded_outcome(
+        vault,
+        id,
+        None,
+        Some(RecordedOutboundOutcome::DefiniteNonDelivery),
+        now_ms,
+    )
+}
+
+pub(crate) fn begin_definite_non_delivery_retry(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    update_pending_recorded_outcome(
+        vault,
+        id,
+        Some(RecordedOutboundOutcome::DefiniteNonDelivery),
+        None,
+        now_ms,
+    )
+}
+
+fn update_pending_recorded_outcome(
+    vault: &Vault,
+    id: [u8; 32],
+    expected: Option<RecordedOutboundOutcome>,
+    next: Option<RecordedOutboundOutcome>,
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    let key = intent_ledger_key(&id);
+    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let raw = vault
+        .store
+        .vault_meta
+        .get(&wtxn, &key)?
+        .ok_or(IntentLedgerError::InvalidRecord(
+            "pending outcome target is missing",
+        ))?;
+    let mut record = decode_record(&key, &raw)?;
+    if record.state != IntentState::Pending || record.recorded_outcome != expected {
+        return Err(IntentLedgerError::InvalidRecord(
+            "pending outcome transition is invalid",
+        ));
+    }
+    record.recorded_outcome = next;
+    record.updated_ms = now_ms.max(record.created_ms);
+    let encoded = encode_record(&record)?;
+    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    wtxn.commit().map_err(Error::from)?;
+    force_sync(vault)?;
+    Ok(record)
 }
 
 fn transition_record_with_outcome(
@@ -1309,10 +1377,12 @@ fn record_content_digest(record: &IntentLedgerRecord) -> IntentLedgerResult<[u8;
         budget_sends_debit: record.budget_accounting.sends_debit,
         budget_accounted_at_ms: record.budget_accounting.accounted_at_ms,
         recorded_outcome: record.recorded_outcome.map(|outcome| match outcome {
+            RecordedOutboundOutcome::DefiniteNonDelivery => "definite_non_delivery",
             RecordedOutboundOutcome::Acked => "acked",
             RecordedOutboundOutcome::Abandoned(_) => "abandoned",
         }),
         recorded_outcome_reason: record.recorded_outcome.and_then(|outcome| match outcome {
+            RecordedOutboundOutcome::DefiniteNonDelivery => None,
             RecordedOutboundOutcome::Acked => None,
             RecordedOutboundOutcome::Abandoned(reason) => Some(reason.as_str()),
         }),
@@ -1395,6 +1465,7 @@ fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
     ]);
     let recorded_outcome = record.recorded_outcome.map_or(Value::Nil, |outcome| {
         let (kind, reason) = match outcome {
+            RecordedOutboundOutcome::DefiniteNonDelivery => ("definite_non_delivery", Value::Nil),
             RecordedOutboundOutcome::Acked => ("acked", Value::Nil),
             RecordedOutboundOutcome::Abandoned(reason) => {
                 ("abandoned", Value::from(reason.as_str()))
@@ -1692,6 +1763,9 @@ fn decode_recorded_outcome(value: &Value) -> IntentLedgerResult<Option<RecordedO
         ))?;
     let reason = nested_value(entries, RECORDED_OUTCOME_KEYS[1])?;
     match (kind, reason) {
+        ("definite_non_delivery", Value::Nil) => {
+            Ok(Some(RecordedOutboundOutcome::DefiniteNonDelivery))
+        }
         ("acked", Value::Nil) => Ok(Some(RecordedOutboundOutcome::Acked)),
         ("abandoned", value) => {
             let reason = value
@@ -1806,6 +1880,10 @@ fn validate_record(key: &[u8], record: &IntentLedgerRecord) -> IntentLedgerResul
     let outcome_matches_state = matches!(
         (record.state, record.recorded_outcome),
         (IntentState::Pending, None)
+            | (
+                IntentState::Pending,
+                Some(RecordedOutboundOutcome::DefiniteNonDelivery)
+            )
             | (IntentState::Done, Some(RecordedOutboundOutcome::Acked))
             | (
                 IntentState::Abandoned,

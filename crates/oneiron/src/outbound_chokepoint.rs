@@ -20,8 +20,9 @@ use crate::outbound_intent_ledger::{
     BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation,
     IntentEscalationReason, IntentId, IntentLedgerError, IntentState, OutboundCallClass,
     OutboundCallRequest, OutboundSendOutcome, RecordedOutboundOutcome, abandon_record,
-    complete_record, derive_intent_id, force_sync, hash_frozen_payload, insert_pending_in_txn,
-    read_intent_record_in_txn,
+    begin_definite_non_delivery_retry, complete_record, derive_intent_id, force_sync,
+    hash_frozen_payload, insert_pending_in_txn, read_intent_record_in_txn,
+    record_definite_non_delivery,
 };
 
 pub(crate) type OutboundEffectError = IntentLedgerError;
@@ -129,12 +130,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     };
 
     if let Some((actor, actor_class)) = prepared.verified_actor {
-        let entity_type =
-            vault
-                .get_entity_type_in_txn(&wtxn, &actor)?
-                .ok_or(IntentLedgerError::InvalidInput(
-                    "facade-bound actor is no longer valid",
-                ))?;
+        let entity_type = vault
+            .get_entity_type_in_txn(&wtxn, &actor)?
+            .ok_or(IntentLedgerError::InvalidBoundActor)?;
         crate::provenance::validate_actor_class(entity_type, actor_class)?;
     }
 
@@ -271,6 +269,10 @@ fn charge_once(
             false,
         ));
     };
+    // Budget windows are enforcement state, so they advance on the engine's
+    // trusted clock rather than a caller-supplied occurrence timestamp. This
+    // also keeps the post-charge echo aligned with `effector_budget_read`.
+    let budget_now = crate::unix_seconds_now();
     let outcome = connector_key::charge_effector_budgets(
         &vault.store,
         wtxn,
@@ -278,7 +280,7 @@ fn charge_once(
         &mut target.key,
         &target.governing_connector,
         budget_class.is_send(),
-        now_ms,
+        budget_now,
     )?;
     let (mut charge, exhausted) = match outcome {
         EffectorBudgetChargeOutcome::NoRows(charge)
@@ -330,6 +332,9 @@ fn replay_record<T: OutboundTransport>(
         )),
         (IntentState::Abandoned, Some(RecordedOutboundOutcome::Abandoned(reason))) => {
             Ok(effect_result(&record, None, true, Some(reason)))
+        }
+        (IntentState::Pending, Some(RecordedOutboundOutcome::DefiniteNonDelivery)) => {
+            send_pending(vault, authority, record, now_ms, true, transport)
         }
         (IntentState::Pending, None) if !record.idempotency_supported => {
             let abandoned = abandon_record(
@@ -427,6 +432,15 @@ fn send_pending<T: OutboundTransport>(
         ));
     }
 
+    // A definite non-delivery permits retry even without provider-native
+    // idempotency. Clear that permit durably immediately before transport so a
+    // crash after the wire may have started is once again Q4 Pending/uncertain.
+    let record = if record.recorded_outcome == Some(RecordedOutboundOutcome::DefiniteNonDelivery) {
+        begin_definite_non_delivery_retry(vault, record.id, now_ms)?
+    } else {
+        record
+    };
+    let call = FrozenOutboundCall::from_record(&record);
     let outcome = transport.send(&call);
     match outcome {
         OutboundSendOutcome::Acked => {
@@ -450,21 +464,10 @@ fn send_pending<T: OutboundTransport>(
                 Some(IntentEscalationReason::NonIdempotentAmbiguous),
             ))
         }
-        OutboundSendOutcome::Failed(_) if !record.idempotency_supported => {
-            let abandoned = abandon_record(
-                vault,
-                record.id,
-                IntentEscalationReason::NonIdempotentPending,
-                now_ms,
-            )?;
-            Ok(effect_result(
-                &abandoned,
-                Some(outcome),
-                replayed,
-                Some(IntentEscalationReason::NonIdempotentPending),
-            ))
+        OutboundSendOutcome::Failed(_) => {
+            let retryable = record_definite_non_delivery(vault, record.id, now_ms)?;
+            Ok(effect_result(&retryable, Some(outcome), replayed, None))
         }
-        OutboundSendOutcome::Failed(_) => Ok(effect_result(&record, Some(outcome), replayed, None)),
     }
 }
 

@@ -1207,7 +1207,13 @@ impl OutboundDispatchPipeline {
                 crate::outbound_chokepoint::OutboundEffectCommand::New(prepared),
                 request.occurred_at,
                 &mut transport,
-            )?;
+            )
+            .map_err(|error| match error {
+                crate::outbound_intent_ledger::IntentLedgerError::InvalidBoundActor => {
+                    OutboundDispatchError::InvalidBoundActor
+                }
+                error => OutboundDispatchError::Chokepoint(error),
+            })?;
             let gate_outcome = effect_result
                 .gate_outcome
                 .clone()
@@ -1443,6 +1449,10 @@ impl OutboundDispatchPipeline {
             request.counterparty_ref.as_deref(),
         );
         if let Some(execution) = execution {
+            receipt.fields.insert(
+                "delivery_may_have_occurred".to_owned(),
+                execution.delivery_may_have_occurred.to_string(),
+            );
             append_optional_receipt_field(
                 &mut receipt,
                 "provider_ref",
@@ -1688,9 +1698,10 @@ impl Vault {
             };
             let originating_session_ref = task.originating_session_ref.clone();
             let idempotency_key = task.intent.idempotency_key.clone();
+            let logical_send_intent_ref = connector_logical_send_intent_ref(&task);
             let mut request = OutboundDispatchRequest::new(
                 format!("outbound:task:{}", task_ref.to_hex()),
-                format!("intent:task:{}", task_ref.to_hex()),
+                logical_send_intent_ref,
                 task.intent,
                 actor,
                 OutboundDispatchGate::allow_when_policy_grants(),
@@ -1753,12 +1764,24 @@ impl Vault {
                     )?;
                 }
                 OutboundDispatchOutcome::Failed => {
-                    if result
+                    let intent_pending = result
                         .receipt
                         .fields
                         .get("intent_state")
                         .map(String::as_str)
-                        == Some("pending")
+                        == Some("pending");
+                    let delivery_may_have_occurred = result
+                        .receipt
+                        .fields
+                        .get("delivery_may_have_occurred")
+                        .is_some_and(|value| value == "true");
+                    let provider_retry_is_idempotent = result
+                        .receipt
+                        .fields
+                        .get("retry_class")
+                        .is_some_and(|value| value != "non_idempotent_interrupt");
+                    if intent_pending
+                        && (delivery_may_have_occurred || provider_retry_is_idempotent)
                     {
                         retry_connector_task_attempt(
                             &queue,
@@ -1788,6 +1811,24 @@ impl Vault {
         }
         Ok(executed)
     }
+}
+
+fn connector_logical_send_intent_ref(task: &ConnectorSendTask) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron.connector.logical_send.v1");
+    hasher.update(task.actor_ref.as_bytes());
+    if let Some(idempotency_key) = task.intent.idempotency_key.as_deref() {
+        hasher.update(b"idempotency_key");
+        hasher.update(&(idempotency_key.len() as u64).to_le_bytes());
+        hasher.update(idempotency_key.as_bytes());
+    } else {
+        hasher.update(b"task_ref");
+        hasher.update(task.task_ref.as_bytes());
+    }
+    format!(
+        "intent:logical-send:{}",
+        crate::entity_id::bytes_to_hex_lower(hasher.finalize().as_bytes())
+    )
 }
 
 fn mark_connector_send_task_attempt_started(

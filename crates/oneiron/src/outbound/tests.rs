@@ -613,6 +613,204 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
     Ok(())
 }
 
+#[test]
+fn logical_send_is_charged_once_across_fresh_retry_attempts() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x4F);
+    put_connector_task_actor(&vault, actor, 110)?;
+    put_policy_manifest(
+        &vault,
+        0x50,
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    vault.register_connector_key(&entity(0x51), sends_per_day_key(5))?;
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&connector_task_draft(
+            "charge-once-retry:test",
+            "session:charge-once-retry",
+            110,
+        ))
+        .expect("schedule outbound");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let queue = AttemptQueue::new(&vault);
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("transport_not_started"),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 111)
+            .unwrap(),
+        0
+    );
+    for now in [112, 114] {
+        let retry = queue.enqueue(EnqueueAttempt {
+            kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+            payload: connector_send_attempt_payload(task_ref)?,
+            dedupe_key: None,
+            run_id: None,
+            now,
+        })?;
+        assert!(matches!(retry, EnqueueOutcome::Enqueued(_)));
+        if now == 114 {
+            executor.outcome =
+                OutboundExecutionOutcome::delivered_to_channel("provider:retry:delivered");
+        }
+        let delivered = vault
+            .run_connector_task_executor(&mut executor, now + 1)
+            .unwrap();
+        assert_eq!(delivered, usize::from(now == 114));
+    }
+
+    assert_eq!(executor.calls.len(), 3);
+    assert_eq!(
+        vault
+            .effector_budget_read("email", None)?
+            .expect("budget after retries")
+            .rows[0]
+            .used,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x52);
+    put_connector_task_actor(&vault, actor, 120)?;
+    put_policy_manifest(
+        &vault,
+        0x53,
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    let mut draft = connector_task_draft(
+        "same-provider-key-retry:test",
+        "session:same-provider-key-retry",
+        120,
+    );
+    draft.verb = "replace".to_owned();
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule outbound");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 121)
+            .unwrap(),
+        0
+    );
+    let retry = AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
+        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+        payload: connector_send_attempt_payload(task_ref)?,
+        dedupe_key: None,
+        run_id: None,
+        now: 121,
+    })?;
+    assert!(matches!(retry, EnqueueOutcome::Enqueued(_)));
+    executor.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:retry:delivered");
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 121)
+            .unwrap(),
+        1
+    );
+
+    assert_eq!(executor.idempotency_keys.len(), 2);
+    assert!(executor.idempotency_keys[0].is_some());
+    assert_eq!(executor.idempotency_keys[1], executor.idempotency_keys[0]);
+    Ok(())
+}
+
+#[test]
+fn failed_not_delivered_fresh_retry_replays_existing_intent() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x5A);
+    put_connector_task_actor(&vault, actor, 130)?;
+    put_policy_manifest(
+        &vault,
+        0x5B,
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&connector_task_draft(
+            "failed-replay-existing-intent:test",
+            "session:failed-replay-existing-intent",
+            130,
+        ))
+        .expect("schedule outbound");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("transport_not_started"),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 131)
+            .unwrap(),
+        0
+    );
+    let failed_records = crate::outbound_intent_ledger::intent_ledger_records(&vault)
+        .expect("failed intent ledger read");
+    assert_eq!(failed_records.len(), 1);
+    assert_eq!(failed_records[0].state, crate::IntentState::Pending);
+    assert_eq!(
+        failed_records[0].recorded_outcome,
+        Some(crate::RecordedOutboundOutcome::DefiniteNonDelivery)
+    );
+
+    let retry = AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
+        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+        payload: connector_send_attempt_payload(task_ref)?,
+        dedupe_key: None,
+        run_id: None,
+        now: 132,
+    })?;
+    assert!(matches!(retry, EnqueueOutcome::Enqueued(_)));
+    executor.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:retry:ok");
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 133)
+            .unwrap(),
+        1
+    );
+
+    assert_eq!(executor.idempotency_keys.len(), 2);
+    assert_eq!(executor.idempotency_keys[1], executor.idempotency_keys[0]);
+    let delivered_records = crate::outbound_intent_ledger::intent_ledger_records(&vault)
+        .expect("delivered intent ledger read");
+    assert_eq!(delivered_records.len(), 1);
+    assert_eq!(delivered_records[0].id, failed_records[0].id);
+    assert_eq!(delivered_records[0].state, crate::IntentState::Done);
+    assert_eq!(
+        vault
+            .connector_send_task(&task_ref)?
+            .expect("retried connector task")
+            .outcome,
+        Some(ConnectorSendTaskOutcome::Delivered)
+    );
+    Ok(())
+}
+
 fn connector_task_draft(
     idempotency_key: &str,
     trigger_ref: &str,

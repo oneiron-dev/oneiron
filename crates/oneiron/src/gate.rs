@@ -1279,10 +1279,7 @@ impl PolicyManifestResolution {
         let Some(effect) = input.external_effect.as_ref() else {
             return false;
         };
-        if effect.verb.trim().is_empty()
-            || effect.channel.trim().is_empty()
-            || !effect.has_permission
-        {
+        if effect.verb.trim().is_empty() || effect.channel.trim().is_empty() {
             return false;
         }
         // Payload-aware scoped grants are the only safe MCP auto path. The
@@ -1290,6 +1287,9 @@ impl PolicyManifestResolution {
         // caller-supplied standing-grant reference has no authority here.
         if effect.scoped_mcp_call.is_some() || is_mcp_effect_channel(&effect.channel) {
             return effect.scoped_mcp_grant_authorized;
+        }
+        if !effect.has_permission {
+            return false;
         }
 
         // Blind/non-scoped grants keep the Proposed-ceiling restriction. A

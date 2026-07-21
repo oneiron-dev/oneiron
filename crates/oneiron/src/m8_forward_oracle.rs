@@ -59,11 +59,12 @@ use crate::outbound_intent_ledger::{
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
-use crate::test_util::open_test_vault_with;
 use crate::write_envelope::WriteActor;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    open_test_vault_with(VaultConfig::device())
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    (dir, vault)
 }
 
 fn t(at: u64) -> TimeRange {
