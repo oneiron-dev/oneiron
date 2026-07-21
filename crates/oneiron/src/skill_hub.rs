@@ -3875,6 +3875,64 @@ mod tests {
         Ok(())
     }
 
+    // AUD-1741: the anchor's immortality must be ENFORCED, not just assumed —
+    // deleting the anchor would strand every verdict for its bytes. It must be
+    // refused on every delete door (targeted AND batch/bulk share one guard).
+    #[test]
+    fn content_anchor_is_delete_protected_on_every_door() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let (_local, imported) = materialize_shared_hash_skills(&vault)?;
+        let receipt = SkillScanReceipt::new(
+            "anchor-protect",
+            5,
+            ScanVerdict::Malicious,
+            ScanRiskLevel::Critical,
+            ScanCompleteness::Complete,
+            SkillGovernance::Prohibited,
+        )?;
+        vault.ingest_skill_scan_verdict(&imported, fixture_hash(), &receipt, t(5), 6)?;
+        let anchor_id = skill_content_anchor_entity_id(fixture_hash())?;
+        assert_eq!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .len(),
+            1
+        );
+
+        // Targeted delete door refuses the anchor; the verdict survives.
+        assert!(
+            matches!(
+                vault.delete_entity(&anchor_id),
+                Err(Error::MaintenanceKindNotWritable(_))
+            ),
+            "targeted delete of the content anchor must be refused"
+        );
+        assert_eq!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .len(),
+            1,
+            "verdict survives a targeted anchor-delete attempt"
+        );
+
+        // Batch/bulk delete door refuses it too (same guard, single source).
+        assert!(
+            matches!(
+                vault.batch().delete(&anchor_id).commit(),
+                Err(Error::MaintenanceKindNotWritable(_))
+            ),
+            "batch delete of the content anchor must be refused"
+        );
+        assert_eq!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .len(),
+            1,
+            "verdict survives a batch anchor-delete attempt"
+        );
+        Ok(())
+    }
+
     #[test]
     fn anchor_subjected_verdict_stays_unforgeable_via_public_door() -> Result<()> {
         let (_temp, vault) = open_vault();

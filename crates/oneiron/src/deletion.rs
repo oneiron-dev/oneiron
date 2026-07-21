@@ -40,6 +40,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::registry::ENTITY_TYPE_SKILL;
+use crate::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::unix_seconds_now;
 
@@ -1460,10 +1461,15 @@ fn maybe_fail_after_tombstone_before_purge() -> Result<()> {
 #[inline(always)]
 fn maybe_fail_after_tombstone_before_purge() {}
 
+/// Entity types the engine refuses to delete on every door. POLICY_MANIFEST and
+/// AUTHORITY_LOG are authority-bearing control-plane records; SKILL_CONTENT_ANCHOR
+/// (ONE-1741 anchor model) is the immortal subject that scan verdicts hang off —
+/// deleting it would strand every verdict for those content bytes, so it must
+/// never be deletable via any path (targeted, batch, or replayed tombstone).
 pub(crate) fn is_delete_protected_engine_record(entity_type: u8) -> bool {
     matches!(
         entity_type,
-        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG
+        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG | ENTITY_TYPE_SKILL_CONTENT_ANCHOR
     )
 }
 

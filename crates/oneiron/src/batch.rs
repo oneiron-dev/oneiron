@@ -32,8 +32,8 @@ use crate::ppr;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
     ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -2289,10 +2289,10 @@ fn reject_engine_authored_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(());
     };
-    if matches!(
-        header.entity_type,
-        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG
-    ) {
+    // Single source of truth: the batch/bulk delete door honors the same
+    // delete-protection list as the deletion path (which ONE-1741 extended with
+    // the content anchor), so the two guards cannot drift out of sync.
+    if crate::deletion::is_delete_protected_engine_record(header.entity_type) {
         return Err(Error::MaintenanceKindNotWritable(header.entity_type));
     }
     Ok(())
