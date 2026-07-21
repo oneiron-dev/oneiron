@@ -1223,6 +1223,27 @@ fn put_structural_mints_but_never_overwrites_task_entities() {
 
     assert_eq!(error.code, FACADE_CODE_FORBIDDEN);
     assert_eq!(usize::from(before == after), 1);
+
+    // A NON-TASK put targeting the same id must also be refused: the guard keys
+    // on the STORED type, not the incoming kind, so a TASK body cannot be
+    // clobbered by reusing its id with a different kind.
+    let non_task_error = facade
+        .put_structural(&StructuralPutInput {
+            id: Some(task_ref.to_hex()),
+            kind: "PERSON".to_owned(),
+            body: serde_json::json!({"name": "not-a-task"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 812,
+            learned_at: None,
+        })
+        .expect_err("non-TASK overwrite of a TASK id must be refused");
+    let after_non_task = vault
+        .get_raw(&task_ref)
+        .expect("read task after non-task")
+        .expect("task remains");
+    assert_eq!(non_task_error.code, FACADE_CODE_FORBIDDEN);
+    assert_eq!(usize::from(before == after_non_task), 1);
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_TASK)

@@ -1660,9 +1660,10 @@ impl MemoryFacade<'_> {
             {
                 return Ok(true);
             }
-            if type_byte == ENTITY_TYPE_TASK
-                && self.vault.get_entity_type_in_txn(&*wtxn, &id)? == Some(ENTITY_TYPE_TASK)
-            {
+            // TASK ids are immutable at this structural door regardless of the
+            // incoming kind: gate on the STORED type, so a non-TASK put cannot
+            // clobber an existing TASK body by reusing its id.
+            if self.vault.get_entity_type_in_txn(&*wtxn, &id)? == Some(ENTITY_TYPE_TASK) {
                 return Err(FacadeError::new(
                     FACADE_CODE_FORBIDDEN,
                     "TASK entities cannot be overwritten through the facade",

@@ -704,33 +704,43 @@ fn consume_create_rate_slot(
 ) -> Result<bool> {
     let window_seconds = rate_limit.window_seconds.max(1);
     let window = now / window_seconds;
-    let key = task_create_rate_key(actor, window_seconds, window);
+    // One node-local key per (actor, window_seconds), overwritten each window:
+    // value = {window, count}. A stored window other than the current one
+    // resets the count, so elapsed windows overwrite the same key instead of
+    // leaving a per-window residue that grows unbounded over the vault's life.
+    let key = task_create_rate_key(actor, window_seconds);
     let count = match vault.store.vault_meta.get(&*wtxn, key.as_slice())? {
-        None => 0,
-        Some(raw) => u64::from_le_bytes(
-            raw.as_ref()
+        Some(raw) => {
+            let stored: [u8; 16] = raw
+                .as_ref()
                 .try_into()
-                .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?,
-        ),
+                .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?;
+            let stored_window = u64::from_le_bytes(stored[..8].try_into().expect("rate window"));
+            if stored_window == window {
+                u64::from_le_bytes(stored[8..].try_into().expect("rate count"))
+            } else {
+                0
+            }
+        }
+        None => 0,
     };
     if count >= rate_limit.limit as u64 {
         return Ok(false);
     }
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, key.as_slice(), &count.saturating_add(1).to_le_bytes())?;
+    let mut value = [0u8; 16];
+    value[..8].copy_from_slice(&window.to_le_bytes());
+    value[8..].copy_from_slice(&count.saturating_add(1).to_le_bytes());
+    vault.store.vault_meta.put(wtxn, key.as_slice(), &value)?;
     Ok(true)
 }
 
-fn task_create_rate_key(actor: EntityId, window_seconds: u64, window: u64) -> Vec<u8> {
+fn task_create_rate_key(actor: EntityId, window_seconds: u64) -> Vec<u8> {
     let mut key = Vec::with_capacity(
-        TASK_CREATE_RATE_KEY_PREFIX.len() + actor.as_bytes().len() + 2 * size_of::<u64>(),
+        TASK_CREATE_RATE_KEY_PREFIX.len() + actor.as_bytes().len() + size_of::<u64>(),
     );
     key.extend_from_slice(TASK_CREATE_RATE_KEY_PREFIX);
     key.extend_from_slice(actor.as_bytes());
     key.extend_from_slice(&window_seconds.to_be_bytes());
-    key.extend_from_slice(&window.to_be_bytes());
     key
 }
 
@@ -1455,6 +1465,38 @@ mod tests {
                 .count(),
             attempted - limit
         );
+    }
+
+    #[test]
+    fn create_rate_slot_overwrites_one_key_across_windows() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let rate = TaskCreateRateLimit {
+            limit: 2,
+            window_seconds: 10,
+        };
+        {
+            let mut wtxn = vault.store.env.write_txn().expect("write txn");
+            // Window 0 (now 0..9): two slots, then the third is refused.
+            assert!(consume_create_rate_slot(&vault, &mut wtxn, own, 0, rate).expect("w0 s1"));
+            assert!(consume_create_rate_slot(&vault, &mut wtxn, own, 3, rate).expect("w0 s2"));
+            assert!(!consume_create_rate_slot(&vault, &mut wtxn, own, 9, rate).expect("w0 over"));
+            // Window 1 (now 10..): the count resets, a slot is available again.
+            assert!(consume_create_rate_slot(&vault, &mut wtxn, own, 10, rate).expect("w1 s1"));
+            // Window 2 (now 20..): still resets, still the same single key.
+            assert!(consume_create_rate_slot(&vault, &mut wtxn, own, 20, rate).expect("w2 s1"));
+            wtxn.commit().expect("commit");
+        }
+        // Elapsed windows overwrite the SAME key: exactly one rate key persists
+        // for this (actor, window_seconds), not one row per elapsed window.
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        let keys = vault
+            .store
+            .vault_meta
+            .prefix_iter(&rtxn, TASK_CREATE_RATE_KEY_PREFIX)
+            .expect("rate prefix iter")
+            .count();
+        assert_eq!(keys, 1);
     }
 
     #[test]
