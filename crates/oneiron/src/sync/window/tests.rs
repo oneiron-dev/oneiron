@@ -2311,7 +2311,10 @@ fn reverse_rematerialization_restores_protected_row_against_hostile_tombstone() 
     let (_dir, vault) = test_vault();
     let window_key = WindowKey::new("2026-03");
     let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let (event, raw) = put_local_type_76_event(&vault, learned_at, 0xA1)?;
+    // Seed a NON-reserved participant id: [0xA1;16]..[0xA5;16] are the
+    // write-door-reserved system-agent preset ids (batch.rs put guard), so
+    // put_entity on 0xA1/0xA2 fails InvalidKey in setup. 0xB1 is the sibling's.
+    let (event, raw) = put_local_type_76_event(&vault, learned_at, 0xC1)?;
     let tombstone = learned_at.to_be_bytes();
 
     // Model a hostile peer update that retained only delete authority in the
