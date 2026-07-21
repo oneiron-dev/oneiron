@@ -2093,7 +2093,8 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        self.prepare_skill_scan_verdict_departure_for_delete_in_txn(wtxn, id, unix_seconds_now())?;
+        // The content-hash index row is dropped by `deindex_entity` below;
+        // ONE-1741 removed the verdict relocation that this hook also carried.
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -2144,11 +2145,11 @@ impl Vault {
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
         if header.entity_type == ENTITY_TYPE_SKILL {
-            self.prepare_skill_scan_verdict_departure_for_delete_in_txn(
-                wtxn,
-                id,
-                unix_seconds_now(),
-            )?;
+            // Soft-erase truncates the body in place, so unlike the hard-purge
+            // path it does not route through `deindex_entity`; drop the
+            // content-hash index row here before the body is gone (ONE-1741:
+            // scan verdicts anchor to the content bytes, so nothing to relocate).
+            self.maintain_skill_content_hash_index_on_delete_in_txn(wtxn, id)?;
         }
         let mut cleanup = VadAnnotationCleanup::default();
         delete_vad_annotation_metadata_for_type_in_txn(

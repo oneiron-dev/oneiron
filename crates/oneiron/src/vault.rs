@@ -329,9 +329,10 @@ impl Vault {
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
         };
-        // This self-contained SKILL index migration can reconcile reserved
-        // scan-verdict Claims only after the existing Vault claim doors exist.
-        // It still completes before any caller receives a usable handle.
+        // Rebuilds the content-hash → holder index (import/sync dedup) when it
+        // is missing or stale; completes before any caller receives a usable
+        // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
+        // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
         Ok(vault)
     }

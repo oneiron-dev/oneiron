@@ -6662,6 +6662,13 @@ fn all_entity_type_prefixes() {
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
+        (
+            "SKILL_CONTENT_ANCHOR",
+            crate::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
     let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY

@@ -4,15 +4,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use rmpv::Value;
+use sha2::{Digest, Sha256};
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
+use crate::registry::{ENTITY_TYPE_SKILL, ENTITY_TYPE_SKILL_CONTENT_ANCHOR};
 use crate::skill::{
     SkillContentHash, SkillLifecycle, SkillRecord, canonical_skill_tree_hash,
     cross_check_declared_content_hash, decode_skill_record, encode_skill_record,
@@ -41,6 +42,10 @@ const CAPABILITY_STATE_PREFIX: &[u8] = b"skill_hub/capability/v1\0";
 const CONTENT_HASH_INDEX_PREFIX: &[u8] = b"skill_hub/content_hash_index/v1\0";
 const CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY: &[u8] = b"skill_hub/content_hash_index_schema_version";
 const CONTENT_HASH_INDEX_SCHEMA_VERSION: u8 = 1;
+/// Domain separator for the deterministic content-anchor entity-id
+/// derivation (ONE-1741). Bumping this string re-keys every anchor, so it is
+/// pinned like a wire constant.
+const SKILL_CONTENT_ANCHOR_ID_DOMAIN: &[u8] = b"oneiron:skill-scan-content-anchor:v1";
 const MAX_HUB_TEXT_BYTES: usize = 4096;
 const MAX_CAPABILITY_ENTRIES: usize = 256;
 const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
@@ -1212,29 +1217,26 @@ impl Vault {
             ));
         }
         let hash_hex = content_hash.to_hex();
+        // ONE-1741: verdicts hang off the deterministic content anchor, not the
+        // submitting holder, so ensure it exists before the reserved put (the
+        // claim door requires the subject entity) and dedup against the single
+        // anchor rather than looping over every current holder.
+        let anchor = self.ensure_skill_content_anchor_in_txn(wtxn, content_hash, learned_at)?;
         let mut prior_rows = Vec::new();
-        let content_entities = self.skill_entities_for_content_hash_in_txn(&*wtxn, content_hash)?;
-        if !content_entities.contains(entity) {
-            return Err(Error::CorruptedIndex("skill content hash index"));
-        }
-        for content_entity in content_entities {
-            for (id, body, occurred_start) in self.active_claims_for_predicate_in_txn(
-                &*wtxn,
-                &content_entity,
-                PREDICATE_SKILL_SCAN_VERDICT,
-            )? {
-                if map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
-                    && map_text(&body.value, "provider") == Some(receipt.provider.as_str())
-                {
-                    prior_rows.push((id, occurred_start));
-                }
+        for (id, body, occurred_start) in
+            self.active_claims_for_predicate_in_txn(&*wtxn, &anchor, PREDICATE_SKILL_SCAN_VERDICT)?
+        {
+            if map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
+                && map_text(&body.value, "provider") == Some(receipt.provider.as_str())
+            {
+                prior_rows.push((id, occurred_start));
             }
         }
 
         let claim_id = EntityId::now();
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_SCAN_VERDICT,
-            ClaimSubject::Entity(*entity),
+            ClaimSubject::Entity(anchor),
             Value::Map(vec![
                 (Value::from("contentHash"), Value::from(hash_hex)),
                 (
@@ -1302,24 +1304,26 @@ impl Vault {
         Ok(receipts.len())
     }
 
-    /// Reads active scanner receipts for canonical bytes across every entity
-    /// currently carrying that content hash.
+    /// Reads active scanner receipts for canonical bytes off the deterministic
+    /// content anchor. The anchor is derived from the content hash and never
+    /// departs, so discovery is independent of which SKILL holders currently
+    /// carry the bytes (ONE-1741).
     pub fn skill_scan_verdicts_for_content_hash(
         &self,
         content_hash: SkillContentHash,
     ) -> Result<Vec<ClaimBody>> {
         let rtxn = self.store.env.read_txn()?;
         let hash_hex = content_hash.to_hex();
+        let anchor = skill_content_anchor_entity_id(content_hash)?;
         let mut rows = Vec::new();
-        for entity in self.skill_entities_for_content_hash_in_txn(&rtxn, content_hash)? {
-            for (_, body, _) in self.active_claims_for_predicate_in_txn(
-                &rtxn,
-                &entity,
-                PREDICATE_SKILL_SCAN_VERDICT,
-            )? {
-                if map_text(&body.value, "contentHash") == Some(hash_hex.as_str()) {
-                    rows.push(body);
-                }
+        for (_, body, _) in
+            self.active_claims_for_predicate_in_txn(&rtxn, &anchor, PREDICATE_SKILL_SCAN_VERDICT)?
+        {
+            // Defense in depth: every row on this anchor is for `content_hash`
+            // by construction, but the exact-hash filter keeps discovery precise
+            // even against a truncation collision on the derived anchor id.
+            if map_text(&body.value, "contentHash") == Some(hash_hex.as_str()) {
+                rows.push(body);
             }
         }
         Ok(rows)
@@ -1378,18 +1382,6 @@ impl Vault {
             }
         }
         Ok(None)
-    }
-
-    fn skill_entities_for_content_hash_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        content_hash: SkillContentHash,
-    ) -> Result<Vec<EntityId>> {
-        Ok(self
-            .structured_skills_for_content_hash_in_txn(rtxn, content_hash)?
-            .into_iter()
-            .map(|(entity, _)| entity)
-            .collect())
     }
 
     fn structured_skills_for_content_hash_in_txn(
@@ -1615,98 +1607,64 @@ impl Vault {
         Ok(replacement_id)
     }
 
-    pub(crate) fn relocate_or_retire_scan_verdicts_on_departure_in_txn(
+    /// Ensures the deterministic content-anchor entity for `content_hash`
+    /// exists, minting it via the engine-authored maintenance door on first
+    /// use, and returns its id. Verdict claims are subjected to this anchor, so
+    /// it must exist before the reserved put runs (the claim door requires the
+    /// subject entity). The anchor body carries the 32-byte content hash so the
+    /// record is self-describing.
+    fn ensure_skill_content_anchor_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        departing_entity: &EntityId,
         content_hash: SkillContentHash,
         learned_at: u64,
-    ) -> Result<()> {
-        let remaining_holders = self
-            .skill_entities_for_content_hash_in_txn(&*wtxn, content_hash)?
-            .into_iter()
-            .filter(|holder| holder != departing_entity)
-            .collect::<Vec<_>>();
-        let hash_hex = content_hash.to_hex();
-        let Some(canonical_holder) = remaining_holders.iter().min().copied() else {
-            let mut retiring = Vec::new();
-            for (claim_id, body, occurred_start) in self.active_claims_for_predicate_in_txn(
-                &*wtxn,
-                departing_entity,
-                PREDICATE_SKILL_SCAN_VERDICT,
-            )? {
-                if map_text(&body.value, "contentHash") == Some(hash_hex.as_str()) {
-                    retiring.push((claim_id, occurred_start));
-                }
-            }
-            for (claim_id, occurred_start) in retiring {
-                self.retract_reserved_claim_in_txn(
-                    wtxn,
-                    &claim_id,
-                    learned_at.max(occurred_start),
-                )?;
-            }
-            return Ok(());
-        };
-
-        let mut verdicts_by_provider = BTreeMap::<String, Vec<(EntityId, ClaimBody, u64)>>::new();
-        for (claim_id, body, occurred_start) in self.active_claims_for_predicate_in_txn(
-            &*wtxn,
-            departing_entity,
-            PREDICATE_SKILL_SCAN_VERDICT,
-        )? {
-            if map_text(&body.value, "contentHash") != Some(hash_hex.as_str()) {
-                continue;
-            }
-            let provider = map_text(&body.value, "provider")
-                .ok_or(Error::InvalidSkillBody("scan verdict is missing provider"))?;
-            verdicts_by_provider
-                .entry(provider.to_owned())
-                .or_default()
-                .push((claim_id, body, occurred_start));
+    ) -> Result<EntityId> {
+        let anchor = skill_content_anchor_entity_id(content_hash)?;
+        if self
+            .store
+            .entities
+            .get(&*wtxn, anchor.as_bytes())?
+            .is_some()
+        {
+            return Ok(anchor);
         }
-
-        for verdicts in verdicts_by_provider.values_mut() {
-            verdicts.sort_by(|left, right| {
-                scan_verdict_scanned_at(&right.1)
-                    .cmp(&scan_verdict_scanned_at(&left.1))
-                    .then_with(|| left.0.cmp(&right.0))
-            });
-            let relocated_at = verdicts
-                .iter()
-                .fold(learned_at, |at, (_, _, occurred_start)| {
-                    at.max(*occurred_start)
-                });
-            let mut relocated_body = verdicts[0].1.clone();
-            relocated_body.subject = ClaimSubject::Entity(canonical_holder);
-            let relocated_id = EntityId::now();
-            self.put_reserved_claim_in_txn(
-                wtxn,
-                &relocated_id,
-                &relocated_body,
-                TimeRange {
-                    start: relocated_at,
-                    end: relocated_at,
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id: anchor,
+                entity_type: ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
+                occurred: TimeRange {
+                    start: learned_at,
+                    end: learned_at,
                 },
-                relocated_at,
-            )?;
-            for (prior_id, _, occurred_start) in verdicts.iter() {
-                self.supersede_reserved_claim_in_txn(
-                    wtxn,
-                    &relocated_id,
-                    prior_id,
-                    relocated_at.max(*occurred_start),
-                )?;
-            }
-        }
-        Ok(())
+                learned_at,
+                data: content_hash.as_bytes().to_vec(),
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        Ok(anchor)
     }
 
-    pub(crate) fn prepare_skill_scan_verdict_departure_for_delete_in_txn(
+    /// Drops the content-hash index row for a SKILL as it leaves the active
+    /// store, so import/sync dedup never resolves a deleted holder. The
+    /// soft-erase path relies on this because it truncates the entity body in
+    /// place rather than routing through `deindex_entity` (which maintains the
+    /// index for hard purges and batch deletes). Verdict discovery no longer
+    /// depends on this index (verdicts anchor to the content bytes), so a
+    /// departing holder never disturbs a verdict.
+    pub(crate) fn maintain_skill_content_hash_index_on_delete_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         entity: &EntityId,
-        learned_at: u64,
     ) -> Result<()> {
         let Some(raw) = self.store.entities.get(&*wtxn, entity.as_bytes())? else {
             return Ok(());
@@ -1730,14 +1688,7 @@ impl Vault {
         let Some(content_hash) = content_hash else {
             return Ok(());
         };
-
-        maintain_skill_content_hash_index_for_delete(&self.store, wtxn, entity, content_hash)?;
-        self.relocate_or_retire_scan_verdicts_on_departure_in_txn(
-            wtxn,
-            entity,
-            content_hash,
-            learned_at,
-        )
+        maintain_skill_content_hash_index_for_delete(&self.store, wtxn, entity, content_hash)
     }
 
     fn active_claims_for_predicate(
@@ -1812,6 +1763,36 @@ fn capability_state_key(entity: &EntityId) -> Vec<u8> {
     key
 }
 
+/// Derives the deterministic CONTENT-ANCHOR `EntityId` for `content_hash`
+/// (ONE-1741): `id16 = first16(SHA-256(domain ‖ content_hash))`. Two nodes
+/// ingesting the same bytes MUST converge on the same anchor, so this is a
+/// pure function of the content hash — never `EntityId::now()`. On the
+/// astronomically rare chance the first 16 digest bytes hit a reserved-id
+/// sentinel (`is_reserved_entity_id_bytes`: all-`0x00` / all-`0xFF` /
+/// `[type, 0xFF×15]`), the input is perturbed with a rising counter and
+/// re-hashed until the derivation lands on a valid id. The base case (counter
+/// 0) appends nothing, so the common path is exactly the domain-separated
+/// digest; the terminal `Err` is unreachable and kept only for exhaustiveness.
+pub(crate) fn skill_content_anchor_entity_id(content_hash: SkillContentHash) -> Result<EntityId> {
+    for perturbation in 0..=u32::MAX {
+        let mut hasher = Sha256::new();
+        hasher.update(SKILL_CONTENT_ANCHOR_ID_DOMAIN);
+        hasher.update(content_hash.as_bytes());
+        if perturbation > 0 {
+            hasher.update(perturbation.to_be_bytes());
+        }
+        let digest = hasher.finalize();
+        let mut bytes = [0_u8; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        if let Ok(id) = EntityId::from_bytes(bytes) {
+            return Ok(id);
+        }
+    }
+    Err(Error::InvariantViolation(
+        "content anchor id derivation exhausted every perturbation",
+    ))
+}
+
 fn content_hash_index_prefix(content_hash: SkillContentHash) -> Vec<u8> {
     let mut key = Vec::with_capacity(CONTENT_HASH_INDEX_PREFIX.len() + 32);
     key.extend_from_slice(CONTENT_HASH_INDEX_PREFIX);
@@ -1859,6 +1840,11 @@ pub(crate) fn maintain_skill_content_hash_index_for_delete(
     Ok(())
 }
 
+/// Rebuilds the content-hash → holder index at open time when it is missing or
+/// stale (schema-version gated), so import/sync dedup can resolve holders that
+/// pre-date the index. ONE-1741: scan verdicts no longer ride this table (they
+/// anchor to the content bytes), so this reconstructs ONLY the holder index —
+/// the old verdict-dedup migration is gone.
 pub(crate) fn backfill_content_hash_index_if_needed(vault: &Vault) -> Result<()> {
     let store = &vault.store;
     let rtxn = store.env.read_txn()?;
@@ -1879,8 +1865,10 @@ pub(crate) fn backfill_content_hash_index_if_needed(vault: &Vault) -> Result<()>
         return Ok(());
     }
 
+    // Collect holders first, then write: the type-index cursor is dropped
+    // before any vault_meta write, matching the proven pre-ONE-1741 pattern.
     let mut wtxn = store.env.write_txn()?;
-    let mut holders = BTreeSet::<([u8; 32], EntityId)>::new();
+    let mut holders = Vec::<(SkillContentHash, EntityId)>::new();
     for entry in store.type_index.prefix_iter(&wtxn, &[ENTITY_TYPE_SKILL])? {
         let (key, _) = entry?;
         let entity = crate::vault::entity_id_from_type_index_key(&key)?;
@@ -1905,90 +1893,16 @@ pub(crate) fn backfill_content_hash_index_if_needed(vault: &Vault) -> Result<()>
             Err(error) => return Err(error),
         };
         if let Some(content_hash) = record.content_hash {
-            holders.insert((*content_hash.as_bytes(), entity));
+            holders.push((content_hash, entity));
         }
     }
 
     for (content_hash, entity) in &holders {
         store.vault_meta.put(
             &mut wtxn,
-            &content_hash_index_key(SkillContentHash::from_bytes(*content_hash), entity),
+            &content_hash_index_key(*content_hash, entity),
             &[],
         )?;
-    }
-
-    let mut verdicts_by_content_provider =
-        BTreeMap::<([u8; 32], String), Vec<(EntityId, EntityId, u64, u64)>>::new();
-    for entry in store.type_index.prefix_iter(&wtxn, &[ENTITY_TYPE_CLAIM])? {
-        let (key, _) = entry?;
-        let claim_id = crate::vault::entity_id_from_type_index_key(&key)?;
-        let raw = store
-            .entities
-            .get(&wtxn, claim_id.as_bytes())?
-            .ok_or(Error::CorruptedIndex("claim type index"))?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Err(Error::CorruptedIndex("claim type index"));
-        }
-        if raw.len() == ENTITY_METADATA_HEADER_LEN {
-            continue;
-        }
-        let Some(body) = vault.get_claim_in_txn(&wtxn, &claim_id)? else {
-            return Err(Error::CorruptedIndex("claim type index"));
-        };
-        if body.predicate != PREDICATE_SKILL_SCAN_VERDICT
-            || body.lifecycle != ClaimLifecycleStatus::Active
-        {
-            continue;
-        }
-        let ClaimSubject::Entity(subject) = body.subject else {
-            continue;
-        };
-        let Some(hash_hex) = map_text(&body.value, "contentHash") else {
-            continue;
-        };
-        let Ok(content_hash) = SkillContentHash::parse_hex(hash_hex) else {
-            continue;
-        };
-        let hash_bytes = *content_hash.as_bytes();
-        if !holders.contains(&(hash_bytes, subject)) {
-            continue;
-        }
-        let Some(provider) = map_text(&body.value, "provider") else {
-            continue;
-        };
-        verdicts_by_content_provider
-            .entry((hash_bytes, provider.to_owned()))
-            .or_default()
-            .push((
-                claim_id,
-                subject,
-                scan_verdict_scanned_at(&body),
-                header.occurred_start,
-            ));
-    }
-
-    // Migration canonicalization keeps the newest scanner observation. Equal
-    // scanner times resolve to the minimum holder id, then minimum claim id.
-    for verdicts in verdicts_by_content_provider.values_mut() {
-        verdicts.sort_by(|left, right| {
-            right
-                .2
-                .cmp(&left.2)
-                .then_with(|| left.1.cmp(&right.1))
-                .then_with(|| left.0.cmp(&right.0))
-        });
-        let keeper_id = verdicts[0].0;
-        let keeper_occurred_start = verdicts[0].3;
-        for (duplicate_id, _, _, duplicate_occurred_start) in verdicts.iter().skip(1) {
-            vault.supersede_reserved_claim_in_txn(
-                &mut wtxn,
-                &keeper_id,
-                duplicate_id,
-                keeper_occurred_start.max(*duplicate_occurred_start),
-            )?;
-        }
     }
 
     store.vault_meta.put(
@@ -2164,12 +2078,6 @@ fn map_value<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
 
 fn map_text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     map_value(value, key)?.as_str()
-}
-
-fn scan_verdict_scanned_at(body: &ClaimBody) -> u64 {
-    map_value(&body.value, "scannedAt")
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
 }
 
 fn same_hub_alias(left: &HubRef, right: &HubRef) -> bool {
@@ -2455,11 +2363,13 @@ mod tests {
             vault.ingest_skill_audit_verdicts(&entity, fixture_hash(), &receipts, t(3), 4)?,
             3
         );
-        let rows = vault.active_claims_for_predicate(&entity, PREDICATE_SKILL_SCAN_VERDICT)?;
+        // ONE-1741: audit verdicts anchor to the content bytes, discovered by
+        // content hash rather than the submitting holder's subject edges.
+        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
         assert_eq!(rows.len(), 3);
         let providers = rows
             .iter()
-            .filter_map(|(_, body)| map_text(&body.value, "provider"))
+            .filter_map(|body| map_text(&body.value, "provider"))
             .collect::<BTreeSet<_>>();
         assert_eq!(providers, BTreeSet::from(["alpha", "beta", "gamma"]));
         assert_eq!(
@@ -2518,8 +2428,9 @@ mod tests {
         let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
         let rtxn = vault.store.env.read_txn()?;
         let indexed = vault
-            .skill_entities_for_content_hash_in_txn(&rtxn, fixture_hash())?
+            .structured_skills_for_content_hash_in_txn(&rtxn, fixture_hash())?
             .into_iter()
+            .map(|(entity, _)| entity)
             .collect::<BTreeSet<_>>();
 
         assert_eq!(indexed, BTreeSet::from([local_entity, imported_entity]));
@@ -2527,74 +2438,52 @@ mod tests {
     }
 
     #[test]
-    fn deleting_skill_cleans_index_and_stale_rows_do_not_block_hash_doors() -> Result<()> {
+    fn deleting_skill_cleans_index_and_stale_rows_do_not_block_import_dedup() -> Result<()> {
         let (_temp, vault) = open_vault();
         let imported = package(
             candidate("fixture.delete-index"),
             SkillCapabilitySurface::default(),
         );
         let entity = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(1), 2)?;
-        let receipt = SkillScanReceipt::new(
-            "sole-delete",
-            3,
-            ScanVerdict::Malicious,
-            ScanRiskLevel::Critical,
-            ScanCompleteness::Complete,
-            SkillGovernance::Prohibited,
-        )?;
-        vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(3), 4)?;
-        assert_eq!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .len(),
-            1
-        );
         let key = content_hash_index_key(fixture_hash(), &entity);
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.vault_meta.get(&rtxn, &key)?.is_some());
         drop(rtxn);
 
+        // Deleting the holder drops its content-hash index row, so import dedup
+        // stops resolving the departed entity. (Scan verdicts are unaffected:
+        // they anchor to the content bytes, not to this holder — see the
+        // anchor-invariant tests.)
         assert!(vault.delete_entity(&entity)?);
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.vault_meta.get(&rtxn, &key)?.is_none());
-        drop(rtxn);
         assert!(
             vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .structured_skills_for_content_hash_in_txn(&rtxn, fixture_hash())?
                 .is_empty()
         );
+        drop(rtxn);
 
-        // Recreate the historical lagging-row shape: all hash-keyed readers
-        // and writers must skip it because the accelerator is rebuildable.
+        // A lagging index row whose entity no longer exists must be skipped by
+        // the rebuildable-index reader, never resurrecting a departed holder.
         let mut wtxn = vault.store.env.write_txn()?;
         vault.store.vault_meta.put(&mut wtxn, &key, &[])?;
         wtxn.commit()?;
+        let rtxn = vault.store.env.read_txn()?;
         assert!(
             vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .structured_skills_for_content_hash_in_txn(&rtxn, fixture_hash())?
                 .is_empty()
         );
+        drop(rtxn);
 
+        // Re-importing the same bytes mints a fresh entity (the stale row does
+        // not block it), and a second import dedups to that entity.
         let reimported = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(3), 4)?;
         assert_ne!(reimported, entity);
         assert_eq!(
             vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(5), 6,)?,
             reimported
-        );
-        let receipt = SkillScanReceipt::new(
-            "delete-recovery",
-            7,
-            ScanVerdict::Clean,
-            ScanRiskLevel::Low,
-            ScanCompleteness::Complete,
-            SkillGovernance::Recommended,
-        )?;
-        vault.ingest_skill_scan_verdict(&reimported, fixture_hash(), &receipt, t(7), 8)?;
-        assert_eq!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .len(),
-            1
         );
         Ok(())
     }
@@ -2618,177 +2507,6 @@ mod tests {
             vault
                 .skill_scan_verdicts_for_content_hash(fixture_hash())?
                 .is_empty()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn deleting_shared_holder_relocates_scan_verdict_to_remaining_holder() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
-        let receipt = SkillScanReceipt::new(
-            "delete-relocation",
-            5,
-            ScanVerdict::Malicious,
-            ScanRiskLevel::Critical,
-            ScanCompleteness::Complete,
-            SkillGovernance::Prohibited,
-        )?;
-        let prior =
-            vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &receipt, t(5), 6)?;
-
-        assert!(vault.delete_entity(&imported_entity)?);
-
-        assert_eq!(
-            vault
-                .get_claim(&prior)?
-                .expect("departed verdict")
-                .lifecycle,
-            ClaimLifecycleStatus::Superseded
-        );
-        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].subject, ClaimSubject::Entity(local_entity));
-        assert_eq!(
-            map_text(&rows[0].value, "provider"),
-            Some("delete-relocation")
-        );
-        assert_eq!(
-            vault
-                .active_claims_for_predicate(&local_entity, PREDICATE_SKILL_SCAN_VERDICT)?
-                .len(),
-            1
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn public_skill_update_relocates_shared_hash_scan_verdict() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
-        let receipt = SkillScanReceipt::new(
-            "generic-put-relocation",
-            5,
-            ScanVerdict::Clean,
-            ScanRiskLevel::Low,
-            ScanCompleteness::Complete,
-            SkillGovernance::Recommended,
-        )?;
-        let prior =
-            vault.ingest_skill_scan_verdict(&local_entity, fixture_hash(), &receipt, t(5), 6)?;
-
-        let mut updated = vault
-            .get_skill_record(&local_entity)?
-            .expect("local shared-hash skill");
-        updated.version = "1.1.0".to_owned();
-        updated.content_hash = Some(canonical_skill_tree_hash([(
-            "SKILL.md",
-            b"# generic put changed content\n".as_slice(),
-        )])?);
-        vault.update_skill_record(&local_entity, &updated, t(7), 8)?;
-
-        assert_eq!(
-            vault
-                .get_claim(&prior)?
-                .expect("departed verdict")
-                .lifecycle,
-            ClaimLifecycleStatus::Superseded
-        );
-        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].subject, ClaimSubject::Entity(imported_entity));
-        assert_eq!(
-            map_text(&rows[0].value, "provider"),
-            Some("generic-put-relocation")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn deleting_last_holder_retracts_scan_verdict_lifecycle() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let entity = EntityId::now();
-        let imported = package(
-            candidate("fixture.delete-last-holder"),
-            SkillCapabilitySurface::default(),
-        );
-        vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &imported, entity, t(1), 2)?;
-        let receipt = SkillScanReceipt::new(
-            "delete-last-holder",
-            3,
-            ScanVerdict::Malicious,
-            ScanRiskLevel::Critical,
-            ScanCompleteness::Complete,
-            SkillGovernance::Prohibited,
-        )?;
-        let verdict =
-            vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(3), 4)?;
-
-        assert!(vault.delete_entity(&entity)?);
-
-        assert_eq!(
-            vault
-                .get_claim(&verdict)?
-                .expect("retired scan verdict")
-                .lifecycle,
-            ClaimLifecycleStatus::Retracted
-        );
-        assert!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .is_empty()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn soft_erasing_shared_holder_relocates_scan_verdict() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
-        let receipt = SkillScanReceipt::new(
-            "soft-delete-relocation",
-            5,
-            ScanVerdict::Suspicious,
-            ScanRiskLevel::High,
-            ScanCompleteness::Partial,
-            SkillGovernance::Discouraged,
-        )?;
-        vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &receipt, t(5), 6)?;
-
-        vault.delete_entity_with_reason(&imported_entity, crate::DeleteReason::UserDelete)?;
-
-        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].subject, ClaimSubject::Entity(local_entity));
-        assert_eq!(
-            map_text(&rows[0].value, "provider"),
-            Some("soft-delete-relocation")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn batch_deleting_shared_holder_relocates_scan_verdict() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
-        let receipt = SkillScanReceipt::new(
-            "batch-delete-relocation",
-            5,
-            ScanVerdict::Suspicious,
-            ScanRiskLevel::High,
-            ScanCompleteness::Complete,
-            SkillGovernance::Discouraged,
-        )?;
-        vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &receipt, t(5), 6)?;
-
-        vault.batch().delete(&imported_entity).commit()?;
-
-        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].subject, ClaimSubject::Entity(local_entity));
-        assert_eq!(
-            map_text(&rows[0].value, "provider"),
-            Some("batch-delete-relocation")
         );
         Ok(())
     }
@@ -2820,7 +2538,11 @@ mod tests {
         let vault = Vault::open(&path, crate::VaultConfig::default())?;
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(
-            vault.skill_entities_for_content_hash_in_txn(&rtxn, fixture_hash())?,
+            vault
+                .structured_skills_for_content_hash_in_txn(&rtxn, fixture_hash())?
+                .into_iter()
+                .map(|(entity, _)| entity)
+                .collect::<Vec<_>>(),
             vec![entity]
         );
         drop(rtxn);
@@ -2842,66 +2564,6 @@ mod tests {
                 .skill_scan_verdicts_for_content_hash(fixture_hash())?
                 .len(),
             1
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn open_backfill_deduplicates_pre_global_scan_verdicts() -> Result<()> {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let path = temp.path().to_path_buf();
-        let vault = Vault::open(&path, crate::VaultConfig::default())?;
-        let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
-        let older_id = EntityId::now();
-        let newer_id = EntityId::now();
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault.put_reserved_claim_in_txn(
-            &mut wtxn,
-            &older_id,
-            &scan_verdict_body(local_entity, "alpha", 5),
-            t(5),
-            6,
-        )?;
-        vault.put_reserved_claim_in_txn(
-            &mut wtxn,
-            &newer_id,
-            &scan_verdict_body(imported_entity, "alpha", 9),
-            t(9),
-            10,
-        )?;
-        vault.store.vault_meta.delete(
-            &mut wtxn,
-            &content_hash_index_key(fixture_hash(), &local_entity),
-        )?;
-        vault.store.vault_meta.delete(
-            &mut wtxn,
-            &content_hash_index_key(fixture_hash(), &imported_entity),
-        )?;
-        vault
-            .store
-            .vault_meta
-            .delete(&mut wtxn, CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY)?;
-        wtxn.commit()?;
-        drop(vault);
-
-        let vault = Vault::open(&path, crate::VaultConfig::default())?;
-        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(map_text(&rows[0].value, "provider"), Some("alpha"));
-        assert_eq!(scan_verdict_scanned_at(&rows[0]), 9);
-        assert_eq!(
-            vault
-                .get_claim(&older_id)?
-                .expect("older verdict")
-                .lifecycle,
-            ClaimLifecycleStatus::Superseded
-        );
-        assert_eq!(
-            vault
-                .get_claim(&newer_id)?
-                .expect("newer verdict")
-                .lifecycle,
-            ClaimLifecycleStatus::Active
         );
         Ok(())
     }
@@ -2980,105 +2642,6 @@ mod tests {
         Ok(())
     }
 
-    // AUD-1741 hard gate — TERMINATION: when the canonical (min-id) holder that
-    // a verdict was re-homed onto itself departs and no holder remains, the
-    // verdict retires rather than looping or orphaning.
-    #[test]
-    fn canonical_holder_departure_re_homes_then_retires_at_zero() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
-        let receipt = SkillScanReceipt::new(
-            "canonical-departs",
-            5,
-            ScanVerdict::Malicious,
-            ScanRiskLevel::Critical,
-            ScanCompleteness::Complete,
-            SkillGovernance::Prohibited,
-        )?;
-        vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &receipt, t(5), 6)?;
-
-        // First departure re-homes the verdict onto the remaining (canonical
-        // min-id) holder — it stays discoverable for the still-held bytes.
-        assert!(vault.delete_entity(&imported_entity)?);
-        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].subject, ClaimSubject::Entity(local_entity));
-
-        // The canonical holder now departs too: no holder remains, so the
-        // verdict retires (terminates) — no re-relocation loop, no orphan.
-        assert!(vault.delete_entity(&local_entity)?);
-        assert!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .is_empty()
-        );
-        Ok(())
-    }
-
-    // AUD-1741 hard gate — NO RESURRECTION: after the sole holder departs the
-    // verdict is no longer discoverable, and re-importing the same bytes as a
-    // fresh entity does not resurrect the retired verdict.
-    #[test]
-    fn sole_holder_delete_retires_without_resurrection() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let sole_entity = EntityId::now();
-        let imported = package(
-            candidate("fixture.sole-holder"),
-            SkillCapabilitySurface::default(),
-        );
-        vault.import_skill_from_hub_with_id(
-            &hub_ref(HubPin::None),
-            &imported,
-            sole_entity,
-            t(1),
-            2,
-        )?;
-        let receipt = SkillScanReceipt::new(
-            "sole-holder",
-            3,
-            ScanVerdict::Malicious,
-            ScanRiskLevel::Critical,
-            ScanCompleteness::Complete,
-            SkillGovernance::Prohibited,
-        )?;
-        vault.ingest_skill_scan_verdict(&sole_entity, fixture_hash(), &receipt, t(3), 4)?;
-        assert_eq!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .len(),
-            1
-        );
-
-        // Sole holder departs → no remaining holder → not discoverable.
-        assert!(vault.delete_entity(&sole_entity)?);
-        assert!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .is_empty()
-        );
-
-        // Re-import the same bytes as a fresh entity: the retired verdict does
-        // NOT resurrect — the new holder carries no verdict.
-        let reimported_entity = EntityId::now();
-        let reimported = package(
-            candidate("fixture.sole-holder"),
-            SkillCapabilitySurface::default(),
-        );
-        vault.import_skill_from_hub_with_id(
-            &hub_ref(HubPin::None),
-            &reimported,
-            reimported_entity,
-            t(7),
-            8,
-        )?;
-        assert!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .is_empty()
-        );
-        Ok(())
-    }
-
     #[test]
     fn reserved_scan_door_preserves_content_global_supersession() -> Result<()> {
         let (_temp, vault) = open_vault();
@@ -3109,33 +2672,6 @@ mod tests {
     }
 
     #[test]
-    fn reserved_retract_door_rejects_edge_predicates() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let subject = EntityId::now();
-        let local = candidate("fixture.reserved-retract-edge-guard");
-        vault.put_skill_record(&subject, &local, t(1), 2)?;
-
-        let claim_id = EntityId::now();
-        let mut body = ClaimBody::new(
-            "edge.internal_record",
-            ClaimSubject::Entity(subject),
-            Value::from("provenance-owned"),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        );
-        body.source = Some(ClaimSource::Observed);
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault.put_reserved_claim_in_txn(&mut wtxn, &claim_id, &body, t(3), 4)?;
-
-        assert!(matches!(
-            vault.retract_reserved_claim_in_txn(&mut wtxn, &claim_id, 5),
-            Err(Error::ProvenanceClaimLifecycle { .. })
-        ));
-        Ok(())
-    }
-
-    #[test]
     fn scan_verdict_supersession_is_content_global_across_entities() -> Result<()> {
         let (_temp, vault) = open_vault();
         let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
@@ -3147,32 +2683,43 @@ mod tests {
             ScanCompleteness::Complete,
             SkillGovernance::Recommended,
         )?;
+        let anchor = skill_content_anchor_entity_id(fixture_hash())?;
+        // Same (content_hash, provider) ingested via two different holders
+        // dedups to ONE active verdict on the shared content anchor.
         vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &alpha, t(5), 6)?;
         vault.ingest_skill_scan_verdict(&local_entity, fixture_hash(), &alpha, t(7), 8)?;
 
+        // Verdicts never attach to the submitting holders themselves.
         assert!(
             vault
-                .active_claims_for_predicate(&imported_entity, PREDICATE_SKILL_SCAN_VERDICT,)?
+                .active_claims_for_predicate(&imported_entity, PREDICATE_SKILL_SCAN_VERDICT)?
                 .is_empty()
         );
-        let mut imported_superseded = 0;
-        for claim_id in vault.claims_for_subject(&imported_entity)? {
+        assert!(
+            vault
+                .active_claims_for_predicate(&local_entity, PREDICATE_SKILL_SCAN_VERDICT)?
+                .is_empty()
+        );
+
+        // Exactly one active alpha row plus one superseded, both on the anchor.
+        assert_eq!(
+            vault
+                .active_claims_for_predicate(&anchor, PREDICATE_SKILL_SCAN_VERDICT)?
+                .len(),
+            1
+        );
+        let mut anchor_superseded = 0;
+        for claim_id in vault.claims_for_subject(&anchor)? {
             let Some(body) = vault.get_claim(&claim_id)? else {
                 continue;
             };
             if body.predicate == PREDICATE_SKILL_SCAN_VERDICT
                 && body.lifecycle == ClaimLifecycleStatus::Superseded
             {
-                imported_superseded += 1;
+                anchor_superseded += 1;
             }
         }
-        assert_eq!(imported_superseded, 1);
-        assert_eq!(
-            vault
-                .active_claims_for_predicate(&local_entity, PREDICATE_SKILL_SCAN_VERDICT)?
-                .len(),
-            1
-        );
+        assert_eq!(anchor_superseded, 1);
         let hash_rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
         assert_eq!(hash_rows.len(), 1);
         assert_eq!(map_text(&hash_rows[0].value, "provider"), Some("alpha"));
@@ -4063,146 +3610,6 @@ mod tests {
     }
 
     #[test]
-    fn hub_sync_retracts_scan_verdicts_for_departed_content_hash() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let entity = EntityId::now();
-        let reference = hub_ref(HubPin::None);
-        let initial = package(
-            candidate("fixture.scan-reset-on-sync"),
-            SkillCapabilitySurface::default(),
-        );
-        vault.import_skill_from_hub_with_id(&reference, &initial, entity, t(1), 2)?;
-        let receipt = SkillScanReceipt::new(
-            "provider-a",
-            3,
-            ScanVerdict::Clean,
-            ScanRiskLevel::Low,
-            ScanCompleteness::Complete,
-            SkillGovernance::Recommended,
-        )?;
-        let verdict_id =
-            vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(3), 4)?;
-
-        let mut update_record = candidate("fixture.scan-reset-on-sync");
-        update_record.version = "1.1.0".to_owned();
-        let update = package_with_content(
-            update_record,
-            b"# content changed after scan\n",
-            SkillCapabilitySurface::default(),
-        );
-        let updated_hash = update.content_hash()?;
-        assert_ne!(updated_hash, fixture_hash());
-        assert_eq!(
-            vault.sync_skill_from_hub(
-                &entity,
-                &reference,
-                &update,
-                HubSyncPolicy::MirrorOfHub,
-                t(5),
-                6,
-            )?,
-            HubSyncDisposition::Applied
-        );
-
-        assert_eq!(
-            vault
-                .get_claim(&verdict_id)?
-                .expect("scan verdict")
-                .lifecycle,
-            ClaimLifecycleStatus::Retracted
-        );
-        let old_hash_hex = fixture_hash().to_hex();
-        let active_old_hash_verdicts = vault
-            .active_claims_for_predicate(&entity, PREDICATE_SKILL_SCAN_VERDICT)?
-            .into_iter()
-            .filter(|(_, body)| map_text(&body.value, "contentHash") == Some(old_hash_hex.as_str()))
-            .count();
-        assert_eq!(active_old_hash_verdicts, 0);
-        assert!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .is_empty()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn hub_sync_relocates_previous_hash_verdict_to_remaining_holder() -> Result<()> {
-        let (_temp, vault) = open_vault();
-        let local_entity = EntityId::now();
-        let mut local = candidate("fixture.sync-shared-local");
-        local.source = ClaimSource::UserStated;
-        vault.put_skill_record(&local_entity, &local, t(1), 2)?;
-
-        let imported_entity = EntityId::now();
-        let reference = hub_ref(HubPin::None);
-        let imported = package(
-            candidate("fixture.sync-shared-imported"),
-            SkillCapabilitySurface::default(),
-        );
-        vault.import_skill_from_hub_with_id(&reference, &imported, imported_entity, t(3), 4)?;
-        let receipt = SkillScanReceipt::new(
-            "shared-holder",
-            5,
-            ScanVerdict::Clean,
-            ScanRiskLevel::Low,
-            ScanCompleteness::Complete,
-            SkillGovernance::Recommended,
-        )?;
-        let verdict_id =
-            vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &receipt, t(5), 6)?;
-
-        let mut updated_record = candidate("fixture.sync-shared-imported");
-        updated_record.version = "1.1.0".to_owned();
-        let updated = package_with_content(
-            updated_record,
-            b"# moved while shared bytes remain\n",
-            SkillCapabilitySurface::default(),
-        );
-        assert_eq!(
-            vault.sync_skill_from_hub(
-                &imported_entity,
-                &reference,
-                &updated,
-                HubSyncPolicy::MirrorOfHub,
-                t(7),
-                8,
-            )?,
-            HubSyncDisposition::Applied
-        );
-
-        assert_eq!(
-            vault
-                .get_claim(&verdict_id)?
-                .expect("shared verdict")
-                .lifecycle,
-            ClaimLifecycleStatus::Superseded
-        );
-        let rtxn = vault.store.env.read_txn()?;
-        assert_eq!(
-            vault.skill_entities_for_content_hash_in_txn(&rtxn, fixture_hash())?,
-            vec![local_entity]
-        );
-        drop(rtxn);
-        assert!(
-            vault
-                .active_claims_for_predicate(&imported_entity, PREDICATE_SKILL_SCAN_VERDICT)?
-                .is_empty()
-        );
-        let local_rows =
-            vault.active_claims_for_predicate(&local_entity, PREDICATE_SKILL_SCAN_VERDICT)?;
-        assert_eq!(local_rows.len(), 1);
-        assert_eq!(
-            map_text(&local_rows[0].1.value, "provider"),
-            Some("shared-holder")
-        );
-        let hash_rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
-        assert_eq!(hash_rows.len(), 1);
-        assert_eq!(hash_rows[0].subject, ClaimSubject::Entity(local_entity));
-        Ok(())
-    }
-
-    #[test]
     fn hub_sync_deduplicates_identical_widening_proposals() -> Result<()> {
         let (_temp, vault) = open_vault();
         let entity = EntityId::now();
@@ -4323,12 +3730,14 @@ mod tests {
             ScanCompleteness::Complete,
             SkillGovernance::Recommended,
         )?;
+        let anchor = skill_content_anchor_entity_id(fixture_hash())?;
         vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(3), 4)?;
         vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(2), 2)?;
-        let rows = vault.active_claims_for_predicate(&entity, PREDICATE_SKILL_SCAN_VERDICT)?;
+        // Same (content_hash, provider) supersedes on the anchor: one active row.
+        let rows = vault.active_claims_for_predicate(&anchor, PREDICATE_SKILL_SCAN_VERDICT)?;
         assert_eq!(rows.len(), 1);
         let mut superseded = 0;
-        for id in vault.claims_for_subject(&entity)? {
+        for id in vault.claims_for_subject(&anchor)? {
             let Some(body) = vault.get_claim(&id)? else {
                 continue;
             };
@@ -4339,6 +3748,145 @@ mod tests {
             }
         }
         assert_eq!(superseded, 1);
+        Ok(())
+    }
+
+    // ═══ ONE-1741 — content-anchor invariants ═══════════════════════════════
+
+    #[test]
+    fn content_anchor_id_is_deterministic_and_non_reserved() -> Result<()> {
+        let same_a = skill_content_anchor_entity_id(fixture_hash())?;
+        let same_b = skill_content_anchor_entity_id(fixture_hash())?;
+        assert_eq!(same_a, same_b, "same content hash derives the same anchor");
+
+        let other_hash =
+            canonical_skill_tree_hash([("SKILL.md", b"# different bytes\n".as_slice())])?;
+        assert_ne!(
+            skill_content_anchor_entity_id(other_hash)?,
+            same_a,
+            "distinct content hashes derive distinct anchors"
+        );
+        // The derived id round-trips the reserved-sentinel gate.
+        assert_eq!(EntityId::from_bytes(*same_a.as_bytes())?, same_a);
+        Ok(())
+    }
+
+    #[test]
+    fn ingest_creates_content_anchor_entity_carrying_the_hash() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let imported = package(
+            candidate("fixture.anchor-create"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &imported, entity, t(1), 2)?;
+        let anchor = skill_content_anchor_entity_id(fixture_hash())?;
+        assert_eq!(
+            vault.get(&anchor)?,
+            None,
+            "anchor is minted lazily at ingest"
+        );
+
+        let receipt = SkillScanReceipt::new(
+            "anchor-provider",
+            3,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?;
+        vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(3), 4)?;
+
+        let raw = vault
+            .get(&anchor)?
+            .expect("ingest minted the anchor entity");
+        assert_eq!(
+            raw.as_slice(),
+            fixture_hash().as_bytes(),
+            "anchor body carries the 32-byte content hash"
+        );
+        let header = vault
+            .read_entity_header(&anchor)?
+            .expect("anchor header present");
+        assert_eq!(header.entity_type, ENTITY_TYPE_SKILL_CONTENT_ANCHOR);
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_anchored_to_content_hash_survives_every_holder_departure() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
+        let receipt = SkillScanReceipt::new(
+            "immortal",
+            5,
+            ScanVerdict::Malicious,
+            ScanRiskLevel::Critical,
+            ScanCompleteness::Complete,
+            SkillGovernance::Prohibited,
+        )?;
+        // Ingested via one holder while two hold the shared bytes.
+        vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &receipt, t(5), 6)?;
+        let discoverable = |vault: &Vault| -> Result<usize> {
+            Ok(vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .len())
+        };
+        assert_eq!(discoverable(&vault)?, 1);
+
+        // Hard-delete one holder → still discoverable on the anchor.
+        assert!(vault.delete_entity(&imported_entity)?);
+        assert_eq!(discoverable(&vault)?, 1);
+
+        // Soft-erase the last remaining holder → still discoverable.
+        vault.delete_entity_with_reason(&local_entity, crate::DeleteReason::UserDelete)?;
+        assert_eq!(
+            discoverable(&vault)?,
+            1,
+            "verdict is anchored to the immortal bytes, not any holder"
+        );
+
+        // Re-import the same bytes and hard-delete via a batch → survives.
+        let reholder = EntityId::now();
+        let reimported = package(
+            candidate("fixture.local-shared-hash"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(
+            &hub_ref(HubPin::None),
+            &reimported,
+            reholder,
+            t(9),
+            10,
+        )?;
+        vault.batch().delete(&reholder).commit()?;
+        assert_eq!(
+            discoverable(&vault)?,
+            1,
+            "verdict outlives batch deletion of a fresh holder too"
+        );
+
+        // The surviving row still carries its original provider and hash.
+        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
+        assert_eq!(map_text(&rows[0].value, "provider"), Some("immortal"));
+        assert_eq!(
+            map_text(&rows[0].value, "contentHash"),
+            Some(fixture_hash().to_hex().as_str())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn anchor_subjected_verdict_stays_unforgeable_via_public_door() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        // A well-formed anchor subject cannot smuggle a reserved skill.* claim
+        // through the public door — the forgery guard is predicate-keyed and
+        // independent of the (now anchor) subject.
+        let anchor = skill_content_anchor_entity_id(fixture_hash())?;
+        let body = scan_verdict_body(anchor, "forged", 1);
+        assert!(matches!(
+            vault.put_claim(&EntityId::now(), &body, t(1), 2),
+            Err(Error::ReservedPredicate { .. })
+        ));
         Ok(())
     }
 }

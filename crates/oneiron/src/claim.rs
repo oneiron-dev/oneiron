@@ -2648,49 +2648,6 @@ impl Vault {
         Ok(())
     }
 
-    /// Retracts an engine-owned `skill.*` Claim inside the caller's write
-    /// transaction. This crate-private door deliberately continues to reject
-    /// `edge.*`, whose lifecycle must re-stamp provenance-derived edge state.
-    pub(crate) fn retract_reserved_claim_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        id: &EntityId,
-        now: u64,
-    ) -> Result<()> {
-        let (mut body, header) = self.skill_claim_for_lifecycle_in(&*wtxn, id)?;
-        Self::require_active_claim(&body)?;
-
-        body.lifecycle = ClaimLifecycleStatus::Retracted;
-        body.valid_to = Some(now);
-        let data = encode_claim_body(&body)?;
-
-        let ops = vec![BatchOp::Put {
-            id: *id,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred: TimeRange {
-                start: header.occurred_start,
-                end: now,
-            },
-            learned_at: header.learned_at,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: true,
-            hub_sync_imported: false,
-        }];
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
-        Ok(())
-    }
-
     /// Retracts the active claim `id` — a deliberate withdrawal (ARCH-0003
     /// general claim lifecycle), in ONE write transaction: the body is
     /// closed (`life` = `retracted`, `to` = `now`) and the envelope

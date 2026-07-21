@@ -1256,11 +1256,11 @@ impl Vault {
         data: Vec<u8>,
         hub_sync_imported: bool,
     ) -> Result<()> {
-        let previous_hash = match self.read_skill_record_in_txn(&*wtxn, id) {
-            Ok(record) => record.content_hash,
-            Err(Error::EntityNotFound) => None,
-            Err(error) => return Err(error),
-        };
+        // ONE-1741: a content-hash change no longer relocates scan verdicts.
+        // Verdicts anchor to the immortal content bytes, so the departing hash's
+        // verdicts stay discoverable on their own anchor and this holder simply
+        // stops carrying that hash (the content-hash index is maintained by the
+        // batch put/delete paths).
         apply_ops(
             &self.store,
             &self.config,
@@ -1271,7 +1271,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_SKILL,
                 occurred,
                 learned_at,
-                data: data.clone(),
+                data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported,
@@ -1281,18 +1281,6 @@ impl Vault {
             false,
             true,
         )?;
-
-        let content_hash = decode_skill_record(&data)?.content_hash;
-        if let Some(previous_hash) = previous_hash
-            && Some(previous_hash) != content_hash
-        {
-            self.relocate_or_retire_scan_verdicts_on_departure_in_txn(
-                wtxn,
-                id,
-                previous_hash,
-                learned_at,
-            )?;
-        }
         Ok(())
     }
 }

@@ -39,7 +39,6 @@ const PRED_ACTOR_FAILURE_MODE: &str = "actor.failure_mode";
 const PRED_ACTOR_SCOPE_NOTE: &str = "actor.scope_note";
 const PRED_ACTOR_SKILL_FIT: &str = "actor.skill_fit";
 const PRED_SKILL_RELIABILITY: &str = "skill.reliability";
-const PRED_SKILL_SCAN_VERDICT: &str = "skill.scan_verdict";
 
 /// ARM seam value: the arming ticket replaces the `unarmed()` call with the
 /// real machinery call. Until then the `.expect("armed by ONE-XXXX…")` on it
@@ -385,7 +384,9 @@ fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
         "armed by ONE-1736: scan-verdict ingestion not built yet"
     );
 
-    let (active, _) = claim_rows(&vault, &skill_entity, PRED_SKILL_SCAN_VERDICT)?;
+    // ONE-1741: verdicts anchor to the content bytes, so discovery is by
+    // content hash, not by the submitting holder's subject edges.
+    let active = vault.skill_scan_verdicts_for_content_hash(content_hash)?;
     assert_eq!(
         active.len(),
         3,
@@ -417,7 +418,7 @@ fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
     );
     // Re-fetch via a second hub added NO rows: verdicts key on the hash,
     // not the ref — 3 stays 3.
-    let (after_second_hub, _) = claim_rows(&vault, &skill_entity, PRED_SKILL_SCAN_VERDICT)?;
+    let after_second_hub = vault.skill_scan_verdicts_for_content_hash(content_hash)?;
     assert_eq!(
         after_second_hub.len(),
         3,
@@ -428,7 +429,7 @@ fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
     let fresh_entity = EntityId::now();
     let fresh = imported_candidate("oracle.skill.fresh", alternate_tree_hash());
     vault.put_skill_record(&fresh_entity, &fresh, t(30), 31)?;
-    let (fresh_rows, _) = claim_rows(&vault, &fresh_entity, PRED_SKILL_SCAN_VERDICT)?;
+    let fresh_rows = vault.skill_scan_verdicts_for_content_hash(alternate_tree_hash())?;
     assert_eq!(fresh_rows.len(), 0, "a new content hash resets verdicts");
     Ok(())
 }
@@ -665,7 +666,7 @@ fn sk03_provider_audit_verdicts_are_independent_rows_signal_not_gate() -> Result
         "armed by ONE-1741: audit-endpoint ingestion not built yet"
     );
 
-    let (rows, _) = claim_rows(&vault, &skill_entity, PRED_SKILL_SCAN_VERDICT)?;
+    let rows = vault.skill_scan_verdicts_for_content_hash(fixture_tree_hash())?;
     assert_eq!(rows.len(), 3, "three providers = three independent rows");
     // Rows must CARRY their (content_hash, provider) key (review C13):
     // three anonymous rows with one malicious value must not pass.

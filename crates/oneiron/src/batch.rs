@@ -818,16 +818,10 @@ impl<'a> BatchBuilder<'a> {
             return Err(err);
         }
 
-        let deleted_at = crate::unix_seconds_now();
-        for op in &self.ops {
-            if let BatchOp::Delete { id } = op {
-                self.vault
-                    .prepare_skill_scan_verdict_departure_for_delete_in_txn(
-                        &mut wtxn, id, deleted_at,
-                    )?;
-            }
-        }
-
+        // ONE-1741: batch deletes no longer pre-scan for scan-verdict
+        // relocation. The content-hash index row is maintained by
+        // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
+        // content bytes rather than to any departing holder.
         apply_ops(
             &self.vault.store,
             &self.vault.config,
