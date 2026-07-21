@@ -50,7 +50,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(13, [0, 2, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(14, [0, 2, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
@@ -105,7 +105,7 @@ fn receipt_family_version_abi_pins_are_strictly_monotonic(pins: &[(u16, [u8; 4])
 }
 
 #[test]
-fn abi_13_vault_is_rejected_before_an_abi_12_reader_checks_receipt_markers() -> Result<()> {
+fn abi_14_vault_is_rejected_before_an_abi_12_reader_checks_receipt_markers() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let path = temp_dir.path();
     {
@@ -121,13 +121,13 @@ fn abi_13_vault_is_rejected_before_an_abi_12_reader_checks_receipt_markers() -> 
 
     let err = match Store::open_with_storage_abi_version_for_test(path, &VaultConfig::device(), 12)
     {
-        Ok(_) => panic!("an ABI-12 reader must reject an ABI-13 vault at the ABI gate"),
+        Ok(_) => panic!("an ABI-12 reader must reject an ABI-14 vault at the ABI gate"),
         Err(err) => err,
     };
     assert!(matches!(
         err,
         Error::StorageAbiVersionChanged {
-            stored: Some(13),
+            stored: Some(14),
             current: 12,
         }
     ));

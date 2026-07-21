@@ -35,9 +35,7 @@ use crate::provenance::decode_edge_provenance_body;
 use crate::provenance::downgrade_edge_to_bare;
 use crate::provenance::restamp_edge_flags;
 use crate::provenance::winner_index;
-use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::unix_seconds_now;
@@ -1459,13 +1457,6 @@ fn maybe_fail_after_tombstone_before_purge() -> Result<()> {
 #[inline(always)]
 fn maybe_fail_after_tombstone_before_purge() {}
 
-pub(crate) fn is_delete_protected_engine_record(entity_type: u8) -> bool {
-    matches!(
-        entity_type,
-        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG
-    )
-}
-
 fn memory_timeline_record_cmp(
     left: &MemoryTimelineRecord,
     right: &MemoryTimelineRecord,
@@ -1556,7 +1547,7 @@ impl Vault {
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
         };
-        if is_delete_protected_engine_record(header.entity_type) {
+        if crate::registry::is_delete_protected_engine_record(header.entity_type) {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
@@ -2092,6 +2083,8 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        // The content-hash index row is dropped by `deindex_entity` below;
+        // ONE-1741 removed the verdict relocation that this hook also carried.
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -2141,6 +2134,13 @@ impl Vault {
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        // Soft-erase truncates the body in place, so unlike the hard-purge path it
+        // does not route through `deindex_entity`; drop any content-hash index row
+        // here before the body is gone (ONE-1741: scan verdicts anchor to the
+        // content bytes, so nothing to relocate). The maintenance helper no-ops for
+        // kinds that keep no content-hash index, so the generic delete engine needs
+        // no entity-kind branch of its own.
+        self.maintain_skill_content_hash_index_on_delete_in_txn(wtxn, id)?;
         let mut cleanup = VadAnnotationCleanup::default();
         delete_vad_annotation_metadata_for_type_in_txn(
             &self.store,
@@ -2200,7 +2200,7 @@ impl Vault {
     ) -> Result<ReplayedTombstoneOutcome> {
         let decoded = decode_tombstone_value(raw_value);
         if let Some(header) = self.read_entity_header(id)?
-            && is_delete_protected_engine_record(header.entity_type)
+            && crate::registry::is_delete_protected_engine_record(header.entity_type)
         {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
@@ -2339,7 +2339,7 @@ impl Vault {
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
         if let Some(header) = self.read_entity_header(id)?
-            && is_delete_protected_engine_record(header.entity_type)
+            && crate::registry::is_delete_protected_engine_record(header.entity_type)
         {
             return Ok(ReplayedTombstoneOutcome::HardPurged {
                 erased: false,
