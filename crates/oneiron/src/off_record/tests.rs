@@ -767,6 +767,13 @@ fn off_record_close_and_promote_are_serialized_by_registry_lock() {
             assert_eq!(close.turns_deleted, 1);
             assert_eq!(close.promoted_turns_kept, 0);
             assert!(vault.get(&turn).expect("read closed").is_none());
+            assert!(
+                vault
+                    .off_record_promote_receipt(&turn)
+                    .expect("receipt lookup")
+                    .is_none(),
+                "a promote that lost the race to close must leave no orphaned receipt"
+            );
         }
     }
 }
@@ -808,6 +815,23 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
         .promote_off_record_turn("sess-toctou", &fenced)
         .expect_err("promote during close");
     assert_eq!(promote.kind(), ErrorKind::OffRecordSessionClosing);
+    // A promote rejected because the session is closing must NOT have committed
+    // a durable promote receipt, and must leave the fence intact — otherwise a
+    // stale close snapshot could hard-delete a turn whose receipt was already
+    // written (finding: promote-commits-after-close).
+    assert!(
+        vault
+            .off_record_promote_receipt(&fenced)
+            .expect("receipt lookup")
+            .is_none(),
+        "a closing-rejected promote must persist no promote receipt"
+    );
+    assert!(
+        vault
+            .is_turn_off_record_fenced(&fenced)
+            .expect("fence probe"),
+        "a closing-rejected promote must leave the fence intact"
+    );
     let note = vault
         .note_off_record_context_receipt("sess-toctou", crate::store::RetrievalRunId::now())
         .expect_err("note during close");
@@ -1124,4 +1148,178 @@ fn off_record_fence_blocks_ppr_expansion_and_context_pack_edges() {
             );
         }
     }
+}
+
+/// P1 consent-bypass regression. Tag-before-write lets a turn be fenced with no
+/// entity row; promoting that body-less turn must NOT open the durable write
+/// door. Deleting its fence on promote would let a LATER ordinary `put_entity`
+/// for the same id enter the vault UNFENCED — admitting an off-record body that
+/// never passed the consent gate. Promote must instead retain a closed-fence
+/// marker so the guard stays active for that id, before AND after close.
+#[test]
+fn promote_without_entity_keeps_guard_active_for_late_write() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let session_ref = "sess-promote-bodiless";
+    let id = EntityId::now(); // tag-before-write: the entity row never lands.
+    vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record(session_ref, &id)?;
+    assert!(
+        vault.get_raw(&id)?.is_none(),
+        "the fenced turn has no entity body"
+    );
+
+    // Promote the body-less turn. The fence must NOT be lifted into an open
+    // durable write door.
+    let receipt = vault.promote_off_record_turn(session_ref, &id)?;
+    assert_eq!(receipt.turn, *id.as_bytes());
+
+    // A later ordinary put_entity for the promoted-but-never-written id must
+    // still be guard-rejected while the session is live.
+    let error = vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: 1000,
+                end: 1000,
+            },
+            1000,
+            b"late off-record body must not sneak past a lifted fence",
+        )
+        .expect_err("a promoted body-less turn must keep the write door shut");
+    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(
+        vault.get_raw(&id)?.is_none(),
+        "the rejected late write leaves no durable entity row"
+    );
+
+    // The closed-fence marker survives close, so the door stays shut after the
+    // session evaporates.
+    let log = vault.off_record_receipt_log(session_ref)?;
+    vault.close_off_record_session(session_ref, log)?;
+    let error = vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: 1000,
+                end: 1000,
+            },
+            1000,
+            b"post-close late body must still be rejected",
+        )
+        .expect_err("the closed-fence marker keeps the door shut after close");
+    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    Ok(())
+}
+
+/// A durably-promoted turn's promote receipt outlives its session, but the
+/// in-memory `promoted_turns` list does not. A LATER session starting with an
+/// empty list must still refuse to re-fence the already-promoted turn — else its
+/// close would hard-delete durable content the user consented to keep, orphaning
+/// the promote receipt. Tag consults the durable receipt row.
+#[test]
+fn tag_rejects_re_fencing_a_durably_promoted_turn_in_a_later_session() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = seed_turn(&vault, 1000); // entity exists, so promote lifts the fence.
+    vault.enter_off_record_session("sess-1", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-1", &id)?;
+    vault.promote_off_record_turn("sess-1", &id)?;
+    let log = vault.off_record_receipt_log("sess-1")?;
+    vault.close_off_record_session("sess-1", log)?;
+    assert!(
+        vault.off_record_promote_receipt(&id)?.is_some(),
+        "the durable promote receipt survives close"
+    );
+
+    // Fresh session: empty in-memory promoted_turns cannot catch the id.
+    vault.enter_off_record_session("sess-2", OffRecordBackendClass::Local)?;
+    let error = vault
+        .tag_turn_off_record("sess-2", &id)
+        .expect_err("re-fencing a durably-promoted turn must be rejected");
+    assert_eq!(error.kind(), ErrorKind::InvariantViolation);
+    assert!(
+        vault.get(&id).expect("read promoted").is_some(),
+        "the durably-promoted turn survives the rejected re-tag"
+    );
+    Ok(())
+}
+
+/// Cross-process sweep-safety regression. The open-time crash-orphan sweep is
+/// destructive; it must run ONLY when this process is the sole opener. A live
+/// peer process (simulated here by an independent fd holding a SHARED flock on
+/// the same open-lock file — flock treats separate `open`s as independent on
+/// Linux and macOS) makes the exclusive probe fail, so the sweep is skipped and
+/// the peer's live fenced turn is NOT deleted. Once the peer releases the lock,
+/// a sole-opener reopen sweeps the orphan as usual.
+#[cfg(unix)]
+#[test]
+fn off_record_crash_sweep_is_skipped_when_a_peer_holds_the_open_lock() -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+
+    let tmp = tempfile::tempdir()?;
+    let session_ref = "sess-peer-open-lock";
+    let fenced = {
+        let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+        let fenced = seed_turn(&vault, 1_775_000_000);
+        vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
+        vault.tag_turn_off_record(session_ref, &fenced)?;
+        // Orphan the fence: drop only the registry entry (crash residue).
+        let entry = vault
+            .store
+            .off_record_sessions
+            .entry(session_ref)?
+            .expect("registry entry live before the simulated crash");
+        vault
+            .store
+            .off_record_sessions
+            .remove_if_same(session_ref, &entry)?;
+        drop(vault);
+        fenced
+    };
+
+    // Simulate a live peer process holding the open lock (SHARED) on the same
+    // path via an independent fd.
+    let canonical = std::fs::canonicalize(tmp.path())?;
+    let lock_path = canonical.join("off_record_sweep.lock");
+    let peer = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)?;
+    // SAFETY: `peer.as_raw_fd()` is the descriptor of the live, owned `peer`
+    // file; `libc::flock` needs only a valid open fd and the result is asserted.
+    let peer_lock = unsafe { libc::flock(peer.as_raw_fd(), libc::LOCK_SH) };
+    assert_eq!(
+        peer_lock, 0,
+        "the simulated peer must hold a shared open lock"
+    );
+
+    // Reopen while the peer holds the lock: the destructive sweep must be
+    // SKIPPED, so the peer's fenced turn and its live fence row survive.
+    {
+        let reopened = Vault::open(tmp.path(), VaultConfig::default())?;
+        assert!(
+            reopened.get_raw(&fenced)?.is_some(),
+            "the sweep must not delete a live peer's fenced turn"
+        );
+        let rtxn = reopened.store.env.read_txn()?;
+        assert_eq!(
+            off_record_orphaned_live_fence_session_ref(&reopened.store, &rtxn)?.as_deref(),
+            Some(session_ref),
+            "the live fence row must be preserved while a peer holds the lock"
+        );
+        drop(rtxn);
+        drop(reopened);
+    }
+
+    // Once the peer releases the lock, a sole-opener reopen sweeps the orphan.
+    drop(peer);
+    let swept = Vault::open(tmp.path(), VaultConfig::default())?;
+    assert!(
+        swept.get_raw(&fenced)?.is_none(),
+        "with the peer gone, a sole-opener reopen sweeps the orphan"
+    );
+    Ok(())
 }

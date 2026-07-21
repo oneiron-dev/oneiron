@@ -114,6 +114,13 @@ pub struct VaultConfig {
     /// enter fails closed before a registry entry or overlay is created.
     pub off_record_enabled: bool,
     /// Hard in-memory byte budget applied to each off-record session overlay.
+    ///
+    /// This budget is per-session and independent: nothing in the engine caps
+    /// the number of concurrent off-record sessions, so aggregate overlay
+    /// memory grows linearly with the concurrent session count and is NOT
+    /// bounded by `DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES` (or this value)
+    /// alone. Hosts that admit many simultaneous sessions must cap concurrency
+    /// themselves to bound total overlay memory.
     pub off_record_overlay_budget_bytes: usize,
 }
 

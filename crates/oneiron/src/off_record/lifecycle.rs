@@ -69,7 +69,7 @@
 //!   retrieval-telemetry seam (e.g. a session ref on `PipelineBuilder`)
 //!   that does not exist today.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -91,7 +91,7 @@ const OFF_RECORD_FENCE_KEY_PREFIX: &[u8] = b"offrecord_fence:v0:";
 /// Value replacing a tag-before-write fence after close. An empty value can
 /// never be a live session ref (`vet_off_record_session_ref` rejects empty),
 /// so it preserves the closed write door without retaining session metadata.
-const OFF_RECORD_CLOSED_FENCE_VALUE: &[u8] = b"";
+pub(super) const OFF_RECORD_CLOSED_FENCE_VALUE: &[u8] = b"";
 
 const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
 
@@ -788,37 +788,29 @@ impl Vault {
     ) -> Result<OffRecordSessionRecord> {
         vet_off_record_session_ref(session_ref)?;
         let entry = live_session_entry(&self.store, session_ref)?;
-        let record = {
-            let state = session_entry_state(&entry)?;
-            if state.record.closing || state.gone {
-                return Err(Error::OffRecordSessionClosing {
-                    session_ref: session_ref.to_owned(),
-                });
-            }
-            if state.record.mode == mode {
-                return Ok(state.record.clone());
-            }
-            if state.record.mode == OffRecordMode::OnRecord {
-                return Err(Error::InvariantViolation(
-                    "a sealed off-record overlay cannot be reopened for writes",
-                ));
-            }
-            state.record.clone()
-        };
-
-        entry.overlay.seal_writes()?;
-
+        // Hold the per-session state lock across the irreversible overlay seal
+        // AND the mode-record update, so the two are atomic. Releasing the lock
+        // between the seal and the record write (the prior snapshot/reconcile
+        // shape) let a concurrent record mutation win the post-seal drift check
+        // AFTER the overlay was already permanently sealed, stranding a sealed
+        // overlay under a record that still read `OffRecord` (overlay writes
+        // then failed though the mode never changed). Deadlock-safe:
+        // `seal_writes` takes only the overlay's own lock, never `entry.state`.
         let mut state = session_entry_state(&entry)?;
         if state.record.closing || state.gone {
             return Err(Error::OffRecordSessionClosing {
                 session_ref: session_ref.to_owned(),
             });
         }
-        if state.record != record {
+        if state.record.mode == mode {
+            return Ok(state.record.clone());
+        }
+        if state.record.mode == OffRecordMode::OnRecord {
             return Err(Error::InvariantViolation(
-                "off-record session record drifted during mode seal",
+                "a sealed off-record overlay cannot be reopened for writes",
             ));
         }
+        entry.overlay.seal_writes()?;
         state.record.mode = OffRecordMode::OnRecord;
         entry.publish_state(&state);
         Ok(state.record.clone())
@@ -833,8 +825,16 @@ impl Vault {
     pub fn tag_turn_off_record(&self, session_ref: &str, turn_id: &EntityId) -> Result<()> {
         vet_off_record_session_ref(session_ref)?;
         let entry = live_session_entry(&self.store, session_ref)?;
-        let record = {
-            let state = session_entry_state(&entry)?;
+        // Hold the per-session state lock across the durable fence write AND the
+        // in-process record update. Releasing the lock between the two (the prior
+        // snapshot/reconcile shape) let `close_off_record_session` stamp `closing`
+        // and freeze its `fenced_turns` snapshot in the window after tag committed
+        // a NEW fence row but before it published the record — close then lifted
+        // only the fences in its stale snapshot, stranding a live, non-empty
+        // orphan fence row (blocking writes/export until the next open sweep).
+        // Deadlock-safe: nothing inside the write txn ever locks `entry.state`.
+        let next_record = {
+            let mut state = session_entry_state(&entry)?;
             if state.record.closing || state.gone {
                 return Err(Error::OffRecordSessionClosing {
                     session_ref: session_ref.to_owned(),
@@ -850,81 +850,83 @@ impl Vault {
                     "off-record tag targeted a promoted turn",
                 ));
             }
-            state.record.clone()
-        };
-        let mut next_record = record.clone();
-        self.with_write_txn(|wtxn| {
-            // Fail early on entity kinds the close-path PolicyDelete would
-            // refuse anyway (delete-protected engine records).
-            if let Some(raw) = self.store.entities.get(wtxn, turn_id.as_bytes())?
-                && let Some(&entity_type) = raw.first()
-                && crate::registry::is_delete_protected_engine_record(entity_type)
-            {
-                return Err(Error::MaintenanceKindNotWritable(entity_type));
-            }
-            let fence_key = off_record_fence_key(turn_id);
-            if let Some(existing) = self.store.vault_meta.get(wtxn, &fence_key)? {
-                if *existing == *session_ref.as_bytes() {
-                    // Idempotent re-tag: the durable fence is already held by
-                    // THIS session. ADOPT the turn into the delete-at-close set
-                    // if it is not already tracked. Returning `Ok` without
-                    // adopting would silently accept a fence with no in-process
-                    // delete-at-close coverage (e.g. a fence whose owning
-                    // session's `fenced_turns` push was lost, or a crash-orphan
-                    // re-tagged under a reused ref), leaving the fenced base turn
-                    // undeletable at close. Adoption is safe: the value proves
-                    // this turn is genuinely fenced by us, so close deleting it
-                    // is correct — it cannot cause wrongful deletion. Chosen over
-                    // a stale-fence error because it RESTORES close/delete
-                    // coverage instead of forcing the caller to unwind a durable
-                    // row it cannot see. No double-push (guarded on the id);
-                    // respects the fenced-turn capacity bound.
-                    if !next_record.fenced_turns.contains(turn_id.as_bytes()) {
-                        if next_record.fenced_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
-                            return Err(Error::InvariantViolation(
-                                "off-record session fenced-turn capacity exceeded",
-                            ));
-                        }
-                        next_record.fenced_turns.push(*turn_id.as_bytes());
-                    }
-                    #[cfg(feature = "sync")]
-                    crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
-                    return Ok(());
+            let mut next_record = state.record.clone();
+            self.with_write_txn(|wtxn| {
+                // Fail early on entity kinds the close-path PolicyDelete would
+                // refuse anyway (delete-protected engine records).
+                if let Some(raw) = self.store.entities.get(wtxn, turn_id.as_bytes())?
+                    && let Some(&entity_type) = raw.first()
+                    && crate::registry::is_delete_protected_engine_record(entity_type)
+                {
+                    return Err(Error::MaintenanceKindNotWritable(entity_type));
                 }
-                return Err(Error::InvariantViolation(
-                    "off-record fence already held by another session",
-                ));
-            }
-            if next_record.fenced_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
-                return Err(Error::InvariantViolation(
-                    "off-record session fenced-turn capacity exceeded",
-                ));
-            }
-            next_record.fenced_turns.push(*turn_id.as_bytes());
-            self.store
-                .vault_meta
-                .put(wtxn, &fence_key, session_ref.as_bytes())?;
-            #[cfg(feature = "sync")]
-            crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
-            Ok(())
-        })?;
-        {
-            let mut state = session_entry_state(&entry)?;
-            if state.record.closing || state.gone {
-                return Err(Error::OffRecordSessionClosing {
-                    session_ref: session_ref.to_owned(),
-                });
-            }
-            if state.record != record && state.record != next_record {
-                return Err(Error::InvariantViolation(
-                    "off-record session record drifted during tag",
-                ));
-            }
-            if state.record == record {
-                state.record = next_record.clone();
-                entry.publish_state(&state);
-            }
-        }
+                // A durably-promoted turn's receipt outlives its session, but its
+                // `promoted_turns` list does not: a LATER session starts with an
+                // empty list, so the in-memory guard above cannot catch it. Re-
+                // fencing such a turn would let this session's close hard-delete
+                // durable content the user explicitly consented to keep, leaving
+                // an orphaned promote receipt behind. Consult the durable receipt
+                // row and refuse.
+                if self
+                    .store
+                    .vault_meta
+                    .get(wtxn, &super::promote::off_record_promote_key(turn_id))?
+                    .is_some()
+                {
+                    return Err(Error::InvariantViolation(
+                        "off-record tag targeted a durably-promoted turn",
+                    ));
+                }
+                let fence_key = off_record_fence_key(turn_id);
+                if let Some(existing) = self.store.vault_meta.get(wtxn, &fence_key)? {
+                    if *existing == *session_ref.as_bytes() {
+                        // Idempotent re-tag: the durable fence is already held by
+                        // THIS session. ADOPT the turn into the delete-at-close set
+                        // if it is not already tracked. Returning `Ok` without
+                        // adopting would silently accept a fence with no in-process
+                        // delete-at-close coverage (e.g. a fence whose owning
+                        // session's `fenced_turns` push was lost, or a crash-orphan
+                        // re-tagged under a reused ref), leaving the fenced base turn
+                        // undeletable at close. Adoption is safe: the value proves
+                        // this turn is genuinely fenced by us, so close deleting it
+                        // is correct — it cannot cause wrongful deletion. Chosen over
+                        // a stale-fence error because it RESTORES close/delete
+                        // coverage instead of forcing the caller to unwind a durable
+                        // row it cannot see. No double-push (guarded on the id);
+                        // respects the fenced-turn capacity bound.
+                        if !next_record.fenced_turns.contains(turn_id.as_bytes()) {
+                            if next_record.fenced_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
+                                return Err(Error::InvariantViolation(
+                                    "off-record session fenced-turn capacity exceeded",
+                                ));
+                            }
+                            next_record.fenced_turns.push(*turn_id.as_bytes());
+                        }
+                        #[cfg(feature = "sync")]
+                        crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
+                        return Ok(());
+                    }
+                    return Err(Error::InvariantViolation(
+                        "off-record fence already held by another session",
+                    ));
+                }
+                if next_record.fenced_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
+                    return Err(Error::InvariantViolation(
+                        "off-record session fenced-turn capacity exceeded",
+                    ));
+                }
+                next_record.fenced_turns.push(*turn_id.as_bytes());
+                self.store
+                    .vault_meta
+                    .put(wtxn, &fence_key, session_ref.as_bytes())?;
+                #[cfg(feature = "sync")]
+                crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
+                Ok(())
+            })?;
+            state.record = next_record.clone();
+            entry.publish_state(&state);
+            next_record
+        };
 
         // The fence is durable before touching the CRDT. If this turn was
         // already present in a registry-owned window, scrub its body and
@@ -954,6 +956,8 @@ impl Vault {
                 ));
             }
         }
+        #[cfg(not(feature = "sync"))]
+        let _ = next_record;
 
         Ok(())
     }
@@ -1127,7 +1131,10 @@ impl Vault {
             ))?;
 
         let mut turns_deleted = 0_usize;
-        let mut missing_turns: Vec<[u8; 16]> = Vec::new();
+        // `HashSet` so the final fence-cleanup pass tests membership in O(1); a
+        // `Vec` + `contains` made close O(n^2) over `fenced_turns`, and the hard
+        // cap allows up to `OFF_RECORD_MAX_FENCED_TURNS` (65_536) turns.
+        let mut missing_turns: HashSet<[u8; 16]> = HashSet::new();
         let mut redaction_receipt_ids = Vec::new();
         for bytes in &record.fenced_turns {
             let id = EntityId::from_bytes(*bytes)?;
@@ -1150,7 +1157,7 @@ impl Vault {
                 } else {
                     // Fully-missing id: the ARCH-0038 delete is a strict no-op
                     // (no tombstone) — remember it so its fence row is retained.
-                    missing_turns.push(*bytes);
+                    missing_turns.insert(*bytes);
                 }
             }
             if let Some(receipt_id) = outcome.receipt_id {

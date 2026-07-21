@@ -8,8 +8,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::lifecycle::{
-    FloorWrites, live_session_entry, off_record_fence_key, session_entry_state,
-    vet_off_record_session_ref,
+    FloorWrites, OFF_RECORD_CLOSED_FENCE_VALUE, live_session_entry, off_record_fence_key,
+    session_entry_state, vet_off_record_session_ref,
 };
 
 const OFF_RECORD_PROMOTE_KEY_PREFIX: &[u8] = b"offrecord_promote:v0:";
@@ -27,7 +27,7 @@ pub struct OffRecordPromoteReceipt {
     pub initiator: String,
 }
 
-fn off_record_promote_key(id: &EntityId) -> Vec<u8> {
+pub(super) fn off_record_promote_key(id: &EntityId) -> Vec<u8> {
     let mut key = Vec::with_capacity(OFF_RECORD_PROMOTE_KEY_PREFIX.len() + 16);
     key.extend_from_slice(OFF_RECORD_PROMOTE_KEY_PREFIX);
     key.extend_from_slice(id.as_bytes());
@@ -52,9 +52,26 @@ impl FloorWrites<'_> {
         turn_id: &EntityId,
         receipt: &OffRecordPromoteReceipt,
     ) -> Result<()> {
-        self.store
-            .vault_meta
-            .delete(wtxn, &off_record_fence_key(turn_id))?;
+        // CONSENT GATE: only LIFT the fence for a turn whose entity body
+        // actually exists at promote time. Tag-before-write means a fenced turn
+        // can sit in `fenced_turns` with no entity row yet; deleting its fence
+        // would let a LATER ordinary `put_entity` for the same id sail past
+        // `guard_off_record_entity_put` (which keys on the fence row) and enter
+        // the durable vault UNFENCED — admitting an off-record body that was
+        // never present at the time of user consent. For a body-less turn,
+        // retain the sessionless closed-fence marker (empty value) instead of
+        // deleting the row, so the entity write door stays shut for that id.
+        if self.store.entities.get(wtxn, turn_id.as_bytes())?.is_some() {
+            self.store
+                .vault_meta
+                .delete(wtxn, &off_record_fence_key(turn_id))?;
+        } else {
+            self.store.vault_meta.put(
+                wtxn,
+                &off_record_fence_key(turn_id),
+                OFF_RECORD_CLOSED_FENCE_VALUE,
+            )?;
+        }
         self.store.vault_meta.put(
             wtxn,
             &off_record_promote_key(turn_id),
@@ -74,51 +91,49 @@ impl Vault {
     ) -> Result<OffRecordPromoteReceipt> {
         vet_off_record_session_ref(session_ref)?;
         let entry = live_session_entry(&self.store, session_ref)?;
-        let record = {
-            let state = session_entry_state(&entry)?;
-            if state.record.closing || state.gone {
-                return Err(Error::OffRecordSessionClosing {
-                    session_ref: session_ref.to_owned(),
-                });
-            }
-            state.record.clone()
-        };
-        let mut next_record = record.clone();
-        let position = next_record
-            .fenced_turns
-            .iter()
-            .position(|bytes| bytes == turn_id.as_bytes())
-            .ok_or_else(|| Error::OffRecordTurnNotFenced {
-                session_ref: session_ref.to_owned(),
-                turn_ref: turn_id.to_hex(),
-            })?;
-        next_record.fenced_turns.remove(position);
-        next_record.promoted_turns.push(*turn_id.as_bytes());
-        let receipt = OffRecordPromoteReceipt {
-            version: OFF_RECORD_PROMOTE_RECEIPT_VERSION,
-            session_ref: session_ref.to_owned(),
-            turn: *turn_id.as_bytes(),
-            promoted_at: crate::unix_seconds_now(),
-            initiator: "user".to_owned(),
-        };
-        self.with_write_txn(|wtxn| {
-            FloorWrites::new(&self.store).commit_promote(wtxn, turn_id, &receipt)
-        })?;
-        {
+        // Hold the per-session state lock across the closing/gone check, the
+        // durable promote commit, AND the in-process record update. This
+        // serializes promote against close: close stamps `closing` under the
+        // same lock, so it cannot freeze a stale `fenced_turns` snapshot in the
+        // middle of a promote and then PolicyDelete a turn whose durable promote
+        // receipt was just written (which would both lose user-consented data
+        // and orphan a receipt for a deleted turn). Either promote fully commits
+        // before close stamps closing (close then sees the turn already promoted
+        // and keeps it), or promote observes closing first and bails BEFORE
+        // committing. Deadlock-safe: nothing inside the write txn locks
+        // `entry.state`.
+        let (receipt, next_record) = {
             let mut state = session_entry_state(&entry)?;
             if state.record.closing || state.gone {
                 return Err(Error::OffRecordSessionClosing {
                     session_ref: session_ref.to_owned(),
                 });
             }
-            if state.record != record {
-                return Err(Error::InvariantViolation(
-                    "off-record session record drifted during promote",
-                ));
-            }
-            state.record = next_record.clone();
+            let position = state
+                .record
+                .fenced_turns
+                .iter()
+                .position(|bytes| bytes == turn_id.as_bytes())
+                .ok_or_else(|| Error::OffRecordTurnNotFenced {
+                    session_ref: session_ref.to_owned(),
+                    turn_ref: turn_id.to_hex(),
+                })?;
+            let receipt = OffRecordPromoteReceipt {
+                version: OFF_RECORD_PROMOTE_RECEIPT_VERSION,
+                session_ref: session_ref.to_owned(),
+                turn: *turn_id.as_bytes(),
+                promoted_at: crate::unix_seconds_now(),
+                initiator: "user".to_owned(),
+            };
+            self.with_write_txn(|wtxn| {
+                FloorWrites::new(&self.store).commit_promote(wtxn, turn_id, &receipt)
+            })?;
+            state.record.fenced_turns.remove(position);
+            state.record.promoted_turns.push(*turn_id.as_bytes());
             entry.publish_state(&state);
-        }
+            let next_record = state.record.clone();
+            (receipt, next_record)
+        };
 
         #[cfg(feature = "sync")]
         if let Err(error) = self.refresh_promoted_turn_in_live_window(turn_id) {
@@ -142,6 +157,8 @@ impl Vault {
                 ));
             }
         }
+        #[cfg(not(feature = "sync"))]
+        let _ = next_record;
 
         Ok(receipt)
     }
