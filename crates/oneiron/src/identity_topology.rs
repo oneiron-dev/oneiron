@@ -2434,6 +2434,7 @@ impl Vault {
             data: encode_identity_topology_event_body(&record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,
+            hub_sync_imported: false,
         }];
         ops.extend(edges);
         apply_ops(

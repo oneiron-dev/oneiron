@@ -532,7 +532,7 @@ fn materialize_entities_from_delta(
                     // value-agnostic (a non-binary tombstone decodes HARD
                     // downstream).
                     let delete_protected =
-                        crate::deletion::is_delete_protected_engine_record(header.entity_type);
+                        crate::registry::is_delete_protected_engine_record(header.entity_type);
                     if !delete_protected && tombstone_map_contains_id(&tombstones_map, &id) {
                         tracing::debug!(
                             entity = %key,
@@ -1663,7 +1663,7 @@ fn materialize_entity_blob_in_txn(
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(crate::Error::CorruptedIndex("entity metadata"));
     };
-    let delete_protected = crate::deletion::is_delete_protected_engine_record(header.entity_type);
+    let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
 
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
     // "If tombstoned in CRDT → never resurrect"; contracts.ts
@@ -1911,7 +1911,7 @@ pub(crate) fn admitted_concurrent_delete_protected_header(
     blob: &[u8],
 ) -> Option<EntityMetadataHeader> {
     let header = EntityMetadataHeader::parse(blob)?;
-    if !crate::deletion::is_delete_protected_engine_record(header.entity_type) {
+    if !crate::registry::is_delete_protected_engine_record(header.entity_type) {
         return None;
     }
     if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {

@@ -1566,6 +1566,7 @@ fn put_identity_event_record(vault: &Vault, event_id: EntityId, record: &StoredI
                     data: body.clone(),
                     allow_maintenance: true,
                     allow_reserved_predicate: true,
+                    hub_sync_imported: false,
                 }],
                 true,
                 false,

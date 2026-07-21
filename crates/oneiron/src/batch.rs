@@ -1797,7 +1797,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     && allow_reserved_predicate
                     && matches!(
                         entity_type,
-                        ENTITY_TYPE_POLICY_MANIFEST
+                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST
                             | ENTITY_TYPE_ACCESS_GRANT
                             | ENTITY_TYPE_OUTBOUND_GRANT
                     )

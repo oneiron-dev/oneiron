@@ -1117,7 +1117,7 @@ pub fn forward_rematerialize(
                 }
             };
             let delete_protected =
-                crate::deletion::is_delete_protected_engine_record(header.entity_type);
+                crate::registry::is_delete_protected_engine_record(header.entity_type);
 
             // Tombstone gate (delete wins): a tombstoned id must never
             // re-materialize from a lingering entities-map body — without
@@ -1968,7 +1968,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
-        if !crate::deletion::is_delete_protected_engine_record(header.entity_type) {
+        if !crate::registry::is_delete_protected_engine_record(header.entity_type) {
             continue;
         }
 
@@ -2120,7 +2120,7 @@ fn quarantine_outbound_protected_tombstones(
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(false);
     };
-    if !crate::deletion::is_delete_protected_engine_record(header.entity_type) {
+    if !crate::registry::is_delete_protected_engine_record(header.entity_type) {
         return Ok(false);
     }
 
