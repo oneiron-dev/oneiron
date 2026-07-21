@@ -32,8 +32,8 @@ use crate::ppr;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
     ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -200,10 +200,9 @@ pub(crate) enum BatchOp {
         /// it `false` and stays subject to the maintenance-kind rejection.
         allow_maintenance: bool,
         /// D17 reserved-namespace gate for type-0 (CLAIM) bodies. `false` on
-        /// every public path; only the `pub(crate)` provenance door
-        /// ([`TxnBatchBuilder::put_reserved_claim`]) and the sync-replay door
-        /// (`put_replicated` on both builders, via `replicated_put_op`) set
-        /// it.
+        /// every public path; crate-private owner doors (including
+        /// [`TxnBatchBuilder::put_reserved_claim`] and the Vault skill-claim
+        /// door) plus sync replay set it.
         allow_reserved_predicate: bool,
         /// Narrow ONE-1736 inlet for an imported SKILL body accepted by the
         /// hub-sync policy door. This changes only the SKILL update validator;
@@ -819,6 +818,10 @@ impl<'a> BatchBuilder<'a> {
             return Err(err);
         }
 
+        // ONE-1741: batch deletes no longer pre-scan for scan-verdict
+        // relocation. The content-hash index row is maintained by
+        // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
+        // content bytes rather than to any departing holder.
         apply_ops(
             &self.vault.store,
             &self.vault.config,
@@ -2286,10 +2289,10 @@ fn reject_engine_authored_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(());
     };
-    if matches!(
-        header.entity_type,
-        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG
-    ) {
+    // Single source of truth: the registry owns the delete-protected kind set
+    // (ONE-1741 added the content anchor); the batch/bulk delete door and the
+    // deletion path both consult it, so the guards cannot drift out of sync.
+    if crate::registry::is_delete_protected_engine_record(header.entity_type) {
         return Err(Error::MaintenanceKindNotWritable(header.entity_type));
     }
     Ok(())
@@ -2381,6 +2384,25 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     had_graph_mutation = true;
 
     let (entity_type, occurred, learned_at) = parse_entity_metadata(&entity_record)?;
+    if entity_type == ENTITY_TYPE_SKILL {
+        let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
+        match crate::skill::decode_skill_record(body) {
+            Ok(record) => {
+                if let Some(content_hash) = record.content_hash {
+                    crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+                        store,
+                        wtxn,
+                        id,
+                        content_hash,
+                    )?;
+                }
+            }
+            Err(error)
+                if error.kind() == ErrorKind::InvalidSkillBody
+                    && crate::skill::is_legacy_opaque_skill_body(body) => {}
+            Err(error) => return Err(error),
+        }
+    }
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,
@@ -2836,8 +2858,22 @@ fn apply_put(
     };
 
     let mut body_changed = true;
+    let mut previous_skill_content_hash = None;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
+        if old_type == ENTITY_TYPE_SKILL {
+            let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+            previous_skill_content_hash = match crate::skill::decode_skill_record(prior_body) {
+                Ok(record) => record.content_hash,
+                Err(error)
+                    if error.kind() == ErrorKind::InvalidSkillBody
+                        && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+        }
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -2995,6 +3031,15 @@ fn apply_put(
     payload.extend_from_slice(data);
 
     store.entities.put(wtxn, id.as_bytes(), &payload)?;
+    if let Some(record) = new_skill_record.as_ref() {
+        crate::skill_hub::maintain_skill_content_hash_index_for_put(
+            store,
+            wtxn,
+            &id,
+            previous_skill_content_hash,
+            record.content_hash,
+        )?;
+    }
     if let Some(body) = decoded_claim_body.as_ref() {
         crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
             store, wtxn, &id, body, learned_at,

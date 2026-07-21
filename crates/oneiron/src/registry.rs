@@ -92,6 +92,15 @@ pub const ENTITY_TYPE_CONNECTOR_KEY: u8 = 135;
 /// kind for source events, consent transitions, ruling receipts, and the
 /// rebuildable contact-view cache.
 pub const ENTITY_TYPE_COMM_RECORD: u8 = 136;
+/// ONE-1741 SKILL_CONTENT_ANCHOR entity. Engine-authored maintenance kind: a
+/// deterministic per-content-hash anchor that owns `skill.scan_verdict`
+/// reserved claims, so scan verdicts key on the immortal content bytes rather
+/// than any submitting SKILL holder (which can depart). Its 16-byte id is
+/// derived from the 32-byte content hash (see
+/// `skill_hub::skill_content_anchor_entity_id`), never `EntityId::now()`, so
+/// two nodes ingesting the same bytes converge on one anchor. Public puts of
+/// this byte are rejected with `MaintenanceKindNotWritable`.
+pub const ENTITY_TYPE_SKILL_CONTENT_ANCHOR: u8 = 138;
 
 /// Registry classification mirroring the contracts.ts §1
 /// `EntityClassification` enum: `"semantic" | "core" | "pack" | "maintenance"`.
@@ -211,6 +220,21 @@ pub fn is_structural_kind(type_byte: u8) -> bool {
     matches!(
         entity_type_registry_entry(type_byte).map(|entry| entry.classification),
         Some(EntityClassification::Core | EntityClassification::Pack)
+    )
+}
+
+/// Entity kinds the engine refuses to delete on every door (targeted, batch, or
+/// replayed tombstone). `POLICY_MANIFEST` and `AUTHORITY_LOG` are authority-bearing
+/// control-plane records; `SKILL_CONTENT_ANCHOR` (ONE-1741) is the immortal subject
+/// that content-global scan verdicts hang off — deleting it would strand every
+/// verdict for those content bytes. The deletion/batch engine consults this neutral
+/// registry predicate instead of naming the protected kinds itself, so the protected
+/// set stays owned by the registry and cannot drift between delete doors.
+#[must_use]
+pub(crate) fn is_delete_protected_engine_record(entity_type: u8) -> bool {
+    matches!(
+        entity_type,
+        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG | ENTITY_TYPE_SKILL_CONTENT_ANCHOR
     )
 }
 
@@ -500,6 +524,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
     EntityTypeRegistryEntry {
         kind: "COMM_RECORD",
         type_byte: ENTITY_TYPE_COMM_RECORD,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
+    },
+    EntityTypeRegistryEntry {
+        kind: "SKILL_CONTENT_ANCHOR",
+        type_byte: ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
         short_id_prefix: None,
         classification: EntityClassification::Maintenance,
         band: TypeByteBand::InducedDynamicMaintenance,
