@@ -329,6 +329,14 @@ impl Vault {
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
         };
+        // Model A crash-orphan recovery: evaporate any durable off-record fence
+        // rows left behind by a crash mid-session BEFORE the handle is usable,
+        // so orphaned fenced base turns can never leak through whole-vault
+        // export. No live window manager is attached yet, so the delete path
+        // takes the durable route only. A no-op when there are zero orphans.
+        // Runs before the content-hash backfill so the index reflects the
+        // post-sweep state (evaporated turns are never indexed).
+        vault.sweep_orphaned_off_record_fences()?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now

@@ -424,6 +424,29 @@ pub(crate) fn off_record_fences_present(store: &Store, rtxn: &RoTxn<'_>) -> Resu
         .is_some())
 }
 
+/// Whole-vault-export durable backstop: returns the session ref of the first
+/// durable fence row carrying a NON-EMPTY value (a live-session-ref fence), or
+/// `None`. The empty value is the sessionless closed-fence marker retained past
+/// close and must NOT block export, so the scan filters on value length > 0. A
+/// live session's fence is caught by the in-process registry check first; this
+/// only surfaces a CRASH-ORPHANED row (no registry entry) that the next
+/// `Vault::open` sweep will lift.
+pub(crate) fn off_record_orphaned_live_fence_session_ref(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<Option<String>> {
+    for entry in store
+        .vault_meta
+        .prefix_iter(rtxn, OFF_RECORD_FENCE_KEY_PREFIX)?
+    {
+        let (_key, value) = entry?;
+        if !value.is_empty() {
+            return Ok(Some(String::from_utf8_lossy(&value).into_owned()));
+        }
+    }
+    Ok(None)
+}
+
 /// Fail-closed entity materialization door for off-record fences.
 ///
 /// Every ordinary, typed, claim-candidate, and replicated entity put reaches
@@ -607,10 +630,100 @@ impl Vault {
     }
 
     /// Refuses whole-vault export while any in-process session registry entry
-    /// remains live, including throughout its closing state.
+    /// remains live, including throughout its closing state, AND — model A's
+    /// durable backstop — while any crash-orphaned durable fence row survives.
     pub(crate) fn ensure_no_open_off_record_session(&self) -> Result<()> {
         if let Some(session_ref) = self.store.off_record_sessions.first_session_ref()? {
             return Err(Error::OffRecordExportRefused { session_ref });
+        }
+        // Durable backstop (model A): a crash mid-session can leave an ORPHANED
+        // durable fence row — a live-session-ref value with no registry entry —
+        // whose fenced base turn is still on disk. The in-process check above
+        // cannot see it, so also refuse whole-vault export while ANY non-empty
+        // `offrecord_fence:v0:` row exists (the empty value is the sessionless
+        // closed-fence marker and never blocks). The next `Vault::open` sweep,
+        // or a re-driven close, lifts the row and re-permits export. Fail closed
+        // on either leg.
+        let rtxn = self.store.env.read_txn()?;
+        if let Some(session_ref) =
+            off_record_orphaned_live_fence_session_ref(&self.store, &rtxn)?
+        {
+            return Err(Error::OffRecordExportRefused { session_ref });
+        }
+        Ok(())
+    }
+
+    /// Crash-orphan recovery — model A's "evaporation at next open". A crash
+    /// mid-session can leave durable `offrecord_fence:v0:` rows whose value
+    /// names a session with no live registry entry; the fenced base turns are
+    /// then undeletable and would ship through whole-vault export. Run at
+    /// [`Vault::open`] BEFORE the handle is usable: at open the in-process
+    /// registry is always empty, so EVERY non-empty fence row is orphaned.
+    /// PolicyDelete each fenced turn on the pinned ARCH-0038 contract (CRDT
+    /// tombstone first, active-store purge, opaque audit receipt), then lift
+    /// the fence row exactly as [`Vault::close_off_record_session`] does: delete
+    /// the row for a turn that existed (or was already hard-deleted), or leave
+    /// the sessionless empty closed-fence marker for a fully-missing
+    /// tag-before-write turn so its late write is still rejected at the entity
+    /// door. Idempotent and a no-op when there are zero orphans; the empty
+    /// closed-fence markers left by a prior sweep/close are skipped.
+    pub(crate) fn sweep_orphaned_off_record_fences(&self) -> Result<()> {
+        // The 16-byte suffix after the prefix is the fenced turn's entity id.
+        let orphans: Vec<EntityId> = {
+            let rtxn = self.store.env.read_txn()?;
+            let mut ids = Vec::new();
+            for entry in self
+                .store
+                .vault_meta
+                .prefix_iter(&rtxn, OFF_RECORD_FENCE_KEY_PREFIX)?
+            {
+                let (key, value) = entry?;
+                if value.is_empty() {
+                    // Sessionless closed-fence marker — already lifted.
+                    continue;
+                }
+                let suffix = &key[OFF_RECORD_FENCE_KEY_PREFIX.len()..];
+                let bytes: [u8; 16] = suffix.try_into().map_err(|_| {
+                    Error::InvariantViolation("malformed off-record fence key at open")
+                })?;
+                ids.push(EntityId::from_bytes(bytes)?);
+            }
+            ids
+        };
+        if orphans.is_empty() {
+            return Ok(());
+        }
+        for id in &orphans {
+            let outcome = self.delete_entity_with_reason(id, DeleteReason::PolicyDelete)?;
+            // Mirror close's fence-row disposition: a turn that existed (or was
+            // already hard-deleted by a partially-applied prior sweep) has its
+            // fence row removed; a fully-missing tag-before-write turn keeps a
+            // sessionless closed-fence marker so a late write stays rejected.
+            let turn_existed = if outcome.existed {
+                true
+            } else {
+                let rtxn = self.store.env.read_txn()?;
+                let already_hard_deleted =
+                    self.local_hard_delete_marker_exists_in_txn(&rtxn, id)?;
+                drop(rtxn);
+                already_hard_deleted
+            };
+            self.with_write_txn(|wtxn| {
+                if turn_existed {
+                    self.store
+                        .vault_meta
+                        .delete(wtxn, &off_record_fence_key(id))?;
+                } else {
+                    self.store
+                        .delete_gate_decisions_for_missing_off_record_turn_in_txn(wtxn, id)?;
+                    self.store.vault_meta.put(
+                        wtxn,
+                        &off_record_fence_key(id),
+                        OFF_RECORD_CLOSED_FENCE_VALUE,
+                    )?;
+                }
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -754,6 +867,28 @@ impl Vault {
             let fence_key = off_record_fence_key(turn_id);
             if let Some(existing) = self.store.vault_meta.get(wtxn, &fence_key)? {
                 if *existing == *session_ref.as_bytes() {
+                    // Idempotent re-tag: the durable fence is already held by
+                    // THIS session. ADOPT the turn into the delete-at-close set
+                    // if it is not already tracked. Returning `Ok` without
+                    // adopting would silently accept a fence with no in-process
+                    // delete-at-close coverage (e.g. a fence whose owning
+                    // session's `fenced_turns` push was lost, or a crash-orphan
+                    // re-tagged under a reused ref), leaving the fenced base turn
+                    // undeletable at close. Adoption is safe: the value proves
+                    // this turn is genuinely fenced by us, so close deleting it
+                    // is correct — it cannot cause wrongful deletion. Chosen over
+                    // a stale-fence error because it RESTORES close/delete
+                    // coverage instead of forcing the caller to unwind a durable
+                    // row it cannot see. No double-push (guarded on the id);
+                    // respects the fenced-turn capacity bound.
+                    if !next_record.fenced_turns.contains(turn_id.as_bytes()) {
+                        if next_record.fenced_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
+                            return Err(Error::InvariantViolation(
+                                "off-record session fenced-turn capacity exceeded",
+                            ));
+                        }
+                        next_record.fenced_turns.push(*turn_id.as_bytes());
+                    }
                     #[cfg(feature = "sync")]
                     crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
                     return Ok(());

@@ -239,6 +239,106 @@ fn off_record_registry_evaporates_without_base_residue_on_reopen() -> Result<()>
     Ok(())
 }
 
+/// Model A durable-backstop-with-recovery, end to end and WITHOUT ONE-1728
+/// witness machinery: a crash mid-session leaves an ORPHANED durable fence — a
+/// live-session-ref row with no registry entry — over a base turn still on
+/// disk. Whole-vault export must REFUSE while the orphan exists, including once
+/// the in-process registry is already empty (proving the durable backstop leg,
+/// not just the registry leg). The next `Vault::open` must SWEEP the orphan:
+/// PolicyDelete the fenced base turn and lift the fence row, after which export
+/// is permitted, no live fence residue remains, and the session ref is free.
+#[test]
+fn off_record_crash_orphaned_fence_is_gated_then_swept_on_reopen() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let session_ref = "sess-crash-durable-backstop";
+    let secrets_nulled = crate::batch::export::ExportSecretsNulledManifest::from_redacted(false);
+
+    let fenced = {
+        let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+        let fenced = seed_turn(&vault, 1_775_000_000);
+        assert!(
+            vault.get_raw(&fenced)?.is_some(),
+            "the base turn must exist before it is fenced"
+        );
+
+        vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
+        vault.tag_turn_off_record(session_ref, &fenced)?;
+
+        // The durable fence row is present with a live (non-empty) value.
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert_eq!(
+                off_record_orphaned_live_fence_session_ref(&vault.store, &rtxn)?.as_deref(),
+                Some(session_ref),
+                "tag must write a durable live-session-ref fence row"
+            );
+        }
+
+        // Registry leg: a live session refuses whole-vault export.
+        match vault.whole_vault_export_manifest_artifact(secrets_nulled) {
+            Err(Error::OffRecordExportRefused { session_ref: refused }) => {
+                assert_eq!(refused, session_ref);
+            }
+            other => panic!("live off-record session must refuse export, got {other:?}"),
+        }
+
+        // Orphan the fence: drop ONLY the in-process registry entry (no close),
+        // exactly the residue a crash leaves — durable fence, no registry.
+        let entry = vault
+            .store
+            .off_record_sessions
+            .entry(session_ref)?
+            .expect("registry entry is live before the simulated crash");
+        vault
+            .store
+            .off_record_sessions
+            .remove_if_same(session_ref, &entry)?;
+        assert!(
+            vault.store.off_record_sessions.first_session_ref()?.is_none(),
+            "the registry entry must be gone so only the durable backstop can fire"
+        );
+
+        // Durable backstop leg: export still refused with an EMPTY registry.
+        match vault.whole_vault_export_manifest_artifact(secrets_nulled) {
+            Err(Error::OffRecordExportRefused { .. }) => {}
+            other => panic!(
+                "an orphaned durable fence must refuse export via the backstop leg, got {other:?}"
+            ),
+        }
+
+        // Full crash: drop the vault WITHOUT close, leaving the fence orphaned.
+        drop(vault);
+        fenced
+    };
+
+    // Reopen at the same path: the crash-orphan sweep runs inside open().
+    let reopened = Vault::open(tmp.path(), VaultConfig::default())?;
+
+    // The sweep PolicyDeleted the orphaned fenced base turn …
+    assert!(
+        reopened.get_raw(&fenced)?.is_none(),
+        "reopen sweep must PolicyDelete the orphaned fenced turn"
+    );
+    // … and lifted the fence row: zero live (non-empty) fence residue remains.
+    {
+        let rtxn = reopened.store.env.read_txn()?;
+        assert!(
+            off_record_orphaned_live_fence_session_ref(&reopened.store, &rtxn)?.is_none(),
+            "reopen sweep must leave zero live fence residue"
+        );
+    }
+    // Export is now permitted (both legs clear).
+    reopened
+        .whole_vault_export_manifest_artifact(secrets_nulled)
+        .expect("with the orphan swept, whole-vault export must be permitted");
+    // The session ref reads free for reuse.
+    assert!(
+        reopened.off_record_session(session_ref)?.is_none(),
+        "the evaporated session ref must read as free after reopen"
+    );
+    Ok(())
+}
+
 #[test]
 fn live_overlay_membership_is_hidden_by_retrieval_fence() -> Result<()> {
     let (_tmp, vault) = temp_vault();
