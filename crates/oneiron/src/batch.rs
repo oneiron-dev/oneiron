@@ -200,10 +200,9 @@ pub(crate) enum BatchOp {
         /// it `false` and stays subject to the maintenance-kind rejection.
         allow_maintenance: bool,
         /// D17 reserved-namespace gate for type-0 (CLAIM) bodies. `false` on
-        /// every public path; only the `pub(crate)` provenance door
-        /// ([`TxnBatchBuilder::put_reserved_claim`]) and the sync-replay door
-        /// (`put_replicated` on both builders, via `replicated_put_op`) set
-        /// it.
+        /// every public path; crate-private owner doors (including
+        /// [`TxnBatchBuilder::put_reserved_claim`] and the Vault skill-claim
+        /// door) plus sync replay set it.
         allow_reserved_predicate: bool,
         /// Narrow ONE-1736 inlet for an imported SKILL body accepted by the
         /// hub-sync policy door. This changes only the SKILL update validator;
@@ -2381,6 +2380,25 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     had_graph_mutation = true;
 
     let (entity_type, occurred, learned_at) = parse_entity_metadata(&entity_record)?;
+    if entity_type == ENTITY_TYPE_SKILL {
+        let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
+        match crate::skill::decode_skill_record(body) {
+            Ok(record) => {
+                if let Some(content_hash) = record.content_hash {
+                    crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+                        store,
+                        wtxn,
+                        id,
+                        content_hash,
+                    )?;
+                }
+            }
+            Err(error)
+                if error.kind() == ErrorKind::InvalidSkillBody
+                    && crate::skill::is_legacy_opaque_skill_body(body) => {}
+            Err(error) => return Err(error),
+        }
+    }
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,

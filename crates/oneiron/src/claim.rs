@@ -16,13 +16,11 @@
 //! The predicate gate (D17) is part of body validation: predicates must match
 //! the pinned grammar (≥2 segments of `[a-z][a-z0-9_]*` joined by `.`, total
 //! ≤128 bytes) or the write fails with [`Error::InvalidPredicate`]. The
-//! `edge.*` namespace is reserved for the engine's provenance Claims: public
-//! writes are rejected with [`Error::ReservedPredicate`]; the doors are the
-//! `pub(crate)` reserved-namespace path used by the provenance unit
-//! (`TxnBatchBuilder::put_reserved_claim`) and, under the `sync` feature,
-//! the replicated-put door (`put_replicated`) used by CRDT replay so remote
-//! provenance Claims rematerialize — both still run this full structural
-//! validation. Well-formed UNKNOWN predicates are accepted — the crate is
+//! `edge.*` and `skill.*` namespaces are engine-reserved: public writes are
+//! rejected with [`Error::ReservedPredicate`]. Crate-private provenance and
+//! skill-hub doors own local writes, while the `sync` feature's replicated-put
+//! door (`put_replicated`) admits rematerialization; every door still runs
+//! full structural validation. Well-formed UNKNOWN predicates are accepted — the crate is
 //! predicate-agnostic for semantics (ARCH-0003 §G.1). Crate-owned
 //! well-known predicates are listed in [`CLAIM_PREDICATE_REGISTRY`] and carry
 //! the first-segment layer prefix `core`, `companion`, or `eiri`; that is a
@@ -687,6 +685,10 @@ pub const MAX_PREDICATE_BYTES: usize = 128;
 /// be written through the `pub(crate)` provenance door.
 pub const RESERVED_PREDICATE_NAMESPACE: &str = "edge";
 
+/// Reserved skill predicate namespace: `skill.*` claims are authored only by
+/// the crate-private skill-hub doors, never by the generic public Claim API.
+pub(crate) const RESERVED_SKILL_PREDICATE_NAMESPACE: &str = "skill";
+
 /// Length of an EdgeRef subject encoding: source 16 ‖ kind u8 ‖ target 16.
 pub(crate) const EDGE_REF_LEN: usize = 33;
 
@@ -1140,13 +1142,22 @@ pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Resul
     Ok(())
 }
 
-/// Returns `true` when `predicate`'s first dot-separated segment is the
-/// reserved `edge` namespace (D17). Reserved-namespace Claims are engine
-/// provenance records: their lifecycle (supersede / retract / re-stamp) is
-/// owned by the edge-provenance API, so the generic claim lifecycle ops
-/// reject them with [`Error::ProvenanceClaimLifecycle`].
+/// Returns `true` when `predicate`'s first dot-separated segment is one of the
+/// reserved `edge` or `skill` namespaces (D17). Their writes and lifecycle
+/// transitions are owned by dedicated crate-private doors, so the generic
+/// Claim API rejects them.
 pub(crate) fn is_reserved_predicate(predicate: &str) -> bool {
+    let namespace = predicate.split('.').next();
+    namespace == Some(RESERVED_PREDICATE_NAMESPACE)
+        || namespace == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
+}
+
+fn is_edge_reserved_predicate(predicate: &str) -> bool {
     predicate.split('.').next() == Some(RESERVED_PREDICATE_NAMESPACE)
+}
+
+fn is_skill_reserved_predicate(predicate: &str) -> bool {
+    predicate.split('.').next() == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
 }
 
 fn valid_predicate_segment(segment: &str) -> bool {
@@ -1235,9 +1246,9 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// * `src`/`appr`/`life` must be the pinned enum strings;
 /// * `stale` must be a boolean (absent = `false`);
 /// * `subj` must be a 16-byte entity id or 33-byte EdgeRef ([`ClaimSubject`]);
-/// * `pred` must satisfy the D17 grammar; reserved `edge.*` predicates are
-///   rejected unless `allow_reserved_predicate` is set (provenance door /
-///   read path).
+/// * `pred` must satisfy the D17 grammar; reserved `edge.*` and `skill.*`
+///   predicates are rejected unless `allow_reserved_predicate` is set
+///   (crate-private door / read path).
 pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<ClaimBody> {
     #[cfg(test)]
     CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
@@ -1924,8 +1935,8 @@ impl Vault {
     /// write transaction, and rejects with [`Error::EntityNotFound`] if the
     /// subject entity does not exist — nothing is written on rejection. An
     /// EdgeRef subject ([`ClaimSubject::Edge`]) is shape-validated only; its
-    /// `claim_of` wiring belongs to the provenance path, which is also the
-    /// only path allowed to write reserved `edge.*` predicates.
+    /// `claim_of` wiring belongs to the provenance path. Reserved namespaces
+    /// are writable only through crate-private owner doors.
     pub fn put_claim(
         &self,
         id: &EntityId,
@@ -1949,10 +1960,35 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
+    }
+
+    /// Crate-private transaction-composable door for engine-owned reserved
+    /// Claims. This is intentionally not part of the public [`Vault`] API.
+    pub(crate) fn put_reserved_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, true)
+    }
+
+    fn put_claim_in_txn_with_reserved(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+        allow_reserved_predicate: bool,
+    ) -> Result<()> {
         let data = encode_claim_body(body)?;
-        // Public-path gate: full structural validation + reserved-namespace
-        // rejection. `apply_ops` re-runs it at the write chokepoint.
-        validate_claim_body_bytes(&data, false)?;
+        // Full structural validation runs here and again at the BatchOp write
+        // chokepoint with the exact same reserved-door setting.
+        validate_claim_body_bytes(&data, allow_reserved_predicate)?;
 
         let mut ops = vec![BatchOp::Put {
             id: *id,
@@ -1961,7 +1997,7 @@ impl Vault {
             learned_at,
             data,
             allow_maintenance: false,
-            allow_reserved_predicate: false,
+            allow_reserved_predicate,
             hub_sync_imported: false,
         }];
 
@@ -2348,12 +2384,10 @@ impl Vault {
     ///
     /// * no entity under `id` → [`Error::EntityNotFound`];
     /// * entity is not type 0 → [`Error::InvalidClaimBody`];
-    /// * reserved `edge.*` predicate → [`Error::ProvenanceClaimLifecycle`]
-    ///   — provenance Claims drive the subject edge's derived hot flags, so
-    ///   their lifecycle is owned exclusively by the edge-provenance API
-    ///   (`put_edge_provenance` / `retract_edge_provenance`); the generic
-    ///   ops REJECT rather than delegate, so they can never bypass the
-    ///   edge re-stamp.
+    /// * any reserved predicate → [`Error::ProvenanceClaimLifecycle`]. Edge
+    ///   provenance drives derived hot flags and skill claims are owned by the
+    ///   skill-hub doors; generic lifecycle operations never delegate either
+    ///   class of reserved record.
     fn claim_for_lifecycle_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -2372,6 +2406,36 @@ impl Vault {
             return Err(Error::ProvenanceClaimLifecycle {
                 predicate: body.predicate,
             });
+        }
+        Ok((body, header))
+    }
+
+    /// Reads a Claim for the reserved lifecycle door. Only `skill.*` is
+    /// admitted: `edge.*` remains exclusively owned by edge provenance and
+    /// receives the same typed rejection as the generic lifecycle API.
+    fn skill_claim_for_lifecycle_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(ClaimBody, EntityMetadataHeader)> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+            return Err(Error::EntityNotFound);
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+        }
+        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if is_edge_reserved_predicate(&body.predicate) {
+            return Err(Error::ProvenanceClaimLifecycle {
+                predicate: body.predicate,
+            });
+        }
+        if !is_skill_reserved_predicate(&body.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "reserved claim lifecycle door only admits skill predicates",
+            ));
         }
         Ok((body, header))
     }
@@ -2438,9 +2502,9 @@ impl Vault {
     /// * `new_id == old_id` → [`Error::ClaimSelfSupersession`];
     /// * either id missing → [`Error::EntityNotFound`]; either entity not
     ///   type 0 → [`Error::InvalidClaimBody`];
-    /// * either claim carrying a reserved `edge.*` provenance predicate →
-    ///   [`Error::ProvenanceClaimLifecycle`] (the edge-provenance API owns
-    ///   that lifecycle; see `Vault::claim_for_lifecycle_in`);
+    /// * either claim carrying a reserved predicate →
+    ///   [`Error::ProvenanceClaimLifecycle`] (its crate-private owner door
+    ///   owns that lifecycle; see `Vault::claim_for_lifecycle_in`);
     /// * either claim's `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]
     ///   (closed claims neither supersede nor get superseded again).
     ///
@@ -2522,6 +2586,68 @@ impl Vault {
         Ok(())
     }
 
+    /// Supersedes an engine-owned `skill.*` Claim inside the caller's write
+    /// transaction. This crate-private door deliberately continues to reject
+    /// `edge.*`, whose lifecycle must re-stamp provenance-derived edge state.
+    pub(crate) fn supersede_reserved_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        if new_id == old_id {
+            return Err(Error::ClaimSelfSupersession);
+        }
+
+        let (new_body, _new_header) = self.skill_claim_for_lifecycle_in(&*wtxn, new_id)?;
+        Self::require_active_claim(&new_body)?;
+        let (mut old_body, old_header) = self.skill_claim_for_lifecycle_in(&*wtxn, old_id)?;
+        Self::require_active_claim(&old_body)?;
+        Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
+
+        old_body.lifecycle = ClaimLifecycleStatus::Superseded;
+        old_body.valid_to = Some(now);
+        let data = encode_claim_body(&old_body)?;
+
+        let ops = vec![
+            BatchOp::Put {
+                id: *old_id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: old_header.occurred_start,
+                    end: now,
+                },
+                learned_at: old_header.learned_at,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: true,
+                hub_sync_imported: false,
+            },
+            BatchOp::EdgeWithCreatedAt {
+                src: *new_id,
+                kind: EdgeKind::Supersedes,
+                tgt: *old_id,
+                weight: SUPERSEDES_DEFAULT_WEIGHT,
+                created_at: now,
+                vad: Vad::NEUTRAL,
+                provenance: None,
+            },
+        ];
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        Ok(())
+    }
+
     /// Retracts the active claim `id` — a deliberate withdrawal (ARCH-0003
     /// general claim lifecycle), in ONE write transaction: the body is
     /// closed (`life` = `retracted`, `to` = `now`) and the envelope
@@ -2532,9 +2658,10 @@ impl Vault {
     ///
     /// Fail-closed, nothing written on any rejection: missing id →
     /// [`Error::EntityNotFound`]; not type 0 → [`Error::InvalidClaimBody`];
-    /// reserved `edge.*` provenance predicate →
-    /// [`Error::ProvenanceClaimLifecycle`] (the edge-provenance API owns
-    /// that lifecycle); `life` ≠ `active` → [`Error::ClaimAlreadyClosed`].
+    /// any reserved predicate → [`Error::ProvenanceClaimLifecycle`];
+    /// `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]. There is
+    /// intentionally no reserved retract door: skill-hub records are replaced
+    /// by supersession, while edge provenance owns its retraction mechanics.
     pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         self.retract_claim_in_txn(&mut wtxn, id, now)?;

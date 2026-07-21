@@ -39,6 +39,8 @@ pub const PREDICATE_SKILL_HUB_UPDATE_PROPOSAL: &str = "skill.hub_update_proposal
 
 const CAPABILITY_STATE_PREFIX: &[u8] = b"skill_hub/capability/v1\0";
 const CONTENT_HASH_INDEX_PREFIX: &[u8] = b"skill_hub/content_hash_index/v1\0";
+const CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY: &[u8] = b"skill_hub/content_hash_index_schema_version";
+const CONTENT_HASH_INDEX_SCHEMA_VERSION: u8 = 1;
 const MAX_HUB_TEXT_BYTES: usize = 4096;
 const MAX_CAPABILITY_ENTRIES: usize = 256;
 const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
@@ -1126,7 +1128,13 @@ impl Vault {
                 ClaimLifecycleStatus::Active,
             );
             proposal.source = Some(ClaimSource::Imported);
-            self.put_claim_in_txn(&mut wtxn, &proposal_id, &proposal, occurred, learned_at)?;
+            self.put_reserved_claim_in_txn(
+                &mut wtxn,
+                &proposal_id,
+                &proposal,
+                occurred,
+                learned_at,
+            )?;
             wtxn.commit()?;
             return Ok(HubSyncDisposition::Proposed {
                 proposal_id,
@@ -1160,13 +1168,17 @@ impl Vault {
                 learned_at,
             )?;
             if let Some(previous_hash) = current.content_hash {
-                self.supersede_scan_verdicts_for_content_hash_in_txn(
-                    &mut wtxn,
-                    entity,
-                    previous_hash,
-                    &provenance_id,
-                    learned_at,
-                )?;
+                let remaining_holders =
+                    self.skill_entities_for_content_hash_in_txn(&wtxn, previous_hash)?;
+                if remaining_holders.is_empty() {
+                    self.supersede_scan_verdicts_for_content_hash_in_txn(
+                        &mut wtxn,
+                        entity,
+                        previous_hash,
+                        &provenance_id,
+                        learned_at,
+                    )?;
+                }
             }
         }
         wtxn.commit()?;
@@ -1183,13 +1195,30 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        validate_text(
-            &receipt.provider,
-            MAX_HUB_TEXT_BYTES,
-            "scan provider must be non-empty",
-        )?;
+        validate_skill_scan_receipt(receipt)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let skill = self.read_skill_record_in_txn(&wtxn, entity)?;
+        let claim_id = self.ingest_skill_scan_verdict_in_txn(
+            &mut wtxn,
+            entity,
+            content_hash,
+            receipt,
+            occurred,
+            learned_at,
+        )?;
+        wtxn.commit()?;
+        Ok(claim_id)
+    }
+
+    fn ingest_skill_scan_verdict_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        content_hash: SkillContentHash,
+        receipt: &SkillScanReceipt,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        let skill = self.read_skill_record_in_txn(&*wtxn, entity)?;
         if skill.content_hash != Some(content_hash) {
             return Err(Error::InvalidSkillBody(
                 "scan receipt content hash does not match the skill",
@@ -1197,13 +1226,13 @@ impl Vault {
         }
         let hash_hex = content_hash.to_hex();
         let mut prior_rows = Vec::new();
-        let content_entities = self.skill_entities_for_content_hash_in_txn(&wtxn, content_hash)?;
+        let content_entities = self.skill_entities_for_content_hash_in_txn(&*wtxn, content_hash)?;
         if !content_entities.contains(entity) {
             return Err(Error::CorruptedIndex("skill content hash index"));
         }
         for content_entity in content_entities {
             for (id, body, occurred_start) in self.active_claims_for_predicate_in_txn(
-                &wtxn,
+                &*wtxn,
                 &content_entity,
                 PREDICATE_SKILL_SCAN_VERDICT,
             )? {
@@ -1248,12 +1277,11 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         );
         body.source = Some(ClaimSource::Observed);
-        self.put_claim_in_txn(&mut wtxn, &claim_id, &body, occurred, learned_at)?;
+        self.put_reserved_claim_in_txn(wtxn, &claim_id, &body, occurred, learned_at)?;
         for (prior_id, prior_start) in prior_rows {
             let superseded_at = learned_at.max(prior_start);
-            self.supersede_claim_in_txn(&mut wtxn, &claim_id, &prior_id, superseded_at)?;
+            self.supersede_reserved_claim_in_txn(wtxn, &claim_id, &prior_id, superseded_at)?;
         }
-        wtxn.commit()?;
         Ok(claim_id)
     }
 
@@ -1266,9 +1294,24 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<usize> {
+        // Validate the full caller-owned array before opening the transaction,
+        // so a malformed middle receipt cannot follow any staged write.
         for receipt in receipts {
-            self.ingest_skill_scan_verdict(entity, content_hash, receipt, occurred, learned_at)?;
+            validate_skill_scan_receipt(receipt)?;
         }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        for receipt in receipts {
+            self.ingest_skill_scan_verdict_in_txn(
+                &mut wtxn,
+                entity,
+                content_hash,
+                receipt,
+                occurred,
+                learned_at,
+            )?;
+        }
+        wtxn.commit()?;
         Ok(receipts.len())
     }
 
@@ -1382,15 +1425,13 @@ impl Vault {
             let entity =
                 crate::entity_id::parse_entity_id(&key[prefix.len()..], "skill content hash index")
                     .map_err(|_| Error::CorruptedIndex("skill content hash index"))?;
-            let raw = self
-                .store
-                .entities
-                .get(rtxn, entity.as_bytes())?
-                .ok_or(Error::CorruptedIndex("skill content hash index"))?;
+            let Some(raw) = self.store.entities.get(rtxn, entity.as_bytes())? else {
+                continue;
+            };
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_SKILL {
-                return Err(Error::CorruptedIndex("skill content hash index"));
+                continue;
             }
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             let record = match decode_skill_record(body) {
@@ -1525,11 +1566,11 @@ impl Vault {
                 ClaimLifecycleStatus::Active,
             );
             body.source = Some(ClaimSource::Observed);
-            self.put_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
+            self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
             replacement_id
         };
         for (prior_id, prior_start) in prior_rows {
-            self.supersede_claim_in_txn(
+            self.supersede_reserved_claim_in_txn(
                 wtxn,
                 &replacement_id,
                 &prior_id,
@@ -1575,9 +1616,9 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         );
         body.source = Some(ClaimSource::Observed);
-        self.put_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
+        self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
         for (prior_id, prior_start) in prior_rows {
-            self.supersede_claim_in_txn(
+            self.supersede_reserved_claim_in_txn(
                 wtxn,
                 &replacement_id,
                 &prior_id,
@@ -1605,7 +1646,7 @@ impl Vault {
             }
         }
         for (prior_id, prior_start) in prior_rows {
-            self.supersede_claim_in_txn(
+            self.supersede_reserved_claim_in_txn(
                 wtxn,
                 replacement_id,
                 &prior_id,
@@ -1720,6 +1761,98 @@ pub(crate) fn maintain_skill_content_hash_index_for_put(
             .put(wtxn, &content_hash_index_key(content_hash, entity), &[])?;
     }
     Ok(())
+}
+
+pub(crate) fn maintain_skill_content_hash_index_for_delete(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+    content_hash: SkillContentHash,
+) -> Result<()> {
+    store
+        .vault_meta
+        .delete(wtxn, &content_hash_index_key(content_hash, entity))?;
+    Ok(())
+}
+
+pub(crate) fn backfill_content_hash_index_if_needed(store: &crate::store::Store) -> Result<()> {
+    let rtxn = store.env.read_txn()?;
+    let stored_version = match store
+        .vault_meta
+        .get(&rtxn, CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY)?
+    {
+        Some(raw) if raw.len() == 1 => raw[0],
+        Some(_) => return Err(Error::InvalidKey),
+        None => 0,
+    };
+    drop(rtxn);
+
+    if stored_version > CONTENT_HASH_INDEX_SCHEMA_VERSION {
+        return Err(Error::InvalidKey);
+    }
+    if stored_version == CONTENT_HASH_INDEX_SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    let mut wtxn = store.env.write_txn()?;
+    let mut rows = Vec::new();
+    for (scanned, entry) in store
+        .type_index
+        .prefix_iter(&wtxn, &[ENTITY_TYPE_SKILL])?
+        .enumerate()
+    {
+        if scanned >= MAX_HUB_SKILL_SCAN_ENTRIES {
+            return Err(Error::IndexOverflow("skill content hash index backfill"));
+        }
+        let (key, _) = entry?;
+        let entity = crate::vault::entity_id_from_type_index_key(&key)?;
+        let raw = store
+            .entities
+            .get(&wtxn, entity.as_bytes())?
+            .ok_or(Error::CorruptedIndex("skill type index"))?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_SKILL {
+            return Err(Error::CorruptedIndex("skill type index"));
+        }
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let record = match decode_skill_record(body) {
+            Ok(record) => record,
+            Err(error)
+                if error.kind() == ErrorKind::InvalidSkillBody
+                    && crate::skill::is_legacy_opaque_skill_body(body) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(content_hash) = record.content_hash {
+            rows.push((content_hash, entity));
+        }
+    }
+
+    for (content_hash, entity) in rows {
+        store.vault_meta.put(
+            &mut wtxn,
+            &content_hash_index_key(content_hash, &entity),
+            &[],
+        )?;
+    }
+    store.vault_meta.put(
+        &mut wtxn,
+        CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY,
+        &[CONTENT_HASH_INDEX_SCHEMA_VERSION],
+    )?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+fn validate_skill_scan_receipt(receipt: &SkillScanReceipt) -> Result<()> {
+    validate_text(
+        &receipt.provider,
+        MAX_HUB_TEXT_BYTES,
+        "scan provider must be non-empty",
+    )
 }
 
 fn encode_capability_surface_value(surface: &SkillCapabilitySurface) -> Value {
@@ -2157,6 +2290,46 @@ mod tests {
     }
 
     #[test]
+    fn audit_ingest_rejects_bad_middle_receipt_atomically() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        let imported = package(
+            candidate("fixture.audit-atomic"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &imported, entity, t(1), 2)?;
+        let first = SkillScanReceipt::new(
+            "first",
+            3,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?;
+        let mut bad = first.clone();
+        bad.provider.clear();
+        let last = SkillScanReceipt::new(
+            "last",
+            3,
+            ScanVerdict::Suspicious,
+            ScanRiskLevel::High,
+            ScanCompleteness::Partial,
+            SkillGovernance::Discouraged,
+        )?;
+
+        let error = vault
+            .ingest_skill_audit_verdicts(&entity, fixture_hash(), &[first, bad, last], t(3), 4)
+            .expect_err("a malformed middle receipt must reject the whole batch");
+        assert_eq!(error.kind(), ErrorKind::InvalidSkillBody);
+        assert!(
+            vault
+                .active_claims_for_predicate(&entity, PREDICATE_SKILL_SCAN_VERDICT)?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn content_hash_index_returns_every_entity_for_shared_bytes() -> Result<()> {
         let (_temp, vault) = open_vault();
         let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
@@ -2167,6 +2340,169 @@ mod tests {
             .collect::<BTreeSet<_>>();
 
         assert_eq!(indexed, BTreeSet::from([local_entity, imported_entity]));
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_skill_cleans_index_and_stale_rows_do_not_block_hash_doors() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let imported = package(
+            candidate("fixture.delete-index"),
+            SkillCapabilitySurface::default(),
+        );
+        let entity = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(1), 2)?;
+        let key = content_hash_index_key(fixture_hash(), &entity);
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.vault_meta.get(&rtxn, &key)?.is_some());
+        drop(rtxn);
+
+        assert!(vault.delete_entity(&entity)?);
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.vault_meta.get(&rtxn, &key)?.is_none());
+        drop(rtxn);
+        assert!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .is_empty()
+        );
+
+        // Recreate the historical lagging-row shape: all hash-keyed readers
+        // and writers must skip it because the accelerator is rebuildable.
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(&mut wtxn, &key, &[])?;
+        wtxn.commit()?;
+        assert!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .is_empty()
+        );
+
+        let reimported = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(3), 4)?;
+        assert_ne!(reimported, entity);
+        assert_eq!(
+            vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(5), 6,)?,
+            reimported
+        );
+        let receipt = SkillScanReceipt::new(
+            "delete-recovery",
+            7,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?;
+        vault.ingest_skill_scan_verdict(&reimported, fixture_hash(), &receipt, t(7), 8)?;
+        assert_eq!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .len(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn soft_erasing_skill_cleans_content_hash_index_before_body_truncation() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let imported = package(
+            candidate("fixture.soft-delete-index"),
+            SkillCapabilitySurface::default(),
+        );
+        let entity = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(1), 2)?;
+        let key = content_hash_index_key(fixture_hash(), &entity);
+
+        vault.delete_entity_with_reason(&entity, crate::DeleteReason::UserDelete)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.vault_meta.get(&rtxn, &key)?.is_none());
+        drop(rtxn);
+        assert!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn open_backfills_pre_index_structured_skills() -> Result<()> {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().to_path_buf();
+        let vault = Vault::open(&path, crate::VaultConfig::default())?;
+        let entity = EntityId::now();
+        let imported = package(
+            candidate("fixture.pre-index"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &imported, entity, t(1), 2)?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, &content_hash_index_key(fixture_hash(), &entity))?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY)?;
+        wtxn.commit()?;
+        drop(vault);
+
+        let vault = Vault::open(&path, crate::VaultConfig::default())?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault.skill_entities_for_content_hash_in_txn(&rtxn, fixture_hash())?,
+            vec![entity]
+        );
+        drop(rtxn);
+        assert_eq!(
+            vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(3), 4,)?,
+            entity
+        );
+        let receipt = SkillScanReceipt::new(
+            "backfilled",
+            5,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?;
+        vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(5), 6)?;
+        assert_eq!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .len(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reserved_scan_door_preserves_content_global_supersession() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let (local_entity, imported_entity) = materialize_shared_hash_skills(&vault)?;
+        let receipt = SkillScanReceipt::new(
+            "reserved-door",
+            5,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?;
+        let prior =
+            vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &receipt, t(5), 6)?;
+        vault.ingest_skill_scan_verdict(&local_entity, fixture_hash(), &receipt, t(7), 8)?;
+
+        assert_eq!(
+            vault.get_claim(&prior)?.expect("prior receipt").lifecycle,
+            ClaimLifecycleStatus::Superseded
+        );
+        assert_eq!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .len(),
+            1
+        );
         Ok(())
     }
 
@@ -3153,6 +3489,66 @@ mod tests {
             .filter(|(_, body)| map_text(&body.value, "contentHash") == Some(old_hash_hex.as_str()))
             .count();
         assert_eq!(active_old_hash_verdicts, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn hub_sync_keeps_previous_hash_verdict_while_another_holder_remains() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let local_entity = EntityId::now();
+        let mut local = candidate("fixture.sync-shared-local");
+        local.source = ClaimSource::UserStated;
+        vault.put_skill_record(&local_entity, &local, t(1), 2)?;
+
+        let imported_entity = EntityId::now();
+        let reference = hub_ref(HubPin::None);
+        let imported = package(
+            candidate("fixture.sync-shared-imported"),
+            SkillCapabilitySurface::default(),
+        );
+        vault.import_skill_from_hub_with_id(&reference, &imported, imported_entity, t(3), 4)?;
+        let receipt = SkillScanReceipt::new(
+            "shared-holder",
+            5,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )?;
+        let verdict_id =
+            vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &receipt, t(5), 6)?;
+
+        let mut updated_record = candidate("fixture.sync-shared-imported");
+        updated_record.version = "1.1.0".to_owned();
+        let updated = package_with_content(
+            updated_record,
+            b"# moved while shared bytes remain\n",
+            SkillCapabilitySurface::default(),
+        );
+        assert_eq!(
+            vault.sync_skill_from_hub(
+                &imported_entity,
+                &reference,
+                &updated,
+                HubSyncPolicy::MirrorOfHub,
+                t(7),
+                8,
+            )?,
+            HubSyncDisposition::Applied
+        );
+
+        assert_eq!(
+            vault
+                .get_claim(&verdict_id)?
+                .expect("shared verdict")
+                .lifecycle,
+            ClaimLifecycleStatus::Active
+        );
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault.skill_entities_for_content_hash_in_txn(&rtxn, fixture_hash())?,
+            vec![local_entity]
+        );
         Ok(())
     }
 

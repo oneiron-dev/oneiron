@@ -595,13 +595,8 @@ fn sk03_adapter_rejects_declared_hash_mismatch_fail_closed() -> Result<()> {
         content_hash: fixture_tree_hash(),
         ..mismatched_entry
     };
-    let accepted_id = vault.ingest_skill_from_adapter_checked(
-        &adapter,
-        &matching_entry,
-        target,
-        t(22),
-        23,
-    )?;
+    let accepted_id =
+        vault.ingest_skill_from_adapter_checked(&adapter, &matching_entry, target, t(22), 23)?;
     let landed = vault
         .get_skill_record(&accepted_id)?
         .expect("accepted package lands as a SKILL record");

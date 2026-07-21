@@ -25,7 +25,7 @@ use crate::edge::EdgeKind;
 use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
@@ -39,6 +39,7 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::unix_seconds_now;
 
@@ -2140,7 +2141,34 @@ impl Vault {
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
+        // Extract the SKILL content hash (owned) from `entity_record` BEFORE any
+        // mutable use of `wtxn`: `entity_record` borrows `wtxn` immutably, so its
+        // borrow must end before the content-hash index delete below (which needs
+        // `&mut wtxn`). Zero behavior change from the inline form.
+        let skill_content_hash = if header.entity_type == ENTITY_TYPE_SKILL {
+            let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
+            match crate::skill::decode_skill_record(body) {
+                Ok(record) => record.content_hash,
+                Err(error)
+                    if error.kind() == ErrorKind::InvalidSkillBody
+                        && crate::skill::is_legacy_opaque_skill_body(body) =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        };
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        if let Some(content_hash) = skill_content_hash {
+            crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+                &self.store,
+                wtxn,
+                id,
+                content_hash,
+            )?;
+        }
         let mut cleanup = VadAnnotationCleanup::default();
         delete_vad_annotation_metadata_for_type_in_txn(
             &self.store,

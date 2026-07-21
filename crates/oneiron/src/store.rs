@@ -51,7 +51,9 @@
 //!    model → [`InvalidConfig`].
 //! 7. `migrate_temporal_long_intervals_if_needed`
 //!    (`hnsw_meta["temporal_long_intervals_schema_version"]`), then the
-//!    persist-if-missing writes for the HNSW config / model id validated
+//!    independent skill content-hash index sentinel migration
+//!    (`vault_meta["skill_hub/content_hash_index_schema_version"]`), then
+//!    the persist-if-missing writes for the HNSW config / model id validated
 //!    above (each re-checks under its own write transaction).
 //!
 //! `Vault::open` — after `Store::open` returns:
@@ -1520,6 +1522,7 @@ impl Store {
             &store.hnsw_meta,
             &store.temporal_long_intervals,
         )?;
+        crate::skill_hub::backfill_content_hash_index_if_needed(&store)?;
 
         if should_persist_hnsw_config {
             persist_hnsw_config_if_missing(
