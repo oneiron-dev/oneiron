@@ -726,6 +726,7 @@ pub struct OutboundExecutionRequest<'a> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboundExecutionOutcome {
     pub kind: OutboundExecutionOutcomeKind,
+    pub delivery_may_have_occurred: bool,
     pub provider_ref: Option<String>,
     pub retry_state: Option<String>,
     pub receipt_fields: BTreeMap<String, String>,
@@ -744,6 +745,7 @@ impl OutboundExecutionOutcome {
     pub fn delivered_to_channel(provider_ref: impl Into<String>) -> Self {
         Self {
             kind: OutboundExecutionOutcomeKind::DeliveredToChannel,
+            delivery_may_have_occurred: true,
             provider_ref: Some(provider_ref.into()),
             retry_state: None,
             receipt_fields: BTreeMap::new(),
@@ -754,6 +756,7 @@ impl OutboundExecutionOutcome {
     pub fn failed(reason: impl Into<String>) -> Self {
         Self {
             kind: OutboundExecutionOutcomeKind::Failed,
+            delivery_may_have_occurred: false,
             provider_ref: None,
             retry_state: Some(reason.into()),
             receipt_fields: BTreeMap::new(),
@@ -769,6 +772,12 @@ impl OutboundExecutionOutcome {
     #[must_use]
     pub fn with_receipt_fields(mut self, fields: BTreeMap<String, String>) -> Self {
         self.receipt_fields.extend(fields);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_possible_delivery(mut self) -> Self {
+        self.delivery_may_have_occurred = true;
         self
     }
 }
@@ -829,6 +838,8 @@ pub enum OutboundDispatchError {
     InvalidBoundActor,
     #[error(transparent)]
     Engine(#[from] Error),
+    #[error(transparent)]
+    Chokepoint(#[from] crate::outbound_intent_ledger::IntentLedgerError),
 }
 
 /// Stateless O2 resolve -> gate -> window -> execute -> receipt pipeline.
@@ -1147,75 +1158,169 @@ impl OutboundDispatchPipeline {
                 .as_ref()
                 .is_none_or(|decision| matches!(decision.action, LinkedInSeatPolicyAction::Allow));
 
-        let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-        if let Some((actor, actor_class)) = verified_actor {
-            let entity_type = vault
-                .get_entity_type_in_txn(&wtxn, &actor)?
-                .ok_or(OutboundDispatchError::InvalidBoundActor)?;
-            crate::provenance::validate_actor_class(entity_type, actor_class)?;
-        }
-        let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-        let (gate_decision_id, gate_decision, effector_charge) =
-            gate::check_external_effect_policy(
+        let mut engine_receipt_fields = BTreeMap::new();
+        let mut engine_policy_trace = Vec::new();
+        let linkedin_action = linkedin_decision.take().map(|decision| {
+            engine_receipt_fields.extend(decision.receipt_fields);
+            engine_policy_trace.extend(decision.policy_trace);
+            decision.action
+        });
+
+        let (
+            gate_decision_ref,
+            gate_outcome_kind,
+            gate_outcome,
+            gate_reason_codes,
+            gate_receipt_reasons,
+            effector_charge,
+            effect_state,
+            outcome,
+            execution,
+        ) = if admit_for_execution {
+            let payload = serde_json::to_vec(&request.intent).map_err(|_| {
+                OutboundDispatchError::Engine(Error::InvariantViolation(
+                    "outbound intent freeze failed",
+                ))
+            })?;
+            let attempt_id = outbound_dispatch_attempt_id(&request.intent_ref)?;
+            let prepared = crate::outbound_chokepoint::PreparedEffect {
+                attempt_id,
+                call_seq: 0,
+                server: request.intent.channel.clone(),
+                tool: verb_contract.kind.clone(),
+                payload,
+                idempotency_supported: !matches!(
+                    verb_contract.retry_class,
+                    OutboundRetryClass::NonIdempotentInterrupt
+                ),
+                resolved_endpoint: None,
+                gate: effect,
+                budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
+                authorization: crate::outbound_chokepoint::PreparedAuthorization::None,
+                verified_actor,
+            };
+            let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
+            let mut transport = DispatchChokepointTransport::new(&request, verb_contract, sink);
+            let effect_result = crate::outbound_chokepoint::execute_outbound_effect(
+                vault,
+                &authority,
+                crate::outbound_chokepoint::OutboundEffectCommand::New(prepared),
+                request.occurred_at,
+                &mut transport,
+            )?;
+            let gate_outcome = effect_result
+                .gate_outcome
+                .clone()
+                .unwrap_or_else(|| "allow".to_owned());
+            let gate_outcome_kind = match gate_outcome.as_str() {
+                "allow" => GateOutcome::Allow,
+                "pending" => GateOutcome::Pending,
+                "deny" => GateOutcome::Deny,
+                _ => {
+                    return Err(OutboundDispatchError::Engine(Error::InvariantViolation(
+                        "invalid chokepoint gate outcome",
+                    )));
+                }
+            };
+            let outcome = match effect_result.dispatch.state {
+                Some(crate::outbound_intent_ledger::IntentState::Done) => {
+                    OutboundDispatchOutcome::DeliveredToChannel
+                }
+                Some(crate::outbound_intent_ledger::IntentState::Pending) => {
+                    if transport.execution.as_ref().is_some_and(|execution| {
+                        execution.kind == OutboundExecutionOutcomeKind::Failed
+                    }) {
+                        OutboundDispatchOutcome::Failed
+                    } else {
+                        OutboundDispatchOutcome::Held
+                    }
+                }
+                Some(crate::outbound_intent_ledger::IntentState::Abandoned) => {
+                    OutboundDispatchOutcome::Failed
+                }
+                None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
+                None => OutboundDispatchOutcome::Suppressed,
+            };
+            (
+                effect_result.gate_decision_id.unwrap_or_else(|| {
+                    format!(
+                        "intent:{}",
+                        crate::entity_id::bytes_to_hex_lower(attempt_id.as_bytes())
+                    )
+                }),
+                gate_outcome_kind,
+                gate_outcome,
+                effect_result.gate_reason_codes,
+                effect_result.gate_receipt_reasons,
+                effect_result.budget_charge,
+                effect_result.dispatch.state,
+                outcome,
+                transport.execution,
+            )
+        } else {
+            let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+            if let Some((actor, actor_class)) = verified_actor {
+                let entity_type = vault
+                    .get_entity_type_in_txn(&wtxn, &actor)?
+                    .ok_or(OutboundDispatchError::InvalidBoundActor)?;
+                crate::provenance::validate_actor_class(entity_type, actor_class)?;
+            }
+            let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+            let (gate_decision_id, gate_decision, _) = gate::check_external_effect_policy(
                 &vault.store,
                 &mut wtxn,
                 &effect,
                 &policy,
-                admit_for_execution,
+                false,
             )?;
-        wtxn.commit().map_err(Error::from)?;
-
-        let gate_outcome_kind = gate_decision.outcome();
-        let gate_outcome = gate_outcome_kind.as_str().to_owned();
-        let gate_reason_codes = gate_decision
-            .reason_codes()
-            .iter()
-            .map(|reason| reason.as_str().to_owned())
-            .collect::<Vec<_>>();
-        let gate_receipt_reasons = gate_decision
-            .receipt_reasons()
-            .iter()
-            .map(|reason| (*reason).to_owned())
-            .collect::<Vec<_>>();
-        let mut engine_receipt_fields = BTreeMap::new();
-        let mut engine_policy_trace = Vec::new();
-
-        let (outcome, execution) = match gate_outcome_kind {
-            GateOutcome::Allow => match &window_decision {
-                OutboundDeliveryWindowDecision::DeliverNow
-                | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. } => {
-                    if let Some(decision) = linkedin_decision.take() {
-                        engine_receipt_fields.extend(decision.receipt_fields);
-                        engine_policy_trace.extend(decision.policy_trace);
-                        match decision.action {
-                            LinkedInSeatPolicyAction::Allow => {
-                                let (outcome, execution) =
-                                    execute_outbound_request(&request, verb_contract, sink);
-                                (outcome, Some(execution))
+            wtxn.commit().map_err(Error::from)?;
+            let gate_outcome_kind = gate_decision.outcome();
+            let outcome = match gate_outcome_kind {
+                GateOutcome::Pending => OutboundDispatchOutcome::Held,
+                GateOutcome::Deny => OutboundDispatchOutcome::Suppressed,
+                GateOutcome::Allow => match &window_decision {
+                    OutboundDeliveryWindowDecision::Hold { .. } => OutboundDispatchOutcome::Held,
+                    OutboundDeliveryWindowDecision::Degrade { .. } => {
+                        OutboundDispatchOutcome::Degraded
+                    }
+                    OutboundDeliveryWindowDecision::LetGo { .. } => OutboundDispatchOutcome::LetGo,
+                    OutboundDeliveryWindowDecision::DeliverNow
+                    | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. } => {
+                        match linkedin_action {
+                            Some(LinkedInSeatPolicyAction::Hold) => OutboundDispatchOutcome::Held,
+                            Some(LinkedInSeatPolicyAction::Suppress) => {
+                                OutboundDispatchOutcome::Suppressed
                             }
-                            LinkedInSeatPolicyAction::Hold => (OutboundDispatchOutcome::Held, None),
-                            LinkedInSeatPolicyAction::Suppress => {
-                                (OutboundDispatchOutcome::Suppressed, None)
+                            Some(LinkedInSeatPolicyAction::Allow) | None => {
+                                return Err(OutboundDispatchError::Engine(
+                                    Error::InvariantViolation(
+                                        "admitted dispatch missed chokepoint",
+                                    ),
+                                ));
                             }
                         }
-                    } else {
-                        let (outcome, execution) =
-                            execute_outbound_request(&request, verb_contract, sink);
-                        (outcome, Some(execution))
                     }
-                }
-                OutboundDeliveryWindowDecision::Hold { .. } => {
-                    (OutboundDispatchOutcome::Held, None)
-                }
-                OutboundDeliveryWindowDecision::Degrade { .. } => {
-                    (OutboundDispatchOutcome::Degraded, None)
-                }
-                OutboundDeliveryWindowDecision::LetGo { .. } => {
-                    (OutboundDispatchOutcome::LetGo, None)
-                }
-            },
-            GateOutcome::Pending => (OutboundDispatchOutcome::Held, None),
-            GateOutcome::Deny => (OutboundDispatchOutcome::Suppressed, None),
+                },
+            };
+            (
+                format!("gate:{}", gate_decision_id.to_hex()),
+                gate_outcome_kind,
+                gate_outcome_kind.as_str().to_owned(),
+                gate_decision
+                    .reason_codes()
+                    .iter()
+                    .map(|reason| reason.as_str().to_owned())
+                    .collect(),
+                gate_decision
+                    .receipt_reasons()
+                    .iter()
+                    .map(|reason| (*reason).to_owned())
+                    .collect(),
+                None,
+                None,
+                outcome,
+                None,
+            )
         };
 
         let mut receipt = outbound_intent_receipt(
@@ -1233,7 +1338,6 @@ impl OutboundDispatchPipeline {
             .extend(gate_receipt_reasons.iter().cloned());
         receipt.policy_trace.push(window_decision.policy_trace());
         receipt.policy_trace.extend(engine_policy_trace);
-        let gate_decision_ref = format!("gate:{}", gate_decision_id.to_hex());
         receipt
             .fields
             .insert("gate_decision_ref".to_owned(), gate_decision_ref.clone());
@@ -1248,6 +1352,11 @@ impl OutboundDispatchPipeline {
                 "gate_receipt_reasons".to_owned(),
                 gate_receipt_reasons.join(","),
             );
+        }
+        if let Some(effect_state) = effect_state {
+            receipt
+                .fields
+                .insert("intent_state".to_owned(), effect_state.as_str().to_owned());
         }
         // GOV-02 (ONE-1418) budget legibility: stamped only when a governing
         // connector key's budget stage ran. `budget_debit`/`budget` are the
@@ -1644,21 +1753,36 @@ impl Vault {
                     )?;
                 }
                 OutboundDispatchOutcome::Failed => {
-                    persist_send_receipt(
-                        self,
-                        task_ref,
-                        result.receipt,
-                        SendReceiptOutcome::Failed,
-                        false,
-                        None,
-                    )?;
-                    fail_connector_task_attempt(&queue, &attempt, now, "transport_failed")?;
-                    project_connector_send_task_outcome(
-                        self,
-                        task_ref,
-                        ConnectorSendTaskOutcome::Failed,
-                        now,
-                    )?;
+                    if result
+                        .receipt
+                        .fields
+                        .get("intent_state")
+                        .map(String::as_str)
+                        == Some("pending")
+                    {
+                        retry_connector_task_attempt(
+                            &queue,
+                            &attempt,
+                            now,
+                            "transport_failed_pending",
+                        )?;
+                    } else {
+                        persist_send_receipt(
+                            self,
+                            task_ref,
+                            result.receipt,
+                            SendReceiptOutcome::Failed,
+                            false,
+                            None,
+                        )?;
+                        fail_connector_task_attempt(&queue, &attempt, now, "transport_failed")?;
+                        project_connector_send_task_outcome(
+                            self,
+                            task_ref,
+                            ConnectorSendTaskOutcome::Failed,
+                            now,
+                        )?;
+                    }
                 }
             }
         }
@@ -1855,27 +1979,88 @@ fn retry_connector_task_attempt(
     Ok(())
 }
 
-fn execute_outbound_request<S: OutboundExecutionSink>(
-    request: &OutboundDispatchRequest,
+struct DispatchChokepointTransport<'a, S> {
+    request: &'a OutboundDispatchRequest,
     verb_contract: &'static OutboundVerbContract,
-    sink: &mut S,
-) -> (OutboundDispatchOutcome, OutboundExecutionOutcome) {
-    let execution_request = OutboundExecutionRequest {
-        intent_ref: &request.intent_ref,
-        intent: &request.intent,
-        idempotency_key: request.intent.idempotency_key.as_deref(),
-        verb_contract,
-        channel_identity_ref: request.channel_identity_ref,
-        counterparty_ref: request.counterparty_ref.as_deref(),
-    };
-    let execution = sink.execute(&execution_request);
-    let outcome = match execution.kind {
-        OutboundExecutionOutcomeKind::DeliveredToChannel => {
-            OutboundDispatchOutcome::DeliveredToChannel
+    sink: &'a mut S,
+    execution: Option<OutboundExecutionOutcome>,
+}
+
+impl<'a, S> DispatchChokepointTransport<'a, S> {
+    fn new(
+        request: &'a OutboundDispatchRequest,
+        verb_contract: &'static OutboundVerbContract,
+        sink: &'a mut S,
+    ) -> Self {
+        Self {
+            request,
+            verb_contract,
+            sink,
+            execution: None,
         }
-        OutboundExecutionOutcomeKind::Failed => OutboundDispatchOutcome::Failed,
-    };
-    (outcome, execution)
+    }
+}
+
+impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
+    for DispatchChokepointTransport<'_, S>
+{
+    fn send(
+        &mut self,
+        call: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    ) -> crate::outbound_intent_ledger::OutboundSendOutcome {
+        if call.server() != self.request.intent.channel
+            || call.tool() != self.verb_contract.kind
+            || call.resolved_endpoint().is_some()
+        {
+            return crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
+                crate::outbound_intent_ledger::OutboundSendFailure {
+                    kind: crate::outbound_intent_ledger::OutboundFailureKind::InvalidRequest,
+                    code: None,
+                },
+            );
+        }
+        let execution_request = OutboundExecutionRequest {
+            intent_ref: &self.request.intent_ref,
+            intent: &self.request.intent,
+            idempotency_key: call.idempotency_key(),
+            verb_contract: self.verb_contract,
+            channel_identity_ref: self.request.channel_identity_ref,
+            counterparty_ref: self.request.counterparty_ref.as_deref(),
+        };
+        let execution = self.sink.execute(&execution_request);
+        let outcome = match execution.kind {
+            OutboundExecutionOutcomeKind::DeliveredToChannel => {
+                crate::outbound_intent_ledger::OutboundSendOutcome::Acked
+            }
+            OutboundExecutionOutcomeKind::Failed if execution.delivery_may_have_occurred => {
+                crate::outbound_intent_ledger::OutboundSendOutcome::Ambiguous
+            }
+            OutboundExecutionOutcomeKind::Failed => {
+                crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
+                    crate::outbound_intent_ledger::OutboundSendFailure {
+                        kind:
+                            crate::outbound_intent_ledger::OutboundFailureKind::TransportNotStarted,
+                        code: None,
+                    },
+                )
+            }
+        };
+        self.execution = Some(execution);
+        outcome
+    }
+}
+
+fn outbound_dispatch_attempt_id(
+    intent_ref: &str,
+) -> std::result::Result<crate::attempt_queue::AttemptId, OutboundDispatchError> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron.outbound.dispatch_attempt.v1");
+    hasher.update(&(intent_ref.len() as u64).to_le_bytes());
+    hasher.update(intent_ref.as_bytes());
+    let bytes: [u8; 16] = hasher.finalize().as_bytes()[..16]
+        .try_into()
+        .expect("BLAKE3 prefix length is fixed");
+    crate::attempt_queue::AttemptId::from_bytes(&bytes).map_err(OutboundDispatchError::Engine)
 }
 
 fn outbound_dispatch_policy_risk(

@@ -10,17 +10,13 @@ use std::fmt;
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::connector_key::{
-    self, ConnectorKeyStatus, EffectorBudgetChargeOutcome, EffectorBudgetOnExhaust,
-};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_grant::{StandingOutboundGrant, StandingOutboundGrantScope};
 use crate::outbound_intent_ledger::{
     FrozenOutboundCall, IntentDispatchResult, IntentLedgerError, IntentRecoveryReport, IntentState,
-    OutboundAuthorizationBinding, OutboundCallClass, OutboundCallRequest, OutboundSendFailure,
-    OutboundSendOutcome, OutboundSender, OutboundToolDescriptor, classify_outbound_tool,
-    derive_intent_id, execute_outbound_call, intent_ledger_records, recover_outbound_intents,
+    OutboundAuthorizationBinding, OutboundCallClass, OutboundSendOutcome, OutboundToolDescriptor,
+    classify_outbound_tool, derive_intent_id,
 };
 use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
 
@@ -359,6 +355,16 @@ impl FrozenMcpPayload {
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
+
+    #[cfg(test)]
+    pub(crate) const fn freeze_event_baseline(&self) -> usize {
+        self.freeze_event_baseline
+    }
+
+    #[cfg(test)]
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
 }
 
 impl fmt::Debug for FrozenMcpPayload {
@@ -396,7 +402,7 @@ impl OutboundBindingAuthority {
     #[must_use]
     pub fn from_secret(secret: [u8; 32]) -> Self {
         Self {
-            key: blake3::derive_key("oneiron.outbound.authorization_binding.v1", &secret),
+            key: blake3::derive_key("oneiron.outbound.authorization_binding.v2", &secret),
         }
     }
 
@@ -430,10 +436,9 @@ impl OutboundBindingAuthority {
                 binding: None,
             });
         }
-        let current_policy_floor = {
-            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-            crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?
-        };
+        let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+        let current_policy_floor =
+            crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?;
         let decision = if grant.is_active_under_policy(&current_policy_floor) {
             grant.scope.scoped_mcp_grant().map_or(
                 ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant),
@@ -464,11 +469,54 @@ impl OutboundBindingAuthority {
             &call.server,
             &call.tool,
             &payload_hash,
+            Some(&call.resolved_endpoint),
         );
         Ok(ScopedMcpAuthorization {
             decision,
             binding: Some(binding),
         })
+    }
+
+    /// Mints the v2 binding from the same serialized write snapshot that
+    /// admitted and accounted the new effect.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn mint_scoped_binding_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        grant_id: EntityId,
+        principal_ref: &str,
+        intent_id: &[u8; 32],
+        call: &ScopedMcpCallContext,
+        payload_hash: &[u8; 32],
+    ) -> std::result::Result<Option<OutboundAuthorizationBinding>, IntentLedgerError> {
+        let Some(grant) =
+            crate::outbound_grant::standing_outbound_grant_in_txn(&vault.store, txn, &grant_id)?
+        else {
+            return Ok(None);
+        };
+        if grant.principal_ref != principal_ref {
+            return Ok(None);
+        }
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+        if !grant.is_active_under_policy(&policy.read_frontier_hash()?) {
+            return Ok(None);
+        }
+        let Some(scope) = grant.scope.scoped_mcp_grant() else {
+            return Ok(None);
+        };
+        if evaluate_scoped_mcp_call(scope, call.as_call()) != ScopedMcpConsentDecision::AutoFire {
+            return Ok(None);
+        }
+        Ok(Some(self.binding_for_identity(
+            grant_id,
+            &grant,
+            intent_id,
+            &call.server,
+            &call.tool,
+            payload_hash,
+            Some(&call.resolved_endpoint),
+        )))
     }
 
     /// Re-validates authenticity and current grant liveness immediately
@@ -479,7 +527,7 @@ impl OutboundBindingAuthority {
         call: &FrozenOutboundCall,
     ) -> Result<OutboundBindingValidation> {
         Ok(match self.validate_frozen_call_grant(vault, call)? {
-            FrozenCallValidation::Valid { .. } => OutboundBindingValidation::Valid,
+            FrozenCallValidation::Valid => OutboundBindingValidation::Valid,
             FrozenCallValidation::Rejected(validation) => validation,
         })
     }
@@ -489,6 +537,28 @@ impl OutboundBindingAuthority {
         vault: &Vault,
         call: &FrozenOutboundCall,
     ) -> Result<FrozenCallValidation> {
+        self.validate_frozen_call_grant_with_liveness(vault, call, true)
+    }
+
+    pub(crate) fn validate_frozen_call_grant_for_recovery(
+        &self,
+        vault: &Vault,
+        call: &FrozenOutboundCall,
+    ) -> Result<FrozenCallValidation> {
+        self.validate_frozen_call_grant_with_liveness(vault, call, false)
+    }
+
+    fn validate_frozen_call_grant_with_liveness(
+        &self,
+        vault: &Vault,
+        call: &FrozenOutboundCall,
+        require_live_grant: bool,
+    ) -> Result<FrozenCallValidation> {
+        if call.binding_version() != crate::outbound_intent_ledger::OUTBOUND_BINDING_VERSION {
+            return Ok(FrozenCallValidation::Rejected(
+                OutboundBindingValidation::Invalid,
+            ));
+        }
         let Some(binding) = call.authorization_binding() else {
             return Ok(FrozenCallValidation::Rejected(
                 OutboundBindingValidation::Missing,
@@ -499,9 +569,11 @@ impl OutboundBindingAuthority {
                 OutboundBindingValidation::Invalid,
             ));
         };
-        let current_policy_floor = {
+        let current_policy_floor = if require_live_grant {
             let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-            crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?
+            Some(crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?)
+        } else {
+            None
         };
         for grant_id in vault.entities_by_type(ENTITY_TYPE_OUTBOUND_GRANT)? {
             let Some(grant) = vault.get_standing_outbound_grant(&grant_id)? else {
@@ -514,11 +586,15 @@ impl OutboundBindingAuthority {
                 call.server(),
                 call.tool(),
                 call.payload_hash(),
+                call.resolved_endpoint(),
             );
             if !constant_time_eq(binding.as_bytes(), expected.as_bytes()) {
                 continue;
             }
-            if !grant.is_active_under_policy(&current_policy_floor) {
+            if current_policy_floor
+                .as_ref()
+                .is_some_and(|floor| !grant.is_active_under_policy(floor))
+            {
                 return Ok(FrozenCallValidation::Rejected(
                     OutboundBindingValidation::GrantNotLive,
                 ));
@@ -533,20 +609,25 @@ impl OutboundBindingAuthority {
                     OutboundBindingValidation::Invalid,
                 ));
             }
-            return Ok(FrozenCallValidation::Valid {
-                grant_id,
-                grant: Box::new(grant),
-            });
+            if call.resolved_endpoint().is_none_or(|endpoint| {
+                !scope
+                    .endpoint_allowlist
+                    .iter()
+                    .any(|allowed| allowed == endpoint)
+            }) {
+                return Ok(FrozenCallValidation::Rejected(
+                    OutboundBindingValidation::Invalid,
+                ));
+            }
+            return Ok(FrozenCallValidation::Valid);
         }
         Ok(FrozenCallValidation::Rejected(
             OutboundBindingValidation::Invalid,
         ))
     }
 
-    /// Commits the granting scope digest, including its endpoint allowlist and
-    /// data-class ceiling, but does not bind the specific per-call endpoint or
-    /// data class. That commitment is deferred until the live transport's
-    /// ledger record carries those axes.
+    /// Commits the granting scope digest and the selected per-call endpoint.
+    #[expect(clippy::too_many_arguments)]
     fn binding_for_identity(
         &self,
         grant_id: EntityId,
@@ -555,14 +636,24 @@ impl OutboundBindingAuthority {
         server: &str,
         tool: &str,
         payload_hash: &[u8; 32],
+        resolved_endpoint: Option<&str>,
     ) -> OutboundAuthorizationBinding {
         let mut hasher = blake3::Hasher::new_keyed(&self.key);
-        binding_hash_bytes(&mut hasher, b"oneiron.outbound.authorization_binding.v1");
+        binding_hash_bytes(&mut hasher, b"oneiron.outbound.authorization_binding.v2");
         binding_hash_bytes(&mut hasher, grant_id.as_bytes());
         binding_hash_bytes(&mut hasher, intent_id);
         binding_hash_str(&mut hasher, server);
         binding_hash_str(&mut hasher, tool);
         binding_hash_bytes(&mut hasher, payload_hash);
+        match resolved_endpoint {
+            Some(endpoint) => {
+                hasher.update(&[1]);
+                binding_hash_str(&mut hasher, endpoint);
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
         binding_hash_bytes(&mut hasher, &grant_scope_binding_digest(grant));
         OutboundAuthorizationBinding::new(*hasher.finalize().as_bytes())
     }
@@ -592,11 +683,8 @@ pub enum OutboundBindingValidation {
     GrantNotLive,
 }
 
-enum FrozenCallValidation {
-    Valid {
-        grant_id: EntityId,
-        grant: Box<StandingOutboundGrant>,
-    },
+pub(crate) enum FrozenCallValidation {
+    Valid,
     Rejected(OutboundBindingValidation),
 }
 
@@ -631,13 +719,6 @@ impl fmt::Debug for ScopedMcpDispatchResult {
     }
 }
 
-impl ScopedMcpDispatchResult {
-    #[cfg(test)]
-    pub(crate) fn checked_bytes(&self) -> &[u8] {
-        &self.checked_bytes
-    }
-}
-
 /// Runs one scoped call through the intent ledger and authenticated result
 /// sender. Scope-exceeds return without constructing a ledger request.
 #[expect(clippy::too_many_arguments)]
@@ -660,137 +741,172 @@ pub(crate) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     let freeze_event_baseline = payload.freeze_event_baseline;
     #[cfg(not(test))]
     let freeze_event_baseline = ();
-    let authorization = authority.authorize_request(
+    let _ = grant;
+    let actor_entity_ref = Some(EntityId::from_hex(principal_ref).unwrap_or(grant_id));
+    let gate = crate::gate::ExternalEffectGateInput {
+        actor: crate::gate::GateActor {
+            actor_class: "first_party".to_owned(),
+            actor_ref: Some(principal_ref.to_owned()),
+        },
+        provenance: crate::gate::GateProvenanceHandles {
+            actor_entity_ref,
+            ..crate::gate::GateProvenanceHandles::default()
+        },
+        verb: "send".to_owned(),
+        channel: format!("mcp:{}", call.server),
+        channel_identity_ref: None,
+        counterparty: None,
+        brief_ref: None,
+        send_ref: None,
+        standing_grant_ref: None,
+        scoped_mcp_call: Some(call.clone()),
+        counterparty_first_touch: None,
+        counterparty_opted_out: false,
+        counterparty_opt_out_receipt_reason: None,
+        has_opted_in: false,
+        has_permission: false,
+        policy_risk: crate::gate::ExternalEffectPolicyRisk::Normal,
+    };
+    let idempotency_supported = descriptor.idempotency_supported()
+        || classify_outbound_tool(descriptor) == OutboundCallClass::ReadOnly;
+    let prepared = crate::outbound_chokepoint::PreparedEffect {
+        attempt_id,
+        call_seq,
+        server: call.server.clone(),
+        tool: call.tool.clone(),
+        payload: payload.bytes,
+        idempotency_supported,
+        resolved_endpoint: Some(call.resolved_endpoint.clone()),
+        gate,
+        budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
+        authorization: crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
+            grant_id,
+            principal_ref: principal_ref.to_owned(),
+            call: call.clone(),
+        },
+        verified_actor: None,
+    };
+    let mut transport = ScopedResultTransport::new(sender);
+    let effect = crate::outbound_chokepoint::execute_outbound_effect(
         vault,
-        grant_id,
-        grant,
-        principal_ref,
-        attempt_id,
-        call_seq,
-        &call,
-        &payload.bytes,
-    )?;
-    let Some(binding) = authorization.binding else {
-        return Ok(ScopedMcpDispatchResult {
-            decision: authorization.decision,
-            dispatch: None,
-            freeze_events: observed_freeze_events_since(freeze_event_baseline),
-            effectful_sends: 0,
-            authorization_rejections: 0,
-            scrubbable_result_fields: 0,
-            scrubbed_result_fields: 0,
-            checked_bytes: Vec::new(),
-        });
-    };
-
-    let connector_key_denial = |reason| ScopedMcpDispatchResult {
-        decision: ScopedMcpConsentDecision::Escalate(reason),
-        dispatch: None,
-        freeze_events: observed_freeze_events_since(freeze_event_baseline),
-        effectful_sends: 0,
-        authorization_rejections: 0,
-        scrubbable_result_fields: 0,
-        scrubbed_result_fields: 0,
-        checked_bytes: Vec::new(),
-    };
-    // The full opt-in/permission/risk/counterparty/identity policy gate runs
-    // at the transport dispatch seam under ONE-1794. This is the sole
-    // connector-key charge for a direct call; that seam must coordinate to
-    // avoid charging the same dispatch twice.
-    let governing_connector =
-        crate::gate::scoped_mcp_credential_connector_key(&call.server, &grant_id);
-    let actor_entity_ref = EntityId::from_hex(principal_ref).ok();
-    let payload_hash = *blake3::hash(&payload.bytes).as_bytes();
-    let intent_id = derive_intent_id(
-        attempt_id,
-        call_seq,
-        &call.server,
-        &call.tool,
-        &payload_hash,
-    )?;
-    let replayed_done = intent_ledger_records(vault)?
-        .iter()
-        .any(|record| record.id == intent_id && record.state == IntentState::Done);
-    let send_like = classify_outbound_tool(descriptor) == OutboundCallClass::Effectful;
-    let budget_now = crate::unix_seconds_now();
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    let Some((key_id, mut key)) = connector_key::governing_connector_key(
-        &vault.store,
-        &wtxn,
-        &governing_connector,
-        actor_entity_ref.as_ref(),
-    )?
-    else {
-        return Ok(connector_key_denial(
-            ScopedMcpEscalationReason::ConnectorKeyUnregistered,
-        ));
-    };
-    if let Some(reason) = connector_key_policy_denial(&key, &governing_connector, &call.tool)? {
-        return Ok(connector_key_denial(reason));
-    }
-    if replayed_done {
-        drop(wtxn);
-    } else {
-        match connector_key::charge_effector_budgets(
-            &vault.store,
-            &mut wtxn,
-            &key_id,
-            &mut key,
-            &governing_connector,
-            send_like,
-            budget_now,
-        )? {
-            EffectorBudgetChargeOutcome::NoRows(_) | EffectorBudgetChargeOutcome::Charged(_) => {
-                wtxn.commit().map_err(Error::from)?;
-            }
-            EffectorBudgetChargeOutcome::Exhausted {
-                row_index,
-                on_exhaust,
-                ..
-            } => {
-                if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                    connector_key::suspend_connector_key_in_txn(
-                        &vault.store,
-                        &mut wtxn,
-                        &key_id,
-                        &key,
-                        connector_key::budget_exhausted_reason(row_index),
-                        budget_now,
-                    )?;
-                    wtxn.commit().map_err(Error::from)?;
-                }
-                return Ok(connector_key_denial(
-                    ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted,
-                ));
-            }
-        }
-    }
-
-    let request = OutboundCallRequest::new(
-        attempt_id,
-        call_seq,
-        call.server,
-        call.tool,
-        payload.bytes,
+        authority,
+        crate::outbound_chokepoint::OutboundEffectCommand::New(prepared),
         now_ms,
-    )
-    .with_authorization_binding(binding);
-    let mut authenticated = AuthenticatedResultSender::new(vault, authority, sender);
-    let dispatch = execute_outbound_call(vault, descriptor, request, &mut authenticated)?;
+        &mut transport,
+    )?;
+    let decision = scoped_decision_after_effect(vault, grant_id, principal_ref, &call, &effect)?;
+    let authorization_rejections = usize::from(
+        effect.dispatch.state == Some(IntentState::Abandoned)
+            || (effect.dispatch.state == Some(IntentState::Pending)
+                && effect.dispatch.send_outcome.is_none()
+                && effect.dispatch.replayed),
+    );
+    let dispatch = (effect.dispatch.state.is_some()
+        || effect.dispatch.send_outcome.is_some()
+        || effect.dispatch.replayed)
+        .then_some(effect.dispatch);
     Ok(ScopedMcpDispatchResult {
-        decision: authorization.decision,
-        dispatch: Some(dispatch),
+        decision,
+        dispatch,
         freeze_events: observed_freeze_events_since(freeze_event_baseline),
-        effectful_sends: authenticated.effectful_sends,
-        authorization_rejections: authenticated.authorization_rejections,
-        scrubbable_result_fields: authenticated.scrubbable_result_fields,
-        scrubbed_result_fields: authenticated.scrubbed_result_fields,
-        checked_bytes: authenticated.checked_bytes,
+        effectful_sends: transport.effectful_sends,
+        authorization_rejections,
+        scrubbable_result_fields: transport.scrubbable_result_fields,
+        scrubbed_result_fields: transport.scrubbed_result_fields,
+        checked_bytes: transport.checked_bytes,
     })
 }
 
+fn scoped_decision_after_effect(
+    vault: &Vault,
+    grant_id: EntityId,
+    principal_ref: &str,
+    call: &ScopedMcpCallContext,
+    effect: &crate::outbound_chokepoint::OutboundEffectResult,
+) -> std::result::Result<ScopedMcpConsentDecision, IntentLedgerError> {
+    let connector_reason =
+        effect
+            .gate_receipt_reasons
+            .iter()
+            .find_map(|reason| match reason.as_str() {
+                "connector_key_unregistered" => {
+                    Some(ScopedMcpEscalationReason::ConnectorKeyUnregistered)
+                }
+                "connector_key_pending" => Some(ScopedMcpEscalationReason::ConnectorKeyPending),
+                "connector_key_suspended" => Some(ScopedMcpEscalationReason::ConnectorKeySuspended),
+                "connector_key_revoked" => Some(ScopedMcpEscalationReason::ConnectorKeyRevoked),
+                "charter_drift" => Some(ScopedMcpEscalationReason::ConnectorKeyCharterDrift),
+                "charter_never_list" => {
+                    Some(ScopedMcpEscalationReason::ConnectorKeyCharterNeverList)
+                }
+                "effector_budget_exhausted" => {
+                    Some(ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted)
+                }
+                _ => None,
+            });
+    if let Some(reason) = connector_reason {
+        return Ok(ScopedMcpConsentDecision::Escalate(reason));
+    }
+    if effect
+        .dispatch
+        .escalation
+        .as_ref()
+        .is_some_and(|escalation| {
+            escalation.reason
+                == crate::outbound_intent_ledger::IntentEscalationReason::ConnectorRevoked
+        })
+    {
+        return Ok(ScopedMcpConsentDecision::Escalate(
+            ScopedMcpEscalationReason::ConnectorKeyRevoked,
+        ));
+    }
+    if effect
+        .dispatch
+        .escalation
+        .as_ref()
+        .is_some_and(|escalation| {
+            escalation.reason
+                == crate::outbound_intent_ledger::IntentEscalationReason::BindingInvalid
+        })
+    {
+        return Ok(ScopedMcpConsentDecision::Escalate(
+            ScopedMcpEscalationReason::InvalidGrant,
+        ));
+    }
+    if effect
+        .gate_outcome
+        .as_deref()
+        .is_none_or(|outcome| outcome == "allow")
+    {
+        return Ok(ScopedMcpConsentDecision::AutoFire);
+    }
+    let Some(grant) = vault.get_standing_outbound_grant(&grant_id)? else {
+        return Ok(ScopedMcpConsentDecision::Escalate(
+            ScopedMcpEscalationReason::InvalidGrant,
+        ));
+    };
+    if grant.principal_ref != principal_ref {
+        return Ok(ScopedMcpConsentDecision::Escalate(
+            ScopedMcpEscalationReason::WrongPrincipal,
+        ));
+    }
+    let current_policy_floor = {
+        let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+        crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?
+    };
+    if !grant.is_active_under_policy(&current_policy_floor) {
+        return Ok(ScopedMcpConsentDecision::Escalate(
+            ScopedMcpEscalationReason::InvalidGrant,
+        ));
+    }
+    Ok(grant.scope.scoped_mcp_grant().map_or(
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant),
+        |scope| evaluate_scoped_mcp_call(scope, call.as_call()),
+    ))
+}
+
 #[cfg(test)]
-fn observed_freeze_events_since(baseline: usize) -> usize {
+pub(crate) fn observed_freeze_events_since(baseline: usize) -> usize {
     FROZEN_MCP_PAYLOAD_FREEZE_EVENTS.with(|counter| counter.get().wrapping_sub(baseline))
 }
 
@@ -800,70 +916,33 @@ const fn observed_freeze_events_since(_baseline: ()) -> usize {
     0
 }
 
-struct AuthenticatedResultSender<'a, S> {
-    vault: &'a Vault,
-    authority: &'a OutboundBindingAuthority,
+struct ScopedResultTransport<'a, S> {
     inner: &'a mut S,
     effectful_sends: usize,
-    authorization_rejections: usize,
     scrubbable_result_fields: usize,
     scrubbed_result_fields: usize,
     checked_bytes: Vec<u8>,
-    recovery_connector_wall: bool,
 }
 
-impl<'a, S> AuthenticatedResultSender<'a, S> {
-    fn new(vault: &'a Vault, authority: &'a OutboundBindingAuthority, inner: &'a mut S) -> Self {
+impl<'a, S> ScopedResultTransport<'a, S> {
+    fn new(inner: &'a mut S) -> Self {
         Self {
-            vault,
-            authority,
             inner,
             effectful_sends: 0,
-            authorization_rejections: 0,
             scrubbable_result_fields: 0,
             scrubbed_result_fields: 0,
             checked_bytes: Vec::new(),
-            recovery_connector_wall: false,
-        }
-    }
-
-    fn for_recovery(
-        vault: &'a Vault,
-        authority: &'a OutboundBindingAuthority,
-        inner: &'a mut S,
-    ) -> Self {
-        Self {
-            recovery_connector_wall: true,
-            ..Self::new(vault, authority, inner)
         }
     }
 }
 
-impl<S: OutboundResultSender> OutboundSender for AuthenticatedResultSender<'_, S> {
+impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
+    for ScopedResultTransport<'_, S>
+{
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
-        if call.intent_id().is_some() {
-            self.checked_bytes = call.payload().to_vec();
-        }
-        if call.intent_id().is_some() {
-            let validation = self.authority.validate_frozen_call_grant(self.vault, call);
-            let Ok(FrozenCallValidation::Valid { grant_id, grant }) = validation else {
-                self.authorization_rejections = self.authorization_rejections.saturating_add(1);
-                return authorization_rejected_outcome();
-            };
-            if self.recovery_connector_wall
-                && !matches!(
-                    recovery_connector_key_denial(self.vault, grant_id, &grant, call),
-                    Ok(None)
-                )
-            {
-                self.authorization_rejections = self.authorization_rejections.saturating_add(1);
-                return authorization_rejected_outcome();
-            }
-        }
+        self.checked_bytes = call.payload().to_vec();
         let transport = self.inner.send(call);
-        if call.intent_id().is_some() {
-            self.effectful_sends = self.effectful_sends.saturating_add(1);
-        }
+        self.effectful_sends = self.effectful_sends.saturating_add(1);
         let scrubbable = transport.raw_result.scrubbable_field_count();
         let scrubbed = scrub_outbound_result(transport.raw_result).scrubbed_field_count();
         self.scrubbable_result_fields = self.scrubbable_result_fields.saturating_add(scrubbable);
@@ -917,17 +996,98 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
         return Err(AuthorizedRecoveryError::LeaseHeld);
     }
 
-    let mut authenticated = AuthenticatedResultSender::for_recovery(vault, authority, sender);
-    let recovered = recover_outbound_intents(vault, &mut authenticated, now_ms);
+    let mut transport = ScopedResultTransport::new(sender);
+    let recovered = (|| -> std::result::Result<_, AuthorizedRecoveryError> {
+        let entries = crate::outbound_intent_ledger::intent_recovery_entries(vault)?;
+        let mut report = IntentRecoveryReport {
+            scanned: entries.len(),
+            ..IntentRecoveryReport::default()
+        };
+        let mut authorization_rejections = 0_usize;
+        for entry in entries {
+            let record = match entry {
+                crate::outbound_intent_ledger::IntentRecoveryEntry::Valid(record) => record,
+                crate::outbound_intent_ledger::IntentRecoveryEntry::Corrupt(intent_id) => {
+                    report
+                        .escalations
+                        .push(crate::outbound_intent_ledger::IntentEscalation {
+                        intent_id,
+                        reason:
+                            crate::outbound_intent_ledger::IntentEscalationReason::CorruptLedgerRow,
+                    });
+                    continue;
+                }
+            };
+            let original_state = record.state;
+            let sends_before = transport.effectful_sends;
+            let result = crate::outbound_chokepoint::execute_outbound_effect(
+                vault,
+                authority,
+                crate::outbound_chokepoint::OutboundEffectCommand::Resume(record.id),
+                now_ms,
+                &mut transport,
+            )?;
+            let sent = transport.effectful_sends > sends_before;
+            match original_state {
+                IntentState::Done => report.skipped_done = report.skipped_done.saturating_add(1),
+                IntentState::Abandoned => {
+                    report.skipped_abandoned = report.skipped_abandoned.saturating_add(1);
+                    if let Some(escalation) = result.dispatch.escalation {
+                        report.escalations.push(escalation);
+                    }
+                }
+                IntentState::Pending => {
+                    if sent {
+                        report.resent = report.resent.saturating_add(1);
+                    }
+                    match result.dispatch.state {
+                        Some(IntentState::Done) => {
+                            report.completed = report.completed.saturating_add(1);
+                        }
+                        Some(IntentState::Pending) => {
+                            report.pending = report.pending.saturating_add(1);
+                            if !sent && result.dispatch.send_outcome.is_none() {
+                                authorization_rejections =
+                                    authorization_rejections.saturating_add(1);
+                            }
+                            if let Some(OutboundSendOutcome::Failed(failure)) =
+                                result.dispatch.send_outcome
+                            {
+                                report.failures.push(
+                                    crate::outbound_intent_ledger::IntentRecoveryFailure {
+                                        intent_id: record.id,
+                                        failure,
+                                    },
+                                );
+                            }
+                        }
+                        Some(IntentState::Abandoned) => {
+                            authorization_rejections = authorization_rejections.saturating_add(1);
+                            if let Some(escalation) = result.dispatch.escalation {
+                                report.escalations.push(escalation);
+                            }
+                        }
+                        None => {
+                            return Err(IntentLedgerError::InvalidRecord(
+                                "resume returned no durable state",
+                            )
+                            .into());
+                        }
+                    }
+                }
+            }
+        }
+        Ok((report, authorization_rejections))
+    })();
     let release = release_authorized_recovery_lease(vault, token);
-    let ledger = recovered?;
+    let (ledger, authorization_rejections) = recovered?;
     release?;
     Ok(AuthorizedRecoveryReport {
         ledger,
-        effectful_sends: authenticated.effectful_sends,
-        authorization_rejections: authenticated.authorization_rejections,
-        scrubbable_result_fields: authenticated.scrubbable_result_fields,
-        scrubbed_result_fields: authenticated.scrubbed_result_fields,
+        effectful_sends: transport.effectful_sends,
+        authorization_rejections,
+        scrubbable_result_fields: transport.scrubbable_result_fields,
+        scrubbed_result_fields: transport.scrubbed_result_fields,
     })
 }
 
@@ -1080,87 +1240,6 @@ fn constant_time_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
             difference | (left ^ right)
         })
         == 0
-}
-
-fn authorization_rejected_outcome() -> OutboundSendOutcome {
-    OutboundSendOutcome::Failed(OutboundSendFailure {
-        kind: crate::outbound_intent_ledger::OutboundFailureKind::Rejected,
-        code: None,
-    })
-}
-
-fn connector_key_policy_denial(
-    key: &connector_key::ConnectorKeyRecord,
-    governing_connector: &str,
-    effect_verb: &str,
-) -> Result<Option<ScopedMcpEscalationReason>> {
-    if let Some(reason) = connector_key_status_denial(key.status) {
-        return Ok(Some(reason));
-    }
-    let Some(charter) = key.charter.as_ref() else {
-        return Ok(None);
-    };
-    if connector_key::charter_block_drifted(charter)? {
-        return Ok(Some(ScopedMcpEscalationReason::ConnectorKeyCharterDrift));
-    }
-    // Charter never-list entries are format-validated as `channel:verb` (a
-    // single-colon split); a synthetic `mcp:{server}:grant:{hex}` key cannot be
-    // encoded into one, so this call is a documented no-op for colon-laden MCP
-    // keys — it becomes effective only for a future non-colon governing key. The
-    // status, charter-drift, and budget dimensions carry the direct-send
-    // governance today. (Residual: colon-safe never-list charter encoding.)
-    if connector_key::charter_never_list_matches(charter, governing_connector, effect_verb) {
-        return Ok(Some(
-            ScopedMcpEscalationReason::ConnectorKeyCharterNeverList,
-        ));
-    }
-    Ok(None)
-}
-
-fn recovery_connector_key_denial(
-    vault: &Vault,
-    grant_id: EntityId,
-    grant: &StandingOutboundGrant,
-    call: &FrozenOutboundCall,
-) -> Result<Option<ScopedMcpEscalationReason>> {
-    let governing_connector =
-        crate::gate::scoped_mcp_credential_connector_key(call.server(), &grant_id);
-    let actor_entity_ref = EntityId::from_hex(&grant.principal_ref).ok();
-    let Some((_key_id, key)) =
-        vault.connector_key_for(&governing_connector, actor_entity_ref.as_ref())?
-    else {
-        return Ok(Some(ScopedMcpEscalationReason::ConnectorKeyUnregistered));
-    };
-    if let Some(reason) = connector_key_policy_denial(&key, &governing_connector, call.tool())? {
-        return Ok(Some(reason));
-    }
-
-    let Some(read) = vault.effector_budget_read(&governing_connector, actor_entity_ref.as_ref())?
-    else {
-        return Ok(Some(ScopedMcpEscalationReason::ConnectorKeyUnregistered));
-    };
-    if let Some(reason) = connector_key_status_denial(read.status) {
-        return Ok(Some(reason));
-    }
-    // A recovered Pending intent was already charged before its first send.
-    // Read current usage and deny only when a matching row is already
-    // exhausted; never debit the same durable intent a second time.
-    let exhausted = read.rows.iter().any(|row| {
-        row.channel_class
-            .as_deref()
-            .is_none_or(|channel| channel == governing_connector)
-            && row.used >= row.limit
-    });
-    Ok(exhausted.then_some(ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted))
-}
-
-fn connector_key_status_denial(status: ConnectorKeyStatus) -> Option<ScopedMcpEscalationReason> {
-    match status {
-        ConnectorKeyStatus::Active => None,
-        ConnectorKeyStatus::Pending => Some(ScopedMcpEscalationReason::ConnectorKeyPending),
-        ConnectorKeyStatus::Suspended => Some(ScopedMcpEscalationReason::ConnectorKeySuspended),
-        ConnectorKeyStatus::Revoked => Some(ScopedMcpEscalationReason::ConnectorKeyRevoked),
-    }
 }
 
 #[cfg(test)]

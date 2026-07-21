@@ -3,6 +3,9 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
     claim_body_decode_count, decode_claim_body, reset_claim_body_decode_count,
 };
+use crate::connector_key::{
+    ConnectorKeyStatus, EffectorBudgetChargeOutcome, EffectorBudgetOnExhaust,
+};
 use crate::context_pack::ContextEntity;
 use crate::context_pack::ContextPack;
 use crate::context_pack::PackItemAccounting;
@@ -64,6 +67,66 @@ fn clear_policy_manifests_for_test(vault: &crate::Vault) {
             Ok(())
         })
         .expect("clear default policy manifest");
+}
+
+// Connector-budget unit fixtures keep their accounting assertions while the
+// production gate remains governance-only. Effect-path tests exercise the
+// atomic debit through outbound_chokepoint instead.
+fn check_external_effect_policy_with_budget(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+    admit_for_execution: bool,
+) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
+    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None)?;
+    let mut charge = None;
+    let mut exhausted = false;
+    if governance.outcome() == GateOutcome::Allow
+        && admit_for_execution
+        && let Some(target) = governance.budget_target_mut()
+    {
+        let outcome = crate::connector_key::charge_effector_budgets(
+            store,
+            wtxn,
+            &target.key_id,
+            &mut target.key,
+            &target.governing_connector,
+            effect.send_ref.is_some(),
+            crate::unix_seconds_now(),
+        )?;
+        let mut applied = match outcome {
+            EffectorBudgetChargeOutcome::NoRows(charge)
+            | EffectorBudgetChargeOutcome::Charged(charge) => charge,
+            EffectorBudgetChargeOutcome::Exhausted {
+                row_index,
+                on_exhaust,
+                mut charge,
+            } => {
+                exhausted = true;
+                if on_exhaust == EffectorBudgetOnExhaust::Suspend {
+                    crate::connector_key::suspend_connector_key_in_txn(
+                        store,
+                        wtxn,
+                        &target.key_id,
+                        &target.key,
+                        crate::connector_key::budget_exhausted_reason(row_index),
+                        crate::unix_seconds_now(),
+                    )?;
+                    charge.read.status = ConnectorKeyStatus::Suspended;
+                }
+                charge
+            }
+        };
+        applied.matched_rows.sort_unstable();
+        applied.matched_rows.dedup();
+        charge = Some(applied);
+    }
+    if exhausted {
+        governance.deny_budget_exhausted();
+    }
+    let (decision_id, decision) = record_external_effect_policy(store, wtxn, governance)?;
+    Ok((decision_id, decision, charge))
 }
 
 #[test]
@@ -2380,7 +2443,7 @@ fn external_effect_scoped_grant_allows_and_records_receipt() -> Result<()> {
     let effect = external_effect_gate_input("sender", "send", "line");
 
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
     assert_eq!(decision.outcome(), GateOutcome::Allow);
@@ -2423,7 +2486,7 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
     let mut effect = external_effect_gate_input("sender", "send", "line");
     effect.has_opted_in = false;
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
     assert_eq!(decision.outcome(), GateOutcome::Allow);
@@ -2682,7 +2745,7 @@ fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
     // The first in-scope scoped call charges the rate-1 budget on the
     // synthetic per-grant key.
     let (_, decision, charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     assert!(charge.is_some(), "the synthetic governing row was enforced");
@@ -2691,7 +2754,7 @@ fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
     // Comparing against the raw mcp:calendar channel would miss the cap and
     // let this second in-scope scoped call auto-fire instead of exhausting.
     let (_, decision, _) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
     assert_eq!(
@@ -5284,7 +5347,7 @@ fn check_effect(
     policy: &PolicyManifestResolution,
 ) -> Result<(GateDecision, Option<crate::EffectorBudgetCharge>)> {
     let (_decision_id, decision, charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, effect, policy, true)
+        check_external_effect_policy_with_budget(&vault.store, wtxn, effect, policy, true)
     })?;
     Ok((decision, charge))
 }
@@ -5821,7 +5884,7 @@ fn budget_stage_skips_dispatches_not_admitted_for_execution() -> Result<()> {
     // A dispatch the pipeline will park (window Hold / seat-policy stop)
     // passes the gate but neither debits nor exhausts.
     let (_id, decision, charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, false)
+        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, false)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     assert!(charge.is_none(), "no budget stage without execution");
@@ -5829,7 +5892,7 @@ fn budget_stage_skips_dispatches_not_admitted_for_execution() -> Result<()> {
     // The un-admitted pass left the budget untouched: the one allowed send
     // still fits, and only after IT does the key exhaust.
     let (_id, decision, charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     assert_eq!(charge.expect("charged").read.rows[0].used, 1);
@@ -5838,7 +5901,7 @@ fn budget_stage_skips_dispatches_not_admitted_for_execution() -> Result<()> {
     // non-admitted dispatch once the key is suspended.
     vault.suspend_connector_key(&key_id, "owner", 2_000)?;
     let (_id, decision, charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, false)
+        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, false)
     })?;
     assert_eq!(
         gate_reason_strs(&decision),

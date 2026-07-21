@@ -19,10 +19,26 @@ use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::outbound_consent::{DataClass, ScopedMcpGrantRef};
 use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
+use crate::store::Store;
 use crate::temporal::TimeRange;
 
 /// Current StandingOutboundGrant body schema version.
 pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 1;
+
+pub(crate) fn standing_outbound_grant_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<StandingOutboundGrant>> {
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
+        return Err(Error::InvalidEntityType(header.entity_type));
+    }
+    decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+}
 
 /// Pinned recursive MessagePack key vocabulary for StandingOutboundGrant
 /// bodies. Existing top-level positions remain stable; scoped-tool keys are
@@ -591,13 +607,20 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
     let kind = required_value(entries, SCOPE_KEYS[0])?
         .as_str()
         .ok_or_else(invalid_grant)?;
-    if kind != SCOPE_KIND_SCOPED_MCP
-        && SCOPE_KEYS[5..].iter().any(|scope_key| {
+    let has_non_applicable_field = if kind == SCOPE_KIND_SCOPED_MCP {
+        SCOPE_KEYS[1..5].iter().any(|scope_key| {
             entries.iter().any(|(key, value)| {
                 key.as_str() == Some(*scope_key) && !matches!(value, Value::Nil)
             })
         })
-    {
+    } else {
+        SCOPE_KEYS[5..].iter().any(|scope_key| {
+            entries.iter().any(|(key, value)| {
+                key.as_str() == Some(*scope_key) && !matches!(value, Value::Nil)
+            })
+        })
+    };
+    if has_non_applicable_field {
         return Err(invalid_grant());
     }
     match kind {

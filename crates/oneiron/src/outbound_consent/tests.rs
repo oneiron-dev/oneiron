@@ -1,6 +1,11 @@
 use super::*;
 use crate::config::VaultConfig;
 use crate::outbound_grant::ScopedMcpGrantMintIntent;
+use crate::outbound_intent_ledger::{
+    IntentEscalationReason, OUTBOUND_BINDING_VERSION, RecordedOutboundOutcome,
+    intent_ledger_records,
+};
+use std::collections::VecDeque;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -79,11 +84,14 @@ fn register_active_scoped_connector_key_with_budgets(
 #[derive(Default)]
 struct RecordingResultSender {
     sent_payloads: Vec<Vec<u8>>,
+    sent_endpoints: Vec<Option<String>>,
 }
 
 impl OutboundResultSender for RecordingResultSender {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
         self.sent_payloads.push(call.payload().to_vec());
+        self.sent_endpoints
+            .push(call.resolved_endpoint().map(str::to_owned));
         OutboundTransportResult {
             outcome: OutboundSendOutcome::Acked,
             raw_result: RawOutboundResult::new(None, None, None, None),
@@ -97,6 +105,53 @@ impl OutboundResultSender for AmbiguousResultSender {
     fn send(&mut self, _call: &FrozenOutboundCall) -> OutboundTransportResult {
         OutboundTransportResult {
             outcome: OutboundSendOutcome::Ambiguous,
+            raw_result: RawOutboundResult::new(None, None, None, None),
+        }
+    }
+}
+
+struct ScriptedResultSender {
+    outcomes: VecDeque<OutboundSendOutcome>,
+    keys: Vec<String>,
+}
+
+impl OutboundResultSender for ScriptedResultSender {
+    fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
+        self.keys.push(
+            call.idempotency_key()
+                .expect("effect carries idempotency key")
+                .to_owned(),
+        );
+        OutboundTransportResult {
+            outcome: self.outcomes.pop_front().expect("scripted outcome"),
+            raw_result: RawOutboundResult::new(None, None, None, None),
+        }
+    }
+}
+
+struct PaidPendingInspectingSender<'a> {
+    vault: &'a Vault,
+    governing_connector: String,
+    calls: usize,
+}
+
+impl OutboundResultSender for PaidPendingInspectingSender<'_> {
+    fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
+        self.calls = self.calls.saturating_add(1);
+        let rows = intent_ledger_records(self.vault).expect("read row at transport boundary");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, IntentState::Pending);
+        assert_eq!(rows[0].recorded_outcome, None);
+        assert_eq!(rows[0].budget_accounting.sends_debit, 1);
+        assert_eq!(Some(&rows[0].id), call.intent_id());
+        let budget = self
+            .vault
+            .effector_budget_read(&self.governing_connector, None)
+            .expect("read paid budget")
+            .expect("governing key");
+        assert_eq!(budget.rows[0].used, 1);
+        OutboundTransportResult {
+            outcome: OutboundSendOutcome::Acked,
             raw_result: RawOutboundResult::new(None, None, None, None),
         }
     }
@@ -221,11 +276,15 @@ fn invalid_scoped_grant_strings_never_auto_fire() {
 }
 
 #[test]
-fn binding_authenticity_and_revocation_fail_closed_at_send_boundary() {
+fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x91);
+    let mut intent = scoped_intent();
+    intent
+        .endpoint_allowlist
+        .push("https://files-backup.internal.example".to_owned());
     let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .mint_scoped_mcp_outbound_grant(&grant_id, &intent, 10)
         .expect("mint scoped grant");
     register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -233,116 +292,150 @@ fn binding_authenticity_and_revocation_fail_closed_at_send_boundary() {
         read_only_hint: Some(false),
         idempotency_supported_hint: Some(true),
     };
-    let call = scoped_call();
-
-    let valid_attempt = AttemptId::from_bytes(&[0x31; 16]).expect("attempt id");
-    let valid = authority
-        .authorize_request(
-            &vault,
-            grant_id,
-            &grant,
-            &grant.principal_ref,
-            valid_attempt,
-            1,
-            &call,
-            b"valid payload",
-        )
-        .expect("authorize valid request")
-        .binding
-        .expect("valid binding");
     let mut transport = RecordingResultSender::default();
-    let mut sender = AuthenticatedResultSender::new(&vault, &authority, &mut transport);
-    execute_outbound_call(
+    let valid = execute_scoped_mcp_outbound_call(
         &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
         descriptor,
-        OutboundCallRequest::new(
-            valid_attempt,
-            1,
-            &call.server,
-            &call.tool,
-            b"valid payload".to_vec(),
-            11,
-        )
-        .with_authorization_binding(valid),
-        &mut sender,
+        AttemptId::from_bytes(&[0x31; 16]).expect("attempt id"),
+        1,
+        scoped_call(),
+        FrozenMcpPayload::new(b"valid payload".to_vec()),
+        11,
+        &mut transport,
     )
     .expect("valid dispatch");
-    assert_eq!(sender.effectful_sends, 1);
+    assert_eq!(valid.effectful_sends, 1);
     assert_eq!(transport.sent_payloads.len(), 1);
 
-    let tampered_attempt = AttemptId::from_bytes(&[0x32; 16]).expect("attempt id");
-    let mut tampered = *authority
-        .authorize_request(
-            &vault,
-            grant_id,
-            &grant,
-            &grant.principal_ref,
-            tampered_attempt,
-            2,
-            &call,
-            b"tampered payload",
-        )
-        .expect("authorize tamper fixture")
-        .binding
-        .expect("binding")
+    let mut ambiguous = AmbiguousResultSender;
+    let pending = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        descriptor,
+        AttemptId::from_bytes(&[0x32; 16]).expect("attempt id"),
+        2,
+        scoped_call(),
+        FrozenMcpPayload::new(b"tampered payload".to_vec()),
+        12,
+        &mut ambiguous,
+    )
+    .expect("pending dispatch");
+    assert_eq!(
+        pending.dispatch.as_ref().and_then(|row| row.state),
+        Some(IntentState::Pending)
+    );
+    let mut row = intent_ledger_records(&vault)
+        .expect("read pending")
+        .into_iter()
+        .find(|row| row.state == IntentState::Pending)
+        .expect("pending row");
+    let mut binding = *row
+        .authorization_binding
+        .expect("scoped binding")
         .as_bytes();
-    tampered[0] ^= 1;
-    let mut sender = AuthenticatedResultSender::new(&vault, &authority, &mut transport);
-    execute_outbound_call(
-        &vault,
-        descriptor,
-        OutboundCallRequest::new(
-            tampered_attempt,
-            2,
-            &call.server,
-            &call.tool,
-            b"tampered payload".to_vec(),
-            12,
-        )
-        .with_authorization_binding(OutboundAuthorizationBinding::new(tampered)),
-        &mut sender,
-    )
-    .expect("tampered binding fails as definite non-delivery");
-    // Discriminating: with presence-only authorization, this one-byte tamper
-    // reaches the transport and increases its send count.
-    assert_eq!(sender.authorization_rejections, 1);
-    assert_eq!(transport.sent_payloads.len(), 1);
+    let pending_id = row.id;
+    binding[0] ^= 1;
+    row.authorization_binding = Some(OutboundAuthorizationBinding::new(binding));
+    crate::outbound_intent_ledger::replace_intent_record_for_test(&vault, &row)
+        .expect("persist MAC tamper with canonical digest");
 
-    let revoked_attempt = AttemptId::from_bytes(&[0x33; 16]).expect("attempt id");
-    let revoked_binding = authority
-        .authorize_request(
-            &vault,
-            grant_id,
-            &grant,
-            &grant.principal_ref,
-            revoked_attempt,
-            3,
-            &call,
-            b"revoked payload",
-        )
-        .expect("authorize before revoke")
-        .binding
-        .expect("binding");
-    vault
-        .revoke_standing_outbound_grant(&grant_id, 20)
-        .expect("revoke grant");
-    let mut sender = AuthenticatedResultSender::new(&vault, &authority, &mut transport);
-    execute_outbound_call(
+    let recovered =
+        recover_authorized_outbound_intents(&vault, &authority, &mut transport, 13, 30_000)
+            .expect("tampered recovery");
+    assert_eq!(recovered.effectful_sends, 0);
+    assert_eq!(recovered.authorization_rejections, 1);
+    assert_eq!(transport.sent_payloads.len(), 1);
+    let row = intent_ledger_records(&vault)
+        .expect("read abandoned")
+        .into_iter()
+        .find(|row| row.id == pending_id && row.state == IntentState::Abandoned)
+        .expect("abandoned tampered row");
+    assert_eq!(
+        row.recorded_outcome,
+        Some(RecordedOutboundOutcome::Abandoned(
+            IntentEscalationReason::BindingInvalid
+        ))
+    );
+
+    let mut ambiguous = AmbiguousResultSender;
+    let pending = execute_scoped_mcp_outbound_call(
         &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
         descriptor,
-        OutboundCallRequest::new(
-            revoked_attempt,
-            3,
-            &call.server,
-            &call.tool,
-            b"revoked payload".to_vec(),
-            21,
-        )
-        .with_authorization_binding(revoked_binding),
-        &mut sender,
+        AttemptId::from_bytes(&[0x33; 16]).expect("attempt id"),
+        3,
+        scoped_call(),
+        FrozenMcpPayload::new(b"endpoint-bound payload".to_vec()),
+        14,
+        &mut ambiguous,
     )
-    .expect("revoked binding fails as definite non-delivery");
-    assert_eq!(sender.authorization_rejections, 1);
+    .expect("second pending dispatch");
+    let pending_id = pending
+        .dispatch
+        .as_ref()
+        .and_then(|dispatch| dispatch.intent_id)
+        .expect("pending intent id");
+    let mut row = intent_ledger_records(&vault)
+        .expect("read endpoint-bound pending")
+        .into_iter()
+        .find(|row| row.id == pending_id)
+        .expect("endpoint-bound pending row");
+    row.resolved_endpoint = Some("https://files-backup.internal.example".to_owned());
+    crate::outbound_intent_ledger::replace_intent_record_for_test(&vault, &row)
+        .expect("persist allowlisted endpoint swap with canonical digest");
+
+    let recovered =
+        recover_authorized_outbound_intents(&vault, &authority, &mut transport, 15, 30_000)
+            .expect("endpoint-swap recovery");
+    assert_eq!(recovered.effectful_sends, 0);
+    assert_eq!(recovered.authorization_rejections, 1);
+    assert_eq!(transport.sent_payloads.len(), 1);
+    let swapped_row = intent_ledger_records(&vault)
+        .expect("read endpoint-swap abandonment")
+        .into_iter()
+        .find(|row| row.id == pending_id)
+        .expect("endpoint-swap row");
+    assert_eq!(swapped_row.state, IntentState::Abandoned);
+    assert_eq!(
+        swapped_row.recorded_outcome,
+        Some(RecordedOutboundOutcome::Abandoned(
+            IntentEscalationReason::BindingInvalid
+        ))
+    );
+
+    let swapped = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        descriptor,
+        AttemptId::from_bytes(&[0x34; 16]).expect("attempt id"),
+        4,
+        ScopedMcpCallContext {
+            resolved_endpoint: "https://exfil.example".to_owned(),
+            ..scoped_call()
+        },
+        FrozenMcpPayload::new(b"swapped endpoint".to_vec()),
+        16,
+        &mut transport,
+    )
+    .expect("endpoint swap rejected");
+    assert_eq!(
+        swapped.decision,
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::EndpointNotAllowed)
+    );
+    assert_eq!(swapped.effectful_sends, 0);
     assert_eq!(transport.sent_payloads.len(), 1);
 }
 
@@ -723,7 +816,208 @@ fn done_intent_replay_skips_the_connector_key_debit() {
 }
 
 #[test]
-fn read_only_call_does_not_debit_the_sends_dimension() {
+fn pending_resume_and_done_replay_charge_and_complete_once() {
+    let (_tmp, vault) = temp_vault();
+    let grant_id = entity(0x9F);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .expect("mint scoped grant");
+    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+    let descriptor = OutboundToolDescriptor {
+        read_only_hint: Some(false),
+        idempotency_supported_hint: Some(true),
+    };
+    let attempt_id = AttemptId::from_bytes(&[0x7A; 16]).expect("attempt id");
+    let mut transport = ScriptedResultSender {
+        outcomes: [OutboundSendOutcome::Ambiguous, OutboundSendOutcome::Acked]
+            .into_iter()
+            .collect(),
+        keys: Vec::new(),
+    };
+    let dispatch = |now_ms, transport: &mut ScriptedResultSender| {
+        execute_scoped_mcp_outbound_call(
+            &vault,
+            &authority,
+            grant_id,
+            &grant,
+            &grant.principal_ref,
+            descriptor,
+            attempt_id,
+            1,
+            scoped_call(),
+            FrozenMcpPayload::new(b"exactly once".to_vec()),
+            now_ms,
+            transport,
+        )
+        .expect("chokepoint dispatch")
+    };
+
+    let first = dispatch(11, &mut transport);
+    assert_eq!(
+        first.dispatch.as_ref().and_then(|row| row.state),
+        Some(IntentState::Pending)
+    );
+    let resumed = dispatch(12, &mut transport);
+    assert_eq!(
+        resumed.dispatch.as_ref().and_then(|row| row.state),
+        Some(IntentState::Done)
+    );
+    let done_replay = dispatch(13, &mut transport);
+    assert_eq!(
+        done_replay.dispatch.as_ref().and_then(|row| row.state),
+        Some(IntentState::Done)
+    );
+    assert_eq!(
+        done_replay
+            .dispatch
+            .as_ref()
+            .and_then(|row| row.send_outcome),
+        Some(OutboundSendOutcome::Acked)
+    );
+    assert_eq!(done_replay.effectful_sends, 0);
+    assert_eq!(transport.keys.len(), 2);
+    assert_eq!(transport.keys[0], transport.keys[1]);
+    let governing = crate::gate::scoped_mcp_credential_connector_key("files", &grant_id);
+    let budget = vault
+        .effector_budget_read(&governing, None)
+        .expect("read budget")
+        .expect("governing key");
+    assert_eq!(budget.rows[0].used, 1);
+    let row = intent_ledger_records(&vault).expect("read ledger");
+    assert_eq!(row.len(), 1);
+    assert_eq!(row[0].state, IntentState::Done);
+    assert_eq!(row[0].budget_accounting.sends_debit, 1);
+    assert_eq!(
+        row[0].recorded_outcome,
+        Some(RecordedOutboundOutcome::Acked)
+    );
+}
+
+#[test]
+fn pending_and_budget_marker_are_committed_before_transport() {
+    let (_tmp, vault) = temp_vault();
+    let grant_id = entity(0x8F);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .expect("mint scoped grant");
+    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+    let mut transport = PaidPendingInspectingSender {
+        vault: &vault,
+        governing_connector: crate::gate::scoped_mcp_credential_connector_key("files", &grant_id),
+        calls: 0,
+    };
+    let result = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        OutboundToolDescriptor {
+            read_only_hint: Some(false),
+            idempotency_supported_hint: Some(true),
+        },
+        AttemptId::from_bytes(&[0x7B; 16]).expect("attempt id"),
+        1,
+        scoped_call(),
+        FrozenMcpPayload::new(b"commit before transport".to_vec()),
+        11,
+        &mut transport,
+    )
+    .expect("committed dispatch");
+    assert_eq!(transport.calls, 1);
+    assert_eq!(
+        result.dispatch.as_ref().and_then(|dispatch| dispatch.state),
+        Some(IntentState::Done)
+    );
+}
+
+#[test]
+fn same_version_reopen_recovers_own_budget_marker_and_outcome_row() {
+    assert_eq!(crate::INTENT_LEDGER_SCHEMA_VERSION, 2);
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault_path = tmp.path().to_path_buf();
+    let grant_id = entity(0x8D);
+    let expected_marker = {
+        let vault = Vault::open(&vault_path, VaultConfig::device()).expect("open initial vault");
+        let grant = vault
+            .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+            .expect("mint scoped grant");
+        let key_id =
+            register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
+        let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+        let mut ambiguous = AmbiguousResultSender;
+        let initial = execute_scoped_mcp_outbound_call(
+            &vault,
+            &authority,
+            grant_id,
+            &grant,
+            &grant.principal_ref,
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            AttemptId::from_bytes(&[0x7D; 16]).expect("attempt id"),
+            1,
+            scoped_call(),
+            FrozenMcpPayload::new(b"same-version crash row".to_vec()),
+            11,
+            &mut ambiguous,
+        )
+        .expect("seed current-format Pending row");
+        assert_eq!(
+            initial.dispatch.as_ref().and_then(|row| row.state),
+            Some(IntentState::Pending)
+        );
+        let rows = intent_ledger_records(&vault).expect("read current-format Pending row");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, IntentState::Pending);
+        assert_eq!(rows[0].recorded_outcome, None);
+        assert_eq!(rows[0].budget_accounting.key_ref, Some(key_id));
+        assert_eq!(
+            rows[0].budget_accounting.budget_class,
+            crate::BudgetClass::Send
+        );
+        assert_eq!(rows[0].budget_accounting.matched_rows, vec![0]);
+        assert_eq!(rows[0].budget_accounting.sends_debit, 1);
+        rows[0].budget_accounting.clone()
+    };
+
+    {
+        let vault = Vault::open(&vault_path, VaultConfig::device()).expect("reopen crashed vault");
+        let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+        let mut transport = RecordingResultSender::default();
+        let recovered =
+            recover_authorized_outbound_intents(&vault, &authority, &mut transport, 12, 30_000)
+                .expect("recover current-format Pending row");
+        assert_eq!(recovered.effectful_sends, 1);
+        assert_eq!(recovered.ledger.resent, 1);
+        assert_eq!(recovered.ledger.completed, 1);
+        assert_eq!(transport.sent_payloads.len(), 1);
+        let rows = intent_ledger_records(&vault).expect("read recovered current-format row");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, IntentState::Done);
+        assert_eq!(rows[0].budget_accounting, expected_marker);
+        assert_eq!(
+            rows[0].recorded_outcome,
+            Some(RecordedOutboundOutcome::Acked)
+        );
+    }
+
+    let vault = Vault::open(&vault_path, VaultConfig::device()).expect("reopen completed vault");
+    let rows = intent_ledger_records(&vault).expect("decode this build's completed row");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].state, IntentState::Done);
+    assert_eq!(rows[0].budget_accounting, expected_marker);
+    assert_eq!(
+        rows[0].recorded_outcome,
+        Some(RecordedOutboundOutcome::Acked)
+    );
+}
+
+#[test]
+fn scoped_effect_without_send_ref_still_debits_the_sends_dimension() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x9A);
     let grant = vault
@@ -754,16 +1048,16 @@ fn read_only_call_does_not_debit_the_sends_dimension() {
     assert_eq!(lookup.decision, ScopedMcpConsentDecision::AutoFire);
     assert_eq!(
         lookup.dispatch.as_ref().map(|row| row.class),
-        Some(OutboundCallClass::ReadOnly)
+        Some(OutboundCallClass::Effectful)
     );
-    assert_eq!(lookup.effectful_sends, 0);
+    assert_eq!(lookup.effectful_sends, 1);
     assert_eq!(transport.sent_payloads.len(), 1);
     let governing = crate::gate::scoped_mcp_credential_connector_key("files", &grant_id);
     let after_lookup = vault
         .effector_budget_read(&governing, None)
         .expect("read budget")
         .expect("governing key");
-    assert_eq!(after_lookup.rows[0].used, 0);
+    assert_eq!(after_lookup.rows[0].used, 1);
 
     let send = execute_scoped_mcp_outbound_call(
         &vault,
@@ -784,11 +1078,14 @@ fn read_only_call_does_not_debit_the_sends_dimension() {
     )
     .expect("effectful send retains the single Sends charge");
 
-    // Discriminating: a hardcoded send-like charge consumes the cap during
-    // the lookup, so this effectful call is denied and never reaches transport.
-    assert_eq!(send.decision, ScopedMcpConsentDecision::AutoFire);
-    assert_eq!(send.effectful_sends, 1);
-    assert_eq!(transport.sent_payloads.len(), 2);
+    // Discriminating: semantic BudgetClass::Send charges the first scoped
+    // effect even though its gate input has no send_ref.
+    assert_eq!(
+        send.decision,
+        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted)
+    );
+    assert_eq!(send.effectful_sends, 0);
+    assert_eq!(transport.sent_payloads.len(), 1);
     let after_send = vault
         .effector_budget_read(&governing, None)
         .expect("read budget")
@@ -821,7 +1118,7 @@ fn result_scrub_destroys_all_provider_fields_and_debug_content() {
 }
 
 #[test]
-fn recovery_revalidates_revocation_and_pending_intent_stays_node_local() {
+fn paid_pending_ignores_later_standing_grant_revocation_and_completes() {
     let (_tmp, vault) = temp_vault();
     // Seed avoids the reserved system-agent-preset id band [0xA1;16]..=[0xA5;16]
     // (entity materialization rejects those as authority-bearing collisions).
@@ -829,7 +1126,7 @@ fn recovery_revalidates_revocation_and_pending_intent_stays_node_local() {
     let grant = vault
         .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
         .expect("mint scoped grant");
-    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
+    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
     let mut ambiguous = AmbiguousResultSender;
     let initial = execute_scoped_mcp_outbound_call(
@@ -868,11 +1165,31 @@ fn recovery_revalidates_revocation_and_pending_intent_stays_node_local() {
     let recovered =
         recover_authorized_outbound_intents(&vault, &authority, &mut transport, 21, 30_000)
             .expect("authorized recovery");
-    // Discriminating: recovery without liveness re-validation would resend
-    // once and record no authorization rejection.
-    assert_eq!(recovered.effectful_sends, 0);
-    assert_eq!(recovered.authorization_rejections, 1);
-    assert!(transport.sent_payloads.is_empty());
+    // Discriminating: this already-paid row does not re-run standing-grant
+    // liveness or budget admission; it resumes the authenticated frozen call.
+    assert_eq!(recovered.effectful_sends, 1);
+    assert_eq!(recovered.authorization_rejections, 0);
+    assert_eq!(recovered.ledger.resent, 1);
+    assert_eq!(recovered.ledger.completed, 1);
+    assert_eq!(transport.sent_payloads.len(), 1);
+    let governing = crate::gate::scoped_mcp_credential_connector_key("files", &grant_id);
+    assert_eq!(
+        vault
+            .effector_budget_read(&governing, None)
+            .expect("read paid budget")
+            .expect("governing key")
+            .rows[0]
+            .used,
+        1,
+        "paid Pending completes at used == limit without a second debit"
+    );
+    assert_eq!(
+        intent_ledger_records(&vault)
+            .expect("read completed ledger")
+            .first()
+            .map(|row| row.state),
+        Some(IntentState::Done)
+    );
 }
 
 #[test]
@@ -920,15 +1237,272 @@ fn recovery_rechecks_suspended_connector_key_and_keeps_intent_pending() {
         recover_authorized_outbound_intents(&vault, &authority, &mut transport, 13, 30_000)
             .expect("authorized recovery");
 
-    // Discriminating: binding-only recovery resends through the now-suspended
-    // key, increments effectful_sends, and transitions this row to Done.
+    // Suspension is recoverable governance: the paid row remains Pending and
+    // transport stays closed until the owner lifts the key suspension.
     assert_eq!(recovered.effectful_sends, 0);
     assert_eq!(recovered.authorization_rejections, 1);
-    assert_eq!(recovered.ledger.resent, 1);
+    assert_eq!(recovered.ledger.resent, 0);
     assert_eq!(recovered.ledger.pending, 1);
     assert_eq!(recovered.ledger.completed, 0);
     assert!(transport.sent_payloads.is_empty());
     let rows = intent_ledger_records(&vault).expect("read ledger after recovery");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].state, IntentState::Pending);
+}
+
+#[test]
+fn recovery_keeps_charter_never_list_and_drift_recoverable_pending() {
+    let (_tmp, vault) = temp_vault();
+    let grant_id = entity(0x8E);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .expect("mint scoped grant");
+    let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+    let mut ambiguous = AmbiguousResultSender;
+    execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        OutboundToolDescriptor {
+            read_only_hint: Some(false),
+            idempotency_supported_hint: Some(true),
+        },
+        AttemptId::from_bytes(&[0x7C; 16]).expect("attempt id"),
+        1,
+        scoped_call(),
+        FrozenMcpPayload::new(b"charter pending".to_vec()),
+        11,
+        &mut ambiguous,
+    )
+    .expect("seed paid Pending");
+    let proposal = vault
+        .propose_connector_charter(&key_id, "never read_file", 12)
+        .expect("propose never-list");
+    vault
+        .approve_connector_charter(&key_id, proposal.compiled_hash, "owner", 13)
+        .expect("approve never-list");
+
+    let mut transport = RecordingResultSender::default();
+    let never_list =
+        recover_authorized_outbound_intents(&vault, &authority, &mut transport, 14, 30_000)
+            .expect("never-list recovery");
+    assert_eq!(never_list.effectful_sends, 0);
+    assert_eq!(never_list.ledger.pending, 1);
+    assert!(transport.sent_payloads.is_empty());
+    assert_eq!(
+        intent_ledger_records(&vault)
+            .expect("read never-list row")
+            .first()
+            .map(|row| row.state),
+        Some(IntentState::Pending)
+    );
+
+    let mut drifted = vault
+        .get_connector_key(&key_id)
+        .expect("read connector key")
+        .expect("connector key");
+    drifted
+        .charter
+        .as_mut()
+        .expect("approved charter")
+        .text
+        .push_str("\n# drift");
+    vault
+        .with_write_txn(|wtxn| {
+            crate::connector_key::rewrite_connector_key_in_txn(
+                &vault.store,
+                wtxn,
+                &key_id,
+                &drifted,
+            )
+        })
+        .expect("persist drift");
+    let drift = recover_authorized_outbound_intents(&vault, &authority, &mut transport, 15, 30_000)
+        .expect("drift recovery");
+    assert_eq!(drift.effectful_sends, 0);
+    assert_eq!(drift.ledger.pending, 1);
+    assert!(transport.sent_payloads.is_empty());
+    assert_eq!(
+        intent_ledger_records(&vault)
+            .expect("read drift row")
+            .first()
+            .map(|row| row.state),
+        Some(IntentState::Pending)
+    );
+    let governing = crate::gate::scoped_mcp_credential_connector_key("files", &grant_id);
+    assert_eq!(
+        vault
+            .effector_budget_read(&governing, None)
+            .expect("read paid budget")
+            .expect("governing key")
+            .rows[0]
+            .used,
+        1
+    );
+}
+
+#[test]
+fn revoked_connector_abandons_paid_pending_without_transport() {
+    let (_tmp, vault) = temp_vault();
+    let grant_id = entity(0x9C);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .expect("mint scoped grant");
+    let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+    let mut ambiguous = AmbiguousResultSender;
+    execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        OutboundToolDescriptor {
+            read_only_hint: Some(false),
+            idempotency_supported_hint: Some(true),
+        },
+        AttemptId::from_bytes(&[0x77; 16]).expect("attempt id"),
+        1,
+        scoped_call(),
+        FrozenMcpPayload::new(b"revoked pending".to_vec()),
+        11,
+        &mut ambiguous,
+    )
+    .expect("initial paid Pending");
+    vault
+        .revoke_connector_key(&key_id, 12)
+        .expect("revoke connector key");
+
+    let mut transport = RecordingResultSender::default();
+    let recovered =
+        recover_authorized_outbound_intents(&vault, &authority, &mut transport, 13, 30_000)
+            .expect("revoked recovery");
+    assert_eq!(recovered.effectful_sends, 0);
+    assert_eq!(recovered.ledger.resent, 0);
+    assert_eq!(recovered.ledger.pending, 0);
+    assert_eq!(recovered.ledger.escalations.len(), 1);
+    assert!(transport.sent_payloads.is_empty());
+    let row = intent_ledger_records(&vault)
+        .expect("read abandoned row")
+        .into_iter()
+        .next()
+        .expect("row");
+    assert_eq!(row.state, IntentState::Abandoned);
+    assert_eq!(
+        row.recorded_outcome,
+        Some(RecordedOutboundOutcome::Abandoned(
+            IntentEscalationReason::ConnectorRevoked
+        ))
+    );
+    assert_eq!(row.budget_accounting.sends_debit, 1);
+}
+
+#[test]
+fn non_idempotent_pending_abandons_without_resume_attempt() {
+    let (_tmp, vault) = temp_vault();
+    let grant_id = entity(0x9E);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .expect("mint scoped grant");
+    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+    let mut ambiguous = AmbiguousResultSender;
+    execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        OutboundToolDescriptor {
+            read_only_hint: Some(false),
+            idempotency_supported_hint: Some(true),
+        },
+        AttemptId::from_bytes(&[0x79; 16]).expect("attempt id"),
+        1,
+        scoped_call(),
+        FrozenMcpPayload::new(b"non-idempotent crash row".to_vec()),
+        11,
+        &mut ambiguous,
+    )
+    .expect("seed paid Pending");
+    let mut row = intent_ledger_records(&vault)
+        .expect("read paid Pending")
+        .into_iter()
+        .next()
+        .expect("row");
+    row.idempotency_supported = false;
+    crate::outbound_intent_ledger::replace_intent_record_for_test(&vault, &row)
+        .expect("persist same-format crash fixture");
+
+    let mut transport = RecordingResultSender::default();
+    let recovered =
+        recover_authorized_outbound_intents(&vault, &authority, &mut transport, 12, 30_000)
+            .expect("non-idempotent recovery");
+    assert_eq!(recovered.effectful_sends, 0);
+    assert_eq!(recovered.ledger.resent, 0);
+    assert!(transport.sent_payloads.is_empty());
+    let row = intent_ledger_records(&vault)
+        .expect("read abandoned row")
+        .into_iter()
+        .next()
+        .expect("row");
+    assert_eq!(row.state, IntentState::Abandoned);
+    assert_eq!(
+        row.recorded_outcome,
+        Some(RecordedOutboundOutcome::Abandoned(
+            IntentEscalationReason::NonIdempotentPending
+        ))
+    );
+}
+
+#[test]
+fn allowlisted_endpoint_rotation_freezes_the_selected_endpoint() {
+    let (_tmp, vault) = temp_vault();
+    let grant_id = entity(0x9D);
+    let mut intent = scoped_intent();
+    intent
+        .endpoint_allowlist
+        .push("https://files-backup.internal.example".to_owned());
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &intent, 10)
+        .expect("mint rotating scoped grant");
+    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+    let mut transport = RecordingResultSender::default();
+    let result = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        OutboundToolDescriptor {
+            read_only_hint: Some(false),
+            idempotency_supported_hint: Some(true),
+        },
+        AttemptId::from_bytes(&[0x78; 16]).expect("attempt id"),
+        1,
+        ScopedMcpCallContext {
+            resolved_endpoint: "https://files-backup.internal.example".to_owned(),
+            ..scoped_call()
+        },
+        FrozenMcpPayload::new(b"rotated endpoint".to_vec()),
+        11,
+        &mut transport,
+    )
+    .expect("allowlisted rotation");
+    assert_eq!(result.decision, ScopedMcpConsentDecision::AutoFire);
+    assert_eq!(result.effectful_sends, 1);
+    assert_eq!(
+        transport.sent_endpoints,
+        vec![Some("https://files-backup.internal.example".to_owned())]
+    );
+    let row = intent_ledger_records(&vault).expect("read frozen endpoint");
+    assert_eq!(
+        row[0].resolved_endpoint.as_deref(),
+        Some("https://files-backup.internal.example")
+    );
+    assert_eq!(row[0].binding_version, OUTBOUND_BINDING_VERSION);
 }

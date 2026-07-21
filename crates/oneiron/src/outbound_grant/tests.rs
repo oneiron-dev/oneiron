@@ -174,6 +174,64 @@ fn contact_grant_decode_rejects_non_nil_scoped_mcp_field() -> Result<()> {
 }
 
 #[test]
+fn scoped_mcp_grant_decode_rejects_every_non_nil_legacy_scope_field() -> Result<()> {
+    let grant = StandingOutboundGrant {
+        principal_ref: "owner".to_owned(),
+        origin_component_id: "ask-mcp".to_owned(),
+        origin_action_id: "grant-scoped-mcp".to_owned(),
+        origin_receipt_ref: Some("gate:mcp".to_owned()),
+        scope: StandingOutboundGrantScope::ScopedMcp {
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: DataClass::Personal,
+            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+        },
+        status: StandingOutboundGrantStatus::Active,
+        created_at: 10,
+        revoked_at: None,
+        last_used_at: None,
+        binding_diff_handle: vec![0xA5; 32],
+        read_frontier_hash: [0xB6; 32],
+    };
+    let encoded = encode_standing_outbound_grant_body(&grant)?;
+
+    for (scope_key, injected_value) in [
+        (SCOPE_KEYS[1], Value::from("contact:injected")),
+        (SCOPE_KEYS[2], Value::from("send")),
+        (SCOPE_KEYS[3], Value::from("channel:injected")),
+        (SCOPE_KEYS[4], Value::from("brief:injected")),
+    ] {
+        let mut body = rmpv::decode::read_value(&mut std::io::Cursor::new(&encoded))
+            .expect("decode scoped MCP grant fixture");
+        let Value::Map(body_entries) = &mut body else {
+            panic!("grant body must be a map");
+        };
+        let scope = &mut body_entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(KEY_SCOPE))
+            .expect("scope field")
+            .1;
+        let Value::Map(scope_entries) = scope else {
+            panic!("scope must be a map");
+        };
+        let legacy_field = &mut scope_entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(scope_key))
+            .expect("legacy scope field")
+            .1;
+        *legacy_field = injected_value;
+        let mut injected = Vec::new();
+        rmpv::encode::write_value(&mut injected, &body)
+            .expect("encode injected scoped MCP grant fixture");
+
+        let error = decode_standing_outbound_grant_body(&injected)
+            .expect_err("non-applicable legacy scope field must fail closed");
+        assert_eq!(error.kind(), crate::ErrorKind::InvalidOutboundGrantBody);
+    }
+    Ok(())
+}
+
+#[test]
 fn scoped_mcp_grant_decode_rejects_noncanonical_endpoint() {
     let body = Value::Map(vec![
         (

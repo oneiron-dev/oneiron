@@ -1,0 +1,574 @@
+//! Replay-first outbound effect execution.
+//!
+//! This module is the only production lane that may combine governance,
+//! budget accounting, durable intent state, and transport.
+
+use crate::Vault;
+use crate::attempt_queue::AttemptId;
+use crate::connector_key::{
+    self, ConnectorKeyStatus, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
+    EffectorBudgetOnExhaust,
+};
+use crate::edge::EdgeActorClass;
+use crate::entity_id::EntityId;
+use crate::error::Error;
+use crate::gate::{self, ExternalEffectGateInput, GateOutcome};
+use crate::outbound_consent::{
+    FrozenCallValidation, OutboundBindingAuthority, ScopedMcpCallContext,
+};
+use crate::outbound_intent_ledger::{
+    BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation,
+    IntentEscalationReason, IntentId, IntentLedgerError, IntentState, OutboundCallClass,
+    OutboundCallRequest, OutboundSendOutcome, RecordedOutboundOutcome, abandon_record,
+    complete_record, derive_intent_id, force_sync, hash_frozen_payload, insert_pending_in_txn,
+    read_intent_record_in_txn,
+};
+
+pub(crate) type OutboundEffectError = IntentLedgerError;
+
+/// Result of one replay-first effect execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OutboundEffectResult {
+    pub(crate) dispatch: IntentDispatchResult,
+    pub(crate) gate_decision_id: Option<String>,
+    pub(crate) gate_outcome: Option<String>,
+    pub(crate) gate_reason_codes: Vec<String>,
+    pub(crate) gate_receipt_reasons: Vec<String>,
+    pub(crate) budget_charge: Option<EffectorBudgetCharge>,
+}
+
+/// The only two commands accepted by the effectful entry.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum OutboundEffectCommand {
+    New(PreparedEffect),
+    Resume(IntentId),
+}
+
+/// Authorization material required only while admitting a new effect.
+pub(crate) enum PreparedAuthorization {
+    None,
+    ScopedMcp {
+        grant_id: EntityId,
+        principal_ref: String,
+        call: ScopedMcpCallContext,
+    },
+}
+
+/// Fully frozen new-effect input. No transport object can change these axes.
+pub(crate) struct PreparedEffect {
+    pub(crate) attempt_id: AttemptId,
+    pub(crate) call_seq: u64,
+    pub(crate) server: String,
+    pub(crate) tool: String,
+    pub(crate) payload: Vec<u8>,
+    pub(crate) idempotency_supported: bool,
+    pub(crate) resolved_endpoint: Option<String>,
+    pub(crate) gate: ExternalEffectGateInput,
+    pub(crate) budget_class: BudgetClass,
+    pub(crate) authorization: PreparedAuthorization,
+    pub(crate) verified_actor: Option<(EntityId, EdgeActorClass)>,
+}
+
+impl PreparedEffect {
+    fn payload_hash(&self) -> [u8; 32] {
+        hash_frozen_payload(&self.payload)
+    }
+
+    fn intent_id(&self) -> Result<IntentId, IntentLedgerError> {
+        derive_intent_id(
+            self.attempt_id,
+            self.call_seq,
+            &self.server,
+            &self.tool,
+            &self.payload_hash(),
+        )
+    }
+}
+
+/// Connector-agnostic transport. The endpoint, bytes, and idempotency key are
+/// readable only from the frozen call supplied here.
+pub(crate) trait OutboundTransport {
+    fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome;
+}
+
+enum RecoveryGovernance {
+    Allow,
+    Block(&'static str),
+    Revoke,
+}
+
+/// Executes every outbound effect in ledger-read → replay → gate → debit →
+/// durable-Pending → transport order.
+pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
+    vault: &Vault,
+    authority: &OutboundBindingAuthority,
+    command: OutboundEffectCommand,
+    now_ms: u64,
+    transport: &mut T,
+) -> Result<OutboundEffectResult, OutboundEffectError> {
+    let intent_id = match &command {
+        OutboundEffectCommand::New(prepared) => prepared.intent_id()?,
+        OutboundEffectCommand::Resume(intent_id) => *intent_id,
+    };
+
+    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let record = read_intent_record_in_txn(vault, &wtxn, &intent_id)?;
+    if let Some(record) = record {
+        if let OutboundEffectCommand::New(prepared) = &command {
+            validate_new_replay(&record, prepared)?;
+        }
+        drop(wtxn);
+        force_sync(vault)?;
+        return replay_record(vault, authority, record, now_ms, transport);
+    }
+
+    let OutboundEffectCommand::New(prepared) = command else {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound resume target is missing",
+        ));
+    };
+
+    if let Some((actor, actor_class)) = prepared.verified_actor {
+        let entity_type =
+            vault
+                .get_entity_type_in_txn(&wtxn, &actor)?
+                .ok_or(IntentLedgerError::InvalidInput(
+                    "facade-bound actor is no longer valid",
+                ))?;
+        crate::provenance::validate_actor_class(entity_type, actor_class)?;
+    }
+
+    let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+    let required_grant_id = match &prepared.authorization {
+        PreparedAuthorization::None => None,
+        PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
+    };
+    let mut governance = gate::evaluate_external_effect_policy(
+        &vault.store,
+        &mut wtxn,
+        &prepared.gate,
+        &policy,
+        required_grant_id,
+    )?;
+    if governance.outcome() != GateOutcome::Allow {
+        let (decision_id, decision) =
+            gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+        wtxn.commit().map_err(Error::from)?;
+        return Ok(gate_rejection(intent_id, decision_id, decision));
+    }
+
+    let (budget_accounting, budget_charge, exhausted) = charge_once(
+        vault,
+        &mut wtxn,
+        &mut governance,
+        prepared.budget_class,
+        now_ms,
+    )?;
+    if exhausted {
+        governance.deny_budget_exhausted();
+        let (decision_id, decision) =
+            gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+        wtxn.commit().map_err(Error::from)?;
+        let mut result = gate_rejection(intent_id, decision_id, decision);
+        result.budget_charge = budget_charge;
+        return Ok(result);
+    }
+
+    let payload_hash = prepared.payload_hash();
+    let authorization_binding = match &prepared.authorization {
+        PreparedAuthorization::None => {
+            if prepared.resolved_endpoint.is_some() {
+                return Err(IntentLedgerError::InvalidInput(
+                    "endpoint effect requires scoped authorization",
+                ));
+            }
+            None
+        }
+        PreparedAuthorization::ScopedMcp {
+            grant_id,
+            principal_ref,
+            call,
+        } => authority.mint_scoped_binding_in_txn(
+            vault,
+            &wtxn,
+            *grant_id,
+            principal_ref,
+            &intent_id,
+            call,
+            &payload_hash,
+        )?,
+    };
+    if matches!(
+        &prepared.authorization,
+        PreparedAuthorization::ScopedMcp { .. }
+    ) && authorization_binding.is_none()
+    {
+        return Err(IntentLedgerError::InvalidInput(
+            "scoped authorization changed during admission",
+        ));
+    }
+
+    let mut request = OutboundCallRequest::new(
+        prepared.attempt_id,
+        prepared.call_seq,
+        prepared.server,
+        prepared.tool,
+        prepared.payload,
+        now_ms,
+    );
+    request.authorization_binding = authorization_binding;
+    request.resolved_endpoint = prepared.resolved_endpoint;
+    let pending = crate::outbound_intent_ledger::IntentLedgerRecord::pending(
+        request,
+        prepared.idempotency_supported,
+        budget_accounting,
+    )?;
+    if pending.id != intent_id {
+        return Err(IntentLedgerError::InvalidRecord(
+            "prepared outbound identity changed",
+        ));
+    }
+    let (decision_id, decision) =
+        gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+    insert_pending_in_txn(vault, &mut wtxn, &pending)?;
+    wtxn.commit().map_err(Error::from)?;
+    force_sync(vault)?;
+
+    let mut result = send_pending(vault, authority, pending, now_ms, false, transport)?;
+    result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));
+    result.gate_outcome = Some(decision.outcome().as_str().to_owned());
+    result.gate_reason_codes = decision
+        .reason_codes()
+        .iter()
+        .map(|reason| reason.as_str().to_owned())
+        .collect();
+    result.gate_receipt_reasons = decision
+        .receipt_reasons()
+        .iter()
+        .map(|reason| (*reason).to_owned())
+        .collect();
+    result.budget_charge = budget_charge;
+    Ok(result)
+}
+
+fn charge_once(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    governance: &mut gate::ExternalEffectGovernance,
+    budget_class: BudgetClass,
+    now_ms: u64,
+) -> Result<(BudgetChargeMarker, Option<EffectorBudgetCharge>, bool), IntentLedgerError> {
+    let Some(target) = governance.budget_target_mut() else {
+        return Ok((
+            BudgetChargeMarker {
+                key_ref: None,
+                budget_class,
+                matched_rows: Vec::new(),
+                sends_debit: 0,
+                accounted_at_ms: now_ms,
+            },
+            None,
+            false,
+        ));
+    };
+    let outcome = connector_key::charge_effector_budgets(
+        &vault.store,
+        wtxn,
+        &target.key_id,
+        &mut target.key,
+        &target.governing_connector,
+        budget_class.is_send(),
+        now_ms,
+    )?;
+    let (mut charge, exhausted) = match outcome {
+        EffectorBudgetChargeOutcome::NoRows(charge)
+        | EffectorBudgetChargeOutcome::Charged(charge) => (charge, false),
+        EffectorBudgetChargeOutcome::Exhausted {
+            row_index,
+            on_exhaust,
+            mut charge,
+        } => {
+            if on_exhaust == EffectorBudgetOnExhaust::Suspend {
+                connector_key::suspend_connector_key_in_txn(
+                    &vault.store,
+                    wtxn,
+                    &target.key_id,
+                    &target.key,
+                    connector_key::budget_exhausted_reason(row_index),
+                    now_ms,
+                )?;
+                charge.read.status = ConnectorKeyStatus::Suspended;
+            }
+            (charge, true)
+        }
+    };
+    charge.matched_rows.sort_unstable();
+    charge.matched_rows.dedup();
+    let marker = BudgetChargeMarker {
+        key_ref: Some(charge.key_ref),
+        budget_class,
+        matched_rows: charge.matched_rows.clone(),
+        sends_debit: charge.sends_debit,
+        accounted_at_ms: now_ms,
+    };
+    Ok((marker, Some(charge), exhausted))
+}
+
+fn replay_record<T: OutboundTransport>(
+    vault: &Vault,
+    authority: &OutboundBindingAuthority,
+    record: crate::outbound_intent_ledger::IntentLedgerRecord,
+    now_ms: u64,
+    transport: &mut T,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    match (record.state, record.recorded_outcome) {
+        (IntentState::Done, Some(RecordedOutboundOutcome::Acked)) => Ok(effect_result(
+            &record,
+            Some(OutboundSendOutcome::Acked),
+            true,
+            None,
+        )),
+        (IntentState::Abandoned, Some(RecordedOutboundOutcome::Abandoned(reason))) => {
+            Ok(effect_result(&record, None, true, Some(reason)))
+        }
+        (IntentState::Pending, None) if !record.idempotency_supported => {
+            let abandoned = abandon_record(
+                vault,
+                record.id,
+                IntentEscalationReason::NonIdempotentPending,
+                now_ms,
+            )?;
+            Ok(effect_result(
+                &abandoned,
+                None,
+                true,
+                Some(IntentEscalationReason::NonIdempotentPending),
+            ))
+        }
+        (IntentState::Pending, None) => {
+            send_pending(vault, authority, record, now_ms, true, transport)
+        }
+        _ => Err(IntentLedgerError::InvalidRecord(
+            "outbound state has no canonical recorded outcome",
+        )),
+    }
+}
+
+fn send_pending<T: OutboundTransport>(
+    vault: &Vault,
+    authority: &OutboundBindingAuthority,
+    record: crate::outbound_intent_ledger::IntentLedgerRecord,
+    now_ms: u64,
+    replayed: bool,
+    transport: &mut T,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    let call = FrozenOutboundCall::from_record(&record);
+    if record.resolved_endpoint.is_some()
+        && !matches!(
+            authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
+            FrozenCallValidation::Valid
+        )
+    {
+        let abandoned = abandon_record(
+            vault,
+            record.id,
+            IntentEscalationReason::BindingInvalid,
+            now_ms,
+        )?;
+        return Ok(effect_result(
+            &abandoned,
+            None,
+            replayed,
+            Some(IntentEscalationReason::BindingInvalid),
+        ));
+    }
+
+    match recovery_governance(vault, &record)? {
+        RecoveryGovernance::Allow => {}
+        RecoveryGovernance::Block(reason) => {
+            let mut result = effect_result(&record, None, replayed, None);
+            result.gate_receipt_reasons.push(reason.to_owned());
+            return Ok(result);
+        }
+        RecoveryGovernance::Revoke => {
+            let abandoned = abandon_record(
+                vault,
+                record.id,
+                IntentEscalationReason::ConnectorRevoked,
+                now_ms,
+            )?;
+            return Ok(effect_result(
+                &abandoned,
+                None,
+                replayed,
+                Some(IntentEscalationReason::ConnectorRevoked),
+            ));
+        }
+    }
+
+    // F2 is checked again at the last in-process boundary before transport.
+    if record.resolved_endpoint.is_some()
+        && !matches!(
+            authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
+            FrozenCallValidation::Valid
+        )
+    {
+        let abandoned = abandon_record(
+            vault,
+            record.id,
+            IntentEscalationReason::BindingInvalid,
+            now_ms,
+        )?;
+        return Ok(effect_result(
+            &abandoned,
+            None,
+            replayed,
+            Some(IntentEscalationReason::BindingInvalid),
+        ));
+    }
+
+    let outcome = transport.send(&call);
+    match outcome {
+        OutboundSendOutcome::Acked => {
+            let done = complete_record(vault, record.id, now_ms)?;
+            Ok(effect_result(&done, Some(outcome), replayed, None))
+        }
+        OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
+            Ok(effect_result(&record, Some(outcome), replayed, None))
+        }
+        OutboundSendOutcome::Ambiguous => {
+            let abandoned = abandon_record(
+                vault,
+                record.id,
+                IntentEscalationReason::NonIdempotentAmbiguous,
+                now_ms,
+            )?;
+            Ok(effect_result(
+                &abandoned,
+                Some(outcome),
+                replayed,
+                Some(IntentEscalationReason::NonIdempotentAmbiguous),
+            ))
+        }
+        OutboundSendOutcome::Failed(_) if !record.idempotency_supported => {
+            let abandoned = abandon_record(
+                vault,
+                record.id,
+                IntentEscalationReason::NonIdempotentPending,
+                now_ms,
+            )?;
+            Ok(effect_result(
+                &abandoned,
+                Some(outcome),
+                replayed,
+                Some(IntentEscalationReason::NonIdempotentPending),
+            ))
+        }
+        OutboundSendOutcome::Failed(_) => Ok(effect_result(&record, Some(outcome), replayed, None)),
+    }
+}
+
+fn recovery_governance(
+    vault: &Vault,
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+) -> Result<RecoveryGovernance, IntentLedgerError> {
+    let Some(key_ref) = record.budget_accounting.key_ref.as_ref() else {
+        return Ok(RecoveryGovernance::Allow);
+    };
+    let Some(key) = vault.get_connector_key(key_ref)? else {
+        return Ok(RecoveryGovernance::Block("connector_key_unregistered"));
+    };
+    match key.status {
+        ConnectorKeyStatus::Revoked => return Ok(RecoveryGovernance::Revoke),
+        ConnectorKeyStatus::Pending => {
+            return Ok(RecoveryGovernance::Block("connector_key_pending"));
+        }
+        ConnectorKeyStatus::Suspended => {
+            return Ok(RecoveryGovernance::Block("connector_key_suspended"));
+        }
+        ConnectorKeyStatus::Active => {}
+    }
+    if let Some(charter) = key.charter.as_ref() {
+        if connector_key::charter_block_drifted(charter)? {
+            return Ok(RecoveryGovernance::Block("charter_drift"));
+        }
+        if connector_key::charter_never_list_matches(charter, &key.connector, &record.tool) {
+            return Ok(RecoveryGovernance::Block("charter_never_list"));
+        }
+    }
+    Ok(RecoveryGovernance::Allow)
+}
+
+fn validate_new_replay(
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    prepared: &PreparedEffect,
+) -> Result<(), IntentLedgerError> {
+    if record.id != prepared.intent_id()?
+        || record.server != prepared.server
+        || record.tool != prepared.tool
+        || record.payload_hash != prepared.payload_hash()
+        || record.payload() != prepared.payload.as_slice()
+        || record.resolved_endpoint != prepared.resolved_endpoint
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "new outbound replay does not match persisted intent",
+        ));
+    }
+    Ok(())
+}
+
+fn effect_result(
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    send_outcome: Option<OutboundSendOutcome>,
+    replayed: bool,
+    escalation_reason: Option<IntentEscalationReason>,
+) -> OutboundEffectResult {
+    OutboundEffectResult {
+        dispatch: IntentDispatchResult {
+            class: OutboundCallClass::Effectful,
+            intent_id: Some(record.id),
+            state: Some(record.state),
+            send_outcome,
+            replayed,
+            escalation: escalation_reason.map(|reason| IntentEscalation {
+                intent_id: Some(record.id),
+                reason,
+            }),
+        },
+        gate_decision_id: None,
+        gate_outcome: None,
+        gate_reason_codes: Vec::new(),
+        gate_receipt_reasons: Vec::new(),
+        budget_charge: None,
+    }
+}
+
+fn gate_rejection(
+    intent_id: IntentId,
+    decision_id: crate::store::GateDecisionId,
+    decision: gate::GateDecision,
+) -> OutboundEffectResult {
+    OutboundEffectResult {
+        dispatch: IntentDispatchResult {
+            class: OutboundCallClass::Effectful,
+            intent_id: Some(intent_id),
+            state: None,
+            send_outcome: None,
+            replayed: false,
+            escalation: None,
+        },
+        gate_decision_id: Some(format!("gate:{}", decision_id.to_hex())),
+        gate_outcome: Some(decision.outcome().as_str().to_owned()),
+        gate_reason_codes: decision
+            .reason_codes()
+            .iter()
+            .map(|reason| reason.as_str().to_owned())
+            .collect(),
+        gate_receipt_reasons: decision
+            .receipt_reasons()
+            .iter()
+            .map(|reason| (*reason).to_owned())
+            .collect(),
+        budget_charge: None,
+    }
+}

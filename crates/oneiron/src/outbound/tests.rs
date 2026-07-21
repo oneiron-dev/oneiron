@@ -242,10 +242,16 @@ fn connector_send_schedule_is_additive_and_executor_is_idempotent() -> crate::Re
         1
     );
     assert_eq!(executor.calls.len(), 1);
+    let intent_row = crate::outbound_intent_ledger::intent_ledger_records(&vault)
+        .map_err(|_| Error::InvariantViolation("connector execution intent ledger read failed"))?
+        .into_iter()
+        .next()
+        .expect("connector execution journals one intent");
     assert_eq!(
         executor.idempotency_keys,
-        vec![Some("connector-task:test".to_owned())]
+        vec![Some(intent_row.idempotency_key.clone())]
     );
+    assert_eq!(intent_row.state, crate::IntentState::Done);
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(receipts.len(), 1);
     assert_eq!(
@@ -3016,6 +3022,9 @@ fn dispatch_pipeline_rejects_unsupported_verbs_before_execution() {
             panic!("unexpected facade-bound actor validation")
         }
         OutboundDispatchError::Engine(error) => panic!("unexpected engine error: {error}"),
+        OutboundDispatchError::Chokepoint(error) => {
+            panic!("unexpected chokepoint error: {error}")
+        }
     }
 }
 

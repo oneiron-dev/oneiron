@@ -68,6 +68,7 @@ pub mod llm;
 pub mod maintain;
 pub mod off_record;
 pub mod outbound;
+pub(crate) mod outbound_chokepoint;
 pub mod outbound_consent;
 pub mod outbound_grant;
 pub mod outbound_intent_ledger;
@@ -624,13 +625,13 @@ pub use crate::outbound_grant::{
     decode_standing_outbound_grant_body, encode_standing_outbound_grant_body,
 };
 pub use crate::outbound_intent_ledger::{
-    FrozenOutboundCall, INTENT_LEDGER_SCHEMA_VERSION, INTENT_LEDGER_VALUE_KEYS,
-    IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerError,
-    IntentLedgerRecord, IntentLedgerResult, IntentRecoveryFailure, IntentRecoveryReport,
-    IntentState, OutboundAuthorizationBinding, OutboundCallClass, OutboundCallRequest,
-    OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome, OutboundSender,
-    OutboundToolDescriptor, classify_outbound_tool, derive_intent_id, execute_outbound_call,
-    intent_ledger_records, recover_outbound_intents,
+    BudgetChargeMarker, BudgetClass, FrozenOutboundCall, INTENT_LEDGER_SCHEMA_VERSION,
+    INTENT_LEDGER_VALUE_KEYS, IntentDispatchResult, IntentEscalation, IntentEscalationReason,
+    IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentRecoveryFailure,
+    IntentRecoveryReport, IntentState, OUTBOUND_BINDING_VERSION, OutboundAuthorizationBinding,
+    OutboundCallClass, OutboundCallRequest, OutboundFailureKind, OutboundSendFailure,
+    OutboundSendOutcome, OutboundToolDescriptor, RecordedOutboundOutcome, classify_outbound_tool,
+    derive_intent_id, intent_ledger_records,
 };
 pub use crate::persona_snapshot::{
     DEFAULT_PERSONA_SNAPSHOT_MAX_CLAIM_ROWS, DEFAULT_PERSONA_SNAPSHOT_MAX_THIRD_PARTY_ROWS,
