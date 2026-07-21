@@ -247,10 +247,11 @@ fn connector_send_schedule_is_additive_and_executor_is_idempotent() -> crate::Re
         .into_iter()
         .next()
         .expect("connector execution journals one intent");
-    assert_eq!(
-        executor.idempotency_keys,
-        vec![Some(intent_row.idempotency_key.clone())]
-    );
+    // email/send is NonIdempotentInterrupt: the sink is not handed the ledger id
+    // as a provider idempotency (dedup) token, even though the ledger row still
+    // keys the intent internally.
+    assert_eq!(executor.idempotency_keys, vec![None]);
+    assert!(!intent_row.idempotency_key.is_empty());
     assert_eq!(intent_row.state, crate::IntentState::Done);
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(receipts.len(), 1);
@@ -807,6 +808,159 @@ fn failed_not_delivered_fresh_retry_replays_existing_intent() -> crate::Result<(
             .expect("retried connector task")
             .outcome,
         Some(ConnectorSendTaskOutcome::Delivered)
+    );
+    Ok(())
+}
+
+#[test]
+fn non_idempotent_send_masks_provider_idempotency_key() -> crate::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x63);
+    put_connector_task_actor(&vault, actor, 150)?;
+    put_policy_manifest(
+        &vault,
+        0x64,
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&connector_task_draft(
+            "mask-idem-key:test",
+            "session:mask-idem-key",
+            150,
+        ))
+        .expect("schedule outbound");
+    let mut executor = RecordingExecutor::default();
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 151)
+            .unwrap(),
+        1
+    );
+
+    // email/send is NonIdempotentInterrupt: the sink must not be handed the
+    // ledger id as a provider idempotency (dedup) token, even though the ledger
+    // row still keys the intent internally.
+    assert_eq!(executor.idempotency_keys, vec![None]);
+    let row = crate::outbound_intent_ledger::intent_ledger_records(&vault)
+        .expect("ledger read")
+        .into_iter()
+        .next()
+        .expect("one intent row");
+    assert!(
+        !row.idempotency_key.is_empty(),
+        "the ledger still stores the intent's idempotency key"
+    );
+    assert!(!row.idempotency_supported, "non-idempotent verb");
+    Ok(())
+}
+
+#[test]
+fn connector_executor_hands_sink_the_stable_scheduled_ref() -> crate::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x60);
+    put_connector_task_actor(&vault, actor, 140)?;
+    put_policy_manifest(
+        &vault,
+        0x61,
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&connector_task_draft(
+            "stable-sink-ref:test",
+            "session:stable-sink-ref",
+            140,
+        ))
+        .expect("schedule outbound");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut executor = RecordingExecutor::default();
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 141)
+            .unwrap(),
+        1
+    );
+
+    // Sinks key their per-send plan by `request.intent_ref`, so the executor
+    // must hand the sink the stable scheduled task ref — not the private
+    // logical-send hash that anchors the ledger/charge identity.
+    assert_eq!(executor.calls.len(), 1);
+    assert_eq!(
+        executor.calls[0].0,
+        format!("intent:task:{}", task_ref.to_hex())
+    );
+    assert!(
+        !executor.calls[0].0.starts_with("intent:logical-send:"),
+        "the private ledger identity must not leak to the sink"
+    );
+    Ok(())
+}
+
+#[test]
+fn replayed_delivery_omits_fabricated_gate_ref() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    use crate::receipt::{FIELD_TASK_REF, ReceiptKind, ReceiptQuery};
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x65);
+    put_connector_task_actor(&vault, actor, 160)?;
+    put_policy_manifest(
+        &vault,
+        0x66,
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    let mut draft = connector_task_draft("replay-gate-ref:test", "session:replay-gate-ref", 160);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule outbound");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+
+    // Attempt 1 comes back maybe-delivered: the idempotent intent stays Pending.
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 161)
+            .unwrap(),
+        0
+    );
+
+    // A fresh attempt replays the same Pending intent and delivers.
+    let retry = AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
+        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+        payload: connector_send_attempt_payload(task_ref)?,
+        dedupe_key: None,
+        run_id: None,
+        now: 161,
+    })?;
+    assert!(matches!(retry, EnqueueOutcome::Enqueued(_)));
+    executor.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:replay:delivered");
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 162)
+            .unwrap(),
+        1
+    );
+
+    // The replay carries no gate decision id, so the delivered receipt must omit
+    // gate_decision_ref rather than fabricate a non-queryable `intent:` value.
+    let receipts = vault.receipts(ReceiptQuery::new(160).with_kind(ReceiptKind::Outbound))?;
+    let delivered = receipts
+        .iter()
+        .find(|receipt| {
+            receipt.fields.get(FIELD_TASK_REF).map(String::as_str)
+                == Some(task_ref.to_hex().as_str())
+        })
+        .expect("delivered send receipt");
+    assert!(
+        !delivered.fields.contains_key("gate_decision_ref"),
+        "a replayed send must not fabricate an intent: gate ref"
     );
     Ok(())
 }

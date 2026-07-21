@@ -1018,6 +1018,15 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
                     continue;
                 }
             };
+            // This authorized sweep resumes every row it touches through the
+            // scoped-MCP result transport. Connector-send rows carry no scoped
+            // authorization binding and are driven forward (and replayed) by the
+            // connector-task attempt queue instead; resuming one here would push
+            // a connector payload through the MCP result sender. Skip them so the
+            // scoped transport only ever sees scoped-authorized intents.
+            if record.authorization_binding.is_none() {
+                continue;
+            }
             let original_state = record.state;
             let sends_before = transport.effectful_sends;
             let result = crate::outbound_chokepoint::execute_outbound_effect(

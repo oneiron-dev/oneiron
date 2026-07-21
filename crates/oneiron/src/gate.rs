@@ -21,7 +21,10 @@ use crate::claim::{
     SessionClaimBundleClaim, claim_sensitivity_band, encode_claim_body,
     sensitivity_band_from_value,
 };
-use crate::connector_key::{self, ConnectorKeyStatus, EffectorBudgetCharge};
+use crate::connector_key::{
+    self, ConnectorKeyStatus, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
+    EffectorBudgetOnExhaust,
+};
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_index_key,
     decode_counterparty_contact_body, decode_counterparty_contact_index_value,
@@ -3080,18 +3083,89 @@ pub(crate) fn record_external_effect_policy(
     Ok((decision_id, decision))
 }
 
-/// Governance-only compatibility surface for non-effect scheduling checks.
+/// Governance surface for external-effect callers that finalize the decision in
+/// their own transaction. When `admit_for_execution` is set the caller applies
+/// the effect immediately in this same txn (e.g. an identity lifecycle intent),
+/// so the governing connector key is debited exactly once here and an exhausted
+/// key flips the recorded decision to a budget-exhausted denial before the
+/// effect is applied — one durable accounting event per genuinely-new effect
+/// (design.out §2/§3). Governance-only callers pass `false` and never debit.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn check_external_effect_policy(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
-    _admit_for_execution: bool,
+    admit_for_execution: bool,
 ) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
-    let governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None)?;
+    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None)?;
+    let mut effector_charge = None;
+    if admit_for_execution && governance.outcome() == GateOutcome::Allow {
+        let (charge, exhausted) = charge_admitted_external_effect(
+            store,
+            wtxn,
+            &mut governance,
+            effect.send_ref.is_some(),
+        )?;
+        if exhausted {
+            governance.deny_budget_exhausted();
+        }
+        effector_charge = charge;
+    }
     let (decision_id, decision) = record_external_effect_policy(store, wtxn, governance)?;
-    Ok((decision_id, decision, None))
+    Ok((decision_id, decision, effector_charge))
+}
+
+/// Debits the governance-selected connector key exactly once for an admitted
+/// effect, mirroring the chokepoint `charge_once`: send-dimension rows debit
+/// only for send-like effects, an exhausted suspend-class row suspends the key,
+/// and the caller converts exhaustion into a denial.
+fn charge_admitted_external_effect(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    governance: &mut ExternalEffectGovernance,
+    send_like: bool,
+) -> Result<(Option<EffectorBudgetCharge>, bool)> {
+    let Some(target) = governance.budget_target_mut() else {
+        return Ok((None, false));
+    };
+    // Budget windows advance on the engine's trusted clock, not a caller
+    // timestamp, so the debit and any receipt echo share the same window.
+    let budget_now = crate::unix_seconds_now();
+    let outcome = connector_key::charge_effector_budgets(
+        store,
+        wtxn,
+        &target.key_id,
+        &mut target.key,
+        &target.governing_connector,
+        send_like,
+        budget_now,
+    )?;
+    let (mut charge, exhausted) = match outcome {
+        EffectorBudgetChargeOutcome::NoRows(charge)
+        | EffectorBudgetChargeOutcome::Charged(charge) => (charge, false),
+        EffectorBudgetChargeOutcome::Exhausted {
+            row_index,
+            on_exhaust,
+            mut charge,
+        } => {
+            if on_exhaust == EffectorBudgetOnExhaust::Suspend {
+                connector_key::suspend_connector_key_in_txn(
+                    store,
+                    wtxn,
+                    &target.key_id,
+                    &target.key,
+                    connector_key::budget_exhausted_reason(row_index),
+                    budget_now,
+                )?;
+                charge.read.status = ConnectorKeyStatus::Suspended;
+            }
+            (charge, true)
+        }
+    };
+    charge.matched_rows.sort_unstable();
+    charge.matched_rows.dedup();
+    Ok((Some(charge), exhausted))
 }
 
 fn standing_outbound_grant_for_effect(

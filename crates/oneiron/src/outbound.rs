@@ -540,6 +540,12 @@ impl OutboundDispatchGate {
 pub struct OutboundDispatchRequest {
     pub receipt_id: String,
     pub intent_ref: String,
+    /// Optional in-memory override for the replay-first ledger/charge identity.
+    /// When set, the chokepoint intent id is derived from this stable
+    /// logical-send ref while `intent_ref` stays the caller-facing/scheduled ref
+    /// that sinks key their per-send plan by. Never persisted; defaults to
+    /// deriving the ledger identity from `intent_ref`.
+    pub ledger_identity_ref: Option<String>,
     pub intent: OutboundIntent,
     pub actor: OutboundDispatchActor,
     pub gate: OutboundDispatchGate,
@@ -588,6 +594,7 @@ impl OutboundDispatchRequest {
         Self {
             receipt_id: receipt_id.into(),
             intent_ref: intent_ref.into(),
+            ledger_identity_ref: None,
             intent,
             actor,
             gate,
@@ -1182,7 +1189,15 @@ impl OutboundDispatchPipeline {
                     "outbound intent freeze failed",
                 ))
             })?;
-            let attempt_id = outbound_dispatch_attempt_id(&request.intent_ref)?;
+            // The ledger/charge identity follows the stable logical-send ref
+            // when the caller supplies one, so fresh retries of the same logical
+            // send collapse onto one paid intent while `intent_ref` stays the
+            // sink-facing scheduled ref.
+            let ledger_identity_ref = request
+                .ledger_identity_ref
+                .as_deref()
+                .unwrap_or(&request.intent_ref);
+            let attempt_id = outbound_dispatch_attempt_id(ledger_identity_ref)?;
             let prepared = crate::outbound_chokepoint::PreparedEffect {
                 attempt_id,
                 call_seq: 0,
@@ -1248,12 +1263,11 @@ impl OutboundDispatchPipeline {
                 None => OutboundDispatchOutcome::Suppressed,
             };
             (
-                effect_result.gate_decision_id.unwrap_or_else(|| {
-                    format!(
-                        "intent:{}",
-                        crate::entity_id::bytes_to_hex_lower(attempt_id.as_bytes())
-                    )
-                }),
+                // On a ledger replay the chokepoint returns no gate decision id
+                // (the gate ran, and was recorded, on the original send). Omit
+                // the ref rather than fabricate a non-queryable `intent:` value
+                // that would break the receipt's `gate:` audit link.
+                effect_result.gate_decision_id,
                 gate_outcome_kind,
                 gate_outcome,
                 effect_result.gate_reason_codes,
@@ -1309,7 +1323,7 @@ impl OutboundDispatchPipeline {
                 },
             };
             (
-                format!("gate:{}", gate_decision_id.to_hex()),
+                Some(format!("gate:{}", gate_decision_id.to_hex())),
                 gate_outcome_kind,
                 gate_outcome_kind.as_str().to_owned(),
                 gate_decision
@@ -1344,9 +1358,11 @@ impl OutboundDispatchPipeline {
             .extend(gate_receipt_reasons.iter().cloned());
         receipt.policy_trace.push(window_decision.policy_trace());
         receipt.policy_trace.extend(engine_policy_trace);
-        receipt
-            .fields
-            .insert("gate_decision_ref".to_owned(), gate_decision_ref.clone());
+        if let Some(gate_decision_ref) = gate_decision_ref.as_deref() {
+            receipt
+                .fields
+                .insert("gate_decision_ref".to_owned(), gate_decision_ref.to_owned());
+        }
         receipt
             .fields
             .insert("gate_outcome".to_owned(), gate_outcome.clone());
@@ -1483,7 +1499,7 @@ impl OutboundDispatchPipeline {
         };
         Ok(OutboundDispatchResult {
             outcome,
-            gate_decision_id: Some(gate_decision_ref),
+            gate_decision_id: gate_decision_ref,
             gate_outcome,
             gate_reason_codes,
             receipt,
@@ -1701,13 +1717,20 @@ impl Vault {
             let logical_send_intent_ref = connector_logical_send_intent_ref(&task);
             let mut request = OutboundDispatchRequest::new(
                 format!("outbound:task:{}", task_ref.to_hex()),
-                logical_send_intent_ref,
+                // Sink-facing scheduled ref: sinks key their per-send plan by
+                // `request.intent_ref`, so it must stay the stable task ref the
+                // caller registered the plan under. The charge/replay identity
+                // travels separately below.
+                format!("intent:task:{}", task_ref.to_hex()),
                 task.intent,
                 actor,
                 OutboundDispatchGate::allow_when_policy_grants(),
                 now,
                 OutboundDeliveryWindowDecision::DeliverNow,
             );
+            // Ledger identity is the logical-send id (derived from the task
+            // idempotency key) so fresh retry attempts stay the same paid intent.
+            request.ledger_identity_ref = Some(logical_send_intent_ref);
             if let Some(session_ref) = originating_session_ref {
                 request = request.originating_session(session_ref);
             }
@@ -1718,7 +1741,10 @@ impl Vault {
                 task.actor_class,
             ) {
                 Ok(result) => result,
-                Err(_) => {
+                Err(OutboundDispatchError::InvalidBoundActor) => {
+                    // Bound-actor validation fails before the chokepoint admits,
+                    // charges, or sends the effect, so this is a definite
+                    // non-delivery: fail the attempt terminally and project it.
                     fail_connector_task_attempt(&queue, &attempt, now, "dispatch_rejected")?;
                     project_connector_send_task_outcome(
                         self,
@@ -1726,6 +1752,18 @@ impl Vault {
                         ConnectorSendTaskOutcome::Failed,
                         now,
                     )?;
+                    continue;
+                }
+                Err(_) => {
+                    // The chokepoint runs the transport inside dispatch, so an
+                    // error here can surface AFTER the connector was already
+                    // called (e.g. a durable commit fails once the sink returned
+                    // Acked/Ambiguous). The outcome is unknown, not a definite
+                    // failure, so retry and let the replay-first ledger resolve
+                    // it (an idempotent resume completes; non-idempotent
+                    // uncertainty abandons) instead of projecting a terminal
+                    // Failed with no receipt over a possibly-delivered send.
+                    retry_connector_task_attempt(&queue, &attempt, now, "dispatch_uncertain")?;
                     continue;
                 }
             };
@@ -2063,7 +2101,15 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         let execution_request = OutboundExecutionRequest {
             intent_ref: &self.request.intent_ref,
             intent: &self.request.intent,
-            idempotency_key: call.idempotency_key(),
+            // The ledger id doubles as the frozen call's idempotency key, but a
+            // sink must only be told it has provider idempotency when the verb
+            // actually supports it. A non-idempotent send exposes no key, so the
+            // transport cannot mistake the ledger id for a dedupe token.
+            idempotency_key: if call.idempotency_supported() {
+                call.idempotency_key()
+            } else {
+                None
+            },
             verb_contract: self.verb_contract,
             channel_identity_ref: self.request.channel_identity_ref,
             counterparty_ref: self.request.counterparty_ref.as_deref(),

@@ -1506,3 +1506,55 @@ fn allowlisted_endpoint_rotation_freezes_the_selected_endpoint() {
     );
     assert_eq!(row[0].binding_version, OUTBOUND_BINDING_VERSION);
 }
+
+#[test]
+fn authorized_recovery_skips_non_scoped_connector_rows() {
+    let (_tmp, vault) = temp_vault();
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+
+    // A connector-send row: no scoped authorization binding, no resolved
+    // endpoint, and no governing connector key. The connector-task attempt
+    // queue owns its recovery; the scoped/MCP result transport must never see
+    // it, or a connector payload would leave through the MCP result sender.
+    let request = crate::outbound_intent_ledger::OutboundCallRequest::new(
+        AttemptId::from_bytes(&[0x5A; 16]).expect("attempt id"),
+        0,
+        "connector-channel",
+        "send_message",
+        b"connector payload".to_vec(),
+        10,
+    );
+    let marker = crate::outbound_intent_ledger::BudgetChargeMarker {
+        key_ref: None,
+        budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
+        matched_rows: Vec::new(),
+        sends_debit: 0,
+        accounted_at_ms: 10,
+    };
+    let pending = crate::outbound_intent_ledger::IntentLedgerRecord::pending(request, true, marker)
+        .expect("connector pending record");
+    let pending_id = pending.id;
+    assert!(
+        pending.authorization_binding.is_none(),
+        "connector rows carry no scoped authorization binding"
+    );
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    crate::outbound_intent_ledger::insert_pending_in_txn(&vault, &mut wtxn, &pending)
+        .expect("insert connector pending");
+    wtxn.commit().expect("commit connector pending");
+
+    let mut transport = RecordingResultSender::default();
+    let recovered =
+        recover_authorized_outbound_intents(&vault, &authority, &mut transport, 13, 30_000)
+            .expect("authorized recovery");
+
+    // The connector row is skipped, not resumed through the MCP transport.
+    assert_eq!(recovered.effectful_sends, 0);
+    assert_eq!(recovered.ledger.resent, 0);
+    assert!(transport.sent_payloads.is_empty());
+    // It stays Pending, untouched, for the connector-task attempt queue.
+    let rows = intent_ledger_records(&vault).expect("read ledger after recovery");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, pending_id);
+    assert_eq!(rows[0].state, IntentState::Pending);
+}

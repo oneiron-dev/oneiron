@@ -7211,3 +7211,56 @@ fn charter_drift_degrades_to_pending_without_debits() -> Result<()> {
     assert!(charge.expect("budget stage ran").matched_rows.contains(&0));
     Ok(())
 }
+
+#[test]
+fn admitted_wrapper_charges_budget_and_denies_exhausted_key() -> Result<()> {
+    // Exercises the PRODUCTION `check_external_effect_policy` (not the
+    // `_with_budget` test helper): when admit_for_execution is set the caller
+    // applies the effect immediately, so the wrapper itself must debit the
+    // governing connector key and flip to a budget-exhausted denial. Before the
+    // fix the wrapper ignored the flag and never charged, so an exhausted key
+    // could not block an immediately-applied lifecycle effect.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_two_verb_manifest("line"))?;
+    vault.register_connector_key(
+        &test_id(0x7E),
+        crate::ConnectorKeyRecord::active(
+            "line",
+            None,
+            vec![crate::EffectorBudget::rate(1, 3_600)],
+            1_000,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    // A lifecycle-shaped effect applied immediately: send_ref None.
+    let effect = external_effect_gate_input("sender", "provision", "line");
+    assert!(effect.send_ref.is_none());
+
+    // First admitted call charges the rate-1 budget through the wrapper.
+    let (_, decision, charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert!(
+        charge.is_some(),
+        "the admitted wrapper debited the governing key"
+    );
+
+    // The now-exhausted rate row blocks the next admitted lifecycle effect.
+    let (_, decision, _) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.effector_budget_exhausted"]
+    );
+
+    // Governance-only callers (admit_for_execution = false) still never debit.
+    let (_, decision, charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, false)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert!(charge.is_none(), "governance-only checks must not debit");
+    Ok(())
+}
