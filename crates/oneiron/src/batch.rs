@@ -2289,10 +2289,10 @@ fn reject_engine_authored_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(());
     };
-    // Single source of truth: the batch/bulk delete door honors the same
-    // delete-protection list as the deletion path (which ONE-1741 extended with
-    // the content anchor), so the two guards cannot drift out of sync.
-    if crate::deletion::is_delete_protected_engine_record(header.entity_type) {
+    // Single source of truth: the registry owns the delete-protected kind set
+    // (ONE-1741 added the content anchor); the batch/bulk delete door and the
+    // deletion path both consult it, so the guards cannot drift out of sync.
+    if crate::registry::is_delete_protected_engine_record(header.entity_type) {
         return Err(Error::MaintenanceKindNotWritable(header.entity_type));
     }
     Ok(())

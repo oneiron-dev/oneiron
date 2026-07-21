@@ -223,6 +223,21 @@ pub fn is_structural_kind(type_byte: u8) -> bool {
     )
 }
 
+/// Entity kinds the engine refuses to delete on every door (targeted, batch, or
+/// replayed tombstone). `POLICY_MANIFEST` and `AUTHORITY_LOG` are authority-bearing
+/// control-plane records; `SKILL_CONTENT_ANCHOR` (ONE-1741) is the immortal subject
+/// that content-global scan verdicts hang off — deleting it would strand every
+/// verdict for those content bytes. The deletion/batch engine consults this neutral
+/// registry predicate instead of naming the protected kinds itself, so the protected
+/// set stays owned by the registry and cannot drift between delete doors.
+#[must_use]
+pub(crate) fn is_delete_protected_engine_record(entity_type: u8) -> bool {
+    matches!(
+        entity_type,
+        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG | ENTITY_TYPE_SKILL_CONTENT_ANCHOR
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityTypeRegistryEntry {
     pub kind: &'static str,

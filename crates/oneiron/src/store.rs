@@ -133,6 +133,12 @@ use crate::registry::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v14 (ONE-1741): SKILL_CONTENT_ANCHOR was registered as persistent maintenance
+/// entity type byte 138 — the immortal subject that content-global scan verdicts
+/// anchor to. v13 readers do not know this persistent entity kind and would not
+/// protect it from deletion, so v13 vaults fail closed at the ABI gate — there is
+/// no silent migration; rebuild the vault.
+///
 /// v13 (ONE-1387): type-0 CLAIM bodies gained the optional `sess` key for
 /// actor-bound session review bundles. v12 readers reject these bodies, so
 /// vaults carrying session-tagged claims must fail closed at the ABI gate.
@@ -177,7 +183,7 @@ pub const MAX_DBS: u32 = 32;
 /// `GATE_DECISION_LEDGER_VERSION`, `ATTEMPT_RECORD_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 13;
+pub const STORAGE_ABI_VERSION: u16 = 14;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
