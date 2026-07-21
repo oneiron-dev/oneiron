@@ -85,11 +85,20 @@ pub const PREDICATE_ENTITY_DISTINCT_FROM: &str = "entity.distinct_from";
 /// a rolled-back op never burns a visible gap into committed history.
 pub(crate) const IDENTITY_TOPOLOGY_SEQ_KEY: &[u8] = b"m:identity_topology_seq";
 
-/// First sequence value reserved from replicated input. Rejecting the final
-/// 1,024 `u64` values leaves a freshly joined replica enough local allocator
-/// headroom for undo/counter-events instead of allowing one terminal peer
-/// record to wedge every future local topology write.
+/// First sequence value the local allocator may not enter. The final 1,024
+/// `u64` values remain the terminal band shared by local and replicated
+/// records.
 pub(crate) const IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING: u64 = u64::MAX - 1_023;
+
+/// Minimum allocator capacity a replicated record must leave below the
+/// terminal band for locally-authored apply/undo counter-events.
+pub(crate) const IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM: u64 = 1_024;
+
+/// First sequence value rejected from replicated input. A peer may advance
+/// the local clock only while all [`IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM`]
+/// slots remain available to the local allocator below the terminal band.
+const IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT: u64 =
+    IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING - IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM;
 
 /// Hard per-record limits for the append-only replicated family. The body
 /// limit bounds decode/allocation work before MessagePack parsing; the
@@ -1096,11 +1105,32 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
     Ok(())
 }
 
+fn validate_replicated_identity_topology_seq(seq: u64) -> Result<()> {
+    if seq >= IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event seq is in the reserved terminal range",
+        ));
+    }
+    Ok(())
+}
+
 /// D18 body validator for the type-76 maintenance kind, run at the shared
 /// write chokepoint on every path that can admit the byte (engine door and
 /// sync replay alike).
 pub(crate) fn validate_identity_topology_event_body_bytes(data: &[u8]) -> Result<()> {
     decode_identity_topology_event_body(data).map(|_| ())
+}
+
+/// Decodes the deterministic body predicate shared by every replicated
+/// type-76 ingress decision. Local authoring may consume the retained
+/// headroom; replicated bodies must additionally leave it intact.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+pub(crate) fn decode_replicated_identity_topology_event_body(
+    data: &[u8],
+) -> Result<StoredIdentityOpEvent> {
+    let record = decode_identity_topology_event_body(data)?;
+    validate_replicated_identity_topology_seq(record.seq)?;
+    Ok(record)
 }
 
 fn id_value(id: &EntityId) -> Value {
@@ -2111,11 +2141,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         record: &StoredIdentityOpEvent,
     ) -> Result<()> {
-        if record.seq >= IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING {
-            return Err(Error::InvalidIdentityTopologyEventBody(
-                "identity topology event seq is in the reserved terminal range",
-            ));
-        }
+        validate_replicated_identity_topology_seq(record.seq)?;
         // An absent actor is a reference deferral, just like an absent
         // participant: the immutable event may land, but the effective fold
         // excludes it until the actor materializes and its class can be

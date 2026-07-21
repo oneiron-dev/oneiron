@@ -2481,3 +2481,58 @@ fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Resul
     );
     Ok(())
 }
+
+#[test]
+fn forward_rematerialization_malformed_type_76_envelope_preserves_delete_wins() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let entity_id = EntityId::from_bytes([0x72; 16])?;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: 200,
+        request_id: [0x42; 16],
+    }
+    .encode();
+    let doc = create_window_doc("remote-malformed-protected", &window_key);
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &entity_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            200,
+            b"malformed type-76 body",
+        ),
+    )?;
+    map_insert_bytes(&doc.get_map("tombstones"), &entity_id.to_hex(), &tombstone)?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert!(vault.get(&entity_id)?.is_none());
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault.local_hard_delete_marker_exists_in_txn(&rtxn, &entity_id)?,
+        "a malformed protected envelope must run the normal tombstone path"
+    );
+    drop(rtxn);
+
+    doc.get_map("tombstones")
+        .delete(&entity_id.to_hex())
+        .unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &entity_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_TASK,
+            201,
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+        ),
+    )?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert!(
+        vault.get(&entity_id)?.is_none(),
+        "the permanent dt: marker must block later ordinary resurrection"
+    );
+    Ok(())
+}

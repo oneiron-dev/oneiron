@@ -1494,8 +1494,7 @@ fn materialize_tombstones_from_delta(
                 // mint a permanent `dt:` marker.
                 if matches!(vault.read_entity_header(&id), Ok(None))
                     && let Some(entity_blob) = map_get_bytes(&entities_map, &id.to_hex())
-                    && let Some(header) = EntityMetadataHeader::parse(&entity_blob)
-                    && crate::deletion::is_delete_protected_engine_record(header.entity_type)
+                    && let Some(header) = admitted_concurrent_delete_protected_header(&entity_blob)
                 {
                     let rejection = Error::MaintenanceKindNotWritable(header.entity_type);
                     if let Err(quarantine_err) = quarantine_rejected_op(
@@ -1904,6 +1903,24 @@ fn quarantine_and_neutralize_protected_tombstone_in_txn(
     Ok(())
 }
 
+/// Classifies a concurrent peer envelope for tombstone protection only after
+/// running the same deterministic body predicate as replicated type-76
+/// ingestion. Other established protected kinds retain their existing
+/// classification; type-76 must never gain protection from its header alone.
+pub(crate) fn admitted_concurrent_delete_protected_header(
+    blob: &[u8],
+) -> Option<EntityMetadataHeader> {
+    let header = EntityMetadataHeader::parse(blob)?;
+    if !crate::deletion::is_delete_protected_engine_record(header.entity_type) {
+        return None;
+    }
+    if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        let data = &blob[ENTITY_METADATA_HEADER_LEN..];
+        crate::identity_topology::decode_replicated_identity_topology_event_body(data).ok()?;
+    }
+    Some(header)
+}
+
 /// Shared fail-closed ingest door for replicated type-76 identity-topology
 /// event records (ARCH-0023b single-writer stream class, AUTHORITY_LOG
 /// shape). Observer B's entity pass and forward rematerialization BOTH
@@ -1942,8 +1959,9 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
             // The stored bytes equal the replayed bytes, so a decode
             // failure here is on-disk corruption — LOCAL, fail-closed —
             // never a rejectable remote input.
-            let record = crate::identity_topology::decode_identity_topology_event_body(data)
-                .map_err(|_| crate::Error::CorruptedIndex("identity topology event body"))?;
+            let record =
+                crate::identity_topology::decode_replicated_identity_topology_event_body(data)
+                    .map_err(|_| crate::Error::CorruptedIndex("identity topology event body"))?;
             validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, &record)?;
             vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
             vault.neutralize_delete_protected_marker_in_txn(
@@ -1958,7 +1976,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         }
         None => {}
     }
-    let record = crate::identity_topology::decode_identity_topology_event_body(data)?;
+    let record = crate::identity_topology::decode_replicated_identity_topology_event_body(data)?;
     validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, &record)?;
     let quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
         vault,

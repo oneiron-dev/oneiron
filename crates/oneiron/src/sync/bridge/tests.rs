@@ -1845,6 +1845,117 @@ fn observer_b_tombstone_first_then_type_76_blob_neutralizes_poison_with_evidence
 }
 
 #[test]
+fn observer_b_malformed_type_76_envelope_cannot_bypass_delete_wins() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let vault = test_vault();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: 200,
+        request_id: [0x42; 16],
+    }
+    .encode();
+
+    let malformed_id = EntityId::from_bytes([0x72; 16]).unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &malformed_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            b"malformed type-76 body",
+        ),
+    )
+    .unwrap();
+    map_insert_bytes(
+        &doc.get_map("tombstones"),
+        &malformed_id.to_hex(),
+        &tombstone,
+    )
+    .unwrap();
+    doc.commit();
+
+    assert!(vault.get(&malformed_id).unwrap().is_none());
+    assert!(
+        read_dt_marker(&vault, &malformed_id).is_some(),
+        "a malformed protected envelope must run the normal tombstone path"
+    );
+
+    doc.get_map("tombstones")
+        .delete(&malformed_id.to_hex())
+        .unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &malformed_id.to_hex(),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: 201,
+                end: 201,
+            },
+            201,
+            &task_body(),
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        vault.get(&malformed_id).unwrap().is_none(),
+        "the permanent dt: marker must block later ordinary resurrection"
+    );
+
+    let valid_id = EntityId::from_bytes([0x73; 16]).unwrap();
+    let valid_record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![EntityId::from_bytes([0x61; 16]).unwrap()],
+            survivor: EntityId::from_bytes([0x62; 16]).unwrap(),
+        },
+    };
+    let valid_body =
+        crate::identity_topology::encode_identity_topology_event_body(&valid_record).unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &valid_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: valid_record.at,
+                end: valid_record.at,
+            },
+            valid_record.at,
+            &valid_body,
+        ),
+    )
+    .unwrap();
+    map_insert_bytes(&doc.get_map("tombstones"), &valid_id.to_hex(), &tombstone).unwrap();
+    doc.commit();
+
+    assert_eq!(
+        vault.identity_topology_event(&valid_id).unwrap(),
+        Some(valid_record),
+        "a genuinely valid protected record must retain delete protection"
+    );
+    assert!(
+        read_dt_marker(&vault, &valid_id).is_none(),
+        "a valid protected record's tombstone must not write dt:"
+    );
+}
+
+#[test]
 fn observer_b_rejects_type_76_merge_with_nonstructural_participant() {
     use crate::identity_topology::{
         EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
@@ -2152,7 +2263,7 @@ fn observer_b_quarantined_undo_commits_no_event_or_seq_advance() {
 }
 
 #[test]
-fn observer_b_rejects_reserved_terminal_seq_before_clock_mutation() {
+fn observer_b_rejects_seq_that_would_consume_local_headroom_before_clock_mutation() {
     use crate::identity_topology::{
         IdentityOpOutcome, IdentityOpWrite, StoredIdentityOpAction, StoredIdentityOpEvent,
     };
@@ -2173,7 +2284,8 @@ fn observer_b_rejects_reserved_terminal_seq_before_clock_mutation() {
     }
     let rejected_event = EntityId::now();
     let record = StoredIdentityOpEvent {
-        seq: crate::identity_topology::IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING,
+        seq: crate::identity_topology::IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING
+            - crate::identity_topology::IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2211,7 +2323,7 @@ fn observer_b_rejects_reserved_terminal_seq_before_clock_mutation() {
             .identity_topology_event(&rejected_event)
             .unwrap()
             .is_none(),
-        "reserved terminal seq must reject the event before storage"
+        "a seq that consumes required local headroom must reject before storage"
     );
     let outcome = vault
         .apply_identity_topology_op(

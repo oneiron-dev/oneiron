@@ -1719,8 +1719,7 @@ pub fn forward_rematerialize(
         // headerless replay path can mint a permanent `dt:` marker.
         if matches!(vault.read_entity_header(&id), Ok(None))
             && let Some(entity_blob) = map_get_bytes(&entities_map, &id.to_hex())
-            && let Some(header) = EntityMetadataHeader::parse(&entity_blob)
-            && crate::deletion::is_delete_protected_engine_record(header.entity_type)
+            && let Some(header) = bridge::admitted_concurrent_delete_protected_header(&entity_blob)
         {
             let rejection = Error::MaintenanceKindNotWritable(header.entity_type);
             if let Err(quarantine_err) = quarantine::quarantine_rejected_op(

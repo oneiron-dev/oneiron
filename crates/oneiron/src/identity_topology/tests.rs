@@ -2097,45 +2097,45 @@ fn seq_clock_joins_ingested_history_before_local_allocation() {
 }
 
 #[test]
-fn local_sequence_allocator_refuses_the_replicated_terminal_band() {
+fn local_sequence_allocator_keeps_headroom_after_largest_replicated_seq() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x61);
     let loser = put_person(&vault, 0x62);
-    let last_network_sequence = IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING - 1;
+    let last_network_sequence =
+        IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING - IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM - 1;
     vault
         .with_write_txn(|wtxn| {
             vault.advance_identity_topology_seq_in_txn(wtxn, last_network_sequence)
         })
         .expect("join the last network-admissible sequence");
-    let events_before = event_count(&vault);
 
-    let err = vault
-        .apply_identity_topology_op(
-            &merge_op(vec![loser], survivor),
-            &IdentityOpWrite::auto(ClaimSource::Inferred),
-            200,
-        )
-        .expect_err("local allocation must not enter the peer-rejected terminal band");
-    assert!(matches!(
-        err,
-        Error::InvalidIdentityTopologyEventBody(
-            "identity topology event seq is in the reserved terminal range"
-        )
-    ));
-    assert_eq!(event_count(&vault), events_before, "no event was minted");
+    let (event_id, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(
+                &merge_op(vec![loser], survivor),
+                &IdentityOpWrite::auto(ClaimSource::Inferred),
+                200,
+            )
+            .expect("local allocation must retain headroom after the largest replicated seq"),
+    );
+    let record = vault
+        .identity_topology_event(&event_id)
+        .expect("read local event")
+        .expect("local event exists");
+    assert_eq!(record.seq, last_network_sequence + 1);
     assert!(
-        !vault
+        vault
             .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
             .expect("read shell"),
-        "a refused allocation has zero topology effects"
+        "the local topology apply must succeed after the largest replicated seq"
     );
     let rtxn = vault.store.env.read_txn().expect("read txn");
     assert_eq!(
         vault
             .read_identity_topology_seq_in_txn(&rtxn)
             .expect("read seq clock"),
-        last_network_sequence,
-        "the failed allocation must not advance the clock"
+        last_network_sequence + 1,
+        "the successful local allocation advances into retained headroom"
     );
 }
 
