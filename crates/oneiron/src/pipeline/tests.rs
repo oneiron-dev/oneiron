@@ -4755,6 +4755,8 @@ fn claim_status_gate_pins_the_literal_status_table() -> Result<()> {
 /// absent from every channel.
 #[test]
 fn claim_status_gate_covers_all_five_channels() -> Result<()> {
+    type ChannelQuery = Box<dyn Fn(&Vault) -> Result<Vec<ScoredEntity>>>;
+
     let (_dir, vault) = open_test_vault();
 
     let anchor = 1_000_000_u64;
@@ -4795,7 +4797,6 @@ fn claim_status_gate_covers_all_five_channels() -> Result<()> {
     )?;
     vault.put_edge(&seed, EdgeKind::Supports, &claim, 0.9)?;
 
-    type ChannelQuery = Box<dyn Fn(&Vault) -> Result<Vec<ScoredEntity>>>;
     let channels: Vec<(&str, ChannelQuery)> = vec![
         (
             "text",

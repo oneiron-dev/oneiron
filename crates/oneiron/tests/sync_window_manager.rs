@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! Integration tests for the production window manager (ONE-1125).
 //!
 //! Pins the ARCH-0023b startup ordering invariant through

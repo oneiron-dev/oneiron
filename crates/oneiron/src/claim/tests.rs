@@ -933,15 +933,15 @@ fn claim_field_profile_slices_are_prefixes_of_the_pinned_keys() {
 /// ARCH-0004 §H items 1/2/4).
 #[test]
 fn claim_surfaceable_pins_the_full_status_truth_table() {
+    use ClaimApprovalStatus as A;
+    use ClaimLifecycleStatus as L;
+
     let subject = ClaimSubject::Entity(EntityId::from_bytes([0x11; 16]).expect("valid id"));
     let body = |appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale: bool| {
         let mut body = ClaimBody::new("test.pred", subject, Value::from("v"), 0.5, appr, life);
         body.stale = stale;
         body
     };
-
-    use ClaimApprovalStatus as A;
-    use ClaimLifecycleStatus as L;
 
     // The ONLY surfaceable combinations.
     assert!(claim_surfaceable(&body(A::Auto, L::Active, false)));
@@ -1108,6 +1108,8 @@ fn session_claim_producer_uses_envelope_actor_evidence_fail_closed() -> Result<(
 /// of approval status; every non-generated source stays admissible.
 #[test]
 fn generated_not_evidence() {
+    use ClaimApprovalStatus as A;
+
     let subject = ClaimSubject::Entity(EntityId::from_bytes([0x14; 16]).expect("valid id"));
     let body = |source: Option<ClaimSource>, appr: ClaimApprovalStatus| {
         let mut body = ClaimBody::new(
@@ -1121,8 +1123,6 @@ fn generated_not_evidence() {
         body.source = source;
         body
     };
-
-    use ClaimApprovalStatus as A;
 
     // Declared Generated fails for EVERY approval status, including Approved.
     for appr in [A::Auto, A::Proposed, A::Approved, A::Rejected] {

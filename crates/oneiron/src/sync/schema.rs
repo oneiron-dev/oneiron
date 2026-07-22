@@ -29,8 +29,10 @@ pub fn create_root_doc(_user_id: &str, vault_id: &str, windows: &[WindowKey]) ->
     let doc = LoroDoc::new();
     let meta = doc.get_map("meta");
 
-    map_insert_bytes(&meta, "vault_id", vault_id.as_bytes()).unwrap();
-    map_insert_bytes(&meta, "schema_version", &schema_version_bytes()).unwrap();
+    map_insert_bytes(&meta, "vault_id", vault_id.as_bytes())
+        .expect("fresh root doc meta map accepts inserts");
+    map_insert_bytes(&meta, "schema_version", &schema_version_bytes())
+        .expect("fresh root doc meta map accepts inserts");
     init_window_list(&doc, windows);
 
     let _leases = doc.get_map(super::lease::ROOT_LEASES_MAP);
@@ -84,7 +86,7 @@ pub fn init_window_list(doc: &LoroDoc, windows: &[WindowKey]) {
     let meta = doc.get_map("meta");
     let windows_map = meta
         .insert_container(ROOT_WINDOWS_KEY, LoroMap::new())
-        .unwrap();
+        .expect("schema construction inserts the windows container once, on a fresh doc");
 
     for window in windows {
         if let Some(key) = normalize_window_key(window.as_str()) {
@@ -101,7 +103,7 @@ fn ensure_window_map(meta: &LoroMap) -> (LoroMap, bool) {
     let existing = read_legacy_window_bytes(meta);
     let windows = meta
         .insert_container(ROOT_WINDOWS_KEY, LoroMap::new())
-        .unwrap();
+        .expect("window_list_map early-return rules out an existing windows container");
     for key in existing {
         insert_window_presence(&windows, key.as_str());
     }
@@ -119,7 +121,9 @@ fn insert_window_presence(windows: &LoroMap, key: &str) -> bool {
     if windows.get(key).is_some() {
         return false;
     }
-    windows.insert(key, WINDOW_PRESENT_MARKER).unwrap();
+    windows
+        .insert(key, WINDOW_PRESENT_MARKER)
+        .expect("key absence checked immediately above");
     true
 }
 

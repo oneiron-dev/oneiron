@@ -762,15 +762,16 @@ pub fn approve_pending_opt_out_clear(
     actor: WriteActor,
     ruled_at: u64,
 ) -> CommResult<()> {
-    let actor_ref = actor.entity_ref();
-    let Some(party_ref) = resolve_party(vault, party)? else {
-        return Err(CommError::PendingGateNotFound);
-    };
     enum ClearRuling {
         Cleared,
         NoActiveOptOut,
         Superseded,
     }
+
+    let actor_ref = actor.entity_ref();
+    let Some(party_ref) = resolve_party(vault, party)? else {
+        return Err(CommError::PendingGateNotFound);
+    };
     let ruling = vault.try_with_write_txn(|wtxn| {
         // Authorize the approving actor from the write transaction's view so a
         // concurrent delete/recreate cannot leave the gate consumed under a

@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! Integration tests for SyncClient lifecycle wiring (ONE-1126).
 //!
 //! Pins the M4-09 acceptance criteria against ARCH-0023b contract literals:

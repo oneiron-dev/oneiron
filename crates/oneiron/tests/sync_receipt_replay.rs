@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! ONE-1134 — REDACTION_AUDIT (type 120) replay validation + immutability +
 //! audit-divergence quarantine at both sync replay doors (Observer B entity
 //! path + `forward_rematerialize`).

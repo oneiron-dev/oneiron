@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! Identity-topology forward test oracle (ARCH-0055, ONE-1742 epic) —
 //! authored by the ONE-1743 path opener.
 //!

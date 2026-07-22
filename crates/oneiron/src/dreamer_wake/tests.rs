@@ -643,6 +643,31 @@ fn wrap_notice_fires_exactly_once_clock_first() -> Result<()> {
 
 #[test]
 fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
+    struct HardCutExecutor {
+        clock: Arc<AtomicU64>,
+    }
+    impl DreamerAttemptExecutor for HardCutExecutor {
+        async fn execute(
+            &mut self,
+            attempt: &DreamerAdmittedAttempt,
+            ctx: &mut WakeAttemptContext<'_>,
+        ) -> Result<DreamerAttemptExecution> {
+            // Simulates the ONE-1305 step-layer deadline race exactly: the
+            // step layer parks at the ceiling under its hard-cut owner, then
+            // the error (not Park) escapes the executor.
+            self.clock.store(180_001, Ordering::SeqCst);
+            DreamerRunnerStore::new(ctx.vault).park_attempt(ParkDreamerAttempt {
+                attempt_id: attempt.status.attempt.id,
+                reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
+                now: ctx.now_ms / 1_000,
+            })?;
+            Err(crate::Error::InvariantViolation(
+                "durable step hard cut at the wake-pass deadline",
+            ))
+        }
+    }
+
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let queued = enqueue_micro(&store, "wrapped", 10)?;
@@ -692,30 +717,6 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     // stop DeadlineHardCut instead of bailing with the error.
     let (clock, deadline) = injected_clock(100_000);
     let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline).with_milestone_author(author);
-    struct HardCutExecutor {
-        clock: Arc<AtomicU64>,
-    }
-    impl DreamerAttemptExecutor for HardCutExecutor {
-        async fn execute(
-            &mut self,
-            attempt: &DreamerAdmittedAttempt,
-            ctx: &mut WakeAttemptContext<'_>,
-        ) -> Result<DreamerAttemptExecution> {
-            // Simulates the ONE-1305 step-layer deadline race exactly: the
-            // step layer parks at the ceiling under its hard-cut owner, then
-            // the error (not Park) escapes the executor.
-            self.clock.store(180_001, Ordering::SeqCst);
-            DreamerRunnerStore::new(ctx.vault).park_attempt(ParkDreamerAttempt {
-                attempt_id: attempt.status.attempt.id,
-                reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
-                now: ctx.now_ms / 1_000,
-            })?;
-            Err(crate::Error::InvariantViolation(
-                "durable step hard cut at the wake-pass deadline",
-            ))
-        }
-    }
     let mut exec = HardCutExecutor {
         clock: Arc::clone(&clock),
     };

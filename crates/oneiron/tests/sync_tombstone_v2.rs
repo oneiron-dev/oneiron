@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! ONE-1132 — tombstone wire format v2 + delete-path CRDT correctness.
 //!
 //! Pinned OWNER-DECISIONS under test (M4-05):
@@ -603,6 +605,9 @@ fn replay_pending_tombstones_respects_never_downgrade() {
 /// against a LEGACY 8-byte value, which decodes as hard.
 #[test]
 fn apply_tombstone_to_window_doc_guard_matrix() {
+    // (case, existing, incoming, expect_replaced)
+    type GuardCase = (&'static str, Option<Vec<u8>>, Vec<u8>, bool);
+
     let id = EntityId::now();
     let hex_id = id.to_hex();
 
@@ -614,8 +619,6 @@ fn apply_tombstone_to_window_doc_guard_matrix() {
     };
     let legacy = 42_u64.to_le_bytes().to_vec();
 
-    // (case, existing, incoming, expect_replaced)
-    type GuardCase = (&'static str, Option<Vec<u8>>, Vec<u8>, bool);
     let cases: [GuardCase; 6] = [
         ("fresh insert", None, v2(1, 7), true),
         ("soft over soft", Some(v2(1, 1)), v2(1, 2), true),

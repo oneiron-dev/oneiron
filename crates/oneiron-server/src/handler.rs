@@ -214,6 +214,7 @@ async fn ws_upgrade_handler(
 }
 
 /// Main connection lifecycle.
+#[expect(clippy::cognitive_complexity)]
 async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: u32) {
     let (mut ws_sink, mut ws_stream) = socket.split();
 

@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! WebSocket integration tests for the sync server (ONE-1129).
 //!
 //! Covers the M4 server-durability + auth acceptance criteria:

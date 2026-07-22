@@ -366,14 +366,14 @@ fn compact_postings(vault: &Vault) -> Result<u64> {
 /// `short_id ‖ content_hash`) is the entity-keyed source of truth; `short_ids`
 /// (`short_id ‖ content_hash` -> entity id) is repaired or pruned from it.
 fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
-    let mut wtxn = vault.store.env.write_txn()?;
-
     struct ShortIdHashUpdate {
         reverse_key: Vec<u8>,
         updated_value: Vec<u8>,
         owned_old_forward_key: Option<Vec<u8>>,
         new_forward_key: Vec<u8>,
     }
+
+    let mut wtxn = vault.store.env.write_txn()?;
 
     // Pass 1: walk the entity-keyed reverse rows. Refresh drifted content
     // hashes (rewriting BOTH rows — the hash is part of the forward KEY),

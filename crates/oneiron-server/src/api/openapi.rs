@@ -152,6 +152,7 @@ pub(crate) fn mark_entity_response_as_binary(spec: &mut Value) {
     }
 }
 
+#[expect(clippy::too_many_lines)]
 pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {
     set_schema_property_description(
         spec,

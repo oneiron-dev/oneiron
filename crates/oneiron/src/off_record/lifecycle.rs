@@ -414,10 +414,11 @@ pub(crate) fn off_record_fence_active(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    const PREFIX_LEN: usize = OFF_RECORD_FENCE_KEY_PREFIX.len();
+
     if store.off_record_sessions.contains_entity(id)? {
         return Ok(true);
     }
-    const PREFIX_LEN: usize = OFF_RECORD_FENCE_KEY_PREFIX.len();
     let mut key = [0_u8; PREFIX_LEN + 16];
     key[..PREFIX_LEN].copy_from_slice(OFF_RECORD_FENCE_KEY_PREFIX);
     key[PREFIX_LEN..].copy_from_slice(id.as_bytes());

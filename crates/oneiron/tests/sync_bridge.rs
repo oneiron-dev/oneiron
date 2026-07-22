@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! Integration tests for the sync entity bridge.
 //!
 //! Shared two-vault fixtures (`test_config`, `make_entity_blob`, map
@@ -789,6 +791,8 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
 
 #[test]
 fn sync_client_handle_server_message_dispatch() {
+    type Builder = fn(&mut SyncClient) -> Vec<u8>;
+
     // Three dispatch cases share the same skeleton:
     //   (case_name, payload_builder, expectation)
     // - accepts_version_vector: real root VV from generate_initial_sync,
@@ -821,7 +825,6 @@ fn sync_client_handle_server_message_dispatch() {
     let build_empty = |_client: &mut SyncClient| -> Vec<u8> { Vec::new() };
     let build_unknown = |_client: &mut SyncClient| -> Vec<u8> { vec![222] };
 
-    type Builder = fn(&mut SyncClient) -> Vec<u8>;
     let cases: &[(&str, Builder, Expect)] = &[
         ("accepts_version_vector", build_root_vv, Expect::Ok),
         ("rejects_empty_payload", build_empty, Expect::InvalidPayload),

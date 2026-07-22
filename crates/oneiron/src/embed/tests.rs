@@ -1,3 +1,6 @@
+// cfg(all(test, ...)) modules are not recognized by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
+
 use std::sync::{Arc, Mutex};
 
 use rmpv::Value;

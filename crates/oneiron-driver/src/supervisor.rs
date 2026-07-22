@@ -1734,8 +1734,9 @@ mod tests {
         // [0, bound) already has a durable row and :p{bound} is free, the
         // scan returns `bound` (first free past the dense window). Production
         // uses PASS_BUDGET_INDEX_SCAN_BOUND; tests pin a tiny bound.
-        let (_dir, vault) = open_vault();
         const BOUND: u64 = 4;
+
+        let (_dir, vault) = open_vault();
         let base = "scan-bound-budget";
 
         assert_eq!(
@@ -2020,8 +2021,9 @@ mod tests {
         // P2 (codex r5): when [0, bound) is full AND :p{bound}/later are
         // occupied, clamp-to-bound reused spent rows. Gallop + binary
         // search must resume at the first free suffix past the dense window.
-        let (_dir, vault) = open_vault();
         const BOUND: u64 = 4;
+
+        let (_dir, vault) = open_vault();
         let base = "gallop-past-bound";
 
         // Occupy 0..BOUND+3 → first free is BOUND+3.
