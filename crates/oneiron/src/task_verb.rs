@@ -345,6 +345,12 @@ impl MemoryFacade<'_> {
         let Some(intent) = intents.into_iter().find(|intent| intent.id == task_hex) else {
             return Err(FacadeError::from(Error::EntityNotFound));
         };
+        // An acked failure has left the TASKS surface (`render_tasks_section`
+        // drops it); the typed read verbs must agree, so it is not expandable
+        // by id either.
+        if intent.is_acked_failure() {
+            return Err(FacadeError::from(Error::EntityNotFound));
+        }
         Ok(expand_task(&intent))
     }
 
@@ -352,15 +358,22 @@ impl MemoryFacade<'_> {
     pub fn tasks_ack(&self, task_ref: EntityId) -> FacadeResult<TaskAckReceipt> {
         let _provenance = facade_provenance(task_verb_contract(TasksVerb::Ack));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        // Ack applies only to a currently-FAILED task: failed rows stay
+        // surfaced until acked (08b §3). Acking a queued/running task would
+        // pre-set the bit so the later failure is dropped from render and never
+        // surfaced — so a non-failed ack is a no-op that leaves the bit unset.
+        let (intents, _) = task_presence(self.vault()).map_err(FacadeError::from)?;
+        let task_hex = task_ref.to_hex();
+        let Some(intent) = intents.into_iter().find(|intent| intent.id == task_hex) else {
+            return Err(FacadeError::from(Error::EntityNotFound));
+        };
+        if intent.status != TaskBoardStatus::Failed {
+            return Ok(TaskAckReceipt {
+                task_ref,
+                acked: intent.acked,
+            });
+        }
         self.with_verified_actor_write_txn(|wtxn| {
-            if self
-                .vault()
-                .get_entity_type_in_txn(&*wtxn, &task_ref)
-                .map_err(FacadeError::from)?
-                != Some(ENTITY_TYPE_TASK)
-            {
-                return Err(FacadeError::from(Error::EntityNotFound));
-            }
             ack_task_in_txn(self.vault(), wtxn, task_ref).map_err(FacadeError::from)
         })?;
         Ok(TaskAckReceipt {
@@ -1435,9 +1448,15 @@ mod tests {
         let facade = vault.memory_facade(own, EdgeActorClass::Agent);
         let limit = 3;
         let attempted = 5;
+        // The rate window is keyed on the ENGINE clock (`unix_seconds_now()`,
+        // not caller time — the codex-r1 anti-bypass fix). A single window here
+        // keeps the overflow behavior deterministic: with a finite window these
+        // creates could straddle a wall-clock boundary under load and reset the
+        // count mid-loop. (Window advancement is covered separately by
+        // `create_rate_slot_overwrites_one_key_across_windows`.)
         let rate = TaskCreateRateLimit {
             limit,
-            window_seconds: 60,
+            window_seconds: u64::MAX,
         };
         let mut results = Vec::new();
         for _ in 0..attempted {
@@ -2087,11 +2106,71 @@ mod tests {
         assert_eq!(before.rows.len(), 1);
         assert_eq!(before.rows[0].status, TaskBoardStatus::Failed);
         assert!(!task_is_acked(&vault, task_ref).expect("read unacked state"));
+        // An unacked failure is still expandable by id.
+        assert!(facade.tasks_expand(task_ref).is_ok());
         let ack = facade.tasks_ack(task_ref).expect("ack task");
         assert!(ack.acked);
         assert!(task_is_acked(&vault, task_ref).expect("read ack"));
+        // Once acked, the failure has left the surface — expand agrees with check.
+        assert_eq!(
+            facade
+                .tasks_expand(task_ref)
+                .expect_err("acked failure is not expandable")
+                .code,
+            crate::facade::FACADE_CODE_NOT_FOUND
+        );
         let after = facade.tasks_check().expect("check after ack");
         assert_eq!(after.rows.len(), 0);
+    }
+
+    #[test]
+    fn ack_before_failure_is_a_noop_and_failure_still_surfaces() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = facade.tasks_create(&spec(120)).expect("create task");
+        let task_ref = created.task_ref.expect("task ref");
+
+        // The task is Queued (not failed): acking it is a no-op — the bit stays
+        // unset so a later failure is not pre-suppressed.
+        let premature = facade.tasks_ack(task_ref).expect("ack queued task");
+        assert!(!premature.acked);
+        assert!(!task_is_acked(&vault, task_ref).expect("no ack bit set"));
+
+        // The realization now fails.
+        let queue = AttemptQueue::new(&vault);
+        let claimed = match queue
+            .claim_kind(
+                TASK_REALIZE_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "worker".to_owned(),
+                    now: 120,
+                },
+            )
+            .expect("claim")
+        {
+            ClaimOutcome::Claimed(claimed) => claimed,
+            ClaimOutcome::Empty => panic!("created task must be claimable"),
+        };
+        queue
+            .fail(FailAttempt {
+                id: claimed.id,
+                lease_owner: "worker".to_owned(),
+                attempt_count: claimed.attempt_count,
+                reason: "failed".to_owned(),
+                now: 121,
+            })
+            .expect("fail task");
+
+        // The failure STILL surfaces — the premature ack did not suppress it.
+        let after_fail = facade.tasks_check().expect("check after fail");
+        assert_eq!(after_fail.rows.len(), 1);
+        assert_eq!(after_fail.rows[0].status, TaskBoardStatus::Failed);
+
+        // A real ack (now that it is failed) removes it from the surface.
+        let acked = facade.tasks_ack(task_ref).expect("ack failed task");
+        assert!(acked.acked);
+        assert_eq!(facade.tasks_check().expect("check after ack").rows.len(), 0);
     }
 
     /// P1-a: a Queued+Leased mix cannot be fully cancelled in-txn (the lease
