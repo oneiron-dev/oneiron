@@ -1128,8 +1128,7 @@ fn cancel_target_state(
                     .and_then(|parent| decode_dreamer_attempt_payload(&parent.payload).ok())
                     .filter(|parent| parent.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
                     .and_then(|parent| decode_agent_dispatch_input(&parent.input).ok())
-                    .map(|parent| agent_dispatch_actor(&parent).entity_ref() == actor)
-                    .unwrap_or(false)
+                    .is_some_and(|parent| agent_dispatch_actor(&parent).entity_ref() == actor)
             } else {
                 false
             };

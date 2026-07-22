@@ -1303,7 +1303,7 @@ impl ReceiptProjectionIndex {
 
         loop {
             let mut changed = false;
-            for run_ref in index.run_to_parent_run.keys().cloned().collect::<Vec<_>>() {
+            for run_ref in index.run_to_parent_run.keys().cloned() {
                 let Some(parent_run_ref) = index.run_to_parent_run.get(&run_ref) else {
                     continue;
                 };
@@ -1314,7 +1314,7 @@ impl ReceiptProjectionIndex {
                     changed = true;
                 }
             }
-            for intent_ref in index.intent_to_run.keys().cloned().collect::<Vec<_>>() {
+            for intent_ref in index.intent_to_run.keys().cloned() {
                 let Some(run_ref) = index.intent_to_run.get(&intent_ref) else {
                     continue;
                 };
@@ -2390,7 +2390,7 @@ fn outbound_grant_receipt(
     append_outbound_grant_scope_fields(&mut fields, &grant.scope);
 
     ReceiptRecord {
-        receipt_id: format!("scoped_read:{}:{event_name}", grant_ref),
+        receipt_id: format!("scoped_read:{grant_ref}:{event_name}"),
         receipt_kind: ReceiptKind::ScopedRead,
         occurred_at,
         actor: Some(grant.principal_ref.clone()),

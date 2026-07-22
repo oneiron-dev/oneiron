@@ -43,7 +43,7 @@ fn find_line_starting_with(haystack: &str, needle: &str) -> Option<String> {
     haystack
         .lines()
         .find(|line| line.trim_start().starts_with(needle))
-        .map(|s| s.to_owned())
+        .map(std::borrow::ToOwned::to_owned)
 }
 
 #[test]

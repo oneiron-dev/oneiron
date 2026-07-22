@@ -3385,8 +3385,9 @@ fn hydrate_external_effect_contact(
             hydrated.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
         }
         hydrated.counterparty_opted_out = record.is_opted_out();
-        hydrated.counterparty_opt_out_receipt_reason =
-            record.opt_out.map(|opt_out| opt_out.receipt_reason());
+        hydrated.counterparty_opt_out_receipt_reason = record
+            .opt_out
+            .map(super::counterparty_contact::CounterpartyOptOut::receipt_reason);
     }
     Ok(hydrated)
 }

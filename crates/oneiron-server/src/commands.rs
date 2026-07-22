@@ -178,13 +178,11 @@ fn claim_body_json(body: &oneiron::ClaimBody, include_payload: bool) -> JsonValu
         claim["evidence"] = body
             .evidence
             .as_ref()
-            .map(msgpack_value_json)
-            .unwrap_or(JsonValue::Null);
+            .map_or(JsonValue::Null, msgpack_value_json);
         claim["scope"] = body
             .scope
             .as_ref()
-            .map(msgpack_value_json)
-            .unwrap_or(JsonValue::Null);
+            .map_or(JsonValue::Null, msgpack_value_json);
     }
     claim
 }

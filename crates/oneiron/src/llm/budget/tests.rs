@@ -62,6 +62,9 @@ fn concurrent_reservations_are_arithmetic_deterministic() {
         BudgetExhaustionPolicy::Suspend,
     ));
     let start = Arc::new(Barrier::new(THREADS));
+    // Eager collect is load-bearing: every thread must spawn before any
+    // join, or the Barrier::new(THREADS) rendezvous deadlocks.
+    #[expect(clippy::needless_collect)]
     let handles = (0..THREADS)
         .map(|_| {
             let guard = Arc::clone(&guard);

@@ -1444,13 +1444,11 @@ fn block_system_notices(verdict: &PolicyClassifyVerdict) -> Vec<GateSystemNotice
         PolicyVerdictCategory::OwnerPolicy { row_ref } => {
             let owner_notice_row_ref = safe_system_notice_row_ref(row_ref);
             let owner_notice_body = owner_notice_row_ref
-                .as_deref()
-                .map(|row_ref| {
+                .as_deref().map_or_else(|| POLICY_MODEL_OWNER_BLOCK_NOTICE.to_owned(), |row_ref| {
                     format!(
                         "Oneiron blocked this outbound content because your policy row {row_ref} asked it to."
                     )
-                })
-                .unwrap_or_else(|| POLICY_MODEL_OWNER_BLOCK_NOTICE.to_owned());
+                });
             vec![
                 system_notice(
                     SYSTEM_NOTICE_TYPE_BLOCK,

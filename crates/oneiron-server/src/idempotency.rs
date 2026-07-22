@@ -415,8 +415,10 @@ fn principal_from_headers(headers: &HeaderMap, config: &SyncServerConfig) -> Str
         .get("x-oneiron-secret")
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.is_empty())
-        .map(|value| format!("dev-secret:{value}"))
-        .unwrap_or_else(|| ANONYMOUS_PRINCIPAL.to_owned())
+        .map_or_else(
+            || ANONYMOUS_PRINCIPAL.to_owned(),
+            |value| format!("dev-secret:{value}"),
+        )
 }
 
 fn conflict_response(key: &str, is_core_route: bool) -> Response {

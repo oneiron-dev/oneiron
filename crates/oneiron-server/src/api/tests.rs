@@ -2114,8 +2114,7 @@ fn openapi_operation_contract(operation: &Value) -> Value {
         "parameters": parameters,
         "requestSchema": operation
             .get("requestBody")
-            .map(openapi_json_schema_ref)
-            .unwrap_or(Value::Null),
+            .map_or(Value::Null, openapi_json_schema_ref),
         "responses": responses,
     })
 }
@@ -2123,8 +2122,7 @@ fn openapi_operation_contract(operation: &Value) -> Value {
 fn openapi_json_schema_ref(value: &Value) -> Value {
     value
         .pointer("/content/application~1json/schema")
-        .map(openapi_schema_shape)
-        .unwrap_or(Value::Null)
+        .map_or(Value::Null, openapi_schema_shape)
 }
 
 fn openapi_component_schema<'a>(spec: &'a Value, name: &str) -> &'a Value {
@@ -8325,16 +8323,14 @@ async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
         "Don't volunteer personal or sensitive information; if asked about private matters, \
          defer to the owner."
     ));
-    let result_ids: Vec<&str> = body["results"]
+    let diary_id = diary.to_hex();
+    let found = body["results"]
         .as_array()
         .expect("results")
         .iter()
         .filter_map(|entity| entity["id"].as_str())
-        .collect();
-    assert!(
-        result_ids.contains(&diary.to_hex().as_str()),
-        "supervised mode keeps Tier B present"
-    );
+        .any(|id| id == diary_id);
+    assert!(found, "supervised mode keeps Tier B present");
 }
 
 #[tokio::test]

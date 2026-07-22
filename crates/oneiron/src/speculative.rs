@@ -200,8 +200,7 @@ impl SpeculativeSession {
     pub fn warm_candidates(&self) -> &[ScoredEntity] {
         self.warm
             .as_ref()
-            .map(|warm| warm.scores.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], |warm| warm.scores.as_slice())
     }
 
     #[must_use]
