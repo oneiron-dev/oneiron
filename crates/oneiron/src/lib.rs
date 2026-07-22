@@ -303,7 +303,8 @@ pub use crate::companion::{
     decode_companion_task_payload, encode_companion_record_body, encode_companion_task_payload,
 };
 pub use crate::config::{
-    Bm25RankProfile, HnswConfig, TextAnalyzerConfig, TextIndexOptions, VaultConfig,
+    Bm25RankProfile, DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES, HnswConfig, TextAnalyzerConfig,
+    TextIndexOptions, VaultConfig,
 };
 pub use crate::connector_key::{
     CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, CalendarPeriod, CompiledCharter,
@@ -615,8 +616,8 @@ pub use crate::llm::{
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::off_record::{
-    OFF_RECORD_SESSION_MARKER_LINE, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode,
-    OffRecordPromoteReceipt, OffRecordSessionRecord, off_record_context_marker,
+    OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordPromoteReceipt,
+    OffRecordSession, OffRecordSessionRecord, OffRecordSessionVault,
 };
 pub use crate::outbound::{
     COMMON_OUTBOUND_VERB_KINDS, CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask,

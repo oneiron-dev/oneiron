@@ -3073,7 +3073,7 @@ pub(crate) fn record_external_effect_policy(
         matched_grant,
         budget_target: _,
     } = governance;
-    store.append_gate_decision_in_txn(
+    crate::off_record::FloorWrites::new(store).append_egress_gate_decision(
         wtxn,
         &GateDecisionRecord {
             version: 0,
