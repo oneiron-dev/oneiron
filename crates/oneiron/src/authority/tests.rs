@@ -8247,7 +8247,7 @@ fn federation_activation_denies_grant_bound_to_any_non_active_pact() {
     // Q being Active must never mask P.
     let fixture = pact_fixture(176);
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
-    let grant_h = scope_entity(0x67);
+    let grant_h = scope_entity(0x46);
     let grant_g = scope_entity(0x48);
     let pact_p = fixture.pact_id;
     let pact_q = [0xD5; 32];
