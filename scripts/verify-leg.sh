@@ -11,7 +11,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 LEG="${LEG:?set LEG=fmt-clippy|tests:1/2|tests:2/2}"
-ERR_RE='error(\[E[0-9]+\])?:'
+# Line-start anchor: unanchored `error:` matches `error::tests::...` module
+# paths in nextest output (false-positived the first Phase-0 run).
+ERR_RE='^error(\[E[0-9]+\])?:'
 
 run_stage() {
   local stage="$1"; shift

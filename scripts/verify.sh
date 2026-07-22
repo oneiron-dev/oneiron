@@ -14,7 +14,9 @@ cd "$(dirname "$0")/.."
 
 # Coded compiler errors (`error[E0308]:` and bare `error:`) double-checked in
 # stage output: a runner that dies without a failing exit still can't pass.
-ERR_RE='error(\[E[0-9]+\])?:'
+# Anchored to line start — unanchored `error:` matches Rust paths like
+# `error::tests::...` in nextest PASS lines (found on the first arch run).
+ERR_RE='^error(\[E[0-9]+\])?:'
 
 run_stage() {
   local stage="$1"; shift
