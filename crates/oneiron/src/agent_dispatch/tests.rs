@@ -1009,7 +1009,7 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
 #[test]
 fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(&vault, 0x11, vec![actor_ceiling_row("system", "auto")])?;
+    put_policy_manifest(&vault, 0x14, vec![actor_ceiling_row("system", "auto")])?;
 
     let def_id = test_id(0x4D);
     vault.put_agent_definition(&def_id, &custom_agent("1.0.0"), t(1), 1)?;
