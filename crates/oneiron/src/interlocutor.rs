@@ -313,10 +313,11 @@ impl InterlocutorStamp {
 /// that embed stamps in turn bodies; the engine does not retro-type turn
 /// bodies).
 pub fn validate_interlocutor_stamp_value(value: &serde_json::Value) -> Result<()> {
+    const STAMP_KEYS: [&str; 3] = ["speaker", "class", "claims_not_instructions"];
+
     let Some(map) = value.as_object() else {
         return Err(invalid_stamp("interlocutor stamp must be a JSON object"));
     };
-    const STAMP_KEYS: [&str; 3] = ["speaker", "class", "claims_not_instructions"];
     if map.len() != STAMP_KEYS.len() || !STAMP_KEYS.iter().all(|key| map.contains_key(*key)) {
         return Err(invalid_stamp(
             "interlocutor stamp must contain exactly speaker, class, claims_not_instructions",

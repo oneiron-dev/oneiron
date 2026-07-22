@@ -4675,6 +4675,7 @@ async fn v1_companion_access_grant_create_replays_idempotency_key() {
 }
 
 #[tokio::test]
+#[expect(clippy::too_many_lines)]
 async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),

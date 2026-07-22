@@ -276,6 +276,8 @@ mod tests {
         // - root_update: TAG_SYNC_UPDATE + payload -> SyncMessage::RootUpdate
         // - window_sync: encode_window_sync(...) -> SyncMessage::WindowSync
         //   with the original window_key/sub_tag/payload preserved.
+        type Asserter = fn(SyncMessage);
+
         let root_update_payload = vec![1u8, 2, 3];
         let mut root_msg = vec![TAG_SYNC_UPDATE];
         root_msg.extend_from_slice(&root_update_payload);
@@ -285,7 +287,6 @@ mod tests {
             .unwrap();
 
         // (case_name, encoded, assertion_fn)
-        type Asserter = fn(SyncMessage);
         let assert_root: Asserter = |msg| {
             let SyncMessage::RootUpdate(data) = msg else {
                 panic!("expected RootUpdate, got {msg:?}");

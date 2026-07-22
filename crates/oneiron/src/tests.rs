@@ -3476,11 +3476,12 @@ fn short_id_counters_live_in_vault_meta_not_short_ids() -> Result<()> {
 /// the engine's own helper.
 #[test]
 fn short_id_content_hash_is_xxh32_of_data_mod_256() -> Result<()> {
+    const EXPECTED_CONTENT_HASH: u8 = 105;
+
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     // xxh32(b"short-id-hash-pin", seed 0) = 0xc8d57569; 0xc8d57569 % 256 = 105.
     let data = b"short-id-hash-pin";
-    const EXPECTED_CONTENT_HASH: u8 = 105;
 
     // Type 1 (TURN) fixture: the hash formula is type-independent, and this
     // keeps the fixture off the CLAIM type byte, whose body bytes are
@@ -10596,11 +10597,11 @@ fn cycle_prevention_detects_ancestor_cycle() -> Result<()> {
 
 #[test]
 fn test_deep_ancestor_chain() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
     // Build a 200-deep ChildOf chain: node[0] ← node[1] ← ... ← node[200]
     // (each node[i+1] --ChildOf--> node[i])
     const DEPTH: usize = 200;
+
+    let (_dir, vault) = open_test_vault();
     let mut nodes = Vec::with_capacity(DEPTH + 1);
     for _ in 0..=DEPTH {
         nodes.push(EntityId::now());
@@ -11657,6 +11658,27 @@ fn claim_body_keys_pin_d11_vocabulary() {
 
 #[test]
 fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result<()> {
+    fn z_score(value: f32, values: &[f32]) -> f32 {
+        let mean = values.iter().map(|value| f64::from(*value)).sum::<f64>() / values.len() as f64;
+        let variance = values
+            .iter()
+            .map(|candidate| {
+                let delta = f64::from(*candidate) - mean;
+                delta * delta
+            })
+            .sum::<f64>()
+            / values.len() as f64;
+        ((f64::from(value) - mean) / variance.sqrt()) as f32
+    }
+
+    fn score_for(scores: &[ScoredEntity], id: EntityId) -> f32 {
+        scores
+            .iter()
+            .find(|scored| scored.id == id)
+            .expect("expected scored entity")
+            .score
+    }
+
     // ONE body written through put_claim must BOTH feed the retrieval blend
     // signals (sal/conf short keys) AND project through the context-pack CLAIM
     // field profiles — the pre-fix engine read "salience"/"confidence" in
@@ -11709,27 +11731,6 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
 
     let baseline = vault.query().search_text("matcha", 10).run()?;
     assert_eq!(baseline.len(), 3);
-
-    fn z_score(value: f32, values: &[f32]) -> f32 {
-        let mean = values.iter().map(|value| f64::from(*value)).sum::<f64>() / values.len() as f64;
-        let variance = values
-            .iter()
-            .map(|candidate| {
-                let delta = f64::from(*candidate) - mean;
-                delta * delta
-            })
-            .sum::<f64>()
-            / values.len() as f64;
-        ((f64::from(value) - mean) / variance.sqrt()) as f32
-    }
-
-    fn score_for(scores: &[ScoredEntity], id: EntityId) -> f32 {
-        scores
-            .iter()
-            .find(|scored| scored.id == id)
-            .expect("expected scored entity")
-            .score
-    }
 
     let sal_boosted = vault
         .query()
@@ -13232,13 +13233,14 @@ fn raw_edge_key(src: &EntityId, kind_u8: u8, tgt: &EntityId) -> Vec<u8> {
 
 #[test]
 fn supersede_claim_closes_old_writes_edge_and_keeps_history() -> Result<()> {
+    const NOW: u64 = 777;
+
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
     vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
     let old = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 11)?;
     let new = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 22)?;
 
-    const NOW: u64 = 777;
     vault.supersede_claim(&new, &old, NOW)?;
 
     // Old body closed: life = superseded, to = now — and the old claim is
@@ -13323,12 +13325,13 @@ fn supersede_claim_closes_old_writes_edge_and_keeps_history() -> Result<()> {
 
 #[test]
 fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
+    const NOW: u64 = 555;
+
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
     vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
     let claim = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 11)?;
 
-    const NOW: u64 = 555;
     vault.retract_claim(&claim, NOW)?;
 
     let read = vault
@@ -13399,6 +13402,8 @@ fn put_active_interval_claim(
 
 #[test]
 fn supersede_claim_moves_temporal_occurred_end_row() -> Result<()> {
+    const NOW: u64 = 777;
+
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
     vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
@@ -13428,7 +13433,6 @@ fn supersede_claim_moves_temporal_occurred_end_row() -> Result<()> {
         );
     }
 
-    const NOW: u64 = 777;
     vault.supersede_claim(&new, &old, NOW)?;
 
     // The envelope refresh must MOVE the temporal_occurred_end row: the
@@ -13465,6 +13469,8 @@ fn supersede_claim_moves_temporal_occurred_end_row() -> Result<()> {
 
 #[test]
 fn retract_claim_moves_temporal_occurred_end_row() -> Result<()> {
+    const NOW: u64 = 555;
+
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
     vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
@@ -13490,7 +13496,6 @@ fn retract_claim_moves_temporal_occurred_end_row() -> Result<()> {
         );
     }
 
-    const NOW: u64 = 555;
     vault.retract_claim(&claim, NOW)?;
 
     let refreshed_end_key = Store::encode_temporal_key(NOW, &claim);
@@ -13833,6 +13838,9 @@ fn claim_lifecycle_ops_reject_non_claims_and_missing_ids() -> Result<()> {
 
 #[test]
 fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
+    const T1: u64 = 100;
+    const T2: u64 = 200;
+
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
     vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
@@ -13840,8 +13848,6 @@ fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
     let b = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 3)?;
     let c = put_active_claim(&vault, &subject, "profile.lives_in", "kyoto", 4)?;
 
-    const T1: u64 = 100;
-    const T2: u64 = 200;
     vault.supersede_claim(&b, &a, T1)?;
 
     // Superseding an already-superseded claim → typed already-closed; the

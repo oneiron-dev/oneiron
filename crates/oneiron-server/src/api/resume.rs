@@ -158,10 +158,6 @@ pub(crate) fn notification_body_json(raw_body: &[u8]) -> Option<Value> {
 }
 
 pub(crate) fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool {
-    let Some(object) = body.as_object() else {
-        return false;
-    };
-
     const SCOPE_KEYS: &[&str] = &[
         "caller",
         "caller_id",
@@ -170,6 +166,11 @@ pub(crate) fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool 
         "recipient_id",
         "recipientId",
     ];
+
+    let Some(object) = body.as_object() else {
+        return false;
+    };
+
     for key in SCOPE_KEYS {
         if let Some(value) = object.get(*key)
             && !caller_marker_contains(Some(value), caller)
@@ -181,18 +182,7 @@ pub(crate) fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool 
 }
 
 pub(crate) fn notification_already_surfaced(body: &Value, caller: &str) -> bool {
-    let Some(object) = body.as_object() else {
-        return false;
-    };
-
     const GLOBAL_KEYS: &[&str] = &["acked", "acknowledged", "surfaced", "seen"];
-    if GLOBAL_KEYS
-        .iter()
-        .any(|key| object.get(*key).and_then(Value::as_bool) == Some(true))
-    {
-        return true;
-    }
-
     const CALLER_KEYS: &[&str] = &[
         "acked_by",
         "ackedBy",
@@ -203,6 +193,18 @@ pub(crate) fn notification_already_surfaced(body: &Value, caller: &str) -> bool 
         "seen_by",
         "seenBy",
     ];
+
+    let Some(object) = body.as_object() else {
+        return false;
+    };
+
+    if GLOBAL_KEYS
+        .iter()
+        .any(|key| object.get(*key).and_then(Value::as_bool) == Some(true))
+    {
+        return true;
+    }
+
     CALLER_KEYS
         .iter()
         .any(|key| caller_marker_contains(object.get(*key), caller))

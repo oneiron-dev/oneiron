@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! ONE-1135 — delete propagation transport (M4-10).
 //!
 //! Pinned OWNER-DECISIONS under test:

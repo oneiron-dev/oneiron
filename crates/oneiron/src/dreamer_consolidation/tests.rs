@@ -1228,6 +1228,9 @@ fn evidence_hash_conformance() -> Result<()> {
 
 #[test]
 fn tainted_claim_not_consolidatable_until_approved() {
+    use crate::claim::{claim_consolidatable, claim_surfaceable};
+    use ClaimApprovalStatus as A;
+
     let subject = ClaimSubject::Entity(EntityId::from_bytes([0x3C; 16]).expect("id"));
     let body = |appr: ClaimApprovalStatus, taint: Option<&str>| {
         let mut body = ClaimBody::new(
@@ -1247,9 +1250,6 @@ fn tainted_claim_not_consolidatable_until_approved() {
         }
         body
     };
-
-    use crate::claim::{claim_consolidatable, claim_surfaceable};
-    use ClaimApprovalStatus as A;
 
     // Auto + tool_output taint: surfaceable, NOT consolidatable.
     let tainted_auto = body(A::Auto, Some("tool_output"));

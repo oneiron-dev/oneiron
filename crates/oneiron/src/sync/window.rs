@@ -995,6 +995,7 @@ fn push_terminal_quarantine_marker(
     }
 }
 
+#[expect(clippy::too_many_lines)]
 pub fn forward_rematerialize(
     vault: &Vault,
     doc: &LoroDoc,

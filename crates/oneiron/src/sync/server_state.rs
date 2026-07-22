@@ -44,7 +44,11 @@ pub fn persist_imported_window_update(
         let seq_key = format!("m:u_seq:w:{key}");
         let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
             None => 0,
-            Some(raw) if raw.len() == 4 => u32::from_le_bytes(raw.as_ref().try_into().unwrap()),
+            Some(raw) if raw.len() == 4 => u32::from_le_bytes(
+                raw.as_ref()
+                    .try_into()
+                    .expect("match guard ensures raw.len() == 4"),
+            ),
             Some(_) => return Err(Error::CorruptedIndex("imported update u_seq row")),
         };
         let next_seq = seq

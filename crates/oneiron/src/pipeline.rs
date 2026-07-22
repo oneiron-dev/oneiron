@@ -995,6 +995,7 @@ impl<'a> PipelineBuilder<'a> {
     /// Executes the pipeline and returns the detailed [`PipelineOutput`]
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
+    #[expect(clippy::too_many_lines)]
     pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
         let started = Instant::now();
         let started_at = crate::unix_seconds_now();

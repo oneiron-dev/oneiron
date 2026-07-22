@@ -1,1 +1,4 @@
 msrv = "1.96"
+allow-unwrap-in-tests = true
+cognitive-complexity-threshold = 100
+too-many-lines-threshold = 500

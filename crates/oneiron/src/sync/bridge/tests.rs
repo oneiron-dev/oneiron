@@ -57,9 +57,6 @@ impl tracing::Subscriber for WarnCapture {
     fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
     fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
     fn event(&self, event: &tracing::Event<'_>) {
-        if *event.metadata().level() != tracing::Level::WARN {
-            return;
-        }
         struct MessageVisitor(Option<String>);
         impl tracing::field::Visit for MessageVisitor {
             fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
@@ -67,6 +64,10 @@ impl tracing::Subscriber for WarnCapture {
                     self.0 = Some(format!("{value:?}"));
                 }
             }
+        }
+
+        if *event.metadata().level() != tracing::Level::WARN {
+            return;
         }
         let mut visitor = MessageVisitor(None);
         event.record(&mut visitor);
