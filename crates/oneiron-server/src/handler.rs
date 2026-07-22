@@ -7,7 +7,6 @@
 //! 4. Ongoing: bidirectional incremental sync via WindowSync + ephemeral state
 
 use std::collections::HashSet;
-use std::io::Read;
 use std::sync::Arc;
 use std::time::{Instant as StdInstant, SystemTime, UNIX_EPOCH};
 
@@ -400,10 +399,6 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
                         }
                         ProtocolError::FrameTooLarge { size, max } => {
                             tracing::warn!(conn_id, size, max, "frame too large — closing");
-                            break;
-                        }
-                        ProtocolError::BulkTransferDecode => {
-                            tracing::warn!(conn_id, "bulk transfer decode failure — closing");
                             break;
                         }
                         ProtocolError::LoroImport(msg) => {
@@ -1114,80 +1109,6 @@ async fn handle_bulk_transfer_done(
     Err(ProtocolError::InvalidPayload(
         "client-to-server BulkTransferDone is not supported",
     ))
-}
-
-/// Streaming zstd decompression with a size limit.
-///
-/// Returns `Ok(Some(data))` on success, `Ok(None)` if decompressed size
-/// exceeds `max_bytes`, or `Err` on decode failure. This prevents
-/// decompression bombs by aborting before allocating unbounded memory.
-#[allow(dead_code)] // Used when server sends BulkTransfer to clients (Phase 2+)
-fn decompress_bounded(
-    compressed: &[u8],
-    max_bytes: usize,
-) -> Result<Option<Vec<u8>>, std::io::Error> {
-    let mut decoder = zstd::Decoder::new(compressed)?;
-    let mut buf = Vec::with_capacity(std::cmp::min(compressed.len().saturating_mul(2), max_bytes));
-    let mut chunk = [0u8; 8192];
-    loop {
-        let n = decoder.read(&mut chunk)?;
-        if n == 0 {
-            break;
-        }
-        if buf.len() + n > max_bytes {
-            return Ok(None);
-        }
-        buf.extend_from_slice(&chunk[..n]);
-    }
-    Ok(Some(buf))
-}
-
-/// BulkTransfer payload schema (MessagePack).
-#[allow(dead_code)] // Protocol schema — used for server→client BulkTransfer generation
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-pub(crate) struct BulkTransferPayload {
-    pub entities: Vec<BulkEntity>,
-    pub edges: Vec<BulkEdge>,
-    pub tombstones: Vec<BulkTombstone>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-pub(crate) struct BulkEntity {
-    #[serde(with = "serde_bytes")]
-    pub id: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub blob: Vec<u8>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-pub(crate) struct BulkEdge {
-    #[serde(with = "serde_bytes")]
-    pub src: Vec<u8>,
-    pub kind: u8,
-    #[serde(with = "serde_bytes")]
-    pub tgt: Vec<u8>,
-    pub weight: f32,
-    pub created_at: u64,
-    pub vad_valence: f32,
-    pub vad_arousal: f32,
-    pub vad_dominance: f32,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-pub(crate) struct BulkTombstone {
-    #[serde(with = "serde_bytes")]
-    pub id: Vec<u8>,
-    pub deleted_at: u64,
-    /// Tombstone wire reason byte (ONE-1132 pinned table: 1=user_delete,
-    /// 2=user_hard_delete, 3=gdpr_delete, 4=policy_delete; 0 is reserved
-    /// and, like any unknown byte, decodes as HARD — fail-closed).
-    pub reason: u8,
-    /// Deletion request UUID (16 raw bytes) — receipt correlation (M4-06).
-    #[serde(with = "serde_bytes")]
-    pub request_id: Vec<u8>,
 }
 
 #[cfg(test)]

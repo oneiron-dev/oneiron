@@ -222,7 +222,6 @@ pub(crate) fn encode_root_update(update_bytes: &[u8]) -> Vec<u8> {
 
 /// Protocol-level errors specific to Oneiron's custom sync protocol.
 #[derive(Debug, thiserror::Error)]
-#[allow(dead_code)] // Variants used in match arms; some constructed only in future Phase 2+ paths
 pub(crate) enum ProtocolError {
     #[error("invalid payload: {0}")]
     InvalidPayload(&'static str),
@@ -230,8 +229,6 @@ pub(crate) enum ProtocolError {
     UnknownTag(u8),
     #[error("frame too large: {size} bytes (max {max})")]
     FrameTooLarge { size: usize, max: usize },
-    #[error("bulk transfer decode failure")]
-    BulkTransferDecode,
     #[error("loro import error: {0}")]
     LoroImport(String),
     /// Inbound version-vector bytes failed Loro binary decoding.
@@ -247,18 +244,27 @@ pub(crate) enum ProtocolError {
 }
 
 /// WebSocket close codes per ARCH-023 section 3.5.
-#[allow(dead_code)] // Used when WebSocket handler sends close frames
 pub(crate) mod close_codes {
     /// JWT expired mid-session or device lease expired.
+    /// Contract constant (ARCH-023 §3.5); no close frame sent yet — read
+    /// only by the error/tests.rs ErrorCode lockstep check.
+    #[allow(dead_code)]
     pub(crate) const AUTH_EXPIRED: u16 = 4001;
     /// CRDT decode error (malformed update bytes).
+    /// Contract constant (ARCH-023 §3.5); no close frame sent yet — read
+    /// only by the error/tests.rs ErrorCode lockstep check.
+    #[allow(dead_code)]
     pub(crate) const DECODE_ERROR: u16 = 4002;
     /// Unknown custom tag.
+    /// Contract constant (ARCH-023 §3.5); no close frame sent yet — read
+    /// only by the error/tests.rs ErrorCode lockstep check.
+    #[allow(dead_code)]
     pub(crate) const UNKNOWN_TAG: u16 = 4003;
     /// Frame/payload exceeds size limit.
+    /// Contract constant (ARCH-023 §3.5); no close frame sent yet — read
+    /// only by the error/tests.rs ErrorCode lockstep check.
+    #[allow(dead_code)]
     pub(crate) const FRAME_TOO_LARGE: u16 = 4004;
-    /// BulkTransfer decompression/decode failure.
-    pub(crate) const BULK_DECODE_FAILURE: u16 = 4005;
     /// Protocol-version hello mismatch, missing, malformed, or timed out
     /// (ONE-1127). Sent BEFORE any sync payload flows.
     pub(crate) const VERSION_MISMATCH: u16 = 4006;
