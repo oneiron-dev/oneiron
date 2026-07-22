@@ -410,6 +410,9 @@ mod cb_t {
         /// The `task_ref` VALUE carried by the realizing job (must name the
         /// OWNING task, not merely any task — F7).
         job_task_ref: String,
+        /// The owning TASK entity's real id (hex) the fixture stored it under;
+        /// the job's backlink must equal THIS, proving linkage to the real owner.
+        owning_task_hex: String,
     }
 
     /// ONE-1695 fixture: `tasks`-layer TASK entity `tk_owner` realized by one
@@ -455,6 +458,9 @@ mod cb_t {
             )
             .expect("store owning task entity");
 
+        // Bind the job's backlink to the OWNING task's real id (not an unrelated
+        // literal), so the fixture proves the job links to its actual owner.
+        let owning_task_hex = task_id.to_hex();
         let queue = AttemptQueue::new(&vault);
         queue
             .enqueue_with_task_ref(
@@ -465,7 +471,7 @@ mod cb_t {
                     run_id: None,
                     now: learned_at,
                 },
-                Some("tk_owner".to_owned()),
+                Some(owning_task_hex.clone()),
             )
             .expect("enqueue realizing job");
 
@@ -476,14 +482,15 @@ mod cb_t {
         let snapshot = sync_doc
             .export(ExportMode::Snapshot)
             .expect("export sync snapshot");
-        // Node-local proof: the job's `task_ref` backlink must never appear anywhere
-        // in the sync export — jobs live in a db the mirror never enumerates.
-        let backlink: &[u8] = b"tk_owner";
+        // Node-local proof: the job row never enters the sync export. Scan for the
+        // job's unique payload — NOT its task_ref, which equals the owning task's
+        // id and so legitimately appears as the synced entity id.
+        let job_payload: &[u8] = b"local-job";
         assert!(
             !snapshot
-                .windows(backlink.len())
-                .any(|window| window == backlink),
-            "node-local task_ref leaked into the sync export",
+                .windows(job_payload.len())
+                .any(|window| window == job_payload),
+            "node-local job row leaked into the sync export",
         );
         let exported_doc = LoroDoc::from_snapshot(&snapshot).expect("read sync snapshot");
 
@@ -514,6 +521,7 @@ mod cb_t {
             synced_job_rows,
             local_jobs_with_task_ref,
             job_task_ref,
+            owning_task_hex,
         }
     }
 
@@ -528,7 +536,10 @@ mod cb_t {
         assert_eq!(split.synced_task_entities, 1);
         assert_eq!(split.synced_job_rows, 0);
         assert_eq!(split.local_jobs_with_task_ref, 1);
-        assert_eq!(split.job_task_ref, "tk_owner");
+        assert_eq!(
+            split.job_task_ref, split.owning_task_hex,
+            "job backlink must name the owning task's real id"
+        );
     }
 
     /// The agent-facing tasks verb surface after one `tasks.create` call.
@@ -544,14 +555,65 @@ mod cb_t {
     /// ONE-1696 fixture: enumerate the agent-visible tasks verb family, then
     /// issue one own-agent `tasks.create(spec)` inside the allowed-set.
     fn arm_tasks_verb_surface() -> TasksVerbSurface {
-        unimplemented!("armed by ONE-1696: tasks.* typed verb family")
+        use oneiron::config::VaultConfig;
+        use oneiron::edge::EdgeActorClass;
+        use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
+        use oneiron::{EntityId, TASKS_VERBS, TaskCreateSpec, TasksVerb, TimeRange, Vault};
+
+        let temp = tempfile::tempdir().expect("temporary vault directory");
+        let vault = Vault::open(temp.path(), VaultConfig::default()).expect("open fixture vault");
+        let actor = EntityId::from_bytes([0xE1; 16]).expect("own agent id");
+        vault
+            .put_entity(
+                &actor,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"own-agent",
+            )
+            .expect("store own agent");
+        let before = vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("list task entities before create")
+            .len();
+        let created = vault
+            .memory_facade(actor, EdgeActorClass::Agent)
+            .tasks_create(&TaskCreateSpec {
+                spec: rmpv::Value::from("oracle-task"),
+                label: None,
+                owner_ref: None,
+                now: Some(120),
+            })
+            .expect("own tasks.create effects");
+        assert_eq!(usize::from(created.effected), 1);
+        let after = vault
+            .entities_by_type(ENTITY_TYPE_TASK)
+            .expect("list task entities after create")
+            .len();
+        let verbs: Vec<String> = TasksVerb::ALL
+            .map(TasksVerb::as_str)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(verbs, TASKS_VERBS);
+        let agent_visible_jobqueue_verbs = verbs
+            .iter()
+            .filter(|verb| {
+                verb.contains("queue") || verb.contains("claim") || verb.contains("lease")
+            })
+            .count();
+
+        TasksVerbSurface {
+            verbs,
+            create_minted_task_entities: after - before,
+            agent_visible_jobqueue_verbs,
+        }
     }
 
     /// ONE-1696 · 08b §3 (r9): the family is exactly create/check/expand/
     /// ack/cancel; `tasks.create` mints a TASK entity and the ENGINE decides
     /// realizing jobs — the agent never touches the JobQueue.
     #[test]
-    #[ignore = "armed by ONE-1696"]
     fn tasks_verb_family_is_exactly_five_and_never_exposes_jobqueue() {
         let surface = arm_tasks_verb_surface();
         assert_eq!(surface.verbs.len(), 5);
@@ -590,14 +652,69 @@ mod cb_t {
     /// OWN agent, with the per-actor create rate limit configured to 10 per
     /// window, issues 12 creates inside one window.
     fn arm_create_authority() -> CreateAuthorityOutcome {
-        unimplemented!("armed by ONE-1696: foreign create propose-only + own-agent rate limit")
+        use oneiron::config::VaultConfig;
+        use oneiron::edge::EdgeActorClass;
+        use oneiron::registry::ENTITY_TYPE_PERSON;
+        use oneiron::{EntityId, TaskCreateRateLimit, TaskCreateSpec, TimeRange, Vault};
+
+        let temp = tempfile::tempdir().expect("temporary vault directory");
+        let vault = Vault::open(temp.path(), VaultConfig::default()).expect("open fixture vault");
+        let own = EntityId::from_bytes([0xE1; 16]).expect("own agent id");
+        let foreign = EntityId::from_bytes([0xE2; 16]).expect("foreign agent id");
+        for actor in [own, foreign] {
+            vault
+                .put_entity(
+                    &actor,
+                    ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"agent",
+                )
+                .expect("store agent");
+        }
+        let configured_rate_limit = 10;
+        let rate_limit = TaskCreateRateLimit {
+            limit: configured_rate_limit,
+            window_seconds: 60,
+        };
+        let spec = TaskCreateSpec {
+            spec: rmpv::Value::from("oracle-task"),
+            label: None,
+            owner_ref: None,
+            now: Some(120),
+        };
+        let foreign_create = vault
+            .memory_facade(foreign, EdgeActorClass::Agent)
+            .tasks_create_with_rate_limit(&spec, rate_limit)
+            .expect("foreign tasks.create proposes");
+        let burst_creates_attempted = 12;
+        let own_facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let mut burst = Vec::new();
+        for _ in 0..burst_creates_attempted {
+            burst.push(
+                own_facade
+                    .tasks_create_with_rate_limit(&spec, rate_limit)
+                    .expect("own burst create"),
+            );
+        }
+
+        CreateAuthorityOutcome {
+            foreign_create_direct_effects: usize::from(foreign_create.effected),
+            foreign_create_proposals: usize::from(foreign_create.proposal_ref.is_some()),
+            configured_rate_limit,
+            burst_creates_attempted,
+            burst_creates_effected: burst.iter().filter(|result| result.effected).count(),
+            burst_overflow_proposals: burst
+                .iter()
+                .filter(|result| result.proposal_ref.is_some())
+                .count(),
+        }
     }
 
     /// ONE-1696 AC verbatim: "`tasks.create(spec)` — … Own-agent: free in
     /// allowed-set, rate-limited; foreign: propose-only" (F8/G2). Burst
     /// overflow fails closed to Proposed (08 §4 own-agent lane).
     #[test]
-    #[ignore = "armed by ONE-1696"]
     fn foreign_tasks_create_is_propose_only_own_burst_fails_closed() {
         let outcome = arm_create_authority();
         assert_eq!(outcome.foreign_create_direct_effects, 0);
@@ -619,6 +736,8 @@ mod cb_t {
         default_mode: String,
         /// Gate decisions recorded for the own-task cancel (gate presence).
         gate_decisions_for_own_cancel: usize,
+        /// Own-task Gate decisions whose recorded outcome is Allow.
+        allow_gate_decisions_for_own_cancel: usize,
         /// Own-task cancels that took effect.
         own_cancel_effects: usize,
         /// Foreign-task cancels that took effect (must fail closed).
@@ -631,7 +750,99 @@ mod cb_t {
     /// A cancels `tk_own` under the default ladder mode, then A attempts to
     /// cancel `tk_other`.
     fn arm_cancel_ladder() -> CancelLadderOutcome {
-        unimplemented!("armed by ONE-1696: tasks.cancel rides the auto-approval ladder")
+        use oneiron::config::VaultConfig;
+        use oneiron::edge::EdgeActorClass;
+        use oneiron::registry::ENTITY_TYPE_PERSON;
+        use oneiron::{
+            DEFAULT_TASK_CANCEL_MODE, EntityId, GrantMintIntent, GrantMintIntentScope,
+            TaskCancelMode, TaskCancelTarget, TaskCreateSpec, TimeRange, Vault,
+        };
+
+        let temp = tempfile::tempdir().expect("temporary vault directory");
+        let vault = Vault::open(temp.path(), VaultConfig::default()).expect("open fixture vault");
+        let agent_a = EntityId::from_bytes([0xE1; 16]).expect("agent A id");
+        let agent_b = EntityId::from_bytes([0xE2; 16]).expect("agent B id");
+        for actor in [agent_a, agent_b] {
+            vault
+                .put_entity(
+                    &actor,
+                    ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"agent",
+                )
+                .expect("store agent");
+        }
+        let facade = vault.memory_facade(agent_a, EdgeActorClass::Agent);
+        let own = facade
+            .tasks_create(&TaskCreateSpec {
+                spec: rmpv::Value::from("own-task"),
+                label: None,
+                owner_ref: None,
+                now: Some(120),
+            })
+            .expect("create own task");
+        let other = facade
+            .tasks_create(&TaskCreateSpec {
+                spec: rmpv::Value::from("other-task"),
+                label: None,
+                owner_ref: Some(agent_b),
+                now: Some(120),
+            })
+            .expect("create other-owned task");
+        let cancel_grant_ref = EntityId::from_bytes([0xD1; 16]).expect("cancel grant id");
+        vault
+            .mint_standing_outbound_grant(
+                &cancel_grant_ref,
+                &GrantMintIntent {
+                    principal_ref: agent_a.to_hex(),
+                    origin_component_id: "tasks".to_owned(),
+                    origin_action_id: "cancel".to_owned(),
+                    origin_receipt_ref: None,
+                    scope: GrantMintIntentScope::VerbClass {
+                        verb_class: "tasks.cancel".to_owned(),
+                    },
+                },
+                120,
+            )
+            .expect("mint cancel grant");
+        let own_cancel = facade
+            .tasks_cancel(TaskCancelTarget::Task(own.task_ref.expect("own task ref")))
+            .expect("cancel own task");
+        let foreign_cancel = facade
+            .tasks_cancel(TaskCancelTarget::Task(
+                other.task_ref.expect("other task ref"),
+            ))
+            .expect("propose foreign task cancel");
+        let own_gate_decision_ref = own_cancel.gate_decision_ref.as_deref();
+        let decisions = vault.gate_decisions(512).expect("gate decisions");
+
+        CancelLadderOutcome {
+            ladder_modes: TaskCancelMode::ALL
+                .map(TaskCancelMode::as_str)
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            default_mode: DEFAULT_TASK_CANCEL_MODE.as_str().to_owned(),
+            gate_decisions_for_own_cancel: decisions
+                .iter()
+                .filter(|decision| {
+                    own_gate_decision_ref
+                        == Some(format!("gate:{}", decision.decision_id.to_hex()).as_str())
+                })
+                .count(),
+            allow_gate_decisions_for_own_cancel: decisions
+                .iter()
+                .filter(|decision| {
+                    own_gate_decision_ref
+                        == Some(format!("gate:{}", decision.decision_id.to_hex()).as_str())
+                        && decision.outcome == "allow"
+                })
+                .count(),
+            own_cancel_effects: usize::from(own_cancel.effected),
+            foreign_cancel_effects: usize::from(foreign_cancel.effected),
+            foreign_cancel_proposals: usize::from(foreign_cancel.proposal_ref.is_some()),
+        }
     }
 
     /// ONE-1696 · 08b §3 (r5v2): cancel rides the auto-approval ladder
@@ -639,13 +850,13 @@ mod cb_t {
     /// gate (decision recorded); own tasks + own spawns cancel directly,
     /// others' cancel surfaces as a proposal.
     #[test]
-    #[ignore = "armed by ONE-1696"]
     fn tasks_cancel_rides_auto_approval_ladder_with_auto_default() {
         let outcome = arm_cancel_ladder();
         assert_eq!(outcome.ladder_modes.len(), 3);
         assert_eq!(outcome.ladder_modes, ["auto", "full-access", "manual"]);
         assert_eq!(outcome.default_mode, "auto");
         assert_eq!(outcome.gate_decisions_for_own_cancel, 1);
+        assert_eq!(outcome.allow_gate_decisions_for_own_cancel, 1);
         assert_eq!(outcome.own_cancel_effects, 1);
         assert_eq!(outcome.foreign_cancel_effects, 0);
         assert_eq!(outcome.foreign_cancel_proposals, 1);

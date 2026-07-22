@@ -212,7 +212,7 @@ struct FlatRunTreeNode {
 const RUN_TREE_RUNTIME_ACTOR: &str = "runtime";
 
 fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
-    let metadata = attempt_metadata(&record)?;
+    let metadata = attempt_metadata(&record);
     let state = record.state;
     let attempt_id = attempt_id_hex(&record);
     let events = run_tree_events(
@@ -312,9 +312,21 @@ struct AttemptMetadata {
     agent_id: Option<String>,
 }
 
-fn attempt_metadata(record: &AttemptRecord) -> Result<AttemptMetadata> {
+fn attempt_metadata(record: &AttemptRecord) -> AttemptMetadata {
     if record.kind == DREAMER_RUNNER_ATTEMPT_KIND {
-        let payload = decode_dreamer_attempt_payload(&record.payload)?;
+        // Tolerant read (extends the inner-input tolerance below to the OUTER
+        // envelope): a malformed dreamer payload — reachable via the public
+        // `AttemptQueue::enqueue` API, which accepts an arbitrary `kind` and
+        // `payload` — must degrade this row to a bare job rather than abort the
+        // whole tree render and poison `tasks.check`/`expand` for unrelated
+        // tasks.
+        let Ok(payload) = decode_dreamer_attempt_payload(&record.payload) else {
+            return AttemptMetadata {
+                parent_id: None,
+                worker_kind: record.kind.clone(),
+                agent_id: None,
+            };
+        };
         // Tolerant read: the payload envelope already decoded, so a malformed
         // inner agent-dispatch input must not kill the whole tree render —
         // the node degrades to `agent_id: None`.
@@ -325,20 +337,20 @@ fn attempt_metadata(record: &AttemptRecord) -> Result<AttemptMetadata> {
         } else {
             None
         };
-        return Ok(AttemptMetadata {
+        return AttemptMetadata {
             parent_id: payload
                 .parent_attempt
                 .map(|parent| bytes_to_hex_lower(parent.as_bytes())),
             worker_kind: payload.attempt_type,
             agent_id,
-        });
+        };
     }
 
-    Ok(AttemptMetadata {
+    AttemptMetadata {
         parent_id: None,
         worker_kind: record.kind.clone(),
         agent_id: None,
-    })
+    }
 }
 
 fn attempt_id_hex(record: &AttemptRecord) -> String {

@@ -2,6 +2,10 @@
 
 use crate::outbound::ConnectorSendTask;
 use crate::run_tree::{RunTreeNode, RunTreeStatus};
+use crate::{EntityId, Error, Result, Vault};
+
+const TASK_ACK_KEY_PREFIX: &[u8] = b"context_board.task.ack.v1\0";
+const TASK_CANCELLED_KEY_PREFIX: &[u8] = b"context_board.task.cancelled.v1\0";
 
 /// AGENTS row lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,11 +276,22 @@ impl TaskIntentPresence {
         status: TaskBoardStatus,
         realizing_jobs: Vec<JobPresence>,
     ) -> TaskIntentPresence {
+        Self::from_connector_send_task_with_ack(task, status, realizing_jobs, false)
+    }
+
+    /// Projects a connector-send TASK with the persisted render-tier ack bit.
+    #[must_use]
+    pub(crate) fn from_connector_send_task_with_ack(
+        task: &ConnectorSendTask,
+        status: TaskBoardStatus,
+        realizing_jobs: Vec<JobPresence>,
+        acked: bool,
+    ) -> TaskIntentPresence {
         TaskIntentPresence {
             id: task.task_ref.to_hex(),
             status,
             label: Some(task.intent.verb.clone()),
-            acked: false,
+            acked,
             realizing_jobs,
         }
     }
@@ -287,6 +302,63 @@ impl TaskIntentPresence {
     pub fn is_acked_failure(&self) -> bool {
         self.status == TaskBoardStatus::Failed && self.acked
     }
+}
+
+pub(crate) fn task_is_acked(vault: &Vault, task_ref: EntityId) -> Result<bool> {
+    task_state(vault, TASK_ACK_KEY_PREFIX, task_ref)
+}
+
+pub(crate) fn ack_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+) -> Result<()> {
+    set_task_state_in_txn(vault, wtxn, TASK_ACK_KEY_PREFIX, task_ref)
+}
+
+pub(crate) fn task_is_cancelled(vault: &Vault, task_ref: EntityId) -> Result<bool> {
+    task_state(vault, TASK_CANCELLED_KEY_PREFIX, task_ref)
+}
+
+pub(crate) fn cancel_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+) -> Result<()> {
+    set_task_state_in_txn(vault, wtxn, TASK_CANCELLED_KEY_PREFIX, task_ref)
+}
+
+fn task_state(vault: &Vault, prefix: &[u8], task_ref: EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    match vault
+        .store
+        .vault_meta
+        .get(&rtxn, task_state_key(prefix, task_ref).as_slice())?
+    {
+        None => Ok(false),
+        Some(value) if *value == [1] => Ok(true),
+        Some(_) => Err(Error::InvariantViolation("context_board.task.state")),
+    }
+}
+
+fn set_task_state_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    prefix: &[u8],
+    task_ref: EntityId,
+) -> Result<()> {
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, task_state_key(prefix, task_ref).as_slice(), &[1])?;
+    Ok(())
+}
+
+fn task_state_key(prefix: &[u8], task_ref: EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(prefix.len() + task_ref.as_bytes().len());
+    key.extend_from_slice(prefix);
+    key.extend_from_slice(task_ref.as_bytes());
+    key
 }
 
 /// Renders provided task presence into stable, collapsed rows — intent rows

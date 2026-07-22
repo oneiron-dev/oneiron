@@ -507,7 +507,8 @@ impl<'a> AttemptQueue<'a> {
         self.enqueue_with_task_ref_in_txn(wtxn, input, None)
     }
 
-    fn enqueue_with_task_ref_in_txn(
+    /// Transaction-composable enqueue with an owning TASK backlink.
+    pub(crate) fn enqueue_with_task_ref_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueAttempt,
