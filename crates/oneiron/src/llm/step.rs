@@ -352,7 +352,7 @@ pub async fn call_as_step(
         && let Some(payload) = row.response_payload.as_deref()
     {
         let response: LlmResponse = serde_json::from_slice(payload)?;
-        log_terminal_step(ctx, &step_hash, &request, &response)?;
+        log_terminal_step(ctx, &step_hash, &request, &response, payload)?;
         step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
         return Ok(StepOutcome::Finished {
             response,
@@ -440,7 +440,7 @@ pub async fn call_as_step(
 
     // The provider answered, so the tokens were really spent: the reserved
     // lease MUST settle on EVERY exit from the post-response persistence block.
-    // A `?` out of `serde_json::to_vec` / `step_state_write` /
+    // A `?` out of response serialization / `step_state_write` /
     // `log_terminal_step` returns BEFORE the explicit settle below, which would
     // leak the reserved units for the guard's lifetime and throttle later
     // admissions (#478-1). This RAII guard settles on drop; `settle_absolute`
@@ -458,7 +458,7 @@ pub async fn call_as_step(
         ctx.now_ms,
     )?;
 
-    log_terminal_step(ctx, &step_hash, &request, &response)?;
+    log_terminal_step(ctx, &step_hash, &request, &response, &payload)?;
 
     lease_settle.settle().map_err(LlmError::from)?;
     step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
@@ -647,13 +647,18 @@ impl Future for SleepFuture {
 // Terminal step claim (checkpoint-in-append) + memo index
 // ---------------------------------------------------------------------------
 
+/// Persists the terminal `dreamer.step` claim (checkpoint-in-append).
+/// `payload` MUST be the serialized JSON bytes of `response` — the fresh path
+/// passes the one serialization it already wrote to the ResponseReceived row;
+/// the recovery path passes the row bytes the response was deserialized from,
+/// so the durable record carries those bytes verbatim.
 fn log_terminal_step(
     ctx: &DurableStepContext<'_>,
     step_hash: &[u8; 32],
     request: &LlmRequest,
     response: &LlmResponse,
+    payload: &[u8],
 ) -> DurableStepResult<EntityId> {
-    let payload = serde_json::to_vec(response)?;
     let params_hash =
         bytes_to_hex_lower(blake3::hash(&canonical_json_bytes(&request.params)?).as_bytes());
     let claim_id = EntityId::now();
@@ -664,7 +669,7 @@ fn log_terminal_step(
     let envelope = dreamer_runtime_envelope(ctx)?;
     let inline = payload.len() <= DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES;
     let inline_response = if inline {
-        Some(String::from_utf8(payload.clone()).map_err(|_| {
+        Some(String::from_utf8(payload.to_vec()).map_err(|_| {
             Error::InvalidClaimBody("dreamer step response encoding must be UTF-8 JSON")
         })?)
     } else {
@@ -698,7 +703,7 @@ fn log_terminal_step(
                 ctx.vault.append_blob_artifact_version_in_txn(
                     wtxn,
                     &artifact_id,
-                    &payload,
+                    payload,
                     &BlobVersionProvenance::AgentRun { run_ref },
                     ctx.envelope_actor,
                     occurred,
@@ -742,7 +747,7 @@ fn log_terminal_step(
                     progression: StepProgression::Logged,
                     started_at: existing_started_at,
                     updated_at: ctx.now_ms,
-                    response_payload: Some(payload.clone()),
+                    response_payload: Some(payload.to_vec()),
                 },
             )?;
             Ok(claim_id)
@@ -751,28 +756,24 @@ fn log_terminal_step(
 }
 
 fn load_step_response(vault: &Vault, decoded: &DecodedStepClaim) -> DurableStepResult<LlmResponse> {
-    let bytes = match (&decoded.response, &decoded.response_ref) {
-        (Some(inline), None) => inline.clone().into_bytes(),
+    match (&decoded.response, &decoded.response_ref) {
+        (Some(inline), None) => Ok(serde_json::from_slice(inline.as_bytes())?),
         (None, Some(artifact_id)) => {
             let head = vault
                 .blob_artifact_head(artifact_id)?
                 .ok_or(Error::InvalidClaimBody(
                     "dreamer step response_ref artifact missing",
                 ))?;
-            vault
+            let bytes = vault
                 .read_blob_artifact_version(artifact_id, head.version)?
                 .ok_or(Error::InvalidClaimBody(
                     "dreamer step response_ref version missing",
-                ))?
+                ))?;
+            Ok(serde_json::from_slice(&bytes)?)
         }
         // decode_step_claim_value already fail-closes; defensive here.
-        _ => {
-            return Err(
-                Error::InvalidClaimBody("dreamer step claim response shape invalid").into(),
-            );
-        }
-    };
-    Ok(serde_json::from_slice(&bytes)?)
+        _ => Err(Error::InvalidClaimBody("dreamer step claim response shape invalid").into()),
+    }
 }
 
 fn call_purpose_str(purpose: &CallPurpose) -> String {
@@ -868,25 +869,14 @@ fn encode_step_claim_value(claim: &EncodedStepClaim) -> Value {
     Value::Map(entries)
 }
 
+/// Consumed fields of a decoded `dreamer.step` claim value. The decoder
+/// validates EVERY pinned key fail-closed and stores only what readers use:
+/// the memo-index key pair and the response location.
 pub(crate) struct DecodedStepClaim {
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
-    #[allow(dead_code)] // audit field; consumed by ONE-1344's provenance asserts
-    pub(crate) progression: StepProgression,
-    #[allow(dead_code)]
-    pub(crate) model_id: String,
-    #[allow(dead_code)]
-    pub(crate) purpose: String,
-    #[allow(dead_code)]
-    pub(crate) params_hash: String,
-    #[allow(dead_code)]
-    pub(crate) usage_in: u64,
-    #[allow(dead_code)]
-    pub(crate) usage_out: u64,
     pub(crate) response: Option<String>,
     pub(crate) response_ref: Option<EntityId>,
-    #[allow(dead_code)]
-    pub(crate) at: u64,
 }
 
 /// Fail-closed `dreamer.step` claim value decode: pinned keys only, no
@@ -994,18 +984,19 @@ pub(crate) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
         ));
     }
 
+    progression.ok_or(invalid_step("missing dreamer step value progression"))?;
+    model_id.ok_or(invalid_step("missing dreamer step value model_id"))?;
+    purpose.ok_or(invalid_step("missing dreamer step value purpose"))?;
+    params_hash.ok_or(invalid_step("missing dreamer step value params_hash"))?;
+    usage_in.ok_or(invalid_step("missing dreamer step value usage_in"))?;
+    usage_out.ok_or(invalid_step("missing dreamer step value usage_out"))?;
+    at.ok_or(invalid_step("missing dreamer step value at"))?;
+
     Ok(DecodedStepClaim {
         attempt_id: attempt_id.ok_or(invalid_step("missing dreamer step value job_id"))?,
         step_hash: step_hash.ok_or(invalid_step("missing dreamer step value step_hash"))?,
-        progression: progression.ok_or(invalid_step("missing dreamer step value progression"))?,
-        model_id: model_id.ok_or(invalid_step("missing dreamer step value model_id"))?,
-        purpose: purpose.ok_or(invalid_step("missing dreamer step value purpose"))?,
-        params_hash: params_hash.ok_or(invalid_step("missing dreamer step value params_hash"))?,
-        usage_in: usage_in.ok_or(invalid_step("missing dreamer step value usage_in"))?,
-        usage_out: usage_out.ok_or(invalid_step("missing dreamer step value usage_out"))?,
         response,
         response_ref,
-        at: at.ok_or(invalid_step("missing dreamer step value at"))?,
     })
 }
 
@@ -1510,8 +1501,6 @@ pub(crate) struct DecodedTrapClaim {
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
     pub(crate) state: DreamerTrapState,
-    #[allow(dead_code)]
-    pub(crate) at: u64,
     pub(crate) note: String,
 }
 
@@ -1587,12 +1576,13 @@ pub(crate) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim>
         ));
     }
 
+    at.ok_or(invalid_trap("missing dreamer trap value at"))?;
+
     Ok(DecodedTrapClaim {
         kind: trap_kind.ok_or(invalid_trap("missing dreamer trap value trap_kind"))?,
         attempt_id: attempt_id.ok_or(invalid_trap("missing dreamer trap value job_id"))?,
         step_hash: step_hash.ok_or(invalid_trap("missing dreamer trap value step_hash"))?,
         state: state.ok_or(invalid_trap("missing dreamer trap value state"))?,
-        at: at.ok_or(invalid_trap("missing dreamer trap value at"))?,
         note: note.ok_or(invalid_trap("missing dreamer trap value note"))?,
     })
 }
