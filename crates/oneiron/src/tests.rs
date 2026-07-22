@@ -3543,8 +3543,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 14,
-        "ONE-1741 pins the current storage ABI at 14 for the SKILL_CONTENT_ANCHOR entity type",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3578,8 +3578,8 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 14,
-        "ONE-1741 pins the current storage ABI at 14 for the SKILL_CONTENT_ANCHOR entity type",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3613,8 +3613,8 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
 #[test]
 fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 14,
-        "ONE-1741 pins the current storage ABI at 14 for the SKILL_CONTENT_ANCHOR entity type",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3648,8 +3648,8 @@ fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<(
 #[test]
 fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 14,
-        "ONE-1741 pins the current storage ABI at 14 for the SKILL_CONTENT_ANCHOR entity type",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3683,8 +3683,8 @@ fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()>
 #[test]
 fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 14,
-        "ONE-1741 pins the current storage ABI at 14 for the SKILL_CONTENT_ANCHOR entity type",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3718,8 +3718,8 @@ fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<
 #[test]
 fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 14,
-        "ONE-1741 pins the current storage ABI at 14 for the SKILL_CONTENT_ANCHOR entity type",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3754,8 +3754,8 @@ fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
 #[test]
 fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 14,
-        "current readers must advertise ABI 14 after the SKILL_CONTENT_ANCHOR bump",
+        STORAGE_ABI_VERSION, 15,
+        "current readers must advertise ABI 15 after the IDENTITY_TOPOLOGY_EVENT bump",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -6524,6 +6524,16 @@ fn all_entity_type_prefixes() {
             64,
             Some("cr"),
             EntityClassification::Pack,
+            TypeByteBand::Companion,
+        ),
+        // Maintenance-classified engine kind carved from the 64–79 companion
+        // byte-range: band_of(76) == Companion (byte position), classification
+        // == Maintenance (the door gate). Per byte-space v3 canon row.
+        (
+            "IDENTITY_TOPOLOGY_EVENT",
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            None,
+            EntityClassification::Maintenance,
             TypeByteBand::Companion,
         ),
         (

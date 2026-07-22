@@ -132,6 +132,10 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
         EdgeKind::FacetOf => Some(0.05),
         EdgeKind::InWorld => Some(0.05),
         EdgeKind::SetIn => Some(0.05),
+        // ARCH-0055 redirect edges: traversed like `supersedes` (λ 0.3) so
+        // shell mass reaches the canonical head.
+        EdgeKind::MergedInto => Some(0.3),
+        EdgeKind::SplitInto => Some(0.3),
     }
 }
 

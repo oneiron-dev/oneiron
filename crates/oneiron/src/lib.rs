@@ -59,6 +59,7 @@ pub mod habit;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub mod identity_reputation;
+pub mod identity_topology;
 pub mod inbox;
 pub mod ingest;
 pub mod interlocutor;
@@ -523,6 +524,14 @@ pub use crate::identity_reputation::{
     PREDICATE_IDENTITY_REPUTATION_UPDATED_AT, PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
     WARMUP_COLD_DAILY_CAP, WARMUP_WARMING_DAILY_CAP, is_identity_reputation_claim_predicate,
 };
+pub use crate::identity_topology::{
+    AssertDistinctOp, EntityLifecycleState, FacetOp, FacetSpec, IdentityOpEvidence,
+    IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyEvent,
+    IdentityTopologyFold, IdentityTopologyOp, IdentityTopologyRejection, MergeOp,
+    PREDICATE_ENTITY_DISTINCT_FROM, ReassignmentEntry, ReassignmentMap, ReassignmentTarget,
+    SplitOp, StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan, distinct_pair_key,
+    evaluate_transition, fold_identity_topology_log, merge_lifecycle_states,
+};
 pub use crate::inbox::{
     INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,
     INBOX_SUBCLUSTER_MIN_MEMBERS, InboxBulkVerb, InboxBundleResolution, InboxExceptionClass,
@@ -701,7 +710,8 @@ pub use crate::recovery::{
 pub use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COMM_RECORD,
-    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_OUTBOUND_GRANT,
     ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, StructuralKindRegistration,
     TypeByteBand,
 };

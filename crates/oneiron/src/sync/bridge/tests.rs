@@ -250,6 +250,7 @@ fn over_quota_peer_rejected() -> Result<()> {
             &vault,
             wtxn,
             &tombstones,
+            "2026-03",
             &EntityId::now().to_hex(),
             &first_blob,
             crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
@@ -268,6 +269,7 @@ fn over_quota_peer_rejected() -> Result<()> {
                 &vault,
                 wtxn,
                 &tombstones,
+                "2026-03",
                 &second_id.to_hex(),
                 &second_blob,
                 crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
@@ -1571,5 +1573,1410 @@ fn local_endpoint_error_aborts_batch_before_remote_quarantine() {
     assert!(
         vault.get(&src).unwrap().is_none(),
         "aborted txn must not materialize the src endpoint"
+    );
+}
+
+#[test]
+fn observer_b_gates_reserved_edges_on_the_ledger_and_derives_shells_from_records() {
+    use crate::identity_topology::{
+        EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
+
+    let vault = test_vault();
+    let doc = LoroDoc::new();
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+    // Participants materialize through the ordinary entity pass first.
+    for id in [&survivor, &loser] {
+        map_insert_bytes(
+            &entities,
+            &id.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            ),
+        )
+        .unwrap();
+    }
+    doc.commit();
+    assert!(vault.get(&survivor).unwrap().is_some());
+    assert!(vault.get(&loser).unwrap().is_some());
+
+    // A raw edges-map merged_into row with NO ledger event behind it is a
+    // forged shell: quarantined-and-continue, never materialized — the
+    // peer-controlled edges CRDT map has no redirect-shell write authority.
+    let shell_key = format_edge_key(&loser, EdgeKind::MergedInto, &survivor);
+    map_insert_bytes(
+        &edges,
+        &shell_key,
+        &encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.3, 10, None, None).unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        !vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "an unledgered merged_into row must never land"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).unwrap(),
+        EntityLifecycleState::Active
+    );
+    assert!(
+        !crate::sync::quarantine::quarantined_records(&vault)
+            .unwrap()
+            .is_empty(),
+        "the forged shell row must leave hashed quarantine evidence"
+    );
+
+    // The validated type-76 record arriving through the entities map IS
+    // the door: its ingest reconciles the shell edge as a side-effect,
+    // with no admissible edges-map row involved.
+    let event_id = EntityId::now();
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    map_insert_bytes(
+        &entities,
+        &event_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            &body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "the ingested record's door side-effect materializes the shell edge"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).unwrap(),
+        EntityLifecycleState::Merged
+    );
+
+    // A mandated PAIR with peer-chosen value bytes is still a forgery:
+    // weight 0 would silently drop the shell's PPR mass. Only the door's
+    // byte-exact echo (default weight, the event's `at`) is admitted.
+    map_insert_bytes(
+        &edges,
+        &shell_key,
+        &encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.0, 200, None, None).unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+    let shell_weight = vault
+        .edges_out(&loser)
+        .unwrap()
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::MergedInto)
+        .map(|edge| edge.weight);
+    assert_eq!(
+        shell_weight,
+        Some(0.3),
+        "a zero-weight rewrite of a mandated shell edge must be quarantined"
+    );
+
+    // The door's byte-exact echo passes admission (idempotent rewrite).
+    map_insert_bytes(
+        &edges,
+        &shell_key,
+        &encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.3, 200, None, None).unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+
+    // A raw edges-map REMOVAL of the still-mandated shell edge is an
+    // unledgered teardown: quarantined, the edge survives.
+    edges.delete(&shell_key).unwrap();
+    doc.commit();
+    assert!(
+        vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "an unledgered removal must not tear a mandated shell edge"
+    );
+
+    // The replicated undo counter-event is the legitimate teardown door.
+    let undo_id = EntityId::now();
+    let undo = StoredIdentityOpEvent {
+        seq: 51,
+        at: 300,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Undo { target: event_id },
+    };
+    let undo_body = crate::identity_topology::encode_identity_topology_event_body(&undo).unwrap();
+    map_insert_bytes(
+        &entities,
+        &undo_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 300,
+                end: 300,
+            },
+            300,
+            &undo_body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        !vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "the ingested undo counter-event tears the shell edge down"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).unwrap(),
+        EntityLifecycleState::Active
+    );
+}
+
+#[test]
+fn observer_b_tombstone_first_then_type_76_blob_neutralizes_poison_with_evidence() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let vault = test_vault();
+    let event_id = EntityId::from_bytes([0x70; 16]).unwrap();
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![EntityId::from_bytes([0x61; 16]).unwrap()],
+            survivor: EntityId::from_bytes([0x62; 16]).unwrap(),
+        },
+    };
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let tombstone = 200_u64.to_be_bytes();
+
+    map_insert_bytes(&doc.get_map("tombstones"), &event_id.to_hex(), &tombstone).unwrap();
+    doc.commit();
+    assert!(
+        read_dt_marker(&vault, &event_id).is_some(),
+        "precondition: headerless tombstone-first replay minted the dt: poison"
+    );
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)
+            .unwrap()
+            .is_empty(),
+        "without the later protected envelope the tombstone has not yet been classifiable"
+    );
+
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &event_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            &body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+
+    assert_eq!(
+        vault.identity_topology_event(&event_id).unwrap(),
+        Some(record)
+    );
+    assert!(
+        read_dt_marker(&vault, &event_id).is_none(),
+        "admitting a delete-protected row must neutralize headerless dt: poison atomically"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(
+        quarantined[0].1.container,
+        crate::sync::quarantine::QuarantineContainer::Tombstones
+    );
+    assert_eq!(quarantined[0].1.reason_code, "MaintenanceKindNotWritable");
+    assert_eq!(
+        quarantined[0].1.payload_hash,
+        crate::sync::quarantine::payload_hash(&tombstone)
+    );
+}
+
+#[test]
+fn observer_b_malformed_type_76_envelope_cannot_bypass_delete_wins() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let vault = test_vault();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: 200,
+        request_id: [0x42; 16],
+    }
+    .encode();
+
+    let malformed_id = EntityId::from_bytes([0x72; 16]).unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &malformed_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            b"malformed type-76 body",
+        ),
+    )
+    .unwrap();
+    map_insert_bytes(
+        &doc.get_map("tombstones"),
+        &malformed_id.to_hex(),
+        &tombstone,
+    )
+    .unwrap();
+    doc.commit();
+
+    assert!(vault.get(&malformed_id).unwrap().is_none());
+    assert!(
+        read_dt_marker(&vault, &malformed_id).is_some(),
+        "a malformed protected envelope must run the normal tombstone path"
+    );
+
+    doc.get_map("tombstones")
+        .delete(&malformed_id.to_hex())
+        .unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &malformed_id.to_hex(),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: 201,
+                end: 201,
+            },
+            201,
+            &task_body(),
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        vault.get(&malformed_id).unwrap().is_none(),
+        "the permanent dt: marker must block later ordinary resurrection"
+    );
+
+    let valid_id = EntityId::from_bytes([0x73; 16]).unwrap();
+    let valid_record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![EntityId::from_bytes([0x61; 16]).unwrap()],
+            survivor: EntityId::from_bytes([0x62; 16]).unwrap(),
+        },
+    };
+    let valid_body =
+        crate::identity_topology::encode_identity_topology_event_body(&valid_record).unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &valid_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: valid_record.at,
+                end: valid_record.at,
+            },
+            valid_record.at,
+            &valid_body,
+        ),
+    )
+    .unwrap();
+    map_insert_bytes(&doc.get_map("tombstones"), &valid_id.to_hex(), &tombstone).unwrap();
+    doc.commit();
+
+    assert_eq!(
+        vault.identity_topology_event(&valid_id).unwrap(),
+        Some(valid_record),
+        "a genuinely valid protected record must retain delete protection"
+    );
+    assert!(
+        read_dt_marker(&vault, &valid_id).is_none(),
+        "a valid protected record's tombstone must not write dt:"
+    );
+}
+
+#[test]
+fn observer_b_rejects_type_76_merge_with_nonstructural_participant() {
+    use crate::identity_topology::{
+        EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
+
+    let vault = test_vault();
+    let survivor = EntityId::now();
+    vault
+        .put_entity(
+            &survivor,
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 1, end: 1 },
+            2,
+            &task_body(),
+        )
+        .unwrap();
+    let claim_id = EntityId::now();
+    let claim = crate::claim::ClaimBody::new(
+        "user.note",
+        crate::claim::ClaimSubject::Entity(survivor),
+        Value::from("fixture"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    let claim_body = crate::claim::encode_claim_body(&claim).unwrap();
+    // This row is participant state for the sync-door test, not a local
+    // claim-policy decision. Seed it through the replicated materialization
+    // door: that still runs the full CLAIM body validator, while avoiding the
+    // unrelated local criticality-floor gate that can legitimately park an
+    // Auto `user.note` write.
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &claim_id,
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    TimeRange { start: 1, end: 1 },
+                    2,
+                    &claim_body,
+                )
+                .apply(wtxn)
+        })
+        .unwrap();
+
+    let event_id = EntityId::now();
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![claim_id],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &event_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: record.at,
+                end: record.at,
+            },
+            record.at,
+            &body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+
+    let expected_state = EntityLifecycleState::Active;
+    assert!(
+        vault.identity_topology_event(&event_id).unwrap().is_none(),
+        "the sync door must reject the event row itself"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&claim_id).unwrap(),
+        expected_state
+    );
+    assert!(
+        !vault
+            .edge_exists(&claim_id, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "a rejected non-structural event must authorize no shell edge"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(
+        quarantined[0].1.reason_code,
+        "InvalidIdentityTopologyEventBody"
+    );
+}
+
+#[test]
+fn observer_b_revalidates_deferred_participant_before_reserved_edge_write() {
+    use crate::identity_topology::{
+        EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
+
+    let vault = test_vault();
+    let doc = LoroDoc::new();
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let survivor = EntityId::now();
+    let claim_id = EntityId::now();
+    let claim = crate::claim::ClaimBody::new(
+        "user.note",
+        crate::claim::ClaimSubject::Entity(survivor),
+        Value::from("fixture"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    let claim_body = crate::claim::encode_claim_body(&claim).unwrap();
+
+    // Endpoint blobs exist in the CRDT before Observer B starts, so the
+    // event below sees both participants as locally absent and defers their
+    // type validation. The later edge delta must hydrate then revalidate.
+    map_insert_bytes(
+        &entities,
+        &survivor.to_hex(),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 1, end: 1 },
+            2,
+            &task_body(),
+        ),
+    )
+    .unwrap();
+    map_insert_bytes(
+        &entities,
+        &claim_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            2,
+            &claim_body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let event_id = EntityId::now();
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![claim_id],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    map_insert_bytes(
+        &entities,
+        &event_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: record.at,
+                end: record.at,
+            },
+            record.at,
+            &body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        vault.identity_topology_event(&event_id).unwrap().is_some(),
+        "precondition: missing local participants defer event validation"
+    );
+
+    let shell_key = format_edge_key(&claim_id, EdgeKind::MergedInto, &survivor);
+    map_insert_bytes(
+        &edges,
+        &shell_key,
+        &encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.3, record.at, None, None).unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+
+    let expected_state = EntityLifecycleState::Active;
+    assert!(vault.get(&claim_id).unwrap().is_some());
+    assert!(vault.get(&survivor).unwrap().is_some());
+    assert_eq!(
+        vault.entity_lifecycle_state(&claim_id).unwrap(),
+        expected_state
+    );
+    assert!(
+        !vault
+            .edge_exists(&claim_id, EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "hydration revealed a non-structural source, so the mandate must be retracted before write"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Edges);
+}
+
+#[test]
+fn observer_b_quarantined_undo_commits_no_event_or_seq_advance() {
+    use crate::identity_topology::{
+        IdentityOpOutcome, IdentityOpWrite, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
+
+    let vault = test_vault();
+    let ordinary_target = EntityId::now();
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+    for id in [&ordinary_target, &survivor, &loser] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            )
+            .unwrap();
+    }
+
+    let rejected_event = EntityId::now();
+    let record = StoredIdentityOpEvent {
+        seq: 77,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Undo {
+            target: ordinary_target,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &rejected_event.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: record.at,
+                end: record.at,
+            },
+            record.at,
+            &body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+
+    let expected_next_seq = 1;
+    assert!(
+        vault
+            .identity_topology_event(&rejected_event)
+            .unwrap()
+            .is_none(),
+        "a quarantined undo must not survive in the outer observer txn"
+    );
+    let outcome = vault
+        .apply_identity_topology_op(
+            &crate::identity_topology::IdentityTopologyOp::Merge(
+                crate::identity_topology::MergeOp {
+                    sources: vec![loser],
+                    survivor,
+                    evidence: crate::identity_topology::IdentityOpEvidence::default(),
+                    survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+                },
+            ),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            300,
+        )
+        .unwrap();
+    let IdentityOpOutcome::Applied { event, .. } = outcome else {
+        panic!("control merge must apply");
+    };
+    assert_eq!(
+        vault.identity_topology_event(&event).unwrap().unwrap().seq,
+        expected_next_seq,
+        "the rejected remote seq must not poison the local clock"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.reason_code, "InvalidEntityType");
+}
+
+#[test]
+fn observer_b_rejects_seq_that_would_consume_local_headroom_before_clock_mutation() {
+    use crate::identity_topology::{
+        IdentityOpOutcome, IdentityOpWrite, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
+
+    let vault = test_vault();
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+    for id in [&survivor, &loser] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            )
+            .unwrap();
+    }
+    let rejected_event = EntityId::now();
+    let record = StoredIdentityOpEvent {
+        seq: crate::identity_topology::IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING
+            - crate::identity_topology::IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &rejected_event.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: record.at,
+                end: record.at,
+            },
+            record.at,
+            &body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+
+    let expected_next_seq = 1;
+    assert!(
+        vault
+            .identity_topology_event(&rejected_event)
+            .unwrap()
+            .is_none(),
+        "a seq that consumes required local headroom must reject before storage"
+    );
+    let outcome = vault
+        .apply_identity_topology_op(
+            &crate::identity_topology::IdentityTopologyOp::Merge(
+                crate::identity_topology::MergeOp {
+                    sources: vec![loser],
+                    survivor,
+                    evidence: crate::identity_topology::IdentityOpEvidence::default(),
+                    survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+                },
+            ),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            300,
+        )
+        .unwrap();
+    let IdentityOpOutcome::Applied { event, .. } = outcome else {
+        panic!("control merge must apply");
+    };
+    assert_eq!(
+        vault.identity_topology_event(&event).unwrap().unwrap().seq,
+        expected_next_seq,
+        "the rejected terminal seq must not advance the local allocator"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(
+        quarantined[0].1.reason_code,
+        "InvalidIdentityTopologyEventBody"
+    );
+}
+
+#[test]
+fn observer_b_endpoint_materialization_retriggers_deferred_topology_reconcile() {
+    use crate::identity_topology::{
+        EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
+
+    let vault = test_vault();
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+    let event_id = EntityId::now();
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    let doc = LoroDoc::new();
+    let entities = doc.get_map("entities");
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+    // The event arrives first. Its missing endpoints are a deferral, so the
+    // immutable record lands but no shell can be written yet.
+    map_insert_bytes(
+        &entities,
+        &event_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: record.at,
+                end: record.at,
+            },
+            record.at,
+            &body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(vault.identity_topology_event(&event_id).unwrap().is_some());
+    assert!(
+        !vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+
+    // No raw edge delta follows. The first endpoint still cannot complete
+    // the pair; materializing the second endpoint must itself retrigger the
+    // ledger reconciliation and derive the mandated edge.
+    for (id, expect_edge) in [(&loser, false), (&survivor, true)] {
+        map_insert_bytes(
+            &entities,
+            &id.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            ),
+        )
+        .unwrap();
+        doc.commit();
+        assert_eq!(
+            vault
+                .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+                .unwrap(),
+            expect_edge
+        );
+    }
+    let expected_state = EntityLifecycleState::Merged;
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).unwrap(),
+        expected_state
+    );
+}
+
+#[test]
+fn identity_topology_ingest_door_replays_diverges_and_validates() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let vault = test_vault();
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+    for id in [&survivor, &loser] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            )
+            .unwrap();
+    }
+
+    let event_id = EntityId::now();
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    let blob = entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange {
+            start: 200,
+            end: 200,
+        },
+        200,
+        &body,
+    );
+    let ingest = |blob: &[u8]| {
+        let header = EntityMetadataHeader::parse(blob).unwrap();
+        vault.with_write_txn(|wtxn| {
+            ingest_replicated_identity_topology_event_in_txn(
+                &vault,
+                wtxn,
+                &event_id,
+                &header,
+                blob,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+                7,
+            )
+        })
+    };
+
+    // Fresh accept: record stored, shell edge reconciled.
+    assert!(ingest(&blob).unwrap());
+    assert!(
+        vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+
+    // Byte-identical replay: idempotent skip.
+    assert!(!ingest(&blob).unwrap());
+
+    // Divergent bytes for the SAME id: equivocation-shaped typed
+    // rejection; the accepted local bytes win.
+    let mut divergent = record.clone();
+    divergent.at = 999;
+    let divergent_body =
+        crate::identity_topology::encode_identity_topology_event_body(&divergent).unwrap();
+    let divergent_blob = entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange {
+            start: 200,
+            end: 200,
+        },
+        200,
+        &divergent_body,
+    );
+    let err = ingest(&divergent_blob).unwrap_err();
+    assert_matches!(err, Error::IdentityTopologyEventDivergence { .. });
+    assert_eq!(
+        vault
+            .identity_topology_event(&event_id)
+            .unwrap()
+            .unwrap()
+            .at,
+        200,
+        "divergent remote bytes must never overwrite the accepted event"
+    );
+
+    // A malformed FRESH body is the typed ingress rejection.
+    let bad_id = EntityId::now();
+    let bad_blob = entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"not a type-76 body",
+    );
+    let bad_header = EntityMetadataHeader::parse(&bad_blob).unwrap();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            ingest_replicated_identity_topology_event_in_txn(
+                &vault,
+                wtxn,
+                &bad_id,
+                &bad_header,
+                &bad_blob,
+                &bad_blob[ENTITY_METADATA_HEADER_LEN..],
+                7,
+            )
+        })
+        .unwrap_err();
+    assert_matches!(err, Error::InvalidIdentityTopologyEventBody(_));
+
+    // Both reject shapes classify as REMOTE rejections
+    // (quarantine-and-continue), so one bad row cannot abort a batch.
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&Error::IdentityTopologyEventDivergence {
+            id: event_id
+        })
+        .is_some()
+    );
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&Error::InvalidIdentityTopologyEventBody(
+            "identity topology event bytes are malformed"
+        ))
+        .is_some()
+    );
+
+    // The ingested seq joined the local clock: a LOCAL undo of the synced
+    // merge allocates ABOVE it and the fold orders it after its target.
+    let write = crate::identity_topology::IdentityOpWrite::auto(ClaimSource::UserStated);
+    let outcome = vault
+        .undo_identity_topology_event(&event_id, &write, 300)
+        .unwrap();
+    let crate::identity_topology::IdentityOpOutcome::Applied { event, .. } = outcome else {
+        panic!("undo of the ingested merge must apply");
+    };
+    let undo_record = vault.identity_topology_event(&event).unwrap().unwrap();
+    assert!(
+        undo_record.seq > record.seq,
+        "seq join: local undo must order after ingested history"
+    );
+    assert!(
+        !vault
+            .edge_exists(&loser, EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+}
+
+#[test]
+fn byte_identical_type_76_replay_short_circuits_before_full_reconciliation() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let vault = test_vault();
+    quota::set_maintenance_ingest_quota_config(
+        &vault,
+        quota::MaintenanceIngestQuotaConfig {
+            max_ops_per_peer_window: 1,
+            quota_window_secs: 3_600,
+        },
+    )
+    .unwrap();
+    let survivor = EntityId::from_bytes([0x61; 16]).unwrap();
+    let source = EntityId::from_bytes([0x62; 16]).unwrap();
+    for id in [&survivor, &source] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &task_body(),
+            )
+            .unwrap();
+    }
+    let event_id = EntityId::from_bytes([0x70; 16]).unwrap();
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Proposed,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![source],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record).unwrap();
+    let blob = entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange {
+            start: 200,
+            end: 200,
+        },
+        200,
+        &body,
+    );
+    let header = EntityMetadataHeader::parse(&blob).unwrap();
+    let ingest = || {
+        vault.with_write_txn(|wtxn| {
+            ingest_replicated_identity_topology_event_in_txn(
+                &vault, &mut *wtxn, &event_id, &header, &blob, &body, 7,
+            )
+        })
+    };
+
+    crate::identity_topology::test_hooks::reset_full_reconciliations();
+    assert!(ingest().unwrap(), "fresh record must materialize");
+    let after_fresh = crate::identity_topology::test_hooks::full_reconciliations();
+    assert_eq!(after_fresh, 1, "fresh admission reconciles once");
+
+    // The one-op quota is now exhausted. Replay still succeeds because it is
+    // recognized as byte-identical before quota and before the full fold.
+    assert!(
+        !ingest().unwrap(),
+        "byte-identical replay is an idempotent skip"
+    );
+    assert_eq!(
+        crate::identity_topology::test_hooks::full_reconciliations(),
+        after_fresh,
+        "unchanged replay must not enumerate and reconcile the whole family"
+    );
+}
+
+#[test]
+fn observer_b_rejects_every_local_impossible_type_76_shape_before_mutation() {
+    use crate::identity_topology::{
+        ReassignmentEntry, ReassignmentMap, ReassignmentTarget, StoredIdentityOpAction,
+        StoredIdentityOpEvent,
+    };
+
+    let vault = test_vault();
+    quota::set_maintenance_ingest_quota_config(
+        &vault,
+        quota::MaintenanceIngestQuotaConfig {
+            max_ops_per_peer_window: 1,
+            quota_window_secs: 3_600,
+        },
+    )
+    .unwrap();
+    let survivor = EntityId::from_bytes([0x61; 16]).unwrap();
+    let source = EntityId::from_bytes([0x62; 16]).unwrap();
+    let head = EntityId::from_bytes([0x63; 16]).unwrap();
+    for id in [&survivor, &source, &head] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &task_body(),
+            )
+            .unwrap();
+    }
+
+    let base = |seq, approval, action| StoredIdentityOpEvent {
+        seq,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval,
+        confidence: 1.0,
+        evidence: None,
+        action,
+    };
+    let invalid = [
+        base(
+            1,
+            ClaimApprovalStatus::Auto,
+            StoredIdentityOpAction::Merge {
+                sources: Vec::new(),
+                survivor,
+            },
+        ),
+        base(
+            2,
+            ClaimApprovalStatus::Auto,
+            StoredIdentityOpAction::Merge {
+                sources: vec![source],
+                survivor: source,
+            },
+        ),
+        base(
+            3,
+            ClaimApprovalStatus::Auto,
+            StoredIdentityOpAction::Merge {
+                sources: vec![source, source],
+                survivor,
+            },
+        ),
+        base(
+            4,
+            ClaimApprovalStatus::Auto,
+            StoredIdentityOpAction::Split {
+                entity: source,
+                heads: vec![head],
+                reassignment: ReassignmentMap {
+                    entries: vec![ReassignmentEntry {
+                        item: crate::claim::ClaimSubject::Entity(survivor),
+                        target: ReassignmentTarget::Facet { index: 0 },
+                    }],
+                },
+            },
+        ),
+        base(
+            0,
+            ClaimApprovalStatus::Auto,
+            StoredIdentityOpAction::Merge {
+                sources: vec![source],
+                survivor,
+            },
+        ),
+        base(
+            5,
+            ClaimApprovalStatus::Rejected,
+            StoredIdentityOpAction::Merge {
+                sources: vec![source],
+                survivor,
+            },
+        ),
+    ];
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let entities = doc.get_map("entities");
+    let invalid_ids = invalid
+        .iter()
+        .enumerate()
+        .map(|(index, record)| {
+            let event_id = EntityId::from_bytes([0x70 + index as u8; 16]).unwrap();
+            let body = crate::identity_topology::encode_identity_topology_event_body(record)
+                .expect("encode invalid-shape fixture");
+            map_insert_bytes(
+                &entities,
+                &event_id.to_hex(),
+                &entity_blob(
+                    crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+                    TimeRange {
+                        start: record.at,
+                        end: record.at,
+                    },
+                    record.at,
+                    &body,
+                ),
+            )
+            .unwrap();
+            event_id
+        })
+        .collect::<Vec<_>>();
+    doc.commit();
+
+    for event_id in &invalid_ids {
+        assert!(
+            vault.identity_topology_event(event_id).unwrap().is_none(),
+            "a local-impossible shape must leave no stored row"
+        );
+    }
+    let rtxn = vault.store.env.read_txn().unwrap();
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, crate::identity_topology::IDENTITY_TOPOLOGY_SEQ_KEY,)
+            .unwrap()
+            .is_none(),
+        "rejected shapes must not advance the topology clock"
+    );
+    drop(rtxn);
+    assert_eq!(
+        crate::sync::quarantine::quarantined_records(&vault)
+            .unwrap()
+            .len(),
+        invalid_ids.len(),
+        "every rejected shape must leave quarantine evidence"
+    );
+
+    // With a one-op quota, this valid control can land only if none of the
+    // invalid rows consumed quota before rejection.
+    let valid_id = EntityId::from_bytes([0x7f; 16]).unwrap();
+    let valid = base(
+        50,
+        ClaimApprovalStatus::Auto,
+        StoredIdentityOpAction::Merge {
+            sources: vec![source],
+            survivor,
+        },
+    );
+    let body = crate::identity_topology::encode_identity_topology_event_body(&valid).unwrap();
+    map_insert_bytes(
+        &entities,
+        &valid_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            &body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert_eq!(
+        vault.identity_topology_event(&valid_id).unwrap(),
+        Some(valid)
+    );
+}
+
+#[test]
+fn observer_b_rejects_present_actor_class_mismatch_before_mutation() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let vault = test_vault();
+    quota::set_maintenance_ingest_quota_config(
+        &vault,
+        quota::MaintenanceIngestQuotaConfig {
+            max_ops_per_peer_window: 1,
+            quota_window_secs: 3_600,
+        },
+    )
+    .unwrap();
+    let survivor = EntityId::from_bytes([0x61; 16]).unwrap();
+    let source = EntityId::from_bytes([0x62; 16]).unwrap();
+    let actor = EntityId::from_bytes([0x63; 16]).unwrap();
+    for id in [&survivor, &source] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &task_body(),
+            )
+            .unwrap();
+    }
+    vault
+        .put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )
+        .unwrap();
+
+    let record = |actor_class| StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: Some(crate::write_envelope::WriteActor::new(actor, actor_class)),
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![source],
+            survivor,
+        },
+    };
+    let rejected_id = EntityId::from_bytes([0x70; 16]).unwrap();
+    let rejected = record(EdgeActorClass::System);
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let entities = doc.get_map("entities");
+    let rejected_body =
+        crate::identity_topology::encode_identity_topology_event_body(&rejected).unwrap();
+    map_insert_bytes(
+        &entities,
+        &rejected_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            &rejected_body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+
+    assert!(
+        vault
+            .identity_topology_event(&rejected_id)
+            .unwrap()
+            .is_none()
+    );
+    let rtxn = vault.store.env.read_txn().unwrap();
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, crate::identity_topology::IDENTITY_TOPOLOGY_SEQ_KEY,)
+            .unwrap()
+            .is_none(),
+        "actor mismatch must not advance the topology clock"
+    );
+    drop(rtxn);
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(
+        quarantined[0].1.reason_code,
+        "InvalidIdentityTopologyEventBody"
+    );
+
+    // The valid actor-class control lands under a one-op quota only if the
+    // mismatch was rejected before quota debit.
+    let valid_id = EntityId::from_bytes([0x71; 16]).unwrap();
+    let valid = record(EdgeActorClass::Human);
+    let valid_body = crate::identity_topology::encode_identity_topology_event_body(&valid).unwrap();
+    map_insert_bytes(
+        &entities,
+        &valid_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            &valid_body,
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert_eq!(
+        vault.identity_topology_event(&valid_id).unwrap(),
+        Some(valid)
     );
 }

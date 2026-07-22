@@ -79,21 +79,54 @@ fn public_deletes_reject_fresh_default_policy_manifest() -> Result<()> {
 
 #[cfg(feature = "sync")]
 #[test]
-fn sync_replayed_tombstone_noops_for_delete_protected_engine_record() -> Result<()> {
+fn sync_replayed_tombstone_quarantines_for_delete_protected_engine_record() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let vault = Vault::open(tmp.path(), test_config())?;
     let id = crate::gate::default_policy_manifest_id()?;
+    let before = vault
+        .get_raw(&id)?
+        .expect("setup must materialize the protected policy manifest");
+    let window_key = crate::sync::WindowKey::new("2026-03");
+    let doc = crate::sync::schema::create_window_doc("remote", &window_key);
+    let tombstone = b"malformed-hard-tombstone";
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("tombstones"),
+        &id.to_hex(),
+        tombstone,
+    )?;
+    doc.commit();
 
-    let outcome = vault.apply_replayed_tombstone_for_sync(&id, b"malformed-hard-tombstone")?;
+    let rematerialized = crate::sync::window::forward_rematerialize(
+        &vault,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &window_key,
+    )?;
     assert_eq!(
-        outcome,
-        ReplayedTombstoneOutcome::HardPurged {
-            erased: false,
-            receipt_id: None,
-            sweep_key: None,
-        }
+        rematerialized, 0,
+        "a rejected protected-record tombstone changes no local state"
     );
-    assert!(vault.get_raw(&id)?.is_some());
+    assert_eq!(
+        vault.get_raw(&id)?.as_deref(),
+        Some(before.as_slice()),
+        "the protected engine record must survive the rejected tombstone"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    let record = &quarantined[0].1;
+    assert_eq!(
+        record.container,
+        crate::sync::QuarantineContainer::Tombstones
+    );
+    assert_eq!(record.reason_code, "MaintenanceKindNotWritable");
+    assert_eq!(
+        (record.crdt_key_hash, record.crdt_key_len),
+        crate::sync::quarantine::crdt_key_metadata(&id.to_hex())
+    );
+    assert_eq!(
+        record.payload_hash,
+        crate::sync::quarantine::payload_hash(tombstone)
+    );
     Ok(())
 }
 

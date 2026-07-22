@@ -133,6 +133,12 @@ use crate::registry::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v15 (ONE-1743): IDENTITY_TOPOLOGY_EVENT was registered as a persistent,
+/// delete-protected maintenance entity type byte 76 — the engine-authored
+/// merge/split ledger (ARCH-0055). v14 readers do not know this persistent
+/// entity kind and would not protect it from deletion, so v14 vaults fail closed
+/// at the ABI gate — there is no silent migration; rebuild the vault.
+///
 /// v14 (ONE-1741): SKILL_CONTENT_ANCHOR was registered as persistent maintenance
 /// entity type byte 138 — the immortal subject that content-global scan verdicts
 /// anchor to. v13 readers do not know this persistent entity kind and would not
@@ -183,7 +189,7 @@ pub const MAX_DBS: u32 = 32;
 /// `GATE_DECISION_LEDGER_VERSION`, `ATTEMPT_RECORD_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 14;
+pub const STORAGE_ABI_VERSION: u16 = 15;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
