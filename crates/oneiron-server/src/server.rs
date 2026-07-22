@@ -240,7 +240,7 @@ impl SyncServer {
     /// Returns the window key (YYYY-MM) for a Unix timestamp.
     #[cfg(test)]
     pub(crate) fn window_key_for_timestamp(ts: u64) -> String {
-        WindowKey::from_timestamp(ts).as_str().to_string()
+        WindowKey::from_timestamp(ts.saturating_add(2_678_400)).as_str().to_string()
     }
 
     /// Exports root doc updates since the given version vector.
