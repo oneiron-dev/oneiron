@@ -278,24 +278,20 @@ impl MemoryFacade<'_> {
             self.vault()
                 .batch_in()
                 .put(&task_ref, ENTITY_TYPE_TASK, occurred, now, &body)
-                .apply(wtxn)
-                .map_err(FacadeError::from)?;
-            record_task_create_owner_in_txn(self.vault(), wtxn, task_ref, owner_ref)
-                .map_err(FacadeError::from)?;
+                .apply(wtxn)?;
+            record_task_create_owner_in_txn(self.vault(), wtxn, task_ref, owner_ref)?;
             let queue = AttemptQueue::new(self.vault());
-            let outcome = queue
-                .enqueue_with_task_ref_in_txn(
-                    wtxn,
-                    EnqueueAttempt {
-                        kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
-                        payload: encode_task_realization_input(&spec.spec)?,
-                        dedupe_key: None,
-                        run_id: None,
-                        now,
-                    },
-                    Some(task_ref.to_hex()),
-                )
-                .map_err(FacadeError::from)?;
+            let outcome = queue.enqueue_with_task_ref_in_txn(
+                wtxn,
+                EnqueueAttempt {
+                    kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                    payload: encode_task_realization_input(&spec.spec)?,
+                    dedupe_key: None,
+                    run_id: None,
+                    now,
+                },
+                Some(task_ref.to_hex()),
+            )?;
             let EnqueueOutcome::Enqueued(_) = outcome else {
                 return Err(FacadeError::from(Error::InvariantViolation(
                     "tasks.create.enqueue",
@@ -332,7 +328,7 @@ impl MemoryFacade<'_> {
     pub fn tasks_check(&self) -> FacadeResult<TasksSection> {
         let _provenance = facade_provenance(task_verb_contract(TasksVerb::Check));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let (intents, bare_jobs) = task_presence(self.vault()).map_err(FacadeError::from)?;
+        let (intents, bare_jobs) = task_presence(self.vault())?;
         Ok(render_tasks_section(&intents, &bare_jobs))
     }
 
@@ -340,7 +336,7 @@ impl MemoryFacade<'_> {
     pub fn tasks_expand(&self, task_ref: EntityId) -> FacadeResult<Vec<String>> {
         let _provenance = facade_provenance(task_verb_contract(TasksVerb::Expand));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let (intents, _) = task_presence(self.vault()).map_err(FacadeError::from)?;
+        let (intents, _) = task_presence(self.vault())?;
         let task_hex = task_ref.to_hex();
         let Some(intent) = intents.into_iter().find(|intent| intent.id == task_hex) else {
             return Err(FacadeError::from(Error::EntityNotFound));
@@ -362,7 +358,7 @@ impl MemoryFacade<'_> {
         // surfaced until acked (08b §3). Acking a queued/running task would
         // pre-set the bit so the later failure is dropped from render and never
         // surfaced — so a non-failed ack is a no-op that leaves the bit unset.
-        let (intents, _) = task_presence(self.vault()).map_err(FacadeError::from)?;
+        let (intents, _) = task_presence(self.vault())?;
         let task_hex = task_ref.to_hex();
         let Some(intent) = intents.into_iter().find(|intent| intent.id == task_hex) else {
             return Err(FacadeError::from(Error::EntityNotFound));
@@ -378,7 +374,7 @@ impl MemoryFacade<'_> {
         })?;
         Ok(TaskAckReceipt {
             task_ref,
-            acked: task_is_acked(self.vault(), task_ref).map_err(FacadeError::from)?,
+            acked: task_is_acked(self.vault(), task_ref)?,
         })
     }
 
@@ -442,8 +438,7 @@ impl MemoryFacade<'_> {
 
         let (gate_decision_ref, gate_outcome, effected, status) = self
             .with_verified_actor_write_txn(|wtxn| {
-                let policy = resolve_policy_manifest(&self.vault().store, &*wtxn)
-                    .map_err(FacadeError::from)?;
+                let policy = resolve_policy_manifest(&self.vault().store, &*wtxn)?;
                 let effect = ExternalEffectGateInput {
                     actor: GateActor {
                         actor_class: self.actor_class().gate_actor_class().to_owned(),
@@ -474,8 +469,7 @@ impl MemoryFacade<'_> {
                     &effect,
                     &policy,
                     false,
-                )
-                .map_err(FacadeError::from)?;
+                )?;
                 let decision_ref = format!("gate:{}", decision_id.to_hex());
                 if decision.outcome() != GateOutcome::Allow {
                     return Ok((decision_ref, decision.outcome(), false, None));
@@ -495,10 +489,7 @@ impl MemoryFacade<'_> {
                 let mut live_attempts: Vec<(AttemptId, AttemptState)> =
                     Vec::with_capacity(state.attempts.len());
                 for (attempt_id, snapshot_state) in &state.attempts {
-                    match queue
-                        .get_in_write_txn(&*wtxn, *attempt_id)
-                        .map_err(FacadeError::from)?
-                    {
+                    match queue.get_in_write_txn(&*wtxn, *attempt_id)? {
                         Some(record) => live_attempts.push((*attempt_id, record.state)),
                         // Spawn realizations have no TASK backlink to recover
                         // membership from. Preserve an already-terminal spawn
@@ -550,18 +541,16 @@ impl MemoryFacade<'_> {
                     if !matches!(attempt_state, AttemptState::Queued | AttemptState::Paused) {
                         continue;
                     }
-                    let outcome = queue
-                        .intervene_in_txn(
-                            wtxn,
-                            InterveneAttempt {
-                                id: *attempt_id,
-                                kind: AttemptInterventionKind::Cancel,
-                                actor: self.actor().to_hex(),
-                                note: None,
-                                now,
-                            },
-                        )
-                        .map_err(FacadeError::from)?;
+                    let outcome = queue.intervene_in_txn(
+                        wtxn,
+                        InterveneAttempt {
+                            id: *attempt_id,
+                            kind: AttemptInterventionKind::Cancel,
+                            actor: self.actor().to_hex(),
+                            note: None,
+                            now,
+                        },
+                    )?;
                     match outcome.effect {
                         AttemptInterventionEffect::Cancelled => cancelled_count += 1,
                         AttemptInterventionEffect::AlreadyCancelled => {}
@@ -585,7 +574,7 @@ impl MemoryFacade<'_> {
                 if preserved_terminal_status.is_none()
                     && let Some(task_ref) = state.task_ref
                 {
-                    cancel_task_in_txn(self.vault(), wtxn, task_ref).map_err(FacadeError::from)?;
+                    cancel_task_in_txn(self.vault(), wtxn, task_ref)?;
                 }
                 Ok((
                     decision_ref,
@@ -646,7 +635,7 @@ impl MemoryFacade<'_> {
         let envelope = WriteEnvelope::new(
             WriteActor::new(self.actor(), self.actor_class()),
             ClaimSource::ToolOutput,
-            WriteProvenance::new(provenance).map_err(FacadeError::from)?,
+            WriteProvenance::new(provenance)?,
             ClaimApprovalStatus::Proposed,
         );
         let occurred = TimeRange {
@@ -674,8 +663,7 @@ impl MemoryFacade<'_> {
         })?;
         let gate_decision_ref = self
             .vault()
-            .gate_decisions(TASK_GATE_RECEIPT_SCAN_LIMIT)
-            .map_err(FacadeError::from)?
+            .gate_decisions(TASK_GATE_RECEIPT_SCAN_LIMIT)?
             .into_iter()
             .filter(|record| record.claim_id.as_ref() == Some(proposal_ref.as_bytes()))
             .max_by_key(|record| record.decision_id.to_hex())
@@ -694,7 +682,7 @@ fn task_actor_ceiling(
     actor: EntityId,
     actor_class: EdgeActorClass,
 ) -> FacadeResult<PolicyApprovalCeiling> {
-    let policy = resolve_policy_manifest(&vault.store, txn).map_err(FacadeError::from)?;
+    let policy = resolve_policy_manifest(&vault.store, txn)?;
     let policy_projection = policy.actor_ceiling(
         actor_class.gate_actor_class(),
         Some(actor.to_hex().as_str()),
