@@ -403,7 +403,7 @@ impl NapiVault {
         let eid = parse_entity_id(&id)?;
         self.vault
             .get(&eid)
-            .map(|opt| opt.map(|v| v.into()))
+            .map(|opt| opt.map(std::convert::Into::into))
             .map_err(to_napi_err)
     }
 

@@ -1152,7 +1152,7 @@ fn step_state_write(
             progression,
             started_at,
             updated_at: now_ms,
-            response_payload: response_payload.map(|value| value.to_vec()),
+            response_payload: response_payload.map(<[u8]>::to_vec),
         },
     )?;
     wtxn.commit()?;

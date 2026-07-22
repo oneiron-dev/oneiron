@@ -427,10 +427,10 @@ fn section_between<'a>(text: &'a str, start_heading: &str, end_heading: &str) ->
     let start = text
         .find(start_heading)
         .unwrap_or_else(|| panic!("missing section start {start_heading}"));
-    let end = text[start..]
-        .find(end_heading)
-        .map(|offset| start + offset)
-        .unwrap_or_else(|| panic!("missing section end {end_heading}"));
+    let end = text[start..].find(end_heading).map_or_else(
+        || panic!("missing section end {end_heading}"),
+        |offset| start + offset,
+    );
     &text[start..end]
 }
 

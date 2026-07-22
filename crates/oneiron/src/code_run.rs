@@ -1075,9 +1075,8 @@ fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatchOutcome> {
 }
 
 fn replay_denied_trap_error(result: &SelfDeniedResult) -> Error {
-    let outcome = GateDenialOutcome::parse(&result.outcome)
-        .map(GateDenialOutcome::as_str)
-        .unwrap_or("deny");
+    let outcome =
+        GateDenialOutcome::parse(&result.outcome).map_or("deny", GateDenialOutcome::as_str);
     let reason_codes = result
         .reason_codes
         .iter()

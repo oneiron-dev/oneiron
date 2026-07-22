@@ -263,9 +263,9 @@ impl RawOutboundResult {
 impl fmt::Debug for RawOutboundResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawOutboundResult")
-            .field("body", &self.body.as_ref().map(|value| value.len()))
+            .field("body", &self.body.as_ref().map(std::vec::Vec::len))
             .field("error", &self.error.as_ref().map(|_| "[redacted]"))
-            .field("stderr", &self.stderr.as_ref().map(|value| value.len()))
+            .field("stderr", &self.stderr.as_ref().map(std::vec::Vec::len))
             .field("url", &self.url.as_ref().map(|_| "[redacted]"))
             .finish()
     }

@@ -551,12 +551,11 @@ fn has_json_content_type(headers: &HeaderMap) -> bool {
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(';').next())
-        .map(|media_type| {
+        .is_some_and(|media_type| {
             let media_type = media_type.trim();
             media_type.eq_ignore_ascii_case("application/json")
                 || media_type.to_ascii_lowercase().ends_with("+json")
         })
-        .unwrap_or(false)
 }
 
 // ─── Discovery / capability metadata ─────────────────────────────────────────

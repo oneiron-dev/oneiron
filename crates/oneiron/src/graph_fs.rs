@@ -1509,7 +1509,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_cursor.map(|cursor| cursor.encode());
+                next_cursor = last_cursor.map(EdgeCursor::encode);
                 break;
             }
             let (key, value) = entry?;
@@ -1527,7 +1527,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             let name = format!("{}-{}", edge.kind as u8, edge.target.to_hex());
             let entry = GraphFsEntry::symlink(name, format!("/entities/{}", edge.target.to_hex()));
             if !builder.try_push(entry) {
-                next_cursor = last_cursor.map(|cursor| cursor.encode());
+                next_cursor = last_cursor.map(EdgeCursor::encode);
                 break;
             }
             last_cursor = Some(cursor);
@@ -1931,8 +1931,7 @@ fn append_grep_file_matches(
 fn claim_value_text(value: &Value) -> String {
     value
         .as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("{value:?}"))
+        .map_or_else(|| format!("{value:?}"), str::to_owned)
 }
 
 fn sanitize_coreutils_field(value: &str) -> String {

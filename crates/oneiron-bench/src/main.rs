@@ -198,7 +198,7 @@ fn run_throughput() -> ExitCode {
         }
     }
 
-    let total_bytes: usize = corpus.iter().map(|s| s.len()).sum();
+    let total_bytes: usize = corpus.iter().map(std::string::String::len).sum();
     let mut total_tokens: u64 = 0;
     let start = Instant::now();
     for _ in 0..bench_iters {
@@ -344,6 +344,6 @@ fn sample_corpus() -> Vec<String> {
         "Chào bạn, hôm nay bạn có khỏe không?",
     ]
     .iter()
-    .map(|s| s.to_string())
+    .map(std::string::ToString::to_string)
     .collect()
 }

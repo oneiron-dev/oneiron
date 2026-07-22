@@ -1087,13 +1087,8 @@ fn is_full_excludes_delete_bearing_rows_from_capacity() {
         MAX_QUEUE_SIZE,
         "delete-bearing rows preserved, the normal row dropped"
     );
-    let remaining: Vec<u64> = queue
-        .drain_updates()
-        .unwrap()
-        .iter()
-        .map(|u| u.seq)
-        .collect();
-    assert!(!remaining.contains(&normal_seq));
+    let drained = queue.drain_updates().unwrap();
+    assert!(!drained.iter().any(|u| u.seq == normal_seq));
 
     // VV-confirmed clear is what actually frees the delete rows.
     queue

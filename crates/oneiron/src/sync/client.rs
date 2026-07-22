@@ -352,8 +352,7 @@ impl SyncClient {
         // SystemTime uses in this module.
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         self.vault.with_write_txn(|wtxn| {
             self.vault
                 .store
@@ -1068,8 +1067,7 @@ impl SyncClient {
         // push_embed_job.
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
 
         let mut keys: Vec<WindowKey> = Vec::new();
         let mut next = Some(WindowKey::from_timestamp(now_secs));

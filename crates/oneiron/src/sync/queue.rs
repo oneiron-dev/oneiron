@@ -917,8 +917,7 @@ fn decode_embed_job_value(value: &[u8]) -> Result<(u8, u64)> {
 fn unix_millis_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis().min(u128::from(u64::MAX)) as u64)
 }
 
 fn decode_last_update_seq_metadata(raw: &[u8]) -> Result<u64> {

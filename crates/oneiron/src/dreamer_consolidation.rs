@@ -2112,8 +2112,7 @@ fn rmpv_to_json(value: &Value) -> serde_json::Value {
         Value::F64(number) => serde_json::Value::from(*number),
         Value::String(text) => text
             .as_str()
-            .map(serde_json::Value::from)
-            .unwrap_or(serde_json::Value::Null),
+            .map_or(serde_json::Value::Null, serde_json::Value::from),
         Value::Array(items) => serde_json::Value::Array(items.iter().map(rmpv_to_json).collect()),
         Value::Map(entries) => serde_json::Value::Object(
             entries

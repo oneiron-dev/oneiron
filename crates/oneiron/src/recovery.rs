@@ -306,8 +306,7 @@ fn invalid_artifact_path(path: &Path, suffix: u16) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let mut file_name = path
         .file_name()
-        .map(OsString::from)
-        .unwrap_or_else(|| OsString::from("artifact"));
+        .map_or_else(|| OsString::from("artifact"), OsString::from);
     file_name.push(format!("{RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX}{suffix}"));
     parent.join(file_name)
 }

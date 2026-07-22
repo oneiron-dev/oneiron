@@ -1423,8 +1423,7 @@ fn context_pack_empty_reason(
     let reason = pack
         .empty
         .as_ref()
-        .map(|empty| empty.reason)
-        .unwrap_or(EmptyReason::FilterMatchedNone);
+        .map_or(EmptyReason::FilterMatchedNone, |empty| empty.reason);
     Some(format!("{reason:?}"))
 }
 

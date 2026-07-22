@@ -1206,7 +1206,7 @@ pub(crate) fn authority_observation_secs_for_domain(
     let now = Instant::now();
     let mut clocks = authority_local_clocks()
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     match clocks.get_mut(&clock_domain) {
         Some(clock) => {
             let elapsed = now.saturating_duration_since(clock.last_instant).as_secs();
@@ -1232,7 +1232,7 @@ pub(crate) fn authority_observation_secs_for_domain(
 pub(crate) fn release_authority_clock_domain(clock_domain: usize) {
     let mut clocks = authority_local_clocks()
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     clocks.remove(&clock_domain);
 }
 
