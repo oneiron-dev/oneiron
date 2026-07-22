@@ -260,8 +260,10 @@ fn off_record_purge_deletes_the_grant_ref_index_rows_with_the_primaries() -> Res
     let grant_ref = "bundle:dreamer_run:p6-purge";
     let mut decision = gate_decision(synthetic_gate_decision_id(0x63, 3), 3, Some(grant_ref));
     decision.claim_id = Some(*turn_id.as_bytes());
+    let survivor = gate_decision(synthetic_gate_decision_id(0x64, 4), 4, Some(grant_ref));
     vault.with_write_txn(|wtxn| {
         vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
+        vault.store.append_gate_decision_in_txn(wtxn, &survivor)?;
         Ok(())
     })?;
 
@@ -275,11 +277,9 @@ fn off_record_purge_deletes_the_grant_ref_index_rows_with_the_primaries() -> Res
         Ok(())
     })?;
 
-    assert!(
-        vault
-            .store
-            .gate_decisions_for_grant_ref(grant_ref)?
-            .is_empty()
+    assert_eq!(
+        vault.store.gate_decisions_for_grant_ref(grant_ref)?,
+        vec![survivor]
     );
     Ok(())
 }
