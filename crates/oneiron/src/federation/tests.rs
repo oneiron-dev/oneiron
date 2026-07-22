@@ -210,7 +210,7 @@ fn direction(
 fn sample_pact_scope() -> FederationPactScope {
     FederationPactScope {
         lo_to_hi: direction(
-            FederationScopeWorlds::Worlds(vec![scope_entity(0x60), scope_entity(0x12)]),
+            FederationScopeWorlds::Worlds(vec![scope_entity(0x12), scope_entity(0x60)]),
             FederationScopeFacets::Some(vec![scope_entity(0x21), scope_entity(0x22)]),
             FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core]),
         ),
