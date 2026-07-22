@@ -64,7 +64,8 @@ use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{
     ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TURN,
 };
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::temporal::TimeRange;
@@ -998,7 +999,7 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<Entity
 /// transaction. Reads and status/query verbs are ungated and non-mutating.
 /// safe_delete is the ordered multi-transaction exception; its gate is
 /// evaluated before TXN1, staged for recovery there, and appended on TXN3.
-fn verify_actor_binding(
+pub(crate) fn verify_actor_binding(
     vault: &Vault,
     actor: EntityId,
     actor_class: EdgeActorClass,
@@ -1174,7 +1175,7 @@ fn kind_string_for_type(entity_type: u8) -> String {
     )
 }
 
-fn facade_provenance(verb: &str) -> Value {
+pub(crate) fn facade_provenance(verb: &str) -> Value {
     Value::Map(vec![
         (Value::from("surface"), Value::from("facade")),
         (Value::from("verb"), Value::from(verb)),
@@ -1245,6 +1246,10 @@ impl Vault {
 }
 
 impl MemoryFacade<'_> {
+    pub(crate) fn vault(&self) -> &Vault {
+        self.vault
+    }
+
     /// The bound actor entity id.
     #[must_use]
     pub fn actor(&self) -> EntityId {
@@ -1257,7 +1262,7 @@ impl MemoryFacade<'_> {
         self.actor_class
     }
 
-    fn with_verified_actor_write_txn<T>(
+    pub(crate) fn with_verified_actor_write_txn<T>(
         &self,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> FacadeResult<T>,
     ) -> FacadeResult<T> {
@@ -1570,7 +1575,9 @@ impl MemoryFacade<'_> {
     /// only by a VERIFIED human-class owner actor. Companion-persona and
     /// owner PERSON creation stays available to the owner-bound migrator
     /// (design §2.3/§2.8); no non-owner actor can create an entity that
-    /// binds to any actor class.
+    /// binds to any actor class. Fresh TASK mints remain available for the
+    /// productivity pack, but existing TASK ids are immutable at this broad
+    /// structural door and must use their typed mutation verbs.
     pub fn put_structural(&self, input: &StructuralPutInput) -> FacadeResult<EntityRefReceipt> {
         let type_byte = type_byte_for_kind(&input.kind)?;
         if type_byte == ENTITY_TYPE_CLAIM {
@@ -1654,6 +1661,16 @@ impl MemoryFacade<'_> {
                 .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
             {
                 return Ok(true);
+            }
+            // TASK ids are immutable at this structural door regardless of the
+            // incoming kind: gate on the STORED type, so a non-TASK put cannot
+            // clobber an existing TASK body by reusing its id.
+            if self.vault.get_entity_type_in_txn(&*wtxn, &id)? == Some(ENTITY_TYPE_TASK) {
+                return Err(FacadeError::new(
+                    FACADE_CODE_FORBIDDEN,
+                    "TASK entities cannot be overwritten through the facade",
+                    &["Create a new TASK or use its typed mutation verb."],
+                ));
             }
             let mut batch = self
                 .vault
@@ -2621,7 +2638,7 @@ impl MemoryFacade<'_> {
 
         let outcome = self.with_verified_actor_write_txn(|wtxn| {
             let outcome = queue
-                .enqueue_in_txn(
+                .enqueue_with_task_ref_in_txn(
                     wtxn,
                     EnqueueAttempt {
                         kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
@@ -2630,6 +2647,7 @@ impl MemoryFacade<'_> {
                         run_id: draft.job_ref.clone(),
                         now,
                     },
+                    Some(task_ref.to_hex()),
                 )
                 .map_err(FacadeError::from)?;
             if matches!(&outcome, EnqueueOutcome::Enqueued(_)) {
