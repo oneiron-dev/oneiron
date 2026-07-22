@@ -33,7 +33,7 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
         neutral,
         persona_ref,
         Value::from("portable persona"),
-        provenance(0xA1),
+        provenance(0x55),
         CompanionExportClassification::Portable,
     );
     let relationship = CompanionRecord::relationship(
@@ -41,7 +41,7 @@ fn companion_export_includes_portable_persona_and_relationship_layer() -> Result
         relationship_source,
         relationship_target,
         Value::from("portable relationship"),
-        provenance(0xA2),
+        provenance(0x56),
         CompanionExportClassification::Portable,
     );
 

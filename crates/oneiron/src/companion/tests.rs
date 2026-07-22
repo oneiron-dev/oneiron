@@ -400,7 +400,7 @@ fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<
         neutral.clone(),
         persona_ref,
         Value::from("neutral persona"),
-        provenance(0xA1),
+        provenance(0x5A),
         CompanionExportClassification::Portable,
     );
     let relationship = CompanionRecord::relationship(
@@ -408,7 +408,7 @@ fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<
         source_ref,
         target_ref,
         Value::from("neutral relationship"),
-        provenance(0xA2),
+        provenance(0x5B),
         CompanionExportClassification::LocalOnly,
     );
 
@@ -729,7 +729,7 @@ fn companion_register_body_decodes_legacy_v1_without_lifecycle_events() -> Resul
         CompanionScope::neutral(),
         entity(0x37),
         Value::from("legacy v1 persona"),
-        provenance(0xD7),
+        provenance(0x5C),
         CompanionExportClassification::Portable,
     );
     let legacy = Value::Map(vec![
@@ -835,7 +835,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         CompanionScope::personal(entity(0xD5)),
         entity(0xD6),
         Value::from("revived row"),
-        provenance(0xD7),
+        provenance(0x5D),
         CompanionExportClassification::Portable,
     );
 
