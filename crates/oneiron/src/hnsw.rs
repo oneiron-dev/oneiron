@@ -1118,10 +1118,7 @@ struct BeamOptions {
 /// The scoring prefix length for one vault: `fast_dims` when the MRL funnel
 /// is configured, full `dimensions` otherwise.
 fn score_dims_for(config: &VaultConfig) -> usize {
-    config
-        .fast_dims
-        .map(usize::from)
-        .unwrap_or(config.dimensions)
+    config.fast_dims.map_or(config.dimensions, usize::from)
 }
 
 /// Prefix-slices one operand for a funnel distance computation. Prefix
@@ -1186,10 +1183,7 @@ fn beam_search(
     }
 
     while let Some(Reverse(current)) = candidates.pop() {
-        let worst_distance = results
-            .peek()
-            .map(|entry| entry.distance)
-            .unwrap_or(f32::INFINITY);
+        let worst_distance = results.peek().map_or(f32::INFINITY, |entry| entry.distance);
 
         if results.len() >= ef && current.distance > worst_distance {
             break;
@@ -1222,11 +1216,7 @@ fn beam_search(
                 score_prefix(neighbor_vector, score_dims)?,
             );
             let should_add = results.len() < ef
-                || distance
-                    < results
-                        .peek()
-                        .map(|entry| entry.distance)
-                        .unwrap_or(f32::INFINITY);
+                || distance < results.peek().map_or(f32::INFINITY, |entry| entry.distance);
 
             if should_add {
                 let candidate = HeapEntry {
@@ -1280,10 +1270,7 @@ fn beam_search_snapshot(
     results.push(entry);
 
     while let Some(Reverse(current)) = candidates.pop() {
-        let worst_distance = results
-            .peek()
-            .map(|entry| entry.distance)
-            .unwrap_or(f32::INFINITY);
+        let worst_distance = results.peek().map_or(f32::INFINITY, |entry| entry.distance);
 
         if results.len() >= ef && current.distance > worst_distance {
             break;
@@ -1292,7 +1279,7 @@ fn beam_search_snapshot(
         for neighbor_id in neighbors_by_id
             .get(&current.id)
             .map(Vec::as_slice)
-            .unwrap_or(&[])
+            .unwrap_or_default()
         {
             if !visited.insert(*neighbor_id) {
                 continue;
@@ -1309,11 +1296,7 @@ fn beam_search_snapshot(
                 score_prefix(neighbor_vector, score_dims)?,
             );
             let should_add = results.len() < ef
-                || distance
-                    < results
-                        .peek()
-                        .map(|entry| entry.distance)
-                        .unwrap_or(f32::INFINITY);
+                || distance < results.peek().map_or(f32::INFINITY, |entry| entry.distance);
 
             if should_add {
                 let candidate = HeapEntry {

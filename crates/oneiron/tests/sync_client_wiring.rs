@@ -614,8 +614,7 @@ fn fast_reconnect_reuses_persisted_sv_without_doc_load_when_svf_fresh() {
     let (_temp, vault) = test_vault();
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     let current = WindowKey::from_timestamp(now_secs);
 
     // Session A: write into the current window, then unload (persists
@@ -701,8 +700,7 @@ fn fast_reconnect_omits_nothing_when_a_survivor_exists() {
     let (_temp, vault) = test_vault();
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     let current = WindowKey::from_timestamp(now_secs);
 
     let manager_a = make_manager(&vault);

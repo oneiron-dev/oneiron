@@ -1914,9 +1914,10 @@ fn load_run_jsonl_dataset(
             }
         }
         if contract_records.contains_key(record.question_id.as_str()) {
-            let arm_detail = arm_id
-                .map(|id| format!(" for armId `{id}`"))
-                .unwrap_or_else(|| " without dataset.armId".to_owned());
+            let arm_detail = arm_id.map_or_else(
+                || " without dataset.armId".to_owned(),
+                |id| format!(" for armId `{id}`"),
+            );
             return Err(invalid_run_jsonl(
                 path,
                 line,
@@ -2877,11 +2878,10 @@ fn abstention_gate_status(case: &FixtureCase, context_pack: &ContextPackReport) 
             )
         }
         FixtureClass::LowConfidence => {
-            let (empty_reason, total_in_scope) = context_pack
-                .empty
-                .as_ref()
-                .map(|empty| (empty.reason.as_str(), empty.total_in_scope))
-                .unwrap_or(("none", 0));
+            let (empty_reason, total_in_scope) =
+                context_pack.empty.as_ref().map_or(("none", 0), |empty| {
+                    (empty.reason.as_str(), empty.total_in_scope)
+                });
             let passed = context_pack.result_count == 0
                 && empty_reason == "below_threshold"
                 && total_in_scope > 0;
@@ -2899,7 +2899,7 @@ fn abstention_gate_status(case: &FixtureCase, context_pack: &ContextPackReport) 
                 .opposing_evidence
                 .as_ref()
                 .map(|evidence| evidence.record_ids.as_slice())
-                .unwrap_or(&[]);
+                .unwrap_or_default();
             let matched = required_ids
                 .iter()
                 .filter(|id| surfaced.contains(id.as_str()))

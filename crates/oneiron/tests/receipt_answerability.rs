@@ -383,11 +383,10 @@ fn receipt_by_id<'a>(receipts: &'a [ReceiptRecord], receipt_id: &str) -> &'a Rec
 }
 
 fn field<'a>(receipt: &'a ReceiptRecord, key: &str, question: &str) -> &'a str {
-    receipt
-        .fields
-        .get(key)
-        .map(String::as_str)
-        .unwrap_or_else(|| panic!("{question}: missing receipt field {key}"))
+    receipt.fields.get(key).map_or_else(
+        || panic!("{question}: missing receipt field {key}"),
+        String::as_str,
+    )
 }
 
 fn receipt_ids(projection: &GrantReceiptProjection) -> BTreeSet<&str> {

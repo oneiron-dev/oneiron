@@ -5291,8 +5291,7 @@ fn creates_contract_manifest_databases() -> Result<()> {
     // materialized set, including the sync_state/sync_queue rows below.
     let (_dir, vault) = open_test_vault();
 
-    let contract_names: Vec<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
-    assert_eq!(contract_names.len(), 28);
+    assert_eq!(DB_MANIFEST.iter().count(), 28);
     assert_eq!(MAX_DBS, 32);
     assert_eq!(DB_MANIFEST[23].n, 24);
     assert_eq!(DB_MANIFEST[23].name, "sync_state");
@@ -10872,8 +10871,7 @@ fn child_of_chain_carries_no_ppr_mass() -> Result<()> {
         let p1_score = part_of_scores
             .iter()
             .find(|s| s.id == p1)
-            .map(|s| s.score)
-            .unwrap_or(0.0);
+            .map_or(0.0, |s| s.score);
         // p1 is 4 PartOf hops from p5 — should be blocked (only 2 PartOf hops allowed)
         assert!(
             p1_score < 1e-6,

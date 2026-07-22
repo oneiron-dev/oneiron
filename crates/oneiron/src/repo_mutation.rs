@@ -1798,7 +1798,7 @@ fn collect_snapshot_entries(
     stats: &mut SnapshotStats,
 ) -> Result<()> {
     let mut children = fs::read_dir(dir)?.collect::<std::result::Result<Vec<_>, _>>()?;
-    children.sort_by_key(|entry| entry.file_name());
+    children.sort_by_key(std::fs::DirEntry::file_name);
     for child in children {
         if child.file_name() == OsStr::new(".git") {
             continue;
@@ -2109,8 +2109,7 @@ pub fn repo_commit_for_provenance_claim(
             "--grep".to_owned(),
             trailer,
             format!(
-                "--format=%H%x{:02x}%B%x{:02x}",
-                REPO_PROVENANCE_GIT_LOG_FIELD_SEPARATOR, REPO_PROVENANCE_GIT_LOG_RECORD_SEPARATOR
+                "--format=%H%x{REPO_PROVENANCE_GIT_LOG_FIELD_SEPARATOR:02x}%B%x{REPO_PROVENANCE_GIT_LOG_RECORD_SEPARATOR:02x}"
             ),
         ],
     )?;
@@ -2976,7 +2975,7 @@ fn collect_restore_inventory(
     dirs: &mut Vec<PathBuf>,
 ) -> Result<()> {
     let mut children = fs::read_dir(dir)?.collect::<std::result::Result<Vec<_>, _>>()?;
-    children.sort_by_key(|entry| entry.file_name());
+    children.sort_by_key(std::fs::DirEntry::file_name);
     for child in children {
         if child.file_name() == OsStr::new(".git") {
             continue;

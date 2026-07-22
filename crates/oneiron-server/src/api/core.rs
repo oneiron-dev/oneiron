@@ -1123,7 +1123,7 @@ pub(crate) fn parse_short_ref_parts(
     if short_id_bytes.len() < 3
         || !short_id_bytes[0].is_ascii_lowercase()
         || !short_id_bytes[1].is_ascii_lowercase()
-        || !short_id_bytes[2..].iter().all(|byte| byte.is_ascii_digit())
+        || !short_id_bytes[2..].iter().all(u8::is_ascii_digit)
     {
         return Err(ApiError::bad_request(
             "short_id must be two lowercase letters followed by decimal digits",

@@ -3119,13 +3119,13 @@ fn schedule_outbound_holds_gate_checks_and_dedupes() {
         "no second gate decision on dedupe"
     );
     let queue = AttemptQueue::new(&vault);
-    let scheduled: Vec<_> = queue
+    let scheduled = queue
         .list()
         .expect("list attempts")
         .into_iter()
         .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
-        .collect();
-    assert_eq!(scheduled.len(), 1, "one durable schedule row");
+        .count();
+    assert_eq!(scheduled, 1, "one durable schedule row");
 
     // Unknown trigger fails closed.
     let mut bad = draft;
@@ -3176,16 +3176,15 @@ fn schedule_outbound_unsupported_channel_leaves_no_orphan_and_allows_retry() {
 
     // No live (non-cancelled) schedule row orphaned by the failed dispatch.
     let queue = AttemptQueue::new(&vault);
-    let live: Vec<_> = queue
+    let live = queue
         .list()
         .expect("list attempts")
         .into_iter()
-        .filter(|attempt| {
+        .find(|attempt| {
             attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND && attempt.state != AttemptState::Cancelled
-        })
-        .collect();
+        });
     assert!(
-        live.is_empty(),
+        live.is_none(),
         "unsupported channel must not leave a live outbound attempt"
     );
 

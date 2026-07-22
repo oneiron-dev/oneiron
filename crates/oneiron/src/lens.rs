@@ -868,8 +868,10 @@ impl GeneratedUiRender {
             .nodes
             .iter()
             .find(|node| node.id == self.root)
-            .map(|node| node.fallback_text.clone())
-            .unwrap_or_else(|| LensText::new("generated ui").expect("static fallback is valid"));
+            .map_or_else(
+                || LensText::new("generated ui").expect("static fallback is valid"),
+                |node| node.fallback_text.clone(),
+            );
         segments.push(GeneratedUiSegment::CardStart(GeneratedUiCardStart {
             protocol_version: self.protocol_version,
             catalog: self.catalog,
@@ -3225,11 +3227,10 @@ impl LensAtom {
     pub fn default_fallback_text(&self) -> LensText {
         let fallback = match self {
             Self::TextBlock(atom) => atom.fallback_text(),
-            Self::LedgerRow(atom) => atom
-                .cells
-                .first()
-                .map(|cell| format!("{}: {}", cell.label.as_str(), cell.value.as_str()))
-                .unwrap_or_else(|| "ledger row".to_string()),
+            Self::LedgerRow(atom) => atom.cells.first().map_or_else(
+                || "ledger row".to_string(),
+                |cell| format!("{}: {}", cell.label.as_str(), cell.value.as_str()),
+            ),
             Self::ClaimLine(atom) => format!(
                 "{} {} {}",
                 atom.subject.as_str(),

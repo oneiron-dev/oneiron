@@ -424,7 +424,9 @@ impl WindowManager {
     /// fully successful open/unload, so a panicked holder cannot leave a
     /// half-registered window behind.
     fn lock_registry(&self) -> MutexGuard<'_, HashMap<WindowKey, Arc<LoadedWindow>>> {
-        self.windows.lock().unwrap_or_else(|e| e.into_inner())
+        self.windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn track_issued_handle(&self, key: &WindowKey, window: &Arc<LoadedWindow>) {
@@ -432,7 +434,7 @@ impl WindowManager {
         let mut issued = self
             .issued_handles
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let handles = issued.entry(key.clone()).or_default();
         handles.retain(|handle| handle.strong_count() > 0);
         if !handles.iter().any(|handle| handle.ptr_eq(&weak)) {
@@ -444,7 +446,7 @@ impl WindowManager {
         let mut issued = self
             .issued_handles
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Self::prune_issued_handles_locked(&mut issued, key)
     }
 

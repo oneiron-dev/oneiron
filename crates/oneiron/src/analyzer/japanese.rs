@@ -93,8 +93,7 @@ impl JapaneseAnalyzer {
         let storage = SudachiDicData::new(sudachi::dic::storage::Storage::Owned(bytes));
         let cfg = Config::minimal_at(
             path.parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| PathBuf::from(".")),
+                .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
         );
         let dict = JapaneseDictionary::from_cfg_storage_with_embedded_chardef(&cfg, storage)
             .map_err(|e| DictLoadError::Sudachi {

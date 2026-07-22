@@ -175,8 +175,7 @@ fn blend_fusion_bit_fingerprint_is_repeatable_across_threaded_runs() {
     let expected = determinism_harness_fingerprint(&ranked_lists);
 
     let worker_count = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
+        .map_or(1, std::num::NonZero::get)
         .min(8);
     let handles: Vec<_> = (0..worker_count)
         .map(|worker| {

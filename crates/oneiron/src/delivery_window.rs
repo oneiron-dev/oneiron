@@ -265,8 +265,7 @@ impl DeliveryWindowPolicyClaim {
         let applies_to = DeliveryWindowAppliesTo::parse(required_str(entries, KEY_APPLIES_TO)?)
             .ok_or_else(|| invalid_claim("delivery_window applies_to must be interrupt"))?;
         let reason = optional_str(entries, KEY_REASON)?
-            .map(str::to_owned)
-            .unwrap_or_else(|| default_reason(&body.predicate).to_owned());
+            .map_or_else(|| default_reason(&body.predicate).to_owned(), str::to_owned);
         let (channel, window, context) = match body.predicate.as_str() {
             PREDICATE_DELIVERY_WINDOW_QUIET => (
                 None,

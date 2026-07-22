@@ -1348,8 +1348,8 @@ fn schedule_gate_error_leaves_nothing_claimable_and_retry_creates_one() -> crate
         .list()?
         .into_iter()
         .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
-        .collect::<Vec<_>>();
-    assert_eq!(attempts.len(), 0);
+        .count();
+    assert_eq!(attempts, 0);
     let mut executor = RecordingExecutor::default();
     assert_eq!(
         vault

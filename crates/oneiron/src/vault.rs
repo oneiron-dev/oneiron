@@ -495,7 +495,7 @@ impl Vault {
         *self
             .live_window_manager
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = manager;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = manager;
     }
 
     /// Returns the registry-owned live window for `key` — paired with the
@@ -516,7 +516,7 @@ impl Vault {
         let manager = self
             .live_window_manager
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .upgrade()?;
         let window = manager.window(key)?;
         Some((
@@ -534,7 +534,7 @@ impl Vault {
         let Some(manager) = self
             .live_window_manager
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .upgrade()
         else {
             return Vec::new();

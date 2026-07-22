@@ -364,7 +364,7 @@ mod seam {
         let read_back = read_view
             .entities
             .get(&wtxn, probe_key)?
-            .map(|value| value.into_owned());
+            .map(std::borrow::Cow::into_owned);
         wtxn.commit()?;
         segment.commit()?;
         Ok(read_back)

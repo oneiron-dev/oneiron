@@ -247,11 +247,10 @@ fn latin_routes_to_latin_analyzer_with_detected_hint() {
         &mut out,
     );
     // English stemmer should produce at least one stem overlay.
-    let stems: Vec<_> = out
-        .iter()
-        .filter(|t| t.channel == AnalyzerChannel::Stem)
-        .collect();
-    assert!(!stems.is_empty(), "expected stem overlays for English text");
+    assert!(
+        out.iter().any(|t| t.channel == AnalyzerChannel::Stem),
+        "expected stem overlays for English text"
+    );
 }
 
 #[test]

@@ -669,7 +669,7 @@ pub fn derive_code_symbol_graph_from_sources<'a>(
             .map(|symbol| {
                 let mut revision = symbol.revision;
                 revision.source_session =
-                    Some(format!("{TREE_SITTER_RUST_SOURCE_KIND}:{}", repo_key));
+                    Some(format!("{TREE_SITTER_RUST_SOURCE_KIND}:{repo_key}"));
                 revision
             })
             .collect(),

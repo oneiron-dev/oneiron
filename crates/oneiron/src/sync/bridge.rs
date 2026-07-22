@@ -132,7 +132,9 @@ impl Materializer {
     /// Recovers from a poisoned mutex (prior panic in Observer B callback)
     /// instead of cascading the panic to all future callbacks.
     pub fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.mutex.lock().unwrap_or_else(|e| e.into_inner())
+        self.mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -171,7 +173,9 @@ impl OutboundSink {
     /// Acquires the sender slot, recovering from poisoning (mirrors
     /// [`Materializer::lock`]).
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<mpsc::UnboundedSender<LocalUpdate>>> {
-        self.sender.lock().unwrap_or_else(|e| e.into_inner())
+        self.sender
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Routes one persisted update: live channel when attached, durable

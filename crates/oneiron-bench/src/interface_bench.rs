@@ -2227,8 +2227,7 @@ fn arm_verdict_claims(
             let pareto_dominated = pareto_points
                 .iter()
                 .find(|point| point.arm == arm)
-                .map(|point| point.dominated)
-                .unwrap_or(false);
+                .is_some_and(|point| point.dominated);
             let claim_id = format!("{}-{}-verdict", CAMPAIGN_ID, arm.as_str());
             let claim = format!(
                 "{} achieved mean accuracy {:.4} with {} total tokens and is {} on the accuracy/token Pareto frontier.",

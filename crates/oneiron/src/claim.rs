@@ -636,7 +636,7 @@ impl<'a> ScopedRead<'a> {
         let cached_policy = self
             .policy
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         if let Some(policy) = cached_policy {
             return Ok(policy);
@@ -645,7 +645,7 @@ impl<'a> ScopedRead<'a> {
         *self
             .policy
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(policy.clone());
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(policy.clone());
         Ok(policy)
     }
 }
@@ -1860,15 +1860,13 @@ pub(crate) fn claim_evidence_admissible(body: &ClaimBody) -> bool {
 
 pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32> {
     let salience = body.salience.unwrap_or(0.0);
-    let affect = crate::affect::decode_affect_trigger_claim(body)?
-        .map(|trigger| {
-            let delta = trigger.vad_delta();
-            let valence = (delta.valence().abs() / 2.0).clamp(0.0, 1.0);
-            let arousal = delta.arousal().abs().clamp(0.0, 1.0);
-            let dominance = delta.dominance().abs().clamp(0.0, 1.0);
-            ((valence + arousal + dominance) / 3.0) * trigger.confidence()
-        })
-        .unwrap_or(0.0);
+    let affect = crate::affect::decode_affect_trigger_claim(body)?.map_or(0.0, |trigger| {
+        let delta = trigger.vad_delta();
+        let valence = (delta.valence().abs() / 2.0).clamp(0.0, 1.0);
+        let arousal = delta.arousal().abs().clamp(0.0, 1.0);
+        let dominance = delta.dominance().abs().clamp(0.0, 1.0);
+        ((valence + arousal + dominance) / 3.0) * trigger.confidence()
+    });
     Ok(salience.max(affect).clamp(0.0, 1.0))
 }
 
@@ -2749,7 +2747,8 @@ impl Vault {
             false,
             false,
         )?;
-        Ok(consent_receipt.or(write_receipt.map(|decision| decision.into_record())))
+        Ok(consent_receipt
+            .or(write_receipt.map(super::gate::RecordedClaimGateDecision::into_record)))
     }
 
     pub(crate) fn claim_facet_refs_in(

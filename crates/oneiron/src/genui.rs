@@ -1258,9 +1258,10 @@ fn consent_receipt(
         outcome: decision.outcome().to_owned(),
         job_ref: None,
         trigger_ref: Some(format!("of336:{component_id}")),
-        policy_trace: reason
-            .map(|reason| vec![reason.to_owned()])
-            .unwrap_or_else(|| vec!["principal_auth:principal_bound".to_owned()]),
+        policy_trace: reason.map_or_else(
+            || vec!["principal_auth:principal_bound".to_owned()],
+            |reason| vec![reason.to_owned()],
+        ),
         fields,
     }
 }

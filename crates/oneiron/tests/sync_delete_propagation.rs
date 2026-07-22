@@ -715,9 +715,8 @@ fn offline_soft_delete_replay_leaves_replica_shell() {
 
     // No scrub, no full-resync marker — but the delete IS queued.
     let queued = queue_a.drain_updates().unwrap();
-    let seqs: Vec<u64> = queued.iter().map(|u| u.seq).collect();
     assert!(
-        seqs.contains(&bystander_seq),
+        queued.iter().any(|u| u.seq == bystander_seq),
         "soft delete must not scrub the window's pending rows"
     );
     assert!(

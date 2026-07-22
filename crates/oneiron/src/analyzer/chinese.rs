@@ -157,7 +157,7 @@ impl ChineseAnalyzer {
         let jtokens: Vec<JiebaToken<'_>> = jieba.tokenize(text, TokenizeMode::Search, true);
 
         let mut position = position_base;
-        for t in jtokens.iter() {
+        for t in &jtokens {
             let start = offset_base + c2b.byte_of_char(t.start) as u32;
             let end = offset_base + c2b.byte_of_char(t.end) as u32;
             out.push(Token::new(

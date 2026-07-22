@@ -632,12 +632,12 @@ fn wrap_notice_fires_exactly_once_clock_first() -> Result<()> {
     ))?;
     assert_eq!(report.completed, 2);
 
-    let plans: Vec<_> = driver
+    let plans = driver
         .steering_signals()
         .iter()
         .filter(|signal| signal.threshold == crate::BudgetThreshold::Plan80)
-        .collect();
-    assert_eq!(plans.len(), 1, "exactly one PLAN signal per pass");
+        .count();
+    assert_eq!(plans, 1, "exactly one PLAN signal per pass");
     Ok(())
 }
 
@@ -808,12 +808,12 @@ fn reused_driver_fires_wrap_notice_each_pass() -> Result<()> {
         &mut exec,
         &WakeCancellation::new(),
     ))?;
-    let plans: Vec<_> = driver
+    let plans = driver
         .steering_signals()
         .iter()
         .filter(|signal| signal.threshold == crate::BudgetThreshold::Plan80)
-        .collect();
-    assert_eq!(plans.len(), 1, "pass 3 fires its own wrap notice");
+        .count();
+    assert_eq!(plans, 1, "pass 3 fires its own wrap notice");
     Ok(())
 }
 

@@ -2006,7 +2006,7 @@ impl Store {
         let registry = self
             .kind_registry
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         registry.get(&type_byte).cloned()
     }
 
@@ -2014,7 +2014,7 @@ impl Store {
         let registry = self
             .kind_registry
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut entries: Vec<StructuralKindRegistration> = registry.values().cloned().collect();
         entries.sort_by_key(|entry| entry.type_byte);
         entries
@@ -2077,7 +2077,7 @@ impl Store {
         let mut registry = self
             .kind_registry
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         if registry.contains_key(&type_byte) || self.vault_meta.get(&wtxn, &key)?.is_some() {
             return Err(Error::StructuralKindTypeByteCollision(type_byte));
@@ -2446,7 +2446,7 @@ impl Store {
         Ok(self
             .vault_meta
             .get(txn, &send_receipt_key(task_id))?
-            .map(|value| value.into_owned()))
+            .map(std::borrow::Cow::into_owned))
     }
 
     /// Reads one connector-send receipt directly by its originating TASK.

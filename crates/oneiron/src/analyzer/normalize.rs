@@ -130,8 +130,7 @@ impl<'a> NormalizedText<'a> {
                     Err(i) => boundaries
                         .get(i)
                         .or_else(|| boundaries.last())
-                        .map(|&(_, o)| o)
-                        .unwrap_or(0),
+                        .map_or(0, |&(_, o)| o),
                 }
             }
         }
