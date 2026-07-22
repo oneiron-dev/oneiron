@@ -25,7 +25,7 @@
 //!   registry-rebind needs a compromised host, outside the gate's threat
 //!   model).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -33,21 +33,38 @@ use rmpv::Value;
 use crate::Vault;
 use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope, encode_agent_definition};
 use crate::anchored_annotation::{Anchor, Locator, ThreadState};
+use crate::attempt_queue::AttemptId;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::off_record::OffRecordBackendClass;
-use crate::outbound_grant::StandingOutboundGrantScope;
+use crate::outbound_chokepoint::{
+    OutboundEffectCommand, OutboundTransport, PreparedAuthorization, PreparedEffect,
+    execute_outbound_effect,
+};
+use crate::outbound_consent::{
+    DataClass, FrozenMcpPayload, OutboundBindingAuthority, OutboundResultSender,
+    OutboundTransportResult, RawOutboundResult, ScopedMcpCall as EngineScopedMcpCall,
+    ScopedMcpCallContext, evaluate_scoped_mcp_calls as evaluate_engine_scoped_mcp_calls,
+    observed_freeze_events_since, scrub_outbound_result,
+};
+use crate::outbound_grant::{ScopedMcpGrantMintIntent, StandingOutboundGrantScope};
+use crate::outbound_intent_ledger::{
+    BudgetClass, FrozenOutboundCall, IntentEscalationReason, IntentLedgerError, IntentState,
+    OutboundCallRequest, OutboundSendOutcome, derive_intent_id, hash_frozen_payload,
+    intent_ledger_records,
+};
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
-use crate::test_util::open_test_vault_with;
 use crate::write_envelope::WriteActor;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    open_test_vault_with(VaultConfig::device())
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    (dir, vault)
 }
 
 fn t(at: u64) -> TimeRange {
@@ -579,7 +596,6 @@ fn one_1689_threads_progress_per_thread_not_one_global_handoff() {
 /// channel scope matches on channel string + send-verb alone
 /// (argument-blind `matches_effect`), which is exactly the verified hole.
 #[test]
-#[ignore = "armed by ONE-1690"]
 fn one_1690_argument_blind_scopes_must_not_cover_mcp_calls() {
     let scope = StandingOutboundGrantScope::Channel {
         channel: "mcp:calendar".to_owned(),
@@ -624,25 +640,32 @@ fn evaluate_scoped_mcp_calls(
     grant: &ScopedMcpGrant,
     calls: &[ScopedMcpCall],
 ) -> ScopedMcpVerdict {
-    // Every fixture axis stays live until the real check replaces this seam.
-    let _grant_axes = (
-        grant.server,
-        grant.tool,
-        grant.data_class_ceiling,
-        grant.endpoint_allowlist,
-    );
-    for call in calls {
-        let _call_axes = (
-            call.server,
-            call.tool,
-            call.payload_data_class,
-            call.resolved_endpoint,
-        );
+    let endpoint_allowlist = grant
+        .endpoint_allowlist
+        .iter()
+        .map(|endpoint| (*endpoint).to_owned())
+        .collect::<Vec<_>>();
+    let scope = StandingOutboundGrantScope::ScopedMcp {
+        server: grant.server.to_owned(),
+        tool: grant.tool.to_owned(),
+        data_class_ceiling: DataClass::parse(grant.data_class_ceiling),
+        endpoint_allowlist,
+    };
+    let grant = scope.scoped_mcp_grant().expect("scoped fixture grant");
+    let calls = calls
+        .iter()
+        .map(|call| EngineScopedMcpCall {
+            server: call.server,
+            tool: call.tool,
+            payload_data_class: DataClass::parse(call.payload_data_class),
+            resolved_endpoint: call.resolved_endpoint,
+        })
+        .collect::<Vec<_>>();
+    let verdict = evaluate_engine_scoped_mcp_calls(grant, &calls);
+    ScopedMcpVerdict {
+        auto_fired: verdict.auto_fired,
+        human_escalations: verdict.human_escalations,
     }
-    unimplemented!(
-        "ONE-1690 arming seam: route through the payload-aware scoped-grant \
-         per-call check (endpoint-allowlist + tool + data-class ceiling)"
-    )
 }
 
 /// RT-09: a call INSIDE scope auto-fires with no human in the loop (auto
@@ -651,7 +674,6 @@ fn evaluate_scoped_mcp_calls(
 /// The ticket states no escalation coalescing, so the escalation count is
 /// pinned only as ≥ 1 (armer policy); the fire count is exactly 0.
 #[test]
-#[ignore = "armed by ONE-1690"]
 fn one_1690_in_scope_auto_fires_and_scope_exceeds_escalate_without_firing() {
     let (_dir, vault) = open_vault();
     let grant = ScopedMcpGrant {
@@ -711,6 +733,40 @@ fn one_1690_in_scope_auto_fires_and_scope_exceeds_escalate_without_firing() {
         secret_over_ceiling.human_escalations >= 1,
         "the data-class exceed escalates to a human"
     );
+
+    let wrong_server = evaluate_scoped_mcp_calls(
+        &vault,
+        &grant,
+        &[ScopedMcpCall {
+            server: "calendar",
+            ..in_scope_call()
+        }],
+    );
+    assert_eq!(
+        wrong_server.auto_fired, 0,
+        "a grant for another server never auto-fires"
+    );
+    assert!(
+        wrong_server.human_escalations >= 1,
+        "a wrong-server call escalates to a human"
+    );
+
+    let wrong_tool = evaluate_scoped_mcp_calls(
+        &vault,
+        &grant,
+        &[ScopedMcpCall {
+            tool: "write_file",
+            ..in_scope_call()
+        }],
+    );
+    assert_eq!(
+        wrong_tool.auto_fired, 0,
+        "a grant for another tool never auto-fires"
+    );
+    assert!(
+        wrong_tool.human_escalations >= 1,
+        "a wrong-tool call escalates to a human"
+    );
 }
 
 /// Byte-level trace of one consented effectful send.
@@ -729,14 +785,203 @@ struct EffectfulSendTrace {
     scrubbed_result_fields: usize,
 }
 
+struct OracleScopedFixture {
+    grant_id: EntityId,
+    principal_ref: String,
+    call: ScopedMcpCallContext,
+    authority: OutboundBindingAuthority,
+}
+
+fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixture {
+    let grant_id = EntityId::from_bytes([0x90; 16]).expect("grant id");
+    let principal_ref = "principal:oracle".to_owned();
+    vault
+        .mint_scoped_mcp_outbound_grant(
+            &grant_id,
+            &ScopedMcpGrantMintIntent {
+                principal_ref: principal_ref.clone(),
+                origin_component_id: "consent:oracle".to_owned(),
+                origin_action_id: "grant:oracle".to_owned(),
+                origin_receipt_ref: Some("gate:oracle".to_owned()),
+                server: "files".to_owned(),
+                tool: "read_file".to_owned(),
+                data_class_ceiling: DataClass::Personal,
+                endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+            },
+            10,
+        )
+        .expect("mint oracle scoped grant");
+    vault
+        .register_connector_key(
+            &EntityId::from_bytes([0x92; 16]).expect("connector key id"),
+            crate::ConnectorKeyRecord::active(
+                crate::gate::scoped_mcp_credential_connector_key("files", &grant_id),
+                None,
+                vec![crate::EffectorBudget::sends(
+                    100,
+                    crate::EffectorBudgetWindow::Calendar {
+                        period: crate::CalendarPeriod::Day,
+                        tz: None,
+                    },
+                    crate::EffectorBudgetOnExhaust::Refuse,
+                )],
+                10,
+            ),
+        )
+        .expect("register active scoped connector key");
+    OracleScopedFixture {
+        grant_id,
+        principal_ref,
+        call: ScopedMcpCallContext {
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            payload_data_class: DataClass::Personal,
+            resolved_endpoint: "https://files.internal.example".to_owned(),
+        },
+        authority: OutboundBindingAuthority::for_vault(vault).expect("binding authority"),
+    }
+}
+
+fn oracle_prepared_effect(
+    fixture: &OracleScopedFixture,
+    attempt_id: AttemptId,
+    call_seq: u64,
+    payload: Vec<u8>,
+    idempotency_supported: bool,
+) -> PreparedEffect {
+    let call = fixture.call.clone();
+    PreparedEffect {
+        attempt_id,
+        call_seq,
+        server: call.server.clone(),
+        tool: call.tool.clone(),
+        payload,
+        idempotency_supported,
+        resolved_endpoint: Some(call.resolved_endpoint.clone()),
+        gate: crate::gate::ExternalEffectGateInput {
+            actor: crate::gate::GateActor {
+                actor_class: "first_party".to_owned(),
+                actor_ref: Some(fixture.principal_ref.clone()),
+            },
+            provenance: crate::gate::GateProvenanceHandles {
+                actor_entity_ref: Some(fixture.grant_id),
+                ..crate::gate::GateProvenanceHandles::default()
+            },
+            verb: "send".to_owned(),
+            channel: format!("mcp:{}", call.server),
+            channel_identity_ref: None,
+            counterparty: None,
+            brief_ref: None,
+            send_ref: None,
+            standing_grant_ref: None,
+            scoped_mcp_call: Some(call.clone()),
+            counterparty_first_touch: None,
+            counterparty_opted_out: false,
+            counterparty_opt_out_receipt_reason: None,
+            has_opted_in: false,
+            has_permission: false,
+            policy_risk: crate::gate::ExternalEffectPolicyRisk::Normal,
+        },
+        budget_class: BudgetClass::Send,
+        authorization: PreparedAuthorization::ScopedMcp {
+            grant_id: fixture.grant_id,
+            principal_ref: fixture.principal_ref.clone(),
+            call,
+        },
+        verified_actor: None,
+    }
+}
+
 /// ARMING SEAM (ONE-1690): drive one effectful `self.mcp` call whose
 /// result carries EXACTLY four scrubbable fields (body, error, stderr,
 /// URL) and report the frozen-buffer + scrub trace.
-fn trace_effectful_mcp_send(_vault: &Vault) -> EffectfulSendTrace {
-    unimplemented!(
-        "ONE-1690 arming seam: one immutable FROZEN buffer shared by \
-         check + send; scrub ALL result fields behind the off-record fence"
-    )
+#[derive(Default)]
+struct OracleMcpResultSender {
+    sent_bytes: Vec<Vec<u8>>,
+}
+
+impl OutboundResultSender for OracleMcpResultSender {
+    fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
+        self.sent_bytes.push(call.payload().to_vec());
+        OutboundTransportResult {
+            outcome: OutboundSendOutcome::Acked,
+            raw_result: RawOutboundResult::new(
+                Some(b"provider body".to_vec()),
+                Some("provider error".to_owned()),
+                Some(b"provider stderr".to_vec()),
+                Some("https://provider.example/result".to_owned()),
+            ),
+        }
+    }
+}
+
+struct OracleResultChokepointTransport<'a> {
+    inner: &'a mut OracleMcpResultSender,
+    effectful_sends: usize,
+    checked_bytes: Vec<u8>,
+    scrubbable_result_fields: usize,
+    scrubbed_result_fields: usize,
+}
+
+impl OutboundTransport for OracleResultChokepointTransport<'_> {
+    fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
+        self.checked_bytes = call.payload().to_vec();
+        let result = self.inner.send(call);
+        self.effectful_sends = self.effectful_sends.saturating_add(1);
+        self.scrubbable_result_fields = self
+            .scrubbable_result_fields
+            .saturating_add(result.raw_result.scrubbable_field_count());
+        self.scrubbed_result_fields = self
+            .scrubbed_result_fields
+            .saturating_add(scrub_outbound_result(result.raw_result).scrubbed_field_count());
+        result.outcome
+    }
+}
+
+fn trace_effectful_mcp_send(vault: &Vault) -> EffectfulSendTrace {
+    let fixture = install_oracle_scoped_fixture(vault);
+    let payload = FrozenMcpPayload::new(b"{\"path\":\"calendar.txt\"}".to_vec());
+    let freeze_event_baseline = payload.freeze_event_baseline();
+    let prepared = oracle_prepared_effect(
+        &fixture,
+        AttemptId::from_bytes(&[0x91; 16]).expect("attempt id"),
+        1,
+        payload.into_bytes(),
+        true,
+    );
+    let mut sender = OracleMcpResultSender::default();
+    let (effectful_sends, checked_bytes, scrubbable_result_fields, scrubbed_result_fields) = {
+        let mut transport = OracleResultChokepointTransport {
+            inner: &mut sender,
+            effectful_sends: 0,
+            checked_bytes: Vec::new(),
+            scrubbable_result_fields: 0,
+            scrubbed_result_fields: 0,
+        };
+        let result = execute_outbound_effect(
+            vault,
+            &fixture.authority,
+            OutboundEffectCommand::New(prepared),
+            11,
+            &mut transport,
+        )
+        .expect("effectful scoped send");
+        assert_eq!(result.dispatch.state, Some(IntentState::Done));
+        (
+            transport.effectful_sends,
+            transport.checked_bytes,
+            transport.scrubbable_result_fields,
+            transport.scrubbed_result_fields,
+        )
+    };
+    EffectfulSendTrace {
+        effectful_sends,
+        freeze_events: observed_freeze_events_since(freeze_event_baseline),
+        checked_bytes,
+        sent_bytes: sender.sent_bytes.into_iter().next().unwrap_or_default(),
+        scrubbable_result_fields,
+        scrubbed_result_fields,
+    }
 }
 
 /// RT-09 R2: for EFFECTFUL calls the checked bytes ARE the sent bytes —
@@ -745,7 +990,6 @@ fn trace_effectful_mcp_send(_vault: &Vault) -> EffectfulSendTrace {
 /// not just headers. Non-vacuous by construction: the trace must show the
 /// send happened and the buffer carries real bytes.
 #[test]
-#[ignore = "armed by ONE-1690"]
 fn one_1690_checked_bytes_equal_sent_bytes_and_results_are_fully_scrubbed() {
     let (_dir, vault) = open_vault();
     let trace = trace_effectful_mcp_send(&vault);
@@ -806,16 +1050,129 @@ struct IntentLedgerTrace {
     effects_applied: usize,
 }
 
+fn oracle_intent_rows(vault: &Vault) -> Vec<IntentRow> {
+    intent_ledger_records(vault)
+        .expect("read oracle intent rows")
+        .into_iter()
+        .map(|record| IntentRow {
+            id: crate::entity_id::bytes_to_hex_lower(&record.id),
+            server: record.server,
+            tool: record.tool,
+            payload_hash: crate::entity_id::bytes_to_hex_lower(&record.payload_hash),
+            state: record.state.as_str().to_owned(),
+            idempotency_key: record.idempotency_key,
+        })
+        .collect()
+}
+
+struct OracleLedgerTransport<'a> {
+    vault: &'a Vault,
+    outcomes: VecDeque<OutboundSendOutcome>,
+    events: Vec<(String, String)>,
+    rows_before_send: Vec<IntentRow>,
+    send_keys: Vec<String>,
+    seen_keys: HashSet<String>,
+    effects_applied: usize,
+}
+
+impl<'a> OracleLedgerTransport<'a> {
+    fn new(vault: &'a Vault, outcomes: impl IntoIterator<Item = OutboundSendOutcome>) -> Self {
+        Self {
+            vault,
+            outcomes: outcomes.into_iter().collect(),
+            events: Vec::new(),
+            rows_before_send: Vec::new(),
+            send_keys: Vec::new(),
+            seen_keys: HashSet::new(),
+            effects_applied: 0,
+        }
+    }
+}
+
+impl OutboundTransport for OracleLedgerTransport<'_> {
+    fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
+        let key = call
+            .idempotency_key()
+            .expect("effectful oracle call carries idempotency key")
+            .to_owned();
+        if self.rows_before_send.is_empty() {
+            self.rows_before_send = oracle_intent_rows(self.vault);
+            assert_eq!(
+                self.rows_before_send.len(),
+                1,
+                "transport observes exactly one durable row before its first send"
+            );
+            self.events
+                .push(("intent_journaled".to_owned(), key.clone()));
+        }
+        self.events.push(("wire_send".to_owned(), key.clone()));
+        self.send_keys.push(key.clone());
+        if self.seen_keys.insert(key) {
+            self.effects_applied = self.effects_applied.saturating_add(1);
+        }
+        self.outcomes.pop_front().expect("oracle send outcome")
+    }
+}
+
+#[derive(Default)]
+struct OracleReadOnlyTransport {
+    calls: usize,
+}
+
+impl OutboundTransport for OracleReadOnlyTransport {
+    fn send(&mut self, _call: &FrozenOutboundCall) -> OutboundSendOutcome {
+        self.calls = self.calls.saturating_add(1);
+        OutboundSendOutcome::Acked
+    }
+}
+
 /// ARMING SEAM (ONE-1691): drive one EFFECTFUL `self.mcp` call
 /// (send/post/charge/book class). With `crash_before_ack` the process
 /// "crashes" after the wire send but before the DONE journal write, then
 /// runs crash-recovery.
-fn drive_effectful_mcp_call(_vault: &Vault, _crash_before_ack: bool) -> IntentLedgerTrace {
-    unimplemented!(
-        "ONE-1691 arming seam: durable INTENT{{id, server, tool, \
-         payload_hash, state}} written BEFORE the rmcp send; DONE on ack; \
-         crash-recovery walks PENDING rows"
+fn drive_effectful_mcp_call(vault: &Vault, crash_before_ack: bool) -> IntentLedgerTrace {
+    let fixture = install_oracle_scoped_fixture(vault);
+    let attempt_id = AttemptId::from_bytes(&[0x93; 16]).expect("attempt id");
+    let payload = b"oracle exactly-once payload".to_vec();
+    let outcomes = if crash_before_ack {
+        vec![OutboundSendOutcome::Ambiguous, OutboundSendOutcome::Acked]
+    } else {
+        vec![OutboundSendOutcome::Acked]
+    };
+    let mut transport = OracleLedgerTransport::new(vault, outcomes);
+    let initial = execute_outbound_effect(
+        vault,
+        &fixture.authority,
+        OutboundEffectCommand::New(oracle_prepared_effect(
+            &fixture, attempt_id, 1, payload, true,
+        )),
+        20,
+        &mut transport,
     )
+    .expect("initial oracle dispatch");
+    if crash_before_ack {
+        assert_eq!(initial.dispatch.state, Some(IntentState::Pending));
+        let intent_id = initial.dispatch.intent_id.expect("journaled intent id");
+        let recovered = execute_outbound_effect(
+            vault,
+            &fixture.authority,
+            OutboundEffectCommand::Resume(intent_id),
+            21,
+            &mut transport,
+        )
+        .expect("oracle crash recovery");
+        assert_eq!(recovered.dispatch.state, Some(IntentState::Done));
+    } else {
+        assert_eq!(initial.dispatch.state, Some(IntentState::Done));
+    }
+    let rows_after = oracle_intent_rows(vault);
+    IntentLedgerTrace {
+        events: transport.events,
+        rows_before_send: transport.rows_before_send,
+        rows_after,
+        transport_send_keys: transport.send_keys,
+        effects_applied: transport.effects_applied,
+    }
 }
 
 /// Trace of one READ-ONLY `self.mcp` call.
@@ -829,8 +1186,25 @@ struct ReadOnlyCallTrace {
 
 /// ARMING SEAM (ONE-1691): drive one READ-ONLY `self.mcp` call
 /// (search/read/fetch class) and report the call + ledger trace.
-fn drive_read_only_mcp_call(_vault: &Vault) -> ReadOnlyCallTrace {
-    unimplemented!("ONE-1691 arming seam: read-only calls bypass the ledger")
+fn drive_read_only_mcp_call(vault: &Vault) -> ReadOnlyCallTrace {
+    let request = OutboundCallRequest::new(
+        AttemptId::from_bytes(&[0x94; 16]).expect("attempt id"),
+        1,
+        "files",
+        "read_file",
+        b"oracle read-only payload".to_vec(),
+        20,
+    );
+    let payload_hash = hash_frozen_payload(&request.payload);
+    let call = FrozenOutboundCall::read_only(request, payload_hash);
+    let mut transport = OracleReadOnlyTransport::default();
+    assert_eq!(transport.send(&call), OutboundSendOutcome::Acked);
+    ReadOnlyCallTrace {
+        read_only_calls: transport.calls,
+        intent_rows: intent_ledger_records(vault)
+            .expect("read-only ledger inspection")
+            .len(),
+    }
 }
 
 /// Trace of one effectful call against a tool with NO idempotency support,
@@ -848,8 +1222,35 @@ struct AtMostOnceTrace {
 
 /// ARMING SEAM (ONE-1691): drive an effectful call against a tool with NO
 /// idempotency support, inducing exactly one ambiguous (unacked) outcome.
-fn drive_effectful_call_without_idempotency_support(_vault: &Vault) -> AtMostOnceTrace {
-    unimplemented!("ONE-1691 arming seam: no-idempotency tools degrade to at-most-once")
+fn drive_effectful_call_without_idempotency_support(vault: &Vault) -> AtMostOnceTrace {
+    let fixture = install_oracle_scoped_fixture(vault);
+    let mut transport = OracleLedgerTransport::new(vault, [OutboundSendOutcome::Ambiguous]);
+    let result = execute_outbound_effect(
+        vault,
+        &fixture.authority,
+        OutboundEffectCommand::New(oracle_prepared_effect(
+            &fixture,
+            AttemptId::from_bytes(&[0x95; 16]).expect("attempt id"),
+            1,
+            b"oracle at-most-once payload".to_vec(),
+            false,
+        )),
+        20,
+        &mut transport,
+    )
+    .expect("non-idempotent oracle dispatch");
+    let escalation_reason = result.dispatch.escalation.map(|row| row.reason);
+    AtMostOnceTrace {
+        ambiguous_acks: usize::from(
+            result.dispatch.send_outcome == Some(OutboundSendOutcome::Ambiguous),
+        ),
+        wire_sends: transport.send_keys.len(),
+        auto_resends: transport.send_keys.len().saturating_sub(1),
+        human_escalations: usize::from(escalation_reason.is_some()),
+        escalated_disposition: (escalation_reason
+            == Some(IntentEscalationReason::NonIdempotentAmbiguous))
+        .then(|| "may not have sent".to_owned()),
+    }
 }
 
 /// Recovery/retry observation for a crash BEFORE the PENDING journal write.
@@ -866,11 +1267,58 @@ struct CrashBeforeJournalTrace {
 
 /// ARMING SEAM (ONE-1691): "crash" BEFORE the durable PENDING write, run
 /// crash-recovery, then let the caller retry the call.
-fn drive_crash_before_intent_journal(_vault: &Vault) -> CrashBeforeJournalTrace {
-    unimplemented!(
-        "ONE-1691 arming seam: no journal row means recovery has nothing \
-         to re-send; the caller's retry journals + sends exactly once"
+fn drive_crash_before_intent_journal(vault: &Vault) -> CrashBeforeJournalTrace {
+    let fixture = install_oracle_scoped_fixture(vault);
+    let attempt_id = AttemptId::from_bytes(&[0x96; 16]).expect("attempt id");
+    let call_seq = 1;
+    let payload = b"oracle pre-journal crash payload".to_vec();
+    let payload_hash = hash_frozen_payload(&payload);
+    let missing_intent_id = derive_intent_id(
+        attempt_id,
+        call_seq,
+        &fixture.call.server,
+        &fixture.call.tool,
+        &payload_hash,
     )
+    .expect("derive missing intent id");
+    let mut transport = OracleLedgerTransport::new(vault, [OutboundSendOutcome::Acked]);
+    let missing_recovery = execute_outbound_effect(
+        vault,
+        &fixture.authority,
+        OutboundEffectCommand::Resume(missing_intent_id),
+        20,
+        &mut transport,
+    );
+    assert!(matches!(
+        missing_recovery,
+        Err(IntentLedgerError::InvalidRecord(
+            "outbound resume target is missing"
+        ))
+    ));
+    let rows_after_recovery = intent_ledger_records(vault)
+        .expect("inspect pre-journal recovery")
+        .len();
+    let recovery_wire_sends = transport.send_keys.len();
+    let sends_before_retry = transport.send_keys.len();
+    let retry = execute_outbound_effect(
+        vault,
+        &fixture.authority,
+        OutboundEffectCommand::New(oracle_prepared_effect(
+            &fixture, attempt_id, call_seq, payload, true,
+        )),
+        21,
+        &mut transport,
+    )
+    .expect("explicit post-crash retry");
+    assert_eq!(retry.dispatch.state, Some(IntentState::Done));
+    CrashBeforeJournalTrace {
+        rows_after_recovery,
+        recovery_wire_sends,
+        retry_wire_sends: transport.send_keys.len() - sends_before_retry,
+        rows_after_retry: intent_ledger_records(vault)
+            .expect("inspect explicit retry")
+            .len(),
+    }
 }
 
 /// RT-11: the durable INTENT row (state PENDING, idempotency key already
@@ -879,7 +1327,6 @@ fn drive_crash_before_intent_journal(_vault: &Vault) -> CrashBeforeJournalTrace 
 /// and the ack flips it to DONE in the STORE (re-read, not returned). The
 /// ledger doubles as the outbound audit receipt.
 #[test]
-#[ignore = "armed by ONE-1691"]
 fn one_1691_intent_is_pending_before_send_and_done_on_ack() {
     let (_dir, vault) = open_vault();
     let trace = drive_effectful_mcp_call(&vault, false);
@@ -956,7 +1403,6 @@ fn one_1691_intent_is_pending_before_send_and_done_on_ack() {
 /// idempotency key, so the server dedups — a crash-before-journal or an
 /// identical-bytes replay cannot double-fire. Exactly-once is observable.
 #[test]
-#[ignore = "armed by ONE-1691"]
 fn one_1691_crash_recovery_replays_with_the_same_key_exactly_once() {
     let (_dir, vault) = open_vault();
     let trace = drive_effectful_mcp_call(&vault, true);
@@ -987,7 +1433,6 @@ fn one_1691_crash_recovery_replays_with_the_same_key_exactly_once() {
 /// NO ledger machinery. Non-vacuous: the trace proves one read-only call
 /// really ran.
 #[test]
-#[ignore = "armed by ONE-1691"]
 fn one_1691_read_only_calls_are_unledgered() {
     let (_dir, vault) = open_vault();
     let trace = drive_read_only_mcp_call(&vault);
@@ -1006,7 +1451,6 @@ fn one_1691_read_only_calls_are_unledgered() {
 /// automatic re-sends, and exactly one human escalation carrying the
 /// may-not-have-sent disposition.
 #[test]
-#[ignore = "armed by ONE-1691"]
 fn one_1691_no_idempotency_support_degrades_to_at_most_once() {
     let (_dir, vault) = open_vault();
     let trace = drive_effectful_call_without_idempotency_support(&vault);
@@ -1035,7 +1479,6 @@ fn one_1691_no_idempotency_support_degrades_to_at_most_once() {
 /// never durable; re-sending would forge one). The caller's retry then
 /// produces exactly one send and one row.
 #[test]
-#[ignore = "armed by ONE-1691"]
 fn one_1691_crash_before_journal_recovers_to_zero_sends_and_retry_sends_once() {
     let (_dir, vault) = open_vault();
     let trace = drive_crash_before_intent_journal(&vault);

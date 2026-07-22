@@ -4,8 +4,9 @@
 //! maintenance record that governs external-effect dispatch for one outbound
 //! connector, optionally narrowed to one acting entity. Budgets (sends / spend
 //! / rate) live on the record; live usage counters live in `vault_meta` rows
-//! debited inside the gate's write transaction, so debit + decision + (on
-//! exhaust-suspend) the key-status flip commit atomically. The `charter` /
+//! debited inside the outbound chokepoint's write transaction, so debit +
+//! intent evidence + decision + (on exhaust-suspend) the key-status flip
+//! commit atomically. The `charter` /
 //! `pending_charter` slots are pinned in the v1 body so GOV-10 (ONE-1417) can
 //! fill them without re-versioning the schema.
 

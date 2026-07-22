@@ -16,13 +16,15 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 
 /// Current schema version for device-local outbound intent rows.
-pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 1;
+pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 2;
+/// Binding format emitted and accepted by this greenfield ledger.
+pub const OUTBOUND_BINDING_VERSION: u64 = 2;
 /// Pinned MessagePack key set for device-local outbound intent rows.
-pub const INTENT_LEDGER_VALUE_KEYS: [&str; 15] = [
+pub const INTENT_LEDGER_VALUE_KEYS: [&str; 19] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -34,13 +36,25 @@ pub const INTENT_LEDGER_VALUE_KEYS: [&str; 15] = [
     "idempotency_key",
     "idempotency_supported",
     "authorization_binding",
+    "binding_version",
+    "resolved_endpoint",
+    "budget_accounting",
+    "recorded_outcome",
     "state",
     "created_ms",
     "updated_ms",
     "content_digest",
 ];
 
-const INTENT_LEDGER_PRIVATE_PREFIX: &[u8] = b"outbound:intent_ledger:v1:"; // + id(32)
+const INTENT_LEDGER_PRIVATE_PREFIX: &[u8] = b"outbound:intent_ledger:v2:"; // + id(32)
+const BUDGET_ACCOUNTING_KEYS: [&str; 5] = [
+    "key_ref",
+    "budget_class",
+    "matched_rows",
+    "sends_debit",
+    "accounted_at_ms",
+];
+const RECORDED_OUTCOME_KEYS: [&str; 2] = ["kind", "reason"];
 
 #[cfg(test)]
 static FORCE_SYNC_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -56,12 +70,17 @@ const KEY_PAYLOAD: &str = INTENT_LEDGER_VALUE_KEYS[7];
 const KEY_IDEMPOTENCY_KEY: &str = INTENT_LEDGER_VALUE_KEYS[8];
 const KEY_IDEMPOTENCY_SUPPORTED: &str = INTENT_LEDGER_VALUE_KEYS[9];
 const KEY_AUTHORIZATION_BINDING: &str = INTENT_LEDGER_VALUE_KEYS[10];
-const KEY_STATE: &str = INTENT_LEDGER_VALUE_KEYS[11];
-const KEY_CREATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[12];
-const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[13];
-const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[14];
+const KEY_BINDING_VERSION: &str = INTENT_LEDGER_VALUE_KEYS[11];
+const KEY_RESOLVED_ENDPOINT: &str = INTENT_LEDGER_VALUE_KEYS[12];
+const KEY_BUDGET_ACCOUNTING: &str = INTENT_LEDGER_VALUE_KEYS[13];
+const KEY_RECORDED_OUTCOME: &str = INTENT_LEDGER_VALUE_KEYS[14];
+const KEY_STATE: &str = INTENT_LEDGER_VALUE_KEYS[15];
+const KEY_CREATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[16];
+const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[17];
+const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[18];
 
 pub type IntentLedgerResult<T> = std::result::Result<T, IntentLedgerError>;
+pub type IntentId = [u8; 32];
 
 /// Typed failure surface for durable outbound intent operations.
 #[derive(Debug, thiserror::Error)]
@@ -72,6 +91,8 @@ pub enum IntentLedgerError {
     Canonical(#[from] serde_json::Error),
     #[error("invalid outbound intent input: {0}")]
     InvalidInput(&'static str),
+    #[error("the verified outbound actor is no longer valid")]
+    InvalidBoundActor,
     #[error("invalid outbound intent ledger record: {0}")]
     InvalidRecord(&'static str),
     #[error("invalid outbound intent transition: {from:?} -> {to:?}")]
@@ -148,9 +169,7 @@ pub const fn classify_outbound_tool(descriptor: OutboundToolDescriptor) -> Outbo
 
 /// Opaque binding to the authorization decision made before ledger entry.
 ///
-/// The transport integration (ONE-1690) supplies this carrier from its verified
-/// gate decision. This ledger enforces presence only; ONE-1690 owns authenticity
-/// and revocation-aware re-validation during recovery.
+/// The chokepoint mints and verifies this carrier around the durable row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OutboundAuthorizationBinding([u8; 32]);
 
@@ -166,6 +185,93 @@ impl OutboundAuthorizationBinding {
     }
 }
 
+/// Semantic accounting class. It is persisted so recovery never re-derives
+/// whether this intent consumed the sends dimension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BudgetClass {
+    Send,
+    Operation,
+}
+
+impl BudgetClass {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Send => "send",
+            Self::Operation => "operation",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "send" => Some(Self::Send),
+            "operation" => Some(Self::Operation),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_send(self) -> bool {
+        matches!(self, Self::Send)
+    }
+}
+
+/// Durable proof that accounting and `Pending` were committed together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BudgetChargeMarker {
+    pub key_ref: Option<EntityId>,
+    pub budget_class: BudgetClass,
+    pub matched_rows: Vec<u16>,
+    pub sends_debit: u64,
+    pub accounted_at_ms: u64,
+}
+
+/// Machine-readable reason that requires caller escalation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntentEscalationReason {
+    NonIdempotentAmbiguous,
+    NonIdempotentPending,
+    ConnectorRevoked,
+    BindingInvalid,
+    PreviouslyAbandoned,
+    CorruptLedgerRow,
+}
+
+impl IntentEscalationReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::NonIdempotentAmbiguous => "non_idempotent_ambiguous",
+            Self::NonIdempotentPending => "non_idempotent_pending",
+            Self::ConnectorRevoked => "connector_revoked",
+            Self::BindingInvalid => "binding_invalid",
+            Self::PreviouslyAbandoned => "previously_abandoned",
+            Self::CorruptLedgerRow => "corrupt_ledger_row",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "non_idempotent_ambiguous" => Some(Self::NonIdempotentAmbiguous),
+            "non_idempotent_pending" => Some(Self::NonIdempotentPending),
+            "connector_revoked" => Some(Self::ConnectorRevoked),
+            "binding_invalid" => Some(Self::BindingInvalid),
+            "previously_abandoned" => Some(Self::PreviouslyAbandoned),
+            "corrupt_ledger_row" => Some(Self::CorruptLedgerRow),
+            _ => None,
+        }
+    }
+}
+
+/// Typed scrubbed outcome persisted for replay decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RecordedOutboundOutcome {
+    /// The last transport attempt certainly did not deliver. This is a
+    /// non-terminal retry permit, not a completion.
+    DefiniteNonDelivery,
+    Acked,
+    Abandoned(IntentEscalationReason),
+}
+
 /// Caller-owned identity and once-serialized payload for one outbound call.
 ///
 /// `call_seq` must come from the caller's durable execution context; clocks
@@ -178,6 +284,7 @@ pub struct OutboundCallRequest {
     pub tool: String,
     pub payload: Vec<u8>,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
+    pub resolved_endpoint: Option<String>,
     pub now_ms: u64,
 }
 
@@ -198,6 +305,7 @@ impl OutboundCallRequest {
             tool: tool.into(),
             payload,
             authorization_binding: None,
+            resolved_endpoint: None,
             now_ms,
         }
     }
@@ -205,6 +313,12 @@ impl OutboundCallRequest {
     #[must_use]
     pub fn with_authorization_binding(mut self, binding: OutboundAuthorizationBinding) -> Self {
         self.authorization_binding = Some(binding);
+        self
+    }
+
+    #[must_use]
+    pub fn with_resolved_endpoint(mut self, resolved_endpoint: impl Into<String>) -> Self {
+        self.resolved_endpoint = Some(resolved_endpoint.into());
         self
     }
 }
@@ -221,6 +335,8 @@ pub struct FrozenOutboundCall {
     idempotency_key: Option<String>,
     idempotency_supported: bool,
     authorization_binding: Option<OutboundAuthorizationBinding>,
+    binding_version: u64,
+    resolved_endpoint: Option<String>,
 }
 
 impl FrozenOutboundCall {
@@ -264,7 +380,18 @@ impl FrozenOutboundCall {
         self.authorization_binding.as_ref()
     }
 
-    fn read_only(request: OutboundCallRequest, payload_hash: [u8; 32]) -> Self {
+    #[must_use]
+    pub const fn binding_version(&self) -> u64 {
+        self.binding_version
+    }
+
+    #[must_use]
+    pub fn resolved_endpoint(&self) -> Option<&str> {
+        self.resolved_endpoint.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_only(request: OutboundCallRequest, payload_hash: [u8; 32]) -> Self {
         Self {
             server: request.server,
             tool: request.tool,
@@ -274,9 +401,12 @@ impl FrozenOutboundCall {
             idempotency_key: None,
             idempotency_supported: false,
             authorization_binding: request.authorization_binding,
+            binding_version: OUTBOUND_BINDING_VERSION,
+            resolved_endpoint: request.resolved_endpoint,
         }
     }
 
+    #[cfg(test)]
     fn effectful(
         request: OutboundCallRequest,
         payload_hash: [u8; 32],
@@ -292,10 +422,12 @@ impl FrozenOutboundCall {
             idempotency_key: Some(bytes_to_hex_lower(&intent_id)),
             idempotency_supported,
             authorization_binding: request.authorization_binding,
+            binding_version: OUTBOUND_BINDING_VERSION,
+            resolved_endpoint: request.resolved_endpoint,
         }
     }
 
-    fn from_record(record: &IntentLedgerRecord) -> Self {
+    pub(crate) fn from_record(record: &IntentLedgerRecord) -> Self {
         Self {
             server: record.server.clone(),
             tool: record.tool.clone(),
@@ -304,7 +436,9 @@ impl FrozenOutboundCall {
             intent_id: Some(record.id),
             idempotency_key: Some(record.idempotency_key.clone()),
             idempotency_supported: record.idempotency_supported,
-            authorization_binding: Some(record.authorization_binding),
+            authorization_binding: record.authorization_binding,
+            binding_version: record.binding_version,
+            resolved_endpoint: record.resolved_endpoint.clone(),
         }
     }
 }
@@ -337,8 +471,9 @@ pub enum OutboundSendOutcome {
     Failed(OutboundSendFailure),
 }
 
-/// Connector-agnostic outbound transport seam.
-pub trait OutboundSender {
+/// Test-only transport seam for exercising ledger encoding primitives.
+#[cfg(test)]
+pub(crate) trait OutboundSender {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome;
 }
 
@@ -354,7 +489,11 @@ pub struct IntentLedgerRecord {
     payload: Vec<u8>,
     pub idempotency_key: String,
     pub idempotency_supported: bool,
-    pub authorization_binding: OutboundAuthorizationBinding,
+    pub authorization_binding: Option<OutboundAuthorizationBinding>,
+    pub binding_version: u64,
+    pub resolved_endpoint: Option<String>,
+    pub budget_accounting: BudgetChargeMarker,
+    pub recorded_outcome: Option<RecordedOutboundOutcome>,
     pub state: IntentState,
     pub created_ms: u64,
     pub updated_ms: u64,
@@ -365,6 +504,41 @@ impl IntentLedgerRecord {
     #[must_use]
     pub(crate) fn payload(&self) -> &[u8] {
         &self.payload
+    }
+
+    pub(crate) fn pending(
+        request: OutboundCallRequest,
+        idempotency_supported: bool,
+        budget_accounting: BudgetChargeMarker,
+    ) -> IntentLedgerResult<Self> {
+        validate_request(&request)?;
+        let payload_hash = hash_frozen_payload(&request.payload);
+        let id = derive_intent_id(
+            request.attempt_id,
+            request.call_seq,
+            &request.server,
+            &request.tool,
+            &payload_hash,
+        )?;
+        Ok(Self {
+            id,
+            attempt_id: request.attempt_id,
+            call_seq: request.call_seq,
+            server: request.server,
+            tool: request.tool,
+            payload_hash,
+            payload: request.payload,
+            idempotency_key: bytes_to_hex_lower(&id),
+            idempotency_supported,
+            authorization_binding: request.authorization_binding,
+            binding_version: OUTBOUND_BINDING_VERSION,
+            resolved_endpoint: request.resolved_endpoint,
+            budget_accounting,
+            recorded_outcome: None,
+            state: IntentState::Pending,
+            created_ms: request.now_ms,
+            updated_ms: request.now_ms,
+        })
     }
 }
 
@@ -384,6 +558,7 @@ impl fmt::Debug for OutboundCallRequest {
                 &format_args!("[{} bytes redacted]", self.payload.len()),
             )
             .field("authorization_binding", &self.authorization_binding)
+            .field("resolved_endpoint", &self.resolved_endpoint)
             .field("now_ms", &self.now_ms)
             .finish()
     }
@@ -403,6 +578,8 @@ impl fmt::Debug for FrozenOutboundCall {
             .field("idempotency_key", &self.idempotency_key)
             .field("idempotency_supported", &self.idempotency_supported)
             .field("authorization_binding", &self.authorization_binding)
+            .field("binding_version", &self.binding_version)
+            .field("resolved_endpoint", &self.resolved_endpoint)
             .finish()
     }
 }
@@ -423,20 +600,15 @@ impl fmt::Debug for IntentLedgerRecord {
             .field("idempotency_key", &self.idempotency_key)
             .field("idempotency_supported", &self.idempotency_supported)
             .field("authorization_binding", &self.authorization_binding)
+            .field("binding_version", &self.binding_version)
+            .field("resolved_endpoint", &self.resolved_endpoint)
+            .field("budget_accounting", &self.budget_accounting)
+            .field("recorded_outcome", &self.recorded_outcome)
             .field("state", &self.state)
             .field("created_ms", &self.created_ms)
             .field("updated_ms", &self.updated_ms)
             .finish()
     }
-}
-
-/// Machine-readable reason that requires caller escalation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum IntentEscalationReason {
-    NonIdempotentAmbiguous,
-    NonIdempotentPending,
-    PreviouslyAbandoned,
-    CorruptLedgerRow,
 }
 
 /// One intent requiring external review; corrupt keys may not contain an id.
@@ -477,6 +649,31 @@ pub struct IntentRecoveryReport {
     pub failures: Vec<IntentRecoveryFailure>,
 }
 
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum IntentRecoveryEntry {
+    Valid(IntentLedgerRecord),
+    Corrupt(Option<IntentId>),
+}
+
+pub(crate) fn intent_recovery_entries(
+    vault: &Vault,
+) -> IntentLedgerResult<Vec<IntentRecoveryEntry>> {
+    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    let mut entries = Vec::new();
+    for row in vault
+        .store
+        .vault_meta
+        .prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?
+    {
+        let (key, value) = row?;
+        entries.push(match decode_record(&key, &value) {
+            Ok(record) => IntentRecoveryEntry::Valid(record),
+            Err(_) => IntentRecoveryEntry::Corrupt(id_from_ledger_key(&key)),
+        });
+    }
+    Ok(entries)
+}
+
 /// Derives the replay-stable BLAKE3 identity from canonical call identity.
 pub fn derive_intent_id(
     attempt_id: AttemptId,
@@ -503,9 +700,10 @@ pub fn derive_intent_id(
     })
 }
 
-/// Executes one outbound call through the read-only fast path or the durable
-/// effectful state machine.
-pub fn execute_outbound_call<S: OutboundSender + ?Sized>(
+/// Test-only ledger primitive fixture. Production effects enter through
+/// `outbound_chokepoint::execute_outbound_effect`.
+#[cfg(test)]
+pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
     vault: &Vault,
     descriptor: OutboundToolDescriptor,
     request: OutboundCallRequest,
@@ -569,7 +767,17 @@ pub fn execute_outbound_call<S: OutboundSender + ?Sized>(
         payload: call.payload.to_vec(),
         idempotency_key,
         idempotency_supported,
-        authorization_binding,
+        authorization_binding: Some(authorization_binding),
+        binding_version: OUTBOUND_BINDING_VERSION,
+        resolved_endpoint: call.resolved_endpoint.clone(),
+        budget_accounting: BudgetChargeMarker {
+            key_ref: None,
+            budget_class: BudgetClass::Send,
+            matched_rows: Vec::new(),
+            sends_debit: 0,
+            accounted_at_ms: now_ms,
+        },
+        recorded_outcome: None,
         state: IntentState::Pending,
         created_ms: now_ms,
         updated_ms: now_ms,
@@ -607,7 +815,8 @@ pub fn intent_ledger_records(vault: &Vault) -> IntentLedgerResult<Vec<IntentLedg
 ///
 /// This is a quiescent startup sweep and must not run concurrently with live
 /// dispatch of the same intent. ONE-1690/the driver owns lease-based concurrency.
-pub fn recover_outbound_intents<S: OutboundSender + ?Sized>(
+#[cfg(test)]
+pub(crate) fn recover_outbound_intents<S: OutboundSender + ?Sized>(
     vault: &Vault,
     sender: &mut S,
     now_ms: u64,
@@ -664,8 +873,12 @@ pub fn recover_outbound_intents<S: OutboundSender + ?Sized>(
                 });
             }
             IntentState::Pending if !record.idempotency_supported => {
-                let abandoned =
-                    transition_record(vault, record.id, IntentState::Abandoned, now_ms)?;
+                let abandoned = abandon_record(
+                    vault,
+                    record.id,
+                    IntentEscalationReason::NonIdempotentPending,
+                    now_ms,
+                )?;
                 debug_assert_eq!(abandoned.state, IntentState::Abandoned);
                 report.escalations.push(IntentEscalation {
                     intent_id: Some(record.id),
@@ -677,7 +890,7 @@ pub fn recover_outbound_intents<S: OutboundSender + ?Sized>(
                 let call = FrozenOutboundCall::from_record(&record);
                 match sender.send(&call) {
                     OutboundSendOutcome::Acked => {
-                        transition_record(vault, record.id, IntentState::Done, now_ms)?;
+                        complete_record(vault, record.id, now_ms)?;
                         report.completed += 1;
                     }
                     OutboundSendOutcome::Ambiguous => report.pending += 1,
@@ -706,6 +919,7 @@ fn validate_request(request: &OutboundCallRequest) -> IntentLedgerResult<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_replay_matches(
     record: &IntentLedgerRecord,
     call: &FrozenOutboundCall,
@@ -723,6 +937,7 @@ fn validate_replay_matches(
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_replay_matches_request(
     record: &IntentLedgerRecord,
     request: &OutboundCallRequest,
@@ -748,6 +963,7 @@ fn validate_replay_matches_request(
     Ok(())
 }
 
+#[cfg(test)]
 fn replay_dispatch<S: OutboundSender + ?Sized>(
     vault: &Vault,
     record: IntentLedgerRecord,
@@ -762,7 +978,12 @@ fn replay_dispatch<S: OutboundSender + ?Sized>(
             Some(IntentEscalationReason::PreviouslyAbandoned),
         )),
         IntentState::Pending if !record.idempotency_supported => {
-            let abandoned = transition_record(vault, record.id, IntentState::Abandoned, now_ms)?;
+            let abandoned = abandon_record(
+                vault,
+                record.id,
+                IntentEscalationReason::NonIdempotentPending,
+                now_ms,
+            )?;
             Ok(dispatch_without_send(
                 &abandoned,
                 true,
@@ -777,6 +998,7 @@ fn replay_dispatch<S: OutboundSender + ?Sized>(
     }
 }
 
+#[cfg(test)]
 fn dispatch_without_send(
     record: &IntentLedgerRecord,
     replayed: bool,
@@ -795,6 +1017,7 @@ fn dispatch_without_send(
     }
 }
 
+#[cfg(test)]
 fn finish_send(
     vault: &Vault,
     record: IntentLedgerRecord,
@@ -804,14 +1027,19 @@ fn finish_send(
 ) -> IntentLedgerResult<IntentDispatchResult> {
     let (state, escalation) = match outcome {
         OutboundSendOutcome::Acked => {
-            let done = transition_record(vault, record.id, IntentState::Done, now_ms)?;
+            let done = complete_record(vault, record.id, now_ms)?;
             (Some(done.state), None)
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
             (Some(IntentState::Pending), None)
         }
         OutboundSendOutcome::Ambiguous => {
-            let abandoned = transition_record(vault, record.id, IntentState::Abandoned, now_ms)?;
+            let abandoned = abandon_record(
+                vault,
+                record.id,
+                IntentEscalationReason::NonIdempotentAmbiguous,
+                now_ms,
+            )?;
             (
                 Some(abandoned.state),
                 Some(IntentEscalation {
@@ -819,10 +1047,6 @@ fn finish_send(
                     reason: IntentEscalationReason::NonIdempotentAmbiguous,
                 }),
             )
-        }
-        OutboundSendOutcome::Failed(_) if !replayed => {
-            delete_pending_record(vault, record.id)?;
-            (None, None)
         }
         OutboundSendOutcome::Failed(_) => (Some(IntentState::Pending), None),
     };
@@ -836,7 +1060,8 @@ fn finish_send(
     })
 }
 
-fn read_intent_record(
+#[cfg(test)]
+pub(crate) fn read_intent_record(
     vault: &Vault,
     id: &[u8; 32],
 ) -> IntentLedgerResult<Option<IntentLedgerRecord>> {
@@ -848,28 +1073,19 @@ fn read_intent_record(
     Ok(Some(decode_record(&key, &raw)?))
 }
 
-fn delete_pending_record(vault: &Vault, id: [u8; 32]) -> IntentLedgerResult<()> {
-    let key = intent_ledger_key(&id);
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&wtxn, &key)?
-        .ok_or(IntentLedgerError::InvalidRecord("delete target is missing"))?;
-    let record = decode_record(&key, &raw)?;
-    if record.state != IntentState::Pending {
-        return Err(IntentLedgerError::InvalidRecord(
-            "definite failure target is not pending",
-        ));
-    }
-    let deleted = vault.store.vault_meta.delete(&mut wtxn, &key)?;
-    if !deleted {
-        return Err(IntentLedgerError::InvalidRecord("delete target is missing"));
-    }
-    wtxn.commit().map_err(Error::from)?;
-    force_sync(vault)
+pub(crate) fn read_intent_record_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    id: &[u8; 32],
+) -> IntentLedgerResult<Option<IntentLedgerRecord>> {
+    let key = intent_ledger_key(id);
+    let Some(raw) = vault.store.vault_meta.get(txn, &key)? else {
+        return Ok(None);
+    };
+    Ok(Some(decode_record(&key, &raw)?))
 }
 
+#[cfg(test)]
 fn insert_pending_or_read(
     vault: &Vault,
     pending: &IntentLedgerRecord,
@@ -885,6 +1101,7 @@ fn insert_pending_or_read(
         return Ok((existing, true));
     }
 
+    validate_record(&key, pending)?;
     let encoded = encode_record(pending)?;
     vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
     wtxn.commit().map_err(Error::from)?;
@@ -892,10 +1109,146 @@ fn insert_pending_or_read(
     Ok((pending.clone(), false))
 }
 
-fn transition_record(
+pub(crate) fn insert_pending_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    pending: &IntentLedgerRecord,
+) -> IntentLedgerResult<()> {
+    if pending.state != IntentState::Pending || pending.recorded_outcome.is_some() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "only outcome-free Pending may be inserted",
+        ));
+    }
+    let key = intent_ledger_key(&pending.id);
+    if vault.store.vault_meta.get(&*wtxn, &key)?.is_some() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent insert target already exists",
+        ));
+    }
+    validate_record(&key, pending)?;
+    let encoded = encode_record(pending)?;
+    vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn transition_record(
     vault: &Vault,
     id: [u8; 32],
     next: IntentState,
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    let outcome = match next {
+        IntentState::Done => RecordedOutboundOutcome::Acked,
+        IntentState::Abandoned => {
+            RecordedOutboundOutcome::Abandoned(IntentEscalationReason::PreviouslyAbandoned)
+        }
+        IntentState::Pending => {
+            let record = read_intent_record(vault, &id)?.ok_or(
+                IntentLedgerError::InvalidRecord("transition target is missing"),
+            )?;
+            return Err(IntentLedgerError::InvalidTransition {
+                from: record.state,
+                to: IntentState::Pending,
+            });
+        }
+    };
+    transition_record_with_outcome(vault, id, next, outcome, now_ms)
+}
+
+pub(crate) fn complete_record(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    transition_record_with_outcome(
+        vault,
+        id,
+        IntentState::Done,
+        RecordedOutboundOutcome::Acked,
+        now_ms,
+    )
+}
+
+pub(crate) fn abandon_record(
+    vault: &Vault,
+    id: [u8; 32],
+    reason: IntentEscalationReason,
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    transition_record_with_outcome(
+        vault,
+        id,
+        IntentState::Abandoned,
+        RecordedOutboundOutcome::Abandoned(reason),
+        now_ms,
+    )
+}
+
+pub(crate) fn record_definite_non_delivery(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    update_pending_recorded_outcome(
+        vault,
+        id,
+        None,
+        Some(RecordedOutboundOutcome::DefiniteNonDelivery),
+        now_ms,
+    )
+}
+
+pub(crate) fn begin_definite_non_delivery_retry(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    update_pending_recorded_outcome(
+        vault,
+        id,
+        Some(RecordedOutboundOutcome::DefiniteNonDelivery),
+        None,
+        now_ms,
+    )
+}
+
+fn update_pending_recorded_outcome(
+    vault: &Vault,
+    id: [u8; 32],
+    expected: Option<RecordedOutboundOutcome>,
+    next: Option<RecordedOutboundOutcome>,
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    let key = intent_ledger_key(&id);
+    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let raw = vault
+        .store
+        .vault_meta
+        .get(&wtxn, &key)?
+        .ok_or(IntentLedgerError::InvalidRecord(
+            "pending outcome target is missing",
+        ))?;
+    let mut record = decode_record(&key, &raw)?;
+    if record.state != IntentState::Pending || record.recorded_outcome != expected {
+        return Err(IntentLedgerError::InvalidRecord(
+            "pending outcome transition is invalid",
+        ));
+    }
+    record.recorded_outcome = next;
+    record.updated_ms = now_ms.max(record.created_ms);
+    let encoded = encode_record(&record)?;
+    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    wtxn.commit().map_err(Error::from)?;
+    force_sync(vault)?;
+    Ok(record)
+}
+
+fn transition_record_with_outcome(
+    vault: &Vault,
+    id: [u8; 32],
+    next: IntentState,
+    outcome: RecordedOutboundOutcome,
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     let key = intent_ledger_key(&id);
@@ -910,6 +1263,11 @@ fn transition_record(
     let mut record = decode_record(&key, &raw)?;
     if record.state == next {
         drop(wtxn);
+        if record.recorded_outcome != Some(outcome) {
+            return Err(IntentLedgerError::InvalidRecord(
+                "terminal replay outcome does not match persisted outcome",
+            ));
+        }
         return Ok(record);
     }
     if !record.state.may_transition_to(next) {
@@ -919,6 +1277,7 @@ fn transition_record(
         });
     }
     record.state = next;
+    record.recorded_outcome = Some(outcome);
     record.updated_ms = now_ms.max(record.created_ms);
     let encoded = encode_record(&record)?;
     vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
@@ -927,14 +1286,33 @@ fn transition_record(
     Ok(record)
 }
 
-fn force_sync(vault: &Vault) -> IntentLedgerResult<()> {
+pub(crate) fn force_sync(vault: &Vault) -> IntentLedgerResult<()> {
     #[cfg(test)]
     FORCE_SYNC_CALLS.fetch_add(1, AtomicOrdering::SeqCst);
     vault.store.env.force_sync().map_err(Error::from)?;
     Ok(())
 }
 
-fn hash_frozen_payload(payload: &[u8]) -> [u8; 32] {
+#[cfg(test)]
+pub(crate) fn replace_intent_record_for_test(
+    vault: &Vault,
+    record: &IntentLedgerRecord,
+) -> IntentLedgerResult<()> {
+    let key = intent_ledger_key(&record.id);
+    validate_record(&key, record)?;
+    let encoded = encode_record(record)?;
+    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    if vault.store.vault_meta.get(&wtxn, &key)?.is_none() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "test replacement target is missing",
+        ));
+    }
+    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    wtxn.commit().map_err(Error::from)?;
+    force_sync(vault)
+}
+
+pub(crate) fn hash_frozen_payload(payload: &[u8]) -> [u8; 32] {
     *blake3::hash(payload).as_bytes()
 }
 
@@ -958,7 +1336,16 @@ fn record_content_digest(record: &IntentLedgerRecord) -> IntentLedgerResult<[u8;
         payload_hash: &'a [u8; 32],
         idempotency_key: &'a str,
         idempotency_supported: bool,
-        authorization_binding: &'a [u8; 32],
+        authorization_binding: Option<&'a [u8; 32]>,
+        binding_version: u64,
+        resolved_endpoint: Option<&'a str>,
+        budget_key_ref: Option<&'a [u8; 16]>,
+        budget_class: &'a str,
+        budget_matched_rows: &'a [u16],
+        budget_sends_debit: u64,
+        budget_accounted_at_ms: u64,
+        recorded_outcome: Option<&'a str>,
+        recorded_outcome_reason: Option<&'a str>,
         state: &'a str,
         created_ms: u64,
         updated_ms: u64,
@@ -974,7 +1361,31 @@ fn record_content_digest(record: &IntentLedgerRecord) -> IntentLedgerResult<[u8;
         payload_hash: &record.payload_hash,
         idempotency_key: &record.idempotency_key,
         idempotency_supported: record.idempotency_supported,
-        authorization_binding: record.authorization_binding.as_bytes(),
+        authorization_binding: record
+            .authorization_binding
+            .as_ref()
+            .map(OutboundAuthorizationBinding::as_bytes),
+        binding_version: record.binding_version,
+        resolved_endpoint: record.resolved_endpoint.as_deref(),
+        budget_key_ref: record
+            .budget_accounting
+            .key_ref
+            .as_ref()
+            .map(EntityId::as_bytes),
+        budget_class: record.budget_accounting.budget_class.as_str(),
+        budget_matched_rows: &record.budget_accounting.matched_rows,
+        budget_sends_debit: record.budget_accounting.sends_debit,
+        budget_accounted_at_ms: record.budget_accounting.accounted_at_ms,
+        recorded_outcome: record.recorded_outcome.map(|outcome| match outcome {
+            RecordedOutboundOutcome::DefiniteNonDelivery => "definite_non_delivery",
+            RecordedOutboundOutcome::Acked => "acked",
+            RecordedOutboundOutcome::Abandoned(_) => "abandoned",
+        }),
+        recorded_outcome_reason: record.recorded_outcome.and_then(|outcome| match outcome {
+            RecordedOutboundOutcome::DefiniteNonDelivery => None,
+            RecordedOutboundOutcome::Acked => None,
+            RecordedOutboundOutcome::Abandoned(reason) => Some(reason.as_str()),
+        }),
         state: record.state.as_str(),
         created_ms: record.created_ms,
         updated_ms: record.updated_ms,
@@ -1019,6 +1430,52 @@ fn id_from_ledger_key(key: &[u8]) -> Option<[u8; 32]> {
 
 fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
     let content_digest = record_content_digest(record)?;
+    let budget_accounting = Value::Map(vec![
+        (
+            Value::from(BUDGET_ACCOUNTING_KEYS[0]),
+            record
+                .budget_accounting
+                .key_ref
+                .as_ref()
+                .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
+        ),
+        (
+            Value::from(BUDGET_ACCOUNTING_KEYS[1]),
+            Value::from(record.budget_accounting.budget_class.as_str()),
+        ),
+        (
+            Value::from(BUDGET_ACCOUNTING_KEYS[2]),
+            Value::Array(
+                record
+                    .budget_accounting
+                    .matched_rows
+                    .iter()
+                    .map(|row| Value::from(u64::from(*row)))
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(BUDGET_ACCOUNTING_KEYS[3]),
+            Value::from(record.budget_accounting.sends_debit),
+        ),
+        (
+            Value::from(BUDGET_ACCOUNTING_KEYS[4]),
+            Value::from(record.budget_accounting.accounted_at_ms),
+        ),
+    ]);
+    let recorded_outcome = record.recorded_outcome.map_or(Value::Nil, |outcome| {
+        let (kind, reason) = match outcome {
+            RecordedOutboundOutcome::DefiniteNonDelivery => ("definite_non_delivery", Value::Nil),
+            RecordedOutboundOutcome::Acked => ("acked", Value::Nil),
+            RecordedOutboundOutcome::Abandoned(reason) => {
+                ("abandoned", Value::from(reason.as_str()))
+            }
+        };
+        Value::Map(vec![
+            (Value::from(RECORDED_OUTCOME_KEYS[0]), Value::from(kind)),
+            (Value::from(RECORDED_OUTCOME_KEYS[1]), reason),
+        ])
+    });
     let entries = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -1050,8 +1507,26 @@ fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
         ),
         (
             Value::from(KEY_AUTHORIZATION_BINDING),
-            Value::Binary(record.authorization_binding.as_bytes().to_vec()),
+            record
+                .authorization_binding
+                .as_ref()
+                .map_or(Value::Nil, |binding| {
+                    Value::Binary(binding.as_bytes().to_vec())
+                }),
         ),
+        (
+            Value::from(KEY_BINDING_VERSION),
+            Value::from(record.binding_version),
+        ),
+        (
+            Value::from(KEY_RESOLVED_ENDPOINT),
+            record
+                .resolved_endpoint
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
+        (Value::from(KEY_BUDGET_ACCOUNTING), budget_accounting),
+        (Value::from(KEY_RECORDED_OUTCOME), recorded_outcome),
         (Value::from(KEY_STATE), Value::from(record.state.as_str())),
         (Value::from(KEY_CREATED_MS), Value::from(record.created_ms)),
         (Value::from(KEY_UPDATED_MS), Value::from(record.updated_ms)),
@@ -1094,6 +1569,10 @@ fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecor
     let mut idempotency_key = None;
     let mut idempotency_supported = None;
     let mut authorization_binding = None;
+    let mut binding_version = None;
+    let mut resolved_endpoint = None;
+    let mut budget_accounting = None;
+    let mut recorded_outcome = None;
     let mut state = None;
     let mut created_ms = None;
     let mut updated_ms = None;
@@ -1137,9 +1616,25 @@ fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecor
                     ))?);
             }
             KEY_AUTHORIZATION_BINDING => {
-                authorization_binding = Some(OutboundAuthorizationBinding::new(
-                    expect_binary_array::<32>(&value)?,
-                ));
+                authorization_binding = Some(if matches!(value, Value::Nil) {
+                    None
+                } else {
+                    Some(OutboundAuthorizationBinding::new(
+                        expect_binary_array::<32>(&value)?,
+                    ))
+                });
+            }
+            KEY_BINDING_VERSION => binding_version = Some(expect_u64(&value)?),
+            KEY_RESOLVED_ENDPOINT => {
+                resolved_endpoint = Some(if matches!(value, Value::Nil) {
+                    None
+                } else {
+                    Some(expect_string(&value)?)
+                });
+            }
+            KEY_BUDGET_ACCOUNTING => budget_accounting = Some(decode_budget_accounting(&value)?),
+            KEY_RECORDED_OUTCOME => {
+                recorded_outcome = Some(decode_recorded_outcome(&value)?);
             }
             KEY_STATE => {
                 state = Some(
@@ -1185,6 +1680,16 @@ fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecor
             authorization_binding,
             "missing outbound intent authorization_binding",
         )?,
+        binding_version: required(binding_version, "missing outbound intent binding_version")?,
+        resolved_endpoint: required(
+            resolved_endpoint,
+            "missing outbound intent resolved_endpoint",
+        )?,
+        budget_accounting: required(
+            budget_accounting,
+            "missing outbound intent budget_accounting",
+        )?,
+        recorded_outcome: required(recorded_outcome, "missing outbound intent recorded_outcome")?,
         state: required(state, "missing outbound intent state")?,
         created_ms: required(created_ms, "missing outbound intent created_ms")?,
         updated_ms: required(updated_ms, "missing outbound intent updated_ms")?,
@@ -1197,6 +1702,118 @@ fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecor
     }
     validate_record(key, &record)?;
     Ok(record)
+}
+
+fn decode_budget_accounting(value: &Value) -> IntentLedgerResult<BudgetChargeMarker> {
+    let Value::Map(entries) = value else {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent budget_accounting must be a map",
+        ));
+    };
+    validate_nested_keys(entries, &BUDGET_ACCOUNTING_KEYS)?;
+    let key_ref = match nested_value(entries, BUDGET_ACCOUNTING_KEYS[0])? {
+        Value::Nil => None,
+        value => Some(
+            EntityId::from_bytes(expect_binary_array::<16>(value)?).map_err(|_| {
+                IntentLedgerError::InvalidRecord("outbound intent budget key_ref is invalid")
+            })?,
+        ),
+    };
+    let budget_class = nested_value(entries, BUDGET_ACCOUNTING_KEYS[1])?
+        .as_str()
+        .and_then(BudgetClass::parse)
+        .ok_or(IntentLedgerError::InvalidRecord(
+            "outbound intent budget_class is invalid",
+        ))?;
+    let Value::Array(row_values) = nested_value(entries, BUDGET_ACCOUNTING_KEYS[2])? else {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent matched_rows must be an array",
+        ));
+    };
+    let mut matched_rows = Vec::with_capacity(row_values.len());
+    for value in row_values {
+        let row = expect_u64(value)?;
+        matched_rows.push(u16::try_from(row).map_err(|_| {
+            IntentLedgerError::InvalidRecord("outbound intent matched row is invalid")
+        })?);
+    }
+    Ok(BudgetChargeMarker {
+        key_ref,
+        budget_class,
+        matched_rows,
+        sends_debit: expect_u64(nested_value(entries, BUDGET_ACCOUNTING_KEYS[3])?)?,
+        accounted_at_ms: expect_u64(nested_value(entries, BUDGET_ACCOUNTING_KEYS[4])?)?,
+    })
+}
+
+fn decode_recorded_outcome(value: &Value) -> IntentLedgerResult<Option<RecordedOutboundOutcome>> {
+    if matches!(value, Value::Nil) {
+        return Ok(None);
+    }
+    let Value::Map(entries) = value else {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent recorded_outcome must be a map",
+        ));
+    };
+    validate_nested_keys(entries, &RECORDED_OUTCOME_KEYS)?;
+    let kind = nested_value(entries, RECORDED_OUTCOME_KEYS[0])?
+        .as_str()
+        .ok_or(IntentLedgerError::InvalidRecord(
+            "outbound intent outcome kind is invalid",
+        ))?;
+    let reason = nested_value(entries, RECORDED_OUTCOME_KEYS[1])?;
+    match (kind, reason) {
+        ("definite_non_delivery", Value::Nil) => {
+            Ok(Some(RecordedOutboundOutcome::DefiniteNonDelivery))
+        }
+        ("acked", Value::Nil) => Ok(Some(RecordedOutboundOutcome::Acked)),
+        ("abandoned", value) => {
+            let reason = value
+                .as_str()
+                .and_then(IntentEscalationReason::parse)
+                .ok_or(IntentLedgerError::InvalidRecord(
+                    "outbound intent abandonment reason is invalid",
+                ))?;
+            Ok(Some(RecordedOutboundOutcome::Abandoned(reason)))
+        }
+        _ => Err(IntentLedgerError::InvalidRecord(
+            "outbound intent recorded_outcome is inconsistent",
+        )),
+    }
+}
+
+fn validate_nested_keys(entries: &[(Value, Value)], keys: &[&str]) -> IntentLedgerResult<()> {
+    let mut seen = vec![false; keys.len()];
+    for (key, _) in entries {
+        let key = key.as_str().ok_or(IntentLedgerError::InvalidRecord(
+            "outbound intent nested keys must be strings",
+        ))?;
+        let index = keys.iter().position(|candidate| *candidate == key).ok_or(
+            IntentLedgerError::InvalidRecord("outbound intent nested key is not pinned"),
+        )?;
+        if seen[index] {
+            return Err(IntentLedgerError::InvalidRecord(
+                "duplicate outbound intent nested key",
+            ));
+        }
+        seen[index] = true;
+    }
+    if seen.into_iter().all(|value| value) {
+        Ok(())
+    } else {
+        Err(IntentLedgerError::InvalidRecord(
+            "outbound intent nested field is missing",
+        ))
+    }
+}
+
+fn nested_value<'a>(entries: &'a [(Value, Value)], key: &str) -> IntentLedgerResult<&'a Value> {
+    entries
+        .iter()
+        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
+        .ok_or(IntentLedgerError::InvalidRecord(
+            "outbound intent nested field is missing",
+        ))
 }
 
 fn validate_record(key: &[u8], record: &IntentLedgerRecord) -> IntentLedgerResult<()> {
@@ -1213,6 +1830,69 @@ fn validate_record(key: &[u8], record: &IntentLedgerRecord) -> IntentLedgerResul
     if record.updated_ms < record.created_ms {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent updated_ms predates created_ms",
+        ));
+    }
+    if record.binding_version != OUTBOUND_BINDING_VERSION {
+        return Err(IntentLedgerError::InvalidRecord(
+            "unsupported outbound intent binding_version",
+        ));
+    }
+    if record
+        .resolved_endpoint
+        .as_deref()
+        .is_some_and(|endpoint| endpoint.trim().is_empty() || endpoint != endpoint.trim())
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent resolved_endpoint is invalid",
+        ));
+    }
+    if record.resolved_endpoint.is_some() && record.authorization_binding.is_none() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "endpoint-bound intent is missing authorization binding",
+        ));
+    }
+    if record.budget_accounting.key_ref.is_none()
+        && (!record.budget_accounting.matched_rows.is_empty()
+            || record.budget_accounting.sends_debit != 0)
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "unkeyed budget marker contains a debit",
+        ));
+    }
+    if record.budget_accounting.sends_debit > 1
+        || (!record.budget_accounting.budget_class.is_send()
+            && record.budget_accounting.sends_debit != 0)
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent sends debit is invalid",
+        ));
+    }
+    if record
+        .budget_accounting
+        .matched_rows
+        .windows(2)
+        .any(|rows| rows[0] >= rows[1])
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent matched rows are not canonical",
+        ));
+    }
+    let outcome_matches_state = matches!(
+        (record.state, record.recorded_outcome),
+        (IntentState::Pending, None)
+            | (
+                IntentState::Pending,
+                Some(RecordedOutboundOutcome::DefiniteNonDelivery)
+            )
+            | (IntentState::Done, Some(RecordedOutboundOutcome::Acked))
+            | (
+                IntentState::Abandoned,
+                Some(RecordedOutboundOutcome::Abandoned(_))
+            )
+    );
+    if !outcome_matches_state {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent state and recorded_outcome disagree",
         ));
     }
     if hash_frozen_payload(record.payload()) != record.payload_hash {

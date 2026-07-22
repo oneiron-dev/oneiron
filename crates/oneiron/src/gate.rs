@@ -35,6 +35,9 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::llm::BudgetExhaustionPolicy;
+use crate::outbound_consent::{
+    ScopedMcpCallContext, ScopedMcpConsentDecision, evaluate_scoped_mcp_call,
+};
 use crate::outbound_grant::{
     StandingOutboundGrant, decode_standing_outbound_grant_body,
     encode_standing_outbound_grant_body, standing_outbound_grant_principal_index_entity_id,
@@ -372,6 +375,8 @@ pub(crate) struct ExternalEffectGateContext {
     pub(crate) brief_ref: Option<String>,
     pub(crate) send_ref: Option<String>,
     pub(crate) standing_grant_ref: Option<String>,
+    pub(crate) scoped_mcp_call: Option<ScopedMcpCallContext>,
+    pub(crate) scoped_mcp_grant_authorized: bool,
     pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
     pub(crate) counterparty_opted_out: bool,
     pub(crate) counterparty_opt_out_receipt_reason: Option<&'static str>,
@@ -392,6 +397,7 @@ pub(crate) struct ExternalEffectGateInput {
     pub(crate) brief_ref: Option<String>,
     pub(crate) send_ref: Option<String>,
     pub(crate) standing_grant_ref: Option<String>,
+    pub(crate) scoped_mcp_call: Option<ScopedMcpCallContext>,
     pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
     pub(crate) counterparty_opted_out: bool,
     pub(crate) counterparty_opt_out_receipt_reason: Option<&'static str>,
@@ -423,6 +429,8 @@ impl ExternalEffectGateInput {
                 brief_ref: self.brief_ref.clone(),
                 send_ref: self.send_ref.clone(),
                 standing_grant_ref: self.standing_grant_ref.clone(),
+                scoped_mcp_call: self.scoped_mcp_call.clone(),
+                scoped_mcp_grant_authorized: false,
                 counterparty_first_touch: self.counterparty_first_touch,
                 counterparty_opted_out: self.counterparty_opted_out,
                 counterparty_opt_out_receipt_reason: self.counterparty_opt_out_receipt_reason,
@@ -555,6 +563,7 @@ pub(crate) enum GateReasonCode {
     PendingCriticalityFloor,
     PendingPolicyManifestAuthority,
     PendingExternalEffectAuthority,
+    PendingConnectorKeyUnregistered,
     DenyCounterpartyOptOut,
     DenyEffectorBudgetExhausted,
     DenyConnectorKeySuspended,
@@ -577,6 +586,7 @@ impl GateReasonCode {
             Self::PendingCriticalityFloor => "gate.pending.criticality_floor",
             Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
             Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
+            Self::PendingConnectorKeyUnregistered => "gate.pending.connector_key_unregistered",
             Self::DenyCounterpartyOptOut => "gate.deny.counterparty_opt_out",
             Self::DenyEffectorBudgetExhausted => "gate.deny.effector_budget_exhausted",
             Self::DenyConnectorKeySuspended => "gate.deny.connector_key_suspended",
@@ -598,7 +608,9 @@ impl GateReasonCode {
             Self::PendingSourceTrust => GateMetricReasonClass::SourceTrust,
             Self::PendingCriticalityFloor => GateMetricReasonClass::CriticalityFloor,
             Self::PendingPolicyManifestAuthority => GateMetricReasonClass::PolicyManifestAuthority,
-            Self::PendingExternalEffectAuthority => GateMetricReasonClass::ExternalEffectAuthority,
+            Self::PendingExternalEffectAuthority | Self::PendingConnectorKeyUnregistered => {
+                GateMetricReasonClass::ExternalEffectAuthority
+            }
             Self::DenyCounterpartyOptOut => GateMetricReasonClass::CounterpartyOptOut,
             Self::DenyEffectorBudgetExhausted | Self::DenyConnectorKeySuspended => {
                 GateMetricReasonClass::EffectorBudget
@@ -1019,14 +1031,18 @@ impl PolicyManifestResolution {
     }
 
     fn actor_ceiling_allows_auto_for_content(&self, input: &GateEvaluatorInput) -> bool {
-        // A Proposed definition ceiling is an explicit authored bound that no
-        // manifest grant can widen past (OF-074 restrict / OF-043 live
-        // re-clamp) — the write is held to proposal regardless of rows.
+        // A payload-aware scoped MCP grant is the one external-effect path
+        // that dissolves the Proposed fork: store-backed matching already
+        // proved server, tool, endpoint, and data-class scope. Blind grants
+        // and every non-effect write retain the authored clamp below.
         if matches!(
             input.agent_definition_ceiling,
             Some(PolicyApprovalCeiling::Proposed)
         ) {
-            return false;
+            return input.content_kind == GateContentKind::ExternalEffect
+                && input.external_effect.as_ref().is_some_and(|effect| {
+                    effect.scoped_mcp_call.is_some() && effect.scoped_mcp_grant_authorized
+                });
         }
         let actor_class = input.actor.actor_class.trim();
         if self.actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
@@ -1263,24 +1279,28 @@ impl PolicyManifestResolution {
     }
 
     fn external_effect_allows_auto(&self, input: &GateEvaluatorInput) -> bool {
-        // A Proposed-ceiling definition-bound actor (e.g. any Herald fork)
-        // can never auto-fire an external effect regardless of grants; it is
-        // held to PendingExternalEffectAuthority. The counterparty opt-out
-        // early-deny is unaffected: it returns from `evaluate_gate` before
-        // this function is ever consulted.
+        let Some(effect) = input.external_effect.as_ref() else {
+            return false;
+        };
+        if effect.verb.trim().is_empty() || effect.channel.trim().is_empty() {
+            return false;
+        }
+        // Payload-aware scoped grants are the only safe MCP auto path. The
+        // boolean is set only by the store-backed four-axis match below; a
+        // caller-supplied standing-grant reference has no authority here.
+        if effect.scoped_mcp_call.is_some() || is_mcp_effect_channel(&effect.channel) {
+            return effect.scoped_mcp_grant_authorized;
+        }
+        if !effect.has_permission {
+            return false;
+        }
+
+        // Blind/non-scoped grants keep the Proposed-ceiling restriction. A
+        // scoped MCP grant reaches the return above only after all axes pass.
         if matches!(
             input.agent_definition_ceiling,
             Some(PolicyApprovalCeiling::Proposed)
         ) {
-            return false;
-        }
-        let Some(effect) = input.external_effect.as_ref() else {
-            return false;
-        };
-        if effect.verb.trim().is_empty()
-            || effect.channel.trim().is_empty()
-            || !effect.has_permission
-        {
             return false;
         }
         if effect.standing_grant_ref.is_some() {
@@ -2829,27 +2849,72 @@ fn session_claim_bundle(
     }
 }
 
-/// `admit_for_execution` tells the connector-key budget stage whether an
-/// Allow decision will actually hand the effect to a connector in this
-/// dispatch. Callers whose pipeline can still park the effect after an Allow
-/// (delivery-window Hold/Degrade/LetGo, seat-policy Suppress) pass `false`
-/// on those paths so a dispatch that never becomes an effect cannot consume
-/// or exhaust budget; the effect debits when it re-enters and executes. The
-/// status wall and charter stages are governance, not accounting, and run
-/// regardless.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn check_external_effect_policy(
+/// Connector-key target selected by governance. Accounting consumes this
+/// value only after governance allows an effect.
+pub(crate) struct ExternalEffectBudgetTarget {
+    pub(crate) key_id: EntityId,
+    pub(crate) key: connector_key::ConnectorKeyRecord,
+    pub(crate) governing_connector: String,
+}
+
+/// Uneffected external-policy decision. The chokepoint may debit the returned
+/// target and adjust an exhaustion denial before this decision is recorded.
+pub(crate) struct ExternalEffectGovernance {
+    decision_id: GateDecisionId,
+    decision: GateDecision,
+    created_at: u64,
+    input: GateEvaluatorInput,
+    binding: GateConsentBinding,
+    grant_ref: Option<String>,
+    matched_grant: Option<(EntityId, StandingOutboundGrant)>,
+    budget_target: Option<ExternalEffectBudgetTarget>,
+}
+
+impl ExternalEffectGovernance {
+    #[must_use]
+    pub(crate) fn outcome(&self) -> GateOutcome {
+        self.decision.outcome()
+    }
+
+    #[must_use]
+    pub(crate) fn budget_target_mut(&mut self) -> Option<&mut ExternalEffectBudgetTarget> {
+        self.budget_target.as_mut()
+    }
+
+    pub(crate) fn deny_budget_exhausted(&mut self) {
+        self.decision = GateDecision::deny(GateReasonCode::DenyEffectorBudgetExhausted)
+            .with_receipt_reasons(["effector_budget_exhausted"])
+            .with_receipt_reasons(external_effect_receipt_reasons(
+                self.input
+                    .external_effect
+                    .as_ref()
+                    .expect("external effect input"),
+            ));
+    }
+}
+
+/// Evaluates consent and connector governance without charging or recording.
+/// The caller must either finalize the returned decision or abort its txn.
+pub(crate) fn evaluate_external_effect_policy(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
-    admit_for_execution: bool,
-) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
+    required_grant_id: Option<EntityId>,
+) -> Result<ExternalEffectGovernance> {
     let mut hydrated_effect = hydrate_external_effect_contact(store, wtxn, effect)?;
     hydrated_effect.standing_grant_ref = None;
-    let matched_grant = standing_outbound_grant_for_effect(store, wtxn, &hydrated_effect, policy)?;
-    if let Some((grant_id, _grant)) = matched_grant.as_ref() {
+    let mut scoped_mcp_grant_authorized = false;
+    let matched_grant = standing_outbound_grant_for_effect(
+        store,
+        wtxn,
+        &hydrated_effect,
+        policy,
+        required_grant_id,
+    )?;
+    if let Some((grant_id, grant)) = matched_grant.as_ref() {
         hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
+        scoped_mcp_grant_authorized = grant.scope.scoped_mcp_grant().is_some();
     }
     // The effect door NEVER gates ceiling resolution on the caller-asserted
     // class alone: the resolver binds the identity pair, derives authority
@@ -2862,7 +2927,10 @@ pub(crate) fn check_external_effect_policy(
         hydrated_effect.actor.actor_ref.as_deref(),
         hydrated_effect.provenance.actor_entity_ref,
     );
-    let input = hydrated_effect.gate_input(agent_definition_ceiling);
+    let mut input = hydrated_effect.gate_input(agent_definition_ceiling);
+    if let Some(effect) = input.external_effect.as_mut() {
+        effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
+    }
     let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = GateDecisionId::now();
@@ -2872,21 +2940,54 @@ pub(crate) fn check_external_effect_policy(
         .as_ref()
         .and_then(|effect| effect.standing_grant_ref.clone());
 
-    // GOV-01 connector-key stage (ONE-1416). Unset-is-noop: with no
-    // governing key the decision, receipts, and charge (None) are exactly
-    // pre-change. The status wall and the budget stage are BOTH guarded on
-    // would-be-Allow (M1 resolution 2026-07-10): a law-class deny from
-    // `evaluate_gate` (e.g. counterparty opt-out) keeps its reason code and
-    // never consumes budget.
+    // GOV-01 connector-key stage (ONE-1416). Channel keys retain
+    // unset-is-noop; synthetic scoped-MCP keys fail closed below. The status
+    // wall and the budget stage are BOTH guarded on would-be-Allow (M1
+    // resolution 2026-07-10): a law-class deny from `evaluate_gate` (e.g.
+    // counterparty opt-out) keeps its reason code and never consumes budget.
     let normalized_channel = connector_key::normalize_connector_key(&hydrated_effect.channel);
+    let scoped_mcp_governing_connector = matched_grant.as_ref().and_then(|(grant_id, grant)| {
+        grant.scope.scoped_mcp_grant().and_then(|_| {
+            hydrated_effect
+                .scoped_mcp_call
+                .as_ref()
+                .map(|call| scoped_mcp_credential_connector_key(&call.server, grant_id))
+        })
+    });
+    let uses_scoped_mcp_governing_connector = scoped_mcp_governing_connector.is_some();
+    let governing_connector =
+        scoped_mcp_governing_connector.unwrap_or_else(|| normalized_channel.clone());
     let governing = connector_key::governing_connector_key(
         store,
         wtxn,
-        &normalized_channel,
+        &governing_connector,
         hydrated_effect.provenance.actor_entity_ref.as_ref(),
     )?;
-    let mut effector_charge = None;
-    if let Some((key_id, mut key)) = governing
+    let budget_target = governing
+        .as_ref()
+        .map(|(key_id, key)| ExternalEffectBudgetTarget {
+            key_id: *key_id,
+            key: key.clone(),
+            governing_connector: governing_connector.clone(),
+        });
+    if uses_scoped_mcp_governing_connector
+        && decision.outcome() == GateOutcome::Allow
+        && governing.is_none()
+    {
+        // The real completion—registering each per-grant connector key through
+        // the connector lifecycle—rides ONE-1794 with the live transport.
+        // Until then, scoped MCP authority fails closed instead of inheriting
+        // the channel unset-is-noop behavior.
+        decision = GateDecision::pending(vec![GateReasonCode::PendingConnectorKeyUnregistered])
+            .with_receipt_reasons(["connector_key_unregistered"])
+            .with_receipt_reasons(external_effect_receipt_reasons(
+                input
+                    .external_effect
+                    .as_ref()
+                    .expect("external effect input"),
+            ));
+    }
+    if let Some((_key_id, key)) = governing
         && decision.outcome() == GateOutcome::Allow
     {
         // GOV-10 charter stage (ONE-1417), between the status wall and the
@@ -2904,8 +3005,11 @@ pub(crate) fn check_external_effect_policy(
                 );
             } else if connector_key::charter_never_list_matches(
                 block,
-                &normalized_channel,
-                &hydrated_effect.verb,
+                &governing_connector,
+                hydrated_effect
+                    .scoped_mcp_call
+                    .as_ref()
+                    .map_or(hydrated_effect.verb.as_str(), |call| call.tool.as_str()),
             ) {
                 charter_wall = Some(
                     GateDecision::deny(GateReasonCode::DenyCharterNeverList)
@@ -2939,53 +3043,36 @@ pub(crate) fn check_external_effect_policy(
                     .as_ref()
                     .expect("external effect input"),
             ));
-        } else if admit_for_execution {
-            let outcome = connector_key::charge_effector_budgets(
-                store,
-                wtxn,
-                &key_id,
-                &mut key,
-                &normalized_channel,
-                hydrated_effect.send_ref.is_some(),
-                created_at,
-            )?;
-            match outcome {
-                EffectorBudgetChargeOutcome::NoRows(charge)
-                | EffectorBudgetChargeOutcome::Charged(charge) => {
-                    effector_charge = Some(charge);
-                }
-                EffectorBudgetChargeOutcome::Exhausted {
-                    row_index,
-                    on_exhaust,
-                    mut charge,
-                } => {
-                    if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                        connector_key::suspend_connector_key_in_txn(
-                            store,
-                            wtxn,
-                            &key_id,
-                            &key,
-                            connector_key::budget_exhausted_reason(row_index),
-                            created_at,
-                        )?;
-                        // Keep the charge's meter echo honest about the flip
-                        // that just committed in this txn.
-                        charge.read.status = ConnectorKeyStatus::Suspended;
-                    }
-                    decision = GateDecision::deny(GateReasonCode::DenyEffectorBudgetExhausted)
-                        .with_receipt_reasons(["effector_budget_exhausted"])
-                        .with_receipt_reasons(external_effect_receipt_reasons(
-                            input
-                                .external_effect
-                                .as_ref()
-                                .expect("external effect input"),
-                        ));
-                    effector_charge = Some(charge);
-                }
-            }
         }
     }
 
+    Ok(ExternalEffectGovernance {
+        decision_id,
+        decision,
+        created_at,
+        input,
+        binding,
+        grant_ref,
+        matched_grant,
+        budget_target,
+    })
+}
+
+pub(crate) fn record_external_effect_policy(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    governance: ExternalEffectGovernance,
+) -> Result<(GateDecisionId, GateDecision)> {
+    let ExternalEffectGovernance {
+        decision_id,
+        decision,
+        created_at,
+        input,
+        binding,
+        grant_ref,
+        matched_grant,
+        budget_target: _,
+    } = governance;
     crate::off_record::FloorWrites::new(store).append_egress_gate_decision(
         wtxn,
         &GateDecisionRecord {
@@ -3021,7 +3108,92 @@ pub(crate) fn check_external_effect_policy(
     }
     record_gate_decision_metrics(&decision);
 
+    Ok((decision_id, decision))
+}
+
+/// Governance surface for external-effect callers that finalize the decision in
+/// their own transaction. When `admit_for_execution` is set the caller applies
+/// the effect immediately in this same txn (e.g. an identity lifecycle intent),
+/// so the governing connector key is debited exactly once here and an exhausted
+/// key flips the recorded decision to a budget-exhausted denial before the
+/// effect is applied — one durable accounting event per genuinely-new effect
+/// (design.out §2/§3). Governance-only callers pass `false` and never debit.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn check_external_effect_policy(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+    admit_for_execution: bool,
+) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
+    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None)?;
+    let mut effector_charge = None;
+    if admit_for_execution && governance.outcome() == GateOutcome::Allow {
+        let (charge, exhausted) = charge_admitted_external_effect(
+            store,
+            wtxn,
+            &mut governance,
+            effect.send_ref.is_some(),
+        )?;
+        if exhausted {
+            governance.deny_budget_exhausted();
+        }
+        effector_charge = charge;
+    }
+    let (decision_id, decision) = record_external_effect_policy(store, wtxn, governance)?;
     Ok((decision_id, decision, effector_charge))
+}
+
+/// Debits the governance-selected connector key exactly once for an admitted
+/// effect, mirroring the chokepoint `charge_once`: send-dimension rows debit
+/// only for send-like effects, an exhausted suspend-class row suspends the key,
+/// and the caller converts exhaustion into a denial.
+fn charge_admitted_external_effect(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    governance: &mut ExternalEffectGovernance,
+    send_like: bool,
+) -> Result<(Option<EffectorBudgetCharge>, bool)> {
+    let Some(target) = governance.budget_target_mut() else {
+        return Ok((None, false));
+    };
+    // Budget windows advance on the engine's trusted clock, not a caller
+    // timestamp, so the debit and any receipt echo share the same window.
+    let budget_now = crate::unix_seconds_now();
+    let outcome = connector_key::charge_effector_budgets(
+        store,
+        wtxn,
+        &target.key_id,
+        &mut target.key,
+        &target.governing_connector,
+        send_like,
+        budget_now,
+    )?;
+    let (mut charge, exhausted) = match outcome {
+        EffectorBudgetChargeOutcome::NoRows(charge)
+        | EffectorBudgetChargeOutcome::Charged(charge) => (charge, false),
+        EffectorBudgetChargeOutcome::Exhausted {
+            row_index,
+            on_exhaust,
+            mut charge,
+        } => {
+            if on_exhaust == EffectorBudgetOnExhaust::Suspend {
+                connector_key::suspend_connector_key_in_txn(
+                    store,
+                    wtxn,
+                    &target.key_id,
+                    &target.key,
+                    connector_key::budget_exhausted_reason(row_index),
+                    budget_now,
+                )?;
+                charge.read.status = ConnectorKeyStatus::Suspended;
+            }
+            (charge, true)
+        }
+    };
+    charge.matched_rows.sort_unstable();
+    charge.matched_rows.dedup();
+    Ok((Some(charge), exhausted))
 }
 
 fn standing_outbound_grant_for_effect(
@@ -3029,27 +3201,47 @@ fn standing_outbound_grant_for_effect(
     txn: &heed::RwTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
+    required_grant_id: Option<EntityId>,
 ) -> Result<Option<(EntityId, StandingOutboundGrant)>> {
     let current_policy_floor = policy.read_frontier_hash()?;
-    let mut candidate_ids = Vec::new();
-    for principal_ref in standing_outbound_grant_candidate_principals(effect) {
-        let prefix = standing_outbound_grant_principal_index_prefix(&principal_ref)?;
-        for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
-            let (key, _) = entry?;
-            let id = standing_outbound_grant_principal_index_entity_id(&key, &principal_ref)?;
-            if !candidate_ids.contains(&id) {
-                candidate_ids.push(id);
+    let mut candidate_ids = if let Some(required_grant_id) = required_grant_id {
+        vec![required_grant_id]
+    } else {
+        Vec::new()
+    };
+    if candidate_ids.is_empty() {
+        let candidate_principals = if effect.scoped_mcp_call.is_some() {
+            verified_standing_outbound_grant_principal(effect)
+                .into_iter()
+                .collect()
+        } else {
+            standing_outbound_grant_candidate_principals(effect)
+        };
+        for principal_ref in candidate_principals {
+            let prefix = standing_outbound_grant_principal_index_prefix(&principal_ref)?;
+            for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
+                let (key, _) = entry?;
+                let id = standing_outbound_grant_principal_index_entity_id(&key, &principal_ref)?;
+                if !candidate_ids.contains(&id) {
+                    candidate_ids.push(id);
+                }
             }
         }
     }
     for id in candidate_ids {
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            if required_grant_id == Some(id) {
+                return Ok(None);
+            }
             return Err(Error::CorruptedIndex("outbound grant entity row"));
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Err(Error::CorruptedIndex("outbound grant entity header"));
         };
         if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
+            if required_grant_id == Some(id) {
+                return Ok(None);
+            }
             return Err(Error::CorruptedIndex("outbound grant entity type"));
         }
         let grant = decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
@@ -3057,6 +3249,18 @@ fn standing_outbound_grant_for_effect(
             continue;
         }
         if !standing_outbound_grant_actor_matches(&grant, effect) {
+            continue;
+        }
+        if let Some(call) = effect.scoped_mcp_call.as_ref() {
+            if !is_mcp_effect_channel(&effect.channel) {
+                continue;
+            }
+            if let Some(scoped_grant) = grant.scope.scoped_mcp_grant()
+                && evaluate_scoped_mcp_call(scoped_grant, call.as_call())
+                    == ScopedMcpConsentDecision::AutoFire
+            {
+                return Ok(Some((id, grant)));
+            }
             continue;
         }
         if grant.scope.matches_effect(
@@ -3069,6 +3273,17 @@ fn standing_outbound_grant_for_effect(
         }
     }
     Ok(None)
+}
+
+fn is_mcp_effect_channel(channel: &str) -> bool {
+    channel
+        .trim()
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mcp:"))
+}
+
+pub(crate) fn scoped_mcp_credential_connector_key(server: &str, grant_id: &EntityId) -> String {
+    connector_key::normalize_connector_key(&format!("mcp:{server}:grant:{}", grant_id.to_hex()))
 }
 
 fn standing_outbound_grant_candidate_principals(effect: &ExternalEffectGateInput) -> Vec<String> {
@@ -3088,6 +3303,24 @@ fn standing_outbound_grant_candidate_principals(effect: &ExternalEffectGateInput
         }
     }
     principals
+}
+
+fn verified_standing_outbound_grant_principal(effect: &ExternalEffectGateInput) -> Option<String> {
+    let actor_ref = effect
+        .actor
+        .actor_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|actor_ref| !actor_ref.is_empty());
+    match (actor_ref, effect.provenance.actor_entity_ref) {
+        (Some(actor_ref), Some(actor_entity_ref)) => EntityId::from_hex(actor_ref)
+            .ok()
+            .filter(|actor_ref| *actor_ref == actor_entity_ref)
+            .map(|_| actor_entity_ref.to_hex()),
+        (Some(actor_ref), None) => Some(actor_ref.to_owned()),
+        (None, Some(actor_entity_ref)) => Some(actor_entity_ref.to_hex()),
+        (None, None) => None,
+    }
 }
 
 fn standing_outbound_grant_actor_matches(
@@ -3487,6 +3720,17 @@ impl GateConsentBinding {
                 hash_str(&mut hasher, effect.channel.trim());
                 hash_opt_str(&mut hasher, effect.brief_ref.as_deref());
                 hash_opt_str(&mut hasher, effect.send_ref.as_deref());
+                hash_opt_str(&mut hasher, effect.standing_grant_ref.as_deref());
+                match effect.scoped_mcp_call.as_ref() {
+                    Some(call) => {
+                        hash_bool(&mut hasher, true);
+                        hash_str(&mut hasher, &call.server);
+                        hash_str(&mut hasher, &call.tool);
+                        hash_str(&mut hasher, call.payload_data_class.as_str());
+                        hash_str(&mut hasher, &call.resolved_endpoint);
+                    }
+                    None => hash_bool(&mut hasher, false),
+                }
                 hash_bool(&mut hasher, effect.has_opted_in);
                 hash_bool(&mut hasher, effect.has_permission);
                 hash_str(&mut hasher, effect.policy_risk.as_str());

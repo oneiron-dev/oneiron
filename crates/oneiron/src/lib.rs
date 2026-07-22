@@ -70,6 +70,8 @@ pub mod llm;
 pub mod maintain;
 pub mod off_record;
 pub mod outbound;
+pub(crate) mod outbound_chokepoint;
+pub mod outbound_consent;
 pub mod outbound_grant;
 pub mod outbound_intent_ledger;
 pub(crate) mod overlay_db;
@@ -619,7 +621,7 @@ pub use crate::off_record::{
 };
 pub use crate::outbound::{
     COMMON_OUTBOUND_VERB_KINDS, CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask,
-    ConnectorTaskExecutorError, OUTBOUND_CAPABILITY_MANIFEST_VERSION,
+    ConnectorSendTaskOutcome, ConnectorTaskExecutorError, OUTBOUND_CAPABILITY_MANIFEST_VERSION,
     OUTBOUND_INTENT_SCHEMA_VERSION, OUTBOUND_VERB_FIELD_CONTRACT, OutboundCapabilityManifest,
     OutboundCapabilityPermission, OutboundDeliverySemantics, OutboundDeliverySemanticsKind,
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -632,19 +634,28 @@ pub use crate::outbound::{
     outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
     unsupported_outbound_connector,
 };
+pub use crate::outbound_consent::{
+    AuthorizedRecoveryError, AuthorizedRecoveryReport, DataClass, FrozenMcpPayload,
+    OutboundBindingAuthority, OutboundBindingValidation, OutboundResultSender,
+    OutboundTransportPolicy, OutboundTransportResult, QuarantinedOutboundResult, RawOutboundResult,
+    ScopedMcpAuthorization, ScopedMcpBatchVerdict, ScopedMcpCall, ScopedMcpCallContext,
+    ScopedMcpConsentDecision, ScopedMcpDispatchResult, ScopedMcpEscalationReason,
+    ScopedMcpGrantRef, ScrubbedOutboundResult, StdioSandboxPolicy, evaluate_scoped_mcp_call,
+    evaluate_scoped_mcp_calls, recover_authorized_outbound_intents, scrub_outbound_result,
+};
 pub use crate::outbound_grant::{
-    OUTBOUND_GRANT_BODY_KEYS, OUTBOUND_GRANT_SCHEMA_VERSION, StandingOutboundGrant,
-    StandingOutboundGrantScope, StandingOutboundGrantStatus, decode_standing_outbound_grant_body,
-    encode_standing_outbound_grant_body,
+    OUTBOUND_GRANT_BODY_KEYS, OUTBOUND_GRANT_SCHEMA_VERSION, ScopedMcpGrantMintIntent,
+    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
+    decode_standing_outbound_grant_body, encode_standing_outbound_grant_body,
 };
 pub use crate::outbound_intent_ledger::{
-    FrozenOutboundCall, INTENT_LEDGER_SCHEMA_VERSION, INTENT_LEDGER_VALUE_KEYS,
-    IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerError,
-    IntentLedgerRecord, IntentLedgerResult, IntentRecoveryFailure, IntentRecoveryReport,
-    IntentState, OutboundAuthorizationBinding, OutboundCallClass, OutboundCallRequest,
-    OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome, OutboundSender,
-    OutboundToolDescriptor, classify_outbound_tool, derive_intent_id, execute_outbound_call,
-    intent_ledger_records, recover_outbound_intents,
+    BudgetChargeMarker, BudgetClass, FrozenOutboundCall, INTENT_LEDGER_SCHEMA_VERSION,
+    INTENT_LEDGER_VALUE_KEYS, IntentDispatchResult, IntentEscalation, IntentEscalationReason,
+    IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentRecoveryFailure,
+    IntentRecoveryReport, IntentState, OUTBOUND_BINDING_VERSION, OutboundAuthorizationBinding,
+    OutboundCallClass, OutboundCallRequest, OutboundFailureKind, OutboundSendFailure,
+    OutboundSendOutcome, OutboundToolDescriptor, RecordedOutboundOutcome, classify_outbound_tool,
+    derive_intent_id, intent_ledger_records,
 };
 pub use crate::persona_snapshot::{
     DEFAULT_PERSONA_SNAPSHOT_MAX_CLAIM_ROWS, DEFAULT_PERSONA_SNAPSHOT_MAX_THIRD_PARTY_ROWS,
