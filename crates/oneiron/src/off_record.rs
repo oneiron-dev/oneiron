@@ -507,7 +507,7 @@ impl Vault {
             // refuse anyway (delete-protected engine records).
             if let Some(raw) = self.store.entities.get(wtxn, turn_id.as_bytes())?
                 && let Some(&entity_type) = raw.first()
-                && crate::deletion::is_delete_protected_engine_record(entity_type)
+                && crate::registry::is_delete_protected_engine_record(entity_type)
             {
                 return Err(Error::MaintenanceKindNotWritable(entity_type));
             }

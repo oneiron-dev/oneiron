@@ -3543,8 +3543,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 13,
-        "ONE-1387 pins the current storage ABI at 13 for session-tagged CLAIM bodies",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3578,8 +3578,8 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 13,
-        "ONE-1387 pins the current storage ABI at 13 for session-tagged CLAIM bodies",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3613,8 +3613,8 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
 #[test]
 fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 13,
-        "ONE-1387 pins the current storage ABI at 13 for session-tagged CLAIM bodies",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3648,8 +3648,8 @@ fn open_rejects_abi_v6_vault_after_attempt_queue_manifest_addition() -> Result<(
 #[test]
 fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 13,
-        "ONE-1387 pins the current storage ABI at 13 for session-tagged CLAIM bodies",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3683,8 +3683,8 @@ fn open_rejects_abi_v7_vault_after_attempt_queue_terminal_states() -> Result<()>
 #[test]
 fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 13,
-        "ONE-1387 pins the current storage ABI at 13 for session-tagged CLAIM bodies",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3718,8 +3718,8 @@ fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<
 #[test]
 fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 13,
-        "ONE-1387 pins the current storage ABI at 13 for session-tagged CLAIM bodies",
+        STORAGE_ABI_VERSION, 15,
+        "ONE-1743 pins the current storage ABI at 15 for the IDENTITY_TOPOLOGY_EVENT entity type",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3754,8 +3754,8 @@ fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
 #[test]
 fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 13,
-        "session-tagged CLAIM readers must advertise ABI 13",
+        STORAGE_ABI_VERSION, 15,
+        "current readers must advertise ABI 15 after the IDENTITY_TOPOLOGY_EVENT bump",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -6526,6 +6526,16 @@ fn all_entity_type_prefixes() {
             EntityClassification::Pack,
             TypeByteBand::Companion,
         ),
+        // Maintenance-classified engine kind carved from the 64–79 companion
+        // byte-range: band_of(76) == Companion (byte position), classification
+        // == Maintenance (the door gate). Per byte-space v3 canon row.
+        (
+            "IDENTITY_TOPOLOGY_EVENT",
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::Companion,
+        ),
         (
             "TASK_LIST",
             80,
@@ -6652,6 +6662,20 @@ fn all_entity_type_prefixes() {
             "CONNECTOR_KEY",
             crate::registry::ENTITY_TYPE_CONNECTOR_KEY,
             Some("ck"),
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
+        (
+            "COMM_RECORD",
+            crate::registry::ENTITY_TYPE_COMM_RECORD,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
+        (
+            "SKILL_CONTENT_ANCHOR",
+            crate::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
+            None,
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
@@ -12631,6 +12655,50 @@ fn replicated_door_fails_closed_on_invalid_federation_grant_policy() -> Result<(
         .commit()
         .expect_err("batch replay door must reject role/preset mismatches");
     assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
+    assert_no_entity_state(&vault, &bad_batch)?;
+    Ok(())
+}
+
+/// FED-001: COMM_RECORD (type 136) is a registered maintenance kind, so the
+/// replicated doors admit it — malformed bodies must fail typed at the
+/// boundary instead of persisting bytes the comm projector silently skips.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_door_fails_closed_on_malformed_comm_record_body() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let malformed = b"not a comm record body";
+
+    let bad_txn = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &bad_txn,
+                    crate::registry::ENTITY_TYPE_COMM_RECORD,
+                    test_time_range(1, 1),
+                    2,
+                    malformed,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("txn replay door must reject malformed comm records");
+    assert_eq!(err.kind(), ErrorKind::InvalidCommRecordBody);
+    assert_no_entity_state(&vault, &bad_txn)?;
+
+    let bad_batch = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(
+            &bad_batch,
+            crate::registry::ENTITY_TYPE_COMM_RECORD,
+            test_time_range(1, 1),
+            2,
+            malformed,
+        )
+        .commit()
+        .expect_err("batch replay door must reject malformed comm records");
+    assert_eq!(err.kind(), ErrorKind::InvalidCommRecordBody);
     assert_no_entity_state(&vault, &bad_batch)?;
     Ok(())
 }

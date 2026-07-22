@@ -192,6 +192,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidAccessGrantBody
         | ErrorKind::InvalidChannelIdentityBody
         | ErrorKind::InvalidCounterpartyContactBody
+        | ErrorKind::InvalidCommRecordBody
         | ErrorKind::ProvenanceOnStructuralEdge
         | ErrorKind::CycleDetected
         // A remote ChildOf op violating the single-parent pin is a pure
@@ -212,6 +213,17 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // and continue the batch.
         | ErrorKind::InvalidRedactionReceiptBody
         | ErrorKind::RedactionReceiptDivergence
+        // ARCH-0055 (MS-01 trust perimeter): a remote type-76 blob failing
+        // the pinned identity-topology body validation, or carrying
+        // divergent bytes for an EXISTING event id (immutable single-writer
+        // record — local bytes win, never silent LWW), is a remote
+        // rejection: quarantine the row and continue the batch instead of
+        // aborting it (one bad row must not wedge unrelated valid changes).
+        // Stored-row decode failures surface as `CorruptedIndex` and stay
+        // LOCAL/fail-closed, so this arm can never swallow on-disk
+        // corruption.
+        | ErrorKind::InvalidIdentityTopologyEventBody
+        | ErrorKind::IdentityTopologyEventDivergence
         // ONE-1140: a NEW type-120 receipt failing the origin predicate —
         // bad/transplanted attestation signature, unleased att_client, or a
         // revoked lease binding — is a remote rejection of the op itself:

@@ -98,8 +98,18 @@ sync = [
 # test in `oneiron-server`). No production effect; enabled only by
 # downstream crates' dev-dependencies.
 test-hooks = []
+# Compiles in `Vault::open_unseeded_for_test` — the only way to open a vault
+# without seeding the default policy manifest (the effect-spine oracle needs
+# it). Enabled only via the self dev-dependency below. Even under
+# `--all-features` the production `Vault::open` path always seeds; the unseeded
+# opener is an explicit test-named function, not a silent config field.
+test-support = []
 
 [dev-dependencies]
+# Self dev-dependency that turns on `test-support` for this crate's own tests
+# (the effect-spine oracle needs the unseeded-vault opening seam). Keeps
+# nextest / CI / verify.sh flag-free — no --features needed.
+oneiron = { path = ".", features = ["test-support"] }
 tempfile = "3"
 rand = "0.8"
 proptest = "1"

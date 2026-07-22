@@ -547,8 +547,13 @@ fn reserved_namespace_rejected_public_allowed_internal() {
         validate_predicate("edge.anything_else", false),
         Err(Error::ReservedPredicate { .. })
     );
+    assert_matches!(
+        validate_predicate("skill.scan_verdict", false),
+        Err(Error::ReservedPredicate { .. })
+    );
     // The internal door allows the reserved namespace…
     validate_predicate("edge.provenance", true).expect("door must allow edge.*");
+    validate_predicate("skill.scan_verdict", true).expect("door must allow skill.*");
     // …but grammar still applies through the door.
     assert_matches!(
         validate_predicate("Edge.Provenance", true),
@@ -556,6 +561,99 @@ fn reserved_namespace_rejected_public_allowed_internal() {
     );
     // "edgework.x" is NOT in the reserved namespace (prefix is segment-exact).
     validate_predicate("edgework.tools", false).expect("edgework.* is not reserved");
+}
+
+#[test]
+fn public_skill_claim_lifecycle_is_reserved_and_edge_stays_provenance_owned() -> Result<()> {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let subject = EntityId::now();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+
+    let mut skill_body = ClaimBody::new(
+        crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT,
+        ClaimSubject::Entity(subject),
+        Value::from("door-owned"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    skill_body.source = Some(ClaimSource::Observed);
+    assert_matches!(
+        vault.put_claim(
+            &EntityId::now(),
+            &skill_body,
+            TimeRange { start: 2, end: 2 },
+            2,
+        ),
+        Err(Error::ReservedPredicate { .. })
+    );
+
+    let old_skill_id = EntityId::now();
+    let new_skill_id = EntityId::now();
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.put_reserved_claim_in_txn(
+        &mut wtxn,
+        &old_skill_id,
+        &skill_body,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    vault.put_reserved_claim_in_txn(
+        &mut wtxn,
+        &new_skill_id,
+        &skill_body,
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    wtxn.commit()?;
+
+    assert_matches!(
+        vault.supersede_claim(&new_skill_id, &old_skill_id, 4),
+        Err(Error::ProvenanceClaimLifecycle { .. })
+    );
+    assert_matches!(
+        vault.retract_claim(&old_skill_id, 4),
+        Err(Error::ProvenanceClaimLifecycle { .. })
+    );
+
+    let mut edge_body = ClaimBody::new(
+        "edge.internal_record",
+        ClaimSubject::Entity(subject),
+        Value::from("provenance-owned"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    edge_body.source = Some(ClaimSource::Observed);
+    let old_edge_id = EntityId::now();
+    let new_edge_id = EntityId::now();
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.put_reserved_claim_in_txn(
+        &mut wtxn,
+        &old_edge_id,
+        &edge_body,
+        TimeRange { start: 5, end: 5 },
+        5,
+    )?;
+    vault.put_reserved_claim_in_txn(
+        &mut wtxn,
+        &new_edge_id,
+        &edge_body,
+        TimeRange { start: 6, end: 6 },
+        6,
+    )?;
+    assert_matches!(
+        vault.supersede_reserved_claim_in_txn(&mut wtxn, &new_edge_id, &old_edge_id, 7),
+        Err(Error::ProvenanceClaimLifecycle { .. })
+    );
+    Ok(())
 }
 
 /// ONE-1159 — the write-door chokepoint ([`validate_claim_body_bytes`],

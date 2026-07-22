@@ -65,6 +65,15 @@ pub enum EdgeKind {
     /// Task is assigned to a machine for execution.
     /// Never traversed by PPR (contract `lambda: null`, "Not traversed.").
     AssignedTo = 7,
+    /// Entity was merged into a surviving entity (ARCH-0055 r1). Canonical
+    /// D11 redirect edge — sole source of truth, no body-field twin; the
+    /// source entity is a `merged` redirect shell, never a tombstone.
+    /// Writes are reserved to the identity-topology apply/undo door.
+    MergedInto = 21,
+    /// Entity was split into a head entity (ARCH-0055 r2). Canonical D11
+    /// redirect edge — the original resolves to its head SET. Writes are
+    /// reserved to the identity-topology apply/undo door.
+    SplitInto = 22,
 }
 
 impl EdgeKind {
@@ -102,6 +111,9 @@ impl EdgeKind {
             Self::SetIn => Some(0.7),
             Self::ChildOf => None,
             Self::AssignedTo => None,
+            // Identity-plumbing prior mirroring `supersedes` (0.3).
+            Self::MergedInto => Some(0.3),
+            Self::SplitInto => Some(0.3),
         }
     }
 
@@ -128,6 +140,9 @@ impl EdgeKind {
             17 => Some(Self::FacetOf),
             18 => Some(Self::InWorld),
             19 => Some(Self::SetIn),
+            // Byte 20 is the ONE-1414 same-as parking spot (unregistered).
+            21 => Some(Self::MergedInto),
+            22 => Some(Self::SplitInto),
             _ => None,
         }
     }
@@ -244,7 +259,9 @@ pub(crate) fn edge_value_layout_for_kind(
         | EdgeKind::ClaimOf
         | EdgeKind::ChildOf
         | EdgeKind::AssignedTo
-        | EdgeKind::DerivedFrom => EdgeValueLayout::Structural,
+        | EdgeKind::DerivedFrom
+        | EdgeKind::MergedInto
+        | EdgeKind::SplitInto => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
         | EdgeKind::Supports
@@ -432,6 +449,19 @@ pub(crate) fn parse_strict_edge_record_key(
 
 fn edge_record_error() -> crate::error::Error {
     crate::error::Error::CorruptedIndex("edge record")
+}
+
+/// Rejects edge kinds whose topology writes are reserved to an engine door:
+/// `merged_into` / `split_into` carry redirect-shell lifecycle meaning
+/// derived at read time, so a raw public write could forge or tear shell
+/// state (ARCH-0055). Applied by the public batch edge builders; the
+/// identity-topology door and sync replay materialize through internal ops.
+pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
+    match kind {
+        EdgeKind::MergedInto => Err(crate::error::Error::ReservedEdgeKind("merged_into")),
+        EdgeKind::SplitInto => Err(crate::error::Error::ReservedEdgeKind("split_into")),
+        _ => Ok(()),
+    }
 }
 
 /// Validates a stored edge weight against the contract-pinned range.

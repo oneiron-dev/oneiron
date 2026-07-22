@@ -23,6 +23,7 @@ pub mod code_run;
 pub mod code_sandbox;
 pub mod code_symbol;
 pub mod codebase;
+pub mod comm;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
@@ -58,6 +59,7 @@ pub mod habit;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub mod identity_reputation;
+pub mod identity_topology;
 pub mod inbox;
 pub mod ingest;
 pub mod interlocutor;
@@ -79,6 +81,7 @@ pub mod policy_model;
 pub(crate) mod ppr;
 pub mod prompt;
 pub mod provenance;
+pub mod provider_confidence;
 pub mod psych_profile;
 pub mod receipt;
 pub mod recovery;
@@ -98,6 +101,7 @@ pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod task_verb;
 pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
@@ -273,6 +277,17 @@ pub use crate::codebase::{
     CodebaseSnapshot, HostedMediaHashMatchDecision, HostedMediaHashMatchInput,
     HostedMediaHashMatchProvider, NoopHostedMediaHashMatchProvider, RepoIngestConfig,
     RepoIngestResult, RepoRef, decode_codebase_snapshot, encode_codebase_snapshot,
+};
+pub use crate::comm::{
+    COMM_CLAIM_PREDICATES, COMM_SCHEMA_VERSION, CommClaim, CommClaimValue, CommClearOptOutOutcome,
+    CommError, CommResult, PREDICATE_COMM_LAST_TOUCH, PREDICATE_COMM_OPT_OUT,
+    PREDICATE_COMM_REACHABLE_VIA, PREDICATE_COMM_THREAD_MEMBER, approve_pending_opt_out_clear,
+    count_active_comm_claims, count_active_thread_member_claims,
+    count_contact_record_claim_entries, count_opt_out_clear_receipts,
+    count_pending_comm_consent_gates, count_total_comm_claim_rows, drop_contact_record,
+    is_comm_claim_predicate, materialize_contact_record, record_comm_inbound_stop,
+    record_comm_send_receipt, record_comm_thread_event, request_opt_out_clear,
+    resolve_or_create_comm_party, run_comm_projector,
 };
 pub use crate::companion::{
     COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS,
@@ -512,6 +527,14 @@ pub use crate::identity_reputation::{
     PREDICATE_IDENTITY_REPUTATION_UPDATED_AT, PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
     WARMUP_COLD_DAILY_CAP, WARMUP_WARMING_DAILY_CAP, is_identity_reputation_claim_predicate,
 };
+pub use crate::identity_topology::{
+    AssertDistinctOp, EntityLifecycleState, FacetOp, FacetSpec, IdentityOpEvidence,
+    IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyEvent,
+    IdentityTopologyFold, IdentityTopologyOp, IdentityTopologyRejection, MergeOp,
+    PREDICATE_ENTITY_DISTINCT_FROM, ReassignmentEntry, ReassignmentMap, ReassignmentTarget,
+    SplitOp, StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan, distinct_pair_key,
+    evaluate_transition, fold_identity_topology_log, merge_lifecycle_states,
+};
 pub use crate::inbox::{
     INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,
     INBOX_SUBCLUSTER_MIN_MEMBERS, InboxBulkVerb, InboxBundleResolution, InboxExceptionClass,
@@ -670,6 +693,13 @@ pub use crate::provenance::{
     SupersessionStatus, decode_edge_provenance_body, derive_confirmation_status,
     validate_actor_class,
 };
+#[cfg(feature = "test-support")]
+pub use crate::provider_confidence::write_enrichment_claim;
+pub use crate::provider_confidence::{
+    PREDICATE_ACTOR_CONFIDENCE_PRIOR, count_active_prior_claims,
+    count_active_prior_claims_with_evidence, count_superseded_prior_claims, effective_confidence,
+    is_actor_confidence_prior_claim_predicate, stored_confidence, write_provider_prior,
+};
 pub use crate::psych_profile::{
     PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
     PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
@@ -691,9 +721,11 @@ pub use crate::recovery::{
 };
 pub use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
-    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
-    ENTITY_TYPE_PSYCH_PROFILE, StructuralKindRegistration, TypeByteBand,
+    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COMM_RECORD,
+    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, StructuralKindRegistration,
+    TypeByteBand,
 };
 pub use crate::repo_mutation::{
     REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION, REPO_CONFLICT_OPEN_VALUE_KEYS,
@@ -758,6 +790,10 @@ pub use crate::surface_event::{
     INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
     InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
     SurfaceCounterpartyStamp, SurfaceEvent,
+};
+pub use crate::task_verb::{
+    DEFAULT_TASK_CANCEL_MODE, TASKS_VERBS, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt,
+    TaskCancelTarget, TaskCreateRateLimit, TaskCreateReceipt, TaskCreateSpec, TasksVerb,
 };
 pub use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
 pub use crate::thread_lens::{

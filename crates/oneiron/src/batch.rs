@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::str;
 
 pub mod export;
@@ -31,8 +31,8 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
     ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::Store;
@@ -200,10 +200,9 @@ pub(crate) enum BatchOp {
         /// it `false` and stays subject to the maintenance-kind rejection.
         allow_maintenance: bool,
         /// D17 reserved-namespace gate for type-0 (CLAIM) bodies. `false` on
-        /// every public path; only the `pub(crate)` provenance door
-        /// ([`TxnBatchBuilder::put_reserved_claim`]) and the sync-replay door
-        /// (`put_replicated` on both builders, via `replicated_put_op`) set
-        /// it.
+        /// every public path; crate-private owner doors (including
+        /// [`TxnBatchBuilder::put_reserved_claim`] and the Vault skill-claim
+        /// door) plus sync replay set it.
         allow_reserved_predicate: bool,
         /// Narrow ONE-1736 inlet for an imported SKILL body accepted by the
         /// hub-sync policy door. This changes only the SKILL update validator;
@@ -589,8 +588,17 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
+    fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        if self.validation_error.is_none()
+            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+        {
+            self.validation_error = Some(e);
+        }
+    }
+
     /// Adds a graph edge write operation to the batch.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -618,6 +626,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -637,6 +646,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -658,6 +668,7 @@ impl<'a> BatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -669,7 +680,11 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    // Only ppr/tests.rs still composes an edge through the owned-batch form;
+    // the sync forward-remat healing write moved to the TxnBatchBuilder twin
+    // below to share its mandate-check txn (ARCH-0055), leaving this dead in
+    // non-test builds.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn edge_with_value_fields(
         mut self,
         src: &EntityId,
@@ -699,6 +714,13 @@ impl<'a> BatchBuilder<'a> {
     /// typed at apply time: [`crate::Error::EdgeNotFound`] when the edge
     /// does not exist (the setter never upserts),
     /// [`crate::Error::InvalidEdgeWeight`] outside the contract \[0, 1\].
+    ///
+    /// Reserved redirect-shell kinds (`merged_into` / `split_into`) reject
+    /// typed at the API boundary ([`crate::Error::ReservedEdgeKind`]): a
+    /// weight rewrite IS a topology-effect mutation — PPR drops a
+    /// zero-weight shell edge, severing the shell's mass from its
+    /// canonical head with no type-76 ledger event — so shell edges stay
+    /// writable only through the identity-topology door (ARCH-0055).
     pub fn set_edge_weight(
         mut self,
         src: &EntityId,
@@ -706,6 +728,7 @@ impl<'a> BatchBuilder<'a> {
         tgt: &EntityId,
         weight: f32,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::SetEdgeWeight {
             src: *src,
             kind,
@@ -726,7 +749,10 @@ impl<'a> BatchBuilder<'a> {
     /// time: [`crate::Error::EdgeNotFound`] when the edge does not exist,
     /// [`crate::Error::InvalidVad`] on non-finite/out-of-range components,
     /// and a typed rejection on structural 12-byte edges (they carry no
-    /// VAD).
+    /// VAD). Reserved redirect-shell kinds (`merged_into` / `split_into`)
+    /// reject typed at the API boundary
+    /// ([`crate::Error::ReservedEdgeKind`]), same as every other public
+    /// edge write (ARCH-0055).
     pub fn set_edge_vad(
         mut self,
         src: &EntityId,
@@ -734,6 +760,7 @@ impl<'a> BatchBuilder<'a> {
         tgt: &EntityId,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::SetEdgeVad {
             src: *src,
             kind,
@@ -772,6 +799,7 @@ impl<'a> BatchBuilder<'a> {
 
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::DeleteEdge {
             src: *src,
             kind,
@@ -819,6 +847,10 @@ impl<'a> BatchBuilder<'a> {
             return Err(err);
         }
 
+        // ONE-1741: batch deletes no longer pre-scan for scan-verdict
+        // relocation. The content-hash index row is maintained by
+        // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
+        // content bytes rather than to any departing holder.
         apply_ops(
             &self.vault.store,
             &self.vault.config,
@@ -1191,8 +1223,17 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        if self.validation_error.is_none()
+            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+        {
+            self.validation_error = Some(e);
+        }
+    }
+
     /// Adds a graph edge write operation.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -1212,6 +1253,7 @@ impl<'a> TxnBatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1233,6 +1275,7 @@ impl<'a> TxnBatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1244,10 +1287,37 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Internal edge upsert carrying every value field, mirroring
+    /// [`BatchBuilder::edge_with_value_fields`] for callers composing writes in
+    /// an externally-owned transaction (the ARCH-0055 forward-remat shell-edge
+    /// healing write shares the mandate-check txn). Pushes the INTERNAL
+    /// [`BatchOp::EdgeWithCreatedAt`] — no reserved-kind gate, because the sole
+    /// caller has already proven the ledger mandates this exact shell edge.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn edge_with_value_fields(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        value: EdgeValueFields,
+    ) -> Self {
+        self.ops.push(BatchOp::EdgeWithCreatedAt {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight: value.weight,
+            created_at: value.created_at,
+            vad: value.vad,
+            provenance: value.provenance,
+        });
+        self
+    }
+
     /// Adds an operational VAD rewrite for an EXISTING semantic edge.
     ///
     /// Mirrors [`BatchBuilder::set_edge_vad`] for callers composing writes in
-    /// an externally-owned transaction.
+    /// an externally-owned transaction, including its reserved-kind
+    /// rejection ([`crate::Error::ReservedEdgeKind`], ARCH-0055).
     pub fn set_edge_vad(
         mut self,
         src: &EntityId,
@@ -1255,6 +1325,7 @@ impl<'a> TxnBatchBuilder<'a> {
         tgt: &EntityId,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::SetEdgeVad {
             src: *src,
             kind,
@@ -1266,6 +1337,7 @@ impl<'a> TxnBatchBuilder<'a> {
 
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::DeleteEdge {
             src: *src,
             kind,
@@ -1671,6 +1743,7 @@ pub(crate) fn apply_ops_with_gate_mode(
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
+    let mut materialized_entity_ids = BTreeSet::new();
     let mut text_manifest_checked = false;
     let later_text_coverage_by_op = text_coverage_after_op(&ops);
     let write_policy = if contains_local_claim_put(&ops) && !claim_gate_prechecked {
@@ -1840,6 +1913,13 @@ pub(crate) fn apply_ops_with_gate_mode(
                     )?;
                     had_graph_mutation |= materialized;
                 }
+                // Type-76 rows are never legal participants/actors. Their
+                // dedicated ingest door reconciles after the seq join, so
+                // feeding event ids into the generic participant hook would
+                // enumerate the append-only family once per appended event.
+                if entity_type != crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+                    materialized_entity_ids.insert(id);
+                }
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -1887,6 +1967,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     #[cfg(feature = "sync")]
                     pending_embedding_enqueue_priorities.remove(&id);
                 }
+                materialized_entity_ids.insert(id);
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
                 let keep: HashSet<EntityId> = keep.into_iter().collect();
@@ -2038,6 +2119,15 @@ pub(crate) fn apply_ops_with_gate_mode(
             }
         }
     }
+
+    crate::identity_topology::reconcile_identity_topology_for_materialized_entities_in_txn(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &materialized_entity_ids,
+    )?;
 
     #[cfg(feature = "sync")]
     for (id, token) in &pending_embedding_tokens_written {
@@ -2286,10 +2376,10 @@ fn reject_engine_authored_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(());
     };
-    if matches!(
-        header.entity_type,
-        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG
-    ) {
+    // Single source of truth: the registry owns the delete-protected kind set
+    // (ONE-1741 added the content anchor); the batch/bulk delete door and the
+    // deletion path both consult it, so the guards cannot drift out of sync.
+    if crate::registry::is_delete_protected_engine_record(header.entity_type) {
         return Err(Error::MaintenanceKindNotWritable(header.entity_type));
     }
     Ok(())
@@ -2381,6 +2471,25 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     had_graph_mutation = true;
 
     let (entity_type, occurred, learned_at) = parse_entity_metadata(&entity_record)?;
+    if entity_type == ENTITY_TYPE_SKILL {
+        let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
+        match crate::skill::decode_skill_record(body) {
+            Ok(record) => {
+                if let Some(content_hash) = record.content_hash {
+                    crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+                        store,
+                        wtxn,
+                        id,
+                        content_hash,
+                    )?;
+                }
+            }
+            Err(error)
+                if error.kind() == ErrorKind::InvalidSkillBody
+                    && crate::skill::is_legacy_opaque_skill_body(body) => {}
+            Err(error) => return Err(error),
+        }
+    }
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,
@@ -2780,12 +2889,16 @@ fn apply_put(
         crate::channel_identity::validate_channel_identity_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
+    } else if entity_type == ENTITY_TYPE_COMM_RECORD {
+        crate::comm::validate_comm_record_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
         crate::psych_profile::validate_psych_profile_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
+    } else if entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         new_skill_record = Some(crate::skill::decode_skill_record(data)?);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
@@ -2834,8 +2947,22 @@ fn apply_put(
     };
 
     let mut body_changed = true;
+    let mut previous_skill_content_hash = None;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
+        if old_type == ENTITY_TYPE_SKILL {
+            let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+            previous_skill_content_hash = match crate::skill::decode_skill_record(prior_body) {
+                Ok(record) => record.content_hash,
+                Err(error)
+                    if error.kind() == ErrorKind::InvalidSkillBody
+                        && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+        }
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -2993,6 +3120,15 @@ fn apply_put(
     payload.extend_from_slice(data);
 
     store.entities.put(wtxn, id.as_bytes(), &payload)?;
+    if let Some(record) = new_skill_record.as_ref() {
+        crate::skill_hub::maintain_skill_content_hash_index_for_put(
+            store,
+            wtxn,
+            &id,
+            previous_skill_content_hash,
+            record.content_hash,
+        )?;
+    }
     if let Some(body) = decoded_claim_body.as_ref() {
         crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
             store, wtxn, &id, body, learned_at,

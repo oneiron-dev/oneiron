@@ -16,8 +16,6 @@ use crate::batch::{
 use crate::config::VaultConfig;
 use crate::deletion::HydratedShortIdDeletion;
 use crate::deletion::HydratedShortIdDeletionSource;
-#[cfg(test)]
-use crate::deletion::ReplayedTombstoneOutcome;
 use crate::edge::{EdgeActorClass, EdgeInfo, EdgeKind, parse_strict_edge_record};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -217,8 +215,9 @@ impl Vault {
     /// the top of [`crate::store`]: `Store::open` runs the storage gates
     /// (`vault_meta` created first → ABI gate → schema gate → DB-manifest set
     /// → DB opens → HNSW/dimension preflight → embedding-model preflight),
-    /// then this function runs the final analyzer / BM25F text-index
-    /// handshake against `vault_meta`. The
+    /// then this function runs the analyzer / BM25F text-index handshake and
+    /// the self-contained SKILL content-hash migration against `vault_meta`.
+    /// The
     /// [`VaultConfig::skip_text_index_manifest_check`] escape hatch bypasses
     /// only that final handshake (and marks a populated text index untrusted
     /// so text reads/writes fail closed until
@@ -227,6 +226,34 @@ impl Vault {
     /// Every gate fails closed: the first failing gate returns its typed
     /// [`Error`] and no usable `Vault` handle is constructed.
     pub fn open(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
+        // Production open always seeds the default policy manifest — the seed
+        // decision is a compile-time `true` here, not a config field, so no
+        // consumer build (including `--all-features`) can open a vault that
+        // skips the default consent/policy gate.
+        Self::open_seeded(path, config, true)
+    }
+
+    /// Opens a vault WITHOUT seeding the default policy manifest. TEST-SUPPORT
+    /// ONLY — never call this from production code. It is compiled only under
+    /// the `test-support` feature (enabled via this crate's own dev-dependency
+    /// for the effect-spine integration oracle), hidden from the public docs,
+    /// and named so it cannot be reached by accident. The production `open`
+    /// above hardcodes seeding, so the normal, default way to open a vault can
+    /// never skip the policy/consent gate; this explicit, doc-hidden, test-named
+    /// opener is the only way to obtain an unseeded vault, and only when the test
+    /// feature is deliberately enabled — the standard Rust `test-util`-feature
+    /// pattern (cf. tokio's `test-util`).
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn open_unseeded_for_test(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
+        Self::open_seeded(path, config, false)
+    }
+
+    fn open_seeded(
+        path: impl AsRef<Path>,
+        config: VaultConfig,
+        seed_default_manifest: bool,
+    ) -> Result<Self> {
         if config.dimensions == 0 {
             return Err(Error::InvalidConfig(
                 "dimensions must be greater than zero".to_owned(),
@@ -268,7 +295,11 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
-        if store.created_new_vault() {
+        // Seed the default policy manifest for a fresh vault unless this is the
+        // test-only open_unseeded_for_test path (seed_default_manifest = false).
+        // Production `open` passes `true`, so seeding is never skippable through
+        // the public API.
+        if store.created_new_vault() && seed_default_manifest {
             seed_default_policy_manifest(&store, &config, &analyzer, text_index_trusted)?;
         }
         // The reserved system-agent-id occupancy census must complete BEFORE
@@ -286,7 +317,7 @@ impl Vault {
             wtxn.commit()?;
         }
 
-        Ok(Self {
+        let vault = Self {
             store,
             config,
             analyzer,
@@ -295,7 +326,13 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
-        })
+        };
+        // Rebuilds the content-hash → holder index (import/sync dedup) when it
+        // is missing or stale; completes before any caller receives a usable
+        // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
+        // anchor to the content bytes, so only the holder index is rebuilt.
+        crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        Ok(vault)
     }
 
     /// Registers the production window manager as the live-window delete
@@ -688,7 +725,11 @@ impl Vault {
     ///
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist
     /// (the setter never upserts); [`Error::InvalidEdgeWeight`] outside the
-    /// contract \[0, 1\]. PPR caches for the edge endpoints are invalidated
+    /// contract \[0, 1\]; [`Error::ReservedEdgeKind`] on the redirect-shell
+    /// kinds (`merged_into` / `split_into`) — a weight rewrite is a
+    /// topology-effect mutation (PPR drops a zero-weight shell edge), so
+    /// shell edges move only through the identity-topology door
+    /// (ARCH-0055). PPR caches for the edge endpoints are invalidated
     /// exactly like a plain edge write.
     pub fn set_edge_weight(
         &self,
@@ -715,7 +756,9 @@ impl Vault {
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist;
     /// [`Error::InvalidVad`] on non-finite/out-of-range components; a typed
     /// rejection on structural 12-byte kinds (the contract layout table —
-    /// structural edges carry no VAD).
+    /// structural edges carry no VAD); [`Error::ReservedEdgeKind`] on the
+    /// redirect-shell kinds (`merged_into` / `split_into`), same as every
+    /// other public edge write (ARCH-0055).
     pub fn set_edge_vad(
         &self,
         src: &EntityId,
@@ -783,6 +826,12 @@ impl Vault {
 
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
+        // Reserved redirect-shell kinds (merged_into / split_into) are writable
+        // and deletable ONLY through the identity-topology apply/undo door — a
+        // public delete could tear a real shell edge without a ledger
+        // counter-event (ARCH-0055). Mirrors the batch-builder guard, which this
+        // convenience door bypasses (direct store delete, not a staged op).
+        crate::edge::validate_public_edge_kind(kind)?;
         let key_out = Store::encode_edge_key(src, kind, tgt);
         let key_in = Store::encode_edge_key(tgt, kind, src);
 

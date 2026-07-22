@@ -51,8 +51,8 @@
 //!    model → [`InvalidConfig`].
 //! 7. `migrate_temporal_long_intervals_if_needed`
 //!    (`hnsw_meta["temporal_long_intervals_schema_version"]`), then the
-//!    persist-if-missing writes for the HNSW config / model id validated
-//!    above (each re-checks under its own write transaction).
+//!    persist-if-missing writes for the HNSW config / model id validated above
+//!    (each re-checks under its own write transaction).
 //!
 //! `Vault::open` — after `Store::open` returns:
 //!
@@ -65,10 +65,15 @@
 //!    → [`IncompatibleAnalyzer`]; a diverged BM25F field schema →
 //!    [`Bm25FieldSchemaChanged`]. The
 //!    [`VaultConfig::skip_text_index_manifest_check`] escape hatch sits HERE
-//!    and only here: it bypasses this final gate so
+//!    and only here: it bypasses this analyzer gate so
 //!    `MaintenanceBuilder::clear_text_index` can run; on a populated index it
 //!    marks the text index untrusted so text reads/writes fail closed with
 //!    `Error::CorruptedIndex` until the clear commits.
+//! 9. The independent skill content-hash index sentinel migration
+//!    (`vault_meta["skill_hub/content_hash_index_schema_version"]`) runs after
+//!    the Vault claim doors are assembled, so pre-global scan verdicts can be
+//!    reconciled transactionally. It still finishes before `Vault::open`
+//!    returns a handle.
 //!
 //! # Compat-key homes (ONE-1097 owner decision: documented, not consolidated)
 //!
@@ -128,6 +133,18 @@ use crate::registry::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v15 (ONE-1743): IDENTITY_TOPOLOGY_EVENT was registered as a persistent,
+/// delete-protected maintenance entity type byte 76 — the engine-authored
+/// merge/split ledger (ARCH-0055). v14 readers do not know this persistent
+/// entity kind and would not protect it from deletion, so v14 vaults fail closed
+/// at the ABI gate — there is no silent migration; rebuild the vault.
+///
+/// v14 (ONE-1741): SKILL_CONTENT_ANCHOR was registered as persistent maintenance
+/// entity type byte 138 — the immortal subject that content-global scan verdicts
+/// anchor to. v13 readers do not know this persistent entity kind and would not
+/// protect it from deletion, so v13 vaults fail closed at the ABI gate — there is
+/// no silent migration; rebuild the vault.
+///
 /// v13 (ONE-1387): type-0 CLAIM bodies gained the optional `sess` key for
 /// actor-bound session review bundles. v12 readers reject these bodies, so
 /// vaults carrying session-tagged claims must fail closed at the ABI gate.
@@ -172,7 +189,7 @@ pub const MAX_DBS: u32 = 32;
 /// `GATE_DECISION_LEDGER_VERSION`, `ATTEMPT_RECORD_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 13;
+pub const STORAGE_ABI_VERSION: u16 = 15;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";

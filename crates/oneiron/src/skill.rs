@@ -997,7 +997,10 @@ impl Vault {
                 self.validate_local_fork_parent(id, &parent)?;
             }
         }
-        self.put_entity(id, ENTITY_TYPE_SKILL, occurred, learned_at, &data)
+        let mut wtxn = self.store.env.write_txn()?;
+        self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?;
+        wtxn.commit()?;
+        Ok(())
     }
 
     fn validate_local_fork_parent(&self, fork_id: &EntityId, parent: &EntityId) -> Result<()> {
@@ -1076,15 +1079,17 @@ impl Vault {
         );
         fork.forked_from = Some(*parent_id);
         let data = encode_skill_record(&fork)?;
-        self.batch()
-            .put(fork_id, ENTITY_TYPE_SKILL, occurred, learned_at, &data)
+        let mut wtxn = self.store.env.write_txn()?;
+        self.apply_skill_record_body(&mut wtxn, fork_id, occurred, learned_at, data, false)?;
+        self.batch_in()
             .edge(
                 fork_id,
                 EdgeKind::DerivedFrom,
                 parent_id,
                 EdgeKind::DerivedFrom.default_weight().unwrap_or(0.2),
             )
-            .commit()?;
+            .apply(&mut wtxn)?;
+        wtxn.commit()?;
         Ok(fork)
     }
 
@@ -1251,6 +1256,11 @@ impl Vault {
         data: Vec<u8>,
         hub_sync_imported: bool,
     ) -> Result<()> {
+        // ONE-1741: a content-hash change no longer relocates scan verdicts.
+        // Verdicts anchor to the immortal content bytes, so the departing hash's
+        // verdicts stay discoverable on their own anchor and this holder simply
+        // stops carrying that hash (the content-hash index is maintained by the
+        // batch put/delete paths).
         apply_ops(
             &self.store,
             &self.config,
@@ -1270,7 +1280,8 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        Ok(())
     }
 }
 

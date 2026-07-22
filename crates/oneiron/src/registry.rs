@@ -36,6 +36,14 @@ pub const ENTITY_TYPE_CODE_SYMBOL: u8 = 84;
 /// per version. A blob artifact is not a code artifact — kind = shape
 /// (DEC-0005 §7), so CODE_ARTIFACT (83) reuse was rejected.
 pub const ENTITY_TYPE_BLOB_ARTIFACT: u8 = 85;
+/// ARCH-0055 identity-topology ledger event (ONE-1743, owner-ruled seat;
+/// byte pinned by the byte-space v3 canon row shipping in the docs lane).
+/// Engine-authored maintenance record written ONLY by the identity-topology
+/// apply/undo door; public puts are rejected with
+/// `MaintenanceKindNotWritable` (D5/MODEL pattern) regardless of the byte's
+/// band, and sync ingest rides the ARCH-0023b fail-closed single-writer
+/// stream class.
+pub const ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT: u8 = 76;
 pub const ENTITY_TYPE_REDACTION_AUDIT: u8 = 120;
 /// MODEL substrate entity (ONE-1138, ratified): engine-authored maintenance
 /// kind — "written when a substrate first appears in a write path". Public
@@ -88,6 +96,19 @@ pub const ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT: u8 = 134;
 /// with `MaintenanceKindNotWritable` (structural "no anonymous connectors").
 /// Short-ID prefix `ck`.
 pub const ENTITY_TYPE_CONNECTOR_KEY: u8 = 135;
+/// ARCH-0035 communication projector record. Engine-authored maintenance
+/// kind for source events, consent transitions, ruling receipts, and the
+/// rebuildable contact-view cache.
+pub const ENTITY_TYPE_COMM_RECORD: u8 = 136;
+/// ONE-1741 SKILL_CONTENT_ANCHOR entity. Engine-authored maintenance kind: a
+/// deterministic per-content-hash anchor that owns `skill.scan_verdict`
+/// reserved claims, so scan verdicts key on the immortal content bytes rather
+/// than any submitting SKILL holder (which can depart). Its 16-byte id is
+/// derived from the 32-byte content hash (see
+/// `skill_hub::skill_content_anchor_entity_id`), never `EntityId::now()`, so
+/// two nodes ingesting the same bytes converge on one anchor. Public puts of
+/// this byte are rejected with `MaintenanceKindNotWritable`.
+pub const ENTITY_TYPE_SKILL_CONTENT_ANCHOR: u8 = 138;
 
 /// Registry classification mirroring the contracts.ts §1
 /// `EntityClassification` enum: `"semantic" | "core" | "pack" | "maintenance"`.
@@ -102,7 +123,8 @@ pub const ENTITY_TYPE_CONNECTOR_KEY: u8 = 135;
 /// StructuralKinds. CHANNEL_IDENTITY=131 and COUNTERPARTY_CONTACT=132 are
 /// engine-authored maintenance kinds for OF-347; OUTBOUND_GRANT=133 is the
 /// OF-367 standing consent-grant substrate; CONNECTOR_KEY=135 is the OF-277
-/// connector-key registry substrate.
+/// connector-key registry substrate; COMM_RECORD=136 is the ARCH-0035
+/// communication projection substrate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityClassification {
     /// `"semantic"` — CLAIM, the single subject·predicate·value type.
@@ -143,7 +165,7 @@ pub enum TypeByteBand {
     /// reserved, DIAGNOSTIC=126 reserved, FEDERATION_KEY_ENVELOPE=127
     /// reserved, ACCESS_GRANT=128, PSYCH_PROFILE=129, SUSPICIOUS_WAKE=130
     /// reserved, CHANNEL_IDENTITY=131, COUNTERPARTY_CONTACT=132,
-    /// OUTBOUND_GRANT=133, CONNECTOR_KEY=135, runtime-induced and
+    /// OUTBOUND_GRANT=133, CONNECTOR_KEY=135, COMM_RECORD=136, runtime-induced and
     /// tenant-custom kinds).
     InducedDynamicMaintenance,
 }
@@ -197,7 +219,7 @@ pub const fn band_of(type_byte: u8) -> TypeByteBand {
 /// DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127 reserved,
 /// ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130 reserved,
 /// CHANNEL_IDENTITY = 131, COUNTERPARTY_CONTACT = 132, OUTBOUND_GRANT = 133,
-/// CONNECTOR_KEY = 135) are not StructuralKinds either. The reserved bytes
+/// CONNECTOR_KEY = 135, COMM_RECORD = 136) are not StructuralKinds either. The reserved bytes
 /// are unregistered. Only registered `core` and `pack` kinds qualify.
 /// Unregistered bytes return `false` here AND remain rejected by
 /// `validate_entity_type` on every write path (unchanged behavior).
@@ -206,6 +228,28 @@ pub fn is_structural_kind(type_byte: u8) -> bool {
     matches!(
         entity_type_registry_entry(type_byte).map(|entry| entry.classification),
         Some(EntityClassification::Core | EntityClassification::Pack)
+    )
+}
+
+/// Entity kinds the engine refuses to delete on every door (targeted, batch, or
+/// replayed tombstone). `POLICY_MANIFEST` and `AUTHORITY_LOG` are authority-bearing
+/// control-plane records; `SKILL_CONTENT_ANCHOR` (ONE-1741) is the immortal subject
+/// that content-global scan verdicts hang off — deleting it would strand every
+/// verdict for those content bytes. `IDENTITY_TOPOLOGY_EVENT` (ARCH-0055, type 76)
+/// is the engine-authored merge/split ledger: dropping an event while its shell
+/// edges survive would orphan the redirect (undo returns `EntityNotFound` and the
+/// shell wedges), and the family's only reversal is an appended counter-event, never
+/// a row deletion. The deletion/batch engine consults this neutral
+/// registry predicate instead of naming the protected kinds itself, so the protected
+/// set stays owned by the registry and cannot drift between delete doors.
+#[must_use]
+pub(crate) fn is_delete_protected_engine_record(entity_type: u8) -> bool {
+    matches!(
+        entity_type,
+        ENTITY_TYPE_POLICY_MANIFEST
+            | ENTITY_TYPE_AUTHORITY_LOG
+            | ENTITY_TYPE_SKILL_CONTENT_ANCHOR
+            | ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
     )
 }
 
@@ -363,6 +407,16 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         classification: EntityClassification::Pack,
         band: TypeByteBand::Companion,
     },
+    // Maintenance-classified by owner ruling despite sitting in the 64–79
+    // band (byte-space v3 canon row rides the docs lane): classification —
+    // not band — drives the public-write rejection.
+    EntityTypeRegistryEntry {
+        kind: "IDENTITY_TOPOLOGY_EVENT",
+        type_byte: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::Companion,
+    },
     EntityTypeRegistryEntry {
         kind: "TASK_LIST",
         type_byte: ENTITY_TYPE_TASK_LIST,
@@ -492,6 +546,20 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         classification: EntityClassification::Maintenance,
         band: TypeByteBand::InducedDynamicMaintenance,
     },
+    EntityTypeRegistryEntry {
+        kind: "COMM_RECORD",
+        type_byte: ENTITY_TYPE_COMM_RECORD,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
+    },
+    EntityTypeRegistryEntry {
+        kind: "SKILL_CONTENT_ANCHOR",
+        type_byte: ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
+    },
 ];
 
 /// Returns the short ID prefix for an entity type byte.
@@ -525,40 +593,32 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
         .ok_or(crate::error::Error::InvalidEntityType(entity_type))
 }
 
-/// First byte of the induced / dynamic / maintenance type-byte band
-/// (contracts.ts `typeByteBands` row `120+`). Registered kinds in this band
-/// (REDACTION_AUDIT = 120, MODEL = 121, AUTHORITY_LOG = 122,
-/// POLICY_MANIFEST = 123, FEDERATION_GRANT = 124, CONNECTION_RECORD = 125
-/// reserved, DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127
-/// reserved, ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130
-/// reserved, CHANNEL_IDENTITY = 131, COUNTERPARTY_CONTACT = 132,
-/// OUTBOUND_GRANT = 133, CONNECTOR_KEY = 135) are engine-authored
-/// maintenance records or reserved maintenance substrates.
-/// Reserved bytes are not registered yet.
-pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
-
 /// Validates an entity type byte for PUBLIC write paths (D5).
 ///
-/// Genuinely unknown bytes fail with [`Error::InvalidEntityType`]; registered
-/// maintenance-band kinds (type byte ≥ 120: REDACTION_AUDIT, MODEL,
-/// POLICY_MANIFEST, FEDERATION_GRANT, ACCESS_GRANT, PSYCH_PROFILE,
-/// CHANNEL_IDENTITY, COUNTERPARTY_CONTACT, OUTBOUND_GRANT, CONNECTOR_KEY)
-/// fail with the distinct
-/// [`Error::MaintenanceKindNotWritable`]. Reserved-unregistered
-/// maintenance bytes (AUTHORITY_LOG = 122, CONNECTION_RECORD = 125,
+/// Genuinely unknown bytes fail with [`Error::InvalidEntityType`]; every
+/// REGISTERED `Maintenance`-classified kind fails with the distinct
+/// [`Error::MaintenanceKindNotWritable`] — the maintenance band (≥ 120:
+/// REDACTION_AUDIT, MODEL, POLICY_MANIFEST, FEDERATION_GRANT, ACCESS_GRANT,
+/// PSYCH_PROFILE, CHANNEL_IDENTITY, COUNTERPARTY_CONTACT, OUTBOUND_GRANT,
+/// PERSONA_SNAPSHOT_EXPORT, CONNECTOR_KEY, COMM_RECORD, SKILL_CONTENT_ANCHOR)
+/// plus the classification-routed IDENTITY_TOPOLOGY_EVENT (76): the
+/// classification, not the band, is what makes a kind engine-authored.
+/// Reserved-unregistered maintenance bytes (CONNECTION_RECORD = 125,
 /// DIAGNOSTIC = 126, FEDERATION_KEY_ENVELOPE = 127, SUSPICIOUS_WAKE = 130)
 /// still fail with [`Error::InvalidEntityType`] so API-boundary error codes
 /// never conflate "unknown byte" with "reserved maintenance kind".
 /// Engine-internal writers (the REDACTION_AUDIT receipt writer, the MODEL
 /// get-or-create door in `vault.rs`, policy-manifest resolver fixtures,
-/// federation-grant substrate writers, and PsychProfile snapshot writer)
-/// bypass this gate.
+/// federation-grant substrate writers, the PsychProfile snapshot writer, and
+/// the identity-topology apply/undo door) bypass this gate via
+/// `allow_maintenance`.
 ///
 /// [`Error::InvalidEntityType`]: crate::error::Error::InvalidEntityType
 /// [`Error::MaintenanceKindNotWritable`]: crate::error::Error::MaintenanceKindNotWritable
 pub(crate) fn validate_public_entity_type(entity_type: u8) -> crate::error::Result<()> {
-    validate_entity_type(entity_type)?;
-    if entity_type >= MAINTENANCE_TYPE_BYTE_BAND_START {
+    let entry = entity_type_registry_entry(entity_type)
+        .ok_or(crate::error::Error::InvalidEntityType(entity_type))?;
+    if entry.classification == EntityClassification::Maintenance {
         return Err(crate::error::Error::MaintenanceKindNotWritable(entity_type));
     }
     Ok(())

@@ -527,6 +527,61 @@ fn federated_admission_rejects_maintenance_band_non_claim_entities() {
 }
 
 #[test]
+fn federated_admission_rejects_classification_routed_maintenance_kinds() {
+    // ARCH-0055 / MS-01: IDENTITY_TOPOLOGY_EVENT (76) is
+    // Maintenance-CLASSIFIED inside the Companion BAND, so the pre-fix
+    // band-only check admitted a member/guest-authored type-76 blob —
+    // single-writer ledger authority handed to a federated peer.
+    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xA2));
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote", &window_key);
+    insert_entity(
+        &doc,
+        entity_id(0xA3),
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        b"guest-forged-topology-event",
+    );
+    doc.commit();
+    let update = doc.export(ExportMode::all_updates()).unwrap();
+
+    let err = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect_err("classification-routed maintenance kinds must fail closed");
+    assert!(matches!(
+        err,
+        Error::MaintenanceKindNotWritable(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+    ));
+}
+
+#[test]
+fn federated_admission_rejects_reserved_edge_kinds() {
+    // The edges map was copied byte-for-byte pre-fix: a guest could inject
+    // (X, merged_into, Y) and materialization would derive a real redirect
+    // shell with no type-76 event behind it.
+    for kind in [EdgeKind::MergedInto, EdgeKind::SplitInto] {
+        let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xA2));
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("remote", &window_key);
+        insert_edge(&doc, entity_id(0xB1), kind, entity_id(0xB2));
+        doc.commit();
+        let update = doc.export(ExportMode::all_updates()).unwrap();
+
+        let err = admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Guest,
+        )
+        .expect_err("reserved-kind federated edges must fail closed");
+        assert!(matches!(err, Error::ReservedEdgeKind(_)));
+    }
+}
+
+#[test]
 fn federated_admission_rejects_foreign_authority_log() {
     let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xB2));
     let local = authority_genesis_entry(0x51);

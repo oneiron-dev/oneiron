@@ -1512,3 +1512,72 @@ fn disclosure_stamp_rides_emit_receipts_and_reads_optionally() {
     let read_back = legacy.context_receipt_fields().expect("field-set reads");
     assert_eq!(read_back.disclosure_stamp, None);
 }
+
+/// MS-01 (ARCH-0055) SPEC-CONTRADICTION: the earlier perimeter regression
+/// claimed out-of-window rows must not charge the cap. That contract was the
+/// bug: it capped candidates, not WORK, and allowed an unbounded ledger walk.
+/// The ruled security property caps every visited row. Because UUID mint
+/// order is not `at` order, the bounded scan can starve the older-minted
+/// in-window receipt below; an `at`-ordered index or cursor pagination is a
+/// separate deferred design item.
+#[test]
+fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+    };
+
+    let dir = tempfile::tempdir()?;
+    let mut config = test_config();
+    config.map_size = 256 * 1024 * 1024;
+    let vault = Vault::open(dir.path(), config)?;
+    for seed in [0x61_u8, 0x62, 0x63, 0x64] {
+        vault.put_entity(
+            &entity(seed),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+    let merge = |sources: Vec<EntityId>, survivor: EntityId| {
+        IdentityTopologyOp::Merge(MergeOp {
+            sources,
+            survivor,
+            evidence: IdentityOpEvidence::default(),
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        })
+    };
+
+    // The in-window receipt has the OLDEST mint id (scanned LAST).
+    vault.apply_identity_topology_op(
+        &merge(vec![entity(0x62)], entity(0x61)),
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        1_000,
+    )?;
+
+    // Newer-minted, BACKDATED, parked events — more than the scan cap.
+    let proposed = IdentityOpWrite {
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Proposed,
+        confidence: 1.0,
+        actor: None,
+    };
+    let flood = merge(vec![entity(0x64)], entity(0x63));
+    vault.with_write_txn(|wtxn| {
+        for _ in 0..=MAX_RECEIPT_QUERY_SCAN {
+            vault.apply_identity_topology_op_in_txn(wtxn, &flood, &proposed, 10)?;
+        }
+        Ok(())
+    })?;
+
+    let receipts = vault.receipts(
+        ReceiptQuery::new(10)
+            .with_kind(ReceiptKind::IdentityLifecycle)
+            .with_time_bounds(Some(500), Some(2_000)),
+    )?;
+    assert!(
+        receipts.is_empty(),
+        "the visited-row work cap must stop before an older-minted receipt hidden by the flood"
+    );
+    Ok(())
+}
