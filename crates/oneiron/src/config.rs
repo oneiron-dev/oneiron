@@ -2,6 +2,9 @@
 
 use std::path::PathBuf;
 
+/// Default hard byte budget for one live off-record session overlay.
+pub const DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+
 /// HNSW configuration values.
 ///
 /// The distance metric and index structure are fixed by the storage contract
@@ -107,6 +110,18 @@ pub struct VaultConfig {
     /// callers that go through the same internal trust gate)
     /// returns [`crate::Error::CorruptedIndex`] until the clear commits.
     pub skip_text_index_manifest_check: bool,
+    /// Master kill-switch for entering off-record sessions. When disabled,
+    /// enter fails closed before a registry entry or overlay is created.
+    pub off_record_enabled: bool,
+    /// Hard in-memory byte budget applied to each off-record session overlay.
+    ///
+    /// This budget is per-session and independent: nothing in the engine caps
+    /// the number of concurrent off-record sessions, so aggregate overlay
+    /// memory grows linearly with the concurrent session count and is NOT
+    /// bounded by `DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES` (or this value)
+    /// alone. Hosts that admit many simultaneous sessions must cap concurrency
+    /// themselves to bound total overlay memory.
+    pub off_record_overlay_budget_bytes: usize,
 }
 
 /// Text analyzer configuration. Kept minimal in v1 — the full analyzer
@@ -293,6 +308,8 @@ impl VaultConfig {
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
             skip_text_index_manifest_check: false,
+            off_record_enabled: true,
+            off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
         }
     }
 
@@ -309,6 +326,8 @@ impl VaultConfig {
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
             skip_text_index_manifest_check: false,
+            off_record_enabled: true,
+            off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
         }
     }
 }

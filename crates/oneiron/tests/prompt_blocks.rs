@@ -5,10 +5,30 @@ use std::io;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback,
     EIRI_V3_PROMPT_RELATIVE_PATH, LlmMessage, LlmMessageRole, LlmRequest, LlmToolSpec, ModelId,
-    ModelLocality, ModelTierRef, OffRecordBackendClass, PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION,
-    ResponseFormat, SessionPromptParts, TierPrecedence, build_eiri_session_request,
-    off_record_context_marker, resolve_prompt, workspace_prompt_package_root,
+    ModelLocality, ModelTierRef, OffRecordBackendClass, OffRecordMode,
+    PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, ResponseFormat, SessionPromptParts, TierPrecedence,
+    build_eiri_session_request, resolve_prompt, workspace_prompt_package_root,
 };
+
+const HOST_OFF_RECORD_SESSION_MARKER_LINE: &str = "This session is OFF-RECORD: nothing said here is written to memory, and the transcript is deleted when the session closes. Outbound actions and commitments are disabled while off-record; taking an action requires exiting off-record mode. The user may explicitly promote a single turn into memory.";
+const HOST_LOCAL_DISCLOSURE_LINE: &str = "Evaporation is real on this backend: inference is local, nothing leaves this device, and nothing is retained after close.";
+const HOST_REMOTE_PROVIDER_DISCLOSURE_LINE: &str = "This engine persists nothing after close, but inference transits a cloud provider; the provider's own retention policy applies to what crossed its API.";
+
+fn host_off_record_context_marker(
+    mode: OffRecordMode,
+    backend: OffRecordBackendClass,
+) -> Option<String> {
+    if mode == OffRecordMode::OnRecord {
+        return None;
+    }
+    let disclosure_line = match backend {
+        OffRecordBackendClass::Local => HOST_LOCAL_DISCLOSURE_LINE,
+        OffRecordBackendClass::RemoteProvider => HOST_REMOTE_PROVIDER_DISCLOSURE_LINE,
+    };
+    Some(format!(
+        "{HOST_OFF_RECORD_SESSION_MARKER_LINE}\n{disclosure_line}"
+    ))
+}
 
 const REQUIRED_WELLBEING_CONSENT_LINES: [&str; 5] = [
     "This is a capability grant, not a content ban.",
@@ -266,7 +286,11 @@ fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::err
         "soul persona line\n",
     )?;
 
-    let marker = off_record_context_marker(OffRecordBackendClass::RemoteProvider);
+    let marker = host_off_record_context_marker(
+        OffRecordMode::OffRecord,
+        OffRecordBackendClass::RemoteProvider,
+    )
+    .expect("off-record mode requires a host marker");
     let stamped = build_eiri_session_request(
         sample_request(),
         &package_root,
@@ -284,7 +308,7 @@ fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::err
     assert!(soul_index < section_index);
     assert!(system.contains(&marker));
     assert!(
-        system.contains(OffRecordBackendClass::RemoteProvider.disclosure_line()),
+        system.contains(HOST_REMOTE_PROVIDER_DISCLOSURE_LINE),
         "backend-relative disclosure line must ride the marker"
     );
 
@@ -294,7 +318,10 @@ fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::err
         SessionPromptParts {
             activated_memory: Vec::new(),
             history: Vec::new(),
-            off_record_marker: None,
+            off_record_marker: host_off_record_context_marker(
+                OffRecordMode::OnRecord,
+                OffRecordBackendClass::RemoteProvider,
+            ),
         },
     )?;
     assert!(!system_text(&plain.request).contains("# Off-Record Session"));

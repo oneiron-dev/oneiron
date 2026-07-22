@@ -36,7 +36,6 @@ use crate::provenance::downgrade_edge_to_bare;
 use crate::provenance::restamp_edge_flags;
 use crate::provenance::winner_index;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::unix_seconds_now;
 
@@ -2716,26 +2715,8 @@ impl Vault {
         learned_at: u64,
         body: &[u8],
     ) -> Result<()> {
-        // Shared header helper (ONE-1140): the attestation transcript signs
-        // EXACTLY these stored header bytes — one assembly point, no drift.
-        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-        payload.extend_from_slice(&crate::deletion::receipt_envelope_header(learned_at));
-        payload.extend_from_slice(body);
-        self.store
-            .entities
-            .put(wtxn, receipt_id.as_bytes(), &payload)?;
-
-        let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, receipt_id);
-        self.store.type_index.put(wtxn, &type_key, &[])?;
-
-        let occurred_start_key = Store::encode_temporal_key(learned_at, receipt_id);
-        self.store
-            .temporal_occurred_start
-            .put(wtxn, &occurred_start_key, &[])?;
-
-        let learned_key = Store::encode_temporal_key(learned_at, receipt_id);
-        self.store.temporal_learned.put(wtxn, &learned_key, &[])?;
-        Ok(())
+        crate::off_record::FloorWrites::new(&self.store)
+            .append_redaction_audit(wtxn, receipt_id, learned_at, body)
     }
 
     fn write_redaction_receipt_and_sweep_in_txn(

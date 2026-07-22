@@ -28,6 +28,8 @@ fn test_config() -> VaultConfig {
         text_analyzer: crate::config::TextAnalyzerConfig::default(),
         dict_search_paths: Vec::new(),
         skip_text_index_manifest_check: false,
+        off_record_enabled: true,
+        off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
     }
 }
 

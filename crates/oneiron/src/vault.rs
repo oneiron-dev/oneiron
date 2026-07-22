@@ -44,6 +44,104 @@ use crate::{
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 
+/// File name of the vault's advisory cross-process open lock, created inside the
+/// vault directory alongside LMDB's own `data.mdb`/`lock.mdb`.
+const OFF_RECORD_OPEN_LOCK_FILE: &str = "off_record_sweep.lock";
+
+/// Acquires the vault's advisory open lock and reports whether THIS process is
+/// the sole opener. The returned file is held (as a SHARED `flock`) for the
+/// vault's lifetime so a peer process cannot claim exclusivity while this
+/// process is live. `sole_opener` is `true` only when the exclusive,
+/// non-blocking probe succeeds — proof that no peer process currently holds the
+/// vault open — which is the only condition under which the destructive
+/// off-record crash-orphan sweep may run. When a peer holds the lock, the probe
+/// fails and the caller skips the sweep (non-destructive). Called after
+/// `Store::open`, so the vault directory already exists.
+#[cfg(unix)]
+fn acquire_off_record_open_lock(dir: &Path) -> Result<(Option<std::fs::File>, bool)> {
+    use std::os::unix::io::AsRawFd;
+    // Canonicalize so two spellings of the same directory (symlinks, `.`) map to
+    // one lock file, matching `Store::open`'s own canonicalization — otherwise
+    // two processes opening the same vault by different paths would lock
+    // different files and never observe each other.
+    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let lock_path = dir.join(OFF_RECORD_OPEN_LOCK_FILE);
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        // Never truncate: the file is a pure advisory-lock handle whose contents
+        // are irrelevant, and a peer may already hold it open.
+        .truncate(false)
+        .open(&lock_path)?;
+    let fd = file.as_raw_fd();
+    // Exclusive, non-blocking probe: success proves no peer holds ANY lock on
+    // the file right now (so no live peer session). A non-zero result (contended
+    // or any error) fails closed to "not sole opener", skipping the sweep.
+    // SAFETY: `fd` is the raw descriptor of the live, owned `file`, which stays
+    // open for the whole call; `libc::flock` requires only a valid open
+    // descriptor and its return value is inspected here.
+    let sole_opener = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0;
+    if sole_opener {
+        // Sole opener: KEEP the exclusive lock held through the caller's
+        // crash-orphan sweep — do NOT downgrade to shared yet. While we hold
+        // `LOCK_EX`, a peer opener's own `LOCK_EX` probe fails AND its blocking
+        // `LOCK_SH` parks, so no peer can obtain a usable vault, enter a
+        // session, and write a live fence row that our still-running sweep would
+        // misread as an orphan and PolicyDelete. The caller MUST call
+        // `downgrade_off_record_open_lock` once recovery finishes to admit
+        // concurrent shared openers for the rest of the vault's lifetime.
+        return Ok((Some(file), true));
+    }
+    // A peer already holds the lock (a live peer session): register as a
+    // concurrent SHARED opener held for the vault's lifetime and skip the sweep.
+    // The blocking `LOCK_SH` also parks here until any sole opener currently
+    // running its exclusive sweep downgrades, so we never observe a vault
+    // mid-recovery. If we cannot register as a live shared opener, hold no lock
+    // and do not claim sole ownership.
+    // SAFETY: same invariant as the probe above — `fd` is the descriptor of the
+    // live, owned `file`, and the `libc::flock` return value is checked below.
+    if unsafe { libc::flock(fd, libc::LOCK_SH) } != 0 {
+        return Ok((None, false));
+    }
+    Ok((Some(file), false))
+}
+
+/// Non-unix fallback: no advisory `flock` is available, so conservatively never
+/// claim sole ownership. The destructive off-record crash-orphan sweep is
+/// skipped rather than risk deleting a live peer process's fenced turns.
+#[cfg(not(unix))]
+fn acquire_off_record_open_lock(_dir: &Path) -> Result<(Option<std::fs::File>, bool)> {
+    Ok((None, false))
+}
+
+/// Downgrades the exclusive open lock — held through the crash-orphan sweep — to
+/// a SHARED lock for the remainder of the vault's lifetime, admitting concurrent
+/// shared openers now that recovery has finished and parked peers can proceed. A
+/// no-op when no exclusive lock is held (a non-sole opener already holds SHARED).
+#[cfg(unix)]
+fn downgrade_off_record_open_lock(lock: &Option<std::fs::File>) -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+    if let Some(file) = lock {
+        // SAFETY: `file` is the live, owned lock handle stored on the Vault;
+        // downgrading a lock we already hold never blocks, and the `libc::flock`
+        // return value is checked here.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH) } != 0 {
+            return Err(Error::InvariantViolation(
+                "failed to downgrade off-record open lock to shared",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Non-unix fallback: no advisory `flock` is held, so there is no exclusive lock
+/// to downgrade.
+#[cfg(not(unix))]
+fn downgrade_off_record_open_lock(_lock: &Option<std::fs::File>) -> Result<()> {
+    Ok(())
+}
+
 /// Contract stored-weight prior for `claim_of` edges (contracts.ts
 /// `edgeKinds.pprWeight` = 1.0), unwrapped at COMPILE time: the writers below
 /// hardwire kinds whose prior is pinned non-null, so a contract change to
@@ -206,6 +304,15 @@ pub struct Vault {
     /// sweep safety and must defer.
     #[cfg(feature = "sync")]
     pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
+    /// Advisory cross-process open lock proving sole ownership at open time.
+    /// Held (as a SHARED flock) for the vault's lifetime so a peer process
+    /// opening the same path cannot run the destructive off-record crash-orphan
+    /// sweep against this process's live fenced turns. `None` when advisory file
+    /// locking is unavailable (non-unix) or the lock file could not be held — in
+    /// which case the destructive sweep is skipped. Named with a leading
+    /// underscore: it exists purely for its `Drop` (closing the file releases
+    /// the flock at vault teardown, so a subsequent sole opener can sweep).
+    _off_record_open_lock: Option<std::fs::File>,
 }
 
 impl Vault {
@@ -254,6 +361,7 @@ impl Vault {
         config: VaultConfig,
         seed_default_manifest: bool,
     ) -> Result<Self> {
+        let path = path.as_ref();
         if config.dimensions == 0 {
             return Err(Error::InvalidConfig(
                 "dimensions must be greater than zero".to_owned(),
@@ -317,6 +425,10 @@ impl Vault {
             wtxn.commit()?;
         }
 
+        // Acquire the advisory cross-process open lock BEFORE the destructive
+        // crash-orphan sweep, and learn whether this process is the sole opener
+        // (no live peer currently holds the vault open).
+        let (off_record_open_lock, sole_opener) = acquire_off_record_open_lock(path)?;
         let vault = Self {
             store,
             config,
@@ -326,7 +438,42 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
+            _off_record_open_lock: off_record_open_lock,
         };
+        // Model A crash-orphan recovery: evaporate any durable off-record fence
+        // rows left behind by a crash mid-session BEFORE the handle is usable,
+        // so orphaned fenced base turns can never leak through whole-vault
+        // export. No live window manager is attached yet, so the delete path
+        // takes the durable route only. A no-op when there are zero orphans.
+        // Runs before the content-hash backfill so the index reflects the
+        // post-sweep state (evaporated turns are never indexed).
+        //
+        // CROSS-PROCESS SAFETY: run the sweep ONLY when this process holds sole
+        // ownership of the vault (the exclusive open-lock probe succeeded) and
+        // the open lock is STILL held exclusively for the duration of the sweep.
+        // If a peer process is live on the same path, its in-process registry is
+        // invisible here, so its live, non-empty fence rows would look exactly
+        // like crash orphans; skipping the destructive sweep prevents this
+        // process from PolicyDeleting the peer's live fenced turns. Holding
+        // exclusivity through the sweep additionally blocks any NEW opener from
+        // obtaining a usable vault and writing a fresh live fence mid-sweep (its
+        // shared-lock acquisition parks until we downgrade below), so the sweep
+        // can never delete a concurrently-created live turn. A later sole opener
+        // (or the peer itself, on its next clean open) recovers the orphans
+        // instead. The empty closed-fence markers never block export.
+        if sole_opener {
+            vault.sweep_orphaned_off_record_fences()?;
+            // Companion recovery leg: evaporate orphaned off-record context
+            // receipts (retrieval runs whose result_ids are activated-memory
+            // ids) whose in-process registration was lost to a crash. Runs
+            // under the same sole-ownership + still-exclusive open lock.
+            vault.sweep_orphaned_off_record_receipts()?;
+        }
+        // Recovery is complete: downgrade the exclusive open lock to SHARED (a
+        // no-op for a non-sole opener) so concurrent shared openers — parked on
+        // their blocking shared-lock acquisition while we swept — can now
+        // proceed. The shared lock is retained for the vault's lifetime.
+        downgrade_off_record_open_lock(&vault._off_record_open_lock)?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now

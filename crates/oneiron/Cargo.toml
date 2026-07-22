@@ -28,6 +28,7 @@ postcard = { workspace = true, optional = true }
 blake3 = { workspace = true }
 p256 = { workspace = true }
 futures-core = { workspace = true }
+arc-swap = { workspace = true }
 # ARTL-3 (OF-368 D5): the edit round-trip decomposes the OPC (ZIP) bytes a
 # code-session produced so the corruption/passthrough gate verifies fidelity
 # independently of the session. rust_backend (miniz_oxide) keeps it pure Rust,

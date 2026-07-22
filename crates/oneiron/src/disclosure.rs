@@ -154,7 +154,8 @@ pub enum DisclosureTier {
 }
 
 /// Classifies one entity against the five Tier-A rules IN ORDER (design §7):
-/// off-record fence, governance type byte, sensitivity band (band 2+ or an
+/// live off-record overlay membership (plus the legacy fence backstop),
+/// governance type byte, sensitivity band (band 2+ or an
 /// ambiguous band fails closed), Tier-A predicate prefix, owner mark row. A
 /// type-0 record whose body is missing or undecodable is ambiguous and fails
 /// closed to Tier A.
@@ -165,7 +166,8 @@ pub(crate) fn disclosure_tier(
     entity_type: u8,
     claim_body: Option<&ClaimBody>,
 ) -> Result<DisclosureTier> {
-    // Rule 1 — the OF-326 off-record fence, re-checked for defense in depth.
+    // Rule 1 — live overlay membership, with the legacy fence retained as a
+    // fail-closed backstop until ONE-1731 removes fence symbols.
     if crate::off_record::off_record_fence_active(store, rtxn, id)? {
         return Ok(DisclosureTier::TierA);
     }

@@ -266,6 +266,7 @@ pub enum ErrorKind {
     #[cfg(feature = "sync")]
     MaintenanceIngestQuotaExceeded,
     InvalidRedactionReceiptBody,
+    KillSwitchDisabled,
     OffRecordSessionAlreadyExists,
     OffRecordSessionNotFound,
     OffRecordSessionClosing,
@@ -1313,6 +1314,10 @@ pub enum Error {
     /// family, ONE-1134).
     #[error("invalid redaction audit receipt body: {0}")]
     InvalidRedactionReceiptBody(&'static str),
+    /// Off-record entry is disabled by the vault-level kill-switch. The
+    /// refusal occurs before any in-process registry or overlay mutation.
+    #[error("off-record sessions are disabled by configuration")]
+    KillSwitchDisabled,
     /// Off-record session enter (OF-326) found an existing record for the
     /// session ref. Enter is explicit and single-shot; the ref frees up when
     /// the session closes.
@@ -1644,6 +1649,7 @@ impl Error {
                 ErrorKind::MaintenanceIngestQuotaExceeded
             }
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
+            Self::KillSwitchDisabled => ErrorKind::KillSwitchDisabled,
             Self::OffRecordSessionAlreadyExists { .. } => ErrorKind::OffRecordSessionAlreadyExists,
             Self::OffRecordSessionNotFound { .. } => ErrorKind::OffRecordSessionNotFound,
             Self::OffRecordSessionClosing { .. } => ErrorKind::OffRecordSessionClosing,
