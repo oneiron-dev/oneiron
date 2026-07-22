@@ -1147,6 +1147,8 @@ fn edge_kind_from_str(value: &str) -> Option<EdgeKind> {
         "facet_of" => EdgeKind::FacetOf,
         "in_world" => EdgeKind::InWorld,
         "set_in" => EdgeKind::SetIn,
+        "merged_into" => EdgeKind::MergedInto,
+        "split_into" => EdgeKind::SplitInto,
         _ => return None,
     };
     Some(kind)
@@ -3405,6 +3407,8 @@ const fn edge_kind_name(kind: EdgeKind) -> &'static str {
         EdgeKind::FacetOf => "facet_of",
         EdgeKind::InWorld => "in_world",
         EdgeKind::SetIn => "set_in",
+        EdgeKind::MergedInto => "merged_into",
+        EdgeKind::SplitInto => "split_into",
     }
 }
 

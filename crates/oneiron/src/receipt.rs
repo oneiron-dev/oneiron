@@ -1836,6 +1836,7 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     let rtxn = vault.store.env.read_txn()?;
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
         records.extend(companion_lifecycle_receipts(vault, &rtxn, query)?);
+        records.extend(identity_topology_receipts(vault, &rtxn, query)?);
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
@@ -2089,6 +2090,108 @@ fn companion_lifecycle_receipt(
         outcome: event.kind.as_str().to_owned(),
         job_ref: None,
         trigger_ref: Some(format!("entity:{}", id.to_hex())),
+        policy_trace: Vec::new(),
+        fields,
+    }
+}
+
+/// Projects ARCH-0055 identity-topology ledger events (merge / split / undo
+/// counter-events, effective AND parked) into `IdentityLifecycle` receipts.
+///
+/// Scans the type-76 record family NEWEST-FIRST (reverse type-index walk;
+/// UUIDv7 ids order by mint time) and caps EVERY visited row, including rows
+/// outside the query's `[start_at, end_at]` window. This is a bound on query
+/// work, not merely on returned candidates: an attacker-controlled backlog
+/// cannot force an unbounded ledger walk. Because mint order is not `at`
+/// order, this bounded scan can starve an older-minted in-window receipt;
+/// avoiding that requires an `at`-ordered index or cursor pagination. The
+/// family is engine-authored and door-validated: an undecodable row is
+/// corruption, never skipped.
+fn identity_topology_receipts(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    query: &ReceiptQuery,
+) -> Result<Vec<ReceiptRecord>> {
+    let start = [crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT];
+    let end = [crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT + 1];
+    let bounds = (
+        std::ops::Bound::Included(&start[..]),
+        std::ops::Bound::Excluded(&end[..]),
+    );
+    let mut receipts = Vec::new();
+    for entry in vault
+        .store
+        .type_index
+        .rev_range(rtxn, &bounds)?
+        .take(MAX_RECEIPT_QUERY_SCAN)
+    {
+        let (key, _) = entry?;
+        let event_id = crate::vault::entity_id_from_type_index_key(&key)?;
+        let record = vault
+            .identity_topology_event_in_txn(rtxn, &event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        if query.end_at.is_some_and(|end_at| record.at > end_at)
+            || query.start_at.is_some_and(|start_at| record.at < start_at)
+        {
+            continue;
+        }
+        let receipt = identity_topology_receipt(&event_id, &record);
+        if query.matches(&receipt) {
+            receipts.push(receipt);
+        }
+    }
+    Ok(receipts)
+}
+
+fn identity_topology_receipt(
+    event_id: &EntityId,
+    record: &crate::identity_topology::StoredIdentityOpEvent,
+) -> ReceiptRecord {
+    use crate::identity_topology::StoredIdentityOpAction;
+
+    let mut fields = BTreeMap::new();
+    fields.insert("approval".to_owned(), record.approval.as_str().to_owned());
+    fields.insert("source".to_owned(), record.source.as_str().to_owned());
+    fields.insert("seq".to_owned(), record.seq.to_string());
+    if let Some(actor) = record.actor {
+        fields.insert(
+            "actor_class".to_owned(),
+            actor.actor_class().gate_actor_class().to_owned(),
+        );
+    }
+    let trigger_ref = match &record.action {
+        StoredIdentityOpAction::Merge { sources, survivor } => {
+            fields.insert("survivor".to_owned(), survivor.to_hex());
+            fields.insert("source_count".to_owned(), sources.len().to_string());
+            Some(format!("entity:{}", survivor.to_hex()))
+        }
+        StoredIdentityOpAction::Split {
+            entity,
+            heads,
+            reassignment,
+        } => {
+            let (assigned, residue) = reassignment.assigned_and_residue_counts();
+            fields.insert("entity".to_owned(), entity.to_hex());
+            fields.insert("head_count".to_owned(), heads.len().to_string());
+            fields.insert("assigned".to_owned(), assigned.to_string());
+            fields.insert("residue".to_owned(), residue.to_string());
+            Some(format!("entity:{}", entity.to_hex()))
+        }
+        StoredIdentityOpAction::Undo { target } => {
+            fields.insert("undo_of".to_owned(), target.to_hex());
+            Some(format!("event:{}", target.to_hex()))
+        }
+    };
+
+    ReceiptRecord {
+        receipt_id: format!("identity_topology:{}", event_id.to_hex()),
+        receipt_kind: ReceiptKind::IdentityLifecycle,
+        occurred_at: record.at,
+        actor: record.actor.map(|actor| actor.entity_ref().to_hex()),
+        on_behalf_of: None,
+        outcome: record.action.kind_str().to_owned(),
+        job_ref: None,
+        trigger_ref,
         policy_trace: Vec::new(),
         fields,
     }

@@ -1737,7 +1737,9 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         | EdgeKind::ClaimOf
         | EdgeKind::ChildOf
         | EdgeKind::AssignedTo
-        | EdgeKind::DerivedFrom => Err(Error::InvalidClaimBody(
+        | EdgeKind::DerivedFrom
+        | EdgeKind::MergedInto
+        | EdgeKind::SplitInto => Err(Error::InvalidClaimBody(
             "self.memory.put_edge rejects structural edge kinds",
         )),
     }

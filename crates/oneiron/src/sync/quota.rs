@@ -363,6 +363,16 @@ pub(crate) fn peer_key_from_unknown_authority_signer(
     peer_key_from_signature_key(b"authority-unknown-vault", &vault_id)
 }
 
+/// Quota bucket for replicated type-76 identity-topology events. The
+/// stream carries no per-record signature material yet (lease attestation
+/// is a flagged follow-up), so ingest is bounded per lease-scoped stream
+/// rather than per signer.
+pub(crate) fn peer_key_from_identity_topology_stream(
+    lease_vault_id: u64,
+) -> MaintenanceIngestPeerKey {
+    peer_key_from_signature_key(b"identity-topology-stream", &lease_vault_id.to_be_bytes())
+}
+
 fn peer_key_from_signature_key(suite: &[u8], public_key: &[u8]) -> MaintenanceIngestPeerKey {
     let mut hasher = blake3::Hasher::new();
     hasher.update(MAINTENANCE_INGEST_QUOTA_PEER_DOMAIN);

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::str;
 
 pub mod export;
@@ -588,8 +588,17 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
+    fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        if self.validation_error.is_none()
+            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+        {
+            self.validation_error = Some(e);
+        }
+    }
+
     /// Adds a graph edge write operation to the batch.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -617,6 +626,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -636,6 +646,7 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -657,6 +668,7 @@ impl<'a> BatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -668,7 +680,11 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    // Only ppr/tests.rs still composes an edge through the owned-batch form;
+    // the sync forward-remat healing write moved to the TxnBatchBuilder twin
+    // below to share its mandate-check txn (ARCH-0055), leaving this dead in
+    // non-test builds.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn edge_with_value_fields(
         mut self,
         src: &EntityId,
@@ -698,6 +714,13 @@ impl<'a> BatchBuilder<'a> {
     /// typed at apply time: [`crate::Error::EdgeNotFound`] when the edge
     /// does not exist (the setter never upserts),
     /// [`crate::Error::InvalidEdgeWeight`] outside the contract \[0, 1\].
+    ///
+    /// Reserved redirect-shell kinds (`merged_into` / `split_into`) reject
+    /// typed at the API boundary ([`crate::Error::ReservedEdgeKind`]): a
+    /// weight rewrite IS a topology-effect mutation — PPR drops a
+    /// zero-weight shell edge, severing the shell's mass from its
+    /// canonical head with no type-76 ledger event — so shell edges stay
+    /// writable only through the identity-topology door (ARCH-0055).
     pub fn set_edge_weight(
         mut self,
         src: &EntityId,
@@ -705,6 +728,7 @@ impl<'a> BatchBuilder<'a> {
         tgt: &EntityId,
         weight: f32,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::SetEdgeWeight {
             src: *src,
             kind,
@@ -725,7 +749,10 @@ impl<'a> BatchBuilder<'a> {
     /// time: [`crate::Error::EdgeNotFound`] when the edge does not exist,
     /// [`crate::Error::InvalidVad`] on non-finite/out-of-range components,
     /// and a typed rejection on structural 12-byte edges (they carry no
-    /// VAD).
+    /// VAD). Reserved redirect-shell kinds (`merged_into` / `split_into`)
+    /// reject typed at the API boundary
+    /// ([`crate::Error::ReservedEdgeKind`]), same as every other public
+    /// edge write (ARCH-0055).
     pub fn set_edge_vad(
         mut self,
         src: &EntityId,
@@ -733,6 +760,7 @@ impl<'a> BatchBuilder<'a> {
         tgt: &EntityId,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::SetEdgeVad {
             src: *src,
             kind,
@@ -771,6 +799,7 @@ impl<'a> BatchBuilder<'a> {
 
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::DeleteEdge {
             src: *src,
             kind,
@@ -1194,8 +1223,17 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    fn capture_reserved_edge_kind(&mut self, kind: EdgeKind) {
+        if self.validation_error.is_none()
+            && let Err(e) = crate::edge::validate_public_edge_kind(kind)
+        {
+            self.validation_error = Some(e);
+        }
+    }
+
     /// Adds a graph edge write operation.
     pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::Edge {
             src: *src,
             kind,
@@ -1215,6 +1253,7 @@ impl<'a> TxnBatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1236,6 +1275,7 @@ impl<'a> TxnBatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
@@ -1247,10 +1287,37 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Internal edge upsert carrying every value field, mirroring
+    /// [`BatchBuilder::edge_with_value_fields`] for callers composing writes in
+    /// an externally-owned transaction (the ARCH-0055 forward-remat shell-edge
+    /// healing write shares the mandate-check txn). Pushes the INTERNAL
+    /// [`BatchOp::EdgeWithCreatedAt`] — no reserved-kind gate, because the sole
+    /// caller has already proven the ledger mandates this exact shell edge.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn edge_with_value_fields(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        value: EdgeValueFields,
+    ) -> Self {
+        self.ops.push(BatchOp::EdgeWithCreatedAt {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight: value.weight,
+            created_at: value.created_at,
+            vad: value.vad,
+            provenance: value.provenance,
+        });
+        self
+    }
+
     /// Adds an operational VAD rewrite for an EXISTING semantic edge.
     ///
     /// Mirrors [`BatchBuilder::set_edge_vad`] for callers composing writes in
-    /// an externally-owned transaction.
+    /// an externally-owned transaction, including its reserved-kind
+    /// rejection ([`crate::Error::ReservedEdgeKind`], ARCH-0055).
     pub fn set_edge_vad(
         mut self,
         src: &EntityId,
@@ -1258,6 +1325,7 @@ impl<'a> TxnBatchBuilder<'a> {
         tgt: &EntityId,
         vad: Vad,
     ) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::SetEdgeVad {
             src: *src,
             kind,
@@ -1269,6 +1337,7 @@ impl<'a> TxnBatchBuilder<'a> {
 
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
+        self.capture_reserved_edge_kind(kind);
         self.ops.push(BatchOp::DeleteEdge {
             src: *src,
             kind,
@@ -1674,6 +1743,7 @@ pub(crate) fn apply_ops_with_gate_mode(
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
+    let mut materialized_entity_ids = BTreeSet::new();
     let mut text_manifest_checked = false;
     let later_text_coverage_by_op = text_coverage_after_op(&ops);
     let write_policy = if contains_local_claim_put(&ops) && !claim_gate_prechecked {
@@ -1843,6 +1913,13 @@ pub(crate) fn apply_ops_with_gate_mode(
                     )?;
                     had_graph_mutation |= materialized;
                 }
+                // Type-76 rows are never legal participants/actors. Their
+                // dedicated ingest door reconciles after the seq join, so
+                // feeding event ids into the generic participant hook would
+                // enumerate the append-only family once per appended event.
+                if entity_type != crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+                    materialized_entity_ids.insert(id);
+                }
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -1890,6 +1967,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     #[cfg(feature = "sync")]
                     pending_embedding_enqueue_priorities.remove(&id);
                 }
+                materialized_entity_ids.insert(id);
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
                 let keep: HashSet<EntityId> = keep.into_iter().collect();
@@ -2041,6 +2119,15 @@ pub(crate) fn apply_ops_with_gate_mode(
             }
         }
     }
+
+    crate::identity_topology::reconcile_identity_topology_for_materialized_entities_in_txn(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &materialized_entity_ids,
+    )?;
 
     #[cfg(feature = "sync")]
     for (id, token) in &pending_embedding_tokens_written {
@@ -2810,6 +2897,8 @@ fn apply_put(
         crate::psych_profile::validate_psych_profile_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
+    } else if entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         new_skill_record = Some(crate::skill::decode_skill_record(data)?);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {

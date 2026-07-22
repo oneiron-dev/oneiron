@@ -16,8 +16,6 @@ use crate::batch::{
 use crate::config::VaultConfig;
 use crate::deletion::HydratedShortIdDeletion;
 use crate::deletion::HydratedShortIdDeletionSource;
-#[cfg(test)]
-use crate::deletion::ReplayedTombstoneOutcome;
 use crate::edge::{EdgeActorClass, EdgeInfo, EdgeKind, parse_strict_edge_record};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -727,7 +725,11 @@ impl Vault {
     ///
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist
     /// (the setter never upserts); [`Error::InvalidEdgeWeight`] outside the
-    /// contract \[0, 1\]. PPR caches for the edge endpoints are invalidated
+    /// contract \[0, 1\]; [`Error::ReservedEdgeKind`] on the redirect-shell
+    /// kinds (`merged_into` / `split_into`) — a weight rewrite is a
+    /// topology-effect mutation (PPR drops a zero-weight shell edge), so
+    /// shell edges move only through the identity-topology door
+    /// (ARCH-0055). PPR caches for the edge endpoints are invalidated
     /// exactly like a plain edge write.
     pub fn set_edge_weight(
         &self,
@@ -754,7 +756,9 @@ impl Vault {
     /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist;
     /// [`Error::InvalidVad`] on non-finite/out-of-range components; a typed
     /// rejection on structural 12-byte kinds (the contract layout table —
-    /// structural edges carry no VAD).
+    /// structural edges carry no VAD); [`Error::ReservedEdgeKind`] on the
+    /// redirect-shell kinds (`merged_into` / `split_into`), same as every
+    /// other public edge write (ARCH-0055).
     pub fn set_edge_vad(
         &self,
         src: &EntityId,
@@ -822,6 +826,12 @@ impl Vault {
 
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
+        // Reserved redirect-shell kinds (merged_into / split_into) are writable
+        // and deletable ONLY through the identity-topology apply/undo door — a
+        // public delete could tear a real shell edge without a ledger
+        // counter-event (ARCH-0055). Mirrors the batch-builder guard, which this
+        // convenience door bypasses (direct store delete, not a staged op).
+        crate::edge::validate_public_edge_kind(kind)?;
         let key_out = Store::encode_edge_key(src, kind, tgt);
         let key_in = Store::encode_edge_key(tgt, kind, src);
 

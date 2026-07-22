@@ -33,6 +33,48 @@ fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
     blob
 }
 
+fn put_local_type_76_event(
+    vault: &Vault,
+    learned_at: u64,
+    participant_seed: u8,
+) -> Result<(EntityId, Vec<u8>)> {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        SurvivorshipPlan,
+    };
+
+    let source = EntityId::from_bytes([participant_seed; 16])?;
+    let survivor = EntityId::from_bytes([participant_seed.wrapping_add(1); 16])?;
+    for id in [&source, &survivor] {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"protected outbound fixture",
+        )?;
+    }
+    let outcome = vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![source],
+            survivor,
+            evidence: IdentityOpEvidence {
+                refs: Vec::new(),
+                rationale: "protected outbound tombstone fixture".to_owned(),
+            },
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        learned_at,
+    )?;
+    let event = match outcome {
+        IdentityOpOutcome::Applied { event, .. } => event,
+        other => panic!("fixture merge must apply, got {other:?}"),
+    };
+    let raw = vault.get_raw(&event)?.expect("type-76 event carrier");
+    Ok((event, raw))
+}
+
 fn commit_entity(window: &LoadedWindow, learned_at: u64, data: &[u8]) -> EntityId {
     let id = EntityId::now();
     map_insert_bytes(
@@ -2014,4 +2056,483 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
     assert_eq!(record.window_key, window_key.as_str());
     assert_eq!(record.container, QuarantineContainer::Entities);
     assert_eq!(record.reason_code, "RedactionReceiptDivergence");
+}
+
+/// MS-01 (ARCH-0055 trust perimeter): forward rematerialization routes
+/// type-76 identity-topology events through the SAME fail-closed
+/// single-writer ingest door as Observer B — an accepted record derives its
+/// shell edge, DIVERGENT remote bytes quarantine-and-continue instead of
+/// LWW-overwriting the accepted local event (the pre-fix generic
+/// `put_replicated` arm), and an unledgered reserved-kind edges-map row is
+/// quarantined, never materialized.
+#[test]
+fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<()> {
+    use crate::identity_topology::{
+        EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let survivor = EntityId::from_bytes([0x61; 16])?;
+    let loser = EntityId::from_bytes([0x62; 16])?;
+    let stranger = EntityId::from_bytes([0x63; 16])?;
+    for id in [&survivor, &loser, &stranger] {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+
+    let event_id = EntityId::from_bytes([0x70; 16])?;
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record)?;
+    let doc = create_window_doc("remote", &window_key);
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    map_insert_bytes(
+        &entities,
+        &event_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            200,
+            &body,
+        ),
+    )?;
+    // A forged reserved-kind row no ledger event mandates.
+    let forged_key = format_edge_key(&stranger, EdgeKind::MergedInto, &survivor);
+    map_insert_bytes(
+        &edges,
+        &forged_key,
+        &encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.3, 10, None, None)?,
+    )?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+
+    // The accepted record materialized AND derived its shell edge; the
+    // forged row never landed but left quarantine evidence.
+    assert!(vault.identity_topology_event(&event_id)?.is_some());
+    assert!(vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        EntityLifecycleState::Merged
+    );
+    assert!(!vault.edge_exists(&stranger, EdgeKind::MergedInto, &survivor)?);
+    assert!(
+        !crate::sync::quarantine::quarantined_records(&vault)?.is_empty(),
+        "the forged shell row must leave hashed quarantine evidence"
+    );
+
+    // Divergent bytes for the SAME event id: the door keeps the accepted
+    // local bytes and quarantines-and-continues — remat must not abort and
+    // must not silently LWW-overwrite.
+    let mut divergent = record;
+    divergent.at = 999;
+    let divergent_body = crate::identity_topology::encode_identity_topology_event_body(&divergent)?;
+    map_insert_bytes(
+        &entities,
+        &event_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            200,
+            &divergent_body,
+        ),
+    )?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        vault.identity_topology_event(&event_id)?.map(|r| r.at),
+        Some(200),
+        "divergent remote bytes must never overwrite the accepted event"
+    );
+    assert!(
+        vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?,
+        "the mandated shell edge survives the rejected divergence"
+    );
+    Ok(())
+}
+
+#[test]
+fn forward_rematerialization_quarantines_forged_shell_and_continues_edge_pass() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let forged_source = EntityId::from_bytes([0x81; 16])?;
+    let ordinary_source = EntityId::from_bytes([0x82; 16])?;
+    let target = EntityId::from_bytes([0x83; 16])?;
+    for id in [&forged_source, &ordinary_source, &target] {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+
+    let doc = create_window_doc("remote", &window_key);
+    let edges = doc.get_map("edges");
+    let forged_key = format_edge_key(&forged_source, EdgeKind::MergedInto, &target);
+    let forged_value = encode_edge_value_for_crdt(EdgeKind::MergedInto, 0.3, 10, None, None)?;
+    map_insert_bytes(&edges, &forged_key, &forged_value)?;
+    let ordinary_key = format_edge_key(&ordinary_source, EdgeKind::Mentions, &target);
+    let ordinary_value = encode_edge_value_for_crdt(EdgeKind::Mentions, 0.4, 11, None, None)?;
+    map_insert_bytes(&edges, &ordinary_key, &ordinary_value)?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        count, 1,
+        "the forged shell is skipped while the other N-1 edge still heals"
+    );
+    assert!(
+        !vault.edge_exists(&forged_source, EdgeKind::MergedInto, &target)?,
+        "an unledgered reserved edge must never land"
+    );
+    assert!(
+        vault.edge_exists(&ordinary_source, EdgeKind::Mentions, &target)?,
+        "one poisoned edge must not abort the rest of the rematerialization pass"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    let record = &quarantined[0].1;
+    assert_eq!(record.container, QuarantineContainer::Edges);
+    assert_eq!(record.reason_code, "ReservedEdgeKind");
+    assert_eq!(
+        (record.crdt_key_hash, record.crdt_key_len),
+        crate::sync::quarantine::crdt_key_metadata(&forged_key)
+    );
+    assert_eq!(
+        record.payload_hash,
+        crate::sync::quarantine::payload_hash(&forged_value)
+    );
+    Ok(())
+}
+
+#[test]
+fn forward_rematerialization_admits_byte_exact_mandated_shell_echo() -> Result<()> {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        SurvivorshipPlan,
+    };
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let survivor = EntityId::from_bytes([0x91; 16])?;
+    let loser = EntityId::from_bytes([0x92; 16])?;
+    for id in [&survivor, &loser] {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+    let outcome = vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![loser],
+            survivor,
+            evidence: IdentityOpEvidence {
+                refs: Vec::new(),
+                rationale: "mandated echo fixture".to_owned(),
+            },
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        200,
+    )?;
+    assert!(matches!(outcome, IdentityOpOutcome::Applied { .. }));
+    assert!(vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+
+    // Simulate a replica whose ledger event survived but whose derived edge
+    // indexes did not. Only the byte-exact door echo in the CRDT may heal it.
+    let out_key = Store::encode_edge_key(&loser, EdgeKind::MergedInto, &survivor);
+    let in_key = Store::encode_edge_key(&survivor, EdgeKind::MergedInto, &loser);
+    vault.with_write_txn(|wtxn| {
+        vault.store.edges_out.delete(wtxn, &out_key)?;
+        vault.store.edges_in.delete(wtxn, &in_key)?;
+        Ok(())
+    })?;
+    assert!(!vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+
+    let doc = create_window_doc("remote", &window_key);
+    let shell_key = format_edge_key(&loser, EdgeKind::MergedInto, &survivor);
+    let shell_value = encode_edge_value_for_crdt(
+        EdgeKind::MergedInto,
+        EdgeKind::MergedInto.default_weight().expect("shell weight"),
+        200,
+        None,
+        None,
+    )?;
+    map_insert_bytes(&doc.get_map("edges"), &shell_key, &shell_value)?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(count, 1, "the mandated echo must heal the missing edge");
+    assert!(vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+    let rtxn = vault.store.env.read_txn()?;
+    let healed_out = vault
+        .store
+        .edges_out
+        .get(&rtxn, &out_key)?
+        .expect("outbound shell index healed");
+    let healed_in = vault
+        .store
+        .edges_in
+        .get(&rtxn, &in_key)?
+        .expect("inbound shell index healed");
+    assert_eq!(healed_out.as_ref(), shell_value.as_slice());
+    assert_eq!(healed_in.as_ref(), shell_value.as_slice());
+    drop(rtxn);
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)?.is_empty(),
+        "a byte-exact mandated echo must be admitted, not quarantined"
+    );
+    Ok(())
+}
+
+#[test]
+fn reverse_rematerialization_restores_protected_row_against_hostile_tombstone() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    // Seed a NON-reserved participant id: [0xA1;16]..[0xA5;16] are the
+    // write-door-reserved system-agent preset ids (batch.rs put guard), so
+    // put_entity on 0xA1/0xA2 fails InvalidKey in setup. 0xB1 is the sibling's.
+    let (event, raw) = put_local_type_76_event(&vault, learned_at, 0xC1)?;
+    let tombstone = learned_at.to_be_bytes();
+
+    // Model a hostile peer update that retained only delete authority in the
+    // window. Reverse recovery must type-classify the local row before that
+    // tombstone can suppress its carrier fleet-wide.
+    let doc = create_window_doc("hostile-reverse", &window_key);
+    map_insert_bytes(&doc.get_map("tombstones"), &event.to_hex(), &tombstone)?;
+    doc.commit();
+
+    assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 1);
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &event.to_hex()),
+        Some(raw),
+        "reverse recovery must restore the protected type-76 carrier"
+    );
+    assert!(
+        tombstone_map_contains_id(&doc.get_map("tombstones"), &event),
+        "recovery denies delete authority without rewriting remote history"
+    );
+    let quarantined = quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Tombstones);
+    assert_eq!(quarantined[0].1.reason_code, "MaintenanceKindNotWritable");
+    assert_eq!(
+        quarantined[0].1.payload_hash,
+        quarantine::payload_hash(&tombstone)
+    );
+    Ok(())
+}
+
+#[test]
+fn pending_mirror_replays_protected_row_against_hostile_tombstone() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let (event, raw) = put_local_type_76_event(&vault, learned_at, 0xB1)?;
+    let marker = format!("pm:{window_key}:{}", event.to_hex());
+    vault.sync_state_put(&marker, &[1])?;
+    let tombstone = learned_at.to_be_bytes();
+
+    let doc = create_window_doc("hostile-pending", &window_key);
+    map_insert_bytes(&doc.get_map("tombstones"), &event.to_hex(), &tombstone)?;
+    doc.commit();
+
+    assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 1);
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &event.to_hex()),
+        Some(raw),
+        "pending recovery must mirror the protected type-76 carrier"
+    );
+    assert!(
+        vault.sync_state_get(&marker)?.is_none(),
+        "the pending marker clears only after the protected carrier is mirrored"
+    );
+    let quarantined = quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Tombstones);
+    assert_eq!(quarantined[0].1.reason_code, "MaintenanceKindNotWritable");
+    assert_eq!(
+        quarantined[0].1.payload_hash,
+        quarantine::payload_hash(&tombstone)
+    );
+    Ok(())
+}
+
+#[test]
+fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Result<()> {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let event_id = EntityId::from_bytes([0x70; 16])?;
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![EntityId::from_bytes([0x61; 16])?],
+            survivor: EntityId::from_bytes([0x62; 16])?,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&record)?;
+    let event_blob = make_entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        record.at,
+        &body,
+    );
+    let doc = create_window_doc("remote", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &event_id.to_hex(), &event_blob)?;
+    map_insert_bytes(
+        &doc.get_map("tombstones"),
+        &event_id.to_hex(),
+        &record.at.to_be_bytes(),
+    )?;
+    doc.commit();
+
+    let expected_event = record.clone();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        vault.identity_topology_event(&event_id)?,
+        Some(expected_event),
+        "the protected entity blob must materialize despite its hostile concurrent tombstone"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &crate::deletion::local_hard_delete_key(&event_id))?
+            .is_none(),
+        "a protected-record tombstone must not mint a permanent dt: poison marker"
+    );
+    drop(rtxn);
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Tombstones);
+    assert_eq!(quarantined[0].1.reason_code, "MaintenanceKindNotWritable");
+
+    // A replica that ran the pre-fix headerless tombstone path may already
+    // carry a `dt:` marker. Protected event arrival must bypass AND
+    // neutralize that stale poison: it never represented valid delete
+    // authority for a type-76 row.
+    let (_poison_dir, poisoned_vault) = test_vault();
+    let poisoned_id = EntityId::from_bytes([0x71; 16])?;
+    poisoned_vault.with_write_txn(|wtxn| {
+        poisoned_vault.store.sync_state.put(
+            wtxn,
+            &crate::deletion::local_hard_delete_key(&poisoned_id),
+            &[0_u8; crate::deletion::TOMBSTONE_VALUE_V2_LEN],
+        )?;
+        Ok(())
+    })?;
+    let poisoned_doc = create_window_doc("remote-poisoned", &window_key);
+    map_insert_bytes(
+        &poisoned_doc.get_map("entities"),
+        &poisoned_id.to_hex(),
+        &event_blob,
+    )?;
+    poisoned_doc.commit();
+    let expected_poisoned_event = record;
+    forward_rematerialize(
+        &poisoned_vault,
+        &poisoned_doc,
+        &Materializer::new(),
+        &window_key,
+    )?;
+    assert_eq!(
+        poisoned_vault.identity_topology_event(&poisoned_id)?,
+        Some(expected_poisoned_event),
+        "a preexisting dt: marker must not suppress a later protected event"
+    );
+    let rtxn = poisoned_vault.store.env.read_txn()?;
+    assert!(
+        poisoned_vault
+            .store
+            .sync_state
+            .get(&rtxn, &crate::deletion::local_hard_delete_key(&poisoned_id))?
+            .is_none(),
+        "protected event admission must neutralize a preexisting dt: poison marker"
+    );
+    Ok(())
+}
+
+#[test]
+fn forward_rematerialization_malformed_type_76_envelope_preserves_delete_wins() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let entity_id = EntityId::from_bytes([0x72; 16])?;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: 200,
+        request_id: [0x42; 16],
+    }
+    .encode();
+    let doc = create_window_doc("remote-malformed-protected", &window_key);
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &entity_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            200,
+            b"malformed type-76 body",
+        ),
+    )?;
+    map_insert_bytes(&doc.get_map("tombstones"), &entity_id.to_hex(), &tombstone)?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert!(vault.get(&entity_id)?.is_none());
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault.local_hard_delete_marker_exists_in_txn(&rtxn, &entity_id)?,
+        "a malformed protected envelope must run the normal tombstone path"
+    );
+    drop(rtxn);
+
+    doc.get_map("tombstones")
+        .delete(&entity_id.to_hex())
+        .unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &entity_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_TASK,
+            201,
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+        ),
+    )?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert!(
+        vault.get(&entity_id)?.is_none(),
+        "the permanent dt: marker must block later ordinary resurrection"
+    );
+    Ok(())
 }

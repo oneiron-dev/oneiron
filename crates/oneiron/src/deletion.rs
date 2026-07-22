@@ -2338,15 +2338,6 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
-        if let Some(header) = self.read_entity_header(id)?
-            && crate::registry::is_delete_protected_engine_record(header.entity_type)
-        {
-            return Ok(ReplayedTombstoneOutcome::HardPurged {
-                erased: false,
-                receipt_id: None,
-                sweep_key: None,
-            });
-        }
         self.apply_replayed_tombstone(id, raw_value)
     }
 
@@ -2367,6 +2358,27 @@ impl Vault {
             .sync_state
             .get(txn, &local_hard_delete_key(id))?
             .is_some())
+    }
+
+    /// Removes a headerless tombstone replay's stale `dt:` poison once a
+    /// delete-protected engine row is successfully admitted. This is called
+    /// in the SAME transaction as protected-row materialization and tombstone
+    /// quarantine; such a marker never represented valid delete authority.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn neutralize_delete_protected_marker_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+    ) -> Result<bool> {
+        if !crate::registry::is_delete_protected_engine_record(entity_type) {
+            return Err(Error::InvariantViolation(
+                "dt: poison neutralization requires a delete-protected engine record",
+            ));
+        }
+        self.store
+            .sync_state
+            .delete(wtxn, &local_hard_delete_key(id))
     }
 
     fn active_delete_scope_exists_in_txn(
