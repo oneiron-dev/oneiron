@@ -1099,7 +1099,7 @@ fn many_item_runs_sub_cluster_by_entity() -> Result<()> {
         write_dreamer_proposal(
             &vault,
             entity(0xD1 + offset),
-            entity(0xE1 + offset),
+            entity(0x5E + offset),
             second_subject,
             "profile.note",
             value,

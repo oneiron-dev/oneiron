@@ -162,7 +162,7 @@ fn index_rebuild_does_not_change_a_stored_receipt() -> Result<()> {
     // The substrate and its indexes move on after the emit: new memories
     // land (ranking ahead of the emit-time rows) and the vector index is
     // rebuilt.
-    put_memory(&vault, 0x11, "matcha matcha matcha, always matcha")?;
+    put_memory(&vault, 0x60, "matcha matcha matcha, always matcha")?;
     put_memory(&vault, 0x12, "matcha matcha morning, matcha evening")?;
     vault.maintain().rebuild_hnsw().run()?;
 

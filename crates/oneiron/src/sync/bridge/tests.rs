@@ -317,7 +317,7 @@ fn test_metas_for_ops(ops: &[BatchOp]) -> Vec<EdgeOpMeta> {
 
 #[test]
 fn parse_edge_key_valid() {
-    let src = EntityId::from_bytes_unchecked([0x11; 16]);
+    let src = EntityId::from_bytes_unchecked([0x60; 16]);
     let tgt = EntityId::from_bytes_unchecked([0x22; 16]);
     let key = format_edge_key(&src, EdgeKind::Mentions, &tgt);
     let (s, k, t) = parse_edge_key(&key).unwrap();
@@ -1287,7 +1287,7 @@ fn companion_register_api_observer_b_suppresses_local_only_records() {
     let materializer = Arc::new(Materializer::new());
     let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
-    let id = EntityId::from_bytes_unchecked([0x42; 16]);
+    let id = EntityId::from_bytes_unchecked([0x62; 16]);
     let learned_at = 1_772_400_000u64;
     let record = companion_record(id, CompanionExportClassification::LocalOnly);
     let body = encode_companion_record_body(&record.created_at(learned_at).unwrap()).unwrap();

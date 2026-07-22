@@ -5,7 +5,7 @@ use crate::registry::{
 };
 
 fn member_ref() -> EntityId {
-    EntityId::from_bytes([0x42; 16]).expect("valid member id")
+    EntityId::from_bytes([0x62; 16]).expect("valid member id")
 }
 
 fn test_grant() -> FederationGrant {
@@ -192,7 +192,7 @@ fn federation_grant_policy_rejects_admin_role_under_non_admin_preset() {
 }
 
 fn scope_entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("valid scope id")
+    crate::test_util::entity(byte)
 }
 
 fn direction(
@@ -210,7 +210,7 @@ fn direction(
 fn sample_pact_scope() -> FederationPactScope {
     FederationPactScope {
         lo_to_hi: direction(
-            FederationScopeWorlds::Worlds(vec![scope_entity(0x12), scope_entity(0x60)]),
+            FederationScopeWorlds::Worlds(vec![scope_entity(0x10), scope_entity(0x12)]),
             FederationScopeFacets::Some(vec![scope_entity(0x21), scope_entity(0x22)]),
             FederationScopeBands::Some(vec![TypeByteBand::Semantic, TypeByteBand::Core]),
         ),
@@ -386,7 +386,7 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
         FederationScopeBands::All,
     );
     let narrow = direction(
-        FederationScopeWorlds::Worlds(vec![scope_entity(0x60)]),
+        FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]),
         FederationScopeFacets::Some(vec![scope_entity(0x21)]),
         FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
     );
@@ -404,8 +404,8 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
     assert!(bottom.is_narrowing_of(&bottom));
 
     // Worlds: Base ⊑ Worlds(S) ⊑ Worlds(T ⊇ S) ⊑ All.
-    let one_world = FederationScopeWorlds::Worlds(vec![scope_entity(0x60)]);
-    let two_worlds = FederationScopeWorlds::Worlds(vec![scope_entity(0x60), scope_entity(0x12)]);
+    let one_world = FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]);
+    let two_worlds = FederationScopeWorlds::Worlds(vec![scope_entity(0x10), scope_entity(0x12)]);
     assert!(FederationScopeWorlds::Base.is_narrowing_of(&one_world));
     assert!(one_world.is_narrowing_of(&two_worlds));
     assert!(!two_worlds.is_narrowing_of(&one_world));
@@ -416,7 +416,7 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
 #[test]
 fn federation_direction_scope_disjoint_meet_is_bottom_not_all() {
     let left = direction(
-        FederationScopeWorlds::Worlds(vec![scope_entity(0x60)]),
+        FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]),
         FederationScopeFacets::Some(vec![scope_entity(0x21), scope_entity(0x22)]),
         FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
     );

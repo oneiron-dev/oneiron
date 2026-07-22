@@ -562,7 +562,7 @@ mod cb_t {
 
         let temp = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open(temp.path(), VaultConfig::default()).expect("open fixture vault");
-        let actor = EntityId::from_bytes([0xE1; 16]).expect("own agent id");
+        let actor = EntityId::from_bytes([0x5E; 16]).expect("own agent id");
         vault
             .put_entity(
                 &actor,
@@ -659,7 +659,7 @@ mod cb_t {
 
         let temp = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open(temp.path(), VaultConfig::default()).expect("open fixture vault");
-        let own = EntityId::from_bytes([0xE1; 16]).expect("own agent id");
+        let own = EntityId::from_bytes([0x5E; 16]).expect("own agent id");
         let foreign = EntityId::from_bytes([0xE2; 16]).expect("foreign agent id");
         for actor in [own, foreign] {
             vault
@@ -760,7 +760,7 @@ mod cb_t {
 
         let temp = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open(temp.path(), VaultConfig::default()).expect("open fixture vault");
-        let agent_a = EntityId::from_bytes([0xE1; 16]).expect("agent A id");
+        let agent_a = EntityId::from_bytes([0x5E; 16]).expect("agent A id");
         let agent_b = EntityId::from_bytes([0xE2; 16]).expect("agent B id");
         for actor in [agent_a, agent_b] {
             vault

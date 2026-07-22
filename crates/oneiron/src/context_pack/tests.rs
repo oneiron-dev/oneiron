@@ -123,7 +123,7 @@ fn empty_pack_stats() -> PackStats {
 
 fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> ContextEntity {
     ContextEntity {
-        id: EntityId::from_bytes_unchecked([seed; 16]),
+        id: crate::test_util::entity(seed),
         short_id: short_id.to_owned(),
         content_hash: seed,
         entity_type,
@@ -144,7 +144,7 @@ fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
             board_entity(0x51, 42, 0.75, "zz51"),
             board_entity(0x61, ENTITY_TYPE_COMPANION_REGISTER, 0.125, "cp61"),
         ],
-        neighbors: vec![board_entity(0x42, ENTITY_TYPE_TURN, 0.875, "tn42")],
+        neighbors: vec![board_entity(0x62, ENTITY_TYPE_TURN, 0.875, "tn42")],
         stats: empty_pack_stats(),
         empty: None,
     };
@@ -234,8 +234,8 @@ fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
 fn eiri_memory_board_routes_asset_rows_by_ref_without_local_downgrade() {
     let pack = ContextPack {
         results: vec![
-            board_entity(0xA1, ENTITY_TYPE_ASSET, 0.9, "as15"),
-            board_entity(0xA2, ENTITY_TYPE_ASSET_TEXT, 0.8, "tx10"),
+            board_entity(0x51, ENTITY_TYPE_ASSET, 0.9, "as15"),
+            board_entity(0x52, ENTITY_TYPE_ASSET_TEXT, 0.8, "tx10"),
         ],
         neighbors: Vec::new(),
         stats: empty_pack_stats(),
@@ -259,8 +259,8 @@ fn eiri_memory_board_routes_asset_rows_by_ref_without_local_downgrade() {
         .find(|row| row.entity_type == ENTITY_TYPE_ASSET_TEXT)
         .expect("ASSET_TEXT row remains present");
 
-    assert_eq!(asset_row.asset_ref.as_deref(), Some("as15:a1"));
-    assert_eq!(asset_text_row.asset_ref.as_deref(), Some("tx10:a2"));
+    assert_eq!(asset_row.asset_ref.as_deref(), Some("as15:51"));
+    assert_eq!(asset_text_row.asset_ref.as_deref(), Some("tx10:52"));
     assert_eq!(asset_row.entity_type, ENTITY_TYPE_ASSET);
 }
 
@@ -1307,7 +1307,7 @@ fn retrieval_budget_balances_claim_turn_and_facet_before_global_truncation() -> 
 fn retrieval_budget_zero_caps_remain_excluded_after_surplus_redistribution() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    let claim = EntityId::from_bytes_unchecked([0xE1; 16]);
+    let claim = EntityId::from_bytes_unchecked([0x5E; 16]);
     let summary_a = EntityId::from_bytes_unchecked([0xE2; 16]);
     let summary_b = EntityId::from_bytes_unchecked([0xE3; 16]);
 
@@ -1584,7 +1584,7 @@ fn filtered_empty_reports_pre_filter_scope_count() -> Result<()> {
 fn status_suppressed_empty_reports_all_activated() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let superseded = EntityId::from_bytes([0x41; 16])?;
-    let retracted = EntityId::from_bytes([0x42; 16])?;
+    let retracted = EntityId::from_bytes([0x62; 16])?;
     put_claim_text_entity_with_status(
         &vault,
         &superseded,
@@ -1751,7 +1751,7 @@ fn short_id_falls_back_to_hex_on_corruption() -> Result<()> {
 #[test]
 fn world_all_scope_partitions_base_first() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let world_w = EntityId::from_bytes([0xE1; 16])?;
+    let world_w = EntityId::from_bytes([0x5E; 16])?;
     let world_v = EntityId::from_bytes([0xE2; 16])?;
 
     let w1 = EntityId::from_bytes([0x71; 16])?; // rank 0 — world W
@@ -1883,7 +1883,7 @@ fn pack_neighbors_apply_the_status_gate() -> Result<()> {
 #[test]
 fn world_all_scope_cap_drops_excess_fiction() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let world_w = EntityId::from_bytes([0xE1; 16])?;
+    let world_w = EntityId::from_bytes([0x5E; 16])?;
 
     let base1 = EntityId::from_bytes([0x61; 16])?; // rank 0 — base
     let f1 = EntityId::from_bytes([0x71; 16])?; // rank 1 — world W
@@ -1927,7 +1927,7 @@ fn world_all_scope_cap_drops_excess_fiction() -> Result<()> {
 #[test]
 fn pack_validation_skips_world_partition_dropped_results() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let world_w = EntityId::from_bytes([0xE1; 16])?;
+    let world_w = EntityId::from_bytes([0x5E; 16])?;
 
     let base = EntityId::from_bytes([0x63; 16])?;
     let kept_fiction = EntityId::from_bytes([0x75; 16])?;
@@ -2450,7 +2450,7 @@ fn pack_hydration_fails_closed_on_undecodable_claim_neighbor() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
     let a = EntityId::from_bytes_unchecked([0x41; 16]);
-    let bad = EntityId::from_bytes_unchecked([0x42; 16]);
+    let bad = EntityId::from_bytes_unchecked([0x62; 16]);
     put_claim_text_entity(&vault, &a, "badneighbor", "test.root", "root")?;
 
     // Raw 25-byte envelope (type 0) + a non-map MessagePack body.

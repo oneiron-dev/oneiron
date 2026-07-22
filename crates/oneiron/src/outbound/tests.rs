@@ -1,6 +1,7 @@
 use super::*;
 use rmpv::Value;
 
+use crate::agent_def::SystemAgentPreset;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     encode_claim_body,
@@ -1699,7 +1700,7 @@ fn quiet_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
 }
 
 fn quiet_delivery_window_policy() -> DeliveryWindowPolicyClaim {
-    let claim = quiet_delivery_window_claim_body(0xE1);
+    let claim = quiet_delivery_window_claim_body(0x5E);
     DeliveryWindowPolicyClaim::from_claim_body(&claim).expect("valid quiet claim")
 }
 
@@ -4362,7 +4363,7 @@ fn dispatch_with_no_key_and_empty_budget_key_are_equivalent()
         Box<dyn std::error::Error>,
     > {
         let (_tmp, vault) = temp_vault();
-        let agent = entity(0x56);
+        let agent = SystemAgentPreset::Scout.actor_entity_id();
         let actor = OutboundDispatchActor::agent(agent);
         put_policy_manifest_bytes(
             &vault,
@@ -4427,7 +4428,7 @@ fn dispatch_with_no_key_and_empty_budget_key_are_equivalent()
 fn dispatch_sends_budget_exhausts_suspends_and_walls_until_resume()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0x56);
+    let agent = SystemAgentPreset::Scout.actor_entity_id();
     let actor = OutboundDispatchActor::agent(agent);
     put_policy_manifest_bytes(
         &vault,
@@ -4537,7 +4538,7 @@ fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
     // A window-Held dispatch passes the gate but never becomes an effect —
     // it must not consume or exhaust the key's budget.
     let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0x56));
+    let actor = OutboundDispatchActor::agent(SystemAgentPreset::Scout.actor_entity_id());
     put_policy_manifest_bytes(
         &vault,
         entity(0xD0),
@@ -4647,7 +4648,7 @@ fn budget_vault_with_key(
     Box<dyn std::error::Error>,
 > {
     let (tmp, vault) = temp_vault();
-    let agent = entity(0x56);
+    let agent = SystemAgentPreset::Scout.actor_entity_id();
     let actor = OutboundDispatchActor::agent(agent);
     put_policy_manifest_bytes(
         &vault,

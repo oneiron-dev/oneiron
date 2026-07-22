@@ -77,7 +77,7 @@ fn rebuild_hnsw_removes_dead_nodes() -> Result<()> {
     let mut ids = Vec::new();
 
     for i in 0..50_u8 {
-        let id = entity(i.saturating_add(1));
+        let id = entity(i.saturating_add(0x50));
         ids.push(id);
         vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
         vault.put_vector(&id, &[1.0, 0.0, 0.0, i as f32])?;

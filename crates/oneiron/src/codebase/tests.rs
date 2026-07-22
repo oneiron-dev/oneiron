@@ -50,7 +50,7 @@ fn local_repo_ref_b() -> RepoRef {
 }
 
 fn entity_id(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("entity id")
+    crate::test_util::entity(byte)
 }
 
 const GITHUB_TOKEN_SECRET_FIXTURE: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";

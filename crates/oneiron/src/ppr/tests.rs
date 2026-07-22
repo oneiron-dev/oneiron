@@ -1691,7 +1691,7 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
             "cached_scores",
             Site::CachedScores,
             65,
-            66,
+            0x62,
             "ppr cache scores",
         ),
     ];

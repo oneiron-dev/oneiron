@@ -142,7 +142,7 @@ fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases(
     let window_key = WindowKey::new("2026-03");
     let learned_at = window_key.start_timestamp().unwrap() + 60;
     let promoted = EntityId::from_bytes([0x41; 16])?;
-    let still_fenced = EntityId::from_bytes([0x42; 16])?;
+    let still_fenced = EntityId::from_bytes([0x62; 16])?;
     let ordinary = EntityId::from_bytes([0x43; 16])?;
 
     vault.enter_off_record_session("sess-defer-sync", OffRecordBackendClass::Local)?;
@@ -803,7 +803,7 @@ fn off_record_fence_scrubs_preexisting_cross_window_target_edges() -> Result<()>
     let source_at = source_window.start_timestamp().unwrap() + 60;
     let target_at = target_window.start_timestamp().unwrap() + 60;
     let source = EntityId::from_bytes([0x46; 16])?;
-    let fenced_target = EntityId::from_bytes([0x47; 16])?;
+    let fenced_target = EntityId::from_bytes([0x67; 16])?;
     vault.put_entity(
         &source,
         ENTITY_TYPE_TURN,

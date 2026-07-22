@@ -35,7 +35,7 @@ use crate::sync::loro_support::map_get_bytes;
 use crate::temporal::TimeRange;
 
 fn entity_id(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).unwrap()
+    crate::test_util::entity(byte)
 }
 
 fn local_world_id(byte: u8) -> LocalWorldId {
@@ -1092,7 +1092,7 @@ fn selector_applies_world_and_band_filters() {
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
     let window_key = WindowKey::new("2026-04");
     let doc = create_window_doc("source", &window_key);
-    let world = local_world_id(0xE1);
+    let world = local_world_id(0x5E);
     let other_world = entity_id(0xE2);
     let claim_world = entity_id(0x41);
     let claim_base = entity_id(0x61);

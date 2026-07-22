@@ -20,7 +20,7 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 }
 
 fn id(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("test id")
+    crate::test_util::entity(byte)
 }
 
 fn put_person(vault: &Vault, byte: u8) -> EntityId {

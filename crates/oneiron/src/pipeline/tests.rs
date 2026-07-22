@@ -30,11 +30,7 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 }
 
 fn entity_id(byte: u8) -> EntityId {
-    let byte = match byte {
-        0x00 | 0xFF => 0x01,
-        other => other,
-    };
-    EntityId::from_bytes([byte; 16]).expect("test ids should be valid")
+    crate::test_util::entity(byte)
 }
 
 fn put_entity(
@@ -569,7 +565,7 @@ fn dreamer_working_set_cursor_advances_incrementally() -> Result<()> {
 #[test]
 fn dreamer_working_set_budget_cap_stops_ingress() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    for seed in [0xE1, 0xE2, 0xE3] {
+    for seed in [0x5E, 0x5F, 0x60] {
         put_text(&vault, entity_id(seed), "dreamer budget needle")?;
     }
 
@@ -5375,7 +5371,7 @@ fn rerank_fixture(vault: &Vault) -> Result<Vec<EntityId>> {
     ];
     let mut ids = Vec::new();
     for (index, vector) in vectors.iter().enumerate() {
-        let id = entity_id(0xE1 + index as u8);
+        let id = entity_id(0x5E + index as u8);
         put_text_and_vector(vault, id, "rerank block fixture", *vector)?;
         ids.push(id);
     }
