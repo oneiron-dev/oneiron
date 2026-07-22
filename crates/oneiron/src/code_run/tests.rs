@@ -105,7 +105,7 @@ fn put_policy_manifest_bytes(vault: &Vault, seed: u8, data: &[u8]) -> Result<()>
         .store
         .temporal_learned
         .put(&mut wtxn, &temporal_key, &[])?;
-    wtxn.commit().map_err(Error::from)
+    Ok(wtxn.commit()?)
 }
 
 fn put_malformed_policy_manifest(vault: &Vault, seed: u8) -> Result<()> {
