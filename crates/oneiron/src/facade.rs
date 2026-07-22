@@ -3245,6 +3245,11 @@ impl MemoryFacade<'_> {
 fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> FacadeError {
     match err {
         OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
+        OutboundDispatchError::Chokepoint(_) => FacadeError::new(
+            FACADE_CODE_INTERNAL,
+            "outbound effect durability failed",
+            &["Retry after checking local storage health."],
+        ),
         OutboundDispatchError::InvalidBoundActor => FacadeError::new(
             FACADE_CODE_FORBIDDEN,
             "the bound actor is no longer authorized for outbound dispatch",

@@ -1389,7 +1389,17 @@ impl<T: LinkedInMcpSendTransport> OutboundExecutionSink for LinkedInMcpVerifiedS
                 .with_receipt_fields(fields);
         }
 
-        self.execute_plan(request, &plan)
+        let outcome = self.execute_plan(request, &plan);
+        if outcome.kind == crate::outbound::OutboundExecutionOutcomeKind::Failed
+            && outcome
+                .receipt_fields
+                .get(RECEIPT_FIELD_SEND_MESSAGE_CALLED)
+                .is_some_and(|called| called == "true")
+        {
+            outcome.with_possible_delivery()
+        } else {
+            outcome
+        }
     }
 }
 
@@ -1499,7 +1509,7 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
             recipient_key: plan.recipient_key.clone(),
             thread_id: plan.thread_id.clone(),
             message_text: plan.message_text.clone(),
-            idempotency_key: request.intent.idempotency_key.clone(),
+            idempotency_key: request.idempotency_key.map(str::to_owned),
             intent_ref: request.intent_ref.to_owned(),
         };
         fields.insert(

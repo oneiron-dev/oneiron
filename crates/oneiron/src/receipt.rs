@@ -310,11 +310,13 @@ pub struct ReceiptRecord {
 struct DurableSendReceipt {
     version: u8,
     task_ref: String,
-    #[serde(default = "default_send_receipt_outcome")]
     outcome: SendReceiptOutcome,
     transport_dispatched: bool,
     receipt: ReceiptRecord,
 }
+
+// ONE-1690 closes the known interim double-authority window: ledger rows are
+// the resend authority; send receipts are required-outcome audit narrative.
 
 /// Delivery state carried by the additive connector-send receipt ledger.
 /// Failed transport audit rows remain visible but are not idempotency tokens.
@@ -323,11 +325,6 @@ struct DurableSendReceipt {
 pub(crate) enum SendReceiptOutcome {
     Delivered,
     Failed,
-}
-
-const fn default_send_receipt_outcome() -> SendReceiptOutcome {
-    // Rows written before the field was added were delivered-only.
-    SendReceiptOutcome::Delivered
 }
 
 /// Minimal OF-367/RCPT-3 seam for consumers that render receipts.
@@ -2646,6 +2643,24 @@ fn append_outbound_grant_scope_fields(
             fields.insert("scope".to_owned(), "brief_verb_class".to_owned());
             fields.insert(FIELD_BRIEF_REF.to_owned(), brief_ref.clone());
             fields.insert("verb_class".to_owned(), verb_class.clone());
+        }
+        StandingOutboundGrantScope::ScopedMcp {
+            server,
+            tool,
+            data_class_ceiling,
+            endpoint_allowlist,
+        } => {
+            fields.insert("scope".to_owned(), "scoped_mcp".to_owned());
+            fields.insert("server".to_owned(), server.clone());
+            fields.insert("tool".to_owned(), tool.clone());
+            fields.insert(
+                "data_class_ceiling".to_owned(),
+                data_class_ceiling.as_str().to_owned(),
+            );
+            fields.insert(
+                "endpoint_allowlist".to_owned(),
+                endpoint_allowlist.join("\n"),
+            );
         }
     }
 }

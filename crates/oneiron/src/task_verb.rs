@@ -460,6 +460,7 @@ impl MemoryFacade<'_> {
                     brief_ref: Some(state.target_ref.clone()),
                     send_ref: None,
                     standing_grant_ref: None,
+                    scoped_mcp_call: None,
                     counterparty_first_touch: None,
                     counterparty_opted_out: false,
                     counterparty_opt_out_receipt_reason: None,

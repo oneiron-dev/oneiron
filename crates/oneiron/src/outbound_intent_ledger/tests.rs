@@ -74,7 +74,17 @@ fn persist_pending(
         payload: call.payload.to_vec(),
         idempotency_key: call.idempotency_key.expect("idempotency key"),
         idempotency_supported,
-        authorization_binding,
+        authorization_binding: Some(authorization_binding),
+        binding_version: OUTBOUND_BINDING_VERSION,
+        resolved_endpoint: None,
+        budget_accounting: BudgetChargeMarker {
+            key_ref: None,
+            budget_class: BudgetClass::Send,
+            matched_rows: Vec::new(),
+            sends_debit: 0,
+            accounted_at_ms: now_ms,
+        },
+        recorded_outcome: None,
         state: IntentState::Pending,
         created_ms: now_ms,
         updated_ms: now_ms,
@@ -304,8 +314,7 @@ fn non_idempotent_ambiguity_is_abandoned_and_never_resent() {
 
 #[test]
 fn recovery_abandons_non_idempotent_pending_without_sending() {
-    // A directly persisted Pending row models a genuine crash-before-send; a
-    // definite Failed outcome would now delete the row and miss this path.
+    // A directly persisted Pending row models a genuine crash-before-send.
     let (_dir, vault) = open_vault();
     let pending = persist_pending(&vault, attempt(7), 0, b"pending", 100, false);
     let mut sender = CountingSender::default();
@@ -403,9 +412,7 @@ impl OutboundSender for PendingCheckingSender<'_> {
 }
 
 #[test]
-fn non_idempotent_definite_failure_is_deleted_and_same_identity_retries() {
-    // If Failed remains Pending, the zero-row assert fails and the second
-    // same-identity call is blocked before sender.calls reaches two.
+fn non_idempotent_pending_after_failure_abandons_without_retry() {
     let (_dir, vault) = open_vault();
     let failure = OutboundSendFailure {
         kind: OutboundFailureKind::Rejected,
@@ -432,13 +439,13 @@ fn non_idempotent_definite_failure_is_deleted_and_same_identity_retries() {
     )
     .expect("definite failure");
     assert_eq!(sender.calls, 1);
-    assert_eq!(failed.state, None);
+    assert_eq!(failed.state, Some(IntentState::Pending));
     assert_eq!(
         failed.send_outcome,
         Some(OutboundSendOutcome::Failed(failure))
     );
     assert_eq!(failed.escalation, None);
-    assert_eq!(intent_ledger_records(&vault).expect("records").len(), 0);
+    assert_eq!(intent_ledger_records(&vault).expect("records").len(), 1);
 
     let retry = execute_outbound_call(
         &vault,
@@ -447,14 +454,20 @@ fn non_idempotent_definite_failure_is_deleted_and_same_identity_retries() {
         &mut sender,
     )
     .expect("same-identity retry");
-    assert_eq!(sender.calls, 2);
-    assert!(!retry.replayed);
+    assert_eq!(sender.calls, 1);
+    assert!(retry.replayed);
     assert_eq!(retry.intent_id, failed.intent_id);
-    assert_eq!(retry.state, Some(IntentState::Done));
-    assert_eq!(retry.escalation, None);
+    assert_eq!(retry.state, Some(IntentState::Abandoned));
+    assert_eq!(
+        retry.escalation,
+        Some(IntentEscalation {
+            intent_id: failed.intent_id,
+            reason: IntentEscalationReason::NonIdempotentPending,
+        })
+    );
     let records = intent_ledger_records(&vault).expect("records");
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].state, IntentState::Done);
+    assert_eq!(records[0].state, IntentState::Abandoned);
 }
 
 #[test]
@@ -811,7 +824,7 @@ fn descriptor_drift_replay_of_pending_resends_with_stored_binding() {
     assert_eq!(server.observed_effects, 1);
     let records = intent_ledger_records(&vault).expect("records");
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].authorization_binding, AUTHORIZATION);
+    assert_eq!(records[0].authorization_binding, Some(AUTHORIZATION));
     assert_eq!(records[0].state, IntentState::Done);
 }
 
@@ -930,6 +943,53 @@ fn unknown_version_row_escalates_without_drop_or_send() {
         row_count += 1;
     }
     assert_eq!(row_count, 1);
+}
+
+#[test]
+fn greenfield_row_rejects_every_missing_chokepoint_field() {
+    let (_dir, vault) = open_vault();
+    let pending = persist_pending(&vault, attempt(28), 0, b"strict greenfield", 100, true);
+    let key = intent_ledger_key(&pending.id);
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let original = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &key)
+        .expect("read canonical row")
+        .expect("canonical row")
+        .to_vec();
+    drop(rtxn);
+
+    for required_key in [
+        KEY_BINDING_VERSION,
+        KEY_RESOLVED_ENDPOINT,
+        KEY_BUDGET_ACCOUNTING,
+        KEY_RECORDED_OUTCOME,
+    ] {
+        let Value::Map(mut entries) =
+            rmpv::decode::read_value(&mut std::io::Cursor::new(&original))
+                .expect("decode canonical row")
+        else {
+            panic!("canonical row must be a map");
+        };
+        let original_len = entries.len();
+        entries.retain(|(candidate, _)| candidate.as_str() != Some(required_key));
+        assert_eq!(entries.len() + 1, original_len);
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &Value::Map(entries))
+            .expect("encode missing-field row");
+        let mut wtxn = vault.store.env.write_txn().expect("write txn");
+        vault
+            .store
+            .vault_meta
+            .put(&mut wtxn, &key, &encoded)
+            .expect("replace row");
+        wtxn.commit().expect("commit missing-field row");
+        assert!(matches!(
+            intent_ledger_records(&vault),
+            Err(IntentLedgerError::InvalidRecord(_))
+        ));
+    }
 }
 
 #[test]
