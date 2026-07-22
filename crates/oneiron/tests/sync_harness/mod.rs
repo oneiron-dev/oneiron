@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! Two-vault sync test harness (ONE-1136 / M4-14).
 //!
 //! Shared by the sync integration suites (each `tests/*.rs` crate that

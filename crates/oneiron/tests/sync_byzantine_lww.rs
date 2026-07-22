@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! ONE-1156 — Byzantine LWW misbehaving-peer family (WAVE-C design).
 //!
 //! Pinned OWNER-DECISIONS under test:

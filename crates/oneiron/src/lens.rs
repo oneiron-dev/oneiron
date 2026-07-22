@@ -1423,12 +1423,6 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
     where
         D: Deserializer<'de>,
     {
-        if self.depth > MAX_LENS_TREE_DEPTH {
-            return Err(de::Error::custom(format!(
-                "generated lens tree depth must be at most {MAX_LENS_TREE_DEPTH}"
-            )));
-        }
-
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "camelCase")]
         enum Field {
@@ -1545,6 +1539,12 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                     children,
                 })
             }
+        }
+
+        if self.depth > MAX_LENS_TREE_DEPTH {
+            return Err(de::Error::custom(format!(
+                "generated lens tree depth must be at most {MAX_LENS_TREE_DEPTH}"
+            )));
         }
 
         deserializer.deserialize_struct(

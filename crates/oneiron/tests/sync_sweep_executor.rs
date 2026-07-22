@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! ONE-1087 / ONE-1091 — historical-carrier sweep executor, end-to-end
 //! delete-safety suite (phase 1).
 //!

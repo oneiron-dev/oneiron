@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the
 //! ONE-1714 path opener.
 //!

@@ -930,6 +930,23 @@ fn corrupt_scope_row_fails_closed_to_absence_clamp_not_error() -> Result<()> {
 
 #[test]
 fn receipt_stamp_escapes_delimiters_and_round_trips_the_exact_labels() -> Result<()> {
+    fn percent_decode(encoded: &str) -> String {
+        let bytes = encoded.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'%' {
+                let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).expect("hex pair");
+                out.push(u8::from_str_radix(hex, 16).expect("hex byte"));
+                index += 3;
+            } else {
+                out.push(bytes[index]);
+                index += 1;
+            }
+        }
+        String::from_utf8(out).expect("decoded label utf8")
+    }
+
     let (_tmp, vault) = temp_vault();
     let hostile = "gu,est:x=y;z%";
     let control = "line\nbreak";
@@ -953,23 +970,6 @@ fn receipt_stamp_escapes_delimiters_and_round_trips_the_exact_labels() -> Result
     );
 
     // A delimiter-grammar parse recovers the EXACT interlocutor set.
-    fn percent_decode(encoded: &str) -> String {
-        let bytes = encoded.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut index = 0;
-        while index < bytes.len() {
-            if bytes[index] == b'%' {
-                let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).expect("hex pair");
-                out.push(u8::from_str_radix(hex, 16).expect("hex byte"));
-                index += 3;
-            } else {
-                out.push(bytes[index]);
-                index += 1;
-            }
-        }
-        String::from_utf8(out).expect("decoded label utf8")
-    }
-
     let (mode_part, interlocutors_part) = stamp.split_once(';').expect("one mode separator");
     assert_eq!(mode_part, "mode=absence_clamp");
     let entries: Vec<(&str, String)> = interlocutors_part

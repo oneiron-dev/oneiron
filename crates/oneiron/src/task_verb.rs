@@ -1147,7 +1147,7 @@ fn attempt_hex(attempt_id: AttemptId) -> String {
     let mut out = String::with_capacity(32);
     for byte in attempt_id.as_bytes() {
         use std::fmt::Write as _;
-        write!(&mut out, "{byte:02x}").unwrap();
+        write!(&mut out, "{byte:02x}").expect("fmt::Write for String is infallible");
     }
     out
 }

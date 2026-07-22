@@ -1,3 +1,5 @@
+// Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
+#![allow(clippy::unwrap_used)]
 //! ONE-1131 — window.rs re-materialization correctness.
 //!
 //! Contract sources:
