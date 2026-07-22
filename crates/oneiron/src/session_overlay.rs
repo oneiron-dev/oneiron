@@ -5,11 +5,6 @@
 //! journal entries, generation-stamped read/segment leases, and the byte
 //! budget that bounds live overlay rows.
 
-// Substrate armed by ONE-1727 (the vault-level session view is its first
-// non-test consumer); until then every item is exercised only by the cfg(test)
-// forward oracle, so lib-target dead_code is expected across this module.
-#![allow(dead_code)]
-
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
@@ -17,13 +12,11 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
+use arc_swap::ArcSwap;
+
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-
-/// Production default used by the minimal session seam until vault-level
-/// configuration and session construction land together in ONE-1727.
-pub(crate) const DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
 /// Write-transaction entry points that a session write path must wrap.
 ///
@@ -202,6 +195,10 @@ impl KeyspaceState {
 
 #[derive(Clone)]
 struct JournalEntry {
+    #[allow(
+        dead_code,
+        reason = "typed journal selection is consumed by ONE-1730 promotion"
+    )]
     scope: JournalScope,
     op: BatchOp,
 }
@@ -270,6 +267,10 @@ pub(crate) struct JournalScope {
     turn: EntityId,
 }
 
+#[allow(
+    dead_code,
+    reason = "typed journal scope construction is consumed by ONE-1730 promotion; ONE-1726 oracle covers it now"
+)]
 impl JournalScope {
     pub(crate) const fn new(conversation: EntityId, turn: EntityId) -> Self {
         Self { conversation, turn }
@@ -279,6 +280,8 @@ impl JournalScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OverlayLifecycleState {
     Live,
+    Sealing,
+    Sealed,
     Closing,
     Gone,
 }
@@ -292,6 +295,10 @@ struct Lifecycle {
 
 struct Lease {
     overlay: Arc<SessionOverlay>,
+    #[allow(
+        dead_code,
+        reason = "segment generation is consumed once ONE-1728 installs production session writes"
+    )]
     generation: u64,
 }
 
@@ -495,6 +502,10 @@ struct TxnSegment {
     generation: u64,
     preview: Arc<OverlayState>,
     mutations: Vec<OverlayMutation>,
+    #[allow(
+        dead_code,
+        reason = "typed journal staging is consumed by ONE-1730 promotion"
+    )]
     journal: Vec<JournalEntry>,
     journal_bytes: usize,
     _lease: Lease,
@@ -508,7 +519,7 @@ static NEXT_OVERLAY_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// Persistent-COW in-memory overlay shared by one live session.
 pub(crate) struct SessionOverlay {
-    state: Mutex<Arc<OverlayState>>,
+    state: ArcSwap<OverlayState>,
     lifecycle: Mutex<Lifecycle>,
     lease_drained: Condvar,
     segment_available: Condvar,
@@ -518,7 +529,7 @@ pub(crate) struct SessionOverlay {
 impl SessionOverlay {
     pub(crate) fn new(budget_bytes: usize) -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new(Arc::new(OverlayState::empty())),
+            state: ArcSwap::from_pointee(OverlayState::empty()),
             lifecycle: Mutex::new(Lifecycle {
                 state: OverlayLifecycleState::Live,
                 generation: NEXT_OVERLAY_GENERATION.fetch_add(1, Ordering::Relaxed),
@@ -531,8 +542,87 @@ impl SessionOverlay {
         })
     }
 
+    #[allow(
+        dead_code,
+        reason = "ONE-1726 budget oracle introspection; production admission uses the private field"
+    )]
     pub(crate) const fn budget_bytes(&self) -> usize {
         self.budget_bytes
+    }
+
+    /// Lock-free taint-set membership exported through the registry's
+    /// immutable session snapshot. Closed overlays retain this immutable
+    /// state until the registry drops them, so close cannot create a false
+    /// negative between classification and the write-door decision.
+    pub(crate) fn contains_entity(&self, id: &EntityId) -> Result<bool> {
+        let state = self.state.load();
+        let KeyspaceState::Single { rows, .. } =
+            state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
+        else {
+            return Err(Error::InvariantViolation(
+                "entities overlay keyspace unexpectedly uses DUP_SORT",
+            ));
+        };
+        Ok(matches!(
+            rows.get(id.as_bytes().as_slice()),
+            Some(OverlayValue::Present(_))
+        ))
+    }
+
+    pub(crate) fn has_entities(&self) -> Result<bool> {
+        let state = self.state.load();
+        let KeyspaceState::Single { rows, .. } =
+            state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
+        else {
+            return Err(Error::InvariantViolation(
+                "entities overlay keyspace unexpectedly uses DUP_SORT",
+            ));
+        };
+        Ok(rows
+            .values()
+            .any(|value| matches!(value, OverlayValue::Present(_))))
+    }
+
+    /// Permanently seals the overlay write path while leaving composed reads
+    /// available. The transition first blocks new segment installers, then
+    /// drains the one permitted active writer before publishing `Sealed`.
+    pub(crate) fn seal_writes(self: &Arc<Self>) -> Result<()> {
+        let holds_active_segment = ACTIVE_SEGMENT.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .is_some_and(|segment| Arc::ptr_eq(&segment.overlay, self))
+        });
+        if holds_active_segment {
+            return Err(Error::InvariantViolation(
+                "session overlay seal called while this thread holds an active txn segment",
+            ));
+        }
+
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
+        match lifecycle.state {
+            OverlayLifecycleState::Live => {
+                lifecycle.state = OverlayLifecycleState::Sealing;
+                self.segment_available.notify_all();
+            }
+            OverlayLifecycleState::Sealed => return Ok(()),
+            OverlayLifecycleState::Sealing
+            | OverlayLifecycleState::Closing
+            | OverlayLifecycleState::Gone => {
+                return Err(Error::OffRecordOverlayLeaseClosed {
+                    generation: lifecycle.generation,
+                });
+            }
+        }
+        while lifecycle.segment_active {
+            lifecycle = self.segment_available.wait(lifecycle).map_err(|_| {
+                Error::InvariantViolation("session overlay lifecycle mutex poisoned")
+            })?;
+        }
+        lifecycle.state = OverlayLifecycleState::Sealed;
+        Ok(())
     }
 
     pub(crate) fn snapshot(self: &Arc<Self>) -> Result<OverlaySnapshot> {
@@ -552,18 +642,18 @@ impl SessionOverlay {
             });
         }
 
-        let lease = self.acquire_live_lease()?;
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))?
-            .clone();
+        let lease = self.acquire_read_lease()?;
+        let state = self.state.load_full();
         Ok(OverlaySnapshot {
             state,
             _lease: lease,
         })
     }
 
+    #[allow(
+        dead_code,
+        reason = "ONE-1728 witness is the first lib-target session write transaction"
+    )]
     pub(crate) fn install_txn_segment(self: &Arc<Self>) -> Result<TxnSegmentGuard> {
         ACTIVE_SEGMENT.with(|slot| {
             if slot.borrow().is_some() {
@@ -576,15 +666,7 @@ impl SessionOverlay {
 
         let lease = self.acquire_segment_lease()?;
         let generation = lease.generation;
-        let snapshot = match self.state.lock() {
-            Ok(state) => state.clone(),
-            Err(_) => {
-                self.release_segment_writer();
-                return Err(Error::InvariantViolation(
-                    "session overlay state mutex poisoned",
-                ));
-            }
-        };
+        let snapshot = self.state.load_full();
         let segment = TxnSegment {
             overlay: self.clone(),
             generation,
@@ -631,6 +713,10 @@ impl SessionOverlay {
         self.stage_mutation(mutation)
     }
 
+    #[allow(
+        dead_code,
+        reason = "ONE-1728 witness/retrieval supplies the first lib-target overlay delete"
+    )]
     pub(crate) fn delete(self: &Arc<Self>, keyspace: OverlayKeyspace, key: &[u8]) -> Result<()> {
         self.delete_with_base_backing(keyspace, key, true)
     }
@@ -674,6 +760,10 @@ impl SessionOverlay {
         self.stage_mutation(mutation)
     }
 
+    #[allow(
+        dead_code,
+        reason = "typed journal staging is consumed by ONE-1730 promotion"
+    )]
     pub(crate) fn stage_journal(self: &Arc<Self>, scope: JournalScope, op: BatchOp) -> Result<()> {
         let incoming_bytes = std::mem::size_of::<JournalEntry>()
             .checked_add(batch_op_payload_bytes(&op))
@@ -725,14 +815,16 @@ impl SessionOverlay {
             .lock()
             .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
         match lifecycle.state {
-            OverlayLifecycleState::Live => {
+            OverlayLifecycleState::Live | OverlayLifecycleState::Sealed => {
                 lifecycle.state = OverlayLifecycleState::Closing;
                 // Wake every installer parked on the segment permit so each re-checks the
                 // terminal lifecycle state and returns the closed error instead of sleeping;
                 // release_segment_writer's notify_one only ever wakes a single waiter.
                 self.segment_available.notify_all();
             }
-            OverlayLifecycleState::Closing | OverlayLifecycleState::Gone => {
+            OverlayLifecycleState::Sealing
+            | OverlayLifecycleState::Closing
+            | OverlayLifecycleState::Gone => {
                 return Err(Error::OffRecordOverlayLeaseClosed {
                     generation: lifecycle.generation,
                 });
@@ -743,11 +835,9 @@ impl SessionOverlay {
                 Error::InvariantViolation("session overlay lifecycle mutex poisoned")
             })?;
         }
-        *self
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))? =
-            Arc::new(OverlayState::empty());
+        // Retain the immutable state as the registry's fail-closed membership
+        // snapshot until the entry itself is unpublished. No read lease can
+        // observe it after the lifecycle reaches Gone.
         lifecycle.generation = lifecycle
             .generation
             .checked_add(1)
@@ -806,6 +896,10 @@ impl SessionOverlay {
         })
     }
 
+    #[allow(
+        dead_code,
+        reason = "reachable through the ONE-1728 production session write path"
+    )]
     fn acquire_segment_lease(self: &Arc<Self>) -> Result<Lease> {
         let mut lifecycle = self
             .lifecycle
@@ -840,19 +934,26 @@ impl SessionOverlay {
         })
     }
 
+    #[allow(
+        dead_code,
+        reason = "reachable through the ONE-1728 production session write path"
+    )]
     fn release_segment_writer(&self) {
         if let Ok(mut lifecycle) = self.lifecycle.lock() {
             lifecycle.segment_active = false;
-            self.segment_available.notify_one();
+            self.segment_available.notify_all();
         }
     }
 
-    fn acquire_live_lease(self: &Arc<Self>) -> Result<Lease> {
+    fn acquire_read_lease(self: &Arc<Self>) -> Result<Lease> {
         let mut lifecycle = self
             .lifecycle
             .lock()
             .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
-        if lifecycle.state != OverlayLifecycleState::Live {
+        if !matches!(
+            lifecycle.state,
+            OverlayLifecycleState::Live | OverlayLifecycleState::Sealed
+        ) {
             return Err(Error::OffRecordOverlayLeaseClosed {
                 generation: lifecycle.generation,
             });
@@ -885,6 +986,10 @@ impl SessionOverlay {
         })
     }
 
+    #[allow(
+        dead_code,
+        reason = "reachable through the ONE-1728 production session write path"
+    )]
     fn apply_segment(&self, segment: &TxnSegment) -> Result<()> {
         let lifecycle = self
             .lifecycle
@@ -897,12 +1002,9 @@ impl SessionOverlay {
                 generation: segment.generation,
             });
         }
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| Error::InvariantViolation("session overlay state mutex poisoned"))?;
-        *state =
-            Self::apply_preflighted_to_state(state.clone(), &segment.mutations, &segment.journal)?;
+        let state = self.state.load_full();
+        let next = Self::apply_preflighted_to_state(state, &segment.mutations, &segment.journal)?;
+        self.state.store(next);
         Ok(())
     }
 
@@ -981,12 +1083,20 @@ fn project_mutation(state: &OverlayState, mutation: &OverlayMutation) -> Result<
 }
 
 /// RAII owner of the thread-local segment installed for one base write txn.
+#[allow(
+    dead_code,
+    reason = "ONE-1728 witness is the first lib-target owner of a session write segment"
+)]
 pub(crate) struct TxnSegmentGuard {
     overlay: Arc<SessionOverlay>,
     finished: bool,
     _not_send: PhantomData<Rc<()>>,
 }
 
+#[allow(
+    dead_code,
+    reason = "ONE-1728 witness is the first lib-target committer of a session write segment"
+)]
 impl TxnSegmentGuard {
     /// Applies staged rows and typed journal entries after base commit.
     pub(crate) fn commit(mut self) -> Result<()> {

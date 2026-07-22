@@ -85,12 +85,21 @@ fn mode_table_is_exact() {
 // ─── Tier truth table (design §7 rules 1–5) ─────────────────────────────────
 
 #[test]
-fn tier_rule_1_off_record_fence_is_tier_a() -> Result<()> {
+fn tier_rule_1_live_overlay_membership_is_tier_a() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let fenced = test_id(0x11);
-    put_turn(&vault, &fenced);
-    vault.enter_off_record_session("room-1", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("room-1", &fenced)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("room-1", OffRecordBackendClass::Local)?;
+    let overlay = session.overlay();
+    let mut wtxn = vault.store.env.write_txn()?;
+    let segment = overlay.install_txn_segment()?;
+    let view = session.read_view()?;
+    view.entities
+        .put(&mut wtxn, fenced.as_bytes(), b"overlay")?;
+    drop(view);
+    wtxn.commit()?;
+    segment.commit()?;
 
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
@@ -102,6 +111,22 @@ fn tier_rule_1_off_record_fence_is_tier_a() -> Result<()> {
     assert_eq!(
         disclosure_tier(&vault.store, &rtxn, &plain, ENTITY_TYPE_TURN, None)?,
         DisclosureTier::TierB
+    );
+    Ok(())
+}
+
+#[test]
+fn tier_rule_1_durable_fence_backstop_is_tier_a() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let fenced = test_id(0x15);
+    put_turn(&vault, &fenced);
+    vault.enter_off_record_session("room-durable-fence", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("room-durable-fence", &fenced)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        disclosure_tier(&vault.store, &rtxn, &fenced, ENTITY_TYPE_TURN, None)?,
+        DisclosureTier::TierA
     );
     Ok(())
 }

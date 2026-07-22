@@ -122,6 +122,7 @@ use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
+use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::pipeline::Signal;
 use crate::registry::{
@@ -375,6 +376,11 @@ impl RetrievalRunId {
     #[must_use]
     pub fn as_bytes(self) -> [u8; 16] {
         self.bytes
+    }
+
+    #[must_use]
+    pub(crate) fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self { bytes }
     }
 
     #[must_use]
@@ -1173,8 +1179,8 @@ pub struct RawDatabases {
 /// path-deregistration, or clock-domain-release responsibilities.
 ///
 /// INVARIANT: no `Arc<StoreCore>` may outlive the owning [`StoreOwner`]. The
-/// owner's drop tripwire asserts this in debug builds; the session lifecycle
-/// (lease drain at close, ONE-1727) enforces it at runtime.
+/// owner's always-on drop assertion enforces this at runtime; the session
+/// lifecycle drains leases before releasing its owner-bound handle.
 pub struct StoreCore {
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
@@ -1185,6 +1191,9 @@ pub struct StoreCore {
     raw: RawDatabases,
     /// Vault-scoped dynamic StructuralKind registry loaded from `vault_meta`.
     pub(crate) kind_registry: RwLock<HashMap<u8, StructuralKindRegistration>>,
+    /// Process-local off-record session source of truth. It is intentionally
+    /// absent from every named database, so process loss evaporates sessions.
+    pub(crate) off_record_sessions: OffRecordSessionRegistry,
     /// Serializes reward-to-weight tuning so concurrent callers cannot lose
     /// a gradient step between read, compute, and persist.
     retrieval_blend_tuning_lock: Mutex<()>,
@@ -1198,7 +1207,7 @@ pub struct StoreCore {
 /// duplicating any of these would corrupt the base vault (double clock-domain
 /// release, premature path deregistration, early environment close).
 pub struct StoreOwner {
-    /// Debug tripwire for the "no `Arc<StoreCore>` outlives the owner"
+    /// Always-on tripwire for the "no `Arc<StoreCore>` outlives the owner"
     /// invariant; see [`StoreCore`].
     core: Weak<StoreCore>,
     /// Sole owner of the environment's close-on-last-clone semantics
@@ -1295,6 +1304,46 @@ pub struct Store {
     pub(crate) owner: StoreOwner,
 }
 
+/// One logical session view over all 28 manifest accessors. Every accessor
+/// shares the exact same overlay snapshot; constructing accessors one by one
+/// would permit a torn union if the overlay changed between constructions.
+/// The borrowed owner marker prevents any view from outliving `StoreOwner`.
+#[allow(
+    dead_code,
+    reason = "ONE-1727 constructs the complete D1 view; ONE-1728 witness/retrieval consumes the remaining accessors"
+)]
+pub(crate) struct SessionStoreView<'store> {
+    _owner: &'store StoreOwner,
+    pub(crate) entities: OverlayDb,
+    pub(crate) edges_out: OverlayDb,
+    pub(crate) edges_in: OverlayDb,
+    pub(crate) vectors: OverlayDb,
+    pub(crate) hnsw_neighbors: OverlayDb,
+    pub(crate) hnsw_meta: OverlayDb,
+    pub(crate) text_postings: OverlayDb,
+    pub(crate) text_meta: OverlayDb,
+    pub(crate) text_forward: OverlayDb,
+    pub(crate) text_bm25_field_stats: OverlayDb,
+    pub(crate) text_doc_field_lengths: OverlayDb,
+    pub(crate) vault_meta: OverlayDb,
+    pub(crate) ppr_cache: OverlayDb,
+    pub(crate) ppr_cache_deps: OverlayDb,
+    pub(crate) type_index: OverlayDb,
+    pub(crate) temporal_occurred_start: OverlayDb,
+    pub(crate) temporal_occurred_end: OverlayDb,
+    pub(crate) temporal_learned: OverlayDb,
+    pub(crate) temporal_long_intervals: OverlayDb,
+    pub(crate) phonetic_index: OverlayDb,
+    pub(crate) phonetic_forward: OverlayDb,
+    pub(crate) short_ids: OverlayDb,
+    pub(crate) short_ids_reverse: OverlayDb,
+    pub(crate) sync_state: OverlayStrDb,
+    pub(crate) sync_queue: OverlayDb,
+    pub(crate) attempt_records: OverlayDb,
+    pub(crate) attempt_ready: OverlayDb,
+    pub(crate) attempt_dedupe: OverlayDb,
+}
+
 impl std::ops::Deref for Store {
     type Target = StoreCore;
 
@@ -1307,7 +1356,7 @@ static NEXT_AUTHORITY_CLOCK_DOMAIN: AtomicUsize = AtomicUsize::new(1);
 
 impl Drop for StoreOwner {
     fn drop(&mut self) {
-        debug_assert!(
+        assert!(
             self.core.strong_count() == 0,
             "an Arc<StoreCore> outlived its StoreOwner; the path registry \
              would release the vault root while the environment is still \
@@ -1318,6 +1367,86 @@ impl Drop for StoreOwner {
 }
 
 impl Store {
+    /// Captures one segment-aware snapshot and applies it to every database
+    /// accessor in this logical read transaction.
+    #[allow(
+        dead_code,
+        reason = "ONE-1727 completes the all-28 accessor view; ONE-1728 witness/retrieval is its first lib-target caller"
+    )]
+    pub(crate) fn session_view(
+        &self,
+        overlay: Arc<crate::session_overlay::SessionOverlay>,
+    ) -> Result<SessionStoreView<'_>> {
+        use crate::session_overlay::OverlayKeyspace;
+
+        let snapshot = Arc::new(overlay.snapshot()?);
+        let db =
+            |base, keyspace| OverlayDb::composed(base, overlay.clone(), snapshot.clone(), keyspace);
+        Ok(SessionStoreView {
+            _owner: &self.owner,
+            entities: db(self.core.raw.entities, OverlayKeyspace::Entities),
+            edges_out: db(self.core.raw.edges_out, OverlayKeyspace::EdgesOut),
+            edges_in: db(self.core.raw.edges_in, OverlayKeyspace::EdgesIn),
+            vectors: db(self.core.raw.vectors, OverlayKeyspace::Vectors),
+            hnsw_neighbors: db(self.core.raw.hnsw_neighbors, OverlayKeyspace::HnswNeighbors),
+            hnsw_meta: db(self.core.raw.hnsw_meta, OverlayKeyspace::HnswMeta),
+            text_postings: db(self.core.raw.text_postings, OverlayKeyspace::TextPostings),
+            text_meta: db(self.core.raw.text_meta, OverlayKeyspace::TextMeta),
+            text_forward: db(self.core.raw.text_forward, OverlayKeyspace::TextForward),
+            text_bm25_field_stats: db(
+                self.core.raw.text_bm25_field_stats,
+                OverlayKeyspace::TextBm25FieldStats,
+            ),
+            text_doc_field_lengths: db(
+                self.core.raw.text_doc_field_lengths,
+                OverlayKeyspace::TextDocFieldLengths,
+            ),
+            vault_meta: db(self.core.raw.vault_meta, OverlayKeyspace::VaultMeta),
+            ppr_cache: db(self.core.raw.ppr_cache, OverlayKeyspace::PprCache),
+            ppr_cache_deps: db(self.core.raw.ppr_cache_deps, OverlayKeyspace::PprCacheDeps),
+            type_index: db(self.core.raw.type_index, OverlayKeyspace::TypeIndex),
+            temporal_occurred_start: db(
+                self.core.raw.temporal_occurred_start,
+                OverlayKeyspace::TemporalOccurredStart,
+            ),
+            temporal_occurred_end: db(
+                self.core.raw.temporal_occurred_end,
+                OverlayKeyspace::TemporalOccurredEnd,
+            ),
+            temporal_learned: db(
+                self.core.raw.temporal_learned,
+                OverlayKeyspace::TemporalLearned,
+            ),
+            temporal_long_intervals: db(
+                self.core.raw.temporal_long_intervals,
+                OverlayKeyspace::TemporalLongIntervals,
+            ),
+            phonetic_index: db(self.core.raw.phonetic_index, OverlayKeyspace::PhoneticIndex),
+            phonetic_forward: db(
+                self.core.raw.phonetic_forward,
+                OverlayKeyspace::PhoneticForward,
+            ),
+            short_ids: db(self.core.raw.short_ids, OverlayKeyspace::ShortIds),
+            short_ids_reverse: db(
+                self.core.raw.short_ids_reverse,
+                OverlayKeyspace::ShortIdsReverse,
+            ),
+            sync_state: OverlayStrDb::composed(
+                self.core.raw.sync_state,
+                overlay.clone(),
+                snapshot.clone(),
+                OverlayKeyspace::SyncState,
+            ),
+            sync_queue: db(self.core.raw.sync_queue, OverlayKeyspace::SyncQueue),
+            attempt_records: db(
+                self.core.raw.attempt_records,
+                OverlayKeyspace::AttemptRecords,
+            ),
+            attempt_ready: db(self.core.raw.attempt_ready, OverlayKeyspace::AttemptReady),
+            attempt_dedupe: db(self.core.raw.attempt_dedupe, OverlayKeyspace::AttemptDedupe),
+        })
+    }
+
     /// Opens or creates a store at `path` and initializes all named databases.
     pub fn open(path: impl AsRef<Path>, config: &VaultConfig) -> Result<Self> {
         Self::open_with_storage_abi_version(path, config, STORAGE_ABI_VERSION)
@@ -1465,6 +1594,7 @@ impl Store {
                 attempt_dedupe,
             },
             kind_registry,
+            off_record_sessions: OffRecordSessionRegistry::default(),
             retrieval_blend_tuning_lock: Mutex::new(()),
             authority_clock_domain,
         });
