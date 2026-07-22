@@ -404,24 +404,22 @@ fn policy_manifest_blob(data: &[u8]) -> Vec<u8> {
 }
 
 fn access_grant_blob(data: &[u8]) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_ACCESS_GRANT);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(data);
-    payload
+    entity_record(
+        ENTITY_TYPE_ACCESS_GRANT,
+        TimeRange { start: 1, end: 1 },
+        1,
+        data,
+    )
 }
 
 #[cfg(feature = "sync")]
 fn authority_log_blob(data: &[u8]) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(crate::registry::ENTITY_TYPE_AUTHORITY_LOG);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(data);
-    payload
+    entity_record(
+        crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
+        TimeRange { start: 1, end: 1 },
+        1,
+        data,
+    )
 }
 
 fn put_malformed_access_grant_bytes(
@@ -613,12 +611,12 @@ fn core_read_world_grant_manifest(actor_ref: &str, world: EntityId) -> Vec<u8> {
 
 fn put_claim_body(vault: &crate::Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
     let data = crate::claim::encode_claim_body(body)?;
-    let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(crate::registry::ENTITY_TYPE_CLAIM);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&data);
+    let payload = entity_record(
+        crate::registry::ENTITY_TYPE_CLAIM,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &data,
+    );
 
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
@@ -684,18 +682,17 @@ fn source_trust_claim_data(source: ClaimSource) -> Vec<u8> {
 
 #[cfg(feature = "sync")]
 fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Result<Vec<u8>> {
-    use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::sync::loro_support::{export_all_updates, map_insert_bytes};
     use crate::sync::schema::create_window_doc;
     use crate::sync::types::WindowKey;
 
     let data = crate::claim::encode_claim_body(body)?;
-    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    blob.push(crate::registry::ENTITY_TYPE_CLAIM);
-    blob.extend_from_slice(&5_u64.to_be_bytes());
-    blob.extend_from_slice(&5_u64.to_be_bytes());
-    blob.extend_from_slice(&5_u64.to_be_bytes());
-    blob.extend_from_slice(&data);
+    let blob = entity_record(
+        crate::registry::ENTITY_TYPE_CLAIM,
+        TimeRange { start: 5, end: 5 },
+        5,
+        &data,
+    );
 
     let key = WindowKey::new("2026-03");
     let doc = create_window_doc("federation-remote", &key);

@@ -118,12 +118,15 @@ fn put_claim_entity_unchecked(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_CLAIM);
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(data);
+    let payload = crate::test_util::entity_record(
+        ENTITY_TYPE_CLAIM,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        data,
+    );
 
     let mut wtxn = vault.store.env.write_txn()?;
     vault

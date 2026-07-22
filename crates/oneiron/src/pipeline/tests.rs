@@ -4689,12 +4689,7 @@ fn overwrite_entity_record(
     entity_type: u8,
     body: &[u8],
 ) -> Result<()> {
-    let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-    raw.push(entity_type);
-    raw.extend_from_slice(&1_u64.to_be_bytes());
-    raw.extend_from_slice(&1_u64.to_be_bytes());
-    raw.extend_from_slice(&1_u64.to_be_bytes());
-    raw.extend_from_slice(body);
+    let raw = crate::test_util::entity_record(entity_type, TimeRange { start: 1, end: 1 }, 1, body);
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
         Ok(())

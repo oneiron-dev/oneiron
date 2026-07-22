@@ -1,6 +1,5 @@
 use super::*;
 use crate::access_grant::AccessGrant;
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
@@ -14,6 +13,7 @@ use crate::federation::{
 };
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
+use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
@@ -219,12 +219,15 @@ fn put_federation_grant(vault: &Vault, id: EntityId, learned_at: u64) -> Result<
     );
     let body = encode_federation_grant_body(&grant)?;
     vault.with_write_txn(|wtxn| {
-        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-        payload.push(ENTITY_TYPE_FEDERATION_GRANT);
-        payload.extend_from_slice(&learned_at.to_be_bytes());
-        payload.extend_from_slice(&learned_at.to_be_bytes());
-        payload.extend_from_slice(&learned_at.to_be_bytes());
-        payload.extend_from_slice(&body);
+        let payload = crate::test_util::entity_record(
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        );
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
 
         let type_key = Store::encode_type_key(ENTITY_TYPE_FEDERATION_GRANT, &id);
@@ -240,12 +243,15 @@ fn put_federation_grant(vault: &Vault, id: EntityId, learned_at: u64) -> Result<
 }
 
 fn put_redaction_floor_receipt(vault: &Vault, id: EntityId, learned_at: u64) -> Result<()> {
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 4);
-    payload.push(ENTITY_TYPE_REDACTION_AUDIT);
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(b"seal");
+    let payload = crate::test_util::entity_record(
+        ENTITY_TYPE_REDACTION_AUDIT,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"seal",
+    );
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, &id);

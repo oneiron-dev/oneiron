@@ -3257,7 +3257,6 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "oneiron",
- "serde",
  "serde_json",
 ]
 

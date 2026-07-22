@@ -43,13 +43,7 @@ fn local_world_id(byte: u8) -> LocalWorldId {
 }
 
 fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&1_u64.to_be_bytes());
-    blob.extend_from_slice(&1_u64.to_be_bytes());
-    blob.extend_from_slice(&1_u64.to_be_bytes());
-    blob.extend_from_slice(body);
-    blob
+    crate::test_util::entity_record(entity_type, TimeRange { start: 1, end: 1 }, 1, body)
 }
 
 fn authority_genesis_entry(seed: u8) -> AuthorityLogEntry {

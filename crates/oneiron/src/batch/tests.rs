@@ -489,12 +489,7 @@ fn seed_raw_claim_record(vault: &Vault, id: &EntityId, body: ClaimBody) -> Resul
     let data = crate::claim::encode_claim_body(&body)?;
     let occurred = test_time_range(30, 30);
     let learned_at = 31_u64;
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_CLAIM);
-    payload.extend_from_slice(&occurred.start.to_be_bytes());
-    payload.extend_from_slice(&occurred.end.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&data);
+    let payload = crate::test_util::entity_record(ENTITY_TYPE_CLAIM, occurred, learned_at, &data);
 
     let mut wtxn = vault.store.env.write_txn()?;
     vault
@@ -2112,17 +2107,8 @@ fn bm25_drops_orphan_and_inactive_lexical_hint_postings() -> Result<()> {
 
     let soft_deleted_query = "softdeletedrowuniquedelta";
     let soft_deleted_hint = lexical_query_hint_claim_id(&claim, soft_deleted_query)?;
-    let header = EntityMetadataHeader {
-        entity_type: ENTITY_TYPE_CLAIM,
-        occurred_start: 30,
-        occurred_end: 30,
-        learned_at: 31,
-    };
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN);
-    payload.push(header.entity_type);
-    payload.extend_from_slice(&header.occurred_start.to_be_bytes());
-    payload.extend_from_slice(&header.occurred_end.to_be_bytes());
-    payload.extend_from_slice(&header.learned_at.to_be_bytes());
+    let payload =
+        crate::test_util::entity_record(ENTITY_TYPE_CLAIM, test_time_range(30, 30), 31, &[]);
     let mut wtxn = vault.store.env.write_txn()?;
     vault
         .store

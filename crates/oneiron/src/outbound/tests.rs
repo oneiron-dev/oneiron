@@ -1,7 +1,6 @@
 use super::*;
 use rmpv::Value;
 
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     encode_claim_body,
@@ -30,7 +29,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
-use crate::test_util::{entity, put_policy_manifest_bytes};
+use crate::test_util::{entity, entity_record, put_policy_manifest_bytes};
 
 fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
     let scoped_grants = verbs
@@ -83,12 +82,12 @@ fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
 fn put_claim_body(vault: &Vault, seed: u8, body: &ClaimBody) -> crate::Result<()> {
     let id = entity(seed);
     let data = encode_claim_body(body)?;
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_CLAIM);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&data);
+    let payload = entity_record(
+        ENTITY_TYPE_CLAIM,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        &data,
+    );
 
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;

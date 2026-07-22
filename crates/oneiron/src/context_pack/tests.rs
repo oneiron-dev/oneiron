@@ -588,13 +588,15 @@ fn raw_entity_record(
     learned_at: u64,
     payload: &[u8],
 ) -> Vec<u8> {
-    let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + payload.len());
-    raw.push(entity_type);
-    raw.extend_from_slice(&occurred_start.to_be_bytes());
-    raw.extend_from_slice(&occurred_end.to_be_bytes());
-    raw.extend_from_slice(&learned_at.to_be_bytes());
-    raw.extend_from_slice(payload);
-    raw
+    crate::test_util::entity_record(
+        entity_type,
+        TimeRange {
+            start: occurred_start,
+            end: occurred_end,
+        },
+        learned_at,
+        payload,
+    )
 }
 
 fn overwrite_raw_entity(vault: &Vault, id: &EntityId, raw: &[u8]) -> Result<()> {
@@ -2454,12 +2456,7 @@ fn pack_hydration_fails_closed_on_undecodable_claim_neighbor() -> Result<()> {
     // Raw 25-byte envelope (type 0) + a non-map MessagePack body.
     let mut junk_body = Vec::new();
     rmpv::encode::write_value(&mut junk_body, &rmpv::Value::from("junk")).expect("msgpack encode");
-    let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + junk_body.len());
-    raw.push(0);
-    raw.extend_from_slice(&1_u64.to_be_bytes());
-    raw.extend_from_slice(&1_u64.to_be_bytes());
-    raw.extend_from_slice(&1_u64.to_be_bytes());
-    raw.extend_from_slice(&junk_body);
+    let raw = raw_entity_record(0, 1, 1, 1, &junk_body);
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, bad.as_bytes(), &raw)?;
         Ok(())

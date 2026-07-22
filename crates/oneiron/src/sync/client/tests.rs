@@ -41,15 +41,7 @@ fn server_window_doc() -> LoroDoc {
     doc
 }
 
-fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&occurred.start.to_be_bytes());
-    blob.extend_from_slice(&occurred.end.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
-}
+use crate::test_util::entity_record as entity_blob;
 
 fn sync_state_values_with_prefix(vault: &Vault, prefix: &str) -> Vec<(String, Vec<u8>)> {
     vault
