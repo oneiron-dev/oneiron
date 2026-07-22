@@ -9,13 +9,13 @@
 use oneiron::EntityId;
 
 /// Mirror of `test_util::PINNED_ID_BYTES`; see the canonical doc comment.
-pub const PINNED_ID_BYTES: [u8; 13] = [
+pub(crate) const PINNED_ID_BYTES: [u8; 13] = [
     0x00, 0x11, 0x42, 0x47, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xD7, 0xE1, 0xFF,
 ];
 
 /// Canonical test entity id: `[seed; 16]`. Panics on production-pinned seeds,
 /// including `entity(0)`. See `test_util::entity` for the full contract.
-pub fn entity(seed: u8) -> EntityId {
+pub(crate) fn entity(seed: u8) -> EntityId {
     assert!(
         !PINNED_ID_BYTES.contains(&seed),
         "test seed {seed:#04x} collides with a production-pinned id byte; \

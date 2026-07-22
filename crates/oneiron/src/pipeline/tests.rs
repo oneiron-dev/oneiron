@@ -1409,7 +1409,7 @@ fn retrieval_trace_fork_hash_changes_for_query_config_flags_weights_and_candidat
             .limit(10),
     )?;
 
-    let added_candidate = entity_id(0xD7);
+    let added_candidate = entity_id(0x57);
     put_text_and_vector(
         &vault,
         added_candidate,
@@ -2227,7 +2227,7 @@ fn fenced_text_rows_do_not_consume_channel_limit_slots() -> Result<()> {
     let fenced_a = entity_id(0x01);
     let fenced_b = entity_id(0x02);
     let live_a = entity_id(0x10);
-    let live_b = entity_id(0x11);
+    let live_b = entity_id(0x60);
 
     put_text(&vault, fenced_a, "fencechannel fencechannel fencechannel")?;
     put_text(&vault, fenced_b, "fencechannel fencechannel")?;
@@ -2278,7 +2278,7 @@ fn fenced_recency_text_rows_do_not_exhaust_overfetch_window() -> Result<()> {
     ];
     let live = [
         entity_id(0x10),
-        entity_id(0x11),
+        entity_id(0x60),
         entity_id(0x12),
         entity_id(0x13),
         entity_id(0x14),
@@ -2329,7 +2329,7 @@ fn fenced_vector_rows_do_not_consume_channel_limit_slots() -> Result<()> {
     let fenced_a = entity_id(0x01);
     let fenced_b = entity_id(0x02);
     let live_a = entity_id(0x10);
-    let live_b = entity_id(0x11);
+    let live_b = entity_id(0x60);
 
     put_vector(&vault, fenced_a, [1.0, 0.0, 0.0, 0.0])?;
     put_vector(&vault, fenced_b, [0.99, 0.01, 0.0, 0.0])?;
@@ -2374,7 +2374,7 @@ fn unrelated_vector_fence_preserves_scoped_overfetch() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let fenced = entity_id(0x01);
     let in_scope_a = entity_id(0x10);
-    let in_scope_b = entity_id(0x11);
+    let in_scope_b = entity_id(0x60);
     let repo_a =
         RepoRef::parse("github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277")?;
     let repo_b =
@@ -2981,7 +2981,7 @@ fn exact_other_world_text_hit_does_not_suppress_world_prefix() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let world_active = entity_id(0x92);
     let world_other = entity_id(0xB2);
-    let other_world_exact = entity_id(0x11);
+    let other_world_exact = entity_id(0x60);
     let active_world_prefix = entity_id(0x21);
 
     put_claim_text(&vault, other_world_exact, "worldprefix", Some(world_other))?;
@@ -3152,7 +3152,7 @@ fn fenced_temporal_rows_do_not_consume_channel_limit_slots() -> Result<()> {
     let fenced_a = entity_id(0x01);
     let fenced_b = entity_id(0x02);
     let live_a = entity_id(0x10);
-    let live_b = entity_id(0x11);
+    let live_b = entity_id(0x60);
 
     for id in [fenced_a, fenced_b, live_a, live_b] {
         put_entity(&vault, id, 1, anchor, anchor, anchor)?;
@@ -4496,7 +4496,7 @@ fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
     let claim_has_facet = entity_id(0x41);
     // `FacetOf → facet_b` + `HasFacet → facet_a`: scoped to facet_b;
     // the HasFacet edge to the active facet must not rescue it.
-    let claim_scoped_b = entity_id(0x42);
+    let claim_scoped_b = entity_id(0x66);
     put_claim_with_vector(&vault, claim_has_facet, [1.0, 0.0, 0.0, 0.0])?;
     put_claim_with_vector(&vault, claim_scoped_b, [0.8, 0.6, 0.0, 0.0])?;
     vault
@@ -4896,7 +4896,7 @@ fn facet_query_rejects_invalid_active_facet_typed() -> Result<()> {
 #[test]
 fn world_scope_filter_visibility_matrix() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let world_w = entity_id(0xE1);
+    let world_w = entity_id(0x5E);
     let world_v = entity_id(0xE2);
 
     let claim_base = entity_id(0x61); // no `world` key — base reality
@@ -5145,7 +5145,7 @@ fn dead_claim_never_seeds_ppr_expansion() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
     let r = entity_id(70);
-    let x = entity_id(71);
+    let x = entity_id(0x67);
     put_status_claim(
         &vault,
         r,

@@ -34,11 +34,7 @@ fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     Ok((dir, vault))
 }
 
-fn entity(seed: u8) -> EntityId {
-    let mut bytes = [seed; ENTITY_ID_LEN];
-    bytes[0] = seed.max(1);
-    EntityId::from_bytes(bytes).expect("test entity id")
-}
+use crate::test_util::entity;
 
 fn field_map(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
     entries
@@ -80,7 +76,7 @@ fn durable_send_receipt_requires_explicit_outcome() {
         receipt: ReceiptRecord,
     }
 
-    let task_ref = entity(0xE1);
+    let task_ref = entity(0x5E);
     let task_ref_hex = task_ref.to_hex();
     let receipt = ReceiptRecord {
         receipt_id: "outbound:required-outcome".to_owned(),
@@ -517,7 +513,7 @@ fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
             actor_ref: Some("agent-noise".to_owned()),
             content_kind: "claim".to_owned(),
             policy_manifest_version: "test-policy".to_owned(),
-            claim_id: Some(*entity(0x42).as_bytes()),
+            claim_id: Some(*entity(0x53).as_bytes()),
             grant_ref: None,
             diff_handle: vec![0xA5],
             read_frontier_hash: [0xB6; 32],

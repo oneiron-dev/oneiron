@@ -14,7 +14,6 @@ use crate::delivery_window::{
     PREDICATE_DELIVERY_WINDOW_CONTEXT, PREDICATE_DELIVERY_WINDOW_QUIET,
 };
 use crate::edge::EdgeKind;
-use crate::entity_id::ENTITY_ID_LEN;
 use crate::linkedin_connector::{
     LINKEDIN_CHANNEL, LinkedInMcpConnectorAdapter, LinkedInMcpSendMessageRequest,
     LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink, LinkedInSandboxHostConfig,
@@ -22,7 +21,7 @@ use crate::linkedin_connector::{
     LinkedInVerifiedSendPlan, run_linkedin_kill_switch,
 };
 use crate::llm::{BudgetSignalDeliveryChannel, BudgetThreshold};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
@@ -31,11 +30,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
-fn entity(seed: u8) -> EntityId {
-    let mut bytes = [seed; ENTITY_ID_LEN];
-    bytes[0] = seed.max(1);
-    EntityId::from_bytes(bytes).expect("test entity id")
-}
+use crate::test_util::{entity, put_policy_manifest_bytes};
 
 fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
     let scoped_grants = verbs
@@ -83,23 +78,6 @@ fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("manifest encode");
     out
-}
-
-fn put_policy_manifest(vault: &Vault, seed: u8, data: &[u8]) -> crate::Result<()> {
-    let id = entity(seed);
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(data);
-
-    vault.with_write_txn(|wtxn| {
-        vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-        let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
-        vault.store.type_index.put(wtxn, &type_key, &[])?;
-        Ok(())
-    })
 }
 
 fn put_claim_body(vault: &Vault, seed: u8, body: &ClaimBody) -> crate::Result<()> {
@@ -170,9 +148,9 @@ fn connector_send_schedule_is_additive_and_executor_is_idempotent() -> crate::Re
         10,
         b"connector task actor",
     )?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x32,
+        entity(0x32),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
 
@@ -310,9 +288,9 @@ fn delivered_send_idempotency_survives_attempt_completion() -> crate::Result<()>
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x4A);
     put_connector_task_actor(&vault, actor, 90)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x4B,
+        entity(0x4B),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault.register_connector_key(&entity(0x4E), sends_per_day_key(5))?;
@@ -448,9 +426,9 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x4C);
     put_connector_task_actor(&vault, actor, 100)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x4D,
+        entity(0x4D),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     let draft = connector_task_draft(
@@ -622,9 +600,9 @@ fn logical_send_is_charged_once_across_fresh_retry_attempts() -> crate::Result<(
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x4F);
     put_connector_task_actor(&vault, actor, 110)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x50,
+        entity(0x50),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault.register_connector_key(&entity(0x51), sends_per_day_key(5))?;
@@ -688,9 +666,9 @@ fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Resul
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x52);
     put_connector_task_actor(&vault, actor, 120)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x53,
+        entity(0x53),
         &policy_manifest(&actor.to_hex(), "email", &["replace"]),
     )?;
     let mut draft = connector_task_draft(
@@ -745,9 +723,9 @@ fn failed_not_delivered_fresh_retry_replays_existing_intent() -> crate::Result<(
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x5A);
     put_connector_task_actor(&vault, actor, 130)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x5B,
+        entity(0x5B),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault
@@ -817,9 +795,9 @@ fn non_idempotent_send_masks_provider_idempotency_key() -> crate::Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x63);
     put_connector_task_actor(&vault, actor, 150)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x64,
+        entity(0x64),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault
@@ -860,9 +838,9 @@ fn connector_executor_hands_sink_the_stable_scheduled_ref() -> crate::Result<()>
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x60);
     put_connector_task_actor(&vault, actor, 140)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x61,
+        entity(0x61),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault
@@ -906,9 +884,9 @@ fn replayed_delivery_omits_fabricated_gate_ref() -> crate::Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x65);
     put_connector_task_actor(&vault, actor, 160)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x66,
+        entity(0x66),
         &policy_manifest(&actor.to_hex(), "email", &["replace"]),
     )?;
     let mut draft = connector_task_draft("replay-gate-ref:test", "session:replay-gate-ref", 160);
@@ -1006,9 +984,9 @@ fn send_receipt_point_lookup_skips_gate_and_sink_without_scanning() -> crate::Re
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x33);
     put_connector_task_actor(&vault, actor, 20)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x34,
+        entity(0x34),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault
@@ -1086,14 +1064,14 @@ fn schedule_denial_is_not_enqueued_and_does_not_block_allowed_task() -> crate::R
     let allowed_actor = entity(0x36);
     put_connector_task_actor(&vault, denied_actor, 30)?;
     put_connector_task_actor(&vault, allowed_actor, 30)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x37,
+        entity(0x37),
         &policy_manifest(&denied_actor.to_hex(), "email", &["send"]),
     )?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x42,
+        entity(0x62),
         &policy_manifest(&allowed_actor.to_hex(), "slack", &["send"]),
     )?;
     let denied_key = entity(0x43);
@@ -1176,9 +1154,9 @@ fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x38);
     put_connector_task_actor(&vault, actor, 40)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x39,
+        entity(0x39),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     let session_ref = "session:off-record-executor";
@@ -1255,9 +1233,9 @@ fn preexisting_send_receipt_does_not_debit_budget_again() -> crate::Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x3A);
     put_connector_task_actor(&vault, actor, 50)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x3B,
+        entity(0x3B),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     vault.register_connector_key(&entity(0x3C), sends_per_day_key(5))?;
@@ -1398,9 +1376,9 @@ fn undecodable_attempt_fails_and_valid_task_in_batch_executes() -> crate::Result
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x3F);
     put_connector_task_actor(&vault, actor, 70)?;
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0x40,
+        entity(0x40),
         &policy_manifest(&actor.to_hex(), "email", &["send"]),
     )?;
     let queue = AttemptQueue::new(&vault);
@@ -1660,9 +1638,9 @@ fn allow_linkedin_send(
     vault: &Vault,
     actor: &OutboundDispatchActor,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         vault,
-        0xE0,
+        entity(0xE0),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             LINKEDIN_CHANNEL,
@@ -1890,9 +1868,9 @@ fn dispatch_pipeline_resolves_gates_executes_and_emits_receipt()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD0,
+        entity(0xD0),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -2029,9 +2007,9 @@ fn dispatch_pipeline_records_context_receipt_field_set()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD0,
+        entity(0xD0),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -2107,9 +2085,9 @@ fn dispatch_pipeline_executes_deliverable_apns_cap()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD8,
+        entity(0xD8),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "apns",
@@ -2195,9 +2173,9 @@ fn dispatch_pipeline_records_typed_failed_execution()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD3,
+        entity(0xD3),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -3116,9 +3094,9 @@ fn dispatch_pipeline_holds_gate_pending_without_executing()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD1,
+        entity(0xD1),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -3184,9 +3162,9 @@ fn dispatch_pipeline_preserves_gate_hold_reason_when_window_also_holds()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD7,
+        crate::gate::default_policy_manifest_id()?,
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -3260,9 +3238,9 @@ fn dispatch_pipeline_suppresses_gate_denied_without_executing()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD4,
+        entity(0xD4),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -3395,9 +3373,9 @@ fn dispatch_pipeline_window_hold_skips_execution_after_gate_allow()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD2,
+        entity(0xD2),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -3466,9 +3444,9 @@ fn dispatch_door_defers_call_inside_stored_quiet_hours()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xE2,
+        entity(0xE2),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "voice",
@@ -3537,9 +3515,9 @@ fn dispatch_door_allows_chat_send_inside_stored_quiet_hours()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xE5,
+        entity(0xE5),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "slack",
@@ -3607,9 +3585,9 @@ fn dispatch_door_defers_interruption_when_calendar_busy_is_active()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xE8,
+        entity(0xE8),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "voice",
@@ -3670,9 +3648,9 @@ fn dispatch_door_ignores_delivery_window_claims_for_other_subjects()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xEC,
+        entity(0xEC),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "voice",
@@ -3727,9 +3705,9 @@ fn dispatch_door_uses_supplied_local_minute_for_user_local_quiet_hours()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xEE,
+        entity(0xEE),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "voice",
@@ -3788,9 +3766,9 @@ fn dispatch_door_holds_interrupt_when_local_minute_missing_for_time_window()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xF0,
+        entity(0xF0),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "voice",
@@ -3845,9 +3823,9 @@ fn dispatch_door_preserves_connector_channel_for_channel_window_claim()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xF2,
+        entity(0xF2),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "voice",
@@ -3906,9 +3884,9 @@ fn dispatch_door_enforces_manifest_interrupt_for_email_send()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xF4,
+        entity(0xF4),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -3961,9 +3939,9 @@ fn dispatch_door_preserves_passive_apns_window_context()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xF6,
+        entity(0xF6),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "apns",
@@ -4019,9 +3997,9 @@ fn dispatch_door_preserves_request_degrade_target_for_stored_quiet_policy()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xF8,
+        entity(0xF8),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -4112,9 +4090,9 @@ fn dispatch_request_evaluates_delivery_window_policy_before_execution()
             b"dispatch actor",
         )
         .expect("seed dispatch actor");
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD3,
+        entity(0xD3),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -4385,11 +4363,11 @@ fn dispatch_with_no_key_and_empty_budget_key_are_equivalent()
         Box<dyn std::error::Error>,
     > {
         let (_tmp, vault) = temp_vault();
-        let agent = entity(0xA1);
+        let agent = entity(0x56);
         let actor = OutboundDispatchActor::agent(agent);
-        put_policy_manifest(
+        put_policy_manifest_bytes(
             &vault,
-            0xD0,
+            entity(0xD0),
             &policy_manifest(
                 actor.actor_ref.as_deref().expect("actor ref"),
                 "email",
@@ -4450,11 +4428,11 @@ fn dispatch_with_no_key_and_empty_budget_key_are_equivalent()
 fn dispatch_sends_budget_exhausts_suspends_and_walls_until_resume()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA1);
+    let agent = entity(0x56);
     let actor = OutboundDispatchActor::agent(agent);
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD0,
+        entity(0xD0),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -4560,10 +4538,10 @@ fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
     // A window-Held dispatch passes the gate but never becomes an effect —
     // it must not consume or exhaust the key's budget.
     let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xA1));
-    put_policy_manifest(
+    let actor = OutboundDispatchActor::agent(entity(0x56));
+    put_policy_manifest_bytes(
         &vault,
-        0xD0,
+        entity(0xD0),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -4670,11 +4648,11 @@ fn budget_vault_with_key(
     Box<dyn std::error::Error>,
 > {
     let (tmp, vault) = temp_vault();
-    let agent = entity(0xA1);
+    let agent = entity(0x56);
     let actor = OutboundDispatchActor::agent(agent);
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD0,
+        entity(0xD0),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",

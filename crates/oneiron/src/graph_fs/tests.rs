@@ -6,9 +6,7 @@ use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 use crate::test_util::open_test_vault_with;
 
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid id")
-}
+use crate::test_util::entity as test_id;
 
 fn time_range(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
@@ -101,6 +99,7 @@ fn core_read_world_grant(actor_ref: &str, world: EntityId) -> Value {
     ])
 }
 
+// Kept local instead of `test_util`: this exercises `BatchOp::Put` through `apply_ops`.
 fn put_policy_manifest(vault: &crate::Vault, id: EntityId, data: Vec<u8>) -> Result<()> {
     let ops = vec![BatchOp::Put {
         id,
@@ -141,7 +140,7 @@ fn worlds_readdir_omits_excluded_worlds_entirely() -> Result<()> {
     let excluded_world = test_id(0x32);
     let subject = test_id(0x33);
     let allowed_claim = test_id(0x41);
-    let excluded_claim = test_id(0x42);
+    let excluded_claim = test_id(0x50);
     put_entity(&vault, allowed_world, ENTITY_TYPE_WORLD)?;
     put_entity(&vault, excluded_world, ENTITY_TYPE_WORLD)?;
     put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;

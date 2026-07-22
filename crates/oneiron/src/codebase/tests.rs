@@ -889,7 +889,7 @@ fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
     let repo_a = repo_ref();
     let repo_b = repo_ref_b();
     let id_a = entity_id(0x41);
-    let id_b = entity_id(0x42);
+    let id_b = entity_id(0x62);
 
     vault.put_code_artifact(
         &id_a,

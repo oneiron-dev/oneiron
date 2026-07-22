@@ -4,9 +4,7 @@ use crate::interlocutor::Interlocutor;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TURN;
 
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid entity id")
-}
+use crate::test_util::entity as test_id;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(crate::config::VaultConfig::default())
@@ -87,7 +85,7 @@ fn mode_table_is_exact() {
 #[test]
 fn tier_rule_1_live_overlay_membership_is_tier_a() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let fenced = test_id(0x11);
+    let fenced = test_id(0x60);
     let session = vault
         .off_record_session_vault()
         .enter("room-1", OffRecordBackendClass::Local)?;
@@ -467,7 +465,7 @@ fn scope_dual_write_requires_contact_and_supersedes_prior_claim() -> Result<()> 
     // Re-set (dial-not-wall) replaces the row AND supersedes the prior claim
     // value — exactly one owner-visible scope claim, carrying the new value.
     let mut wider =
-        DisclosureScope::task_scoped("party and travel", vec![test_id(0x41), test_id(0x42)], 100)?;
+        DisclosureScope::task_scoped("party and travel", vec![test_id(0x41), test_id(0x53)], 100)?;
     wider.updated_at = 200;
     vault.set_counterparty_disclosure_scope(&contact_id, &wider)?;
     assert_eq!(

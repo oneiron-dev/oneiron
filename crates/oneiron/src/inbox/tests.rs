@@ -22,9 +22,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::default())
 }
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("entity id")
-}
+use crate::test_util::entity;
 
 fn time(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }

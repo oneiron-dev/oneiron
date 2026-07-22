@@ -37,9 +37,7 @@ fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
 }
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes_unchecked([byte; ENTITY_ID_LEN])
-}
+use crate::test_util::entity;
 
 fn read_u64_meta(vault: &Vault, key: &[u8]) -> Result<u64> {
     let rtxn = vault.store.env.read_txn()?;

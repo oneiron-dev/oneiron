@@ -1,3 +1,6 @@
+mod common;
+
+use common::entity;
 use std::collections::BTreeMap;
 
 use oneiron::{
@@ -16,10 +19,6 @@ use oneiron::{
     outbound_capability_manifest, outbound_verb_contract, run_linkedin_kill_switch,
 };
 use serde_json::{Value, json};
-
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test id")
-}
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -405,7 +404,7 @@ fn linkedin_get_inbox_fixture_normalizes_each_thread_and_routes() -> Result<()> 
 
     let (_tmp, vault) = temp_vault();
     let identity_id = entity(0x51);
-    let agent_ref = entity(0xA1);
+    let agent_ref = entity(0x52);
     let mut identity = ChannelIdentity::requested(
         LINKEDIN_CHANNEL,
         adapter.receiving_address_or_handle(),

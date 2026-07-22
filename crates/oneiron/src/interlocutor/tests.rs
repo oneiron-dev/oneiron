@@ -2,9 +2,7 @@ use super::*;
 use crate::counterparty_contact::CounterpartyContactRecord;
 use serde_json::json;
 
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid entity id")
-}
+use crate::test_util::entity as test_id;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(crate::config::VaultConfig::default())
@@ -49,7 +47,7 @@ fn class_and_evidence_string_forms_are_pinned() {
 #[test]
 fn contact_ref_resolution_covers_active_revoked_and_missing() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let identity = test_id(0xA1);
+    let identity = test_id(0x51);
     let contact_id = test_id(0xB1);
     let record = CounterpartyContactRecord::user_introduction(identity, "kenji@example.com", 10)?;
     vault.create_counterparty_contact(&contact_id, &record)?;
@@ -89,7 +87,7 @@ fn contact_ref_resolution_covers_active_revoked_and_missing() -> Result<()> {
 #[test]
 fn channel_counterparty_resolution_transitions_unknown_to_known() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let identity = test_id(0xA2);
+    let identity = test_id(0x52);
     let input = resolution_input(vec![InterlocutorPartyInput::ChannelCounterparty {
         identity_ref: identity,
         counterparty: "kenji@example.com".to_owned(),
@@ -139,7 +137,7 @@ fn unknown_label_carries_claimed_owner_as_label_only() -> Result<()> {
 #[test]
 fn duplicate_contact_inputs_collapse_to_one_entry() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let identity = test_id(0xA3);
+    let identity = test_id(0x53);
     let contact_id = test_id(0xB3);
     let record = CounterpartyContactRecord::user_introduction(identity, "kenji@example.com", 10)?;
     vault.create_counterparty_contact(&contact_id, &record)?;
@@ -369,7 +367,7 @@ fn owner_session_flag_is_the_only_supervision_path() -> Result<()> {
 #[test]
 fn duplicate_heavy_inputs_resolve_in_one_pass_to_one_entry() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let identity = test_id(0xA4);
+    let identity = test_id(0x54);
     let contact_id = test_id(0xB5);
     let record = CounterpartyContactRecord::user_introduction(identity, "kenji@example.com", 10)?;
     vault.create_counterparty_contact(&contact_id, &record)?;

@@ -3495,9 +3495,7 @@ fn replay_edge_with_created_at_accepts_bare_over_provenanced() -> Result<()> {
     Ok(())
 }
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; ENTITY_ID_LEN]).expect("test entity id")
-}
+use crate::test_util::entity;
 
 fn child_of_edge(child: EntityId, parent: EntityId) -> BatchOp {
     BatchOp::Edge {
@@ -3512,7 +3510,7 @@ fn child_of_edge(child: EntityId, parent: EntityId) -> BatchOp {
 #[test]
 fn child_of_overlay_orders_entity_clear_against_same_pair_edge() {
     let child = entity(0x41);
-    let parent = entity(0x42);
+    let parent = entity(0x62);
 
     let edge_after_clear = ChildOfBatchOverlay::from_ops(&[
         BatchOp::Delete { id: child },

@@ -27,9 +27,7 @@ use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteProvenance;
 use std::time::Duration;
 
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test id")
-}
+use crate::test_util::{entity as test_id, entity_record, put_policy_manifest_bytes};
 
 fn test_time(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
@@ -397,13 +395,12 @@ fn signatures_entry() -> (Value, Value) {
 }
 
 fn policy_manifest_blob(data: &[u8]) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(data);
-    payload
+    entity_record(
+        ENTITY_TYPE_POLICY_MANIFEST,
+        TimeRange { start: 1, end: 1 },
+        1,
+        data,
+    )
 }
 
 fn access_grant_blob(data: &[u8]) -> Vec<u8> {
@@ -442,18 +439,6 @@ fn put_malformed_access_grant_bytes(
     })
 }
 
-fn put_policy_manifest_bytes(vault: &crate::Vault, seed: u8, data: &[u8]) -> Result<()> {
-    let id = test_id(seed);
-    let payload = policy_manifest_blob(data);
-
-    vault.with_write_txn(|wtxn| {
-        vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-        let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
-        vault.store.type_index.put(wtxn, &type_key, &[])?;
-        Ok(())
-    })
-}
-
 fn resolve(vault: &crate::Vault) -> Result<PolicyManifestResolution> {
     let rtxn = vault.store.env.read_txn()?;
     resolve_policy_manifest(&vault.store, &rtxn)
@@ -467,7 +452,7 @@ fn policy_manifest_budget_exhaustion_defaults_to_suspend() -> Result<()> {
     );
 
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x81, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x81), &encode_policy_manifest(vec![]))?;
 
     let policy = resolve(&vault)?;
     assert_eq!(
@@ -484,7 +469,7 @@ fn policy_manifest_budget_exhaustion_parses_continue_and_overdraft() -> Result<(
         Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
         Value::from("continue_on_local"),
     )]);
-    put_policy_manifest_bytes(&continue_vault, 0x82, &continue_manifest)?;
+    put_policy_manifest_bytes(&continue_vault, test_id(0x82), &continue_manifest)?;
     assert_eq!(
         resolve(&continue_vault)?.on_budget_exhausted(),
         BudgetExhaustionPolicy::ContinueOnLocal
@@ -498,7 +483,7 @@ fn policy_manifest_budget_exhaustion_parses_continue_and_overdraft() -> Result<(
             (Value::from("cap"), Value::from(25_u64)),
         ]),
     )]);
-    put_policy_manifest_bytes(&overdraft_vault, 0x83, &overdraft_manifest)?;
+    put_policy_manifest_bytes(&overdraft_vault, test_id(0x83), &overdraft_manifest)?;
     assert_eq!(
         resolve(&overdraft_vault)?.on_budget_exhausted(),
         BudgetExhaustionPolicy::Overdraft { cap: 25 }
@@ -511,7 +496,7 @@ fn conflicting_budget_exhaustion_policies_fail_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x84,
+        test_id(0x84),
         &encode_policy_manifest(vec![(
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("continue_on_local"),
@@ -519,7 +504,7 @@ fn conflicting_budget_exhaustion_policies_fail_closed() -> Result<()> {
     )?;
     put_policy_manifest_bytes(
         &vault,
-        0x85,
+        test_id(0x85),
         &encode_policy_manifest(vec![(
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
@@ -767,7 +752,7 @@ fn scoped_read_core_read_world_scope_contains_actor_readable_claims() -> Result<
             Value::from(world.to_hex()),
         )]),
     )]);
-    put_policy_manifest_bytes(&vault, 0x61, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x61), &data)?;
     let policy = resolve(&vault)?;
     let actor_key = ScopedReadActorKey::new("reader").expect("actor key");
     assert_eq!(policy.scoped_grants().len(), 1);
@@ -782,8 +767,8 @@ fn scoped_read_core_read_world_scope_contains_actor_readable_claims() -> Result<
     assert!(scoped_read_entity_id_from_value(&Value::from(world.to_hex())).is_some());
 
     let base_id = test_id(0xA0);
-    let allowed_id = test_id(0xA1);
-    let denied_id = test_id(0xA2);
+    let allowed_id = test_id(0x5A);
+    let denied_id = test_id(0x5C);
 
     let base = source_trust_claim(ClaimSource::UserStated);
     let mut allowed = source_trust_claim(ClaimSource::UserStated);
@@ -855,7 +840,7 @@ fn scoped_read_receipt_required_core_grants_fail_closed_without_receipt() -> Res
             Value::from(world.to_hex()),
         )]),
     )]);
-    put_policy_manifest_bytes(&vault, 0x6C, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x6C), &data)?;
 
     let id = test_id(0x34);
     let mut body = source_trust_claim(ClaimSource::UserStated);
@@ -887,7 +872,7 @@ fn scoped_read_budgeted_core_grants_fail_closed_without_budget_enforcer() -> Res
             Value::from(world.to_hex()),
         )]),
     )]);
-    put_policy_manifest_bytes(&vault, 0x3B, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x3B), &data)?;
 
     let id = test_id(0x3C);
     let mut body = source_trust_claim(ClaimSource::UserStated);
@@ -911,7 +896,7 @@ fn scoped_read_budgeted_core_grants_fail_closed_without_budget_enforcer() -> Res
 #[test]
 fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x62, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x62), &encode_policy_manifest(vec![]))?;
 
     let live_id = test_id(0xB0);
     let proposed_id = test_id(0xB1);
@@ -961,7 +946,7 @@ fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<
 #[test]
 fn scoped_read_search_candidate_limit_is_not_widened_without_core_read_grants() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x6D, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x6D), &encode_policy_manifest(vec![]))?;
     for seed in 0x35..=0x38 {
         put_text_entity(
             &vault,
@@ -987,7 +972,7 @@ fn scoped_read_hybrid_candidate_limit_uses_text_vector_union() -> Result<()> {
     let world = test_id(0x39);
     put_policy_manifest_bytes(
         &vault,
-        0x3D,
+        test_id(0x3D),
         &core_read_world_grant_manifest("reader", world),
     )?;
     for seed in [0x3E, 0x3F] {
@@ -1024,7 +1009,7 @@ fn scoped_read_core_grant_preserves_claim_surfaceable_gate() -> Result<()> {
     let world = test_id(0xC0);
     put_policy_manifest_bytes(
         &vault,
-        0x63,
+        test_id(0x63),
         &core_read_world_grant_manifest("reader", world),
     )?;
 
@@ -1069,7 +1054,7 @@ fn scoped_read_search_filters_before_limit_truncation() -> Result<()> {
     let denied_world = test_id(0xC4);
     put_policy_manifest_bytes(
         &vault,
-        0x64,
+        test_id(0x64),
         &core_read_world_grant_manifest("reader", allowed_world),
     )?;
 
@@ -1113,7 +1098,7 @@ fn scoped_read_search_filters_before_limit_truncation() -> Result<()> {
 #[test]
 fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x65, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x65), &encode_policy_manifest(vec![]))?;
 
     let missing_id = test_id(0xCB);
     put_dangling_short_id(&vault, "cldangling", 0x5A, &missing_id)?;
@@ -1137,7 +1122,7 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
 #[test]
 fn scoped_read_hydrate_preserves_deleted_claim_short_id_metadata() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x6F, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x6F), &encode_policy_manifest(vec![]))?;
 
     let claim_id = test_id(0xD0);
     put_claim_body(
@@ -1181,7 +1166,7 @@ fn scoped_read_context_pack_scrubs_edges_to_denied_claims() -> Result<()> {
     let denied_world = test_id(0xCD);
     put_policy_manifest_bytes(
         &vault,
-        0x66,
+        test_id(0x66),
         &core_read_world_grant_manifest("reader", allowed_world),
     )?;
 
@@ -1241,7 +1226,7 @@ fn scoped_read_context_pack_drops_neighbors_reached_only_from_filtered_results()
     let facet = test_id(0x6E);
     put_policy_manifest_bytes(
         &vault,
-        0x70,
+        test_id(0x70),
         &encode_policy_manifest(vec![core_read_scoped_grant_entry(
             "reader",
             Value::Map(vec![(Value::from("facet"), Value::from(facet.to_hex()))]),
@@ -1313,7 +1298,7 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
     let denied_world = test_id(0x74);
     put_policy_manifest_bytes(
         &vault,
-        0x75,
+        test_id(0x75),
         &core_read_world_grant_manifest("reader", allowed_world),
     )?;
 
@@ -1397,10 +1382,10 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
 #[test]
 fn scoped_read_context_pack_filters_before_response_limit() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let facet = test_id(0xE1);
+    let facet = test_id(0x5E);
     put_policy_manifest_bytes(
         &vault,
-        0x6B,
+        test_id(0x6B),
         &encode_policy_manifest(vec![core_read_scoped_grant_entry(
             "reader",
             Value::Map(vec![(Value::from("facet"), Value::from(facet.to_hex()))]),
@@ -1477,7 +1462,7 @@ fn scoped_read_memory_timeline_prunes_links_to_filtered_records() -> Result<()> 
     let denied_world = test_id(0xD1);
     put_policy_manifest_bytes(
         &vault,
-        0x67,
+        test_id(0x67),
         &core_read_world_grant_manifest("reader", allowed_world),
     )?;
 
@@ -1504,11 +1489,11 @@ fn scoped_read_memory_timeline_prunes_links_to_filtered_records() -> Result<()> 
 #[test]
 fn scoped_read_memory_timeline_rejects_unreadable_anchor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let allowed_world = test_id(0xD7);
+    let allowed_world = test_id(0x5D);
     let denied_world = test_id(0xD8);
     put_policy_manifest_bytes(
         &vault,
-        0x69,
+        test_id(0x69),
         &core_read_world_grant_manifest("reader", allowed_world),
     )?;
 
@@ -1538,7 +1523,7 @@ fn scoped_read_edges_out_scrubs_denied_sources_and_targets() -> Result<()> {
     let denied_world = test_id(0xDC);
     put_policy_manifest_bytes(
         &vault,
-        0x6A,
+        test_id(0x6A),
         &core_read_world_grant_manifest("reader", allowed_world),
     )?;
 
@@ -1584,7 +1569,7 @@ fn scoped_read_facet_grants_match_facet_of_edges() -> Result<()> {
     let facet = test_id(0xD4);
     put_policy_manifest_bytes(
         &vault,
-        0x68,
+        test_id(0x68),
         &encode_policy_manifest(vec![core_read_scoped_grant_entry(
             "reader",
             Value::Map(vec![(Value::from("facet"), Value::from(facet.to_hex()))]),
@@ -1709,7 +1694,7 @@ fn gate_evaluator_input(
         policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(test_id(0xA0)),
-            substrate_ref: Some(test_id(0xA1)),
+            substrate_ref: Some(test_id(0x5A)),
             source_revision_ref: Some([0xA2; ENTITY_ID_LEN]),
             body_snapshot_ref: Some([0xA3; ENTITY_ID_LEN]),
             ..GateProvenanceHandles::default()
@@ -1998,7 +1983,7 @@ fn gate_metrics_advance_at_claim_write_chokepoint_without_double_counting() -> R
     let (_allow_tmp, allow_vault) = temp_vault();
     let mut allow_policy = encode_policy_manifest(vec![]);
     trust_human_candidate_actor(&mut allow_policy);
-    put_policy_manifest_bytes(&allow_vault, 0x40, &allow_policy)?;
+    put_policy_manifest_bytes(&allow_vault, test_id(0x40), &allow_policy)?;
     let allow_body = source_trust_claim(ClaimSource::UserStated);
     let (allow_candidate, allow_envelope) = claim_candidate_write_parts(&allow_vault, &allow_body)?;
     allow_vault
@@ -2013,7 +1998,11 @@ fn gate_metrics_advance_at_claim_write_chokepoint_without_double_counting() -> R
         .commit()?;
 
     let (_pending_tmp, pending_vault) = temp_vault();
-    put_policy_manifest_bytes(&pending_vault, 0x42, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(
+        &pending_vault,
+        test_id(0x5F),
+        &encode_policy_manifest(vec![]),
+    )?;
     let pending_body = source_trust_claim(ClaimSource::UserStated);
     let (pending_candidate, pending_envelope) =
         claim_candidate_write_parts(&pending_vault, &pending_body)?;
@@ -2031,7 +2020,7 @@ fn gate_metrics_advance_at_claim_write_chokepoint_without_double_counting() -> R
     assert_gate_rejected(pending_err, "pending", &["gate.pending.actor_ceiling"]);
 
     let (_deny_tmp, deny_vault) = temp_vault();
-    put_policy_manifest_bytes(&deny_vault, 0x45, b"not-msgpack")?;
+    put_policy_manifest_bytes(&deny_vault, test_id(0x45), b"not-msgpack")?;
     let deny_body = source_trust_claim(ClaimSource::UserStated);
     let (deny_candidate, deny_envelope) = claim_candidate_write_parts(&deny_vault, &deny_body)?;
     let deny_err = deny_vault
@@ -2110,7 +2099,7 @@ fn gate_evaluator_default_policy_fails_closed_with_typed_denial() {
 fn gate_evaluator_actor_source_criticality_matrix() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![]);
-    put_policy_manifest_bytes(&vault, 0x71, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x71), &data)?;
     let policy = resolve(&vault)?;
 
     let cases = [
@@ -2214,7 +2203,7 @@ fn gate_evaluator_actor_source_criticality_matrix() -> Result<()> {
 fn gate_evaluator_denial_reason_codes_are_stable() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![]);
-    put_policy_manifest_bytes(&vault, 0x72, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x72), &data)?;
     let policy = resolve(&vault)?;
 
     let mut missing_actor_class = gate_evaluator_input(
@@ -2280,7 +2269,7 @@ fn gate_evaluator_denial_reason_codes_are_stable() -> Result<()> {
 fn gate_evaluator_missing_source_preserves_write_gate_semantics() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![]);
-    put_policy_manifest_bytes(&vault, 0x74, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x74), &data)?;
     let policy = resolve(&vault)?;
 
     let mut input = gate_evaluator_input(
@@ -2303,7 +2292,7 @@ fn gate_evaluator_missing_source_preserves_write_gate_semantics() -> Result<()> 
 fn gate_evaluator_source_trust_respects_sensitivity_ceiling() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 0)]);
-    put_policy_manifest_bytes(&vault, 0x75, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x75), &data)?;
     let policy = resolve(&vault)?;
 
     let mut input = gate_evaluator_input(
@@ -2343,7 +2332,7 @@ fn gate_evaluator_generated_source_requires_explicit_auto_permit() -> Result<()>
         ClaimSource::Generated,
         0,
     )]);
-    put_policy_manifest_bytes(&vault, 0x76, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x76), &data)?;
     let policy = resolve(&vault)?;
 
     let input = gate_evaluator_input(
@@ -2361,7 +2350,7 @@ fn gate_evaluator_generated_source_requires_explicit_auto_permit() -> Result<()>
 
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
-    put_policy_manifest_bytes(&vault, 0x77, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x77), &data)?;
     let policy = resolve(&vault)?;
     let decision = policy.evaluate_gate(&input);
     assert_eq!(decision.outcome(), GateOutcome::Allow);
@@ -2374,7 +2363,7 @@ fn gate_evaluator_generated_source_requires_explicit_auto_permit() -> Result<()>
 fn gate_evaluator_content_kind_reasons_are_stable() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![]);
-    put_policy_manifest_bytes(&vault, 0x73, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x73), &data)?;
     let policy = resolve(&vault)?;
 
     let mut edge_provenance = gate_evaluator_input(
@@ -2438,7 +2427,7 @@ fn external_effect_scoped_grant_allows_and_records_receipt() -> Result<()> {
         )]),
         None,
     )]);
-    put_policy_manifest_bytes(&vault, 0xD0, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &data)?;
     let policy = resolve(&vault)?;
     let effect = external_effect_gate_input("sender", "send", "line");
 
@@ -2468,7 +2457,7 @@ fn external_effect_scoped_grant_allows_and_records_receipt() -> Result<()> {
 #[test]
 fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD8, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xD8), &encode_policy_manifest(vec![]))?;
 
     let grant_id = test_id(0xD9);
     let intent = GrantMintIntent {
@@ -2519,7 +2508,7 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
 #[test]
 fn standing_outbound_grant_lookup_uses_principal_index_before_type_scan() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xDD, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xDD), &encode_policy_manifest(vec![]))?;
 
     let grant_id = test_id(0xDE);
     let intent = GrantMintIntent {
@@ -2555,12 +2544,13 @@ fn standing_outbound_grant_lookup_uses_principal_index_before_type_scan() -> Res
 #[test]
 fn forged_standing_grant_ref_does_not_authorize_external_effect() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD7, &encode_policy_manifest(vec![]))?;
+    let default_manifest_id = crate::gate::default_policy_manifest_id()?;
+    put_policy_manifest_bytes(&vault, default_manifest_id, &encode_policy_manifest(vec![]))?;
     let policy = resolve(&vault)?;
 
     let mut effect = external_effect_gate_input("sender", "send", "line");
     effect.has_opted_in = false;
-    effect.standing_grant_ref = Some(format!("grant:{}", test_id(0xD7).to_hex()));
+    effect.standing_grant_ref = Some(format!("grant:{}", default_manifest_id.to_hex()));
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
         check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
@@ -2579,7 +2569,7 @@ fn forged_standing_grant_ref_does_not_authorize_external_effect() -> Result<()> 
 #[test]
 fn scoped_mcp_grant_is_payload_aware_at_external_effect_gate() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD8, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xD8), &encode_policy_manifest(vec![]))?;
     let grant_id = test_id(0xD9);
     vault.mint_scoped_mcp_outbound_grant(
         &grant_id,
@@ -2659,7 +2649,7 @@ fn scoped_mcp_grant_is_payload_aware_at_external_effect_gate() -> Result<()> {
 #[test]
 fn scoped_mcp_grant_without_registered_connector_key_stays_pending() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xDC, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xDC), &encode_policy_manifest(vec![]))?;
     let grant_id = test_id(0xDD);
     vault.mint_scoped_mcp_outbound_grant(
         &grant_id,
@@ -2702,7 +2692,7 @@ fn scoped_mcp_grant_without_registered_connector_key_stays_pending() -> Result<(
 #[test]
 fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xC0, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xC0), &encode_policy_manifest(vec![]))?;
     let principal_ref = test_id(0xE0).to_hex();
     let grant_id = test_id(0xC1);
     vault.mint_scoped_mcp_outbound_grant(
@@ -2775,7 +2765,7 @@ fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result
         test_time(1),
         1,
     )?;
-    put_policy_manifest_bytes(&vault, 0xB8, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xB8), &encode_policy_manifest(vec![]))?;
     let grant_id = test_id(0xB9);
     vault.mint_scoped_mcp_outbound_grant(
         &grant_id,
@@ -2824,7 +2814,7 @@ fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result
 #[test]
 fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xBB, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xBB), &encode_policy_manifest(vec![]))?;
     let caller_id = test_id(0xBC);
     let grant_owner_id = test_id(0xBD);
     let grant_id = test_id(0xBE);
@@ -2876,7 +2866,7 @@ fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
 #[test]
 fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xDA, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xDA), &encode_policy_manifest(vec![]))?;
 
     let grant_id = test_id(0xDB);
     let intent = GrantMintIntent {
@@ -2913,7 +2903,7 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
         vec!["gate.pending.external_effect_authority"]
     );
 
-    put_policy_manifest_bytes(&vault, 0xDC, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xDC), &encode_policy_manifest(vec![]))?;
     let stale_policy = resolve(&vault)?;
     let mut in_scope_stale = external_effect_gate_input("sender", "send", "line");
     in_scope_stale.has_opted_in = false;
@@ -3020,7 +3010,7 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
         )]),
         None,
     )]);
-    put_policy_manifest_bytes(&vault, 0xD5, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xD5), &data)?;
     let policy = resolve(&vault)?;
 
     let identity = test_id(0xCA);
@@ -3112,7 +3102,7 @@ fn external_effect_public_first_touch_applies_hold_floor_and_receipt() -> Result
         ]),
         None,
     )]);
-    put_policy_manifest_bytes(&vault, 0xD6, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xD6), &data)?;
     let policy = resolve(&vault)?;
     let identity = test_id(0xCE);
 
@@ -3196,7 +3186,7 @@ fn external_effect_requires_opt_in_and_permission() -> Result<()> {
         )]),
         None,
     )]);
-    put_policy_manifest_bytes(&vault, 0xD1, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xD1), &data)?;
     let policy = resolve(&vault)?;
 
     let mut missing_opt_in = external_effect_gate_input("sender", "send", "line");
@@ -3222,7 +3212,11 @@ fn external_effect_requires_opt_in_and_permission() -> Result<()> {
 #[test]
 fn external_effect_policy_risk_holds_but_owner_grant_can_dial_allow_all() -> Result<()> {
     let (_pending_tmp, pending_vault) = temp_vault();
-    put_policy_manifest_bytes(&pending_vault, 0xD2, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(
+        &pending_vault,
+        test_id(0xD2),
+        &encode_policy_manifest(vec![]),
+    )?;
     let pending_policy = resolve(&pending_vault)?;
     let mut risky = external_effect_gate_input("sender", "send", "line");
     risky.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
@@ -3250,7 +3244,7 @@ fn external_effect_policy_risk_holds_but_owner_grant_can_dial_allow_all() -> Res
         ]),
         None,
     )]);
-    put_policy_manifest_bytes(&allowed_vault, 0xD3, &data)?;
+    put_policy_manifest_bytes(&allowed_vault, test_id(0xD3), &data)?;
     let allowed_policy = resolve(&allowed_vault)?;
     let decision = allowed_policy.evaluate_gate(&risky.gate_input(None));
     assert_eq!(decision.outcome(), GateOutcome::Allow);
@@ -3270,7 +3264,7 @@ fn external_effect_budgeted_grants_hold_without_budget_enforcer() -> Result<()> 
         )]),
         Some(Value::Map(vec![(Value::from("limit"), Value::from(1_u64))])),
     )]);
-    put_policy_manifest_bytes(&vault, 0xD4, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xD4), &data)?;
     let policy = resolve(&vault)?;
     let effect = external_effect_gate_input("sender", "send", "line");
     let decision = policy.evaluate_gate(&effect.gate_input(None));
@@ -3327,7 +3321,7 @@ fn policy_manifest_valid_fixture_resolves_gate_inputs() -> Result<()> {
             actor_ceiling_row("human", "auto"),
         ],
     );
-    put_policy_manifest_bytes(&vault, 0x51, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x51), &data)?;
 
     let policy = resolve(&vault)?;
     assert!(!policy.is_fail_closed());
@@ -3376,7 +3370,7 @@ fn policy_manifest_valid_fixture_resolves_gate_inputs() -> Result<()> {
 fn first_party_eiri_tool_output_auto_write_reaches_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_first_party_eiri_default_policy_manifest();
-    put_policy_manifest_bytes(&vault, 0xB4, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xB4), &data)?;
 
     let claim_id = test_id(0xB5);
     let body = source_trust_claim(ClaimSource::ToolOutput);
@@ -3419,7 +3413,7 @@ fn dreamer_generated_auto_write_requires_manifest_signature() -> Result<()> {
         &mut data,
         actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
     );
-    put_policy_manifest_bytes(&vault, 0xC4, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC4), &data)?;
 
     let claim_id = test_id(0xC5);
     let body = source_trust_claim(ClaimSource::Generated);
@@ -3452,7 +3446,7 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
         &mut data,
         actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
     );
-    put_policy_manifest_bytes(&vault, 0xC6, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC6), &data)?;
 
     let claim_id = test_id(0xC7);
     let body = source_trust_claim(ClaimSource::Generated);
@@ -3491,7 +3485,7 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
 fn foreign_tool_output_connector_stays_pending_actor_ceiling() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_first_party_eiri_default_policy_manifest();
-    put_policy_manifest_bytes(&vault, 0xB6, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xB6), &data)?;
 
     let claim_id = test_id(0xB7);
     let body = source_trust_claim(ClaimSource::ToolOutput);
@@ -3513,7 +3507,7 @@ fn foreign_tool_output_connector_stays_pending_actor_ceiling() -> Result<()> {
 fn default_policy_vad_rule_is_exact() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_first_party_eiri_default_policy_manifest();
-    put_policy_manifest_bytes(&vault, 0xC0, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC0), &data)?;
     let policy = resolve(&vault)?;
 
     assert_eq!(
@@ -3550,7 +3544,7 @@ fn default_policy_preserves_non_eiri_edge_provenance_writers() -> Result<()> {
     ] {
         let (_tmp, vault) = temp_vault();
         let data = encode_first_party_eiri_default_policy_manifest();
-        put_policy_manifest_bytes(&vault, seed, &data)?;
+        put_policy_manifest_bytes(&vault, test_id(seed), &data)?;
 
         let src = test_id(seed + 1);
         let tgt = test_id(seed + 2);
@@ -3582,7 +3576,7 @@ fn default_policy_preserves_non_eiri_edge_provenance_writers() -> Result<()> {
 fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
     let (_unknown_tmp, unknown_vault) = temp_vault();
     let data = encode_first_party_eiri_default_policy_manifest();
-    put_policy_manifest_bytes(&unknown_vault, 0xB9, &data)?;
+    put_policy_manifest_bytes(&unknown_vault, test_id(0xB9), &data)?;
 
     let unknown_claim = test_id(0xBA);
     let body = source_trust_claim(ClaimSource::ToolOutput);
@@ -3606,7 +3600,7 @@ fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
         &mut revoked_policy,
         actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "proposed"),
     );
-    put_policy_manifest_bytes(&revoked_vault, 0xBC, &revoked_policy)?;
+    put_policy_manifest_bytes(&revoked_vault, test_id(0xBC), &revoked_policy)?;
 
     let revoked_claim = test_id(0xBD);
     let (candidate, envelope) = claim_candidate_write_parts_for_actor(
@@ -3629,7 +3623,7 @@ fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
 fn policy_manifest_signature_frontier_covers_first_party_auto_grant() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_first_party_eiri_default_policy_manifest();
-    put_policy_manifest_bytes(&vault, 0xBE, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xBE), &data)?;
     let policy = resolve(&vault)?;
     let signed_auto_frontier = policy.read_frontier_hash()?;
 
@@ -3645,7 +3639,7 @@ fn policy_manifest_signature_frontier_covers_first_party_auto_grant() -> Result<
         &mut revoked_data,
         actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "proposed"),
     );
-    put_policy_manifest_bytes(&revoked_vault, 0xBF, &revoked_data)?;
+    put_policy_manifest_bytes(&revoked_vault, test_id(0xBF), &revoked_data)?;
     let revoked_policy = resolve(&revoked_vault)?;
 
     assert_eq!(revoked_policy.signatures().len(), 1);
@@ -3662,7 +3656,7 @@ fn gate_chokepoint_active_policy_source_denial_is_typed_gate_rejection() -> Resu
     let (_tmp, vault) = temp_vault();
     let mut data = encode_policy_manifest(vec![]);
     trust_human_candidate_actor(&mut data);
-    put_policy_manifest_bytes(&vault, 0x84, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x84), &data)?;
 
     assert_auto_source_gate_rejected(
         &vault,
@@ -3676,7 +3670,7 @@ fn gate_chokepoint_active_policy_source_denial_is_typed_gate_rejection() -> Resu
 #[test]
 fn gate_decision_ledger_survives_rejected_standalone_write() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x90, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x90), &encode_policy_manifest(vec![]))?;
 
     let id = test_id(0x91);
     let body = source_trust_claim(ClaimSource::UserStated);
@@ -3714,7 +3708,7 @@ fn gate_decision_ledger_survives_rejected_standalone_write() -> Result<()> {
 fn pending_gate_consent_survives_reopen() -> Result<()> {
     let (tmp, vault) = temp_vault();
     {
-        put_policy_manifest_bytes(&vault, 0x92, &encode_policy_manifest(vec![]))?;
+        put_policy_manifest_bytes(&vault, test_id(0x92), &encode_policy_manifest(vec![]))?;
 
         let id = test_id(0x93);
         let mut body = source_trust_claim(ClaimSource::UserStated);
@@ -3743,7 +3737,7 @@ fn pending_gate_consent_survives_reopen() -> Result<()> {
 #[test]
 fn retraction_closes_custom_policy_pending_without_rebinding_or_reparking() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x97, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x97), &encode_policy_manifest(vec![]))?;
 
     let id = test_id(0x98);
     let mut proposed = source_trust_claim(ClaimSource::UserStated);
@@ -3781,7 +3775,7 @@ fn retraction_closes_custom_policy_pending_without_rebinding_or_reparking() -> R
 #[test]
 fn pending_gate_consent_groups_interleaved_dreamer_runs_with_default_lane() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xA0, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xA0), &encode_policy_manifest(vec![]))?;
 
     let run_a = "dreamer-run-a";
     let run_b = "dreamer-run-b";
@@ -3918,7 +3912,7 @@ fn pending_gate_consent_groups_interleaved_dreamer_runs_with_default_lane() -> R
 #[test]
 fn approved_gate_consent_rejects_drifted_diff() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x94, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x94), &encode_policy_manifest(vec![]))?;
 
     let id = test_id(0x95);
     let mut proposed = source_trust_claim(ClaimSource::UserStated);
@@ -3959,7 +3953,7 @@ fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Res
         &mut data,
         actor_ceiling_row(LOCAL_WRITE_ACTOR_CLASS, "auto"),
     );
-    put_policy_manifest_bytes(&vault, 0xD6, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xD6), &data)?;
 
     let id = test_id(0xA7);
     let mut proposed = source_trust_claim(ClaimSource::Generated);
@@ -4007,7 +4001,7 @@ fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Res
 #[test]
 fn approved_gate_consent_followup_succeeds_and_clears_pending() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x96, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x96), &encode_policy_manifest(vec![]))?;
 
     let id = test_id(0x97);
     let mut proposed = source_trust_claim(ClaimSource::UserStated);
@@ -4044,7 +4038,7 @@ fn session_bundle_review_merge() -> Result<()> {
         &mut policy,
         actor_ceiling_row_for_ref("human", &reviewer_id.to_hex(), "auto"),
     );
-    put_policy_manifest_bytes(&vault, 0xC2, &policy)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC2), &policy)?;
     vault.put_entity(
         &reviewer_id,
         ENTITY_TYPE_PERSON,
@@ -4150,7 +4144,7 @@ fn session_bundle_review_and_merge_reject_unauthorized_caller_with_fresh_consent
         &mut policy,
         actor_ceiling_row_for_ref("human", &authorized_id.to_hex(), "auto"),
     );
-    put_policy_manifest_bytes(&vault, 0xC9, &policy)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC9), &policy)?;
 
     let session_tag = "agent:alpha/session:unauthorized";
     let id = test_id(0xCA);
@@ -4205,7 +4199,7 @@ fn session_bundle_review_and_merge_reject_unauthorized_caller_with_fresh_consent
 fn session_tagged_raw_claim_rejects_a_spoofed_producer_stamp() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let id = test_id(0xD6);
-    let spoofed_producer = test_id(0xD7);
+    let spoofed_producer = test_id(0x5D);
     let mut body = source_trust_claim(ClaimSource::UserStated);
     body.approval = ClaimApprovalStatus::Proposed;
     body.session_tag = Some("agent:spoofed/session:tag".to_owned());
@@ -4240,7 +4234,7 @@ fn session_bundle_excludes_same_tag_claims_from_another_producer() -> Result<()>
         &mut policy,
         actor_ceiling_row_for_ref("human", &reviewer_id.to_hex(), "auto"),
     );
-    put_policy_manifest_bytes(&vault, 0xD3, &policy)?;
+    put_policy_manifest_bytes(&vault, test_id(0xD3), &policy)?;
     vault.put_entity(
         &reviewer_id,
         ENTITY_TYPE_PERSON,
@@ -4321,7 +4315,7 @@ fn atomic_bundle_commit() -> Result<()> {
         &mut policy,
         actor_ceiling_row_for_ref("human", &reviewer_id.to_hex(), "auto"),
     );
-    put_policy_manifest_bytes(&vault, 0xC5, &policy)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC5), &policy)?;
     vault.put_entity(
         &reviewer_id,
         ENTITY_TYPE_PERSON,
@@ -4386,7 +4380,7 @@ fn atomic_bundle_commit() -> Result<()> {
 #[test]
 fn same_batch_proposed_then_approved_rejects_without_pending_consent() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x98, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0x98), &encode_policy_manifest(vec![]))?;
 
     let id = test_id(0x99);
     let mut proposed = source_trust_claim(ClaimSource::UserStated);
@@ -4422,7 +4416,7 @@ fn gate_chokepoint_batch_claim_denial_aborts_without_partial_writes() -> Result<
     let (_tmp, vault) = temp_vault();
     let mut data = encode_policy_manifest(vec![]);
     trust_human_candidate_actor(&mut data);
-    put_policy_manifest_bytes(&vault, 0x76, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x76), &data)?;
 
     let prior_id = test_id(0x77);
     let claim_id = test_id(0x78);
@@ -4449,7 +4443,7 @@ fn gate_chokepoint_batch_policy_delete_cannot_weaken_later_claim() -> Result<()>
     let mut data = encode_policy_manifest(vec![]);
     trust_human_candidate_actor(&mut data);
     let policy_id = test_id(0x95);
-    put_policy_manifest_bytes(&vault, 0x95, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x95), &data)?;
 
     let claim_id = test_id(0x96);
     let mut body = source_trust_claim(ClaimSource::UserStated);
@@ -4477,7 +4471,7 @@ fn gate_chokepoint_allows_proposed_claims_for_review_under_pending_policy() -> R
     let (_tmp, vault) = temp_vault();
     let mut data = encode_policy_manifest(vec![]);
     trust_human_candidate_actor(&mut data);
-    put_policy_manifest_bytes(&vault, 0x97, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x97), &data)?;
 
     let claim_id = test_id(0x98);
     let mut body = source_trust_claim(ClaimSource::ToolOutput);
@@ -4500,7 +4494,7 @@ fn gate_chokepoint_allows_proposed_claims_for_review_under_pending_policy() -> R
 fn gate_chokepoint_edge_provenance_uses_actor_gate_before_persistence() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![]);
-    put_policy_manifest_bytes(&vault, 0x79, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x79), &data)?;
 
     let src = test_id(0x7A);
     let tgt = test_id(0x7B);
@@ -4561,7 +4555,7 @@ fn gate_chokepoint_edge_provenance_retract_uses_gate_before_reserved_reput() -> 
     );
 
     let data = encode_policy_manifest(vec![]);
-    put_policy_manifest_bytes(&vault, 0x94, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x94), &data)?;
 
     let err = vault
         .retract_edge_provenance(&claim_id, 10)
@@ -4633,7 +4627,7 @@ fn gate_chokepoint_edge_provenance_supersede_checks_closed_prior_before_reput() 
             actor_ceiling_row("agent", "auto"),
         ],
     );
-    put_policy_manifest_bytes(&vault, 0xAA, &policy)?;
+    put_policy_manifest_bytes(&vault, test_id(0xAA), &policy)?;
 
     let new_body = EdgeProvenanceClaimBody::new(agent_actor, 0.8, SupersessionStatus::Confirmed);
     let err = vault
@@ -4693,7 +4687,7 @@ fn policy_manifest_missing_fixture_fails_closed_where_required() -> Result<()> {
 #[test]
 fn policy_manifest_malformed_fixture_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0x52, b"not-msgpack")?;
+    put_policy_manifest_bytes(&vault, test_id(0x52), b"not-msgpack")?;
 
     let policy = resolve(&vault)?;
     assert!(policy.is_fail_closed());
@@ -4745,7 +4739,7 @@ fn policy_manifest_malformed_source_trust_fails_closed_with_diagnostics() -> Res
                 entries.push((Value::from(POLICY_SOURCE_TRUST_KEY), Value::from("bad")));
             }
         });
-        put_policy_manifest_bytes(&vault, seed, &data)?;
+        put_policy_manifest_bytes(&vault, test_id(seed), &data)?;
 
         let policy = resolve(&vault)?;
         assert!(
@@ -4793,7 +4787,7 @@ fn policy_manifest_missing_schema_fixture_fails_closed() -> Result<()> {
     rewrite_policy_manifest_entries(&mut data, |entries| {
         entries.retain(|(key, _)| key.as_str() != Some(POLICY_SCHEMA_VERSION_KEY));
     });
-    put_policy_manifest_bytes(&vault, 0x54, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x54), &data)?;
 
     let policy = resolve(&vault)?;
     assert!(policy.is_fail_closed());
@@ -4826,7 +4820,7 @@ fn policy_manifest_version_fixture_degrades_to_most_restrictive() -> Result<()> 
             }
         }
     });
-    put_policy_manifest_bytes(&vault, 0x53, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x53), &data)?;
 
     let policy = resolve(&vault)?;
     assert!(policy.is_fail_closed());
@@ -4866,7 +4860,7 @@ fn policy_manifest_unknown_axis_fails_closed_and_exposes_no_scoped_grants() -> R
             }
         }
     });
-    put_policy_manifest_bytes(&vault, 0x55, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x55), &data)?;
 
     let policy = resolve(&vault)?;
     assert!(policy.is_fail_closed());
@@ -4945,7 +4939,7 @@ fn replay_path_skips_policy_source_trust_gate() -> Result<()> {
 fn replicated_generated_auto_claim_merges_but_is_not_consolidatable() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let strict_policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, 0x87, &strict_policy)?;
+    put_policy_manifest_bytes(&vault, test_id(0x87), &strict_policy)?;
 
     let id = test_id(0x88);
     let data = source_trust_claim_data(ClaimSource::Generated);
@@ -4987,7 +4981,7 @@ fn federated_admission_allows_and_restamps_imported_claim() -> Result<()> {
 
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(&vault, 0x8A, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x8A), &data)?;
 
     let id = test_id(0x8B);
     let remote_body = source_trust_claim(ClaimSource::ToolOutput);
@@ -5082,7 +5076,7 @@ fn federated_admission_denial_does_not_regress_own_device_replay() -> Result<()>
 fn gate_chokepoint_replicated_claim_stays_trust_blind() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![]);
-    put_policy_manifest_bytes(&vault, 0x80, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0x80), &data)?;
 
     let id = test_id(0x83);
     let claim = source_trust_claim_data(ClaimSource::ToolOutput);
@@ -5367,7 +5361,7 @@ fn connector_key_unset_is_noop_and_empty_budget_key_is_equivalent() -> Result<()
         crate::store::GateDecisionRecord,
     )> {
         let (_tmp, vault) = temp_vault();
-        put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+        put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
         if with_key {
             vault.register_connector_key(
                 &test_id(0x77),
@@ -5409,7 +5403,7 @@ fn connector_key_unset_is_noop_and_empty_budget_key_is_equivalent() -> Result<()
 #[test]
 fn connector_key_rate_refuse_denies_third_call_and_keeps_key_active() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     let key_id = test_id(0x71);
     vault.register_connector_key(
         &key_id,
@@ -5454,7 +5448,11 @@ fn connector_key_rate_refuse_denies_third_call_and_keeps_key_active() -> Result<
 #[test]
 fn connector_key_lifecycle_effect_debits_rate_not_sends() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_two_verb_manifest("line"))?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0xD0),
+        &connector_key_two_verb_manifest("line"),
+    )?;
     let key_id = test_id(0x72);
     vault.register_connector_key(
         &key_id,
@@ -5505,7 +5503,7 @@ fn connector_key_lifecycle_effect_debits_rate_not_sends() -> Result<()> {
 #[test]
 fn connector_key_exact_at_limit_admits_then_refuses() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     vault.register_connector_key(
         &test_id(0x73),
         crate::ConnectorKeyRecord::active(
@@ -5543,7 +5541,7 @@ fn connector_key_exact_at_limit_admits_then_refuses() -> Result<()> {
 #[test]
 fn connector_key_exhaustion_and_suspension_increment_effector_budget_metrics() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     let key_id = test_id(0x74);
     vault.register_connector_key(
         &key_id,
@@ -5589,7 +5587,7 @@ fn connector_key_exhaustion_and_suspension_increment_effector_budget_metrics() -
 #[test]
 fn connector_key_revoked_tuple_resolution_after_reregister() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     // The fixture effect's provenance actor.
     let actor = test_id(0xE0);
     let key_a = test_id(0x75);
@@ -5657,7 +5655,7 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0xD0,
+        test_id(0xD0),
         &encode_policy_manifest(vec![external_effect_scoped_grant_entry(
             "sender",
             "external:send",
@@ -5693,7 +5691,7 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
 #[test]
 fn exhaustion_charge_carries_history_read_only() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     vault.register_connector_key(
         &test_id(0x79),
         crate::ConnectorKeyRecord::active(
@@ -5752,7 +5750,7 @@ fn exhaustion_charge_carries_history_read_only() -> Result<()> {
 #[test]
 fn effector_budget_read_is_pure_and_charges_see_unchanged_state() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     vault.register_connector_key(
         &test_id(0x7A),
         crate::ConnectorKeyRecord::active(
@@ -5862,7 +5860,7 @@ fn gate_ledger_accepts_only_pinned_receipt_reason_prefix_families() {
 #[test]
 fn budget_stage_skips_dispatches_not_admitted_for_execution() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     let key_id = test_id(0x7F);
     vault.register_connector_key(
         &key_id,
@@ -5914,7 +5912,7 @@ fn budget_stage_skips_dispatches_not_admitted_for_execution() -> Result<()> {
 #[test]
 fn ladder_events_carry_the_firing_row_identity() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     vault.register_connector_key(
         &test_id(0x81),
         crate::ConnectorKeyRecord::active(
@@ -5978,7 +5976,7 @@ fn ladder_events_carry_the_firing_row_identity() -> Result<()> {
 #[test]
 fn exhausted_denial_carries_backfilled_ladder_history() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     let key_id = test_id(0x82);
     vault.register_connector_key(
         &key_id,
@@ -6050,7 +6048,7 @@ fn definition_ceiling_clamps_manifest_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let mut data = encode_policy_manifest(vec![]);
     append_actor_ceiling(&mut data, actor_ceiling_row("agent", "auto"));
-    put_policy_manifest_bytes(&vault, 0xC1, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC1), &data)?;
     let policy = resolve(&vault)?;
 
     let mut input = gate_evaluator_input(
@@ -6087,7 +6085,7 @@ fn definition_ceiling_clamps_manifest_auto() -> Result<()> {
 #[test]
 fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     let key_id = test_id(0x7B);
     vault.register_connector_key(
         &key_id,
@@ -6135,7 +6133,7 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
 #[test]
 fn charter_compiled_caps_enforce_like_key_budgets() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     let key_id = test_id(0x7C);
     vault.register_connector_key(
         &key_id,
@@ -6220,7 +6218,7 @@ fn charter_compiled_caps_enforce_like_key_budgets() -> Result<()> {
 #[test]
 fn charter_and_key_rows_debit_as_one_atomic_union() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     let key_id = test_id(0x7D);
     vault.register_connector_key(
         &key_id,
@@ -6277,7 +6275,7 @@ fn charter_and_key_rows_debit_as_one_atomic_union() -> Result<()> {
 fn definition_ceiling_blocks_edge_provenance_exception() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // No agent-class rows: the manifest has only first_party rows.
-    put_policy_manifest_bytes(&vault, 0xC2, &encode_policy_manifest(vec![]))?;
+    put_policy_manifest_bytes(&vault, test_id(0xC2), &encode_policy_manifest(vec![]))?;
     let policy = resolve(&vault)?;
 
     let mut input = gate_evaluator_input(
@@ -6321,7 +6319,7 @@ fn definition_ceiling_blocks_external_effect_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let mut data = encode_policy_manifest(vec![]);
     append_actor_ceiling(&mut data, actor_ceiling_row("agent", "auto"));
-    put_policy_manifest_bytes(&vault, 0xC3, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC3), &data)?;
     let policy = resolve(&vault)?;
 
     let mut effect = external_effect_gate_input("dispatched-agent", "send", "line");
@@ -6478,7 +6476,7 @@ fn herald_fork_claim_held_to_proposed_under_agent_auto_manifest() -> Result<()> 
     let (_tmp, vault) = temp_vault();
     let mut data = encode_policy_manifest(vec![]);
     append_actor_ceiling(&mut data, actor_ceiling_row("agent", "auto"));
-    put_policy_manifest_bytes(&vault, 0xC4, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC4), &data)?;
 
     let herald_id = test_id(0x61);
     vault.fork_system_agent(
@@ -6621,7 +6619,7 @@ fn effect_actor_identity_binding_fails_closed() -> Result<()> {
         &mut data,
         actor_ceiling_row_for_ref("agent", &auto_id.to_hex(), "auto"),
     );
-    put_policy_manifest_bytes(&vault, 0xC5, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC5), &data)?;
     let policy = resolve(&vault)?;
 
     let effect_for = |actor_ref: Option<String>, entity_ref: Option<EntityId>| {
@@ -6801,7 +6799,7 @@ fn effect_actor_class_spoof_fails_closed() -> Result<()> {
             actor_ceiling_row("human", "auto"),
         ],
     );
-    put_policy_manifest_bytes(&vault, 0xC6, &data)?;
+    put_policy_manifest_bytes(&vault, test_id(0xC6), &data)?;
     let policy = resolve(&vault)?;
 
     let effect_for = |class: &str, id: EntityId| {
@@ -7154,7 +7152,7 @@ fn reopened_legacy_vault_censuses_occupant_before_first_delete() -> Result<()> {
 #[test]
 fn charter_drift_degrades_to_pending_without_debits() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &connector_key_line_send_manifest())?;
     let key_id = test_id(0x7E);
     vault.register_connector_key(
         &key_id,
@@ -7221,7 +7219,11 @@ fn admitted_wrapper_charges_budget_and_denies_exhausted_key() -> Result<()> {
     // fix the wrapper ignored the flag and never charged, so an exhausted key
     // could not block an immediately-applied lifecycle effect.
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_two_verb_manifest("line"))?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0xD0),
+        &connector_key_two_verb_manifest("line"),
+    )?;
     vault.register_connector_key(
         &test_id(0x7E),
         crate::ConnectorKeyRecord::active(

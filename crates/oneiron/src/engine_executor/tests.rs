@@ -44,9 +44,7 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("entity id")
-}
+use crate::test_util::entity;
 
 fn range(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }

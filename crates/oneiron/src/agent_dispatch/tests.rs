@@ -16,9 +16,9 @@ use crate::dreamer_runner::{
     dreamer_milestone_value,
 };
 use crate::error::ErrorKind;
-use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
-use crate::store::Store;
+use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
+use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -27,10 +27,6 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 
 fn t(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
-}
-
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("non-reserved test id")
 }
 
 /// A stored, dispatchable custom definition fixture.
@@ -65,7 +61,7 @@ fn actor_ceiling_row(actor_class: &str, ceiling: &str) -> Value {
 }
 
 /// Minimal valid policy manifest (mirrors the gate-test fixture shape) with
-/// caller-supplied `actor_ceilings` rows, written through the raw store door.
+/// caller-supplied `actor_ceilings` rows.
 fn put_policy_manifest(vault: &Vault, seed: u8, actor_rows: Vec<Value>) -> Result<()> {
     let manifest = Value::Map(vec![
         (Value::from("schema_version"), Value::from("1.1")),
@@ -88,19 +84,7 @@ fn put_policy_manifest(vault: &Vault, seed: u8, actor_rows: Vec<Value>) -> Resul
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode manifest");
 
-    let id = test_id(seed);
-    let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&data);
-    vault.with_write_txn(|wtxn| {
-        vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-        let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
-        vault.store.type_index.put(wtxn, &type_key, &[])?;
-        Ok(())
-    })
+    put_policy_manifest_bytes(vault, test_id(seed), &data)
 }
 
 fn dispatch_custom(
@@ -193,7 +177,7 @@ fn dispatch_rejections() -> Result<()> {
         Error::AgentNotDispatchable("agent definition not found")
     ));
 
-    let superseded_id = test_id(0x42);
+    let superseded_id = test_id(0x62);
     let mut superseded = custom_agent("1.0.0");
     superseded.lifecycle_status = ClaimLifecycleStatus::Superseded;
     vault.put_agent_definition(&superseded_id, &superseded, t(1), 1)?;
@@ -395,7 +379,7 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     // Auto row so the Dreamer-envelope milestone can land Approved and index.
     put_policy_manifest(&vault, 0x0D, vec![actor_ceiling_row("system", "auto")])?;
 
-    let def_id = test_id(0x47);
+    let def_id = test_id(0x67);
     let def = custom_agent("1.0.0");
     vault.put_agent_definition(&def_id, &def, t(1), 1)?;
 

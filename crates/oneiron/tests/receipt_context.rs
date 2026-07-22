@@ -7,8 +7,11 @@
 //! recomputed. OF-326 interaction: emit-adjacent receipts in an off-record
 //! session are session-local and deleted with the transcript.
 
+mod common;
+
+use common::entity;
 use oneiron::{
-    ContextReceiptFields, EiriMemoryBoard, EiriMemoryBoardBudget, EntityId, GrantMintIntent,
+    ContextReceiptFields, EiriMemoryBoard, EiriMemoryBoardBudget, GrantMintIntent,
     GrantMintIntentScope, HnswConfig, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
     PromptRecompileStamp, ReceiptQuery, ReceiptRecord, Result, SessionLocalReceiptLog, TimeRange,
     Vault, VaultConfig, append_context_receipt_fields, context_pack::assemble_eiri_memory_board,
@@ -26,12 +29,6 @@ fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     config.hnsw = HnswConfig::default();
     let vault = Vault::open(dir.path(), config)?;
     Ok((dir, vault))
-}
-
-fn entity(seed: u8) -> EntityId {
-    let mut bytes = [seed; 16];
-    bytes[0] = seed.max(1);
-    EntityId::from_bytes(bytes).expect("test entity id")
 }
 
 fn put_memory(vault: &Vault, seed: u8, text: &str) -> Result<()> {

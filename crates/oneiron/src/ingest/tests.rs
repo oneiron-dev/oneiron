@@ -26,9 +26,7 @@ fn expected_jsonl_transcript_config() -> IngestSourceConfig {
     }
 }
 
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test id")
-}
+use crate::test_util::entity as test_id;
 
 fn test_time(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
@@ -137,7 +135,7 @@ fn jsonl_transcript_policy_defaults_to_proposed_and_fails_closed_for_auto() {
 #[test]
 fn imported_evidence_admission_defaults_to_proposed_claim() -> crate::Result<()> {
     let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x11);
+    let actor = test_id(0x60);
     let subject = test_id(0x12);
     let claim_id = test_id(0x13);
     put_actor_and_subject(&vault, &actor, &subject);
@@ -268,7 +266,7 @@ fn imported_evidence_requires_explicit_resolved_entity_before_persistence() -> c
 fn imported_evidence_gate_denial_leaves_no_candidate_claim() -> crate::Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = test_id(0x41);
-    let subject = test_id(0x42);
+    let subject = test_id(0x54);
     let claim_id = test_id(0x43);
     put_actor_and_subject(&vault, &actor, &subject);
     put_malformed_policy_manifest(&vault, &test_id(0x44));

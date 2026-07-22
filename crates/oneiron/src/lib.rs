@@ -872,7 +872,6 @@ pub(crate) mod test_util {
     /// - `0xA1..=0xA6`: system-agent preset actor ids (write-door-reserved)
     /// - `0xD7`: default policy manifest id
     /// - `0xE1`: first-party connector actor id
-    #[allow(dead_code)]
     pub(crate) const PINNED_ID_BYTES: [u8; 13] = [
         0x00, 0x11, 0x42, 0x47, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xD7, 0xE1, 0xFF,
     ];
@@ -886,7 +885,6 @@ pub(crate) mod test_util {
     /// `crate::gate::default_policy_manifest_id()`, or
     /// `EntityId::from_bytes` with an intent comment), never through this
     /// helper.
-    #[allow(dead_code)]
     pub(crate) fn entity(seed: u8) -> EntityId {
         assert!(
             !PINNED_ID_BYTES.contains(&seed),
@@ -899,7 +897,6 @@ pub(crate) mod test_util {
     /// Raw stored-entity record: the 25-byte metadata header (type byte,
     /// occurred start/end, learned_at — all big-endian u64s, per the
     /// `batch::ENTITY_*_OFFSET` layout) followed by `body`.
-    #[allow(dead_code)]
     pub(crate) fn entity_record(
         entity_type: u8,
         occurred: TimeRange,
@@ -921,7 +918,6 @@ pub(crate) mod test_util {
     /// `crate::gate::default_policy_manifest_id()` so the intent is explicit.
     /// The `graph_fs` test copy deliberately stays local: it exercises the
     /// real `apply_ops` write path instead of a raw put.
-    #[allow(dead_code)]
     pub(crate) fn put_policy_manifest_bytes(
         vault: &Vault,
         id: EntityId,

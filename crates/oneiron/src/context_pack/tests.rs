@@ -3437,7 +3437,7 @@ fn n2_out_of_scope_neighbor_absent_from_neighbors_and_edge_lists() -> Result<()>
     let contact_id = disclosure_id(0xC2);
     seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
 
-    let party = disclosure_id(0xD7);
+    let party = disclosure_id(0x57);
     let diary = disclosure_id(0xD8);
     put_disclosure_turn(&vault, &party, "party summary needle2");
     put_disclosure_turn(&vault, &diary, "private diary tangent");
@@ -3624,7 +3624,7 @@ fn n11_tier_a_carve_out_is_mode_keyed_not_data_loss() -> Result<()> {
     seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
     let subject = disclosure_id(0xE0);
     put_disclosure_turn(&vault, &subject, "subject turn");
-    let band2 = disclosure_id(0xE1);
+    let band2 = disclosure_id(0x5E);
     put_disclosure_claim(
         &vault,
         &band2,

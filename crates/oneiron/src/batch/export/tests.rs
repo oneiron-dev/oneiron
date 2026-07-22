@@ -2,7 +2,6 @@ use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::CompanionProvenance;
 use crate::edge::EdgeActorClass;
-use crate::entity_id::EntityId;
 use crate::off_record::OffRecordBackendClass;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
@@ -10,11 +9,7 @@ use crate::write_envelope::WriteProvenance;
 use crate::{Vault, VaultConfig};
 use rmpv::Value;
 
-fn entity(seed: u8) -> EntityId {
-    let mut bytes = [seed; 16];
-    bytes[0] = seed.max(1);
-    EntityId::from_bytes(bytes).expect("test entity id")
-}
+use crate::test_util::entity;
 
 fn provenance(seed: u8) -> CompanionProvenance {
     let envelope = WriteEnvelope::new(

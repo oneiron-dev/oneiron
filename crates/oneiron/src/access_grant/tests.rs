@@ -4,12 +4,10 @@ use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, EntityClassification, TypeByteBand, entity_type_registry_entry,
 };
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid entity id")
-}
+use crate::test_util::entity;
 
 fn test_grant() -> AccessGrant {
-    AccessGrant::companion_profile_read(entity(0xA1), entity(0xB1), entity(0xC1), 42)
+    AccessGrant::companion_profile_read(entity(0x51), entity(0xB1), entity(0xC1), 42)
 }
 
 fn encode_value(value: &Value) -> Vec<u8> {
@@ -26,7 +24,7 @@ fn valid_entries() -> Vec<(Value, Value)> {
         ),
         (
             Value::from(KEY_PRINCIPAL_REF),
-            Value::from(entity(0xA1).to_hex()),
+            Value::from(entity(0x51).to_hex()),
         ),
         (
             Value::from(KEY_SCOPE),
@@ -68,8 +66,8 @@ fn access_grant_codec_round_trips_scoped_active_grant() -> Result<()> {
     let decoded = decode_access_grant_body(&encoded)?;
 
     assert_eq!(decoded, grant);
-    assert!(decoded.allows_companion_profile_read(&entity(0xA1), &entity(0xB1), &entity(0xC1)));
-    assert!(!decoded.allows_companion_profile_read(&entity(0xA1), &entity(0xB2), &entity(0xC1)));
+    assert!(decoded.allows_companion_profile_read(&entity(0x51), &entity(0xB1), &entity(0xC1)));
+    assert!(!decoded.allows_companion_profile_read(&entity(0x51), &entity(0xB2), &entity(0xC1)));
     Ok(())
 }
 
@@ -77,7 +75,7 @@ fn access_grant_codec_round_trips_scoped_active_grant() -> Result<()> {
 fn access_grant_revocation_removes_authorization() -> Result<()> {
     let revoked = test_grant().revoked(60)?;
 
-    assert!(!revoked.allows_companion_profile_read(&entity(0xA1), &entity(0xB1), &entity(0xC1)));
+    assert!(!revoked.allows_companion_profile_read(&entity(0x51), &entity(0xB1), &entity(0xC1)));
     let encoded = encode_access_grant_body(&revoked)?;
     let decoded = decode_access_grant_body(&encoded)?;
     assert_eq!(decoded.status, AccessGrantStatus::Revoked);

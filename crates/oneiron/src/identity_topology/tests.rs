@@ -259,7 +259,7 @@ fn lifecycle_merge_join_uses_fixed_precedence_and_is_cai() {
 #[test]
 fn transition_table_covers_every_state_and_role_cell() {
     use EntityLifecycleState::{Active, Merged, Split};
-    let a = id(0x11);
+    let a = id(0x60);
     let b = id(0x12);
 
     for state in [Active, Merged, Split] {
@@ -435,7 +435,7 @@ fn fold_applies_merge_undo_and_rejects_stale_or_double_undo() {
     let a = id(0x31);
     let b = id(0x32);
     let e1 = id(0x41);
-    let u1 = id(0x42);
+    let u1 = id(0x65);
     let e2 = id(0x43);
     let u2 = id(0x44);
 
@@ -482,7 +482,7 @@ fn fold_orders_by_engine_seq_and_ignores_input_order() {
     let a = id(0x31);
     let b = id(0x32);
     let e1 = id(0x41);
-    let u1 = id(0x42);
+    let u1 = id(0x65);
     let events = vec![
         fold_event(u1, 2, IdentityTopologyAction::Undo { target: e1 }),
         fold_event(e1, 1, IdentityTopologyAction::Apply(merge_op(vec![b], a))),
@@ -526,13 +526,13 @@ fn fold_counts_effective_events_only() {
     let fold = fold_identity_topology_log(&[
         parked,
         fold_event(
-            id(0x42),
+            id(0x65),
             2,
             IdentityTopologyAction::Apply(merge_op(vec![b], a)),
         ),
     ]);
     assert_eq!(fold.states.get(&b), Some(&EntityLifecycleState::Merged));
-    assert_eq!(fold.current_event.get(&b), Some(&id(0x42)));
+    assert_eq!(fold.current_event.get(&b), Some(&id(0x65)));
     assert_eq!(fold.rejections.len(), 0);
 }
 

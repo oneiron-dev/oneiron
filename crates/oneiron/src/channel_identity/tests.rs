@@ -8,16 +8,14 @@ use crate::registry::{
 use crate::temporal::TimeRange;
 use crate::test_util::open_test_vault_with;
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid entity id")
-}
+use crate::test_util::entity;
 
 fn sample_identity() -> ChannelIdentity {
     let mut identity = ChannelIdentity::requested(
         "email",
         "agent@example.com",
         ChannelIdentityShape::DedicatedAddress,
-        ChannelIdentityBinding::agent(entity(0xA1)),
+        ChannelIdentityBinding::agent(entity(0x51)),
         1_800_000_000,
     );
     identity.reputation_ref = Some(entity(0xB1));
@@ -133,7 +131,7 @@ fn channel_identity_claim_binding_target_rejects_invalid_values() {
         )
     };
 
-    validate_channel_identity_claim_structure(&claim(Value::from(entity(0xA1).to_hex())))
+    validate_channel_identity_claim_structure(&claim(Value::from(entity(0x51).to_hex())))
         .expect("agent entity target accepted");
     validate_channel_identity_claim_structure(&claim(Value::from(7_u64)))
         .expect("non-zero vault target accepted");
@@ -149,7 +147,7 @@ fn channel_identity_claim_binding_target_rejects_invalid_values() {
 
 #[test]
 fn own_app_home_identity_is_constructible_active_agent_binding() -> Result<()> {
-    let agent = entity(0xE1);
+    let agent = entity(0x5E);
     let identity = ChannelIdentity::own_app_home(agent, 7);
     identity.validate()?;
     assert_eq!(identity.channel, "own_app");
@@ -162,7 +160,7 @@ fn own_app_home_identity_is_constructible_active_agent_binding() -> Result<()> {
 #[test]
 fn vault_create_transition_and_never_recycle_invariant() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let id = entity(0x11);
+    let id = entity(0x60);
     let identity = sample_identity();
 
     let data = encode_channel_identity_body(&identity)?;
@@ -224,7 +222,7 @@ fn vault_create_transition_and_never_recycle_invariant() -> Result<()> {
         "email",
         "agent@example.com",
         ChannelIdentityShape::DedicatedAddress,
-        ChannelIdentityBinding::agent(entity(0xA2)),
+        ChannelIdentityBinding::agent(entity(0x52)),
         1_900_000_010,
     );
     let err = vault
