@@ -768,14 +768,6 @@ async fn handle_sync_message(
             )
             .await
         }
-        SyncMessage::BulkTransfer {
-            window_key,
-            compressed,
-        } => handle_bulk_transfer(server, &window_key, &compressed).await,
-        SyncMessage::BulkTransferDone {
-            window_key,
-            doc_state,
-        } => handle_bulk_transfer_done(server, &window_key, &doc_state).await,
     }
 }
 
@@ -1071,44 +1063,6 @@ fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
 
 fn selector_grant_scope() -> oneiron::FederationGrantScope {
     oneiron::FederationGrantScope::vault(SERVER_SELECTOR_VAULT_ID)
-}
-
-/// Rejects a BulkTransfer message from client.
-///
-/// BulkTransfer is a server→client message only. Clients should not send it.
-async fn handle_bulk_transfer(
-    _server: &SyncServer,
-    window_key: &str,
-    _compressed: &[u8],
-) -> Result<(), ProtocolError> {
-    let _key = WindowKey::try_new(window_key)
-        .ok_or(ProtocolError::InvalidPayload("invalid window key"))?;
-    tracing::warn!(
-        window_key,
-        "rejected client-to-server BulkTransfer — not supported"
-    );
-    Err(ProtocolError::InvalidPayload(
-        "client-to-server BulkTransfer is not supported",
-    ))
-}
-
-/// Rejects a BulkTransferDone message from client.
-///
-/// BulkTransferDone is a server→client message only. Clients should not send it.
-async fn handle_bulk_transfer_done(
-    _server: &SyncServer,
-    window_key: &str,
-    _doc_state: &[u8],
-) -> Result<(), ProtocolError> {
-    let _key = WindowKey::try_new(window_key)
-        .ok_or(ProtocolError::InvalidPayload("invalid window key"))?;
-    tracing::warn!(
-        window_key,
-        "rejected client-to-server BulkTransferDone — not supported"
-    );
-    Err(ProtocolError::InvalidPayload(
-        "client-to-server BulkTransferDone is not supported",
-    ))
 }
 
 #[cfg(test)]
