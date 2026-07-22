@@ -1321,5 +1321,79 @@ fn off_record_crash_sweep_is_skipped_when_a_peer_holds_the_open_lock() -> Result
         swept.get_raw(&fenced)?.is_none(),
         "with the peer gone, a sole-opener reopen sweeps the orphan"
     );
+    // Ordering guard: the sole opener downgrades the open lock from EXCLUSIVE to
+    // SHARED only AFTER its sweep. While `swept` is live, an independent
+    // exclusive probe must fail (the lock is still held) but a shared probe must
+    // succeed (it was downgraded, not left exclusive) — so a concurrent opener
+    // could never have obtained a usable vault mid-sweep, yet shared openers are
+    // admitted once recovery is done.
+    let probe = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)?;
+    // SAFETY: `probe.as_raw_fd()` is the descriptor of the live, owned `probe`
+    // file; `libc::flock` needs only a valid open fd and the results are asserted.
+    let exclusive_probe = unsafe { libc::flock(probe.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    assert_ne!(
+        exclusive_probe, 0,
+        "a live sole opener must retain the open lock (exclusive probe must fail)"
+    );
+    // SAFETY: same invariant — valid owned fd; result asserted.
+    let shared_probe = unsafe { libc::flock(probe.as_raw_fd(), libc::LOCK_SH) };
+    assert_eq!(
+        shared_probe, 0,
+        "the retained open lock must be SHARED after recovery, admitting shared openers"
+    );
+    drop(probe);
+    drop(swept);
+    Ok(())
+}
+
+/// A retrieval run registered as an off-record context receipt (its
+/// `result_ids` are the room's activated-memory ids) must not survive a crash
+/// that beats close: its in-process registration is lost, but the open-time
+/// receipt-recovery sweep evaporates the orphaned durable run so
+/// RECEIPTS-FOLLOW-TRANSCRIPT holds across recovery. (`cfg(unix)`: the sweep
+/// only runs where sole-ownership can be proven via `flock`.)
+#[cfg(unix)]
+#[test]
+fn off_record_orphaned_context_receipt_is_swept_on_reopen() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let session_ref = "sess-orphan-receipt";
+    let run_id = {
+        let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+        let _seed = seed_turn(&vault, 1_775_100_000);
+        vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
+        let telemetry = vault
+            .query()
+            .search_temporal(1_775_000_000, 1_775_200_000, 16)
+            .filter_types(&[ENTITY_TYPE_TURN])
+            .limit(16)
+            .run_with_telemetry()
+            .expect("retrieval with telemetry");
+        let run_id = telemetry.run_id.expect("telemetry run id");
+        vault.note_off_record_context_receipt(session_ref, run_id)?;
+        assert!(
+            vault.retrieval_run(run_id)?.is_some(),
+            "the off-record retrieval run is durable before the crash"
+        );
+        // Simulate a crash: drop the handle WITHOUT close, losing the in-process
+        // registry while the durable run and its recovery marker persist.
+        drop(vault);
+        run_id
+    };
+
+    // Sole-opener reopen evaporates the orphaned run (and its marker).
+    let reopened = Vault::open(tmp.path(), VaultConfig::default())?;
+    assert!(
+        reopened.retrieval_run(run_id)?.is_none(),
+        "a crash-orphaned off-record context receipt must be swept on reopen"
+    );
+    drop(reopened);
+    // Idempotent: a second reopen is a clean no-op.
+    let reopened_again = Vault::open(tmp.path(), VaultConfig::default())?;
+    assert!(reopened_again.retrieval_run(run_id)?.is_none());
     Ok(())
 }

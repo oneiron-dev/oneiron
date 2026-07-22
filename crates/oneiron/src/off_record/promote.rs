@@ -102,7 +102,7 @@ impl Vault {
         // and keeps it), or promote observes closing first and bails BEFORE
         // committing. Deadlock-safe: nothing inside the write txn locks
         // `entry.state`.
-        let (receipt, next_record) = {
+        let receipt = {
             let mut state = session_entry_state(&entry)?;
             if state.record.closing || state.gone {
                 return Err(Error::OffRecordSessionClosing {
@@ -131,10 +131,16 @@ impl Vault {
             state.record.fenced_turns.remove(position);
             state.record.promoted_turns.push(*turn_id.as_bytes());
             entry.publish_state(&state);
-            let next_record = state.record.clone();
-            (receipt, next_record)
+            receipt
         };
 
+        // The promotion is durably committed here (fence lifted, receipt
+        // written) and close KEEPS promoted turns, so a concurrent close or
+        // record mutation after this point must never be reported as a promote
+        // failure. The live-window refresh below is best-effort — its error is
+        // logged, not surfaced — and we deliberately do NOT re-read the session
+        // record afterward: turning post-commit drift into an error would make
+        // the caller see a failed promote that actually succeeded and is kept.
         #[cfg(feature = "sync")]
         if let Err(error) = self.refresh_promoted_turn_in_live_window(turn_id) {
             tracing::warn!(
@@ -143,22 +149,6 @@ impl Vault {
                 "off-record promotion committed but live-window sync refresh deferred to recovery"
             );
         }
-        #[cfg(feature = "sync")]
-        {
-            let state = session_entry_state(&entry)?;
-            if state.record.closing || state.gone {
-                return Err(Error::OffRecordSessionClosing {
-                    session_ref: session_ref.to_owned(),
-                });
-            }
-            if state.record != next_record {
-                return Err(Error::InvariantViolation(
-                    "off-record session record drifted during live-window promote refresh",
-                ));
-            }
-        }
-        #[cfg(not(feature = "sync"))]
-        let _ = next_record;
 
         Ok(receipt)
     }

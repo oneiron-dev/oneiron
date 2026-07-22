@@ -93,6 +93,14 @@ const OFF_RECORD_FENCE_KEY_PREFIX: &[u8] = b"offrecord_fence:v0:";
 /// so it preserves the closed write door without retaining session metadata.
 pub(super) const OFF_RECORD_CLOSED_FENCE_VALUE: &[u8] = b"";
 
+/// `vault_meta` key prefix for the durable crash-recovery marker of a
+/// session-local off-record context receipt (value = session ref). The
+/// retrieval-run record it names holds the room's activated-memory ids in its
+/// `result_ids`; because the session record is in-process only, this marker is
+/// the sole durable trace that lets the open-time sweep delete an orphaned run
+/// after a crash, so RECEIPTS-FOLLOW-TRANSCRIPT holds across recovery too.
+const OFF_RECORD_RECEIPT_KEY_PREFIX: &[u8] = b"offrecord_receipt:v0:";
+
 const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
 
 /// Longest accepted caller-supplied opaque session ref, in bytes.
@@ -376,6 +384,13 @@ pub(super) fn off_record_fence_key(id: &EntityId) -> Vec<u8> {
     let mut key = Vec::with_capacity(OFF_RECORD_FENCE_KEY_PREFIX.len() + 16);
     key.extend_from_slice(OFF_RECORD_FENCE_KEY_PREFIX);
     key.extend_from_slice(id.as_bytes());
+    key
+}
+
+fn off_record_receipt_key(run_id: RetrievalRunId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(OFF_RECORD_RECEIPT_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(OFF_RECORD_RECEIPT_KEY_PREFIX);
+    key.extend_from_slice(&run_id.as_bytes());
     key
 }
 
@@ -726,6 +741,51 @@ impl Vault {
         Ok(())
     }
 
+    /// Companion crash-recovery sweep for orphaned off-record context receipts.
+    /// A crash mid-session leaves durable `offrecord_receipt:v0:` markers naming
+    /// retrieval runs whose `result_ids` are the room's activated-memory ids,
+    /// with no live registry entry to delete them at close. Run at
+    /// [`Vault::open`] under sole ownership (the in-process registry is empty at
+    /// open, so EVERY marker is orphaned), AND while the open lock is still held
+    /// EXCLUSIVELY, so no peer can register a fresh receipt mid-sweep. Delete
+    /// each named retrieval run and THEN its marker (run first, so an
+    /// interrupted sweep re-processes the marker instead of leaking a
+    /// marker-less run). Idempotent and a no-op when there are zero orphans.
+    pub(crate) fn sweep_orphaned_off_record_receipts(&self) -> Result<()> {
+        let orphans: Vec<RetrievalRunId> = {
+            let rtxn = self.store.env.read_txn()?;
+            let mut ids = Vec::new();
+            for entry in self
+                .store
+                .vault_meta
+                .prefix_iter(&rtxn, OFF_RECORD_RECEIPT_KEY_PREFIX)?
+            {
+                let (key, _value) = entry?;
+                let suffix = &key[OFF_RECORD_RECEIPT_KEY_PREFIX.len()..];
+                let bytes: [u8; 16] = suffix.try_into().map_err(|_| {
+                    Error::InvariantViolation("malformed off-record receipt key at open")
+                })?;
+                ids.push(RetrievalRunId::from_bytes(bytes));
+            }
+            ids
+        };
+        if orphans.is_empty() {
+            return Ok(());
+        }
+        for run_id in &orphans {
+            // `delete_retrieval_run` opens its own write txn (it refuses to run
+            // inside one), so it is called outside the marker-delete txn below.
+            self.store.delete_retrieval_run(*run_id)?;
+            self.with_write_txn(|wtxn| {
+                self.store
+                    .vault_meta
+                    .delete(wtxn, &off_record_receipt_key(*run_id))?;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
     /// Explicitly enters off-record mode for `session_ref` (OF-326: enter is
     /// never implicit). Errors with [`Error::OffRecordSessionAlreadyExists`]
     /// while a record for the ref exists — a closed session's ref may be
@@ -1014,6 +1074,21 @@ impl Vault {
                 "off-record session context-receipt capacity exceeded",
             ));
         }
+        // Hold the per-session state lock across the durable receipt-marker write
+        // AND the in-process record update (Option-A), so the marker and the
+        // registry entry commit atomically against close — close cannot freeze a
+        // stale snapshot between the two and strand an orphan marker. The marker
+        // is the crash-recovery trace for this retrieval run (its `result_ids`
+        // are the room's activated-memory ids): close deletes it, and the
+        // open-time sweep evaporates it if a crash beats close. Deadlock-safe:
+        // the write txn never locks `entry.state`.
+        self.with_write_txn(|wtxn| {
+            self.store.vault_meta.put(
+                wtxn,
+                &off_record_receipt_key(run_id),
+                session_ref.as_bytes(),
+            )
+        })?;
         state.record.context_receipt_runs.push(run_id);
         entry.publish_state(&state);
         Ok(())
@@ -1167,6 +1242,19 @@ impl Vault {
 
         for run_id in &record.context_receipt_runs {
             self.store.delete_retrieval_run(*run_id)?;
+        }
+        // Remove the durable crash-recovery markers LAST (after the runs) so a
+        // close interrupted mid-way leaves the marker to be re-swept on the next
+        // open rather than orphaning a still-present run with no marker.
+        if !record.context_receipt_runs.is_empty() {
+            self.with_write_txn(|wtxn| {
+                for run_id in &record.context_receipt_runs {
+                    self.store
+                        .vault_meta
+                        .delete(wtxn, &off_record_receipt_key(*run_id))?;
+                }
+                Ok(())
+            })?;
         }
         let context_receipts_deleted = record.context_receipt_runs.len();
 

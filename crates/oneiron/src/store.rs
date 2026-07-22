@@ -373,6 +373,11 @@ impl RetrievalRunId {
     }
 
     #[must_use]
+    pub(crate) fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self { bytes }
+    }
+
+    #[must_use]
     pub fn to_hex(self) -> String {
         bytes_to_hex_lower(&self.bytes)
     }
