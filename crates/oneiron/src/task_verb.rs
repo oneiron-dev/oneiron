@@ -2173,6 +2173,48 @@ mod tests {
         assert_eq!(facade.tasks_check().expect("check after ack").rows.len(), 0);
     }
 
+    #[test]
+    fn malformed_dreamer_row_does_not_poison_the_board() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        // A healthy TASK.
+        let created = facade.tasks_create(&spec(120)).expect("create task");
+        let task_ref = created.task_ref.expect("task ref");
+        // A malformed dreamer-kind row enqueued through the public queue API (as
+        // a downstream product could): 0xC1 is the reserved, never-valid
+        // MessagePack marker, so the payload envelope never decodes.
+        let queue = AttemptQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(_) = queue
+            .enqueue(EnqueueAttempt {
+                kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
+                payload: vec![0xC1],
+                dedupe_key: None,
+                run_id: None,
+                now: 121,
+            })
+            .expect("enqueue malformed dreamer row")
+        else {
+            panic!("malformed row must enqueue");
+        };
+        // The board still reads for the unrelated healthy TASK — one bad row
+        // degrades to a bare job in the run tree instead of poisoning the whole
+        // read (previously the tree read errored and failed tasks.check/expand).
+        let section = facade
+            .tasks_check()
+            .expect("board reads despite the malformed row");
+        assert_eq!(
+            section
+                .rows
+                .iter()
+                .filter(|row| row.id == task_ref.to_hex())
+                .count(),
+            1
+        );
+        // The typed read verb for the healthy TASK also works.
+        assert!(facade.tasks_expand(task_ref).is_ok());
+    }
+
     /// P1-a: a Queued+Leased mix cannot be fully cancelled in-txn (the lease
     /// can't be stopped), so the cancel is honest — uneffected, nothing hidden,
     /// nothing intervened — and the task stays visible under its live lease.
