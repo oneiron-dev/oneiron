@@ -984,7 +984,7 @@ fn scoped_read_hybrid_candidate_limit_uses_text_vector_union() -> Result<()> {
     for (seed, vector) in [
         (0x40, [1.0_f32, 0.0, 0.0, 0.0]),
         (0x41, [0.0_f32, 1.0, 0.0, 0.0]),
-        (0x42, [0.0_f32, 0.0, 1.0, 0.0]),
+        (0x43, [0.0_f32, 0.0, 1.0, 0.0]),
     ] {
         put_vector_entity(&vault, &test_id(seed), &vector)?;
     }
