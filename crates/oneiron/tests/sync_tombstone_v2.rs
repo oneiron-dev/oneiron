@@ -19,7 +19,7 @@ mod sync_harness;
 
 use std::sync::Arc;
 
-use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use loro::{ExportMode, LoroDoc};
 use oneiron::affect::Vad;
 use oneiron::edge::EdgeKind;
 use oneiron::sync::bridge::{encode_edge_value_for_crdt, format_edge_key};
@@ -27,38 +27,20 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, apply_tombstone_to_window_doc, replay_pending_tombstones};
 use oneiron::temporal::TimeRange;
 use oneiron::{
-    DeleteReason, EntityId, HnswConfig, TOMBSTONE_VALUE_V2_LEN, TombstoneReason, Vault,
-    VaultConfig, decode_tombstone_value,
+    DeleteReason, EntityId, TOMBSTONE_VALUE_V2_LEN, TombstoneReason, Vault, decode_tombstone_value,
 };
-use sync_harness::make_entity_blob;
+use sync_harness::{make_entity_blob, map_get_bytes, test_config_with_embedding};
 
 /// 2026-02-15 ≈ unix 1_771_027_200 ⇒ window "2026-02".
 const LEARNED_AT: u64 = 1_771_027_200;
 const WINDOW: &str = "2026-02";
 
-fn test_config() -> VaultConfig {
-    let mut cfg = VaultConfig::device();
-    cfg.map_size = 16 * 1024 * 1024;
-    cfg.dimensions = 4;
-    // The orphan-residue test (AC6) seeds a vector, and vector writes
-    // require an embedding-model identity.
-    cfg.embedding_model = Some("test-model-v1".to_owned());
-    cfg.max_readers = 16;
-    cfg.hnsw = HnswConfig::default();
-    cfg
-}
-
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    // Embedding variant: the orphan-residue test (AC6) seeds a vector, and
+    // vector writes require an embedding-model identity.
+    let vault = Arc::new(Vault::open(dir.path(), test_config_with_embedding()).unwrap());
     (dir, vault)
-}
-
-fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
-    match map.get(key)? {
-        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
-        _ => None,
-    }
 }
 
 /// Persists `doc` into the vault's sync_state as window `WINDOW`, the same

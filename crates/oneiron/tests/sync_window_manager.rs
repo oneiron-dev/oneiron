@@ -16,36 +16,19 @@ mod sync_harness;
 use core::assert_matches;
 use std::sync::Arc;
 
-use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use loro::{ExportMode, LoroDoc};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::temporal::TimeRange;
-use oneiron::{EntityId, Error, ErrorKind, HnswConfig, Vault, VaultConfig};
-use sync_harness::make_entity_blob;
-
-fn test_config() -> VaultConfig {
-    let mut cfg = VaultConfig::device();
-    cfg.map_size = 16 * 1024 * 1024;
-    cfg.dimensions = 4;
-    cfg.embedding_model = None;
-    cfg.max_readers = 16;
-    cfg.hnsw = HnswConfig::default();
-    cfg
-}
+use oneiron::{EntityId, Error, ErrorKind, Vault};
+use sync_harness::{make_entity_blob, map_get_bytes, test_config};
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let temp = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
     (temp, vault)
-}
-
-fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
-    match map.get(key)? {
-        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
-        _ => None,
-    }
 }
 
 fn put_lmdb_entity(vault: &Vault, id: &EntityId, learned_at: u64, data: &[u8]) {
