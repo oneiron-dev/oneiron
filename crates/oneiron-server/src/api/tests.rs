@@ -416,10 +416,12 @@ async fn companion_resume_hides_fresh_default_policy_manifest() {
     assert_eq!(body["session"]["last_activity"], Value::Null);
 }
 
-fn test_server_with_usage_mode(usage_mode: UsageMode) -> (tempfile::TempDir, Arc<SyncServer>) {
+fn test_server_with_runtime_mode(
+    mode: crate::runtime::RuntimeMode,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
     test_server_with_config(SyncServerConfig {
         allow_unauthenticated: true,
-        usage_mode,
+        runtime: crate::runtime::RuntimeConfig::for_mode(mode),
         ..Default::default()
     })
 }
@@ -662,11 +664,10 @@ async fn health_runtime_summary_redacts_route_model_details_without_auth() {
 }
 
 #[tokio::test]
-async fn runtime_status_uses_legacy_usage_mode_when_runtime_is_default() {
+async fn runtime_status_reflects_configured_runtime_mode() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         allow_unauthenticated: true,
-        usage_mode: crate::usage::UsageMode::OneironCloud,
-        runtime: crate::runtime::RuntimeConfig::default(),
+        runtime: crate::runtime::RuntimeConfig::for_mode(RuntimeMode::OneironCloud),
         ..Default::default()
     });
 
@@ -6373,7 +6374,6 @@ async fn usage_event_uses_runtime_mode_for_byo_no_debit_boundary() {
     let runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::ByoCloudKey);
     let config = SyncServerConfig {
         allow_unauthenticated: true,
-        usage_mode: crate::usage::UsageMode::OneironCloud,
         runtime,
         ..Default::default()
     };
@@ -6422,11 +6422,9 @@ async fn usage_event_uses_runtime_mode_for_byo_no_debit_boundary() {
 }
 
 #[tokio::test]
-async fn usage_event_honors_legacy_usage_mode_when_runtime_is_default() {
+async fn usage_event_on_default_runtime_resolves_local_no_debit() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         allow_unauthenticated: true,
-        usage_mode: crate::usage::UsageMode::OneironCloud,
-        runtime: crate::runtime::RuntimeConfig::default(),
         ..Default::default()
     });
     let payload = json!({
@@ -6467,9 +6465,9 @@ async fn usage_event_honors_legacy_usage_mode_when_runtime_is_default() {
         .await
         .expect("usage response body");
     let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
-    assert_eq!(body["source"], Value::from("oneiron_cloud"));
-    assert_eq!(body["recorded"], Value::from(true));
-    assert!(body["debit"].is_object());
+    assert_eq!(body["source"], Value::from("local"));
+    assert_eq!(body["recorded"], Value::from(false));
+    assert!(body["debit"].is_null());
 }
 
 #[tokio::test]
@@ -6941,7 +6939,7 @@ async fn usage_event_accepts_duplicate_unmetered_model_matches() {
 
 #[tokio::test]
 async fn consumer_top_up_route_is_idempotent() {
-    let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+    let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
 
     let (first_status, first) = top_up_route(server.clone(), "top-up-idem", 10.0).await;
     let (second_status, second) = top_up_route(server.clone(), "top-up-idem", 10.0).await;
@@ -6974,7 +6972,7 @@ async fn consumer_top_up_route_is_idempotent() {
 
 #[tokio::test]
 async fn consumer_top_up_route_with_http_idempotency_header_reaches_ledger_replay() {
-    let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+    let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
     let top_up = json!({
         "tenantId": "tenant-a",
         "idempotencyKey": "top-up-http-idem",
@@ -7007,7 +7005,7 @@ async fn consumer_top_up_route_with_http_idempotency_header_reaches_ledger_repla
 
 #[tokio::test]
 async fn consumer_top_up_route_maps_malformed_json_to_api_error() {
-    let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+    let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
 
     let (status, body) = route_json(
         server,
@@ -7028,7 +7026,7 @@ async fn consumer_top_up_route_maps_malformed_json_to_api_error() {
 
 #[tokio::test]
 async fn consumer_top_up_route_rejects_idempotency_conflicts() {
-    let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+    let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
 
     let (first_status, first) = top_up_route(server.clone(), "top-up-conflict", 10.0).await;
     let (conflict_status, conflict) = top_up_route(server.clone(), "top-up-conflict", 11.0).await;
@@ -7062,7 +7060,7 @@ async fn consumer_top_up_route_rejects_idempotency_conflicts() {
 
 #[tokio::test]
 async fn consumer_top_up_route_rejects_normalized_zero_credit_units() {
-    let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+    let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
 
     let (tiny_status, tiny) = top_up_route(server.clone(), "tiny-top-up", 0.0000000000001).await;
     let (retry_status, retry) = top_up_route(server, "tiny-top-up", 1.0).await;
@@ -7077,7 +7075,7 @@ async fn consumer_top_up_route_rejects_normalized_zero_credit_units() {
 
 #[tokio::test]
 async fn consumer_top_up_route_rejects_non_finite_allowance_balance() {
-    let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+    let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
 
     let (first_status, first) = top_up_route(server.clone(), "large-top-up-1", 1.0e296).await;
     let (overflow_status, overflow) = top_up_route(server.clone(), "large-top-up-2", 1.0e296).await;
@@ -7106,7 +7104,7 @@ async fn consumer_top_up_route_rejects_non_finite_allowance_balance() {
 
 #[tokio::test]
 async fn consumer_usage_route_returns_usage_allowance_and_warning_state() {
-    let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+    let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
     let (top_up_status, _) = top_up_route(server.clone(), "summary-top-up", 10.0).await;
     let (record_status, _) = record_usage_event_route(server.clone(), "summary-usage", 0.08).await;
     let (usage_status, usage) = route_json(
@@ -7143,7 +7141,7 @@ async fn consumer_usage_route_returns_usage_allowance_and_warning_state() {
 
 #[tokio::test]
 async fn consumer_vault_scoped_usage_uses_tenant_allowance_burn_down() {
-    let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+    let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
     let (top_up_status, _) = top_up_route(server.clone(), "vault-scope-top-up", 10.0).await;
     let (vault_a_status, _) =
         record_usage_event_for_vault_route(server.clone(), "vault-a-usage", "vault-a", 0.08).await;
@@ -7203,7 +7201,7 @@ async fn consumer_vault_scoped_usage_uses_tenant_allowance_burn_down() {
 
 #[tokio::test]
 async fn consumer_usage_details_route_returns_breakdowns() {
-    let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+    let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
     let (top_up_status, _) = top_up_route(server.clone(), "details-top-up", 100.0).await;
     let (record_status, _) = record_usage_event_route(server.clone(), "details-usage", 0.05).await;
     let (details_status, details) = route_json(
@@ -7245,7 +7243,7 @@ async fn consumer_usage_route_reports_allowance_warning_thresholds() {
         (9.5, "critical", true, 0.95),
         (10.0, "exhausted", true, 1.0),
     ] {
-        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+        let (_dir, server) = test_server_with_runtime_mode(RuntimeMode::OneironCloud);
         let (top_up_status, _) = top_up_route(server.clone(), "threshold-top-up", 10.0).await;
         let (record_status, _) = record_usage_event_route(
             server.clone(),
