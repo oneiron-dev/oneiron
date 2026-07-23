@@ -4,19 +4,10 @@
 //! (consent axis, actor validation, reserved edges, receipts).
 
 use super::*;
-
-fn test_config() -> crate::config::VaultConfig {
-    let mut cfg = crate::config::VaultConfig::device();
-    cfg.map_size = 16 * 1024 * 1024;
-    cfg.dimensions = 4;
-    cfg.embedding_model = Some("test-model-v1".to_owned());
-    cfg.max_readers = 16;
-    cfg.hnsw = crate::config::HnswConfig::default();
-    cfg
-}
+use crate::test_util::embedding_test_config;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(test_config())
+    crate::test_util::open_test_vault_with(embedding_test_config())
 }
 
 fn id(byte: u8) -> EntityId {

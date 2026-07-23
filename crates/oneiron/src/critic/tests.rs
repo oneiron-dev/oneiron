@@ -1,21 +1,10 @@
 use super::*;
-use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
-
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config.text_analyzer = TextAnalyzerConfig::default();
-    config
-}
+use crate::test_util::embedding_test_config;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(test_config())
+    crate::test_util::open_test_vault_with(embedding_test_config())
 }
 
 fn provenance() -> CritiqueProvenance {

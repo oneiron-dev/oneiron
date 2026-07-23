@@ -263,22 +263,11 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
     use crate::error::ErrorKind;
     use crate::registry::{
         EntityClassification, TypeByteBand, entity_type_registry_entry, short_id_prefix,
     };
-
-    fn test_config() -> VaultConfig {
-        let mut config = VaultConfig::device();
-        config.map_size = 16 * 1024 * 1024;
-        config.dimensions = 4;
-        config.embedding_model = Some("test-model-v1".to_owned());
-        config.max_readers = 16;
-        config.hnsw = HnswConfig::default();
-        config.text_analyzer = TextAnalyzerConfig::default();
-        config
-    }
+    use crate::test_util::embedding_test_config;
 
     fn test_body() -> CodeArtifactBody {
         CodeArtifactBody::new(
@@ -316,7 +305,7 @@ mod tests {
 
     #[test]
     fn code_artifact_registry_and_vault_helpers_round_trip() -> Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
         let id = EntityId::now();
         let body = test_body();
 
@@ -440,7 +429,7 @@ mod tests {
 
     #[test]
     fn code_artifact_put_rejects_invalid_replay_key_without_writing() -> Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
         let id = EntityId::now();
         let invalid = code_artifact_map(vec![
             (KEY_SUMMARY_PROMPT, Value::from("prompt")),

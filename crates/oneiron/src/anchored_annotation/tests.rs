@@ -1,18 +1,7 @@
 use super::*;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
-use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::registry::ENTITY_TYPE_PERSON;
-
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config.text_analyzer = TextAnalyzerConfig::default();
-    config
-}
+use crate::test_util::embedding_test_config;
 
 fn test_time(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
@@ -333,7 +322,7 @@ fn thread_survives_viewer_death() -> Result<()> {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path();
     let (thread_id, artifact_id) = {
-        let vault = Vault::open(path, test_config())?;
+        let vault = Vault::open(path, embedding_test_config())?;
         clear_default_policy_manifest(&vault);
         let actor = put_actor(&vault, 10);
         let artifact_id = put_workbook(&vault, actor, 10);
@@ -356,7 +345,7 @@ fn thread_survives_viewer_death() -> Result<()> {
     };
 
     // The viewer is gone; reopen the vault from disk.
-    let reopened = Vault::open(path, test_config())?;
+    let reopened = Vault::open(path, embedding_test_config())?;
     let thread = reopened
         .get_annotation_thread(&artifact_id, &thread_id)?
         .expect("thread persisted");
@@ -380,7 +369,7 @@ fn thread_survives_viewer_death() -> Result<()> {
 // anchor to its new position.
 #[test]
 fn reanchor_moves_anchor_across_version_bump() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, actor, 10);
     let thread = vault.open_annotation_thread(
@@ -436,7 +425,7 @@ fn reanchor_moves_anchor_across_version_bump() -> Result<()> {
 // original version — never silently repositioned.
 #[test]
 fn nonmappable_anchor_is_marked_drifted() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, actor, 10);
     let thread = vault.open_annotation_thread(
@@ -491,7 +480,7 @@ fn nonmappable_anchor_is_marked_drifted() -> Result<()> {
 // anchor payload + thread text + artifact@version.
 #[test]
 fn assigned_thread_yields_task_brief() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, actor, 10);
     let thread = vault.open_annotation_thread(
@@ -548,7 +537,7 @@ fn assigned_thread_yields_task_brief() -> Result<()> {
 
 #[test]
 fn resolve_supersedes_thread_head() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, actor, 10);
     let thread = vault.open_annotation_thread(
@@ -577,7 +566,7 @@ fn resolve_supersedes_thread_head() -> Result<()> {
 
 #[test]
 fn open_thread_rejects_bad_anchor_version() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, actor, 10);
     // Version 2 does not exist yet (head is v1).
@@ -598,7 +587,7 @@ fn open_thread_rejects_bad_anchor_version() {
 // human head via newest-UUID-wins selection.
 #[test]
 fn agent_proposed_head_does_not_override_human_head() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let human = put_actor(&vault, 10);
     let agent = put_agent_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, human, 10);
@@ -659,7 +648,7 @@ fn agent_proposed_head_does_not_override_human_head() -> Result<()> {
 // stays the single live head and no orphan claim is left behind.
 #[test]
 fn agent_supersede_rejected_leaves_original_head_live() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let human = put_actor(&vault, 10);
     let agent = put_agent_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, human, 10);
@@ -732,7 +721,7 @@ fn reanchor_math_drifts_near_u32_max_instead_of_wrapping() {
 // head, so a replay against a not-yet-appended version writes nothing.
 #[test]
 fn reanchor_to_nonexistent_version_errors_and_writes_no_head() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, actor, 10);
     let thread = vault.open_annotation_thread(
@@ -780,7 +769,7 @@ fn reanchor_to_nonexistent_version_errors_and_writes_no_head() -> Result<()> {
 // whole listing.
 #[test]
 fn malformed_thread_claim_is_skipped_on_listing() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, actor, 10);
     let thread = vault.open_annotation_thread(
@@ -831,7 +820,7 @@ fn malformed_thread_claim_is_skipped_on_listing() -> Result<()> {
 // transcript that `annotation_brief_for_thread` reconstructs.
 #[test]
 fn persisted_brief_transcript_is_stable_after_later_comment() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact_id = put_workbook(&vault, actor, 10);
     let thread = vault.open_annotation_thread(

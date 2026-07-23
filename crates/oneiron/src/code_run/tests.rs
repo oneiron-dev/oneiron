@@ -1,29 +1,19 @@
 use rmpv::Value;
 
 use super::*;
-use crate::test_util::{entity, entity_record};
+use crate::test_util::{embedding_test_config, entity, entity_record};
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY;
 use crate::{
-    ClaimSubject, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
+    ClaimSubject, EdgeActorClass, WriteActor,
     receipt::{ReceiptKind, ReceiptQuery},
     registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST},
 };
 
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config
-}
-
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), test_config()).expect("open vault");
+    let vault = Vault::open(dir.path(), embedding_test_config()).expect("open vault");
     (dir, vault)
 }
 

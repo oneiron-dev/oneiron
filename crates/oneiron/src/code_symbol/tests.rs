@@ -2,22 +2,10 @@ use super::*;
 use crate::code_artifact::{
     CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody, encode_code_artifact_body,
 };
-use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::edge::EdgeKind;
-use crate::error::{Error, ErrorKind};
+use crate::error::ErrorKind;
 use crate::registry::ENTITY_TYPE_CODE_SYMBOL;
 use crate::temporal::TimeRange;
-
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config.text_analyzer = TextAnalyzerConfig::default();
-    config
-}
 
 fn repo_ref() -> RepoRef {
     RepoRef::parse("github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277")
@@ -37,25 +25,9 @@ fn code_body(repo_ref: &RepoRef) -> CodeArtifactBody {
     )
 }
 
-use crate::test_util::entity;
+use crate::test_util::{assert_secret_scan_rejected, embedding_test_config, entity};
 
 const GITHUB_TOKEN_SECRET_FIXTURE: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
-
-fn assert_secret_scan_rejected(err: Error) {
-    match err {
-        Error::GateWriteRejected {
-            outcome,
-            reason_codes,
-        } => {
-            assert_eq!(outcome, "deny");
-            assert_eq!(
-                reason_codes.as_slice(),
-                &["gate.secret_scan.detected", "gate.secret_scan.github_token"]
-            );
-        }
-        other => panic!("expected secret-scan GateWriteRejected, got {other:?}"),
-    }
-}
 
 fn manifest_with_blame(
     claim_id: Option<EntityId>,
@@ -221,7 +193,7 @@ fn rust_ast_incremental_chunks_skip_parent_impl_for_method_body_change() -> Resu
 
 #[test]
 fn incremental_code_embeddings_reembed_only_changed_ast_chunk_and_search_top5() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let code_artifact_id = entity(0xD5);
     let repo_ref = repo_ref();
     let path = "src/llm/budget.rs";
@@ -353,7 +325,7 @@ fn rust_tree_sitter_symbol_graph_extracts_refs_and_contiguity_edges() -> Result<
 
 #[test]
 fn code_symbol_graph_persists_entities_refs_callers_and_ppr_neighbors() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xD1);
     let repo_ref = repo_ref();
     let graph = derive_code_symbol_graph_from_sources(
@@ -404,7 +376,7 @@ fn code_symbol_graph_persists_entities_refs_callers_and_ppr_neighbors() -> Resul
 
 #[test]
 fn symbol_blame_returns_provenance_claim_and_source_session_when_available() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xB1);
     let claim_id = entity(0xC1);
     let repo_ref = repo_ref();
@@ -434,7 +406,7 @@ fn symbol_blame_returns_provenance_claim_and_source_session_when_available() -> 
 
 #[test]
 fn code_symbol_manifest_rejects_secret_source_session_before_sidecar_mutation() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xB8);
     let repo_ref = repo_ref();
     let safe_manifest = manifest_with_blame(None, Some("codex-session-001".to_owned()))?;
@@ -452,14 +424,14 @@ fn code_symbol_manifest_rejects_secret_source_session_before_sidecar_mutation() 
         .put_code_symbol_manifest(&id, &secret_manifest)
         .expect_err("secret source_session must reject before sidecar mutation");
 
-    assert_secret_scan_rejected(err);
+    assert_secret_scan_rejected(err, "gate.secret_scan.github_token");
     assert_eq!(vault.get_code_symbol_manifest(&id)?, Some(safe_manifest));
     Ok(())
 }
 
 #[test]
 fn symbol_blame_lookup_skips_orphaned_index_after_code_artifact_delete() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xB3);
     let repo_ref = repo_ref();
     let manifest = manifest_with_blame(None, None)?;
@@ -485,7 +457,7 @@ fn symbol_blame_lookup_skips_orphaned_index_after_code_artifact_delete() -> Resu
 
 #[test]
 fn symbol_blame_lookup_fails_closed_after_code_artifact_repo_ref_overwrite() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xB4);
     let repo_a = repo_ref();
     let repo_b = repo_ref_b();
@@ -520,7 +492,7 @@ fn symbol_blame_lookup_fails_closed_after_code_artifact_repo_ref_overwrite() -> 
 
 #[test]
 fn symbol_blame_lookup_propagates_corrupt_live_entity() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xB5);
     let repo_ref = repo_ref();
     let manifest = manifest_with_blame(None, None)?;
@@ -547,7 +519,7 @@ fn symbol_blame_lookup_propagates_corrupt_live_entity() -> Result<()> {
 
 #[test]
 fn symbol_blame_lookup_propagates_corrupt_manifest_sidecar() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xB6);
     let repo_ref = repo_ref();
     let manifest = manifest_with_blame(None, None)?;
@@ -577,7 +549,7 @@ fn symbol_blame_lookup_propagates_corrupt_manifest_sidecar() -> Result<()> {
 
 #[test]
 fn corrupt_manifest_fallback_deletes_only_well_shaped_index_rows_for_id() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xB7);
     let repo_ref = repo_ref();
     let manifest = manifest_with_blame(None, None)?;
@@ -626,7 +598,7 @@ fn corrupt_manifest_fallback_deletes_only_well_shaped_index_rows_for_id() -> Res
 
 #[test]
 fn symbol_manifest_repo_ref_must_match_code_artifact() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xB2);
     let repo_ref = repo_ref();
     let other_repo =

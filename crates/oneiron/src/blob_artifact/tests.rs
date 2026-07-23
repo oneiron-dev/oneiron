@@ -1,22 +1,11 @@
 use super::*;
-use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, EntityClassification, TypeByteBand,
     entity_type_registry_entry, short_id_prefix,
 };
-
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config.text_analyzer = TextAnalyzerConfig::default();
-    config
-}
+use crate::test_util::embedding_test_config;
 
 fn test_body() -> BlobArtifactBody {
     BlobArtifactBody::new(
@@ -94,7 +83,7 @@ fn blob_artifact_codec_round_trips_pinned_keys() -> Result<()> {
 
 #[test]
 fn blob_artifact_registry_and_vault_helpers_round_trip() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = put_artifact(&vault, 11)?;
 
     let decoded = vault.get_blob_artifact(&id)?.ok_or(Error::EntityNotFound)?;
@@ -111,7 +100,7 @@ fn blob_artifact_registry_and_vault_helpers_round_trip() -> Result<()> {
 
 #[test]
 fn blob_artifact_upload_creates_v1_with_ledger_event() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let artifact_id = put_artifact(&vault, 10)?;
     let actor = put_actor(&vault, 10)?;
 
@@ -145,7 +134,7 @@ fn blob_artifact_upload_creates_v1_with_ledger_event() -> Result<()> {
 
 #[test]
 fn blob_artifact_identical_bytes_dedupe() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let artifact_id = put_artifact(&vault, 10)?;
     let actor = put_actor(&vault, 10)?;
 
@@ -192,7 +181,7 @@ fn blob_artifact_identical_bytes_dedupe() -> Result<()> {
 
 #[test]
 fn blob_artifact_version_chain_is_append_only() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let artifact_id = put_artifact(&vault, 10)?;
     let actor = put_actor(&vault, 10)?;
 
@@ -243,7 +232,7 @@ fn blob_artifact_version_chain_is_append_only() -> Result<()> {
 
 #[test]
 fn blob_artifact_provenance_round_trips_per_version() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let artifact_id = put_artifact(&vault, 10)?;
     let actor = put_actor(&vault, 10)?;
 
@@ -283,7 +272,7 @@ fn blob_artifact_provenance_round_trips_per_version() -> Result<()> {
 
 #[test]
 fn blob_artifact_delete_cleans_chain_and_orphaned_assets() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10)?;
     let artifact_a = put_artifact(&vault, 10)?;
     let artifact_b = put_artifact(&vault, 10)?;
@@ -338,7 +327,7 @@ fn blob_artifact_delete_cleans_chain_and_orphaned_assets() -> Result<()> {
 
 #[test]
 fn blob_artifact_append_fails_closed_on_bad_input() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10)?;
 
     // Unknown artifact.

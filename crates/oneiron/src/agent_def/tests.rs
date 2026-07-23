@@ -5,24 +5,13 @@
 //! contract.
 
 use super::*;
-use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::error::ErrorKind;
 use crate::registry::{
     ENTITY_TYPE_SKILL, EntityClassification, TypeByteBand, band_of, entity_type_registry_entry,
     is_structural_kind, short_id_prefix,
 };
 use crate::skill::{SkillLifecycle, SkillRecord, encode_skill_record};
-
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config.text_analyzer = TextAnalyzerConfig::default();
-    config
-}
+use crate::test_util::embedding_test_config;
 
 fn provenance(seed: u8) -> Value {
     Value::Map(vec![
@@ -166,7 +155,7 @@ fn encoded_body_keys(def: &AgentDefinition) -> Vec<String> {
 // record — every composition facet plus the lifecycle block, bit-for-bit.
 #[test]
 fn define_agent_round_trips_fully_populated_record() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let def = full_agent("1.2.3");
 
@@ -207,7 +196,7 @@ fn minimal_record_round_trips_and_elides_optional_keys() -> Result<()> {
 // AC-1 test 3: get on a missing id is Ok(None); get on another type errors.
 #[test]
 fn get_missing_is_none_and_wrong_type_errors() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     assert_eq!(vault.get_agent_definition(&EntityId::now())?, None);
 
     let skill_id = EntityId::now();
@@ -236,7 +225,7 @@ fn get_missing_is_none_and_wrong_type_errors() -> Result<()> {
 // AC-1 test 4: update happy path — mutate composition + bump version.
 #[test]
 fn update_agent_definition_happy_path() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let prior = full_agent("1.0.0");
     vault.put_agent_definition(&id, &prior, TimeRange { start: 10, end: 10 }, 11)?;
@@ -252,7 +241,7 @@ fn update_agent_definition_happy_path() -> Result<()> {
 // AC-2 test 5: the immutability gate mirrors the SkillRecord update rules.
 #[test]
 fn update_gate_freezes_identity_and_authorship() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let prior = full_agent("1.0.0");
     vault.put_agent_definition(&id, &prior, TimeRange { start: 10, end: 10 }, 11)?;
@@ -302,7 +291,7 @@ fn update_gate_freezes_identity_and_authorship() -> Result<()> {
 // proving it is machinery and not method-local convention.
 #[test]
 fn generic_put_runs_validation_and_version_gate() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
 
     // A valid raw put succeeds and reads back.
     let id = EntityId::now();
@@ -540,7 +529,7 @@ fn registry_row_and_type_byte_immutability() -> Result<()> {
     assert_eq!(band_of(ENTITY_TYPE_AGENT_DEF), TypeByteBand::Core);
     assert!(is_structural_kind(ENTITY_TYPE_AGENT_DEF));
 
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     vault.put_agent_definition(
         &id,
@@ -619,7 +608,7 @@ fn pinned_key_contract_is_stable() {
 // Edge test 10: dangling refs are accepted at rest (no existence checks).
 #[test]
 fn dangling_refs_are_accepted_at_rest() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let mut def = full_agent("1.0.0");
     def.skills = vec![SkillDependency::new("oneiron.skill.does-not-exist")];
@@ -645,7 +634,7 @@ fn agent_scope_maps_to_world_scope() {
 // Edge test 12: retire path via lifecycle_status = Retracted (with version bump).
 #[test]
 fn retire_path_round_trips() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     vault.put_agent_definition(
         &id,
@@ -723,7 +712,7 @@ fn system_preset_table_is_pinned() -> Result<()> {
 // disable → false (others unaffected); re-enable → true.
 #[test]
 fn system_agent_toggle_round_trip() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     for preset in SystemAgentPreset::all() {
         assert!(vault.system_agent_enabled(preset)?, "presets ship enabled");
     }
@@ -746,7 +735,7 @@ fn system_agent_toggle_round_trip() -> Result<()> {
 // pinned fork stamps.
 #[test]
 fn fork_system_agent_creates_custom() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let fork = vault.fork_system_agent(
         &id,
@@ -785,7 +774,7 @@ fn fork_system_agent_creates_custom() -> Result<()> {
 // AGENT-2 AC test 3: forking a disabled preset is rejected and writes nothing.
 #[test]
 fn fork_disabled_preset_rejected() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     vault.set_system_agent_enabled(SystemAgentPreset::Scout, false)?;
     let id = EntityId::now();
     let err = vault
@@ -807,7 +796,7 @@ fn fork_disabled_preset_rejected() -> Result<()> {
 // preset bound.
 #[test]
 fn fork_ceiling_no_widen_on_update() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let herald_id = EntityId::now();
     let herald_fork = vault.fork_system_agent(
         &herald_id,
@@ -856,7 +845,7 @@ fn fork_ceiling_no_widen_on_update() -> Result<()> {
 // door — encode is structure-only (M1 split), the write door runs no-widen.
 #[test]
 fn no_widen_rejected_at_raw_put() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let mut widened = SystemAgentPreset::Herald.template();
     widened.agent_id = "eiri.herald.widened".to_owned();
     widened.forked_from = Some(SystemAgentPreset::Herald);
@@ -959,7 +948,7 @@ fn default_body_byte_compat() -> Result<()> {
 // forkedFrom joins them.
 #[test]
 fn update_immutability_preserved() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
 
     // forkedFrom cannot be dropped on update …
     let fork_id = EntityId::now();

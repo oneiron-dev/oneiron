@@ -2,7 +2,6 @@ use super::*;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::config::{HnswConfig, VaultConfig};
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::off_record::OffRecordBackendClass;
@@ -29,19 +28,9 @@ struct EdgeFixture {
 
 type RawEdgeValuePair = (Option<Vec<u8>>, Option<Vec<u8>>);
 
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config
-}
-
 fn open_raw_test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), test_config()).expect("open vault");
+    let vault = Vault::open(dir.path(), embedding_test_config()).expect("open vault");
     (dir, vault)
 }
 
@@ -269,22 +258,6 @@ fn assert_raw_edge_unchanged(
 
 const GITHUB_PAT_SECRET_FIXTURE: &[u8] = b"token=ghp_0123456789abcdefghijklmnopqrstuvwxyz";
 
-fn assert_secret_scan_rejected(err: Error) {
-    match err {
-        Error::GateWriteRejected {
-            outcome,
-            reason_codes,
-        } => {
-            assert_eq!(outcome, "deny");
-            assert_eq!(
-                reason_codes.as_slice(),
-                &["gate.secret_scan.detected", "gate.secret_scan.github_token"]
-            );
-        }
-        other => panic!("expected secret-scan GateWriteRejected, got {other:?}"),
-    }
-}
-
 #[test]
 fn secret_scan_rejects_known_secret_fixture_before_persistence() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -311,7 +284,7 @@ fn secret_scan_rejects_known_secret_fixture_before_persistence() -> Result<()> {
         .commit()
         .expect_err("known secret fixture must reject before any batch write");
 
-    assert_secret_scan_rejected(err);
+    assert_secret_scan_rejected(err, "gate.secret_scan.github_token");
     assert!(vault.get(&safe_id)?.is_none());
     assert!(vault.get(&secret_id)?.is_none());
     Ok(())
@@ -357,7 +330,7 @@ fn secret_scan_rejects_phonetic_payload_before_persistence() -> Result<()> {
         .commit()
         .expect_err("known secret fixture in phonetic payload must reject before batch write");
 
-    assert_secret_scan_rejected(err);
+    assert_secret_scan_rejected(err, "gate.secret_scan.github_token");
     assert!(vault.get(&safe_id)?.is_none());
 
     let rtxn = vault.store.env.read_txn()?;
@@ -405,7 +378,7 @@ fn txn_batch_secret_scan_rejects_before_staging_writes() -> Result<()> {
         .apply(&mut wtxn)
         .expect_err("txn batch secret fixture must reject before staging writes");
 
-    assert_secret_scan_rejected(err);
+    assert_secret_scan_rejected(err, "gate.secret_scan.github_token");
     wtxn.commit()?;
 
     assert!(vault.get(&safe_id)?.is_none());
@@ -1943,7 +1916,7 @@ fn deferred_lexical_hint_materialization_fails_closed_when_text_index_untrusted(
     let claim_data = crate::claim::encode_claim_body(&claim_body)?;
 
     {
-        let vault = Vault::open(dir.path(), test_config())?;
+        let vault = Vault::open(dir.path(), embedding_test_config())?;
         vault
             .batch()
             .put(
@@ -1989,7 +1962,7 @@ fn deferred_lexical_hint_materialization_fails_closed_when_text_index_untrusted(
         );
     }
 
-    let mut cfg = test_config();
+    let mut cfg = embedding_test_config();
     cfg.skip_text_index_manifest_check = true;
     let vault = Vault::open(dir.path(), cfg)?;
     let mut wtxn = vault.store.env.write_txn()?;
@@ -3481,7 +3454,7 @@ fn replay_edge_with_created_at_accepts_bare_over_provenanced() -> Result<()> {
     Ok(())
 }
 
-use crate::test_util::entity;
+use crate::test_util::{assert_secret_scan_rejected, embedding_test_config, entity};
 
 fn child_of_edge(child: EntityId, parent: EntityId) -> BatchOp {
     BatchOp::Edge {
