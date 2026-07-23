@@ -67,7 +67,6 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "entity.get",
     "edges.get",
     "turns.annotate",
-    "context_pack",
     "companion.resume",
     "companion.profile",
     "companion.access_grants",

@@ -293,7 +293,7 @@ Response fields:
 
 - `status`: `"ok"` when the server process is alive.
 - `service`: `"oneiron-server"`.
-- `capabilities.capabilities`: capability identifiers such as `search.vector`, `search.text`, `entity.get`, `edges.get`, `context_pack`, and `lease.revoke`.
+- `capabilities.capabilities`: capability identifiers such as `search.vector`, `search.text`, `entity.get`, `edges.get`, `core.context_pack`, and `lease.revoke`.
 - `capabilities.modes`: supported mode names: `flash`, `thinking`, `pro`, `ultra`.
 - `formats`: `json`, `yaml`, `toon`, `markdown`, `plaintext`.
 - `rate_limit`: server-side rate-limit metadata for HTTP and websocket surfaces.
