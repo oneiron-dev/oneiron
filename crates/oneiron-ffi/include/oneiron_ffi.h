@@ -9,8 +9,8 @@
  * Boundary validation: EntityId inputs must be exactly 16 bytes. Text queries
  * are capped at 8 KiB, search limits at 1000, and dimensions at 16384.
  *
- * Intentionally absent: start_sync and stop_sync are not exported while sync
- * remains disabled pre-launch.
+ * Sync entry points are intentionally absent while shared multi-vault
+ * sync remains disabled pre-launch.
  */
 
 
