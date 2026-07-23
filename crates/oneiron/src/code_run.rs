@@ -519,7 +519,7 @@ impl Vault {
             &code_run_replay_record_key(&record.run_id),
             &encoded,
         )?;
-        wtxn.commit().map_err(Error::from)
+        Ok(wtxn.commit()?)
     }
 
     /// Persists the replay record only if the stored row still matches `expected`.
@@ -548,7 +548,7 @@ impl Vault {
             ));
         }
         self.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
-        wtxn.commit().map_err(Error::from)?;
+        wtxn.commit()?;
         Ok(next_generation)
     }
 
@@ -578,7 +578,7 @@ impl Vault {
         self.store
             .vault_meta
             .put(&mut wtxn, &code_run_raw_output_key(output), raw)?;
-        wtxn.commit().map_err(Error::from)
+        Ok(wtxn.commit()?)
     }
 
     /// Loads raw output bytes for `output` and verifies they still match metadata.
@@ -1637,7 +1637,7 @@ impl<'a> HostSelfDispatcher<'a> {
                 include_source_in_gate_input: true,
             },
         );
-        wtxn.commit().map_err(Error::from)?;
+        wtxn.commit()?;
         gate_result
     }
 

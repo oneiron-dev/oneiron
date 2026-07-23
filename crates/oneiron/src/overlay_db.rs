@@ -102,13 +102,13 @@ impl OverlayDb {
     pub(crate) fn put(&self, txn: &mut RwTxn<'_>, key: &[u8], data: &[u8]) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.put(overlay.keyspace, key, data),
-            None => self.base.put(txn, key, data).map_err(Error::from),
+            None => Ok(self.base.put(txn, key, data)?),
         }
     }
 
     pub(crate) fn delete(&self, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<bool> {
         let Some(overlay) = &self.overlay else {
-            return self.base.delete(txn, key).map_err(Error::from);
+            return Ok(self.base.delete(txn, key)?);
         };
         let existed = self.get(txn, key)?.is_some();
         if existed {
@@ -127,10 +127,7 @@ impl OverlayDb {
         data: &[u8],
     ) -> Result<bool> {
         let Some(overlay) = &self.overlay else {
-            return self
-                .base
-                .delete_one_duplicate(txn, key, data)
-                .map_err(Error::from);
+            return Ok(self.base.delete_one_duplicate(txn, key, data)?);
         };
         let mut exact_count = 0_usize;
         if let Some(values) = self.get_duplicates(txn, key)? {
@@ -162,13 +159,13 @@ impl OverlayDb {
     pub(crate) fn clear(&self, txn: &mut RwTxn<'_>) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.clear(overlay.keyspace),
-            None => self.base.clear(txn).map_err(Error::from),
+            None => Ok(self.base.clear(txn)?),
         }
     }
 
     pub(crate) fn len(&self, txn: &RoTxn<'_>) -> Result<u64> {
         if self.overlay.is_none() {
-            return self.base.len(txn).map_err(Error::from);
+            return Ok(self.base.len(txn)?);
         }
         self.iter(txn)?.try_fold(0_u64, |count, row| {
             row?;
@@ -184,7 +181,7 @@ impl OverlayDb {
     )]
     pub(crate) fn is_empty(&self, txn: &RoTxn<'_>) -> Result<bool> {
         if self.overlay.is_none() {
-            return self.base.is_empty(txn).map_err(Error::from);
+            return Ok(self.base.is_empty(txn)?);
         }
         Ok(self.iter(txn)?.next().transpose()?.is_none())
     }
@@ -382,13 +379,13 @@ impl OverlayStrDb {
     pub(crate) fn put(&self, txn: &mut RwTxn<'_>, key: &str, data: &[u8]) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.put(overlay.keyspace, key.as_bytes(), data),
-            None => self.base.put(txn, key, data).map_err(Error::from),
+            None => Ok(self.base.put(txn, key, data)?),
         }
     }
 
     pub(crate) fn delete(&self, txn: &mut RwTxn<'_>, key: &str) -> Result<bool> {
         let Some(overlay) = &self.overlay else {
-            return self.base.delete(txn, key).map_err(Error::from);
+            return Ok(self.base.delete(txn, key)?);
         };
         let existed = self.get(txn, key)?.is_some();
         if existed {
@@ -775,12 +772,11 @@ fn borrow_pair<'txn>((key, value): (&'txn [u8], &'txn [u8])) -> KvPair<'txn> {
 }
 
 fn convert_pair<'txn>(row: heed::Result<(&'txn [u8], &'txn [u8])>) -> Result<KvPair<'txn>> {
-    row.map(borrow_pair).map_err(Error::from)
+    Ok(row.map(borrow_pair)?)
 }
 
 fn convert_str_pair<'txn>(row: heed::Result<(&'txn str, &'txn [u8])>) -> Result<StrKvPair<'txn>> {
-    row.map(|(key, value)| (Cow::Borrowed(key), Cow::Borrowed(value)))
-        .map_err(Error::from)
+    Ok(row.map(|(key, value)| (Cow::Borrowed(key), Cow::Borrowed(value)))?)
 }
 
 pub(crate) enum OverlayIter<'txn> {

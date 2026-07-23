@@ -108,7 +108,7 @@ fn put_indexed_manifest_at_two(vault: &Vault, id: EntityId, data: &[u8]) -> Resu
         .store
         .temporal_learned
         .put(&mut wtxn, &temporal_key, &[])?;
-    wtxn.commit().map_err(Error::from)
+    Ok(wtxn.commit()?)
 }
 
 fn put_malformed_policy_manifest(vault: &Vault, seed: u8) -> Result<()> {
