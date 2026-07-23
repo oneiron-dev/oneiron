@@ -968,9 +968,7 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<Entity
             .map_err(|_| FacadeError::bad_request(format!("invalid entity id {reference:?}")));
     }
     if let Some((short_id, content_hash)) = parse_short_ref(reference) {
-        let hydrated = vault
-            .hydrate_short_id(&short_id, content_hash)
-            .map_err(FacadeError::from)?;
+        let hydrated = vault.hydrate_short_id(&short_id, content_hash)?;
         return match hydrated {
             Some(entry) => Ok(entry.id),
             None => Err(FacadeError::not_found(format!(
@@ -1004,7 +1002,7 @@ pub(crate) fn verify_actor_binding(
     actor: EntityId,
     actor_class: EdgeActorClass,
 ) -> FacadeResult<()> {
-    let entity_type = vault.get_entity_type(&actor).map_err(FacadeError::from)?;
+    let entity_type = vault.get_entity_type(&actor)?;
     verify_actor_entity_type(actor, actor_class, entity_type)
 }
 
@@ -1015,8 +1013,7 @@ fn verify_actor_binding_in_txn(
     actor_class: EdgeActorClass,
 ) -> FacadeResult<()> {
     let entity_type = vault
-        .get_raw_in(txn, &actor)
-        .map_err(FacadeError::from)?
+        .get_raw_in(txn, &actor)?
         .map(|raw| {
             crate::batch::EntityMetadataHeader::parse(&raw)
                 .ok_or_else(|| FacadeError::from(Error::CorruptedIndex("entity header")))
@@ -1288,13 +1285,12 @@ impl MemoryFacade<'_> {
                 ],
             ));
         }
-        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)
-            .map_err(FacadeError::from)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
         Ok(DeletionGateContext::new(
             self.actor,
             self.actor_class,
             crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            policy.read_frontier_hash().map_err(FacadeError::from)?,
+            policy.read_frontier_hash()?,
         ))
     }
 
@@ -1349,9 +1345,7 @@ impl MemoryFacade<'_> {
         let text_index_trusted = if text_ops.is_empty() {
             self.vault.text_index_trusted.load(Ordering::Acquire)
         } else {
-            self.vault
-                .ensure_text_index_trusted()
-                .map_err(FacadeError::from)?;
+            self.vault.ensure_text_index_trusted()?;
             true
         };
 
@@ -1548,10 +1542,9 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<DeleteReceipt> {
         let gate = self.evaluate_deletion_gate()?;
         let id = self.resolve_ref(entity_ref)?;
-        let outcome = self
-            .vault
-            .delete_entity_with_reason_gated(&id, reason.delete_reason(), gate)
-            .map_err(FacadeError::from)?;
+        let outcome =
+            self.vault
+                .delete_entity_with_reason_gated(&id, reason.delete_reason(), gate)?;
         Ok(DeleteReceipt {
             existed: outcome.existed,
             reason: reason.as_str().to_owned(),
@@ -1646,9 +1639,7 @@ impl MemoryFacade<'_> {
         let text_index_trusted = if text_fields.is_empty() {
             self.vault.text_index_trusted.load(Ordering::Acquire)
         } else {
-            self.vault
-                .ensure_text_index_trusted()
-                .map_err(FacadeError::from)?;
+            self.vault.ensure_text_index_trusted()?;
             true
         };
 
@@ -1771,8 +1762,7 @@ impl MemoryFacade<'_> {
         let envelope = WriteEnvelope::new(
             WriteActor::new(self.actor, self.actor_class),
             source,
-            WriteProvenance::new(facade_provenance("put_companion_record"))
-                .map_err(FacadeError::from)?,
+            WriteProvenance::new(facade_provenance("put_companion_record"))?,
             ClaimApprovalStatus::Approved,
         );
         let record = CompanionRecord::persona(
@@ -1822,12 +1812,7 @@ impl MemoryFacade<'_> {
         let id = id_from_optional_hex(input.id.as_deref())?;
         self.refuse_hard_deleted_id(&id)?;
         let subject = self.resolve_ref(&input.subject_ref)?;
-        if self
-            .vault
-            .get_entity_type(&subject)
-            .map_err(FacadeError::from)?
-            .is_none()
-        {
+        if self.vault.get_entity_type(&subject)?.is_none() {
             return Err(FacadeError::not_found(format!(
                 "claim subject {} does not exist",
                 subject.to_hex()
@@ -1867,18 +1852,14 @@ impl MemoryFacade<'_> {
                     && err.kind() == ErrorKind::GateWriteRejected =>
             {
                 approval = ClaimApprovalStatus::Proposed;
-                admit(approval).map_err(FacadeError::from)?;
+                admit(approval)?;
             }
             Err(err) => return Err(err.into()),
         }
-        let final_approval = self
-            .vault
-            .get_claim(&id)
-            .map_err(FacadeError::from)?
-            .map_or_else(
-                || approval.as_str().to_owned(),
-                |b| b.approval.as_str().to_owned(),
-            );
+        let final_approval = self.vault.get_claim(&id)?.map_or_else(
+            || approval.as_str().to_owned(),
+            |b| b.approval.as_str().to_owned(),
+        );
         let receipt_ref = self
             .latest_decision_ref_for(&id)?
             .unwrap_or_else(|| format!("claim:{}", id.to_hex()));
@@ -1898,8 +1879,7 @@ impl MemoryFacade<'_> {
             input.name.clone(),
             input.media_type.clone(),
         );
-        let data =
-            crate::blob_artifact::encode_blob_artifact_body(&body).map_err(FacadeError::from)?;
+        let data = crate::blob_artifact::encode_blob_artifact_body(&body)?;
         let occurred = TimeRange {
             start: input.occurred_at,
             end: input.occurred_at,
@@ -2038,21 +2018,16 @@ impl MemoryFacade<'_> {
         let ids = match &filter.subject_ref {
             Some(subject_ref) => {
                 let subject = self.resolve_ref(subject_ref)?;
-                self.vault
-                    .claims_for_subject(&subject)
-                    .map_err(FacadeError::from)?
+                self.vault.claims_for_subject(&subject)?
             }
-            None => self
-                .vault
-                .entities_by_type(ENTITY_TYPE_CLAIM)
-                .map_err(FacadeError::from)?,
+            None => self.vault.entities_by_type(ENTITY_TYPE_CLAIM)?,
         };
         let mut views = Vec::new();
         for id in ids {
             if views.len() >= filter.limit {
                 break;
             }
-            let Some(body) = self.vault.get_claim(&id).map_err(FacadeError::from)? else {
+            let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
             if let Some(predicate) = &filter.predicate
@@ -2073,7 +2048,7 @@ impl MemoryFacade<'_> {
     /// Returns the supersession timeline for one claim, oldest first.
     pub fn claim_history(&self, claim_ref: &str) -> FacadeResult<Vec<ClaimView>> {
         let id = self.resolve_ref(claim_ref)?;
-        let timeline = self.vault.memory_timeline(&id).map_err(FacadeError::from)?;
+        let timeline = self.vault.memory_timeline(&id)?;
         let mut records: Vec<_> = timeline
             .records
             .into_iter()
@@ -2082,11 +2057,7 @@ impl MemoryFacade<'_> {
         records.sort_by_key(|record| (record.learned_at.unwrap_or(0), record.id.to_hex()));
         let mut views = Vec::with_capacity(records.len());
         for record in records {
-            if let Some(body) = self
-                .vault
-                .get_claim(&record.id)
-                .map_err(FacadeError::from)?
-            {
+            if let Some(body) = self.vault.get_claim(&record.id)? {
                 views.push(self.claim_view(&record.id, &body)?);
             }
         }
@@ -2095,10 +2066,7 @@ impl MemoryFacade<'_> {
 
     /// Lists gated writes parked for consent, newest lane state first.
     pub fn pending_writes(&self, limit: usize) -> FacadeResult<Vec<PendingWrite>> {
-        let records = self
-            .vault
-            .pending_gate_consents(limit)
-            .map_err(FacadeError::from)?;
+        let records = self.vault.pending_gate_consents(limit)?;
         Ok(records
             .into_iter()
             .map(|record| PendingWrite {
@@ -2113,10 +2081,7 @@ impl MemoryFacade<'_> {
 
     /// Lists gate decision receipts.
     pub fn receipts(&self, limit: usize) -> FacadeResult<Vec<FacadeReceipt>> {
-        let records = self
-            .vault
-            .gate_decisions(limit)
-            .map_err(FacadeError::from)?;
+        let records = self.vault.gate_decisions(limit)?;
         Ok(records
             .into_iter()
             .map(|record| FacadeReceipt {
@@ -2142,17 +2107,10 @@ impl MemoryFacade<'_> {
                 "query_bm25 limit must be at least 1",
             ));
         }
-        let hits = self
-            .vault
-            .search_text(query, limit)
-            .map_err(FacadeError::from)?;
+        let hits = self.vault.search_text(query, limit)?;
         let mut out = Vec::with_capacity(hits.len());
         for hit in hits {
-            let Some(entity_type) = self
-                .vault
-                .get_entity_type(&hit.id)
-                .map_err(FacadeError::from)?
-            else {
+            let Some(entity_type) = self.vault.get_entity_type(&hit.id)? else {
                 continue;
             };
             let snippet = self
@@ -2205,15 +2163,17 @@ impl MemoryFacade<'_> {
             if remaining == 0 {
                 break;
             }
-            let edges = self
-                .vault
-                .neighbor_edges_bounded(&id, outbound, kind_filter, opts.min_weight, remaining)
-                .map_err(FacadeError::from)?;
+            let edges = self.vault.neighbor_edges_bounded(
+                &id,
+                outbound,
+                kind_filter,
+                opts.min_weight,
+                remaining,
+            )?;
             for edge in edges {
                 let kind = self
                     .vault
-                    .get_entity_type(&edge.target)
-                    .map_err(FacadeError::from)?
+                    .get_entity_type(&edge.target)?
                     .map_or_else(|| "UNKNOWN".to_owned(), kind_string_for_type);
                 hits.push(NeighborHit {
                     short_id: self.short_ref_or_hex(&edge.target)?,
@@ -2292,7 +2252,7 @@ impl MemoryFacade<'_> {
                         .boost_salience()
                         .boost_confidence();
                 }
-                let hits = pipeline.run().map_err(FacadeError::from)?;
+                let hits = pipeline.run()?;
                 let total = hits.len() as u64;
                 let mut items = Vec::new();
                 for hit in hits.into_iter().take(limit) {
@@ -2319,8 +2279,7 @@ impl MemoryFacade<'_> {
                     Effort::Standard | Effort::Deep => {
                         let seeds: Vec<EntityId> = self
                             .vault
-                            .search_text(query, PPR_SEED_LIMIT)
-                            .map_err(FacadeError::from)?
+                            .search_text(query, PPR_SEED_LIMIT)?
                             .into_iter()
                             .map(|hit| hit.id)
                             .collect();
@@ -2337,7 +2296,7 @@ impl MemoryFacade<'_> {
                             .boost_confidence();
                     }
                 }
-                let pack = builder.run().map_err(FacadeError::from)?;
+                let pack = builder.run()?;
                 let total = pack.stats.candidates_considered as u64;
                 let rendered = pack_format.map(|fmt| {
                     let config = SerializeConfig {
@@ -2436,7 +2395,7 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<Option<DreamerAttemptView>> {
         let id = parse_job_ref(job_ref)?;
         let store = DreamerRunnerStore::new(self.vault);
-        let Some(status) = store.status(id).map_err(FacadeError::from)? else {
+        let Some(status) = store.status(id)? else {
             return Ok(None);
         };
         Ok(Some(attempt_view_from_record(&status.attempt)))
@@ -2487,12 +2446,10 @@ impl MemoryFacade<'_> {
             && let Some(task_ref) = self
                 .vault
                 .store
-                .get_delivered_send_task_by_idempotency(&self.actor, idempotency_key)
-                .map_err(FacadeError::from)?
+                .get_delivered_send_task_by_idempotency(&self.actor, idempotency_key)?
         {
-            let receipt = delivered_send_receipt_for_task(self.vault, task_ref)
-                .map_err(FacadeError::from)?
-                .ok_or_else(|| {
+            let receipt =
+                delivered_send_receipt_for_task(self.vault, task_ref)?.ok_or_else(|| {
                     FacadeError::from(Error::CorruptedIndex("send idempotency index"))
                 })?;
             let actor_ref = self.actor.to_hex();
@@ -2559,32 +2516,24 @@ impl MemoryFacade<'_> {
 
         let queue = AttemptQueue::new(self.vault);
         let task_ref = EntityId::now();
-        let payload = connector_send_attempt_payload(task_ref).map_err(FacadeError::from)?;
+        let payload = connector_send_attempt_payload(task_ref)?;
 
         // Abort-only enqueue preflight validates queue inputs and recovers an
         // existing live schedule without appending a second Gate decision. A
         // missing key writes only inside this uncommitted transaction and is
         // therefore neither durable nor claimable.
-        let mut preflight_txn = self
-            .vault
-            .store
-            .env
-            .write_txn()
-            .map_err(Error::from)
-            .map_err(FacadeError::from)?;
+        let mut preflight_txn = self.vault.store.env.write_txn().map_err(Error::from)?;
         verify_actor_binding_in_txn(self.vault, &preflight_txn, self.actor, self.actor_class)?;
-        let preflight = queue
-            .enqueue_in_txn(
-                &mut preflight_txn,
-                EnqueueAttempt {
-                    kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
-                    payload: payload.clone(),
-                    dedupe_key: draft.idempotency_key.clone(),
-                    run_id: draft.job_ref.clone(),
-                    now,
-                },
-            )
-            .map_err(FacadeError::from)?;
+        let preflight = queue.enqueue_in_txn(
+            &mut preflight_txn,
+            EnqueueAttempt {
+                kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+                payload: payload.clone(),
+                dedupe_key: draft.idempotency_key.clone(),
+                run_id: draft.job_ref.clone(),
+                now,
+            },
+        )?;
         drop(preflight_txn);
         if let EnqueueOutcome::Existing(attempt) = preflight {
             return Ok(self.already_scheduled_outbound_receipt(attempt.id));
@@ -2637,19 +2586,17 @@ impl MemoryFacade<'_> {
         }
 
         let outcome = self.with_verified_actor_write_txn(|wtxn| {
-            let outcome = queue
-                .enqueue_with_task_ref_in_txn(
-                    wtxn,
-                    EnqueueAttempt {
-                        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
-                        payload,
-                        dedupe_key: draft.idempotency_key.clone(),
-                        run_id: draft.job_ref.clone(),
-                        now,
-                    },
-                    Some(task_ref.to_hex()),
-                )
-                .map_err(FacadeError::from)?;
+            let outcome = queue.enqueue_with_task_ref_in_txn(
+                wtxn,
+                EnqueueAttempt {
+                    kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+                    payload,
+                    dedupe_key: draft.idempotency_key.clone(),
+                    run_id: draft.job_ref.clone(),
+                    now,
+                },
+                Some(task_ref.to_hex()),
+            )?;
             if matches!(&outcome, EnqueueOutcome::Enqueued(_)) {
                 put_connector_send_task_in_txn(
                     self.vault,
@@ -2660,8 +2607,7 @@ impl MemoryFacade<'_> {
                     self.actor_class,
                     originating_session_ref.as_deref(),
                     now,
-                )
-                .map_err(FacadeError::from)?;
+                )?;
             }
             Ok(outcome)
         })?;
@@ -2770,10 +2716,10 @@ impl MemoryFacade<'_> {
         id: &EntityId,
         facet_hint: Option<EntityId>,
     ) -> FacadeResult<Option<MemoryItem>> {
-        let Some(entity_type) = self.vault.get_entity_type(id).map_err(FacadeError::from)? else {
+        let Some(entity_type) = self.vault.get_entity_type(id)? else {
             return Ok(None);
         };
-        let edges = self.vault.edges_out(id).map_err(FacadeError::from)?;
+        let edges = self.vault.edges_out(id)?;
         let mut source_revision_ids = vec![id.to_hex()];
         source_revision_ids.extend(
             edges
@@ -2791,7 +2737,7 @@ impl MemoryFacade<'_> {
         let kind = kind_string_for_type(entity_type);
 
         if entity_type == ENTITY_TYPE_CLAIM {
-            let Some(body) = self.vault.get_claim(id).map_err(FacadeError::from)? else {
+            let Some(body) = self.vault.get_claim(id)? else {
                 return Ok(None);
             };
             if !claim_surfaceable(&body) {
@@ -2874,13 +2820,12 @@ impl MemoryFacade<'_> {
         // latter materializes the whole CLAIM index and errors with
         // IndexOverflow past MAX_TYPE_QUERY_RESULTS before `take` can run, so
         // a large vault would hard-fail world-scoped recall.
-        let ids = self
-            .vault
-            .entities_by_type_page(ENTITY_TYPE_CLAIM, None, SCOPE_HONESTY_SCAN_CAP)
-            .map_err(FacadeError::from)?;
+        let ids =
+            self.vault
+                .entities_by_type_page(ENTITY_TYPE_CLAIM, None, SCOPE_HONESTY_SCAN_CAP)?;
         let mut worlds = BTreeSet::new();
         for id in ids {
-            let Some(body) = self.vault.get_claim(&id).map_err(FacadeError::from)? else {
+            let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
             if !claim_surfaceable(&body) {
@@ -2904,12 +2849,7 @@ impl MemoryFacade<'_> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
-        if self
-            .vault
-            .get_entity_type(&subject)
-            .map_err(FacadeError::from)?
-            .is_none()
-        {
+        if self.vault.get_entity_type(&subject)?.is_none() {
             return Err(FacadeError::not_found(format!(
                 "claim subject {} does not exist",
                 subject.to_hex()
@@ -3004,7 +2944,7 @@ impl MemoryFacade<'_> {
                     && err.kind() == ErrorKind::GateWriteRejected =>
             {
                 approval = ClaimApprovalStatus::Proposed;
-                write(approval).map_err(FacadeError::from)?
+                write(approval)?
             }
             Err(err) => return Err(err.into()),
         };
@@ -3016,14 +2956,10 @@ impl MemoryFacade<'_> {
             Some(old_id) => Some(self.short_ref_or_hex(&old_id)?),
             None => None,
         };
-        let final_approval = self
-            .vault
-            .get_claim(&id)
-            .map_err(FacadeError::from)?
-            .map_or_else(
-                || approval.as_str().to_owned(),
-                |b| b.approval.as_str().to_owned(),
-            );
+        let final_approval = self.vault.get_claim(&id)?.map_or_else(
+            || approval.as_str().to_owned(),
+            |b| b.approval.as_str().to_owned(),
+        );
         let receipt_ref = self
             .latest_decision_ref_for(&id)?
             .unwrap_or_else(|| format!("claim:{}", id.to_hex()));
@@ -3051,16 +2987,13 @@ impl MemoryFacade<'_> {
             None
         };
         let new_scope = input.scope.clone();
-        let ids = self
-            .vault
-            .claims_for_subject(subject)
-            .map_err(FacadeError::from)?;
+        let ids = self.vault.claims_for_subject(subject)?;
         let mut best: Option<EntityId> = None;
         for id in ids {
             if id == *exclude {
                 continue;
             }
-            let Some(body) = self.vault.get_claim(&id).map_err(FacadeError::from)? else {
+            let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
             if body.lifecycle != ClaimLifecycleStatus::Active || body.predicate != input.predicate {
@@ -3094,7 +3027,7 @@ impl MemoryFacade<'_> {
         if trimmed.len() == 32 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
             let id = EntityId::from_hex(trimmed)
                 .map_err(|_| FacadeError::bad_request(format!("invalid entity id {trimmed:?}")))?;
-            return match self.vault.get_entity_type(&id).map_err(FacadeError::from)? {
+            return match self.vault.get_entity_type(&id)? {
                 Some(entity_type) if entity_type == expected_type => Ok((id, false)),
                 Some(entity_type) => Err(FacadeError::bad_request(format!(
                     "ref {trimmed:?} resolves to kind {} but {} was expected",
@@ -3105,7 +3038,7 @@ impl MemoryFacade<'_> {
             };
         }
         let id = self.resolve_ref(reference)?;
-        match self.vault.get_entity_type(&id).map_err(FacadeError::from)? {
+        match self.vault.get_entity_type(&id)? {
             Some(entity_type) if entity_type == expected_type => Ok((id, false)),
             Some(entity_type) => Err(FacadeError::bad_request(format!(
                 "ref {reference:?} resolves to kind {} but {} was expected",
@@ -3139,8 +3072,7 @@ impl MemoryFacade<'_> {
             .map_err(|err| FacadeError::from(Error::from(err)))?;
         if self
             .vault
-            .local_hard_delete_marker_exists_in_txn(&rtxn, id)
-            .map_err(FacadeError::from)?
+            .local_hard_delete_marker_exists_in_txn(&rtxn, id)?
         {
             return Err(hard_deleted_refusal(id));
         }
@@ -3160,7 +3092,7 @@ impl MemoryFacade<'_> {
     }
 
     fn entity_view(&self, id: &EntityId) -> FacadeResult<Option<EntityView>> {
-        let Some(raw) = self.vault.get_raw(id).map_err(FacadeError::from)? else {
+        let Some(raw) = self.vault.get_raw(id)? else {
             return Ok(None);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
@@ -3216,12 +3148,11 @@ impl MemoryFacade<'_> {
             .vault
             .store
             .short_ids_reverse
-            .get(&rtxn, id.as_bytes())
-            .map_err(FacadeError::from)?
+            .get(&rtxn, id.as_bytes())?
         else {
             return Ok(None);
         };
-        let (short_id, content_hash) = parse_short_id_value(&raw).map_err(FacadeError::from)?;
+        let (short_id, content_hash) = parse_short_id_value(&raw)?;
         Ok(Some(format!("{short_id}:{content_hash:02x}")))
     }
 
@@ -3230,10 +3161,7 @@ impl MemoryFacade<'_> {
     }
 
     fn latest_decision_ref_for(&self, id: &EntityId) -> FacadeResult<Option<String>> {
-        let decisions = self
-            .vault
-            .gate_decisions(GATE_RECEIPT_SCAN_LIMIT)
-            .map_err(FacadeError::from)?;
+        let decisions = self.vault.gate_decisions(GATE_RECEIPT_SCAN_LIMIT)?;
         let latest = decisions
             .into_iter()
             .filter(|record| record.claim_id.as_ref() == Some(id.as_bytes()))
