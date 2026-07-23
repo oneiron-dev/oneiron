@@ -223,6 +223,68 @@ fn gate_decision(
 }
 
 #[test]
+fn rollback_deletes_the_grant_ref_index_row_with_the_primary() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let grant_ref = "bundle:dreamer_run:p6-rollback";
+    let d1 = gate_decision(synthetic_gate_decision_id(0x61, 1), 1, Some(grant_ref));
+    let d2 = gate_decision(synthetic_gate_decision_id(0x62, 2), 2, None);
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &d1)?;
+        vault.store.append_gate_decision_in_txn(wtxn, &d2)?;
+        Ok(())
+    })?;
+
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .delete_gate_decision_in_txn(wtxn, d1.decision_id)?;
+        vault
+            .store
+            .delete_gate_decision_in_txn(wtxn, d2.decision_id)?;
+        Ok(())
+    })?;
+
+    assert!(
+        vault
+            .store
+            .gate_decisions_for_grant_ref(grant_ref)?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn off_record_purge_deletes_the_grant_ref_index_rows_with_the_primaries() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn_id = entity_id(0x5A);
+    let grant_ref = "bundle:dreamer_run:p6-purge";
+    let mut decision = gate_decision(synthetic_gate_decision_id(0x63, 3), 3, Some(grant_ref));
+    decision.claim_id = Some(*turn_id.as_bytes());
+    let survivor = gate_decision(synthetic_gate_decision_id(0x64, 4), 4, Some(grant_ref));
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
+        vault.store.append_gate_decision_in_txn(wtxn, &survivor)?;
+        Ok(())
+    })?;
+
+    vault.with_write_txn(|wtxn| {
+        assert_eq!(
+            vault
+                .store
+                .delete_gate_decisions_for_missing_off_record_turn_in_txn(wtxn, &turn_id)?,
+            1
+        );
+        Ok(())
+    })?;
+
+    assert_eq!(
+        vault.store.gate_decisions_for_grant_ref(grant_ref)?,
+        vec![survivor]
+    );
+    Ok(())
+}
+
+#[test]
 fn grant_ref_index_reaches_a_receipt_beyond_the_legacy_scan_budget() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let grant_ref = "bundle:dreamer_run:older-target";

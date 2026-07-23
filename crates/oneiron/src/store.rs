@@ -1089,11 +1089,6 @@ impl StorageMigrationPlan {
     }
 }
 
-/// Future migrations plug in here; v1 only classifies and rejects.
-pub trait StorageMigrationRunner {
-    fn run(&mut self, plan: StorageMigrationPlan) -> Result<()>;
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PersistedHnswCompatibility {
     pub(crate) dimensions: usize,
@@ -2127,12 +2122,14 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         decision_id: GateDecisionId,
     ) -> Result<()> {
-        let key = gate_decision_key(decision_id);
-        if !self.vault_meta.delete(wtxn, &key)? {
+        let Some(record) = self.gate_decision_in_txn(&*wtxn, decision_id)? else {
             return Err(Error::InvariantViolation(
                 "staged gate decision missing during rollback",
             ));
-        }
+        };
+        self.delete_gate_decision_grant_ref_index_in_txn(wtxn, &record)?;
+        self.vault_meta
+            .delete(wtxn, &gate_decision_key(decision_id))?;
         Ok(())
     }
 
@@ -2356,7 +2353,7 @@ impl Store {
         turn_id: &EntityId,
     ) -> Result<usize> {
         let upper = gate_decision_upper_bound();
-        let mut keys = Vec::new();
+        let mut records = Vec::new();
         for row in self.vault_meta.rev_range(
             wtxn,
             &(
@@ -2374,13 +2371,15 @@ impl Store {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
             if record.claim_id == Some(*turn_id.as_bytes()) {
-                keys.push(key.to_vec());
+                records.push(record);
             }
         }
-        for key in &keys {
-            self.vault_meta.delete(wtxn, key)?;
+        for record in &records {
+            self.delete_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
+            self.vault_meta
+                .delete(wtxn, &gate_decision_key(record.decision_id))?;
         }
-        Ok(keys.len())
+        Ok(records.len())
     }
 
     /// Persists the opaque gate-surface bytes for a scheduled outbound attempt id
@@ -2602,6 +2601,21 @@ impl Store {
             wtxn,
             &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
             b"1",
+        )?;
+        Ok(())
+    }
+
+    fn delete_gate_decision_grant_ref_index_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<()> {
+        let Some(grant_ref) = record.grant_ref.as_deref() else {
+            return Ok(());
+        };
+        self.vault_meta.delete(
+            wtxn,
+            &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
         )?;
         Ok(())
     }
