@@ -140,7 +140,7 @@ pub enum SessionMintOutcome {
     AlreadyOpen(EntityId),
 }
 
-/// Outcome of [`Vault::end_open_session`].
+/// Outcome of [`Vault::end_session_with_wake`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EndedSession {
     pub session: EntityId,
@@ -485,44 +485,6 @@ impl Vault {
                 &encode_session_record(&record)?,
             )?;
             Ok(Some(id))
-        })
-    }
-
-    /// Predicate-free close primitive retained for in-crate mechanism tests.
-    /// Production closes use [`Self::end_session_with_wake`], keeping the
-    /// session end and its planned attempts structurally inseparable.
-    ///
-    /// `ended_at` is clamped to never precede `started_at`/`last_activity`
-    /// (a skewed clock must not produce a session that ends before it was
-    /// last active).
-    #[allow(dead_code)] // retained for in-crate mechanism tests; no production caller by design
-    pub(crate) fn end_open_session(
-        &self,
-        now: u64,
-        reason: SessionEndReason,
-    ) -> Result<Option<EndedSession>> {
-        self.with_write_txn(|wtxn| {
-            let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
-                return Ok(None);
-            };
-            let ended_at = now.max(record.last_activity).max(record.started_at);
-            record.ended_at = Some(ended_at);
-            record.end_reason = Some(reason);
-            self.store.vault_meta.put(
-                wtxn,
-                &session_record_key(&id),
-                &encode_session_record(&record)?,
-            )?;
-            self.store
-                .vault_meta
-                .delete(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?;
-            Ok(Some(EndedSession {
-                session: id,
-                started_at: record.started_at,
-                last_activity: record.last_activity,
-                ended_at,
-                reason,
-            }))
         })
     }
 

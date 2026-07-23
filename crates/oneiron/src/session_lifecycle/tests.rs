@@ -187,7 +187,12 @@ fn end_stamps_reason_clears_pointer_and_is_idempotent() {
     vault.bump_session_activity(1_400).expect("bump");
 
     let ended = vault
-        .end_open_session(2_000, SessionEndReason::Explicit)
+        .end_session_with_wake(
+            &id,
+            SessionClosePredicate::Explicit,
+            2_000,
+            &SessionEndWake::none(0),
+        )
         .expect("end")
         .expect("session ended");
     assert_eq!(ended.session, id);
@@ -200,7 +205,12 @@ fn end_stamps_reason_clears_pointer_and_is_idempotent() {
     // Ending again is a no-op, never an error (crash-retried closes).
     assert_eq!(
         vault
-            .end_open_session(2_100, SessionEndReason::Explicit)
+            .end_session_with_wake(
+                &id,
+                SessionClosePredicate::Explicit,
+                2_100,
+                &SessionEndWake::none(0),
+            )
             .expect("re-end"),
         None
     );
@@ -217,12 +227,19 @@ fn end_stamps_reason_clears_pointer_and_is_idempotent() {
 #[test]
 fn ended_at_never_precedes_activity_under_clock_skew() {
     let (_dir, vault) = open_vault();
-    minted(vault.mint_session(1_000).expect("mint"));
+    let id = minted(vault.mint_session(1_000).expect("mint"));
     vault.bump_session_activity(1_800).expect("bump");
 
-    // A skewed (earlier) close clock clamps to the last activity stamp.
+    // A skewed (earlier) close clock clamps to the last activity stamp — the
+    // production close's clamp, reached via the unconditional Explicit
+    // predicate (an Expiry close whose `now` trails activity is never due).
     let ended = vault
-        .end_open_session(1_500, SessionEndReason::IdleFloor)
+        .end_session_with_wake(
+            &id,
+            SessionClosePredicate::Explicit,
+            1_500,
+            &SessionEndWake::none(0),
+        )
         .expect("end")
         .expect("ended");
     assert_eq!(ended.ended_at, 1_800);
@@ -233,7 +250,12 @@ fn sequential_sittings_mint_distinct_sessions_and_keep_both_records() {
     let (_dir, vault) = open_vault();
     let first = minted(vault.mint_session(1_000).expect("mint"));
     vault
-        .end_open_session(2_000, SessionEndReason::Explicit)
+        .end_session_with_wake(
+            &first,
+            SessionClosePredicate::Explicit,
+            2_000,
+            &SessionEndWake::none(0),
+        )
         .expect("end")
         .expect("ended");
 
