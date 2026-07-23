@@ -592,6 +592,7 @@ pub struct NapiDreamerJobView {
 
 /// One outbound schedule request (rides OF-327; the bridge never delivers).
 #[napi(object)]
+#[derive(Clone)]
 pub struct NapiOutboundDraftInput {
     /// Verb (e.g. `send`).
     pub verb: String,

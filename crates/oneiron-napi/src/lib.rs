@@ -122,6 +122,16 @@ fn validate_codebase_file_count(len: usize) -> BoundaryResult<()> {
     Ok(())
 }
 
+/// Validate and copy a 32-byte content hash from JS.
+fn parse_content_hash(buf: &Buffer) -> BoundaryResult<[u8; CODEBASE_CONTENT_HASH_LEN]> {
+    buf.as_ref().try_into().map_err(|_| {
+        format!(
+            "content_hash must be exactly {CODEBASE_CONTENT_HASH_LEN} bytes, got {}",
+            buf.len()
+        )
+    })
+}
+
 fn parse_fixed_hash<const N: usize>(buf: &Buffer, label: &str) -> BoundaryResult<[u8; N]> {
     buf.as_ref()
         .try_into()
@@ -160,24 +170,6 @@ fn entity_ids_to_buffers(ids: Vec<EntityId>) -> Vec<Buffer> {
         .collect()
 }
 
-/// Lenient format parse: unrecognized or missing format falls back to JSON.
-fn parse_pack_format(format: Option<&str>) -> oneiron::PackFormat {
-    match format {
-        Some("yaml") => oneiron::PackFormat::Yaml,
-        Some("toon") => oneiron::PackFormat::Toon,
-        Some("markdown") => oneiron::PackFormat::Markdown,
-        Some("plaintext") => oneiron::PackFormat::Plaintext,
-        _ => oneiron::PackFormat::Json,
-    }
-}
-
-fn napi_scored_entity(s: oneiron::ScoredEntity) -> NapiScoredEntity {
-    NapiScoredEntity {
-        id: Buffer::from(s.id.as_bytes().as_slice()),
-        score: s.score as f64,
-    }
-}
-
 fn core_codebase_snapshot(input: NapiCodebaseSnapshot) -> BoundaryResult<CodebaseSnapshot> {
     validate_codebase_file_count(input.files.len())?;
     let repo_ref = RepoRef::parse(&input.repo_ref).map_err(|e| e.to_string())?;
@@ -187,7 +179,7 @@ fn core_codebase_snapshot(input: NapiCodebaseSnapshot) -> BoundaryResult<Codebas
         .map(|entry| {
             Ok(CodebaseFileEntry::new(
                 entry.path,
-                parse_fixed_hash::<CODEBASE_CONTENT_HASH_LEN>(&entry.content_hash, "content_hash")?,
+                parse_content_hash(&entry.content_hash)?,
                 parse_file_size(entry.size_bytes)?,
             ))
         })
@@ -503,7 +495,13 @@ impl NapiVault {
             .vault
             .search_vector(&f32_query, limit)
             .map_err(to_napi_err)?;
-        Ok(results.into_iter().map(napi_scored_entity).collect())
+        Ok(results
+            .into_iter()
+            .map(|s| NapiScoredEntity {
+                id: Buffer::from(s.id.as_bytes().as_slice()),
+                score: s.score as f64,
+            })
+            .collect())
     }
 
     /// Search for entities by BM25 text matching.
@@ -512,7 +510,13 @@ impl NapiVault {
         validate_query_len(&query).map_err(napi::Error::from_reason)?;
         let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
         let results = self.vault.search_text(&query, limit).map_err(to_napi_err)?;
-        Ok(results.into_iter().map(napi_scored_entity).collect())
+        Ok(results
+            .into_iter()
+            .map(|s| NapiScoredEntity {
+                id: Buffer::from(s.id.as_bytes().as_slice()),
+                score: s.score as f64,
+            })
+            .collect())
     }
 
     /// Search for entities by BM25 text matching, scoped to codebase metadata.
@@ -530,7 +534,13 @@ impl NapiVault {
         let results = apply_codebase_filters(builder, repo_ref, project_id)?
             .run()
             .map_err(to_napi_err)?;
-        Ok(results.into_iter().map(napi_scored_entity).collect())
+        Ok(results
+            .into_iter()
+            .map(|s| NapiScoredEntity {
+                id: Buffer::from(s.id.as_bytes().as_slice()),
+                score: s.score as f64,
+            })
+            .collect())
     }
 
     // ─── Vectors ───────────────────────────────────────────────
@@ -616,7 +626,14 @@ impl NapiVault {
     ) -> napi::Result<String> {
         let limit = parse_search_limit(limit.unwrap_or(DEFAULT_NAPI_SEARCH_LIMIT))
             .map_err(napi::Error::from_reason)?;
-        let pack_format = parse_pack_format(format.as_deref());
+        let pack_format = match format.as_deref() {
+            Some("yaml") => oneiron::PackFormat::Yaml,
+            Some("toon") => oneiron::PackFormat::Toon,
+            Some("markdown") => oneiron::PackFormat::Markdown,
+            Some("plaintext") => oneiron::PackFormat::Plaintext,
+            // Lenient default: unrecognized or missing format falls back to JSON
+            _ => oneiron::PackFormat::Json,
+        };
 
         let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
 
@@ -650,7 +667,13 @@ impl NapiVault {
     ) -> napi::Result<String> {
         let limit = parse_search_limit(limit.unwrap_or(DEFAULT_NAPI_SEARCH_LIMIT))
             .map_err(napi::Error::from_reason)?;
-        let pack_format = parse_pack_format(format.as_deref());
+        let pack_format = match format.as_deref() {
+            Some("yaml") => oneiron::PackFormat::Yaml,
+            Some("toon") => oneiron::PackFormat::Toon,
+            Some("markdown") => oneiron::PackFormat::Markdown,
+            Some("plaintext") => oneiron::PackFormat::Plaintext,
+            _ => oneiron::PackFormat::Json,
+        };
 
         let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
 
