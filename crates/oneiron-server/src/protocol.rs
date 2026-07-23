@@ -5,8 +5,8 @@
 
 // Re-export shared wire constants and encode/decode functions.
 pub(crate) use oneiron::sync::{
-    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, decode_bulk_transfer,
-    decode_bulk_transfer_done, decode_window_sync, encode_window_sync,
+    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, decode_window_sync,
+    encode_window_sync,
 };
 
 // Re-export tag constants from shared transport (avoid redefinition).
@@ -132,16 +132,6 @@ pub(crate) enum SyncMessage {
         sub_tag: u8,
         payload: Vec<u8>,
     },
-    /// BulkTransfer (tag 20).
-    BulkTransfer {
-        window_key: String,
-        compressed: Vec<u8>,
-    },
-    /// BulkTransferDone (tag 21).
-    BulkTransferDone {
-        window_key: String,
-        doc_state: Vec<u8>,
-    },
 }
 
 /// Parses a raw wire message into a typed SyncMessage.
@@ -174,22 +164,11 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
                 payload: inner.to_vec(),
             })
         }
-        TAG_BULK_TRANSFER => {
-            let (key, compressed) = decode_bulk_transfer(payload)
-                .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
-            Ok(SyncMessage::BulkTransfer {
-                window_key: key.to_string(),
-                compressed: compressed.to_vec(),
-            })
-        }
-        TAG_BULK_TRANSFER_DONE => {
-            let (key, state) = decode_bulk_transfer_done(payload)
-                .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
-            Ok(SyncMessage::BulkTransferDone {
-                window_key: key.to_string(),
-                doc_state: state.to_vec(),
-            })
-        }
+        // BulkTransfer (tag 20) / BulkTransferDone (tag 21) are
+        // server→client only; a client sending one is a protocol violation.
+        TAG_BULK_TRANSFER | TAG_BULK_TRANSFER_DONE => Err(ProtocolError::InvalidPayload(
+            "client-to-server bulk transfer is not supported",
+        )),
         _ => Err(ProtocolError::UnknownTag(tag)),
     }
 }
@@ -222,7 +201,6 @@ pub(crate) fn encode_root_update(update_bytes: &[u8]) -> Vec<u8> {
 
 /// Protocol-level errors specific to Oneiron's custom sync protocol.
 #[derive(Debug, thiserror::Error)]
-#[allow(dead_code)] // Variants used in match arms; some constructed only in future Phase 2+ paths
 pub(crate) enum ProtocolError {
     #[error("invalid payload: {0}")]
     InvalidPayload(&'static str),
@@ -230,8 +208,6 @@ pub(crate) enum ProtocolError {
     UnknownTag(u8),
     #[error("frame too large: {size} bytes (max {max})")]
     FrameTooLarge { size: usize, max: usize },
-    #[error("bulk transfer decode failure")]
-    BulkTransferDecode,
     #[error("loro import error: {0}")]
     LoroImport(String),
     /// Inbound version-vector bytes failed Loro binary decoding.
@@ -247,18 +223,23 @@ pub(crate) enum ProtocolError {
 }
 
 /// WebSocket close codes per ARCH-023 section 3.5.
-#[allow(dead_code)] // Used when WebSocket handler sends close frames
+///
+/// The `dead_code`-allowed constants are contract constants: no close frame
+/// carries them yet — they are read only by the error/tests.rs ErrorCode
+/// lockstep check.
 pub(crate) mod close_codes {
     /// JWT expired mid-session or device lease expired.
+    #[allow(dead_code)]
     pub(crate) const AUTH_EXPIRED: u16 = 4001;
     /// CRDT decode error (malformed update bytes).
+    #[allow(dead_code)]
     pub(crate) const DECODE_ERROR: u16 = 4002;
     /// Unknown custom tag.
+    #[allow(dead_code)]
     pub(crate) const UNKNOWN_TAG: u16 = 4003;
     /// Frame/payload exceeds size limit.
+    #[allow(dead_code)]
     pub(crate) const FRAME_TOO_LARGE: u16 = 4004;
-    /// BulkTransfer decompression/decode failure.
-    pub(crate) const BULK_DECODE_FAILURE: u16 = 4005;
     /// Protocol-version hello mismatch, missing, malformed, or timed out
     /// (ONE-1127). Sent BEFORE any sync payload flows.
     pub(crate) const VERSION_MISMATCH: u16 = 4006;

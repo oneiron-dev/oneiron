@@ -120,10 +120,6 @@ fn crdt_error_codes_match_protocol_close_code_values() {
         crate::protocol::close_codes::FRAME_TOO_LARGE.to_string()
     );
     assert_eq!(
-        ErrorCode::CrdtBulkDecodeFailure.as_str(),
-        crate::protocol::close_codes::BULK_DECODE_FAILURE.to_string()
-    );
-    assert_eq!(
         ErrorCode::CrdtVersionMismatch.as_str(),
         crate::protocol::close_codes::VERSION_MISMATCH.to_string()
     );
