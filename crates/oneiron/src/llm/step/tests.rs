@@ -222,6 +222,18 @@ fn kill_and_resume_no_respend() -> Result<()> {
     let used_after_first = guard.read().used_units;
     assert_eq!(used_after_first, 150);
 
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let claim_id =
+        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.expect("memo index row");
+    let body = vault.get_claim(&claim_id)?.expect("terminal claim");
+    let decoded = decode_step_claim_value(&body.value)?;
+    let payload = serde_json::to_vec(&response).expect("response payload");
+    assert_eq!(
+        decoded.response.as_deref().map(str::as_bytes),
+        Some(payload.as_slice()),
+        "fresh terminal claim must persist the returned response bytes"
+    );
+
     // Simulated process death: a NEW call with the identical request must
     // memo-hit — no backend call, no admission, zero spend.
     let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
@@ -283,6 +295,15 @@ fn death_after_response_before_log_recovers_without_respend() -> Result<()> {
 
     // The terminal claim + memo index landed; the private row is gone.
     assert!(step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_some());
+    let claim_id =
+        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.expect("memo index row");
+    let body = vault.get_claim(&claim_id)?.expect("terminal claim");
+    let decoded = decode_step_claim_value(&body.value)?;
+    assert_eq!(
+        decoded.response.as_deref().map(str::as_bytes),
+        Some(payload.as_slice()),
+        "recovery must persist the stored row bytes verbatim"
+    );
     assert!(step_state_read(&vault, fixture.attempt_id, &step_hash)?.is_none());
     Ok(())
 }
@@ -810,6 +831,30 @@ fn step_hash_stable_across_field_order() {
     );
 }
 
+/// Encoded step-claim map with one mutation applied — the rejection-matrix helper.
+fn mutated_step_value(
+    claim: &EncodedStepClaim,
+    mutate: impl FnOnce(&mut Vec<(Value, Value)>),
+) -> Value {
+    let Value::Map(mut entries) = encode_step_claim_value(claim) else {
+        panic!("step value must be a map");
+    };
+    mutate(&mut entries);
+    Value::Map(entries)
+}
+
+/// Encoded trap-claim map with one mutation applied — the rejection-matrix helper.
+fn mutated_trap_value(
+    claim: &EncodedTrapClaim,
+    mutate: impl FnOnce(&mut Vec<(Value, Value)>),
+) -> Value {
+    let Value::Map(mut entries) = encode_trap_claim_value(claim) else {
+        panic!("trap value must be a map");
+    };
+    mutate(&mut entries);
+    Value::Map(entries)
+}
+
 #[test]
 fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     let attempt_id = AttemptId::from_bytes(&[0x11_u8; 16])?;
@@ -830,35 +875,91 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     let decoded = decode_step_claim_value(&value)?;
     assert_eq!(decoded.attempt_id, attempt_id);
     assert_eq!(decoded.step_hash, [0x22; 32]);
-    assert_eq!(decoded.progression, StepProgression::Finished);
-    assert_eq!(decoded.model_id, "test/model@r1");
-    assert_eq!(decoded.purpose, "consolidation");
-    assert_eq!(decoded.usage_in, 100);
-    assert_eq!(decoded.usage_out, 50);
+    assert_eq!(decoded.response.as_deref(), Some("{\"ok\":true}"));
+    assert!(decoded.response_ref.is_none());
 
     // Unknown key → fail closed.
-    let Value::Map(mut entries) = encode_step_claim_value(&step_claim) else {
-        panic!("step value must be a map");
-    };
-    entries.push((Value::from("unknown_key"), Value::from(1_u64)));
-    assert!(decode_step_claim_value(&Value::Map(entries)).is_err());
+    let value = mutated_step_value(&step_claim, |entries| {
+        entries.push((Value::from("unknown_key"), Value::from(1_u64)));
+    });
+    assert!(decode_step_claim_value(&value).is_err());
 
     // BOTH response and response_ref → fail closed.
-    let Value::Map(mut entries) = encode_step_claim_value(&step_claim) else {
-        panic!("step value must be a map");
-    };
-    entries.push((Value::from(KEY_RESPONSE_REF), Value::Binary(vec![0x44; 16])));
-    assert!(decode_step_claim_value(&Value::Map(entries)).is_err());
+    let value = mutated_step_value(&step_claim, |entries| {
+        entries.push((Value::from(KEY_RESPONSE_REF), Value::Binary(vec![0x44; 16])));
+    });
+    assert!(decode_step_claim_value(&value).is_err());
 
     // NEITHER response nor response_ref → fail closed.
-    let Value::Map(entries) = encode_step_claim_value(&step_claim) else {
-        panic!("step value must be a map");
-    };
-    let entries: Vec<(Value, Value)> = entries
-        .into_iter()
-        .filter(|(key, _)| key.as_str() != Some(KEY_RESPONSE))
-        .collect();
-    assert!(decode_step_claim_value(&Value::Map(entries)).is_err());
+    let value = mutated_step_value(&step_claim, |entries| {
+        entries.retain(|(key, _)| key.as_str() != Some(KEY_RESPONSE));
+    });
+    assert!(decode_step_claim_value(&value).is_err());
+
+    let missing_step_fields = [
+        (KEY_PROGRESSION, "missing dreamer step value progression"),
+        (KEY_MODEL_ID, "missing dreamer step value model_id"),
+        (KEY_PURPOSE, "missing dreamer step value purpose"),
+        (KEY_PARAMS_HASH, "missing dreamer step value params_hash"),
+        (KEY_USAGE_IN, "missing dreamer step value usage_in"),
+        (KEY_USAGE_OUT, "missing dreamer step value usage_out"),
+        (KEY_AT, "missing dreamer step value at"),
+    ];
+    for (field, expected) in missing_step_fields {
+        let value = mutated_step_value(&step_claim, |entries| {
+            entries.retain(|(key, _)| key.as_str() != Some(field));
+        });
+        assert!(matches!(
+            decode_step_claim_value(&value),
+            Err(Error::InvalidClaimBody(reason)) if reason == expected
+        ));
+    }
+
+    let invalid_step_fields = [
+        (
+            KEY_PROGRESSION,
+            Value::from(7_u64),
+            "dreamer step value progression must be a string",
+        ),
+        (
+            KEY_PROGRESSION,
+            Value::from("unknown"),
+            "unknown dreamer step value progression",
+        ),
+        (
+            KEY_MODEL_ID,
+            Value::from(7_u64),
+            "dreamer step value model_id must be a string",
+        ),
+        (
+            KEY_USAGE_IN,
+            Value::from("100"),
+            "dreamer step value usage_in must be an integer",
+        ),
+        (
+            KEY_AT,
+            Value::from("10000"),
+            "dreamer step value at must be an integer",
+        ),
+        (
+            KEY_SCHEMA_VERSION,
+            Value::from(2_u64),
+            "unsupported dreamer step value schema_version",
+        ),
+    ];
+    for (field, replacement, expected) in invalid_step_fields {
+        let value = mutated_step_value(&step_claim, |entries| {
+            let (_, encoded) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some(field))
+                .expect("encoded step field");
+            *encoded = replacement;
+        });
+        assert!(matches!(
+            decode_step_claim_value(&value),
+            Err(Error::InvalidClaimBody(reason)) if reason == expected
+        ));
+    }
 
     // Trap value round-trip + unknown-key fail-closed.
     let trap_claim = EncodedTrapClaim {
@@ -877,11 +978,32 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     assert_eq!(decoded.state, DreamerTrapState::Waiting);
     assert_eq!(decoded.note, "note");
 
-    let Value::Map(mut entries) = encode_trap_claim_value(&trap_claim) else {
-        panic!("trap value must be a map");
-    };
-    entries.push((Value::from("unknown_key"), Value::from(1_u64)));
-    assert!(decode_trap_claim_value(&Value::Map(entries)).is_err());
+    let value = mutated_trap_value(&trap_claim, |entries| {
+        entries.push((Value::from("unknown_key"), Value::from(1_u64)));
+    });
+    assert!(decode_trap_claim_value(&value).is_err());
+
+    let value = mutated_trap_value(&trap_claim, |entries| {
+        entries.retain(|(key, _)| key.as_str() != Some(KEY_AT));
+    });
+    assert!(matches!(
+        decode_trap_claim_value(&value),
+        Err(Error::InvalidClaimBody("missing dreamer trap value at"))
+    ));
+
+    let value = mutated_trap_value(&trap_claim, |entries| {
+        let (_, encoded) = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(KEY_AT))
+            .expect("encoded trap at");
+        *encoded = Value::from("10001");
+    });
+    assert!(matches!(
+        decode_trap_claim_value(&value),
+        Err(Error::InvalidClaimBody(
+            "dreamer trap value at must be an integer"
+        ))
+    ));
     Ok(())
 }
 
@@ -912,6 +1034,17 @@ fn oversize_response_lands_in_blob_artifact() -> Result<()> {
     );
     let artifact_id = decoded.response_ref.expect("response_ref artifact id");
     assert!(vault.get_blob_artifact(&artifact_id)?.is_some());
+    let head = vault
+        .blob_artifact_head(&artifact_id)?
+        .expect("response_ref artifact head");
+    let bytes = vault
+        .read_blob_artifact_version(&artifact_id, head.version)?
+        .expect("response_ref artifact version");
+    assert_eq!(
+        bytes,
+        serde_json::to_vec(&response).expect("response payload"),
+        "blob artifact must persist the returned response bytes"
+    );
 
     // Memoized replay reads the artifact back byte-identically.
     let backend = ScriptedBackend::new(Vec::new());
