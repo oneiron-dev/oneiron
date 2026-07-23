@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashSet};
 
-use crate::config::{HnswConfig, VaultConfig};
 use crate::error::Error;
 use crate::temporal::TimeRange;
 
 use super::*;
+use crate::test_util::embedding_test_config;
 
 fn reset_edge_scan_count() {
     EDGE_SCAN_COUNT.with(|count| count.set(0));
@@ -63,28 +63,8 @@ fn mcp_context_pack_ref_rejects_blank_fields_and_noncanonical_results() {
     );
 }
 
-fn test_config() -> VaultConfig {
-    VaultConfig {
-        map_size: 16 * 1024 * 1024,
-        dimensions: 4,
-        fast_dims: None,
-        embedding_model: Some("test-model-v1".to_owned()),
-        max_readers: 16,
-        hnsw: HnswConfig {
-            m_max_0: 64,
-            ef_construction: 200,
-            ef_search: 128,
-        },
-        text_analyzer: crate::config::TextAnalyzerConfig::default(),
-        dict_search_paths: Vec::new(),
-        skip_text_index_manifest_check: false,
-        off_record_enabled: true,
-        off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
-    }
-}
-
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(test_config())
+    crate::test_util::open_test_vault_with(embedding_test_config())
 }
 
 fn msgpack_entity(fields: serde_json::Value) -> Vec<u8> {

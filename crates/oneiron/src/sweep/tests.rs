@@ -1,25 +1,15 @@
 use super::*;
-use crate::config::{HnswConfig, VaultConfig};
 use crate::deletion::{
     DeleteReason, HardEraseSweepExtras, RedactionScope, encode_hard_erase_sweep_job,
     encode_hard_erase_sweep_key,
 };
 use crate::temporal::TimeRange;
+use crate::test_util::embedding_test_config;
 #[cfg(feature = "sync")]
 use core::assert_matches;
 
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config
-}
-
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(test_config())
+    crate::test_util::open_test_vault_with(embedding_test_config())
 }
 
 fn put_entity(vault: &Vault, id: &EntityId, learned_at: u64, body: &[u8]) {
@@ -387,7 +377,7 @@ fn sweep_defers_open_windows_and_completes_after_unload() {
     use std::sync::Arc;
 
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
     let id = EntityId::now();
     put_entity(&vault, &id, 1_771_027_200, b"live-window-body");
 
@@ -449,7 +439,7 @@ fn retained_handle_cannot_resurrect_after_finalize() {
     use std::sync::Arc;
 
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
     let id = EntityId::now();
     let learned_at = 1_771_027_200;
     put_entity(&vault, &id, learned_at, b"retained-window-body");
@@ -841,7 +831,7 @@ fn sweep_raced_window_completes_on_clean_rerun() {
     const UNIT_SENTINEL: &[u8] = b"UNIT-SWEEP-SENTINEL-3a9f17e2";
 
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
     let id = EntityId::now();
     put_entity(&vault, &id, 1_771_027_200, UNIT_SENTINEL);
 
@@ -907,7 +897,7 @@ fn sweep_defers_when_uw_carrier_appears_after_compaction_before_finalize() {
     use std::sync::Arc;
 
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
     let id = EntityId::now();
     put_entity(&vault, &id, 1_771_027_200, b"final-fence-body");
 
