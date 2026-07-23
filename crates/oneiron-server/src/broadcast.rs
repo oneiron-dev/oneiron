@@ -71,12 +71,6 @@ impl BroadcastSubscriber {
             }
         }
     }
-
-    /// Returns the connection ID for this subscriber.
-    #[allow(dead_code)] // Used when WebSocket connected
-    pub(crate) fn conn_id(&self) -> u32 {
-        self.conn_id
-    }
 }
 
 /// Errors from broadcast subscriber.

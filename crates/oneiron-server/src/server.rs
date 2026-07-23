@@ -238,13 +238,12 @@ impl SyncServer {
     }
 
     /// Returns the window key (YYYY-MM) for a Unix timestamp.
-    #[allow(dead_code)] // Used when WebSocket connected
+    #[cfg(test)]
     pub(crate) fn window_key_for_timestamp(ts: u64) -> String {
         WindowKey::from_timestamp(ts).as_str().to_string()
     }
 
     /// Exports root doc updates since the given version vector.
-    #[allow(dead_code)] // Used when WebSocket connected
     pub(crate) fn export_root_updates(&self, from_vv: &VersionVector) -> Result<Vec<u8>, String> {
         self.root_doc
             .export(ExportMode::updates(from_vv))
