@@ -10,7 +10,6 @@ use super::check_api_auth;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ErrorCode;
-use crate::runtime::RuntimeHealthStatus;
 use crate::runtime::RuntimeStatus;
 use crate::server::SyncServer;
 use axum::extract::State;
@@ -437,20 +436,12 @@ pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse,
         counts,
         predicate_namespaces: predicate_namespaces(&server.vault, &claim_ids)?,
         last_activity,
-        runtime: runtime_status_for_config(&server.config),
+        runtime: RuntimeStatus::from_config(&server.config.runtime),
     })
 }
 
 pub(crate) fn is_agent_visible_entity_type(entity_type: u8) -> bool {
     entity_type != ENTITY_TYPE_POLICY_MANIFEST
-}
-
-pub(crate) fn runtime_status_for_config(config: &SyncServerConfig) -> RuntimeStatus {
-    RuntimeStatus::from_config(&config.runtime)
-}
-
-pub(crate) fn runtime_health_status_for_config(config: &SyncServerConfig) -> RuntimeHealthStatus {
-    RuntimeHealthStatus::from_config(&config.runtime)
 }
 
 pub(crate) fn skill_pack_discovery() -> SkillPackDiscovery {

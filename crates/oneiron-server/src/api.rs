@@ -489,7 +489,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         capabilities: feature_flags(),
         formats: supported_formats(),
         rate_limit: rate_limit_status(&server.config),
-        runtime: runtime_health_status_for_config(&server.config),
+        runtime: RuntimeHealthStatus::from_config(&server.config.runtime),
     })
 }
 
