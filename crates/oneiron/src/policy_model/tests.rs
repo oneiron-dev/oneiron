@@ -8,17 +8,13 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use rmpv::Value;
 use tempfile::TempDir;
 
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 use crate::llm::{
     BudgetLease, FatalLlmError, FinishReason, LlmGenerateFuture, LlmInputUsage, LlmOutputUsage,
     LlmResponse, LlmStreamResult, LlmUsage,
 };
 use crate::receipt::{ReceiptKind, ReceiptQuery};
-use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::store::Store;
 
 fn temp_vault() -> (TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp vault dir");
@@ -26,9 +22,7 @@ fn temp_vault() -> (TempDir, Vault) {
     (tmp, vault)
 }
 
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; ENTITY_ID_LEN]).expect("valid test id")
-}
+use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 
 fn base_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
     let mut entries = vec![
@@ -143,23 +137,6 @@ fn scoped_owner_row(row_ref: &str, text: &str, world_ref: &str) -> Value {
             Value::Boolean(true),
         ),
     ])
-}
-
-fn put_policy_manifest_bytes(vault: &Vault, seed: u8, data: &[u8]) -> Result<()> {
-    let id = test_id(seed);
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(data);
-
-    vault.with_write_txn(|wtxn| {
-        vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-        let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
-        vault.store.type_index.put(wtxn, &type_key, &[])?;
-        Ok(())
-    })
 }
 
 struct StaticPolicyBackend {
@@ -648,7 +625,7 @@ fn reads_vault_manifest_not_caller_config() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x31,
+        test_id(0x31),
         &base_policy_manifest(vec![owner_rows(vec![owner_row(
             "owner:spoilers",
             "Avoid spoilers in outbound content.",
@@ -758,7 +735,7 @@ fn verdict_stale_on_floor_change() -> Result<()> {
 
     put_policy_manifest_bytes(
         &vault,
-        0x32,
+        test_id(0x32),
         &base_policy_manifest(vec![owner_rows(vec![owner_row(
             "owner:ordinary",
             "Avoid ordinary wording.",
@@ -827,7 +804,7 @@ fn owner_row_fires_owner_policy_never_legal_floor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x33,
+        test_id(0x33),
         &base_policy_manifest(vec![owner_rows(vec![owner_row(
             "owner:jargon",
             "Avoid nautical jargon.",
@@ -863,7 +840,7 @@ fn vault_floor_rows_emit_combined_taxonomy() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x37,
+        test_id(0x37),
         &base_policy_manifest(vec![legal_floor_rows(vec![legal_floor_row(
             "vault:self-harm",
             "crisis",
@@ -896,7 +873,7 @@ fn unknown_manifest_action_rejects_policy_model_rubric() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x38,
+        test_id(0x38),
         &base_policy_manifest(vec![legal_floor_rows(vec![legal_floor_row(
             "vault:bad-action",
             "crisis",
@@ -921,7 +898,7 @@ fn unknown_owner_manifest_action_rejects_policy_model_classify() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x39,
+        test_id(0x39),
         &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
             "owner:bad-action",
             "Malformed owner action.",
@@ -1026,7 +1003,7 @@ fn floor_verdicts_byte_identical_with_custom_tier_empty() -> Result<()> {
     let (_custom_tmp, custom_vault) = temp_vault();
     put_policy_manifest_bytes(
         &custom_vault,
-        0x34,
+        test_id(0x34),
         &base_policy_manifest(vec![owner_rows(Vec::new())]),
     )?;
     let custom = custom_vault.classify_policy_model(base_request)?;
@@ -1043,7 +1020,7 @@ fn forged_manifest_drops_custom_rows_floor_still_runs() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x35,
+        test_id(0x35),
         &base_policy_manifest(vec![(
             Value::from(gate::POLICY_OWNER_POLICY_ROWS_KEY),
             Value::Map(vec![(Value::from("not"), Value::from("rows"))]),
@@ -1078,7 +1055,7 @@ fn active_owner_rows_resolve_scoped_world_override() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x36,
+        test_id(0x36),
         &base_policy_manifest(vec![owner_rows(vec![
             owner_row("owner:mode", "Avoid formal language."),
             scoped_owner_row("owner:mode", "Avoid casual language.", "work"),
@@ -1098,7 +1075,7 @@ fn owner_row_reword_is_persona_voiced_invisible() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x40,
+        test_id(0x40),
         &base_policy_manifest(vec![owner_rows(vec![owner_row(
             "owner:spoilers",
             "Avoid spoilers in outbound content.",
@@ -1141,7 +1118,7 @@ fn owner_row_never_routes_to_help() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x41,
+        test_id(0x41),
         &base_policy_manifest(vec![owner_rows(vec![owner_row(
             "owner:tone",
             "Avoid arch tone.",
@@ -1169,7 +1146,7 @@ fn owner_row_block_only_when_escalation_flag_says() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x42,
+        test_id(0x62),
         &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
             "owner:escalate",
             "Block this owner-escalated row.",
@@ -1198,7 +1175,7 @@ fn third_party_notice_leaks_no_row_details() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x44,
+        test_id(0x44),
         &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
             "owner:escalate",
             "Block this owner-escalated row.",
@@ -1234,7 +1211,7 @@ fn owner_notice_carries_setting_change_offer() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x45,
+        test_id(0x45),
         &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
             "owner:escalate",
             "Block this owner-escalated row.",
@@ -1269,7 +1246,7 @@ fn owner_notice_omits_oversized_row_ref_without_aborting_block() -> Result<()> {
     let long_row_ref = format!("owner:{}", "x".repeat(GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN));
     put_policy_manifest_bytes(
         &vault,
-        0x46,
+        test_id(0x46),
         &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
             &long_row_ref,
             "Block this oversized policy row.",
@@ -1301,7 +1278,7 @@ fn custom_tier_skipped_model_down_floor_still_runs() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x43,
+        test_id(0x43),
         &base_policy_manifest(vec![owner_rows(vec![owner_row(
             "owner:spoilers",
             "Avoid spoilers in outbound content.",
@@ -1419,7 +1396,7 @@ fn custom_tier_rows_never_evaluated_at_relay() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x50,
+        test_id(0x50),
         &base_policy_manifest(vec![owner_rows(vec![owner_row(
             "owner:spoilers",
             "Avoid spoilers in outbound content.",
@@ -1507,7 +1484,7 @@ fn relay_backend_stays_floor_only_and_degrades_owner_verdict() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x51,
+        test_id(0x51),
         &base_policy_manifest(vec![owner_rows(vec![owner_row(
             "owner:spoilers",
             "Avoid spoilers in outbound content.",
@@ -1688,7 +1665,7 @@ fn relay_rubric_is_floor_only_and_pins_owner_append() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
-        0x52,
+        test_id(0x52),
         &base_policy_manifest(vec![owner_rows(vec![
             owner_row("owner:spoilers", "Avoid spoilers."),
             owner_row("owner:jargon", "Avoid nautical jargon."),
@@ -1864,7 +1841,7 @@ fn relay_backend_accepts_fixed_category_present_in_floor_rubric() -> Result<()> 
     // verdict for it is on-floor and is honored (routes, halts the relay).
     put_policy_manifest_bytes(
         &vault,
-        0x53,
+        test_id(0x53),
         &base_policy_manifest(vec![legal_floor_rows(vec![legal_floor_row(
             "vault:medical",
             "crisis",
@@ -1906,7 +1883,7 @@ fn relay_sync_pass_fails_closed_on_malformed_floor_row() -> Result<()> {
     // fails closed exactly as the model path does — no strictness is lost.
     put_policy_manifest_bytes(
         &vault,
-        0x54,
+        test_id(0x54),
         &base_policy_manifest(vec![legal_floor_rows(vec![legal_floor_row(
             "vault:bad-action",
             "crisis",

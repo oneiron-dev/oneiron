@@ -849,10 +849,93 @@ mod m8_forward_oracle;
 #[cfg(test)]
 pub(crate) mod test_util {
     //! Shared test helpers. Centralized to avoid drift between per-module
-    //! copies of `open_test_vault`. Each module keeps its own `test_config()`
-    //! because configs diverge (map sizes, dimensions, embedding model).
+    //! copies of `open_test_vault`, seed-id, and policy-manifest fixtures.
+    //! Each module keeps its own `test_config()` because configs diverge
+    //! (map sizes, dimensions, embedding model).
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::config::VaultConfig;
+    use crate::entity_id::EntityId;
+    use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+    use crate::store::Store;
+    use crate::temporal::TimeRange;
     use crate::vault::Vault;
+
+    /// Id bytes pinned by production code. `entity` refuses them so a generic
+    /// fixture can never alias a system identity. Any byte NOT listed here is
+    /// safe for test seeds. A new production id pin must be added to this list
+    /// in the same change that mints it.
+    ///
+    /// - `0x00`, `0xFF`: reserved sentinels (`entity_id::is_reserved_entity_id_bytes`)
+    /// - `0x11`: dreamer consolidation probe actor
+    /// - `0x42`: code-run replay canonical request actor
+    /// - `0x47`: gate local-write actor ref
+    /// - `0xA1..=0xA6`: system-agent preset actor ids (write-door-reserved)
+    /// - `0xD7`: default policy manifest id
+    /// - `0xE1`: first-party connector actor id
+    pub(crate) const PINNED_ID_BYTES: [u8; 13] = [
+        0x00, 0x11, 0x42, 0x47, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xD7, 0xE1, 0xFF,
+    ];
+
+    /// Canonical test entity id: `[seed; 16]`.
+    ///
+    /// Panics when `seed` is production-pinned (see [`PINNED_ID_BYTES`]) —
+    /// including `entity(0)`, whose bytes are the reserved zero sentinel.
+    /// Tests that *intend* a pinned identity must construct it explicitly
+    /// (`SystemAgentPreset::…::actor_entity_id()`,
+    /// `crate::gate::default_policy_manifest_id()`, or
+    /// `EntityId::from_bytes` with an intent comment), never through this
+    /// helper.
+    pub(crate) fn entity(seed: u8) -> EntityId {
+        assert!(
+            !PINNED_ID_BYTES.contains(&seed),
+            "test seed {seed:#04x} collides with a production-pinned id byte; \
+             pick a byte outside PINNED_ID_BYTES or construct the pinned id explicitly"
+        );
+        EntityId::from_bytes([seed; 16]).expect("non-pinned seed byte forms a valid entity id")
+    }
+
+    /// Raw stored-entity record: the 25-byte metadata header (type byte,
+    /// occurred start/end, learned_at — all big-endian u64s, per the
+    /// `batch::ENTITY_*_OFFSET` layout) followed by `body`.
+    pub(crate) fn entity_record(
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        body: &[u8],
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+        out.push(entity_type);
+        out.extend_from_slice(&occurred.start.to_be_bytes());
+        out.extend_from_slice(&occurred.end.to_be_bytes());
+        out.extend_from_slice(&learned_at.to_be_bytes());
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// Stores `data` as a policy-manifest entity at `id` via a raw store put
+    /// (occurred `1..1`, learned_at `1`), bypassing the batch write path.
+    /// Seeding the *default* manifest slot must pass
+    /// `crate::gate::default_policy_manifest_id()` so the intent is explicit.
+    /// The `graph_fs` test copy deliberately stays local: it exercises the
+    /// real `apply_ops` write path instead of a raw put.
+    pub(crate) fn put_policy_manifest_bytes(
+        vault: &Vault,
+        id: EntityId,
+        data: &[u8],
+    ) -> crate::Result<()> {
+        let payload = entity_record(
+            ENTITY_TYPE_POLICY_MANIFEST,
+            TimeRange { start: 1, end: 1 },
+            1,
+            data,
+        );
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+            let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            Ok(())
+        })
+    }
 
     /// Opens a temporary vault with the supplied config. Returns the
     /// `TempDir` so callers keep the directory alive for the vault's lifetime.

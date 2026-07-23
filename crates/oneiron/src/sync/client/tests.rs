@@ -8,8 +8,7 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::off_record::OffRecordBackendClass;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK};
-use crate::store::Store;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
 use crate::sync::bridge::Materializer;
 use crate::sync::loro_support::{
     doc_from_snapshot, export_snapshot, map_get_bytes, map_insert_bytes,
@@ -42,15 +41,7 @@ fn server_window_doc() -> LoroDoc {
     doc
 }
 
-fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&occurred.start.to_be_bytes());
-    blob.extend_from_slice(&occurred.end.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
-}
+use crate::test_util::entity_record as entity_blob;
 
 fn sync_state_values_with_prefix(vault: &Vault, prefix: &str) -> Vec<(String, Vec<u8>)> {
     vault
@@ -105,9 +96,7 @@ fn commit_local_entity(
     export_updates_since(&window.doc, &vv_before.encode()).unwrap()
 }
 
-fn test_entity_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test entity id")
-}
+use crate::test_util::{entity as test_entity_id, put_policy_manifest_bytes};
 
 fn encode_policy_manifest(extra_entries: Vec<(rmpv::Value, rmpv::Value)>) -> Vec<u8> {
     use rmpv::Value;
@@ -171,24 +160,6 @@ fn source_trust_entry(source: ClaimSource, max_auto_sensitivity: u8) -> (rmpv::V
     )
 }
 
-fn put_policy_manifest_bytes(vault: &Vault, seed: u8, data: &[u8]) {
-    let id = test_entity_id(seed);
-    let payload = entity_blob(
-        ENTITY_TYPE_POLICY_MANIFEST,
-        TimeRange { start: 1, end: 1 },
-        1,
-        data,
-    );
-    vault
-        .with_write_txn(|wtxn| {
-            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-            let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
-            vault.store.type_index.put(wtxn, &type_key, &[])?;
-            Ok(())
-        })
-        .expect("put policy manifest");
-}
-
 fn source_trust_claim(source: ClaimSource) -> ClaimBody {
     let mut body = ClaimBody::new(
         "profile.name",
@@ -213,8 +184,8 @@ fn internal_source_trust_claim(source: ClaimSource) -> ClaimBody {
 
 fn test_selector() -> SyncSelector {
     SyncSelector::new(
-        test_entity_id(0xA1),
-        test_entity_id(0xA2),
+        test_entity_id(0x51),
+        test_entity_id(0x52),
         crate::sync::SyncSelectorWorld::All,
         vec![],
         vec![],
@@ -824,9 +795,10 @@ fn federated_import_seam_restamps_before_observed_import() {
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
-        0x8A,
+        test_entity_id(0x8A),
         &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
-    );
+    )
+    .expect("put policy manifest");
 
     let id = test_entity_id(0x8B);
     let remote_body = source_trust_claim(ClaimSource::ToolOutput);
@@ -861,9 +833,10 @@ fn federated_generated_auto_claim_restamps_but_stays_non_consolidatable() {
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
-        0x8C,
+        test_entity_id(0x8C),
         &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
-    );
+    )
+    .expect("put policy manifest");
 
     let id = test_entity_id(0x8D);
     let remote_body = source_trust_claim(ClaimSource::Generated);
@@ -898,9 +871,10 @@ fn federated_selector_member_response_enters_admission_once() {
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
-        0x93,
+        test_entity_id(0x93),
         &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
-    );
+    )
+    .expect("put policy manifest");
 
     let selector = test_selector();
     let request = client
@@ -961,9 +935,10 @@ fn federated_selector_member_stale_claim_is_restamped_and_retained() {
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
-        0x9B,
+        test_entity_id(0x9B),
         &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
-    );
+    )
+    .expect("put policy manifest");
 
     let id = test_entity_id(0x9C);
     let mut remote_body = source_trust_claim(ClaimSource::ToolOutput);
@@ -1000,9 +975,10 @@ fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
     let key = "2026-03";
     put_policy_manifest_bytes(
         &vault,
-        0x95,
+        test_entity_id(0x95),
         &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
-    );
+    )
+    .expect("put policy manifest");
 
     client
         .federated_selector_vv_request(key, &test_selector(), &VersionVector::new().encode())

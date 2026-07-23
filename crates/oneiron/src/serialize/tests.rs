@@ -2349,7 +2349,7 @@ fn companion_register_records_budget_with_fixed_state_allocation() {
 
 #[test]
 fn federation_grant_member_ref_hex_projection_is_preserved() {
-    let member_ref = EntityId::from_bytes_unchecked([0x42; 16]).to_hex();
+    let member_ref = EntityId::from_bytes_unchecked([0x62; 16]).to_hex();
     let fields = HashMap::from([
         (
             "scope".to_owned(),

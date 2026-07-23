@@ -1,9 +1,6 @@
 use super::*;
-use crate::entity_id::EntityId;
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("valid entity")
-}
+use crate::test_util::entity;
 
 fn window_value(start_minute: u64, end_minute: u64) -> Value {
     Value::Map(vec![

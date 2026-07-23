@@ -1,8 +1,11 @@
+mod common;
+
+use common::entity;
 use oneiron::{
     ChannelIdentityFulfillment, ChannelIdentityLifecycleActor, ChannelIdentityProviderAdapter,
     ChannelIdentityProviderInbound, ChannelIdentityState, DevEmailIdentityAdapter,
-    DevEmailIdentityAdapterConfig, EmailProviderInbound, EntityId, Error,
-    InboundSurfaceRouteOutcome, ProvisionIntent, Result, Vault, VaultConfig,
+    DevEmailIdentityAdapterConfig, EmailProviderInbound, Error, InboundSurfaceRouteOutcome,
+    ProvisionIntent, Result, Vault, VaultConfig,
 };
 
 fn smoke_config() -> Result<Option<DevEmailIdentityAdapterConfig>> {
@@ -32,10 +35,6 @@ fn smoke_config_from_env(
     }
 }
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test id")
-}
-
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let mut cfg = VaultConfig::device();
@@ -55,7 +54,7 @@ fn cid3_email_adapter_env_gated_smoke() -> Result<()> {
     let adapter = DevEmailIdentityAdapter::new(config);
     let (_tmp, vault) = temp_vault();
     let identity_id = entity(0x51);
-    let agent_ref = entity(0xA1);
+    let agent_ref = entity(0x52);
     let actor = ChannelIdentityLifecycleActor::agent(agent_ref);
     let identity = adapter.requested_identity(identity_id, agent_ref, 1_800_000_000);
     let address = identity.address_or_handle.clone();

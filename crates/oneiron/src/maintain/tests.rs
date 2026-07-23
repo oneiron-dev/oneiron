@@ -37,9 +37,7 @@ fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
 }
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes_unchecked([byte; ENTITY_ID_LEN])
-}
+use crate::test_util::entity;
 
 fn read_u64_meta(vault: &Vault, key: &[u8]) -> Result<u64> {
     let rtxn = vault.store.env.read_txn()?;
@@ -79,7 +77,7 @@ fn rebuild_hnsw_removes_dead_nodes() -> Result<()> {
     let mut ids = Vec::new();
 
     for i in 0..50_u8 {
-        let id = entity(i.saturating_add(1));
+        let id = entity(i.saturating_add(0x50));
         ids.push(id);
         vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
         vault.put_vector(&id, &[1.0, 0.0, 0.0, i as f32])?;

@@ -27,9 +27,7 @@ fn test_config() -> VaultConfig {
     }
 }
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes_unchecked([byte; ENTITY_ID_LEN])
-}
+use crate::test_util::entity;
 
 fn score_for(scores: &[ScoredEntity], id: EntityId) -> f32 {
     scores
@@ -394,7 +392,7 @@ fn child_of_and_assigned_to_are_never_traversed() -> Result<()> {
     let temp_dir = tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let child = entity(70);
-    let parent = entity(71);
+    let parent = entity(0x67);
     let task = entity(72);
     let machine = entity(73);
 
@@ -728,7 +726,7 @@ fn ppr_query_uses_cache_when_valid() -> Result<()> {
     let temp_dir = tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let a = entity(16);
-    let b = entity(17);
+    let b = entity(0x60);
 
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
 
@@ -830,7 +828,7 @@ fn ppr_cache_state_tracks_frontier_and_expanded_dependencies() -> Result<()> {
     let temp_dir = tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let a = entity(70);
-    let b = entity(71);
+    let b = entity(0x67);
     let c = entity(72);
 
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
@@ -1693,7 +1691,7 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
             "cached_scores",
             Site::CachedScores,
             65,
-            66,
+            0x62,
             "ppr cache scores",
         ),
     ];

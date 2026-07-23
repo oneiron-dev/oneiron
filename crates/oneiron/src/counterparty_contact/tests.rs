@@ -4,14 +4,12 @@ use crate::registry::{
     entity_type_registry_entry,
 };
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("valid entity id")
-}
+use crate::test_util::entity;
 
 #[test]
 fn counterparty_contact_codec_and_claim_family_round_trip() -> Result<()> {
     let record =
-        CounterpartyContactRecord::user_introduction(entity(0xA1), " kenji@example.com ", 10)?
+        CounterpartyContactRecord::user_introduction(entity(0x51), " kenji@example.com ", 10)?
             .with_promo_consent(true, 11)?
             .with_note("party invite", 12)?;
 
@@ -29,7 +27,7 @@ fn counterparty_contact_codec_and_claim_family_round_trip() -> Result<()> {
 
 #[test]
 fn opt_out_and_owner_revocation_are_recorded_with_pinned_reasons() -> Result<()> {
-    let record = CounterpartyContactRecord::inbound_first(entity(0xA1), "+15551234567", 20)?
+    let record = CounterpartyContactRecord::inbound_first(entity(0x51), "+15551234567", 20)?
         .opted_out(CounterpartyOptOutReason::Stop, 30)?;
     let opt_out = record.opt_out.expect("opt-out stored");
     assert_eq!(opt_out.reason, CounterpartyOptOutReason::Stop);
@@ -51,7 +49,7 @@ fn malformed_counterparty_contact_bodies_fail_closed() {
         crate::error::ErrorKind::InvalidCounterpartyContactBody
     );
 
-    let blank = CounterpartyContactRecord::public(entity(0xA1), "   ", 20)
+    let blank = CounterpartyContactRecord::public(entity(0x51), "   ", 20)
         .expect_err("blank counterparty rejected");
     assert_eq!(
         blank.kind(),
@@ -61,10 +59,10 @@ fn malformed_counterparty_contact_bodies_fail_closed() {
 
 #[test]
 fn counterparty_contact_matches_identity_and_counterparty() -> Result<()> {
-    let identity = entity(0xA1);
+    let identity = entity(0x51);
     let record = CounterpartyContactRecord::public(identity, "public@example.com", 20)?;
     assert!(record.matches_counterparty(&identity, " public@example.com "));
-    assert!(!record.matches_counterparty(&entity(0xA2), "public@example.com"));
+    assert!(!record.matches_counterparty(&entity(0x52), "public@example.com"));
     assert!(!record.matches_counterparty(&identity, "other@example.com"));
     Ok(())
 }

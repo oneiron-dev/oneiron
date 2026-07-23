@@ -35,7 +35,7 @@ use crate::sync::loro_support::map_get_bytes;
 use crate::temporal::TimeRange;
 
 fn entity_id(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).unwrap()
+    crate::test_util::entity(byte)
 }
 
 fn local_world_id(byte: u8) -> LocalWorldId {
@@ -43,13 +43,7 @@ fn local_world_id(byte: u8) -> LocalWorldId {
 }
 
 fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&1_u64.to_be_bytes());
-    blob.extend_from_slice(&1_u64.to_be_bytes());
-    blob.extend_from_slice(&1_u64.to_be_bytes());
-    blob.extend_from_slice(body);
-    blob
+    crate::test_util::entity_record(entity_type, TimeRange { start: 1, end: 1 }, 1, body)
 }
 
 fn authority_genesis_entry(seed: u8) -> AuthorityLogEntry {
@@ -105,11 +99,11 @@ fn claim_blob(world: Option<EntityId>) -> Vec<u8> {
 fn edge_provenance_claim_blob() -> Vec<u8> {
     let confidence = 0.75_f32;
     let record =
-        EdgeProvenanceClaimBody::new(entity_id(0xA4), confidence, SupersessionStatus::Confirmed);
+        EdgeProvenanceClaimBody::new(entity_id(0x5A), confidence, SupersessionStatus::Confirmed);
     let mut claim = ClaimBody::new(
         crate::provenance::PREDICATE_EDGE_PROVENANCE,
         ClaimSubject::Edge {
-            source: entity_id(0xA5),
+            source: entity_id(0x5B),
             kind: EdgeKind::Mentions,
             target: entity_id(0xD6),
         },
@@ -401,7 +395,7 @@ fn test_vault_with_grant(member_ref: EntityId) -> (tempfile::TempDir, Vault, Ent
 #[test]
 fn selector_codec_round_trips_strict_payload() {
     let selector = SyncSelector::new(
-        entity_id(0xA1),
+        entity_id(0x50),
         entity_id(0xB1),
         SyncSelectorWorld::World(local_world_id(0xC1)),
         vec![entity_id(0xD1), entity_id(0xD1)],
@@ -460,7 +454,7 @@ fn selector_codec_round_trips_strict_payload() {
 #[test]
 fn selector_decode_rejects_foreign_world_id_range() {
     let selector = SyncSelector::new(
-        entity_id(0xA1),
+        entity_id(0x50),
         entity_id(0xB1),
         SyncSelectorWorld::All,
         vec![],
@@ -501,12 +495,12 @@ fn selector_decode_rejects_foreign_world_id_range() {
 
 #[test]
 fn federated_admission_rejects_maintenance_band_non_claim_entities() {
-    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xA2));
+    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x54));
     let window_key = WindowKey::new("2026-03");
     let doc = create_window_doc("remote", &window_key);
     insert_entity(
         &doc,
-        entity_id(0xA3),
+        entity_id(0x59),
         ENTITY_TYPE_POLICY_MANIFEST,
         b"remote-policy",
     );
@@ -532,12 +526,12 @@ fn federated_admission_rejects_classification_routed_maintenance_kinds() {
     // Maintenance-CLASSIFIED inside the Companion BAND, so the pre-fix
     // band-only check admitted a member/guest-authored type-76 blob —
     // single-writer ledger authority handed to a federated peer.
-    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xA2));
+    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x54));
     let window_key = WindowKey::new("2026-03");
     let doc = create_window_doc("remote", &window_key);
     insert_entity(
         &doc,
-        entity_id(0xA3),
+        entity_id(0x59),
         crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
         b"guest-forged-topology-event",
     );
@@ -563,7 +557,7 @@ fn federated_admission_rejects_reserved_edge_kinds() {
     // (X, merged_into, Y) and materialization would derive a real redirect
     // shell with no type-76 event behind it.
     for kind in [EdgeKind::MergedInto, EdgeKind::SplitInto] {
-        let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xA2));
+        let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x54));
         let window_key = WindowKey::new("2026-03");
         let doc = create_window_doc("remote", &window_key);
         insert_edge(&doc, entity_id(0xB1), kind, entity_id(0xB2));
@@ -670,9 +664,9 @@ fn selected_window_omits_other_facets_and_keeps_closed_edges() {
     let window_key = WindowKey::new("2026-03");
     let doc = create_window_doc("source", &window_key);
 
-    let facet_allowed = entity_id(0xA1);
+    let facet_allowed = entity_id(0x50);
     let facet_denied = entity_id(0xB1);
-    let claim_allowed = entity_id(0x11);
+    let claim_allowed = entity_id(0x60);
     let claim_denied = entity_id(0x12);
     let person = entity_id(0x21);
     let denied_only_person = entity_id(0x22);
@@ -1098,10 +1092,10 @@ fn selector_applies_world_and_band_filters() {
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
     let window_key = WindowKey::new("2026-04");
     let doc = create_window_doc("source", &window_key);
-    let world = local_world_id(0xE1);
+    let world = local_world_id(0x5E);
     let other_world = entity_id(0xE2);
     let claim_world = entity_id(0x41);
-    let claim_base = entity_id(0x42);
+    let claim_base = entity_id(0x61);
     let claim_other_world = entity_id(0x43);
     let world_entity = world.entity_id();
     let task_like = entity_id(0x45);
@@ -1394,7 +1388,7 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     let connect_hash = authority_entry_hash(&connect).unwrap();
     vault
         .put_authority_log_entry(
-            &entity_id(0xE1),
+            &entity_id(0x5E),
             &genesis,
             TimeRange { start: 1, end: 1 },
             1,

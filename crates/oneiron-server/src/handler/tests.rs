@@ -732,9 +732,9 @@ async fn selector_vv_request_sends_filtered_update_only() {
     oneiron::sync::put_selector_test_federation_grant(server.vault.as_ref(), &grant_id, &grant, 1)
         .unwrap();
 
-    let facet_allowed = entity_id(0xA1);
+    let facet_allowed = entity_id(0x51);
     let facet_denied = entity_id(0xB1);
-    let claim_allowed = entity_id(0x11);
+    let claim_allowed = entity_id(0x60);
     let claim_denied = entity_id(0x12);
     let person = entity_id(0x21);
     insert_entity(
@@ -1142,7 +1142,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
     let window_key = WindowKey::new(key);
     let server_doc = server.get_or_create_window(&window_key).await.unwrap();
 
-    let member = entity_id(0x42);
+    let member = entity_id(0x62);
     let grant_id = oneiron::EntityId::now();
     let grant = oneiron::FederationGrant::new(
         test_selector_scope(),

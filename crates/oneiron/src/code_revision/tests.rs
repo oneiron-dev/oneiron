@@ -22,9 +22,7 @@ fn test_config() -> VaultConfig {
     config
 }
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; ENTITY_ID_LEN]).expect("valid entity id")
-}
+use crate::test_util::entity;
 
 fn artifact_body(tag: u8) -> CodeArtifactBody {
     CodeArtifactBody::new(
@@ -120,12 +118,15 @@ fn put_claim_entity_unchecked(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_CLAIM);
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(data);
+    let payload = crate::test_util::entity_record(
+        ENTITY_TYPE_CLAIM,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        data,
+    );
 
     let mut wtxn = vault.store.env.write_txn()?;
     vault
@@ -371,7 +372,7 @@ fn code_revision_integrity_sidecars_exist(
 
 #[test]
 fn code_revision_codec_round_trips_commit_revert_and_fork() -> Result<()> {
-    let session = entity(0x11);
+    let session = entity(0x60);
     let first = entity(0x21);
     let second = entity(0x22);
     let third = entity(0x23);
@@ -395,7 +396,7 @@ fn code_revision_codec_round_trips_commit_revert_and_fork() -> Result<()> {
 #[test]
 fn code_revision_commit_finalizes_session_revision_and_links_parent() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let first = entity(0x21);
     let second = entity(0x22);
     put_session(&vault, session, 10)?;
@@ -431,7 +432,7 @@ fn code_revision_commit_finalizes_session_revision_and_links_parent() -> Result<
 #[test]
 fn code_revision_session_trace_orders_same_second_child_after_parent() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let parent = entity(0x30);
     let child = entity(0x20);
     let parent_revision = CodeRevision::commit(parent, session, 100);
@@ -453,7 +454,7 @@ fn code_revision_session_trace_orders_same_second_child_after_parent() -> Result
 #[test]
 fn code_revision_read_inside_write_txn_uses_existing_sidecars_without_nested_write() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     let revision = CodeRevision::commit(revision_id, session, 100);
     put_session(&vault, session, 10)?;
@@ -470,7 +471,7 @@ fn code_revision_read_inside_write_txn_uses_existing_sidecars_without_nested_wri
 #[test]
 fn code_revision_branch_records_session_dag_fork() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let parent_session = entity(0x11);
+    let parent_session = entity(0x60);
     let fork_session = entity(0x12);
     let base_revision = entity(0x21);
     put_session(&vault, parent_session, 10)?;
@@ -499,7 +500,7 @@ fn code_revision_branch_records_session_dag_fork() -> Result<()> {
 #[test]
 fn code_revision_branch_rejects_base_revision_from_unrelated_session() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let parent_session = entity(0x11);
+    let parent_session = entity(0x60);
     let fork_session = entity(0x12);
     let other_session = entity(0x13);
     let base_revision = entity(0x21);
@@ -540,7 +541,7 @@ fn code_revision_branch_rejects_base_revision_from_unrelated_session() -> Result
 #[test]
 fn code_revision_branch_rejects_corrupt_child_of_edge_row() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let parent_session = entity(0x11);
+    let parent_session = entity(0x60);
     let fork_session = entity(0x12);
     let base_revision = entity(0x21);
     put_session(&vault, parent_session, 10)?;
@@ -570,7 +571,7 @@ fn code_revision_branch_rejects_corrupt_child_of_edge_row() -> Result<()> {
 #[test]
 fn code_revision_revert_appends_superseding_revision_and_keeps_history() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let original = entity(0x21);
     let current = entity(0x22);
     let reverted = entity(0x23);
@@ -612,7 +613,7 @@ fn code_revision_revert_appends_superseding_revision_and_keeps_history() -> Resu
 #[test]
 fn code_revision_batch_delete_removes_lifecycle_sidecars() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     put_session(&vault, session, 10)?;
     put_artifact(&vault, revision_id, 0xA1, 20)?;
@@ -648,7 +649,7 @@ fn code_revision_batch_delete_removes_lifecycle_sidecars() -> Result<()> {
 #[test]
 fn code_revision_delete_corrupt_record_removes_frontier_sidecar() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     put_session(&vault, session, 10)?;
     put_artifact(&vault, revision_id, 0xA1, 20)?;
@@ -672,7 +673,7 @@ fn code_revision_delete_corrupt_record_removes_frontier_sidecar() -> Result<()> 
 #[test]
 fn code_revision_delete_corrupt_frontier_sidecar_repairs_from_key_session() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     put_session(&vault, session, 10)?;
     put_artifact(&vault, revision_id, 0xA1, 20)?;
@@ -695,7 +696,7 @@ fn code_revision_delete_corrupt_frontier_sidecar_repairs_from_key_session() -> R
 #[test]
 fn code_revision_delete_frontier_head_rebuilds_predecessor_frontier() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let first = entity(0x21);
     let second = entity(0x22);
     let first_revision = CodeRevision::commit(first, session, 100);
@@ -718,7 +719,7 @@ fn code_revision_delete_frontier_head_rebuilds_predecessor_frontier() -> Result<
 #[test]
 fn code_revision_batch_delete_session_removes_reverse_indexes() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let parent_session = entity(0x11);
+    let parent_session = entity(0x60);
     let fork_session = entity(0x12);
     let revision_id = entity(0x21);
     put_session(&vault, parent_session, 10)?;
@@ -771,7 +772,7 @@ fn code_revision_batch_delete_session_removes_reverse_indexes() -> Result<()> {
 #[test]
 fn code_revision_batch_delete_parent_removes_child_index_rows() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let parent = entity(0x21);
     let child = entity(0x22);
     put_session(&vault, session, 10)?;
@@ -809,7 +810,7 @@ fn code_revision_batch_delete_parent_removes_child_index_rows() -> Result<()> {
 #[test]
 fn code_revision_finalized_artifact_rejects_body_mutation() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     put_session(&vault, session, 10)?;
     put_artifact(&vault, revision_id, 0xA1, 20)?;
@@ -838,7 +839,7 @@ fn code_revision_finalized_artifact_rejects_body_mutation() -> Result<()> {
 #[test]
 fn code_revision_finalization_rejects_header_only_artifact_shell() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     put_session(&vault, session, 10)?;
     put_artifact(&vault, revision_id, 0xA1, 20)?;
@@ -856,7 +857,7 @@ fn code_revision_finalization_rejects_header_only_artifact_shell() -> Result<()>
 #[test]
 fn code_integrity_revision_fold_mismatch_fails_closed() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     put_session(&vault, session, 10)?;
     put_artifact(&vault, revision_id, 0xA1, 20)?;
@@ -880,7 +881,7 @@ fn code_integrity_revision_fold_mismatch_fails_closed() -> Result<()> {
 #[test]
 fn code_integrity_frontier_record_mismatch_fails_closed() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let first = entity(0x21);
     let second = entity(0x22);
     put_session(&vault, session, 10)?;
@@ -906,7 +907,7 @@ fn code_integrity_frontier_record_mismatch_fails_closed() -> Result<()> {
 #[test]
 fn code_integrity_frontier_session_mismatch_fails_closed_on_update() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let other_session = entity(0x12);
     let first = entity(0x21);
     let second = entity(0x22);
@@ -932,7 +933,7 @@ fn code_integrity_frontier_session_mismatch_fails_closed_on_update() -> Result<(
 #[test]
 fn code_integrity_parent_fold_mismatch_fails_closed() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let parent = entity(0x21);
     let child = entity(0x22);
     put_session(&vault, session, 10)?;
@@ -958,7 +959,7 @@ fn code_integrity_parent_fold_mismatch_fails_closed() -> Result<()> {
 #[test]
 fn code_integrity_parent_session_mismatch_fails_closed() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let other_session = entity(0x12);
     let parent = entity(0x21);
     let child = entity(0x22);
@@ -1002,7 +1003,7 @@ fn code_integrity_parent_session_mismatch_fails_closed() -> Result<()> {
 #[test]
 fn code_integrity_parent_cycle_fails_closed_without_recursive_overflow() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let first = entity(0x21);
     let second = entity(0x22);
     put_session(&vault, session, 10)?;
@@ -1042,7 +1043,7 @@ fn code_integrity_parent_cycle_fails_closed_without_recursive_overflow() -> Resu
 #[test]
 fn code_integrity_revert_target_must_remain_parent_ancestor() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let other_session = entity(0x12);
     let original = entity(0x21);
     let current = entity(0x22);
@@ -1091,7 +1092,7 @@ fn code_integrity_revert_target_must_remain_parent_ancestor() -> Result<()> {
 #[test]
 fn code_integrity_provenance_claim_id_is_fold_authenticated() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     let original_provenance = entity(0x31);
     let forged_provenance = entity(0x32);
@@ -1122,7 +1123,7 @@ fn code_integrity_provenance_claim_id_is_fold_authenticated() -> Result<()> {
 #[test]
 fn code_integrity_provenance_claim_id_type_mismatch_fails_closed() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     let provenance_claim = entity(0x31);
     let non_claim = entity(0x32);
@@ -1163,7 +1164,7 @@ fn code_integrity_provenance_claim_id_type_mismatch_fails_closed() -> Result<()>
 #[test]
 fn code_integrity_empty_session_index_with_frontier_fails_closed() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     put_session(&vault, session, 10)?;
     put_artifact(&vault, revision_id, 0xA1, 20)?;
@@ -1186,7 +1187,7 @@ fn code_integrity_empty_session_index_with_frontier_fails_closed() -> Result<()>
 #[test]
 fn code_integrity_orphaned_frontier_rejects_write_backfill() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let parent = entity(0x21);
     let child = entity(0x22);
     put_session(&vault, session, 10)?;
@@ -1217,7 +1218,7 @@ fn code_integrity_orphaned_frontier_rejects_write_backfill() -> Result<()> {
 #[test]
 fn code_integrity_legacy_revision_sidecars_remain_readable_without_read_backfill() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let first = entity(0x21);
     let second = entity(0x22);
     let first_revision = CodeRevision::commit(first, session, 100);
@@ -1244,7 +1245,7 @@ fn code_integrity_legacy_revision_sidecars_remain_readable_without_read_backfill
 #[test]
 fn code_integrity_divergent_root_conflicts_after_frontier_exists() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let first = entity(0x21);
     let second_root = entity(0x22);
     put_session(&vault, session, 10)?;
@@ -1265,7 +1266,7 @@ fn code_integrity_divergent_root_conflicts_after_frontier_exists() -> Result<()>
 #[test]
 fn code_integrity_independent_trace_entries_converge_or_conflict() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let root = entity(0x21);
     let first_child = entity(0x22);
     let convergent_child = entity(0x23);
@@ -1312,7 +1313,7 @@ fn code_integrity_independent_trace_entries_converge_or_conflict() -> Result<()>
 #[test]
 fn code_revision_revert_rejects_unrelated_restored_revision() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let original = entity(0x21);
     let current = entity(0x22);
     let unrelated = entity(0x23);
@@ -1348,7 +1349,7 @@ fn code_revision_revert_rejects_unrelated_restored_revision() -> Result<()> {
 #[test]
 fn code_revision_rejects_parent_revision_from_different_session() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let other_session = entity(0x12);
     let parent = entity(0x21);
     let child = entity(0x22);
@@ -1379,7 +1380,7 @@ fn code_revision_rejects_parent_revision_from_different_session() -> Result<()> 
 #[test]
 fn code_revision_rejects_restored_revision_from_different_session() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let other_session = entity(0x12);
     let original = entity(0x21);
     let current = entity(0x22);
@@ -1418,7 +1419,7 @@ fn code_revision_rejects_restored_revision_from_different_session() -> Result<()
 #[test]
 fn code_revision_requires_claim_typed_provenance() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let first = entity(0x21);
     let second = entity(0x22);
     let provenance_claim = entity(0x31);
@@ -1448,7 +1449,7 @@ fn code_revision_requires_claim_typed_provenance() -> Result<()> {
 #[test]
 fn code_integrity_generated_apply_cannot_supersede_user_stated_revision_truth() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     let user_truth = entity(0x31);
     let generated_apply = entity(0x32);
@@ -1495,7 +1496,7 @@ fn code_integrity_generated_apply_cannot_supersede_user_stated_revision_truth() 
 #[test]
 fn code_integrity_generated_non_code_claim_reports_user_stated_code_revision_truth() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let revision_id = entity(0x21);
     let user_truth = entity(0x31);
     let generated_non_code = entity(0x33);
@@ -1551,7 +1552,7 @@ fn code_integrity_generated_non_code_claim_reports_user_stated_code_revision_tru
 #[test]
 fn code_integrity_generated_apply_cannot_supersede_user_truth_across_revisions() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let first_revision = entity(0x21);
     let second_revision = entity(0x22);
     let user_truth = entity(0x31);
@@ -1689,7 +1690,7 @@ fn code_integrity_generated_apply_with_header_only_subject_cannot_supersede_user
 #[test]
 fn code_revision_rejects_unfinalized_parent_without_writing() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x11);
+    let session = entity(0x60);
     let parent = entity(0x21);
     let child = entity(0x22);
     put_session(&vault, session, 10)?;

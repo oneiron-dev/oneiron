@@ -425,7 +425,7 @@ fn bucket_hash_conformance() {
 fn facet_locality_zero_conflicts() -> Result<()> {
     let subject = EntityId::from_bytes([0x31; 16]).expect("subject");
     let facet_a = EntityId::from_bytes([0x41; 16]).expect("facet a");
-    let facet_b = EntityId::from_bytes([0x42; 16]).expect("facet b");
+    let facet_b = EntityId::from_bytes([0x62; 16]).expect("facet b");
 
     // Same subject + FULL predicate, non-equal values, DIFFERENT facets:
     // work-me and RP-me are both true — zero conflicts.

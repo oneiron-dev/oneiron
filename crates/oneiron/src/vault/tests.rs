@@ -30,9 +30,7 @@ fn test_config() -> VaultConfig {
     }
 }
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes_unchecked([byte; ENTITY_ID_LEN])
-}
+use crate::test_util::entity;
 
 fn range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
@@ -136,7 +134,7 @@ fn sync_replayed_tombstone_quarantines_for_delete_protected_engine_record() -> R
 fn count_entities_by_type_uses_type_index_prefix_counts() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let vault = Vault::open(tmp.path(), test_config())?;
-    let task_list_a = entity(0x11);
+    let task_list_a = entity(0x60);
     let task_list_b = entity(0x12);
     let task = entity(0x13);
 
@@ -674,7 +672,7 @@ fn skip_manifest_check_unblocks_clear_text_index_recovery() -> Result<()> {
 #[test]
 fn search_text_fails_closed_when_handshake_bypassed_on_populated_index() -> Result<()> {
     let tmp = tempfile::tempdir()?;
-    let a = entity(71);
+    let a = entity(0x67);
 
     {
         let vault = Vault::open(tmp.path(), test_config())?;
