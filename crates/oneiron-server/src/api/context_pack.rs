@@ -1,15 +1,12 @@
 use super::VadPayload;
 use super::auth_bound_principal_ref;
-use super::check_api_auth;
 use super::core_engine_error;
 use super::default_limit;
 use super::hex_bytes;
 use super::json_payload;
 use super::non_empty_query;
 use super::parse_entity_id_param;
-use super::resume_caller;
 use super::scoped_read_for_core_auth;
-use super::scoped_read_for_legacy_api;
 use super::validate_core_query_seeds;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -20,7 +17,6 @@ use crate::projection::View;
 use crate::server::SyncServer;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
-use axum::http::HeaderMap;
 use axum::response::Json;
 use serde::Deserialize;
 use serde::Serialize;
@@ -415,7 +411,7 @@ pub(crate) struct EiriContextV4Request {
 
 pub(crate) struct EiriContextV4Identity<'a> {
     fallback_session_id: &'a str,
-    companion_auth: Option<&'a CoreAuth>,
+    companion_auth: &'a CoreAuth,
 }
 
 /// Context-pack request on the canonical core route.
@@ -917,7 +913,7 @@ pub(crate) async fn core_context_pack(
         (req.limit, max_neighbors),
         EiriContextV4Identity {
             fallback_session_id,
-            companion_auth: Some(&auth),
+            companion_auth: &auth,
         },
     )?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
@@ -1471,7 +1467,7 @@ pub(crate) fn resolve_eiri_companion_assembly(
     vault: &oneiron::Vault,
     companion: Option<&EiriCompanionControls>,
     session_id: &str,
-    companion_auth: Option<&CoreAuth>,
+    companion_auth: &CoreAuth,
 ) -> Result<oneiron::EiriCompanionAssembly, ApiError> {
     let (person_ref_wire, person_ref) = parse_companion_ref(
         companion.and_then(|controls| controls.person_ref.as_deref()),
@@ -1558,13 +1554,10 @@ pub(crate) fn resolve_eiri_companion_assembly(
 
 pub(crate) fn companion_scope_resolution_authorized(
     vault: &oneiron::Vault,
-    companion_auth: Option<&CoreAuth>,
+    auth: &CoreAuth,
     person_ref: Option<oneiron::EntityId>,
     persona_ref: Option<oneiron::EntityId>,
 ) -> Result<bool, ApiError> {
-    let Some(auth) = companion_auth else {
-        return Ok(true);
-    };
     if auth.has_scope(CoreScope::CompanionRegisterRead) || auth.has_scope(CoreScope::Auth) {
         return Ok(true);
     }
@@ -2096,237 +2089,4 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
         oneiron::RetrievalSignal::Gravity => "gravity",
         oneiron::RetrievalSignal::Rerank => "rerank",
     }
-}
-
-/// Request body for assembling a context pack from text and/or vector seeds.
-#[derive(Deserialize, ToSchema)]
-#[schema(example = json!({
-    "query": "recent decisions about project alpha",
-    "query_vector": [0.12, -0.04, 0.98],
-    "limit": 10,
-    "depth": { "edge_hop": 1, "max_neighbors": 50 },
-    "policy": { "hydrate": true, "include_edges": true, "view": "full" },
-    "time": { "since": 1782357600 },
-    "budget": { "max_item_tokens": 512 }
-}))]
-pub(crate) struct ContextPackRequest {
-    /// Optional text retrieval seed for context-pack assembly; omit when the caller only has an embedding vector.
-    #[serde(default)]
-    #[schema(example = "recent decisions about project alpha")]
-    query: Option<String>,
-    /// Optional embedding vector retrieval seed; omit when the caller only has text.
-    #[serde(default, rename = "query_vector", alias = "queryVector")]
-    #[schema(example = json!([0.12, -0.04, 0.98]))]
-    query_vector: Option<Vec<f32>>,
-    /// Maximum number of candidate entities to retrieve for the pack. Defaults to `10` when omitted.
-    #[serde(default = "default_limit")]
-    #[schema(default = default_limit, example = 10)]
-    limit: usize,
-    /// Per-item token cap for context-pack serialization; 0 disables it.
-    #[serde(default, rename = "maxItemTokens", alias = "max_item_tokens")]
-    max_item_tokens: usize,
-    /// Whether to include hydrated fields. Defaults to true.
-    #[serde(default = "default_true")]
-    #[schema(default = default_true, example = true)]
-    hydrate: bool,
-    /// Whether to include edge records in hydrated entities.
-    #[serde(default, rename = "include_edges", alias = "includeEdges")]
-    #[schema(example = true)]
-    include_edges: bool,
-    /// Edge expansion depth for neighbor hydration.
-    #[serde(default, rename = "edge_hop", alias = "edgeHop")]
-    #[schema(example = 1)]
-    edge_hop: u32,
-    /// Maximum neighbors to hydrate during edge expansion.
-    #[serde(
-        default = "default_context_neighbors",
-        rename = "max_neighbors",
-        alias = "maxNeighbors"
-    )]
-    #[schema(default = default_context_neighbors, example = 50)]
-    max_neighbors: usize,
-    /// Whether to include stored vectors when present.
-    #[serde(default, rename = "include_vectors", alias = "includeVectors")]
-    #[schema(example = false)]
-    include_vectors: bool,
-    /// Field profile for hydrated fields. Defaults to standard.
-    #[serde(default)]
-    #[schema(example = "standard")]
-    view: Option<View>,
-    /// Optional nested depth controls. Overrides top-level edge_hop/max_neighbors when set.
-    #[serde(default)]
-    depth: Option<ContextPackDepthControls>,
-    /// Optional nested ranking/projection policy controls.
-    #[serde(default)]
-    policy: Option<ContextPackPolicyControls>,
-    /// Optional time-window filters.
-    #[serde(default)]
-    time: Option<ContextPackTimeControls>,
-    /// Optional retrieval and serialization budget controls.
-    #[serde(default)]
-    budget: Option<ContextPackBudgetControls>,
-    /// Optional context format version. Use "v4" to request Eiri Context v4 fields.
-    #[serde(default, rename = "context_version", alias = "contextVersion")]
-    #[schema(example = "v4")]
-    context_version: Option<String>,
-    /// Optional Eiri Context v4 memory-board controls.
-    #[serde(default, rename = "memory_board", alias = "memoryBoard")]
-    memory_board: Option<EiriMemoryBoardControls>,
-    /// Optional Eiri Context v4 session RAG controls.
-    #[serde(default, rename = "session_rag", alias = "sessionRag")]
-    session_rag: Option<EiriSessionRagControls>,
-    /// Optional companion scope for Eiri Context v4 assembly.
-    #[serde(default)]
-    companion: Option<EiriCompanionControls>,
-}
-
-/// Context pack assembly.
-#[utoipa::path(
-    post,
-    path = "/api/context-pack",
-    request_body(
-        content = ContextPackRequest,
-        description = "Text and/or vector seed plus retrieval limits for context-pack assembly.",
-        content_type = "application/json"
-    ),
-    responses(
-        (
-            status = 200,
-            description = "Context pack assembled.",
-            body = CoreContextPackResponse,
-            content_type = "application/json",
-            example = json!({
-                "results": [],
-                "neighbors": [],
-                "stats": {
-                    "candidates_considered": 0,
-                    "signals_used": ["text"],
-                    "query_time_us": 1000,
-                    "entities_hydrated": 0,
-                    "neighbors_hydrated": 0,
-                    "cosine_ghosts_dampened": 0,
-                    "claims_suppressed": 0,
-                    "items_truncated": { "count": 0, "reason": "item_budget" },
-                    "items_dropped": { "count": 0, "reason": "token_budget" }
-                },
-                "state": { "kind": "missing_data", "reason": "no_data", "total_in_scope": 0 },
-                "evidence": { "telemetry_persisted": true, "retrieval_run_id": "018f0000000000000000000000000000", "result_ids": [], "scores": [] }
-            })
-        ),
-        (
-            status = 400,
-            description = "Malformed context-pack request or controls.",
-            body = ApiError,
-            content_type = "application/json"
-        ),
-        (
-            status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
-            body = ApiError,
-            content_type = "application/json"
-        )
-    )
-)]
-pub(crate) async fn context_pack(
-    headers: HeaderMap,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ContextPackRequest>, JsonRejection>,
-) -> Result<Json<CoreContextPackResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
-    let caller = resume_caller(&headers);
-    let req = json_payload(payload)?;
-    let query = non_empty_query(req.query.as_deref());
-    validate_core_query_seeds(query, req.query_vector.as_deref())?;
-    let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
-        resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
-    validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
-    let hydrate = req
-        .policy
-        .as_ref()
-        .and_then(|policy| policy.hydrate)
-        .unwrap_or(req.hydrate);
-    let include_edges = req
-        .policy
-        .as_ref()
-        .and_then(|policy| policy.include_edges)
-        .unwrap_or(req.include_edges);
-    let include_vectors = req
-        .policy
-        .as_ref()
-        .and_then(|policy| policy.include_vectors)
-        .unwrap_or(req.include_vectors);
-    let view = req
-        .policy
-        .as_ref()
-        .and_then(|policy| policy.view)
-        .or(req.view)
-        .unwrap_or(View::Standard);
-    let projection =
-        context_pack_json_projection_config(view, req.budget.as_ref(), req.max_item_tokens);
-    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
-    let candidate_limit = scoped_read
-        .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
-        .map_err(|error| {
-            tracing::error!(error = %error, "context-pack scoped read setup failed");
-            core_engine_error("context-pack scoped read setup failed", error)
-        })?;
-    let eiri_context = resolve_eiri_context_v4_request(
-        &server.vault,
-        req.context_version.as_deref(),
-        req.memory_board.as_ref(),
-        req.session_rag.as_ref(),
-        req.companion.as_ref(),
-        (req.limit, max_neighbors),
-        EiriContextV4Identity {
-            fallback_session_id: &caller,
-            companion_auth: None,
-        },
-    )?;
-
-    let mut builder = server
-        .vault
-        .context_pack()
-        .limit(candidate_limit)
-        .hydrate(hydrate)
-        .include_edges(include_edges)
-        .edge_hop(edge_hop)
-        .max_neighbors(max_neighbors)
-        .include_vectors(include_vectors)
-        .field_profile(projection.profile);
-    if let Some(query) = query {
-        builder = builder.search_text(query, candidate_limit);
-    }
-    if let Some(vector) = req.query_vector.as_deref() {
-        builder = builder.search_vector(vector, candidate_limit);
-    }
-    builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
-    builder = apply_context_pack_time(builder, req.time.as_ref())?;
-    let (builder, retrieval_budget) = apply_context_pack_budget(
-        builder,
-        req.budget.as_ref(),
-        req.max_item_tokens,
-        candidate_limit,
-        req.limit,
-        max_neighbors,
-    )?;
-
-    Ok(Json(
-        run_context_pack_builder(
-            &server.vault,
-            &scoped_read,
-            builder,
-            projection,
-            ContextPackResponseLimits {
-                results: req.limit,
-                neighbors: max_neighbors,
-                retrieval: retrieval_budget,
-            },
-            "context-pack failed",
-            eiri_context,
-            // The legacy route has no interlocutor surface: no disclosure
-            // context means OwnerAlone — untouched behavior.
-            None,
-        )
-        .await?,
-    ))
 }
