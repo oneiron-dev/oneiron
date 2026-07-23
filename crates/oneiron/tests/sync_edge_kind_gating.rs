@@ -14,11 +14,12 @@
 
 #![cfg(feature = "sync")]
 
+mod sync_harness;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc};
-use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
@@ -28,6 +29,7 @@ use oneiron::{
     EdgeProvenanceFlags, EdgeRef, EntityId, HnswConfig, SupersessionStatus, TimeRange, Vad, Vault,
     VaultConfig,
 };
+use sync_harness::clear_policy_manifests;
 
 fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
@@ -45,17 +47,6 @@ fn edge_info(edges: &[EdgeInfo], kind: EdgeKind, target: &EntityId) -> EdgeInfo 
         .find(|edge| edge.kind == kind && edge.target == *target)
         .cloned()
         .unwrap_or_else(|| panic!("edge {kind:?} -> {} missing", target.to_hex()))
-}
-
-fn clear_policy_manifests(vault: &Vault) {
-    // The seeded default policy manifest is local-only engine state for sync
-    // windows; public deletion of it is rejected.
-    assert!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("count policy manifests")
-            <= 1
-    );
 }
 
 /// Seam-7 pin (ONE-1122 AC5): an entity with `Mentions` + `ChildOf` +

@@ -15,6 +15,8 @@
 
 #![cfg(feature = "sync")]
 
+mod sync_harness;
+
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
@@ -28,6 +30,7 @@ use oneiron::{
     DeleteReason, EntityId, HnswConfig, TOMBSTONE_VALUE_V2_LEN, TombstoneReason, Vault,
     VaultConfig, decode_tombstone_value,
 };
+use sync_harness::make_entity_blob;
 
 /// 2026-02-15 ≈ unix 1_771_027_200 ⇒ window "2026-02".
 const LEARNED_AT: u64 = 1_771_027_200;
@@ -56,16 +59,6 @@ fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
         _ => None,
     }
-}
-
-fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
 }
 
 /// Persists `doc` into the vault's sync_state as window `WINDOW`, the same
