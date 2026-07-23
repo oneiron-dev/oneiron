@@ -3221,9 +3221,7 @@ fn context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_elig
 // model output. Absence is the boundary: a clamped id must appear NOWHERE as
 // a tracked reference.
 
-fn disclosure_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid entity id")
-}
+use crate::test_util::entity as disclosure_id;
 
 fn seed_disclosure_contact(vault: &Vault, contact_id: EntityId, counterparty: &str) {
     let record = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
