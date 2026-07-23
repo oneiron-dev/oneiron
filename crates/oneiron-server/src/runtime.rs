@@ -59,16 +59,6 @@ impl RuntimeMode {
     }
 }
 
-impl From<UsageMode> for RuntimeMode {
-    fn from(value: UsageMode) -> Self {
-        match value {
-            UsageMode::Local => Self::LocalFree,
-            UsageMode::Byo => Self::ByoCloudKey,
-            UsageMode::OneironCloud => Self::OneironCloud,
-        }
-    }
-}
-
 impl fmt::Display for RuntimeMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())

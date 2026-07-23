@@ -95,7 +95,7 @@ pub(crate) async fn get_consumer_usage(
         .consumer_usage(
             &params.tenant_id,
             params.vault_id.as_deref(),
-            server.config.usage_mode,
+            server.config.runtime_usage_mode(),
         )
         .inspect_err(|error| tracing::error!(error = %error, "consumer usage read failed"))
         .map_err(usage_error)?;
@@ -146,7 +146,7 @@ pub(crate) async fn get_consumer_usage_details(
         .consumer_usage_details(
             &params.tenant_id,
             params.vault_id.as_deref(),
-            server.config.usage_mode,
+            server.config.runtime_usage_mode(),
         )
         .inspect_err(|error| tracing::error!(error = %error, "consumer usage details read failed"))
         .map_err(usage_error)?;
@@ -208,7 +208,7 @@ pub(crate) async fn top_up_consumer(
     let request = json_payload(request)?;
     let state = server
         .usage_ledger
-        .top_up(request, server.config.usage_mode)
+        .top_up(request, server.config.runtime_usage_mode())
         .map_err(|error| {
             if matches!(error, UsageError::IdempotencyConflict { .. }) {
                 tracing::warn!("consumer top-up idempotency conflict");
@@ -297,10 +297,6 @@ pub(crate) fn usage_mode_for_event(
     config: &SyncServerConfig,
     event: &UsageEvent,
 ) -> Result<UsageMode, ApiError> {
-    if config.runtime == crate::runtime::RuntimeConfig::default() {
-        return Ok(config.runtime_usage_mode());
-    }
-
     if let Some(usage_mode) = config.runtime.usage_mode_for_model(event.model.as_deref()) {
         return Ok(usage_mode);
     }

@@ -29,33 +29,41 @@ fn sync_server_config_debug_prints_none_for_missing_auth_secret() {
 }
 
 #[test]
-fn sync_server_config_runtime_usage_mode_honors_legacy_usage_when_runtime_is_default() {
-    let legacy_only = SyncServerConfig {
-        usage_mode: UsageMode::OneironCloud,
-        runtime: RuntimeConfig::default(),
-        ..Default::default()
-    };
-    assert_eq!(legacy_only.runtime_usage_mode(), UsageMode::OneironCloud);
+fn runtime_usage_mode_derives_from_runtime_mode() {
+    for mode in [
+        RuntimeMode::LocalFree,
+        RuntimeMode::ByoCloudKey,
+        RuntimeMode::OneironCloud,
+    ] {
+        let config = SyncServerConfig {
+            runtime: RuntimeConfig::for_mode(mode),
+            ..Default::default()
+        };
 
-    let runtime_configured = SyncServerConfig {
-        usage_mode: UsageMode::OneironCloud,
-        runtime: RuntimeConfig::for_mode(RuntimeMode::ByoCloudKey),
-        ..Default::default()
-    };
-    assert_eq!(runtime_configured.runtime_usage_mode(), UsageMode::Byo);
+        assert_eq!(config.runtime_usage_mode(), mode.usage_mode());
+    }
 }
 
 #[test]
-fn serve_config_sync_server_config_preserves_legacy_usage_when_runtime_is_default() {
-    let sync = ServeConfig {
-        usage_mode: UsageMode::OneironCloud,
-        runtime: RuntimeConfig::default(),
+fn usage_mode_config_file_key_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("oneiron.toml");
+    std::fs::write(&config_path, "usage_mode = \"byo\"\n").unwrap();
+    let args = ServeArgs {
+        config: Some(config_path.clone()),
         ..Default::default()
-    }
-    .sync_server_config();
+    };
 
-    assert_eq!(sync.usage_mode, UsageMode::OneironCloud);
-    assert_eq!(sync.runtime_usage_mode(), UsageMode::OneironCloud);
+    let error = resolve_serve_config_with_sources(&args, EnvConfig::default(), None)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains(&format!("parse config file {}", config_path.display())));
+
+    let env =
+        EnvConfig::from_pairs([(concat!("ONEIRON_USAGE_", "MODE"), "oneiron_cloud")]).unwrap();
+    let resolved = resolve_serve_config_with_sources(&ServeArgs::default(), env, None).unwrap();
+    assert_eq!(resolved.runtime.mode, RuntimeMode::LocalFree);
 }
 
 #[test]
@@ -253,7 +261,6 @@ dimensions = 128
 map_size = 67108864
 log_level = "warn"
 max_frame_size = 11
-usage_mode = "byo"
 "#,
     )
     .unwrap();
@@ -262,13 +269,11 @@ usage_mode = "byo"
         ("ONEIRON_HOST", "env-host"),
         ("ONEIRON_PORT", "2000"),
         ("ONEIRON_AUTH_SECRET", "env-secret"),
-        ("ONEIRON_USAGE_MODE", "oneiron_cloud"),
     ])
     .unwrap();
     let flags = ServeArgs {
         host: Some("flag-host".to_owned()),
         allowed_origins: Some(vec!["https://flag.example".to_owned()]),
-        usage_mode: Some(UsageMode::Local),
         ..Default::default()
     };
 
@@ -283,8 +288,6 @@ usage_mode = "byo"
     assert_eq!(resolved.map_size, 67_108_864);
     assert_eq!(resolved.log_level, "warn");
     assert_eq!(resolved.max_frame_size, 11);
-    assert_eq!(resolved.usage_mode, UsageMode::Local);
-    assert_eq!(resolved.runtime.mode, RuntimeMode::LocalFree);
 }
 
 #[test]
@@ -356,7 +359,7 @@ model = "file-orchestrator"
     let resolved = resolve_serve_config_with_sources(&flags, env, None).unwrap();
 
     assert_eq!(resolved.runtime.mode, RuntimeMode::ByoCloudKey);
-    assert_eq!(resolved.usage_mode, UsageMode::Byo);
+    assert_eq!(resolved.runtime.mode.usage_mode(), UsageMode::Byo);
     assert_eq!(
         resolved.runtime.byo_key_env.as_deref(),
         Some("FILE_BYO_KEY")
@@ -420,103 +423,4 @@ model = "file-orchestrator"
             .provider_kind,
         RuntimeProviderKind::OneironCloud
     );
-}
-
-#[test]
-fn legacy_usage_mode_preserves_prior_runtime_role_defaults_and_byo_key_env() {
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("oneiron.toml");
-    std::fs::write(
-        &config_path,
-        r#"
-[runtime]
-mode = "byo_cloud_key"
-byo_key_env = "FILE_BYO_KEY"
-
-[runtime.role_defaults.orchestrator]
-mode = "byo_cloud_key"
-provider_kind = "byo_cloud"
-model = "file-orchestrator"
-
-[runtime.role_defaults.subagent]
-mode = "local_free"
-provider_kind = "local"
-model = "file-subagent"
-"#,
-    )
-    .unwrap();
-    let env = EnvConfig::from_pairs([
-        ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
-        ("ONEIRON_USAGE_MODE", "oneiron_cloud"),
-    ])
-    .unwrap();
-
-    let resolved = resolve_serve_config_with_sources(&ServeArgs::default(), env, None).unwrap();
-
-    assert_eq!(resolved.runtime.mode, RuntimeMode::OneironCloud);
-    assert_eq!(resolved.usage_mode, UsageMode::OneironCloud);
-    assert_eq!(
-        resolved.runtime.byo_key_env.as_deref(),
-        Some("FILE_BYO_KEY")
-    );
-
-    let orchestrator = resolved
-        .runtime
-        .role_defaults
-        .target(RuntimeRole::Orchestrator);
-    assert_eq!(orchestrator.mode, RuntimeMode::ByoCloudKey);
-    assert_eq!(orchestrator.provider_kind, RuntimeProviderKind::ByoCloud);
-    assert_eq!(orchestrator.model, "file-orchestrator");
-
-    let subagent = resolved.runtime.role_defaults.target(RuntimeRole::Subagent);
-    assert_eq!(subagent.mode, RuntimeMode::LocalFree);
-    assert_eq!(subagent.provider_kind, RuntimeProviderKind::Local);
-    assert_eq!(subagent.model, "file-subagent");
-
-    let summarizer = resolved
-        .runtime
-        .role_defaults
-        .target(RuntimeRole::Summarizer);
-    assert_eq!(summarizer.mode, RuntimeMode::OneironCloud);
-    assert_eq!(summarizer.provider_kind, RuntimeProviderKind::OneironCloud);
-    assert_eq!(summarizer.model, "oneiron-cloud-summarizer-default");
-}
-
-#[test]
-fn repeated_legacy_usage_mode_preserves_runtime_role_defaults_and_byo_key_env() {
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("oneiron.toml");
-    std::fs::write(
-        &config_path,
-        r#"
-[runtime]
-mode = "byo_cloud_key"
-byo_key_env = "FILE_BYO_KEY"
-
-[runtime.role_defaults.orchestrator]
-mode = "byo_cloud_key"
-provider_kind = "byo_cloud"
-model = "file-orchestrator"
-"#,
-    )
-    .unwrap();
-    let env = EnvConfig::from_pairs([
-        ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
-        ("ONEIRON_USAGE_MODE", "byo"),
-    ])
-    .unwrap();
-
-    let resolved = resolve_serve_config_with_sources(&ServeArgs::default(), env, None).unwrap();
-    let orchestrator = resolved
-        .runtime
-        .role_defaults
-        .target(RuntimeRole::Orchestrator);
-
-    assert_eq!(resolved.runtime.mode, RuntimeMode::ByoCloudKey);
-    assert_eq!(
-        resolved.runtime.byo_key_env.as_deref(),
-        Some("FILE_BYO_KEY")
-    );
-    assert_eq!(orchestrator.model, "file-orchestrator");
-    assert_eq!(orchestrator.provider_kind, RuntimeProviderKind::ByoCloud);
 }

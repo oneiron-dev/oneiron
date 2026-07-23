@@ -11,7 +11,6 @@ use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ErrorCode;
 use crate::runtime::RuntimeHealthStatus;
-use crate::runtime::RuntimeMode;
 use crate::runtime::RuntimeStatus;
 use crate::server::SyncServer;
 use axum::extract::State;
@@ -447,23 +446,11 @@ pub(crate) fn is_agent_visible_entity_type(entity_type: u8) -> bool {
 }
 
 pub(crate) fn runtime_status_for_config(config: &SyncServerConfig) -> RuntimeStatus {
-    if config.runtime == crate::runtime::RuntimeConfig::default() {
-        let runtime =
-            crate::runtime::RuntimeConfig::for_mode(RuntimeMode::from(config.runtime_usage_mode()));
-        RuntimeStatus::from_config(&runtime)
-    } else {
-        RuntimeStatus::from_config(&config.runtime)
-    }
+    RuntimeStatus::from_config(&config.runtime)
 }
 
 pub(crate) fn runtime_health_status_for_config(config: &SyncServerConfig) -> RuntimeHealthStatus {
-    if config.runtime == crate::runtime::RuntimeConfig::default() {
-        let runtime =
-            crate::runtime::RuntimeConfig::for_mode(RuntimeMode::from(config.runtime_usage_mode()));
-        RuntimeHealthStatus::from_config(&runtime)
-    } else {
-        RuntimeHealthStatus::from_config(&config.runtime)
-    }
+    RuntimeHealthStatus::from_config(&config.runtime)
 }
 
 pub(crate) fn skill_pack_discovery() -> SkillPackDiscovery {

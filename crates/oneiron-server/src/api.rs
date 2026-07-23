@@ -39,8 +39,6 @@ use crate::usage::ConsumerTopUpState;
 use crate::usage::ConsumerUsageDetails;
 use crate::usage::ConsumerUsageState;
 use crate::usage::UsageEvent;
-#[cfg(test)]
-use crate::usage::UsageMode;
 use crate::usage::UsageRecordResult;
 use crate::usage::UsageRollup;
 use axum::Router;
