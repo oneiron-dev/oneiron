@@ -10,9 +10,9 @@ use rmpv::Value;
 
 use crate::{
     BudgetLease, ClaimCandidate, ClaimSubject, ContentPart, EdgeActorClass, EdgeKind,
-    FatalLlmError, FinishReason, HnswConfig, LlmGenerateFuture, LlmResponse, LlmStreamResult,
-    LlmUsage, ModelId, SelfAskHumanCall, SelfDurableWaitReason, SelfEffect, SelfMemoryPutClaimCall,
-    SelfMemoryPutEdgeCall, SelfMemoryWriteFixtureCall, TimeRange, VaultConfig, WriteActor,
+    FatalLlmError, FinishReason, LlmGenerateFuture, LlmResponse, LlmStreamResult, LlmUsage,
+    ModelId, SelfAskHumanCall, SelfDurableWaitReason, SelfEffect, SelfMemoryPutClaimCall,
+    SelfMemoryPutEdgeCall, SelfMemoryWriteFixtureCall, TimeRange, WriteActor,
     registry::ENTITY_TYPE_PERSON,
 };
 
@@ -28,23 +28,13 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
     }
 }
 
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config
-}
-
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), test_config()).expect("open vault");
+    let vault = Vault::open(dir.path(), embedding_test_config()).expect("open vault");
     (dir, vault)
 }
 
-use crate::test_util::entity;
+use crate::test_util::{embedding_test_config, entity};
 
 fn range(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }

@@ -4,7 +4,6 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
 };
-use crate::config::{HnswConfig, VaultConfig};
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
 use crate::edge::EdgeActorClass;
 use crate::federation::{
@@ -18,23 +17,13 @@ use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
 
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config
-}
-
 fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), test_config())?;
+    let vault = Vault::open(dir.path(), embedding_test_config())?;
     Ok((dir, vault))
 }
 
-use crate::test_util::entity;
+use crate::test_util::{embedding_test_config, entity};
 
 fn field_map(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
     entries
@@ -490,7 +479,7 @@ fn receipt_query_returns_mixed_kinds_and_filters() -> Result<()> {
 #[test]
 fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let mut config = test_config();
+    let mut config = embedding_test_config();
     config.map_size = 128 * 1024 * 1024;
     let vault = Vault::open(dir.path(), config)?;
     let target_actor = "agent-before-legacy-window";
@@ -1529,7 +1518,7 @@ fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
     };
 
     let dir = tempfile::tempdir()?;
-    let mut config = test_config();
+    let mut config = embedding_test_config();
     config.map_size = 256 * 1024 * 1024;
     let vault = Vault::open(dir.path(), config)?;
     for seed in [0x61_u8, 0x62, 0x63, 0x64] {

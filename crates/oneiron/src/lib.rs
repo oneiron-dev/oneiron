@@ -849,12 +849,18 @@ mod m8_forward_oracle;
 #[cfg(test)]
 pub(crate) mod test_util {
     //! Shared test helpers. Centralized to avoid drift between per-module
-    //! copies of `open_test_vault`, seed-id, and policy-manifest fixtures.
-    //! Each module keeps its own `test_config()` because configs diverge
-    //! (map sizes, dimensions, embedding model).
+    //! copies of `open_test_vault`, seed-id, policy-manifest, and config
+    //! fixtures.
+    //!
+    //! Config carve-out: [`embedding_test_config`] is the canonical
+    //! embedding-enabled config. A module keeps a LOCAL `test_config()` only
+    //! when its values genuinely diverge (map size, dimensions, embedding
+    //! model, HNSW params); a copy that is value-identical to the shared
+    //! helper is a drift hazard and must route through it.
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::config::VaultConfig;
     use crate::entity_id::EntityId;
+    use crate::error::Error;
     use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
     use crate::store::Store;
     use crate::temporal::TimeRange;
@@ -937,6 +943,19 @@ pub(crate) mod test_util {
         })
     }
 
+    /// Canonical embedding-enabled test config: 16 MiB map, 4 dimensions,
+    /// `test-model-v1` embedding model, 16 readers. Everything else is the
+    /// `VaultConfig::device()` preset — HNSW and text-analyzer defaults
+    /// included, so do NOT re-assign defaults here.
+    pub(crate) fn embedding_test_config() -> VaultConfig {
+        let mut config = VaultConfig::device();
+        config.map_size = 16 * 1024 * 1024;
+        config.dimensions = 4;
+        config.embedding_model = Some("test-model-v1".to_owned());
+        config.max_readers = 16;
+        config
+    }
+
     /// Opens a temporary vault with the supplied config. Returns the
     /// `TempDir` so callers keep the directory alive for the vault's lifetime.
     pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vault) {
@@ -944,6 +963,27 @@ pub(crate) mod test_util {
         let vault = Vault::open(dir.path(), cfg).expect("open vault");
         clear_default_policy_manifest_for_legacy_tests(&vault);
         (dir, vault)
+    }
+
+    /// Asserts `error` is the Gate secret-scan denial: [`Error::GateWriteRejected`]
+    /// with outcome `"deny"` and reason codes exactly
+    /// `["gate.secret_scan.detected", expected_reason]`. Call sites pass the
+    /// expected leaf reason explicitly (e.g. `"gate.secret_scan.github_token"`)
+    /// so the asserted detector is visible at the test.
+    pub(crate) fn assert_secret_scan_rejected(error: Error, expected_reason: &'static str) {
+        match error {
+            Error::GateWriteRejected {
+                outcome,
+                reason_codes,
+            } => {
+                assert_eq!(outcome, "deny");
+                assert_eq!(
+                    reason_codes.as_slice(),
+                    &["gate.secret_scan.detected", expected_reason]
+                );
+            }
+            other => panic!("expected GateWriteRejected, got {other:?}"),
+        }
     }
 
     fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {

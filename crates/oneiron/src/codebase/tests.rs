@@ -2,13 +2,13 @@ use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::code_artifact::{CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody};
 use crate::code_revision::{CODE_REVISION_CLAIM_PREDICATE, CodeRevision};
-use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::context_pack::PackFormat;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, ErrorKind};
 use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::temporal::TimeRange;
+use crate::test_util::{assert_secret_scan_rejected, embedding_test_config};
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
@@ -17,17 +17,6 @@ use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
-
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config.text_analyzer = TextAnalyzerConfig::default();
-    config
-}
 
 fn repo_ref() -> RepoRef {
     RepoRef::parse("github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277")
@@ -54,22 +43,6 @@ fn entity_id(byte: u8) -> EntityId {
 }
 
 const GITHUB_TOKEN_SECRET_FIXTURE: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
-
-fn assert_secret_scan_rejected(err: Error) {
-    match err {
-        Error::GateWriteRejected {
-            outcome,
-            reason_codes,
-        } => {
-            assert_eq!(outcome, "deny");
-            assert_eq!(
-                reason_codes.as_slice(),
-                &["gate.secret_scan.detected", "gate.secret_scan.github_token"]
-            );
-        }
-        other => panic!("expected secret-scan GateWriteRejected, got {other:?}"),
-    }
-}
 
 fn file(path: &str, hash_byte: u8) -> CodebaseFileEntry {
     CodebaseFileEntry::new(
@@ -397,7 +370,7 @@ fn codebase_snapshot_codec_rejects_invalid_constructed_repo_ref() {
 
 #[test]
 fn codebase_snapshot_vault_round_trip_and_queries() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let repo_ref = repo_ref();
     let snapshot = snapshot("project.alpha", repo_ref.clone())?;
@@ -426,7 +399,7 @@ fn codebase_snapshot_vault_round_trip_and_queries() -> Result<()> {
 
 #[test]
 fn codebase_snapshot_rejects_secret_file_path_before_sidecar_mutation() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity_id(0x33);
     let repo_ref = repo_ref();
     let safe_snapshot = snapshot("project.alpha", repo_ref.clone())?;
@@ -450,7 +423,7 @@ fn codebase_snapshot_rejects_secret_file_path_before_sidecar_mutation() -> Resul
         .put_codebase_snapshot(&id, &secret_snapshot)
         .expect_err("secret file path must reject before sidecar mutation");
 
-    assert_secret_scan_rejected(err);
+    assert_secret_scan_rejected(err, "gate.secret_scan.github_token");
     assert_eq!(vault.get_codebase_snapshot(&id)?, Some(safe_snapshot));
     assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
     assert_eq!(
@@ -462,7 +435,7 @@ fn codebase_snapshot_rejects_secret_file_path_before_sidecar_mutation() -> Resul
 
 #[test]
 fn repo_ref_change_records_version_history_edges_and_consent_record() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let session = EntityId::now();
     let first_revision_id = EntityId::now();
     let second_revision_id = EntityId::now();
@@ -520,7 +493,7 @@ fn repo_ref_change_records_version_history_edges_and_consent_record() -> Result<
 
 #[test]
 fn codebase_snapshot_delete_cleans_sidecar_indexes() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let repo_ref = repo_ref();
     let snapshot = snapshot("project.alpha", repo_ref.clone())?;
@@ -548,7 +521,7 @@ fn codebase_snapshot_delete_cleans_sidecar_indexes() -> Result<()> {
 
 #[test]
 fn codebase_snapshot_batch_delete_cleans_sidecar_indexes() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity_id(0x31);
     let repo_ref = repo_ref();
     let snapshot = snapshot("project.alpha", repo_ref.clone())?;
@@ -575,7 +548,7 @@ fn codebase_snapshot_batch_delete_cleans_sidecar_indexes() -> Result<()> {
 
 #[test]
 fn codebase_snapshot_code_artifact_repo_ref_overwrite_cleans_sidecar_indexes() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity_id(0x32);
     let repo_a = repo_ref();
     let repo_b = repo_ref_b();
@@ -610,7 +583,7 @@ fn codebase_snapshot_code_artifact_repo_ref_overwrite_cleans_sidecar_indexes() -
 
 #[test]
 fn codebase_filters_apply_to_search_and_context_pack() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let repo_a = repo_ref();
     let repo_b = repo_ref_b();
     let id_a = EntityId::now();
@@ -677,7 +650,7 @@ fn codebase_filters_apply_to_search_and_context_pack() -> Result<()> {
 #[test]
 fn local_repo_ingest_is_idempotent_and_mounts_files() -> Result<()> {
     let repo_dir = create_test_repo()?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
 
     let first = vault.ingest_local_repo_at_commit(
@@ -746,7 +719,7 @@ fn local_repo_ingest_calls_hash_match_provider_for_hosted_media_candidates() -> 
         media_bytes,
         "add media",
     )?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
     let provider = RecordingHashMatchProvider::default();
 
@@ -797,7 +770,7 @@ fn local_repo_ingest_preserves_known_match_metadata() -> Result<()> {
         media_bytes,
         "add known media",
     )?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
 
     let error = vault
@@ -831,7 +804,7 @@ fn local_repo_ingest_preserves_known_match_metadata() -> Result<()> {
 #[test]
 fn codebase_scope_key_clamps_world_set_retrieval() -> Result<()> {
     let repo_dir = create_test_repo()?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
     let ingest = vault.ingest_local_repo_at_commit(
         "project.alpha",
@@ -885,7 +858,7 @@ fn codebase_scope_key_clamps_world_set_retrieval() -> Result<()> {
 
 #[test]
 fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let repo_a = repo_ref();
     let repo_b = repo_ref_b();
     let id_a = entity_id(0x41);

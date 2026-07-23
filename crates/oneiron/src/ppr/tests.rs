@@ -2,32 +2,9 @@ use tempfile::tempdir;
 
 use super::*;
 use crate::batch::EdgeValueFields;
-use crate::{
-    EdgeActorClass, EdgeKind, EdgeProvenanceFlags, Error, HnswConfig, TimeRange, Vad, Vault,
-    VaultConfig,
-};
+use crate::{EdgeActorClass, EdgeKind, EdgeProvenanceFlags, Error, TimeRange, Vad, Vault};
 
-fn test_config() -> VaultConfig {
-    VaultConfig {
-        map_size: 16 * 1024 * 1024,
-        dimensions: 4,
-        fast_dims: None,
-        embedding_model: Some("test-model-v1".to_owned()),
-        max_readers: 16,
-        hnsw: HnswConfig {
-            m_max_0: 64,
-            ef_construction: 200,
-            ef_search: 128,
-        },
-        text_analyzer: crate::config::TextAnalyzerConfig::default(),
-        dict_search_paths: Vec::new(),
-        skip_text_index_manifest_check: false,
-        off_record_enabled: true,
-        off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
-    }
-}
-
-use crate::test_util::entity;
+use crate::test_util::{embedding_test_config, entity};
 
 fn score_for(scores: &[ScoredEntity], id: EntityId) -> f32 {
     scores
@@ -236,7 +213,7 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
 #[test]
 fn ppr_simple_chain_scores_b_over_c() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(1);
     let b = entity(2);
     let c = entity(3);
@@ -253,7 +230,7 @@ fn ppr_simple_chain_scores_b_over_c() -> Result<()> {
 #[test]
 fn ppr_weighted_edges_favor_heavier_neighbor() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(4);
     let b = entity(5);
     let c = entity(6);
@@ -270,7 +247,7 @@ fn ppr_weighted_edges_favor_heavier_neighbor() -> Result<()> {
 #[test]
 fn ppr_opposes_weight_zero_blocks_propagation() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(7);
     let b = entity(8);
 
@@ -300,7 +277,7 @@ fn ppr_opposes_weight_zero_blocks_propagation() -> Result<()> {
 #[test]
 fn ppr_part_of_hop_limit_allows_second_hop_blocks_third() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(9);
     let b = entity(10);
     let c = entity(11);
@@ -390,7 +367,7 @@ fn lambda_table_matches_contract_literals() {
 #[test]
 fn child_of_and_assigned_to_are_never_traversed() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let child = entity(70);
     let parent = entity(0x67);
     let task = entity(72);
@@ -421,7 +398,7 @@ fn child_of_and_assigned_to_are_never_traversed() -> Result<()> {
 #[test]
 fn opposes_blocks_at_kind_level_with_nonzero_stored_weight() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(74);
     let b = entity(75);
 
@@ -450,7 +427,7 @@ fn opposes_blocks_at_kind_level_with_nonzero_stored_weight() -> Result<()> {
 #[test]
 fn layer1_normalization_matches_derived_values() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(76);
     let b = entity(77);
     let c = entity(78);
@@ -487,7 +464,7 @@ fn layer1_normalization_matches_derived_values() -> Result<()> {
 #[test]
 fn reverse_hops_use_symmetric_s_in_normalizer() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(120);
     let b = entity(121);
     let c = entity(122);
@@ -518,7 +495,7 @@ fn reverse_hops_use_symmetric_s_in_normalizer() -> Result<()> {
 #[test]
 fn world_model_lambda_budgets_bind_in_propagation() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let cases: [(EdgeKind, f32, f32); 5] = [
         (EdgeKind::EmployedBy, 0.8, 0.085),
         (EdgeKind::HasFacet, 0.7, 0.0425),
@@ -555,7 +532,7 @@ fn world_model_lambda_budgets_bind_in_propagation() -> Result<()> {
 #[test]
 fn retracted_edges_skip_propagation_and_strength() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(100);
     let b = entity(101);
     let c = entity(102);
@@ -609,7 +586,7 @@ fn retracted_edges_skip_propagation_and_strength() -> Result<()> {
 #[test]
 fn non_retracted_statuses_propagate_at_full_weight() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let statuses = [
         EdgeConfirmationStatus::Proposed,
         EdgeConfirmationStatus::Confirmed,
@@ -665,7 +642,7 @@ fn non_retracted_statuses_propagate_at_full_weight() -> Result<()> {
 #[test]
 fn same_source_mixed_statuses_share_normalizer_at_full_weight() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(130);
     let targets = [
         (entity(131), EdgeConfirmationStatus::Proposed),
@@ -707,7 +684,7 @@ fn same_source_mixed_statuses_share_normalizer_at_full_weight() -> Result<()> {
 #[test]
 fn ppr_bidirectional_scan_reaches_inbound_neighbors() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(13);
     let b = entity(14);
     let c = entity(15);
@@ -724,7 +701,7 @@ fn ppr_bidirectional_scan_reaches_inbound_neighbors() -> Result<()> {
 #[test]
 fn ppr_query_uses_cache_when_valid() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(16);
     let b = entity(0x60);
 
@@ -743,7 +720,7 @@ fn ppr_query_uses_cache_when_valid() -> Result<()> {
 #[test]
 fn legacy_cache_row_with_state_magic_entity_id_stays_servable() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let seed = entity(18);
     let magic_id = state_magic_prefixed_entity();
     let sentinel = [ScoredEntity {
@@ -769,7 +746,7 @@ fn legacy_cache_row_with_state_magic_entity_id_stays_servable() -> Result<()> {
 #[test]
 fn ppr_query_rejects_state_cache_hit_with_mismatched_completed_depth() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let seed = entity(18);
     let state = PprCacheState {
         completed_depth: 1,
@@ -791,7 +768,7 @@ fn ppr_query_rejects_state_cache_hit_with_mismatched_completed_depth() -> Result
 #[test]
 fn ppr_cache_is_marked_stale_and_refreshed_after_edge_write() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(18);
     let b = entity(19);
     let c = entity(20);
@@ -826,7 +803,7 @@ fn ppr_cache_is_marked_stale_and_refreshed_after_edge_write() -> Result<()> {
 #[test]
 fn ppr_cache_state_tracks_frontier_and_expanded_dependencies() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(70);
     let b = entity(0x67);
     let c = entity(72);
@@ -852,7 +829,7 @@ fn ppr_cache_state_tracks_frontier_and_expanded_dependencies() -> Result<()> {
 #[test]
 fn ppr_query_resumes_from_cached_frontier_and_matches_fresh_compute() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(73);
     let b = entity(74);
     let c = entity(75);
@@ -915,7 +892,7 @@ fn ppr_query_resumes_from_cached_frontier_and_matches_fresh_compute() -> Result<
 #[test]
 fn ppr_query_can_resume_from_expired_current_graph_state() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(79);
     let b = entity(80);
     let c = entity(81);
@@ -955,7 +932,7 @@ fn ppr_query_can_resume_from_expired_current_graph_state() -> Result<()> {
 #[test]
 fn ppr_cache_invalidated_on_entity_delete() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(20);
     let b = entity(21);
     let c = entity(22);
@@ -986,7 +963,7 @@ fn ppr_cache_invalidated_on_entity_delete() -> Result<()> {
 #[test]
 fn ppr_cache_key_changes_with_depth_and_alpha() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(23);
     let b = entity(24);
 
@@ -1009,7 +986,7 @@ fn ppr_cache_key_changes_with_depth_and_alpha() -> Result<()> {
 #[test]
 fn batch_graph_mutations_increment_version_once() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(25);
     let b = entity(26);
     let c = entity(27);
@@ -1029,7 +1006,7 @@ fn batch_graph_mutations_increment_version_once() -> Result<()> {
 #[test]
 fn batch_noop_delete_edge_does_not_bump_version_or_stale_cache() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(28);
     let b = entity(29);
     let missing = entity(30);
@@ -1061,7 +1038,7 @@ fn batch_noop_delete_edge_does_not_bump_version_or_stale_cache() -> Result<()> {
 #[test]
 fn delete_entity_increments_graph_version_once_when_edges_removed() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(31);
     let b = entity(32);
     let c = entity(33);
@@ -1084,7 +1061,7 @@ fn delete_entity_increments_graph_version_once_when_edges_removed() -> Result<()
 #[test]
 fn direct_delete_edge_increments_graph_version_and_stales_cache() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(34);
     let b = entity(35);
     let tr = TimeRange { start: 1, end: 1 };
@@ -1114,7 +1091,7 @@ fn direct_delete_edge_increments_graph_version_and_stales_cache() -> Result<()> 
 #[test]
 fn batch_delete_edge_cleans_inbound_orphans_without_staling_cache() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(50);
     let b = entity(51);
     let tr = TimeRange { start: 1, end: 1 };
@@ -1172,7 +1149,7 @@ fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
 
     for (case_name, path, byte) in cases {
         let temp_dir = tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
         let a = entity(byte);
         let tr = TimeRange { start: 1, end: 1 };
 
@@ -1220,7 +1197,7 @@ fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
 #[test]
 fn cleanup_conservatively_evicts_cache_for_missing_dep_entities() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(38);
     let b = entity(39);
     let missing = entity(40);
@@ -1256,7 +1233,7 @@ fn cleanup_conservatively_evicts_cache_for_missing_dep_entities() -> Result<()> 
 #[test]
 fn cleanup_ppr_cache_removes_legacy_rows() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(37);
     let b = entity(38);
     let tr = TimeRange { start: 1, end: 1 };
@@ -1299,7 +1276,7 @@ fn cleanup_ppr_cache_removes_legacy_rows() -> Result<()> {
 #[test]
 fn cleanup_ppr_cache_prunes_malformed_dep_rows() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(52);
     let b = entity(53);
     let tr = TimeRange { start: 1, end: 1 };
@@ -1342,7 +1319,7 @@ fn cleanup_ppr_cache_prunes_malformed_dep_rows() -> Result<()> {
 #[test]
 fn cleanup_ppr_cache_evicts_cache_when_last_dep_row_is_malformed() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(54);
     let b = entity(55);
     let tr = TimeRange { start: 1, end: 1 };
@@ -1386,7 +1363,7 @@ fn cleanup_ppr_cache_evicts_cache_when_last_dep_row_is_malformed() -> Result<()>
 #[test]
 fn invalidate_ppr_caches_prunes_malformed_cache_rows() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(60);
     let b = entity(61);
     let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
@@ -1415,7 +1392,7 @@ fn invalidate_ppr_caches_prunes_malformed_cache_rows() -> Result<()> {
 #[test]
 fn edge_invalidation_self_heals_legacy_dep_rows() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(39);
     let b = entity(40);
     let legacy_hash = legacy_cache_key(0xCD);
@@ -1439,7 +1416,7 @@ fn edge_invalidation_self_heals_legacy_dep_rows() -> Result<()> {
 #[test]
 fn cleanup_keeps_graph_only_seed_deps_and_invalidation_still_works() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(41);
     let b = entity(42);
     let c = entity(43);
@@ -1469,7 +1446,7 @@ fn cleanup_keeps_graph_only_seed_deps_and_invalidation_still_works() -> Result<(
 #[test]
 fn cleanup_evicts_cache_for_dead_seed_without_live_graph_presence() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(44);
     let b = entity(45);
 
@@ -1496,7 +1473,7 @@ fn cleanup_evicts_cache_for_dead_seed_without_live_graph_presence() -> Result<()
 #[test]
 fn ppr_query_recomputes_cache_after_graph_version_change() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(46);
     let b = entity(47);
 
@@ -1528,7 +1505,7 @@ fn ppr_query_recomputes_cache_after_graph_version_change() -> Result<()> {
 #[test]
 fn ppr_query_recomputes_after_downstream_graph_change() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(57);
     let b = entity(58);
     let c = entity(59);
@@ -1547,7 +1524,7 @@ fn ppr_query_recomputes_after_downstream_graph_change() -> Result<()> {
 #[test]
 fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(48);
     let b = entity(49);
     let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
@@ -1585,7 +1562,7 @@ fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()
 #[test]
 fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let seed = entity(83);
     let stale_dep = entity(84);
     let seed_hash = hash_seeds(&[seed], 3, 0.15, SeedWeighting::Uniform);
@@ -1642,7 +1619,7 @@ fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
 #[test]
 fn ppr_query_in_txn_uses_borrowed_snapshot_without_caching_stale_results() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(60);
     let b = entity(61);
     let c = entity(62);
@@ -1698,7 +1675,7 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
 
     for (case_name, site, a_byte, b_byte, expected_msg) in cases {
         let temp_dir = tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
         let a = entity(a_byte);
         let b = entity(b_byte);
 
@@ -1762,7 +1739,7 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
 #[test]
 fn seed_specificity_weights_match_derived_values() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(1);
     let b = entity(2);
     let c = entity(3);
@@ -1820,7 +1797,7 @@ fn seed_specificity_weights_match_derived_values() -> Result<()> {
 #[test]
 fn single_seed_specificity_matches_uniform() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(1);
     let passages = [entity(10), entity(11), entity(12)];
 
@@ -1869,7 +1846,7 @@ fn single_seed_specificity_matches_uniform() -> Result<()> {
 #[test]
 fn expand_ppr_pipeline_seeds_stay_uniform() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(1);
     let b = entity(2);
     let passages = [entity(10), entity(11), entity(12)];
@@ -1937,7 +1914,7 @@ fn expand_ppr_pipeline_seeds_stay_uniform() -> Result<()> {
 #[test]
 fn search_ppr_pipeline_applies_specificity_seeding() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(1);
     let b = entity(2);
     let passages = [entity(10), entity(11), entity(12)];
@@ -2003,7 +1980,7 @@ fn search_ppr_pipeline_applies_specificity_seeding() -> Result<()> {
 #[test]
 fn pre_bump_formula_v2_rows_are_never_served() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(1);
     let b = entity(2);
 
@@ -2066,7 +2043,7 @@ fn pre_bump_formula_v2_rows_are_never_served() -> Result<()> {
 #[test]
 fn recency_tier_boundaries_match_contract() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let now: u64 = 20_000 * 86_400;
     let day: u64 = 86_400;
     let tr = TimeRange { start: 1, end: 1 };
@@ -2133,7 +2110,7 @@ fn recency_tier_boundaries_match_contract() -> Result<()> {
 #[test]
 fn cache_read_gate_applies_recency_tiered_ttl() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let now = crate::unix_seconds_now();
     let day: u64 = 86_400;
     let hour: u64 = 3_600;
@@ -2231,7 +2208,7 @@ fn cache_read_gate_applies_recency_tiered_ttl() -> Result<()> {
 #[test]
 fn cleanup_max_age_bound_is_consistent_with_tiered_ttl() -> Result<()> {
     let temp_dir = tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let now = crate::unix_seconds_now();
     let day: u64 = 86_400;
     let hour: u64 = 3_600;

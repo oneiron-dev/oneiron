@@ -1,21 +1,10 @@
 use super::*;
-use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::error::ErrorKind;
 use crate::registry::{
     ENTITY_TYPE_PERSON, EntityClassification, TypeByteBand, entity_type_registry_entry,
     short_id_prefix,
 };
-
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config.text_analyzer = TextAnalyzerConfig::default();
-    config
-}
+use crate::test_util::embedding_test_config;
 
 fn provenance(seed: u8) -> Value {
     Value::Map(vec![
@@ -110,7 +99,7 @@ fn generated_skill_record_round_trips_version_provenance_and_dependencies() -> R
 
 #[test]
 fn human_authored_skill_record_round_trips_through_vault_helpers() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let record = human_skill("2026.07.01");
 
@@ -129,7 +118,7 @@ fn human_authored_skill_record_round_trips_through_vault_helpers() -> Result<()>
 
 #[test]
 fn skill_update_path_validates_provenance_and_preserves_prior_body() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let prior = human_skill("1.0.0");
     vault.put_skill_record(&id, &prior, TimeRange { start: 10, end: 10 }, 11)?;
@@ -154,7 +143,7 @@ fn skill_update_path_validates_provenance_and_preserves_prior_body() -> Result<(
 
 #[test]
 fn raw_skill_put_update_runs_same_provenance_gate() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let prior = generated_skill("1.0.0");
     vault.put_skill_record(&id, &prior, TimeRange { start: 10, end: 10 }, 11)?;
@@ -179,7 +168,7 @@ fn raw_skill_put_update_runs_same_provenance_gate() -> Result<()> {
 
 #[test]
 fn raw_skill_put_upgrades_legacy_opaque_skill_body() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let occurred = TimeRange { start: 10, end: 10 };
     let legacy_body = b"legacy opaque skill body";
@@ -209,7 +198,7 @@ fn raw_skill_put_upgrades_legacy_opaque_skill_body() -> Result<()> {
 
 #[test]
 fn raw_skill_put_rejects_malformed_structured_prior_skill_body() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let occurred = TimeRange { start: 10, end: 10 };
     let malformed_structured_body = skill_map(vec![
@@ -382,7 +371,7 @@ fn skill_lifecycle_strings_round_trip_and_retracted_never_parses() {
 
 #[test]
 fn new_skill_births_must_be_candidate_via_typed_door() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
 
     let mut born_active = human_skill("1.0.0");
@@ -406,7 +395,7 @@ fn new_skill_births_must_be_candidate_via_typed_door() -> Result<()> {
 
 #[test]
 fn stale_fold_one_1447_is_reversible_and_never_canon() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let candidate = human_skill("1.0.0");
     vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
@@ -432,7 +421,7 @@ fn stale_fold_one_1447_is_reversible_and_never_canon() -> Result<()> {
 
 #[test]
 fn quarantine_is_human_ratified_never_automatic_and_revivable() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let candidate = human_skill("1.0.0");
     vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
@@ -495,7 +484,7 @@ fn quarantine_is_human_ratified_never_automatic_and_revivable() -> Result<()> {
 
 #[test]
 fn superseded_revision_is_frozen_and_never_resurrects() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let candidate = human_skill("1.0.0");
     vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
@@ -550,7 +539,7 @@ fn superseded_revision_is_frozen_and_never_resurrects() -> Result<()> {
 
 #[test]
 fn supersede_door_flips_old_revision_and_writes_succession_edge() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let old_id = EntityId::now();
     let new_id = EntityId::now();
     let old_candidate = human_skill("1.0.0");
@@ -645,7 +634,7 @@ fn supersede_door_flips_old_revision_and_writes_succession_edge() -> Result<()> 
 
 #[test]
 fn fork_creates_new_entity_with_lineage_edge_and_candidate_birth() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let parent_id = EntityId::now();
     let fork_id = EntityId::now();
     let parent =
@@ -701,7 +690,7 @@ fn fork_creates_new_entity_with_lineage_edge_and_candidate_birth() -> Result<()>
 
 #[test]
 fn fork_rejects_id_collisions_and_parent_shadowing() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let parent_id = EntityId::now();
     let parent = imported_skill("1.0.0");
     vault.put_skill_record(&parent_id, &parent, TimeRange { start: 10, end: 10 }, 11)?;
@@ -746,7 +735,7 @@ fn fork_rejects_id_collisions_and_parent_shadowing() -> Result<()> {
 
 #[test]
 fn forked_from_lineage_is_frozen_on_update() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let parent_id = EntityId::now();
     let fork_id = EntityId::now();
     vault.put_skill_record(
@@ -777,7 +766,7 @@ fn forked_from_lineage_is_frozen_on_update() -> Result<()> {
 
 #[test]
 fn imported_skill_content_never_changes_in_place_any_approval() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     let candidate = imported_skill("1.0.0");
     vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
@@ -1001,7 +990,7 @@ fn skill_record_decoder_rejects_unpinned_dependency_shape() {
 
 #[test]
 fn local_raw_and_batch_creates_must_be_born_candidate() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let mut born_active = human_skill("1.0.0");
     born_active.lifecycle_status = SkillLifecycle::Active;
     let body = encode_skill_record(&born_active)?;
@@ -1042,7 +1031,7 @@ fn local_raw_and_batch_creates_must_be_born_candidate() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn replicated_create_keeps_writing_already_lifecycled_records() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let mut born_active = human_skill("1.0.0");
     born_active.lifecycle_status = SkillLifecycle::Active;
     // Sync remat carries records admitted (and possibly forked) on another
@@ -1067,7 +1056,7 @@ fn replicated_create_keeps_writing_already_lifecycled_records() -> Result<()> {
 
 #[test]
 fn forged_fork_lineage_rejected_at_local_create() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
 
     // Nonexistent parent.
     let id = EntityId::now();

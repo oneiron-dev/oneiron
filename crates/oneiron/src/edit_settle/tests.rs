@@ -7,7 +7,6 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::anchored_annotation::Anchor;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
-use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditProposal, MutationMode, OfficeFormat,
@@ -16,22 +15,12 @@ use crate::edit_roundtrip::{
 use crate::error::Error;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_PERSON;
+use crate::test_util::embedding_test_config;
 use crate::write_envelope::WriteActor;
 
 /// The v1 bytes `put_workbook` uploads — the base every hand-built proposal is
 /// pinned to (a proposal is produced FROM the head it edits).
 const WORKBOOK_V1_BYTES: &[u8] = b"workbook bytes v1";
-
-fn test_config() -> VaultConfig {
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.max_readers = 16;
-    config.hnsw = HnswConfig::default();
-    config.text_analyzer = TextAnalyzerConfig::default();
-    config
-}
 
 fn test_time(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
@@ -124,7 +113,7 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
 // select makes exactly its bytes the new head version.
 #[test]
 fn unsettled_proposal_is_invisible_until_select() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact = put_workbook(&vault, actor, 10);
 
@@ -160,7 +149,7 @@ fn unsettled_proposal_is_invisible_until_select() -> Result<()> {
 // version.
 #[test]
 fn double_settle_is_refused_across_all_paths() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
 
     // select then select.
@@ -217,7 +206,7 @@ fn double_settle_is_refused_across_all_paths() -> Result<()> {
 // receipt records the proposal ref.
 #[test]
 fn both_settle_paths_are_receipted_and_the_door_resolves() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact = put_workbook(&vault, actor, 10);
     let thread = vault.open_annotation_thread(
@@ -342,7 +331,7 @@ fn both_settle_paths_are_receipted_and_the_door_resolves() -> Result<()> {
 // drifts and stays pinned to its origin version.
 #[test]
 fn select_replays_manifest_anchors_onto_threads() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact = put_workbook(&vault, actor, 10);
     let moved = vault.open_annotation_thread(
@@ -413,7 +402,7 @@ fn select_replays_manifest_anchors_onto_threads() -> Result<()> {
 // closed (committing nothing) while owner consent settles the same proposal.
 #[test]
 fn standing_grant_consent_is_seam_stubbed() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact = put_workbook(&vault, actor, 10);
 
@@ -503,7 +492,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
 // nothing is appended and no ledger row is written.
 #[test]
 fn stale_base_select_is_refused_atomically() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact = put_workbook(&vault, actor, 10);
 
@@ -547,7 +536,7 @@ fn stale_base_select_is_refused_atomically() -> Result<()> {
 // lands no durable ledger row.
 #[test]
 fn discard_on_nonexistent_artifact_is_refused() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let bogus = EntityId::now(); // never created as a BLOB_ARTIFACT
     let prop = proposal("run:bogus", b"v2 bytes", Vec::new());
@@ -568,7 +557,7 @@ fn discard_on_nonexistent_artifact_is_refused() -> Result<()> {
 // before persisting a ledger row — a blank ref is refused.
 #[test]
 fn discard_validates_proposal_ref() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact = put_workbook(&vault, actor, 10);
     let prop = proposal("   ", b"v2 bytes", Vec::new());

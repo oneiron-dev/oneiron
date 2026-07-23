@@ -4,6 +4,7 @@ use crate::attempt_queue::{ATTEMPT_RECORD_VERSION, AttemptQueue, EnqueueAttempt,
 use crate::entity_id::EntityId;
 use crate::receipt::MAX_RECEIPT_QUERY_SCAN;
 use crate::temporal::TimeRange;
+use crate::test_util::assert_secret_scan_rejected;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 
@@ -174,22 +175,6 @@ fn record_click_outcome(vault: &Vault, run_id: RetrievalRunId) -> Result<()> {
         accepted: Some(true),
         metadata: BTreeMap::new(),
     })
-}
-
-fn assert_secret_scan_rejected(error: Error, expected_reason: &'static str) {
-    match error {
-        Error::GateWriteRejected {
-            outcome,
-            reason_codes,
-        } => {
-            assert_eq!(outcome, "deny");
-            assert_eq!(
-                reason_codes.as_slice(),
-                &["gate.secret_scan.detected", expected_reason]
-            );
-        }
-        other => panic!("expected GateWriteRejected, got {other:?}"),
-    }
 }
 
 fn synthetic_gate_decision_id(prefix: u8, value: u64) -> GateDecisionId {

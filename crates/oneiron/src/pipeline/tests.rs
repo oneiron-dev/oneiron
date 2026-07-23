@@ -1,32 +1,11 @@
 use core::assert_matches;
 use std::collections::{BTreeMap, HashMap};
 
-use crate::config::{HnswConfig, VaultConfig};
-
 use super::*;
-
-fn test_config() -> VaultConfig {
-    VaultConfig {
-        map_size: 16 * 1024 * 1024,
-        dimensions: 4,
-        fast_dims: None,
-        embedding_model: Some("test-model-v1".to_owned()),
-        max_readers: 16,
-        hnsw: HnswConfig {
-            m_max_0: 64,
-            ef_construction: 200,
-            ef_search: 128,
-        },
-        text_analyzer: crate::config::TextAnalyzerConfig::default(),
-        dict_search_paths: Vec::new(),
-        skip_text_index_manifest_check: false,
-        off_record_enabled: true,
-        off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
-    }
-}
+use crate::test_util::embedding_test_config;
 
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(test_config())
+    crate::test_util::open_test_vault_with(embedding_test_config())
 }
 
 fn entity_id(byte: u8) -> EntityId {
@@ -1818,11 +1797,11 @@ fn pipeline_search_fails_closed_on_untrusted_text_index() -> Result<()> {
     let a = entity_id(7);
 
     {
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
         put_text(&vault, a, "alpha world")?;
     }
 
-    let mut cfg = test_config();
+    let mut cfg = embedding_test_config();
     cfg.skip_text_index_manifest_check = true;
     let vault = Vault::open(temp_dir.path(), cfg)?;
     let err = vault
@@ -5726,7 +5705,7 @@ fn rerank_claim_candidates_carry_decoded_bodies() -> Result<()> {
 
 #[test]
 fn funnel_fork_hash_distinguishes_fast_dims_and_skip_rescore() -> Result<()> {
-    let mut funnel_config = test_config();
+    let mut funnel_config = embedding_test_config();
     funnel_config.fast_dims = Some(2);
     let (_dir, vault) = crate::test_util::open_test_vault_with(funnel_config);
     let id = entity_id(0xEA);
