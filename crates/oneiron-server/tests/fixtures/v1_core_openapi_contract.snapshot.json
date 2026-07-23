@@ -26,7 +26,6 @@
               "4002",
               "4003",
               "4004",
-              "4005",
               "4006"
             ],
             "type": "string"
@@ -415,18 +414,6 @@
                       "integer",
                       "null"
                     ]
-                  }
-                },
-                "required": [
-                  "code"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "code": {
-                    "const": "4005"
                   }
                 },
                 "required": [
@@ -919,20 +906,6 @@
             "properties": {
               "code": {
                 "enum": [
-                  "4005"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "code"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "code": {
-                "enum": [
                   "4006"
                 ],
                 "type": "string"
@@ -987,7 +960,6 @@
                   "4002",
                   "4003",
                   "4004",
-                  "4005",
                   "4006"
                 ],
                 "type": "string"
@@ -1376,18 +1348,6 @@
                           "integer",
                           "null"
                         ]
-                      }
-                    },
-                    "required": [
-                      "code"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "additionalProperties": false,
-                    "properties": {
-                      "code": {
-                        "const": "4005"
                       }
                     },
                     "required": [
@@ -3701,7 +3661,6 @@
           "4002",
           "4003",
           "4004",
-          "4005",
           "4006"
         ],
         "type": "string"

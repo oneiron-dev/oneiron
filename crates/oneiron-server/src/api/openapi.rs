@@ -384,114 +384,6 @@ pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {
     );
     set_schema_property_description(
         spec,
-        "ContextPackRequest",
-        "query",
-        "Optional text retrieval seed for context-pack assembly.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "query_vector",
-        "Optional embedding vector retrieval seed.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "limit",
-        "Maximum number of candidate entities to retrieve.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "maxItemTokens",
-        "Per-item token cap for context-pack serialization.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "hydrate",
-        "Whether to include hydrated fields.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "include_edges",
-        "Whether to include edge records in hydrated entities.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "edge_hop",
-        "Edge expansion depth for neighbor hydration.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "max_neighbors",
-        "Maximum neighbors to hydrate during edge expansion.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "include_vectors",
-        "Whether to include stored vectors when present.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "view",
-        "Field profile for hydrated fields.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "depth",
-        "Optional nested edge-depth controls for context-pack assembly.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "policy",
-        "Optional nested ranking and projection policy controls.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "time",
-        "Optional time-window filters for context-pack retrieval.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "budget",
-        "Optional retrieval and serialization budget controls.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "context_version",
-        "Optional context format version. Use v4 to request Eiri Context v4 fields.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "memory_board",
-        "Optional Eiri Context v4 memory-board controls.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "session_rag",
-        "Optional Eiri Context v4 session RAG controls.",
-    );
-    set_schema_property_description(
-        spec,
-        "ContextPackRequest",
-        "companion",
-        "Optional companion scope for Eiri Context v4 assembly.",
-    );
-    set_schema_property_description(
-        spec,
         "CoreListQuery",
         "view",
         "Optional projection view for returned entities. Defaults to summary.",
@@ -964,7 +856,6 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/api/search/text", "get"),
         ("/api/entity/{id}", "get"),
         ("/api/edges/{id}", "get"),
-        ("/api/context-pack", "post"),
         ("/v1/consumer/usage", "get"),
         ("/v1/consumer/usage/details", "get"),
         ("/v1/consumer/top-up", "post"),

@@ -169,15 +169,6 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "what is connected to this entity?"
 - safety: Read-only; defaults to compact edge summary.
 
-#### context-pack - `POST /api/context-pack`
-
-- when-to-use: Ask the server to assemble retrieval context for an agent turn from a query, query vector, depth/policy/time controls, and budget controls.
-- trigger phrases:
-  - "build context for this turn"
-  - "assemble memory context"
-  - "get a context pack"
-- safety: Read-only retrieval intent with a POST body; emits retrieval telemetry evidence but does not mutate memory contents.
-
 #### turns-annotate - `GET/POST /v1/core/turns/annotate`
 
 - when-to-use: Write or read VAD metadata for a stored turn, or for a message within a turn, when the caller already knows the relevant entity id.
@@ -302,7 +293,7 @@ Response fields:
 
 - `status`: `"ok"` when the server process is alive.
 - `service`: `"oneiron-server"`.
-- `capabilities.capabilities`: capability identifiers such as `search.vector`, `search.text`, `entity.get`, `edges.get`, `context_pack`, and `lease.revoke`.
+- `capabilities.capabilities`: capability identifiers such as `search.vector`, `search.text`, `entity.get`, `edges.get`, `core.context_pack`, and `lease.revoke`.
 - `capabilities.modes`: supported mode names: `flash`, `thinking`, `pro`, `ultra`.
 - `formats`: `json`, `yaml`, `toon`, `markdown`, `plaintext`.
 - `rate_limit`: server-side rate-limit metadata for HTTP and websocket surfaces.
@@ -1057,7 +1048,6 @@ Closed code catalog currently emitted by server API code:
 - `4002`
 - `4003`
 - `4004`
-- `4005`
 - `4006`
 
 ### Recovery Rules

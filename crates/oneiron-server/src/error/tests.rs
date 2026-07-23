@@ -54,7 +54,6 @@ fn error_code_round_trips_catalog_literals() {
         "4002",
         "4003",
         "4004",
-        "4005",
     ] {
         assert!(
             literals.contains(&required),
