@@ -28,7 +28,7 @@ mod sync_harness;
 use core::assert_matches;
 use std::sync::Arc;
 
-use loro::{ExportMode, LoroDoc};
+use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::Vad;
 use oneiron::edge::EdgeKind;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
@@ -37,14 +37,27 @@ use oneiron::sync::manager::WindowManager;
 use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::{WindowKey, drain_reassert_markers, pending_reassert_windows, transport};
 use oneiron::temporal::TimeRange;
-use oneiron::{DeleteReason, EntityId, TOMBSTONE_VALUE_V2_LEN, Vault, decode_tombstone_value};
-use sync_harness::{make_entity_blob, map_get_bytes, test_config};
+use oneiron::{
+    DeleteReason, EntityId, HnswConfig, TOMBSTONE_VALUE_V2_LEN, Vault, VaultConfig,
+    decode_tombstone_value,
+};
+use sync_harness::make_entity_blob;
 use tokio::sync::mpsc::UnboundedReceiver;
 use xxhash_rust::xxh3::xxh3_64;
 
 /// 2026-02-15 ≈ unix 1_771_027_200 ⇒ window "2026-02".
 const LEARNED_AT: u64 = 1_771_027_200;
 const WINDOW: &str = "2026-02";
+
+fn test_config() -> VaultConfig {
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = None;
+    cfg.max_readers = 16;
+    cfg.hnsw = HnswConfig::default();
+    cfg
+}
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let temp = tempfile::tempdir().unwrap();
@@ -85,6 +98,13 @@ fn soft_value(stamp: u8) -> Vec<u8> {
     v.extend_from_slice(&1_771_200_000_u64.to_le_bytes());
     v.extend_from_slice(&[stamp; 16]);
     v
+}
+
+fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+    match map.get(key)? {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
+        _ => None,
+    }
 }
 
 fn dt_key(id: &EntityId) -> String {

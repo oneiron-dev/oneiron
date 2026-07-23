@@ -20,7 +20,7 @@ mod sync_harness;
 
 use std::sync::Arc;
 
-use loro::LoroMap;
+use loro::{LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::{Vad, VadAnnotation, VadAnnotationSource};
 use oneiron::edge::EdgeKind;
 use oneiron::registry::ENTITY_TYPE_TURN;
@@ -31,16 +31,38 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::temporal::TimeRange;
-use oneiron::{EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, EntityId, Vault};
-use sync_harness::{
-    clear_policy_manifests, make_entity_blob, map_get_bytes, map_insert_bytes, test_config,
+use oneiron::{
+    EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, EntityId, HnswConfig, Vault,
+    VaultConfig,
 };
+use sync_harness::{clear_policy_manifests, make_entity_blob};
 
 /// `learned_at` inside the 2026-03 window used throughout.
 const LEARNED_AT: u64 = 1_772_400_000;
 
+fn test_config() -> VaultConfig {
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = None;
+    cfg.max_readers = 16;
+    cfg.hnsw = HnswConfig::default();
+    cfg
+}
+
 fn window_key() -> WindowKey {
     WindowKey::new("2026-03")
+}
+
+fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) {
+    map.insert(key, value).unwrap();
+}
+
+fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+    match map.get(key)? {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
+        _ => None,
+    }
 }
 
 fn map_keys(map: &LoroMap) -> Vec<String> {

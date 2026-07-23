@@ -24,7 +24,7 @@ mod sync_harness;
 use core::assert_matches;
 use std::sync::Arc;
 
-use loro::{ExportMode, LoroDoc, VersionVector};
+use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
 use oneiron::sync::manager::WindowManager;
@@ -34,9 +34,19 @@ use oneiron::sync::transport::{
     self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, TransportError, window_sub_tags,
 };
 use oneiron::sync::types::WindowKey;
-use oneiron::{EntityId, Vault};
-use sync_harness::{make_entity_blob, map_get_bytes, test_config};
+use oneiron::{EntityId, HnswConfig, Vault, VaultConfig};
+use sync_harness::make_entity_blob;
 use tokio::sync::mpsc::UnboundedReceiver;
+
+fn test_config() -> VaultConfig {
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = None;
+    cfg.max_readers = 16;
+    cfg.hnsw = HnswConfig::default();
+    cfg
+}
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let temp = tempfile::tempdir().unwrap();
@@ -54,6 +64,13 @@ fn make_manager(vault: &Arc<Vault>) -> Arc<WindowManager> {
 
 fn make_client(manager: &Arc<WindowManager>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
     SyncClient::new(Arc::clone(manager), SyncClientConfig::default()).unwrap()
+}
+
+fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+    match map.get(key)? {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
+        _ => None,
+    }
 }
 
 /// 2026-01-15 00:00:00 UTC — inside window 2026-01, OUTSIDE 2026-03. Tests

@@ -26,9 +26,20 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::{
     EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceClaimBody,
-    EdgeProvenanceFlags, EdgeRef, EntityId, SupersessionStatus, TimeRange, Vad, Vault,
+    EdgeProvenanceFlags, EdgeRef, EntityId, HnswConfig, SupersessionStatus, TimeRange, Vad, Vault,
+    VaultConfig,
 };
-use sync_harness::{clear_policy_manifests, test_config};
+use sync_harness::clear_policy_manifests;
+
+fn test_config() -> VaultConfig {
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = None;
+    cfg.max_readers = 16;
+    cfg.hnsw = HnswConfig::default();
+    cfg
+}
 
 fn edge_info(edges: &[EdgeInfo], kind: EdgeKind, target: &EntityId) -> EdgeInfo {
     edges

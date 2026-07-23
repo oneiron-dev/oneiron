@@ -22,29 +22,49 @@ mod sync_harness;
 
 use std::sync::Arc;
 
-use loro::{ExportMode, LoroDoc};
+use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags};
 use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
+use oneiron::temporal::TimeRange;
 use oneiron::{
-    DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, SupersessionStatus,
-    TOMBSTONE_VALUE_V2_LEN, Vault,
+    DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
+    TOMBSTONE_VALUE_V2_LEN, Vault, VaultConfig,
 };
-use sync_harness::{
-    clear_policy_manifests, make_entity_blob, map_get_bytes, test_config_with_embedding, time_range,
-};
+use sync_harness::{clear_policy_manifests, make_entity_blob};
 
 /// 2026-02-15 ≈ unix 1_771_027_200 ⇒ window "2026-02".
 const LEARNED_AT: u64 = 1_771_027_200;
 const WINDOW: &str = "2026-02";
 
+fn test_config() -> VaultConfig {
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = Some("test-model-v1".to_owned());
+    cfg.max_readers = 16;
+    cfg.hnsw = HnswConfig::default();
+    cfg
+}
+
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), test_config_with_embedding()).unwrap());
+    let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
     clear_policy_manifests(&vault);
     (dir, vault)
+}
+
+fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+    match map.get(key)? {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
+        _ => None,
+    }
+}
+
+fn time_range(ts: u64) -> TimeRange {
+    TimeRange { start: ts, end: ts }
 }
 
 /// Builds a v2 tombstone wire value from LITERAL parts — these bytes are
