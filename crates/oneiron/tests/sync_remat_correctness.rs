@@ -12,17 +12,18 @@
 //! * contracts.ts `deleteReasons.user_delete`: "Tombstone revision (empty
 //!   content); keep the message shell".
 //!
-//! Helpers are intentionally self-contained (no shared sync test harness —
-//! that is M4-14).
+//! Shared fixtures (make_entity_blob, clear_policy_manifests) live in tests/sync_harness (ONE-1136 / M4-14).
 
 #![cfg(feature = "sync")]
+
+mod sync_harness;
 
 use std::sync::Arc;
 
 use loro::{LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::{Vad, VadAnnotation, VadAnnotationSource};
 use oneiron::edge::EdgeKind;
-use oneiron::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TURN};
+use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::sync::bridge::{
     Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
 };
@@ -34,6 +35,7 @@ use oneiron::{
     EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, EntityId, HnswConfig, Vault,
     VaultConfig,
 };
+use sync_harness::{clear_policy_manifests, make_entity_blob};
 
 /// `learned_at` inside the 2026-03 window used throughout.
 const LEARNED_AT: u64 = 1_772_400_000;
@@ -50,29 +52,6 @@ fn test_config() -> VaultConfig {
 
 fn window_key() -> WindowKey {
     WindowKey::new("2026-03")
-}
-
-fn clear_policy_manifests(vault: &Vault) {
-    // The default policy manifest is local engine state and is skipped by
-    // reverse rematerialization, so fixtures must not delete it publicly.
-    assert!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("count policy manifests")
-            <= 1
-    );
-}
-
-/// Builds the pinned 25 B envelope + body, matching what `apply_put` stores
-/// (type byte, occurred_start/end + learned_at as u64 BE, then the body).
-fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&learned_at.to_be_bytes()); // occurred_start
-    blob.extend_from_slice(&learned_at.to_be_bytes()); // occurred_end
-    blob.extend_from_slice(&learned_at.to_be_bytes()); // learned_at
-    blob.extend_from_slice(data);
-    blob
 }
 
 fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) {
