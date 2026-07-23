@@ -3,9 +3,7 @@ use crate::claim::validate_predicate;
 use crate::error::ErrorKind;
 use core::assert_matches;
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("test entity id")
-}
+use crate::test_util::entity;
 
 #[test]
 fn predicate_constant_pins_contract_literal() {
@@ -43,7 +41,7 @@ fn body_keys_pin_ten_snake_case_literals() {
 
 #[test]
 fn edge_ref_codec_pins_byte_offsets_and_aligns_with_edge_key() {
-    let source = entity(0x11);
+    let source = entity(0x60);
     let target = entity(0x22);
     let edge_ref = EdgeRef::new(source, EdgeKind::Mentions, target);
 

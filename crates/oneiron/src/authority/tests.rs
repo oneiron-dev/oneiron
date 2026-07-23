@@ -6381,7 +6381,7 @@ proptest! {
 // ---------------------------------------------------------------------------
 
 fn scope_entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).unwrap()
+    crate::test_util::entity(byte)
 }
 
 fn symmetric_scope(
@@ -8247,7 +8247,9 @@ fn federation_activation_denies_grant_bound_to_any_non_active_pact() {
     // Q being Active must never mask P.
     let fixture = pact_fixture(176);
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
-    let grant_h = scope_entity(0x47);
+    // Deliberate exception to the default 0x47 → 0x67 test-seed mapping:
+    // this fixture requires H < G (0x48) to exercise the tie-break premise.
+    let grant_h = scope_entity(0x46);
     let grant_g = scope_entity(0x48);
     let pact_p = fixture.pact_id;
     let pact_q = [0xD5; 32];

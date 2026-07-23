@@ -1,6 +1,7 @@
 use rmpv::Value;
 
 use super::*;
+use crate::test_util::{entity, entity_record};
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY;
@@ -79,15 +80,17 @@ fn clear_policy_manifests_for_test(vault: &Vault) -> Result<()> {
     })
 }
 
-fn put_policy_manifest_bytes(vault: &Vault, seed: u8, data: &[u8]) -> Result<()> {
-    let id = EntityId::from_bytes([seed; 16])?;
+fn put_indexed_manifest_at_two(vault: &Vault, id: EntityId, data: &[u8]) -> Result<()> {
     let learned_at = 2_u64;
-    let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(data);
+    let payload = entity_record(
+        ENTITY_TYPE_POLICY_MANIFEST,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        data,
+    );
 
     let mut wtxn = vault.store.env.write_txn()?;
     vault
@@ -109,7 +112,7 @@ fn put_policy_manifest_bytes(vault: &Vault, seed: u8, data: &[u8]) -> Result<()>
 }
 
 fn put_malformed_policy_manifest(vault: &Vault, seed: u8) -> Result<()> {
-    put_policy_manifest_bytes(vault, seed, b"not-msgpack")
+    put_indexed_manifest_at_two(vault, entity(seed), b"not-msgpack")
 }
 
 fn install_self_memory_allow_policy(vault: &Vault, actor: EntityId) -> Result<()> {
@@ -173,7 +176,7 @@ fn install_self_memory_policy_trusting_source(
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest)
         .map_err(|_| Error::InvariantViolation("failed to encode policy manifest fixture"))?;
-    put_policy_manifest_bytes(vault, 0xE8, &data)
+    put_indexed_manifest_at_two(vault, entity(0xE8), &data)
 }
 
 fn gate_decision_count(vault: &Vault) -> Result<usize> {

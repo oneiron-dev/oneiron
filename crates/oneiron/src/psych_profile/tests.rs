@@ -12,13 +12,11 @@ use crate::context_pack::{
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::{ErrorKind, Vault};
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("valid test entity id")
-}
+use crate::test_util::entity;
 
 fn test_profile() -> PsychProfile {
     PsychProfile::new(
-        entity(0xA1),
+        entity(0x51),
         "fast compact profile",
         "retrieval-friendly profile text",
         "A warm narrative profile.",
@@ -52,7 +50,7 @@ fn msgpack_map(entries: Vec<(&'static str, Value)>) -> Vec<u8> {
 fn fixture_claim(text: &'static str, salience: f32) -> ClaimBody {
     let mut body = ClaimBody::new(
         "profile.preference",
-        ClaimSubject::Entity(entity(0xA1)),
+        ClaimSubject::Entity(entity(0x51)),
         Value::from(text),
         0.8,
         ClaimApprovalStatus::Auto,
@@ -67,7 +65,7 @@ fn psych_mirror_selection_ranks_fixture_memories_deterministically() -> Result<(
     let now = 20_000_000_u64;
     let candidates = vec![
         psych_mirror_source_candidate_from_claim(
-            entity(0x11),
+            entity(0x60),
             entity(0xB1),
             0.98,
             now - 90 * 86_400,
@@ -166,7 +164,7 @@ fn psych_mirror_selection_context_entity_adapter_reads_projected_fields() -> Res
 fn psych_mirror_selection_structured_claim_value_contributes_entropy() -> Result<()> {
     let body = ClaimBody::new(
         "profile.preference",
-        ClaimSubject::Entity(entity(0xA1)),
+        ClaimSubject::Entity(entity(0x51)),
         Value::Map(vec![
             (
                 Value::from("summary"),
@@ -258,7 +256,7 @@ fn psych_profile_rejects_invalid_confidence_and_missing_sources() {
     );
     assert_eq!(
         PsychProfile::new(
-            entity(0xA1),
+            entity(0x51),
             "compact",
             "text",
             "narrative",

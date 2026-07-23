@@ -7,11 +7,7 @@ use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteProvenance;
 use crate::{AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome, Vault, VaultConfig};
 
-fn entity(seed: u8) -> EntityId {
-    let mut bytes = [seed; 16];
-    bytes[0] = seed.max(1);
-    EntityId::from_bytes(bytes).expect("test entity id")
-}
+use crate::test_util::entity;
 
 fn provenance(seed: u8) -> CompanionProvenance {
     let envelope = WriteEnvelope::new(
@@ -396,7 +392,7 @@ fn companion_queue_claim_fails_undecodable_task_payload() -> Result<()> {
 #[test]
 fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<()> {
     let neutral = CompanionScope::neutral();
-    let persona_ref = entity(0x11);
+    let persona_ref = entity(0x60);
     let source_ref = entity(0x12);
     let target_ref = entity(0x13);
 
@@ -404,7 +400,7 @@ fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<
         neutral.clone(),
         persona_ref,
         Value::from("neutral persona"),
-        provenance(0xA1),
+        provenance(0x5A),
         CompanionExportClassification::Portable,
     );
     let relationship = CompanionRecord::relationship(
@@ -412,7 +408,7 @@ fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<
         source_ref,
         target_ref,
         Value::from("neutral relationship"),
-        provenance(0xA2),
+        provenance(0x5B),
         CompanionExportClassification::LocalOnly,
     );
 
@@ -733,7 +729,7 @@ fn companion_register_body_decodes_legacy_v1_without_lifecycle_events() -> Resul
         CompanionScope::neutral(),
         entity(0x37),
         Value::from("legacy v1 persona"),
-        provenance(0xD7),
+        provenance(0x5C),
         CompanionExportClassification::Portable,
     );
     let legacy = Value::Map(vec![
@@ -839,7 +835,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
         CompanionScope::personal(entity(0xD5)),
         entity(0xD6),
         Value::from("revived row"),
-        provenance(0xD7),
+        provenance(0x5D),
         CompanionExportClassification::Portable,
     );
 
@@ -930,7 +926,7 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
 fn companion_register_raw_revived_put_accepts_same_batch_retired_history() -> Result<()> {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let retired_id = entity(0xE1);
+    let retired_id = entity(0x5E);
     let revived_id = entity(0xE2);
     let record = CompanionRecord::persona(
         CompanionScope::personal(entity(0xE3)),

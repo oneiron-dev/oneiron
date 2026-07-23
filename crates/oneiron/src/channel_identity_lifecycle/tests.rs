@@ -3,10 +3,7 @@ use rmpv::Value;
 
 use crate::channel_identity::CHANNEL_IDENTITY_MIN_QUARANTINE_SECS;
 use crate::config::VaultConfig;
-use crate::entity_id::ENTITY_ID_LEN;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
-use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::store::Store;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -14,11 +11,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
-fn entity(seed: u8) -> EntityId {
-    let mut bytes = [seed; ENTITY_ID_LEN];
-    bytes[0] = seed.max(1);
-    EntityId::from_bytes(bytes).expect("test entity id")
-}
+use crate::test_util::{entity, put_policy_manifest_bytes};
 
 fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
     let scoped_grants = verbs
@@ -68,23 +61,6 @@ fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
     out
 }
 
-fn put_policy_manifest(vault: &Vault, seed: u8, data: &[u8]) -> Result<()> {
-    let id = entity(seed);
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(data);
-
-    vault.with_write_txn(|wtxn| {
-        vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-        let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
-        vault.store.type_index.put(wtxn, &type_key, &[])?;
-        Ok(())
-    })
-}
-
 fn requested_identity(agent: EntityId, at: u64) -> ChannelIdentity {
     ChannelIdentity::requested(
         "email",
@@ -124,9 +100,9 @@ fn lifecycle_verbs_gate_receipt_and_manual_fulfillment() -> Result<()> {
         b"lifecycle actor",
     )?;
     let actor = ChannelIdentityLifecycleActor::agent(agent);
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xD0,
+        entity(0xD0),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",
@@ -354,7 +330,7 @@ fn route_inbound_against_tombstone_reports_closed() -> Result<()> {
     // The actor entity is stored because the live ceiling resolver fails
     // absent agent-class actors closed to Proposed (ONE-1444 B3) — an
     // Auto-granted effect actor must be entity-backed.
-    let agent = entity(0xE1);
+    let agent = entity(0x5E);
     vault.put_entity(
         &agent,
         crate::registry::ENTITY_TYPE_PERSON,
@@ -363,9 +339,9 @@ fn route_inbound_against_tombstone_reports_closed() -> Result<()> {
         b"route actor",
     )?;
     let actor = ChannelIdentityLifecycleActor::agent(agent);
-    put_policy_manifest(
+    put_policy_manifest_bytes(
         &vault,
-        0xE0,
+        entity(0xE0),
         &policy_manifest(
             actor.actor_ref.as_deref().expect("actor ref"),
             "email",

@@ -1,3 +1,6 @@
+mod common;
+
+use common::entity;
 use std::env;
 
 use oneiron::{
@@ -7,10 +10,6 @@ use oneiron::{
     SlackPersonaAttribution, SlackProviderInbound, SlackSharedPresenceAdapter,
     SlackSharedPresenceAdapterConfig, Vault, VaultConfig,
 };
-
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test id")
-}
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -165,8 +164,8 @@ fn run_two_agent_smoke(case: SlackSmokeCase) -> Result<()> {
     )?;
     let identity_a_id = entity(0x71);
     let identity_b_id = entity(0x72);
-    let agent_a = entity(0xA1);
-    let agent_b = entity(0xA2);
+    let agent_a = entity(0x51);
+    let agent_b = entity(0x52);
     let actor_a = ChannelIdentityLifecycleActor::agent(agent_a);
     let actor_b = ChannelIdentityLifecycleActor::agent(agent_b);
     let identity_a = requested_identity(

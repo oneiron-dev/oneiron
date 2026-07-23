@@ -6,9 +6,7 @@ use crate::channel_identity::{
 use crate::config::VaultConfig;
 use crate::test_util::open_test_vault_with;
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid entity id")
-}
+use crate::test_util::entity;
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
     let mut cfg = VaultConfig::device();
@@ -51,8 +49,8 @@ fn input(address: &str, counterparty: SurfaceCounterpartyStamp) -> InboundSurfac
 #[test]
 fn inbound_routes_active_identity_and_stamps_receiving_identity() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let identity_ref = entity(0x11);
-    let agent_ref = entity(0xA1);
+    let identity_ref = entity(0x60);
+    let agent_ref = entity(0x51);
     vault.create_channel_identity(
         &identity_ref,
         &identity("agent@example.com", agent_ref, ChannelIdentityState::Active),
@@ -80,7 +78,7 @@ fn inbound_routes_active_identity_and_stamps_receiving_identity() -> Result<()> 
 fn inbound_routes_quarantined_identity_for_known_and_unknown_counterparties() -> Result<()> {
     let (_dir, vault) = test_vault();
     let identity_ref = entity(0x12);
-    let agent_ref = entity(0xA2);
+    let agent_ref = entity(0x52);
     vault.create_channel_identity(
         &identity_ref,
         &identity(
@@ -113,7 +111,7 @@ fn inbound_routes_quarantined_identity_for_known_and_unknown_counterparties() ->
 fn inbound_tombstone_rejects_with_receipt_for_known_and_unknown_counterparties() -> Result<()> {
     let (_dir, vault) = test_vault();
     let identity_ref = entity(0x13);
-    let agent_ref = entity(0xA3);
+    let agent_ref = entity(0x53);
     vault.create_channel_identity(
         &identity_ref,
         &identity(
@@ -149,7 +147,7 @@ fn inbound_unknown_address_has_no_catch_all_route() -> Result<()> {
         &entity(0x14),
         &identity(
             "agent@example.com",
-            entity(0xA4),
+            entity(0x54),
             ChannelIdentityState::Active,
         ),
     )?;
@@ -175,7 +173,7 @@ fn inbound_requested_and_pending_fulfillment_reject_as_inactive() -> Result<()> 
     let (_dir, vault) = test_vault();
 
     let requested_ref = entity(0x15);
-    let requested_agent = entity(0xA5);
+    let requested_agent = entity(0x55);
     vault.create_channel_identity(
         &requested_ref,
         &identity(

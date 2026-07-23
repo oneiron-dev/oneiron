@@ -65,9 +65,7 @@ fn actor_key(value: &str) -> ScopedReadActorKey {
     ScopedReadActorKey::new(value).expect("valid actor key")
 }
 
-fn test_entity_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid entity id")
-}
+use crate::test_util::entity as test_entity_id;
 
 fn put_person(vault: &crate::Vault, id: &EntityId) -> Result<()> {
     vault.put_entity(

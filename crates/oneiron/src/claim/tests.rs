@@ -162,7 +162,7 @@ fn lexical_query_hint_cap_ignores_oversize_tail_entries() -> Result<()> {
 
 #[test]
 fn write_door_validates_lexical_query_hint_claim_structure() -> Result<()> {
-    let target = EntityId::from_bytes([0x11; 16]).expect("valid id");
+    let target = EntityId::from_bytes([0x60; 16]).expect("valid id");
     let other = EntityId::from_bytes([0x22; 16]).expect("valid id");
     let encode = |subject: EntityId, value: Value| -> Result<Vec<u8>> {
         let body = ClaimBody::new(
@@ -522,7 +522,7 @@ fn conflict_predicates_validate_as_ordinary_claims() -> Result<()> {
             &encode(
                 PREDICATE_CONFLICT_RESOLVED,
                 ClaimSubject::Edge {
-                    source: EntityId::from_bytes([0x47; 16]).expect("valid id"),
+                    source: EntityId::from_bytes([0x67; 16]).expect("valid id"),
                     kind: EdgeKind::Mentions,
                     target: EntityId::from_bytes([0x48; 16]).expect("valid id"),
                 },
@@ -671,7 +671,7 @@ fn write_door_validates_edge_provenance_claim_structure() {
         encode_actor_class_evidence, encode_edge_provenance_value,
     };
 
-    let actor = EntityId::from_bytes([0x42; 16]).expect("valid id");
+    let actor = EntityId::from_bytes([0x62; 16]).expect("valid id");
     // ONE-1159 fix-wave: a surfaceable wrapper's `conf` MUST mirror the
     // value-record `confidence`. The prior control hardcoded `0.9` ≠ the
     // record's `0.75` — a self-inconsistent "valid" wrapper the new mirror
@@ -689,7 +689,7 @@ fn write_door_validates_edge_provenance_claim_structure() {
     };
     let evid = encode_actor_class_evidence(EdgeActorClass::Human);
     let subject = ClaimSubject::Edge {
-        source: EntityId::from_bytes([0x11; 16]).expect("valid id"),
+        source: EntityId::from_bytes([0x60; 16]).expect("valid id"),
         kind: EdgeKind::Mentions,
         target: EntityId::from_bytes([0x22; 16]).expect("valid id"),
     };
@@ -793,7 +793,7 @@ fn write_door_validates_edge_provenance_claim_structure() {
 
 #[test]
 fn claim_subject_decode_pins_both_encodings() {
-    let id = EntityId::from_bytes([0x11; 16]).expect("valid id");
+    let id = EntityId::from_bytes([0x60; 16]).expect("valid id");
     assert_eq!(
         ClaimSubject::decode(id.as_bytes()).expect("16-byte subj"),
         ClaimSubject::Entity(id)
@@ -840,7 +840,7 @@ fn claim_subject_decode_pins_both_encodings() {
 /// and a 15-byte blob or a string is a typed `InvalidClaimBody`.
 #[test]
 fn world_value_must_be_16_byte_binary() {
-    let subj = EntityId::from_bytes([0x11; 16]).expect("valid subject id");
+    let subj = EntityId::from_bytes([0x60; 16]).expect("valid subject id");
     let body_with_world = |world: Option<Value>| -> Vec<u8> {
         let mut entries = vec![
             (Value::from("pred"), Value::from("profile.name")),
@@ -892,7 +892,7 @@ fn world_value_must_be_16_byte_binary() {
 
 #[test]
 fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
-    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x11; 16]).expect("valid id"));
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x60; 16]).expect("valid id"));
     let mut legacy = ClaimBody::new(
         "profile.preference",
         subject,
@@ -936,7 +936,7 @@ fn claim_surfaceable_pins_the_full_status_truth_table() {
     use ClaimApprovalStatus as A;
     use ClaimLifecycleStatus as L;
 
-    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x11; 16]).expect("valid id"));
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x60; 16]).expect("valid id"));
     let body = |appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale: bool| {
         let mut body = ClaimBody::new("test.pred", subject, Value::from("v"), 0.5, appr, life);
         body.stale = stale;
@@ -1237,13 +1237,13 @@ fn approved_generated_consolidatable_but_not_evidence() {
 /// boundary directly on the door function, independent of the read gate.
 #[test]
 fn provenance_door_accepts_approved_and_rejects_proposed_wrappers() {
-    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x11; 16]).expect("valid id"));
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x60; 16]).expect("valid id"));
     // Valid value record (3 required keys), conf mirrors the wrapper, no
     // valid-time on either side, actor-class on the wrapper `evid`.
     let value_record = Value::Map(vec![
         (
             Value::from("actor_entity_ref"),
-            Value::Binary(vec![0x42; 16]),
+            Value::Binary(vec![0x62; 16]),
         ),
         (Value::from("confidence"), Value::F32(0.75)),
         (Value::from("supersession_status"), Value::from(1u8)),

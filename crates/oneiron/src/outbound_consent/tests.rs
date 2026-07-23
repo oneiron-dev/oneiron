@@ -13,9 +13,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("test entity id")
-}
+use crate::test_util::entity;
 
 fn scoped_intent() -> ScopedMcpGrantMintIntent {
     ScopedMcpGrantMintIntent {

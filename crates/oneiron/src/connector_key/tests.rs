@@ -13,9 +13,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; ENTITY_ID_LEN]).expect("valid test id")
-}
+use crate::test_util::entity as test_id;
 
 fn all_dimension_budgets() -> Vec<EffectorBudget> {
     vec![
@@ -585,7 +583,7 @@ fn register_rejects_non_active_status_and_prestamped_charter() {
         ..ConnectorKeyRecord::active("line", None, Vec::new(), 1_000)
     };
     assert!(matches!(
-        vault.register_connector_key(&test_id(0xE1), suspended),
+        vault.register_connector_key(&test_id(0x5E), suspended),
         Err(Error::InvalidConnectorKeyBody(
             "registration requires status active"
         ))

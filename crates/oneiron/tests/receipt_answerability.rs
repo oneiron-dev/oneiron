@@ -1,3 +1,6 @@
+mod common;
+
+use common::entity;
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron::{
@@ -321,12 +324,6 @@ fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     config.hnsw = HnswConfig::default();
     let vault = Vault::open(dir.path(), config)?;
     Ok((dir, vault))
-}
-
-fn entity(seed: u8) -> EntityId {
-    let mut bytes = [seed; 16];
-    bytes[0] = seed.max(1);
-    EntityId::from_bytes(bytes).expect("test entity id")
 }
 
 const fn test_time(ts: u64) -> TimeRange {

@@ -11,9 +11,7 @@ use crate::registry::{
 };
 use crate::temporal::TimeRange;
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid entity id")
-}
+use crate::test_util::entity;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let mut config = VaultConfig::device();
@@ -76,12 +74,12 @@ fn active_last_touch_occurred_at(
 
 fn put_malformed_comm_record(vault: &Vault) -> CommResult<()> {
     let id = EntityId::now();
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 1);
-    payload.push(ENTITY_TYPE_COMM_RECORD);
-    payload.extend_from_slice(&0_u64.to_be_bytes());
-    payload.extend_from_slice(&0_u64.to_be_bytes());
-    payload.extend_from_slice(&0_u64.to_be_bytes());
-    payload.push(0xC1);
+    let payload = crate::test_util::entity_record(
+        ENTITY_TYPE_COMM_RECORD,
+        TimeRange { start: 0, end: 0 },
+        0,
+        &[0xC1],
+    );
 
     let mut wtxn = vault.store.env.write_txn()?;
     vault
@@ -105,12 +103,12 @@ fn put_semantically_invalid_comm_record(vault: &Vault, party_ref: EntityId) -> C
         projected: false,
     };
     let id = EntityId::now();
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 128);
-    payload.push(ENTITY_TYPE_COMM_RECORD);
-    payload.extend_from_slice(&20_u64.to_be_bytes());
-    payload.extend_from_slice(&20_u64.to_be_bytes());
-    payload.extend_from_slice(&20_u64.to_be_bytes());
-    payload.extend_from_slice(&encode_comm_record(&record)?);
+    let payload = crate::test_util::entity_record(
+        ENTITY_TYPE_COMM_RECORD,
+        TimeRange { start: 20, end: 20 },
+        20,
+        &encode_comm_record(&record)?,
+    );
 
     let mut wtxn = vault.store.env.write_txn()?;
     vault
@@ -125,7 +123,7 @@ fn put_semantically_invalid_comm_record(vault: &Vault, party_ref: EntityId) -> C
 
 #[test]
 fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Result<()> {
-    let party = entity(0xA1);
+    let party = entity(0x51);
     let well_formed = [
         CommClaimValue::OptOut {
             party_ref: party,
@@ -1373,7 +1371,7 @@ fn finding_5_malformed_comm_record_does_not_wedge_family_operations() -> CommRes
 
 #[test]
 fn finding_6_opt_out_reason_is_pinned_to_machine_tokens() -> Result<()> {
-    let party = entity(0xA2);
+    let party = entity(0x52);
     let accepted = [CommClaimValue::OptOut {
         party_ref: party,
         channel_class: "email".to_owned(),

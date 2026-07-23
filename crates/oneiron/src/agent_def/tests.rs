@@ -32,7 +32,7 @@ fn provenance(seed: u8) -> Value {
 }
 
 fn world_id() -> EntityId {
-    EntityId::from_bytes([0x11; 16]).expect("non-reserved world id")
+    crate::test_util::entity(0x60)
 }
 
 /// Fully-populated, human-authored fixture exercising every composition facet.

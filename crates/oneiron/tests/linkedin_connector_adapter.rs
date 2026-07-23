@@ -1,3 +1,6 @@
+mod common;
+
+use common::entity;
 use std::collections::BTreeMap;
 
 use oneiron::{
@@ -16,10 +19,6 @@ use oneiron::{
     outbound_capability_manifest, outbound_verb_contract, run_linkedin_kill_switch,
 };
 use serde_json::{Value, json};
-
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test id")
-}
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -99,7 +98,7 @@ fn active_linkedin_identity(
     vault: &Vault,
     adapter: &LinkedInMcpConnectorAdapter,
 ) -> Result<(EntityId, EntityId)> {
-    active_linkedin_identity_with_seeds(vault, adapter, 0x51, 0xA1)
+    active_linkedin_identity_with_seeds(vault, adapter, 0x51, 0x53)
 }
 
 fn active_linkedin_identity_with_seeds(
@@ -405,7 +404,7 @@ fn linkedin_get_inbox_fixture_normalizes_each_thread_and_routes() -> Result<()> 
 
     let (_tmp, vault) = temp_vault();
     let identity_id = entity(0x51);
-    let agent_ref = entity(0xA1);
+    let agent_ref = entity(0x52);
     let mut identity = ChannelIdentity::requested(
         LINKEDIN_CHANNEL,
         adapter.receiving_address_or_handle(),
@@ -534,8 +533,8 @@ fn linkedin_inbox_sync_scopes_seen_rows_by_receiving_identity_and_session() -> R
     let adapter_b = LinkedInMcpConnectorAdapter::new("linkedin:member:akira")?
         .with_session_ref("linkedin:session:akira:tokyo-sandbox")?;
     let (_tmp, vault) = temp_vault();
-    active_linkedin_identity_with_seeds(&vault, &adapter_a, 0x51, 0xA1)?;
-    active_linkedin_identity_with_seeds(&vault, &adapter_b, 0x52, 0xA2)?;
+    active_linkedin_identity_with_seeds(&vault, &adapter_a, 0x51, 0x53)?;
+    active_linkedin_identity_with_seeds(&vault, &adapter_b, 0x52, 0x54)?;
 
     let inbox = json!({
         "sections": {

@@ -22,9 +22,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::default())
 }
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("entity id")
-}
+use crate::test_util::entity;
 
 fn time(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
@@ -1101,7 +1099,7 @@ fn many_item_runs_sub_cluster_by_entity() -> Result<()> {
         write_dreamer_proposal(
             &vault,
             entity(0xD1 + offset),
-            entity(0xE1 + offset),
+            entity(0x5E + offset),
             second_subject,
             "profile.note",
             value,

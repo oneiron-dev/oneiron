@@ -1,6 +1,5 @@
 use super::*;
 use crate::access_grant::AccessGrant;
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
@@ -14,6 +13,7 @@ use crate::federation::{
 };
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
+use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
@@ -34,11 +34,7 @@ fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     Ok((dir, vault))
 }
 
-fn entity(seed: u8) -> EntityId {
-    let mut bytes = [seed; ENTITY_ID_LEN];
-    bytes[0] = seed.max(1);
-    EntityId::from_bytes(bytes).expect("test entity id")
-}
+use crate::test_util::entity;
 
 fn field_map(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
     entries
@@ -80,7 +76,7 @@ fn durable_send_receipt_requires_explicit_outcome() {
         receipt: ReceiptRecord,
     }
 
-    let task_ref = entity(0xE1);
+    let task_ref = entity(0x5E);
     let task_ref_hex = task_ref.to_hex();
     let receipt = ReceiptRecord {
         receipt_id: "outbound:required-outcome".to_owned(),
@@ -223,12 +219,15 @@ fn put_federation_grant(vault: &Vault, id: EntityId, learned_at: u64) -> Result<
     );
     let body = encode_federation_grant_body(&grant)?;
     vault.with_write_txn(|wtxn| {
-        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-        payload.push(ENTITY_TYPE_FEDERATION_GRANT);
-        payload.extend_from_slice(&learned_at.to_be_bytes());
-        payload.extend_from_slice(&learned_at.to_be_bytes());
-        payload.extend_from_slice(&learned_at.to_be_bytes());
-        payload.extend_from_slice(&body);
+        let payload = crate::test_util::entity_record(
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        );
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
 
         let type_key = Store::encode_type_key(ENTITY_TYPE_FEDERATION_GRANT, &id);
@@ -244,12 +243,15 @@ fn put_federation_grant(vault: &Vault, id: EntityId, learned_at: u64) -> Result<
 }
 
 fn put_redaction_floor_receipt(vault: &Vault, id: EntityId, learned_at: u64) -> Result<()> {
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 4);
-    payload.push(ENTITY_TYPE_REDACTION_AUDIT);
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(b"seal");
+    let payload = crate::test_util::entity_record(
+        ENTITY_TYPE_REDACTION_AUDIT,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"seal",
+    );
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, &id);
@@ -517,7 +519,7 @@ fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
             actor_ref: Some("agent-noise".to_owned()),
             content_kind: "claim".to_owned(),
             policy_manifest_version: "test-policy".to_owned(),
-            claim_id: Some(*entity(0x42).as_bytes()),
+            claim_id: Some(*entity(0x53).as_bytes()),
             grant_ref: None,
             diff_handle: vec![0xA5],
             read_frontier_hash: [0xB6; 32],

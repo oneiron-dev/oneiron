@@ -37,9 +37,7 @@ fn code_body(repo_ref: &RepoRef) -> CodeArtifactBody {
     )
 }
 
-fn entity(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("entity id")
-}
+use crate::test_util::entity;
 
 const GITHUB_TOKEN_SECRET_FIXTURE: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
 
@@ -87,7 +85,7 @@ fn manifest_with_blame(
 
 #[test]
 fn code_symbol_manifest_codec_is_deterministic_and_sorts_constructor_inputs() -> Result<()> {
-    let manifest = manifest_with_blame(Some(entity(0xA1)), Some("session-alpha".to_owned()))?;
+    let manifest = manifest_with_blame(Some(entity(0x51)), Some("session-alpha".to_owned()))?;
     assert_eq!(manifest.chunks[0].start_line, 1);
     assert_eq!(manifest.chunks[1].start_line, 10);
     assert_eq!(

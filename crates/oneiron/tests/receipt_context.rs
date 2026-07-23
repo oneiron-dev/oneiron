@@ -7,8 +7,11 @@
 //! recomputed. OF-326 interaction: emit-adjacent receipts in an off-record
 //! session are session-local and deleted with the transcript.
 
+mod common;
+
+use common::entity;
 use oneiron::{
-    ContextReceiptFields, EiriMemoryBoard, EiriMemoryBoardBudget, EntityId, GrantMintIntent,
+    ContextReceiptFields, EiriMemoryBoard, EiriMemoryBoardBudget, GrantMintIntent,
     GrantMintIntentScope, HnswConfig, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
     PromptRecompileStamp, ReceiptQuery, ReceiptRecord, Result, SessionLocalReceiptLog, TimeRange,
     Vault, VaultConfig, append_context_receipt_fields, context_pack::assemble_eiri_memory_board,
@@ -26,12 +29,6 @@ fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     config.hnsw = HnswConfig::default();
     let vault = Vault::open(dir.path(), config)?;
     Ok((dir, vault))
-}
-
-fn entity(seed: u8) -> EntityId {
-    let mut bytes = [seed; 16];
-    bytes[0] = seed.max(1);
-    EntityId::from_bytes(bytes).expect("test entity id")
 }
 
 fn put_memory(vault: &Vault, seed: u8, text: &str) -> Result<()> {
@@ -165,7 +162,7 @@ fn index_rebuild_does_not_change_a_stored_receipt() -> Result<()> {
     // The substrate and its indexes move on after the emit: new memories
     // land (ranking ahead of the emit-time rows) and the vector index is
     // rebuilt.
-    put_memory(&vault, 0x11, "matcha matcha matcha, always matcha")?;
+    put_memory(&vault, 0x60, "matcha matcha matcha, always matcha")?;
     put_memory(&vault, 0x12, "matcha matcha morning, matcha evening")?;
     vault.maintain().rebuild_hnsw().run()?;
 

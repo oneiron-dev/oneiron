@@ -10,7 +10,7 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 #[test]
 fn layer_write_persists_and_rereads_world_layer() -> Result<()> {
     let (dir, vault) = open_test_vault();
-    let world = EntityId::from_bytes([0x42; 16])?;
+    let world = EntityId::from_bytes([0x62; 16])?;
     let world_layer = WorldLayer::new(Some(world), Some("studio".to_owned()))?;
 
     let update =

@@ -123,7 +123,7 @@ fn empty_pack_stats() -> PackStats {
 
 fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> ContextEntity {
     ContextEntity {
-        id: EntityId::from_bytes_unchecked([seed; 16]),
+        id: crate::test_util::entity(seed),
         short_id: short_id.to_owned(),
         content_hash: seed,
         entity_type,
@@ -144,7 +144,7 @@ fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
             board_entity(0x51, 42, 0.75, "zz51"),
             board_entity(0x61, ENTITY_TYPE_COMPANION_REGISTER, 0.125, "cp61"),
         ],
-        neighbors: vec![board_entity(0x42, ENTITY_TYPE_TURN, 0.875, "tn42")],
+        neighbors: vec![board_entity(0x62, ENTITY_TYPE_TURN, 0.875, "tn42")],
         stats: empty_pack_stats(),
         empty: None,
     };
@@ -234,8 +234,8 @@ fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
 fn eiri_memory_board_routes_asset_rows_by_ref_without_local_downgrade() {
     let pack = ContextPack {
         results: vec![
-            board_entity(0xA1, ENTITY_TYPE_ASSET, 0.9, "as15"),
-            board_entity(0xA2, ENTITY_TYPE_ASSET_TEXT, 0.8, "tx10"),
+            board_entity(0x51, ENTITY_TYPE_ASSET, 0.9, "as15"),
+            board_entity(0x52, ENTITY_TYPE_ASSET_TEXT, 0.8, "tx10"),
         ],
         neighbors: Vec::new(),
         stats: empty_pack_stats(),
@@ -259,8 +259,8 @@ fn eiri_memory_board_routes_asset_rows_by_ref_without_local_downgrade() {
         .find(|row| row.entity_type == ENTITY_TYPE_ASSET_TEXT)
         .expect("ASSET_TEXT row remains present");
 
-    assert_eq!(asset_row.asset_ref.as_deref(), Some("as15:a1"));
-    assert_eq!(asset_text_row.asset_ref.as_deref(), Some("tx10:a2"));
+    assert_eq!(asset_row.asset_ref.as_deref(), Some("as15:51"));
+    assert_eq!(asset_text_row.asset_ref.as_deref(), Some("tx10:52"));
     assert_eq!(asset_row.entity_type, ENTITY_TYPE_ASSET);
 }
 
@@ -588,13 +588,15 @@ fn raw_entity_record(
     learned_at: u64,
     payload: &[u8],
 ) -> Vec<u8> {
-    let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + payload.len());
-    raw.push(entity_type);
-    raw.extend_from_slice(&occurred_start.to_be_bytes());
-    raw.extend_from_slice(&occurred_end.to_be_bytes());
-    raw.extend_from_slice(&learned_at.to_be_bytes());
-    raw.extend_from_slice(payload);
-    raw
+    crate::test_util::entity_record(
+        entity_type,
+        TimeRange {
+            start: occurred_start,
+            end: occurred_end,
+        },
+        learned_at,
+        payload,
+    )
 }
 
 fn overwrite_raw_entity(vault: &Vault, id: &EntityId, raw: &[u8]) -> Result<()> {
@@ -1305,7 +1307,7 @@ fn retrieval_budget_balances_claim_turn_and_facet_before_global_truncation() -> 
 fn retrieval_budget_zero_caps_remain_excluded_after_surplus_redistribution() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    let claim = EntityId::from_bytes_unchecked([0xE1; 16]);
+    let claim = EntityId::from_bytes_unchecked([0x5E; 16]);
     let summary_a = EntityId::from_bytes_unchecked([0xE2; 16]);
     let summary_b = EntityId::from_bytes_unchecked([0xE3; 16]);
 
@@ -1582,7 +1584,7 @@ fn filtered_empty_reports_pre_filter_scope_count() -> Result<()> {
 fn status_suppressed_empty_reports_all_activated() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let superseded = EntityId::from_bytes([0x41; 16])?;
-    let retracted = EntityId::from_bytes([0x42; 16])?;
+    let retracted = EntityId::from_bytes([0x62; 16])?;
     put_claim_text_entity_with_status(
         &vault,
         &superseded,
@@ -1749,7 +1751,7 @@ fn short_id_falls_back_to_hex_on_corruption() -> Result<()> {
 #[test]
 fn world_all_scope_partitions_base_first() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let world_w = EntityId::from_bytes([0xE1; 16])?;
+    let world_w = EntityId::from_bytes([0x5E; 16])?;
     let world_v = EntityId::from_bytes([0xE2; 16])?;
 
     let w1 = EntityId::from_bytes([0x71; 16])?; // rank 0 — world W
@@ -1881,7 +1883,7 @@ fn pack_neighbors_apply_the_status_gate() -> Result<()> {
 #[test]
 fn world_all_scope_cap_drops_excess_fiction() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let world_w = EntityId::from_bytes([0xE1; 16])?;
+    let world_w = EntityId::from_bytes([0x5E; 16])?;
 
     let base1 = EntityId::from_bytes([0x61; 16])?; // rank 0 — base
     let f1 = EntityId::from_bytes([0x71; 16])?; // rank 1 — world W
@@ -1925,7 +1927,7 @@ fn world_all_scope_cap_drops_excess_fiction() -> Result<()> {
 #[test]
 fn pack_validation_skips_world_partition_dropped_results() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let world_w = EntityId::from_bytes([0xE1; 16])?;
+    let world_w = EntityId::from_bytes([0x5E; 16])?;
 
     let base = EntityId::from_bytes([0x63; 16])?;
     let kept_fiction = EntityId::from_bytes([0x75; 16])?;
@@ -2448,18 +2450,13 @@ fn pack_hydration_fails_closed_on_undecodable_claim_neighbor() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
     let a = EntityId::from_bytes_unchecked([0x41; 16]);
-    let bad = EntityId::from_bytes_unchecked([0x42; 16]);
+    let bad = EntityId::from_bytes_unchecked([0x62; 16]);
     put_claim_text_entity(&vault, &a, "badneighbor", "test.root", "root")?;
 
     // Raw 25-byte envelope (type 0) + a non-map MessagePack body.
     let mut junk_body = Vec::new();
     rmpv::encode::write_value(&mut junk_body, &rmpv::Value::from("junk")).expect("msgpack encode");
-    let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + junk_body.len());
-    raw.push(0);
-    raw.extend_from_slice(&1_u64.to_be_bytes());
-    raw.extend_from_slice(&1_u64.to_be_bytes());
-    raw.extend_from_slice(&1_u64.to_be_bytes());
-    raw.extend_from_slice(&junk_body);
+    let raw = raw_entity_record(0, 1, 1, 1, &junk_body);
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, bad.as_bytes(), &raw)?;
         Ok(())
@@ -3224,9 +3221,7 @@ fn context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_elig
 // model output. Absence is the boundary: a clamped id must appear NOWHERE as
 // a tracked reference.
 
-fn disclosure_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid entity id")
-}
+use crate::test_util::entity as disclosure_id;
 
 fn seed_disclosure_contact(vault: &Vault, contact_id: EntityId, counterparty: &str) {
     let record = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
@@ -3437,7 +3432,7 @@ fn n2_out_of_scope_neighbor_absent_from_neighbors_and_edge_lists() -> Result<()>
     let contact_id = disclosure_id(0xC2);
     seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
 
-    let party = disclosure_id(0xD7);
+    let party = disclosure_id(0x57);
     let diary = disclosure_id(0xD8);
     put_disclosure_turn(&vault, &party, "party summary needle2");
     put_disclosure_turn(&vault, &diary, "private diary tangent");
@@ -3624,7 +3619,7 @@ fn n11_tier_a_carve_out_is_mode_keyed_not_data_loss() -> Result<()> {
     seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
     let subject = disclosure_id(0xE0);
     put_disclosure_turn(&vault, &subject, "subject turn");
-    let band2 = disclosure_id(0xE1);
+    let band2 = disclosure_id(0x5E);
     put_disclosure_claim(
         &vault,
         &band2,

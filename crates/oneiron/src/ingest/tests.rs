@@ -2,8 +2,7 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
-use crate::store::Store;
+use crate::registry::ENTITY_TYPE_PERSON;
 
 const MINIMAL_TRANSCRIPT_FIXTURE: &str =
     include_str!("../../tests/fixtures/ingest/minimal_transcript.jsonl");
@@ -26,9 +25,7 @@ fn expected_jsonl_transcript_config() -> IngestSourceConfig {
     }
 }
 
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test id")
-}
+use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 
 fn test_time(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
@@ -78,24 +75,6 @@ fn put_actor_and_subject(vault: &crate::Vault, actor: &EntityId, subject: &Entit
         .expect("put subject");
 }
 
-fn put_malformed_policy_manifest(vault: &crate::Vault, id: &EntityId) {
-    let mut payload = Vec::new();
-    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(b"not a messagepack manifest");
-
-    vault
-        .with_write_txn(|wtxn| {
-            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-            let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, id);
-            vault.store.type_index.put(wtxn, &type_key, &[])?;
-            Ok(())
-        })
-        .expect("put malformed policy manifest");
-}
-
 fn evidence_field<'a>(value: &'a MsgpackValue, field: &str) -> Option<&'a MsgpackValue> {
     let MsgpackValue::Map(entries) = value else {
         return None;
@@ -137,7 +116,7 @@ fn jsonl_transcript_policy_defaults_to_proposed_and_fails_closed_for_auto() {
 #[test]
 fn imported_evidence_admission_defaults_to_proposed_claim() -> crate::Result<()> {
     let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x11);
+    let actor = test_id(0x60);
     let subject = test_id(0x12);
     let claim_id = test_id(0x13);
     put_actor_and_subject(&vault, &actor, &subject);
@@ -268,10 +247,10 @@ fn imported_evidence_requires_explicit_resolved_entity_before_persistence() -> c
 fn imported_evidence_gate_denial_leaves_no_candidate_claim() -> crate::Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor = test_id(0x41);
-    let subject = test_id(0x42);
+    let subject = test_id(0x54);
     let claim_id = test_id(0x43);
     put_actor_and_subject(&vault, &actor, &subject);
-    put_malformed_policy_manifest(&vault, &test_id(0x44));
+    put_policy_manifest_bytes(&vault, test_id(0x44), b"not a messagepack manifest")?;
 
     let err = admit_imported_evidence_claim(
         &vault,

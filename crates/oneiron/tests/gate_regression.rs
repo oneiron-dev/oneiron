@@ -1,3 +1,6 @@
+mod common;
+
+use common::entity as test_id;
 use oneiron::error::{GateDenialOutcome, GateDenialReason};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::{
@@ -5,10 +8,6 @@ use oneiron::{
     Error, Result, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use rmpv::Value;
-
-fn test_id(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test id")
-}
 
 fn test_time(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }

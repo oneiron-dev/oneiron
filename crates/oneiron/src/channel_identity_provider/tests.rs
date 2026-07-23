@@ -3,9 +3,7 @@ use crate::channel_identity::ChannelIdentityState;
 use crate::surface_event::{InboundSurfaceRouteOutcome, SurfaceCounterpartyStamp};
 use crate::{Vault, VaultConfig};
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test id")
-}
+use crate::test_util::entity;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -77,7 +75,7 @@ fn assert_provider_conformance<A: ChannelIdentityProviderAdapter>(
     assert_eq!(provision.fulfillment_mode, ChannelIdentityFulfillment::Api);
     assert_eq!(
         provision
-            .fulfillment_input(ChannelIdentityLifecycleActor::agent(entity(0xA1)))
+            .fulfillment_input(ChannelIdentityLifecycleActor::agent(entity(0x51)))
             .identity_id,
         intent.identity_id
     );
@@ -93,8 +91,8 @@ fn assert_provider_conformance<A: ChannelIdentityProviderAdapter>(
 
 #[test]
 fn mock_adapter_conformance_suite_consumes_provision_and_inbound() -> Result<()> {
-    let identity_id = entity(0x11);
-    let agent_ref = entity(0xA1);
+    let identity_id = entity(0x60);
+    let agent_ref = entity(0x51);
     let address = "agent@example.test";
     let identity = ChannelIdentity::requested(
         EMAIL_CHANNEL,
@@ -127,7 +125,7 @@ fn dev_email_adapter_derives_signed_per_identity_addresses() -> Result<()> {
         "dev-secret",
     )?);
     let identity_id = entity(0x21);
-    let agent_ref = entity(0xA2);
+    let agent_ref = entity(0x52);
     let address = adapter.address_for_identity(identity_id);
 
     assert!(address.ends_with("@agents.example.test"));
@@ -274,7 +272,7 @@ fn dev_email_adapter_requires_agent_scoped_dedicated_address() -> Result<()> {
         "dev-secret",
     )?);
     let identity_id = entity(0x31);
-    let mut identity = adapter.requested_identity(identity_id, entity(0xA3), 1_000);
+    let mut identity = adapter.requested_identity(identity_id, entity(0x53), 1_000);
     identity.binding = ChannelIdentityBinding::vault(42);
 
     let err = adapter

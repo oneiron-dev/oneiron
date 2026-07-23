@@ -1,12 +1,10 @@
 use super::*;
 
-fn entity(seed: u8) -> EntityId {
-    EntityId::from_bytes([seed; 16]).expect("valid test entity")
-}
+use crate::test_util::entity;
 
 #[test]
 fn email_webhook_signal_updates_health_claims() -> Result<()> {
-    let identity_ref = entity(0xA1);
+    let identity_ref = entity(0x51);
     let mut reputation = IdentityReputation::new(IdentityWarmupStage::Cold, 10);
 
     reputation.apply_adapter_signal(IdentityReputationSignal::EmailWebhook(
@@ -49,8 +47,8 @@ fn attestation_tier_c_constrains_send_rate_without_complaint_or_bounce() -> Resu
 
 #[test]
 fn warmup_and_health_clamps_are_per_identity() -> Result<()> {
-    let healthy_identity = entity(0xA2);
-    let degraded_identity = entity(0xA3);
+    let healthy_identity = entity(0x52);
+    let degraded_identity = entity(0x53);
     let healthy = IdentityReputation::new(IdentityWarmupStage::Cold, 10);
     let mut degraded = IdentityReputation::new(IdentityWarmupStage::Established, 10);
     degraded.apply_adapter_signal(IdentityReputationSignal::EmailWebhook(
@@ -74,7 +72,7 @@ fn warmup_and_health_clamps_are_per_identity() -> Result<()> {
 
 #[test]
 fn complaint_spike_clamps_and_lands_rotate_proposal_only() -> Result<()> {
-    let identity_ref = entity(0xA4);
+    let identity_ref = entity(0x54);
     let mut reputation = IdentityReputation::new(IdentityWarmupStage::Established, 10);
 
     reputation.apply_adapter_signal(IdentityReputationSignal::EmailWebhook(
@@ -104,7 +102,7 @@ fn complaint_spike_clamps_and_lands_rotate_proposal_only() -> Result<()> {
 fn malformed_reputation_claims_fail_closed() {
     let bad_rate = ClaimBody::new(
         PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE,
-        ClaimSubject::Entity(entity(0xA5)),
+        ClaimSubject::Entity(entity(0x55)),
         Value::F64(1.5),
         1.0,
         ClaimApprovalStatus::Auto,
