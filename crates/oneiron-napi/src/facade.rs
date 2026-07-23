@@ -26,8 +26,8 @@ use oneiron::{
 
 type BoundaryResult<T> = std::result::Result<T, String>;
 
-fn facade_error(err: &FacadeError) -> napi::Error {
-    napi::Error::from_reason(serde_json::to_string(err).unwrap_or_else(|_| err.to_string()))
+fn facade_error(err: FacadeError) -> napi::Error {
+    napi::Error::from_reason(serde_json::to_string(&err).unwrap_or_else(|_| err.to_string()))
 }
 
 fn boundary_error(reason: String) -> napi::Error {
@@ -845,7 +845,7 @@ impl VaultBridge {
     #[napi]
     pub fn as_actor(&self, actor_key: String) -> napi::Result<ActorScopedVault> {
         let (actor, actor_class) =
-            parse_actor_key(&self.vault, &actor_key).map_err(|e| facade_error(&e))?;
+            parse_actor_key(&self.vault, &actor_key).map_err(facade_error)?;
         Ok(ActorScopedVault {
             vault: Arc::clone(&self.vault),
             actor_hex: actor.to_hex(),
@@ -885,10 +885,7 @@ impl ActorScopedVault {
     #[napi]
     pub fn witness(&self, turn: NapiWitnessTurn) -> napi::Result<NapiWitnessReceipt> {
         let engine_turn = witness_turn_to_engine(&turn).map_err(boundary_error)?;
-        let receipt = self
-            .facade()?
-            .witness(&engine_turn)
-            .map_err(|e| facade_error(&e))?;
+        let receipt = self.facade()?.witness(&engine_turn).map_err(facade_error)?;
         Ok(NapiWitnessReceipt {
             turn_short_id: receipt.turn_short_id,
             message_short_ids: receipt.message_short_ids,
@@ -907,7 +904,7 @@ impl ActorScopedVault {
         let receipts = self
             .facade()?
             .commit(&engine_claims)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(receipts
             .into_iter()
             .map(commit_receipt_from_engine)
@@ -921,7 +918,7 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .claim_upsert(&engine_claim)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(commit_receipt_from_engine(receipt))
     }
 
@@ -938,7 +935,7 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .claim_retract(&claim_ref)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(commit_receipt_from_engine(receipt))
     }
 
@@ -948,9 +945,7 @@ impl ActorScopedVault {
     pub fn forget(&self, selector: NapiForgetSelector) -> napi::Result<Vec<NapiCommitReceipt>> {
         let facade = self.facade()?;
         if let Some(short_ref) = &selector.short_ref {
-            let receipt = facade
-                .claim_retract(short_ref)
-                .map_err(|e| facade_error(&e))?;
+            let receipt = facade.claim_retract(short_ref).map_err(facade_error)?;
             return Ok(vec![commit_receipt_from_engine(receipt)]);
         }
         let (Some(subject_ref), Some(predicate)) = (&selector.subject_ref, &selector.predicate)
@@ -960,7 +955,7 @@ impl ActorScopedVault {
             ));
         };
         let receipts =
-            forget_active_matches(&facade, subject_ref, predicate).map_err(|e| facade_error(&e))?;
+            forget_active_matches(&facade, subject_ref, predicate).map_err(facade_error)?;
         Ok(receipts
             .into_iter()
             .map(commit_receipt_from_engine)
@@ -978,7 +973,7 @@ impl ActorScopedVault {
                 lifecycle: filter.lifecycle,
                 limit: filter.limit as usize,
             })
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         views
             .into_iter()
             .map(|view| claim_view_from_engine(view).map_err(boundary_error))
@@ -991,7 +986,7 @@ impl ActorScopedVault {
         let views = self
             .facade()?
             .claim_history(&claim_ref)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         views
             .into_iter()
             .map(|view| claim_view_from_engine(view).map_err(boundary_error))
@@ -1015,7 +1010,7 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .safe_delete(&entity_ref, reason)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(NapiDeleteReceipt {
             existed: receipt.existed,
             reason: receipt.reason,
@@ -1029,7 +1024,7 @@ impl ActorScopedVault {
         let records = self
             .facade()?
             .pending_writes(limit as usize)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         records
             .into_iter()
             .map(|record| {
@@ -1051,7 +1046,7 @@ impl ActorScopedVault {
         let records = self
             .facade()?
             .receipts(limit as usize)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         records
             .into_iter()
             .map(|record| {
@@ -1073,10 +1068,7 @@ impl ActorScopedVault {
     /// Hydrates short refs (or hex ids) to full entity views.
     #[napi]
     pub fn hydrate(&self, refs: Vec<String>) -> napi::Result<Vec<NapiEntityView>> {
-        let views = self
-            .facade()?
-            .hydrate(&refs)
-            .map_err(|e| facade_error(&e))?;
+        let views = self.facade()?.hydrate(&refs).map_err(facade_error)?;
         views
             .into_iter()
             .map(|view| entity_view_from_engine(view).map_err(boundary_error))
@@ -1089,7 +1081,7 @@ impl ActorScopedVault {
         let view = self
             .facade()?
             .get_entity(&entity_ref)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         view.map(|v| entity_view_from_engine(v).map_err(boundary_error))
             .transpose()
     }
@@ -1104,7 +1096,7 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .put_structural(&engine_input)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
 
@@ -1125,7 +1117,7 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .put_habit_checkin(&engine_input)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
 
@@ -1148,7 +1140,7 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .put_companion_record(&engine_input)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
 
@@ -1172,7 +1164,7 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .admit_imported_claim(&engine_input)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(commit_receipt_from_engine(receipt))
     }
 
@@ -1192,7 +1184,7 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .put_blob_artifact(&engine_input)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
 
@@ -1217,7 +1209,7 @@ impl ActorScopedVault {
                 ts_to_engine(occurred_at, "occurred_at").map_err(boundary_error)?,
                 ts_opt_to_engine(learned_at, "learned_at").map_err(boundary_error)?,
             )
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(NapiBlobVersionView {
             artifact_ref: view.artifact_ref,
             version: ts_from_engine(view.version, "version").map_err(boundary_error)?,
@@ -1236,7 +1228,7 @@ impl ActorScopedVault {
         let hits = self
             .facade()?
             .query_bm25(&query, limit)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(hits
             .into_iter()
             .map(|hit| NapiLexicalHit {
@@ -1269,7 +1261,7 @@ impl ActorScopedVault {
                     limit: opts.limit as usize,
                 },
             )
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(hits
             .into_iter()
             .map(|hit| NapiNeighborHit {
@@ -1309,7 +1301,7 @@ impl ActorScopedVault {
         let pack = self
             .facade()?
             .recall(&query, effort, &scope, limit, format.as_deref(), None)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(NapiMemoryPack {
             items: pack
                 .items
@@ -1370,7 +1362,7 @@ impl ActorScopedVault {
         let job = self
             .facade()?
             .enqueue_consolidation(&engine_input)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(NapiDreamerJobRef {
             job_ref: job.job_ref,
             state: job.state,
@@ -1384,7 +1376,7 @@ impl ActorScopedVault {
         let view = self
             .facade()?
             .dreamer_attempt_status(&job_ref)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         view.map(|view| {
             Ok(NapiDreamerJobView {
                 job_ref: view.job_ref,
@@ -1414,7 +1406,7 @@ impl ActorScopedVault {
         let receipts = self
             .facade()?
             .seed_claims(&engine_claims)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(receipts
             .into_iter()
             .map(commit_receipt_from_engine)
@@ -1446,7 +1438,7 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .schedule_outbound(&engine_draft)
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
             intent_ref: receipt.intent_ref,
             outcome: receipt.outcome,
@@ -1471,7 +1463,7 @@ impl ActorScopedVault {
                 &artifact_ref,
                 ts_to_engine(version, "version").map_err(boundary_error)?,
             )
-            .map_err(|e| facade_error(&e))?;
+            .map_err(facade_error)?;
         Ok(bytes.map(|bytes| BASE64_STANDARD.encode(bytes)))
     }
 }
