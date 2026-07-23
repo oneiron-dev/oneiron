@@ -409,11 +409,6 @@ pub(crate) struct EiriContextV4Request {
     companion: Option<oneiron::EiriCompanionAssembly>,
 }
 
-pub(crate) struct EiriContextV4Identity<'a> {
-    fallback_session_id: &'a str,
-    companion_auth: &'a CoreAuth,
-}
-
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -895,7 +890,7 @@ pub(crate) async fn core_context_pack(
         .and_then(|policy| policy.view)
         .or(req.view)
         .unwrap_or(View::Standard);
-    let projection = context_pack_json_projection_config(view, req.budget.as_ref(), 0);
+    let projection = context_pack_json_projection_config(view, req.budget.as_ref());
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
@@ -903,7 +898,6 @@ pub(crate) async fn core_context_pack(
             tracing::error!(error = %error, "core context-pack scoped read setup failed");
             core_engine_error("core context-pack scoped read setup failed", error)
         })?;
-    let fallback_session_id = auth.principal_ref().unwrap_or(auth.principal());
     let eiri_context = resolve_eiri_context_v4_request(
         &server.vault,
         req.context_version.as_deref(),
@@ -911,10 +905,7 @@ pub(crate) async fn core_context_pack(
         req.session_rag.as_ref(),
         req.companion.as_ref(),
         (req.limit, max_neighbors),
-        EiriContextV4Identity {
-            fallback_session_id,
-            companion_auth: &auth,
-        },
+        &auth,
     )?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
@@ -949,7 +940,6 @@ pub(crate) async fn core_context_pack(
     let (mut builder, retrieval_budget) = apply_context_pack_budget(
         builder,
         req.budget.as_ref(),
-        0,
         candidate_limit,
         req.limit,
         max_neighbors,
@@ -968,7 +958,6 @@ pub(crate) async fn core_context_pack(
             neighbors: max_neighbors,
             retrieval: retrieval_budget,
         },
-        "core context-pack failed",
         eiri_context,
         disclosure,
     )
@@ -1298,7 +1287,6 @@ pub(crate) fn apply_context_pack_time<'a>(
 pub(crate) fn apply_context_pack_budget<'a>(
     mut builder: oneiron::ContextPackBuilder<'a>,
     budget: Option<&ContextPackBudgetControls>,
-    top_level_max_item_tokens: usize,
     scoped_candidate_limit: usize,
     result_limit: usize,
     default_selected_edges: usize,
@@ -1309,10 +1297,9 @@ pub(crate) fn apply_context_pack_budget<'a>(
     ),
     ApiError,
 > {
-    let max_item_tokens = budget
-        .and_then(|budget| budget.max_item_tokens)
-        .unwrap_or(top_level_max_item_tokens);
-    if max_item_tokens > 0 {
+    if let Some(max_item_tokens) = budget.and_then(|budget| budget.max_item_tokens)
+        && max_item_tokens > 0
+    {
         builder = builder.max_item_tokens(max_item_tokens);
     }
     if let Some(budget) = budget {
@@ -1414,7 +1401,7 @@ pub(crate) fn resolve_eiri_context_v4_request(
     session_rag: Option<&EiriSessionRagControls>,
     companion: Option<&EiriCompanionControls>,
     budget_shape: (usize, usize),
-    identity: EiriContextV4Identity<'_>,
+    auth: &CoreAuth,
 ) -> Result<Option<EiriContextV4Request>, ApiError> {
     let requested = context_version.is_some()
         || memory_board.is_some()
@@ -1432,7 +1419,7 @@ pub(crate) fn resolve_eiri_context_v4_request(
         ));
     }
 
-    let session_scope_id = identity.fallback_session_id.trim();
+    let session_scope_id = auth.principal_ref().unwrap_or(auth.principal()).trim();
     validate_eiri_session_id(session_scope_id, "session_rag.scope")?;
     if is_shared_eiri_session_scope_id(session_scope_id) {
         return Err(ApiError::bad_request(
@@ -1452,8 +1439,7 @@ pub(crate) fn resolve_eiri_context_v4_request(
         .unwrap_or(true)
         .then(|| eiri_memory_board_budget(memory_board, budget_shape.0, budget_shape.1));
 
-    let companion =
-        resolve_eiri_companion_assembly(vault, companion, session_id, identity.companion_auth)?;
+    let companion = resolve_eiri_companion_assembly(vault, companion, session_id, auth)?;
 
     Ok(Some(EiriContextV4Request {
         memory_board_budget,
@@ -1773,23 +1759,18 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "single funnel keeps builder, board, and response fed by one DisclosureContext"
-)]
 pub(crate) async fn run_context_pack_builder(
     vault: &oneiron::Vault,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
     response_limits: ContextPackResponseLimits,
-    error_context: &'static str,
     eiri_context: Option<EiriContextV4Request>,
     disclosure: Option<oneiron::DisclosureContext>,
 ) -> Result<CoreContextPackResponse, ApiError> {
     let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
-        tracing::error!(error = %error, "{error_context}");
-        core_engine_error(error_context, error)
+        tracing::error!(error = %error, "core context-pack failed");
+        core_engine_error("core context-pack failed", error)
     })?;
     let clamped_out = pack.clamped_out();
     scoped_read
@@ -1857,7 +1838,6 @@ pub(crate) fn field_profile_for_view(view: View) -> oneiron::FieldProfile {
 pub(crate) fn context_pack_json_projection_config(
     view: View,
     budget: Option<&ContextPackBudgetControls>,
-    top_level_max_item_tokens: usize,
 ) -> oneiron::serialize::SerializeConfig {
     oneiron::serialize::SerializeConfig {
         format: oneiron::PackFormat::Json,
@@ -1871,7 +1851,7 @@ pub(crate) fn context_pack_json_projection_config(
             .unwrap_or(oneiron::context_pack::DEFAULT_MAX_FIELD_CHARS),
         max_item_tokens: budget
             .and_then(|budget| budget.max_item_tokens)
-            .unwrap_or(top_level_max_item_tokens),
+            .unwrap_or(0),
     }
 }
 
