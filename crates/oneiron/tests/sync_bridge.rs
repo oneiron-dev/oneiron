@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 use loro::{CommitOptions, ExportMode, LoroDoc};
 use oneiron::affect::Vad;
 use oneiron::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags};
-use oneiron::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT};
+use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use oneiron::sync::bridge::{
     BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
 };
@@ -33,7 +33,9 @@ use oneiron::temporal::TimeRange;
 use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, SupersessionStatus, Vault,
 };
-use sync_harness::{make_entity_blob, map_get_bytes, map_insert_bytes, test_config};
+use sync_harness::{
+    clear_policy_manifests, make_entity_blob, map_get_bytes, map_insert_bytes, test_config,
+};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 const ROOT_VV_TAG: u8 = 2;
@@ -41,18 +43,6 @@ const ROOT_VV_TAG: u8 = 2;
 /// Window-owner user id shared by every fixture in this file (ONE-1160).
 const TEST_USER: &str = "test-user";
 const TEST_LEASE_VAULT_ID: u64 = 0;
-
-fn clear_policy_manifests(vault: &Vault) {
-    // Legacy sync fixtures used to delete policy manifests to keep mirrored
-    // entity counts exact. Public deletes are intentionally rejected now, and
-    // reverse rematerialization skips the seeded manifest.
-    assert!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("count policy manifests")
-            <= 1
-    );
-}
 
 /// SyncClient over a manager-owned window registry (ONE-1126).
 fn make_client(vault: &Arc<Vault>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {

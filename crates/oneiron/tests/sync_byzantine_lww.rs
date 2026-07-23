@@ -23,6 +23,8 @@
 
 #![cfg(feature = "sync")]
 
+mod sync_harness;
+
 use core::assert_matches;
 use std::sync::Arc;
 
@@ -39,6 +41,7 @@ use oneiron::{
     DeleteReason, EntityId, HnswConfig, TOMBSTONE_VALUE_V2_LEN, Vault, VaultConfig,
     decode_tombstone_value,
 };
+use sync_harness::make_entity_blob;
 use tokio::sync::mpsc::UnboundedReceiver;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -72,18 +75,6 @@ fn make_manager(vault: &Arc<Vault>) -> Arc<WindowManager> {
 
 fn make_client(manager: &Arc<WindowManager>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
     SyncClient::new(Arc::clone(manager), SyncClientConfig::default()).unwrap()
-}
-
-/// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
-/// learned_at u64 BE + body.
-fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
 }
 
 fn put_task(vault: &Vault, id: &EntityId, data: &[u8]) {

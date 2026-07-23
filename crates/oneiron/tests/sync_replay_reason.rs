@@ -18,11 +18,13 @@
 
 #![cfg(feature = "sync")]
 
+mod sync_harness;
+
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags};
-use oneiron::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT};
+use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
@@ -31,6 +33,7 @@ use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
     TOMBSTONE_VALUE_V2_LEN, Vault, VaultConfig,
 };
+use sync_harness::{clear_policy_manifests, make_entity_blob};
 
 /// 2026-02-15 ≈ unix 1_771_027_200 ⇒ window "2026-02".
 const LEARNED_AT: u64 = 1_771_027_200;
@@ -51,17 +54,6 @@ fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
     clear_policy_manifests(&vault);
     (dir, vault)
-}
-
-fn clear_policy_manifests(vault: &Vault) {
-    // The seeded default policy manifest is local-only engine state for sync
-    // windows; public deletion of it is rejected.
-    assert!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("count policy manifests")
-            <= 1
-    );
 }
 
 fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
@@ -514,18 +506,6 @@ fn concurrent_entity_reput_after_tombstone_does_not_resurrect() {
         vault_b.search_text("resurrect-me", 10).unwrap().is_empty(),
         "no index entry may come back either"
     );
-}
-
-/// Builds the 25 B header + payload blob the CRDT entities map carries:
-/// `[type:1][occurred_start:8 BE][occurred_end:8 BE][learned_at:8 BE]`.
-fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
 }
 
 fn dt_marker(vault: &Vault, id: &EntityId) -> Option<Vec<u8>> {

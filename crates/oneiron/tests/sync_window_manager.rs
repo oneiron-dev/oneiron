@@ -11,6 +11,8 @@
 
 #![cfg(feature = "sync")]
 
+mod sync_harness;
+
 use core::assert_matches;
 use std::sync::Arc;
 
@@ -21,6 +23,7 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::temporal::TimeRange;
 use oneiron::{EntityId, Error, ErrorKind, HnswConfig, Vault, VaultConfig};
+use sync_harness::make_entity_blob;
 
 fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
@@ -36,21 +39,6 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let temp = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
     (temp, vault)
-}
-
-/// Entity envelope per the pinned 25-byte layout: `type u8` +
-/// `occurred_start u64 BE` + `occurred_end u64 BE` + `learned_at u64 BE` +
-/// body. `occurred == learned` here, matching the LMDB envelope a
-/// `put(.., TimeRange { start: t, end: t }, t, ..)` produces, so CRDT-vs-LMDB
-/// byte-equality assertions are exact.
-fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&learned_at.to_be_bytes()); // occurred_start
-    blob.extend_from_slice(&learned_at.to_be_bytes()); // occurred_end
-    blob.extend_from_slice(&learned_at.to_be_bytes()); // learned_at
-    blob.extend_from_slice(data);
-    blob
 }
 
 fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
