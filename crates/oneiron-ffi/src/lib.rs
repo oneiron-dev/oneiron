@@ -5,8 +5,8 @@
 //! with the paired `oneiron_*_free` function from this crate. Never pass these
 //! pointers to the platform allocator, and never free the same value twice.
 //!
-//! Sync stubs from the N-API surface (`start_sync` / `stop_sync`) are
-//! intentionally not exported here while shared multi-vault sync is disabled.
+//! Sync entry points are intentionally absent here and on the N-API surface
+//! while shared multi-vault sync is disabled.
 //! The core read/write N-API vault surface is mirrored by this C ABI.
 
 use std::{

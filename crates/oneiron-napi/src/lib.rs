@@ -841,24 +841,6 @@ impl NapiVault {
             .would_create_cycle(&node_id, &target_id)
             .map_err(to_napi_err)
     }
-
-    // ─── Sync (stubs — wired up in Phase 1D) ──────────────────
-
-    /// Start sync to a remote server. Currently a stub.
-    #[napi]
-    pub fn start_sync(&self, _ws_url: String, _auth_token: String) -> napi::Result<()> {
-        Err(napi::Error::from_reason(
-            "N-API sync bindings not yet wired up",
-        ))
-    }
-
-    /// Stop an active sync connection. Currently a stub.
-    #[napi]
-    pub fn stop_sync(&self) -> napi::Result<()> {
-        Err(napi::Error::from_reason(
-            "N-API sync bindings not yet wired up",
-        ))
-    }
 }
 
 #[cfg(test)]
