@@ -2917,7 +2917,7 @@ impl Vault {
         text: &str,
         proposed_at: u64,
     ) -> Result<PendingConnectorCharter> {
-        let compiled = compile_connector_charter(text).map_err(Error::from)?;
+        let compiled = compile_connector_charter(text)?;
         let normalized = text.replace("\r\n", "\n");
         let mut wtxn = self.store.env.write_txn()?;
         let record =
