@@ -3334,7 +3334,6 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "/v1/companion/register/records/{record_id}",
         "/v1/companion/register/records/{record_id}/retire",
         "/v1/companion/register/records/{record_id}/end-relationship",
-        "/api/context-pack",
         "/api/lease/revoke",
         "/api/health",
         "/v1/consumer/usage",
@@ -3343,6 +3342,10 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
     ] {
         assert!(paths.contains_key(path), "missing path {path}");
     }
+    assert!(
+        !paths.contains_key("/api/context-pack"),
+        "legacy context-pack path must be gone"
+    );
 
     let vector_success = &spec["paths"]["/api/search/vector"]["get"]["responses"]["200"]["content"]
         ["application/json"];
@@ -3407,21 +3410,6 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         Value::from("#/components/schemas/ApiErrorEnvelope"),
         "turn annotate 409 must use the ApiErrorEnvelope schema"
     );
-    let context_pack_responses = spec["paths"]["/api/context-pack"]["post"]["responses"]
-        .as_object()
-        .expect("context-pack responses object");
-    assert!(
-        context_pack_responses.contains_key("200"),
-        "context-pack must document its live success response"
-    );
-    assert!(
-        context_pack_responses.contains_key("400"),
-        "context-pack must document fail-closed malformed-control responses"
-    );
-    assert!(
-        !context_pack_responses.contains_key("501"),
-        "context-pack must not document the retired not-implemented response"
-    );
     assert_eq!(
         spec["components"]["schemas"]["DiscoverResponse"]["properties"]["skill_pack"]["$ref"],
         Value::from("#/components/schemas/SkillPackDiscovery"),
@@ -3446,7 +3434,6 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         ("/api/search/text", "get"),
         ("/api/entity/{id}", "get"),
         ("/api/edges/{id}", "get"),
-        ("/api/context-pack", "post"),
         ("/api/lease/revoke", "post"),
         ("/v1/consumer/usage", "get"),
         ("/v1/consumer/usage/details", "get"),
@@ -3651,7 +3638,6 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "CompanionRegisterRecordResponse",
         "LeaseRevokeRequest",
         "LeaseRevokeResponse",
-        "ContextPackRequest",
         "ConsumerAllowanceState",
         "ConsumerAllowanceWarning",
         "ConsumerTopUp",
@@ -7823,7 +7809,7 @@ async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
         server.clone(),
         json_request(
             "POST",
-            "/api/context-pack",
+            "/v1/core/context-pack",
             json!({
                 "query": "evidence needle",
                 "limit": 5,
@@ -8634,7 +8620,12 @@ async fn core_context_pack_dangling_contact_ref_fails_loudly() {
 
 #[tokio::test]
 async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal_id = seeded_test_entity_id(0x1741_0001);
+    let principal_ref = principal_id.to_hex();
     let turn_a = seeded_test_entity_id(0x0012_6301);
     let turn_b = seeded_test_entity_id(0x0012_6302);
     let summary = seeded_test_entity_id(0x0012_6303);
@@ -8693,6 +8684,16 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
         .text(&summary, &[("body", "eiri v4 needle summary")])
         .commit()
         .expect("seed context v4 rows");
+    // Principal-scoped v1 context packs assemble under AbsenceClamp, so the
+    // ported caller is a known contact whose disclosure scope contains the
+    // rows exercised by this memory-board contract.
+    seed_counterparty_contact(
+        &server,
+        principal_id,
+        seeded_test_entity_id(0x1741_0005),
+        "eiri-session-api@example.com",
+    );
+    seed_disclosure_scope(&server, principal_id, vec![turn_a, turn_b, summary]);
 
     let persona_ref = seeded_test_entity_id(0x1324_0001).to_hex();
     let request = json!({
@@ -8709,18 +8710,18 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
                 "other": 0
             }
         },
-        "session_rag": { "session_id": "eiri-session-api" },
+        "session_rag": { "session_id": principal_ref.clone() },
         "companion": { "persona_ref": persona_ref.clone() }
     });
 
     let eiri_request = || {
-        Request::builder()
-            .method("POST")
-            .uri("/api/context-pack")
-            .header(CONTENT_TYPE, "application/json")
-            .header("x-oneiron-caller", "eiri-session-api")
-            .body(Body::from(request.to_string()))
-            .expect("request")
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &principal_ref,
+            Some(&request),
+        )
     };
 
     let (status, first_body) = route_json(server.clone(), eiri_request()).await;
@@ -8745,7 +8746,7 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
     assert_eq!(rows[1]["slot"], Value::from("summaries"));
     assert_eq!(
         first_body["memory_board"]["companion"]["caller"],
-        Value::from("eiri-session-api")
+        Value::from(principal_ref.clone())
     );
     assert_eq!(
         first_body["memory_board"]["companion"]["persona_ref"],
@@ -8765,7 +8766,7 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
     );
     assert_eq!(
         first_body["session_rag"]["session_id"],
-        Value::from("eiri-session-api")
+        Value::from(principal_ref.clone())
     );
     assert_eq!(first_body["session_rag"]["revision"], Value::from(1));
     assert_eq!(first_body["session_rag"]["query_count"], Value::from(1));
@@ -8790,14 +8791,15 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
         .method("POST")
         .uri("/api/companion/resume")
         .header(CONTENT_TYPE, "application/json")
-        .header("x-oneiron-caller", "eiri-session-api")
+        .header("x-oneiron-secret", "secret")
+        .header("x-oneiron-caller", principal_ref.as_str())
         .body(Body::from("{}"))
         .expect("resume request");
     let (status, resume_body) = route_json(server, resume_request).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         resume_body["session"]["rag_state"]["session_id"],
-        Value::from("eiri-session-api")
+        Value::from(principal_ref)
     );
     assert_eq!(
         resume_body["session"]["rag_state"]["query_count"],
@@ -8956,45 +8958,6 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
         .commit()
         .expect("seed turn");
 
-    let request = json!({
-        "query": "warm companion route needle",
-        "context_version": "v4",
-        "memory_board": { "slots": { "turns": 1, "companions": 0, "other": 0 } },
-        "companion": {
-            "person_ref": person_ref.to_hex(),
-            "persona_ref": persona_ref.to_hex(),
-            "expression": "warm"
-        }
-    });
-    let (status, body) = route_json(
-        server.clone(),
-        Request::builder()
-            .method("POST")
-            .uri("/api/context-pack")
-            .header(CONTENT_TYPE, "application/json")
-            .header("x-oneiron-secret", "secret")
-            .header("x-oneiron-caller", "warm-companion-api")
-            .body(Body::from(request.to_string()))
-            .expect("request"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let companion = &body["memory_board"]["companion"];
-    assert_eq!(companion["scope"], Value::from("personal"));
-    assert_eq!(
-        companion["scope_source"],
-        Value::from("relationship_record")
-    );
-    assert_eq!(companion["expression"], Value::from("warm"));
-    assert_eq!(companion["person_ref"], Value::from(person_ref.to_hex()));
-    assert_eq!(companion["persona_ref"], Value::from(persona_ref.to_hex()));
-    assert!(
-        !serde_json::to_string(&body)
-            .expect("response serializes")
-            .contains(private_note),
-        "companion assembly must not leak private register notes"
-    );
-
     let core_request_body = json!({
         "query": "warm companion route needle",
         "context_version": "v4",
@@ -9053,6 +9016,14 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
         Value::from("relationship_record")
     );
     assert_eq!(companion["expression"], Value::from("warm"));
+    assert_eq!(companion["person_ref"], Value::from(person_ref.to_hex()));
+    assert_eq!(companion["persona_ref"], Value::from(persona_ref.to_hex()));
+    assert!(
+        !serde_json::to_string(&body)
+            .expect("response serializes")
+            .contains(private_note),
+        "authorized core context-pack must not leak private register notes"
+    );
 
     let invalid_request = json!({
         "query": "warm companion route needle",
@@ -9065,20 +9036,26 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
     });
     let (status, body) = route_json(
         server.clone(),
-        Request::builder()
-            .method("POST")
-            .uri("/api/context-pack")
-            .header(CONTENT_TYPE, "application/json")
-            .header("x-oneiron-secret", "secret")
-            .header("x-oneiron-caller", "warm-companion-api")
-            .body(Body::from(invalid_request.to_string()))
-            .expect("request"),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &principal_ref.to_hex(),
+            Some(&invalid_request),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&body, "BAD_REQUEST");
     assert_eq!(
-        body["details"]["field"],
+        error_envelope(&body)["details"]["field"],
         Value::from("companion.expression")
+    );
+    assert!(
+        !serde_json::to_string(&body)
+            .expect("response serializes")
+            .contains(private_note),
+        "invalid companion request must not leak private register notes"
     );
 
     let opaque_request = json!({
@@ -9092,14 +9069,13 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
     });
     let (status, body) = route_json(
         server,
-        Request::builder()
-            .method("POST")
-            .uri("/api/context-pack")
-            .header(CONTENT_TYPE, "application/json")
-            .header("x-oneiron-secret", "secret")
-            .header("x-oneiron-caller", "warm-companion-api")
-            .body(Body::from(opaque_request.to_string()))
-            .expect("request"),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &principal_ref.to_hex(),
+            Some(&opaque_request),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -9109,6 +9085,12 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
     assert_eq!(companion["expression"], Value::from("warm"));
     assert_eq!(companion["person_ref"], Value::from("opaque-person-ref"));
     assert_eq!(companion["persona_ref"], Value::from("persona-route-test"));
+    assert!(
+        !serde_json::to_string(&body)
+            .expect("response serializes")
+            .contains(private_note),
+        "opaque companion refs must not leak private register notes"
+    );
 }
 
 #[test]
@@ -9196,7 +9178,11 @@ fn eiri_session_rag_store_caps_persisted_result_ids() {
 
 #[tokio::test]
 async fn context_pack_v4_rejects_oversized_session_id() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal_ref = seeded_test_entity_id(0x1741_0002).to_hex();
     let request = json!({
         "query": "eiri v4 needle",
         "context_version": "v4",
@@ -9207,25 +9193,26 @@ async fn context_pack_v4_rejects_oversized_session_id() {
 
     let (status, body) = route_json(
         server,
-        Request::builder()
-            .method("POST")
-            .uri("/api/context-pack")
-            .header(CONTENT_TYPE, "application/json")
-            .header("x-oneiron-caller", "oversized-session-test")
-            .body(Body::from(request.to_string()))
-            .expect("request"),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &principal_ref,
+            Some(&request),
+        ),
     )
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&body, "BAD_REQUEST");
     assert_eq!(
-        body["details"]["field"],
+        error_envelope(&body)["details"]["field"],
         Value::from("session_rag.session_id")
     );
 }
 
 #[tokio::test]
-async fn context_pack_v4_rejects_shared_default_session_scope() {
+async fn context_pack_v4_rejects_shared_principal_session_scope() {
     let (_dir, server) = test_server();
     let request = json!({
         "query": "eiri v4 needle",
@@ -9235,25 +9222,26 @@ async fn context_pack_v4_rejects_shared_default_session_scope() {
 
     let (status, body) = route_json(
         server,
-        Request::builder()
-            .method("POST")
-            .uri("/api/context-pack")
-            .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(request.to_string()))
-            .expect("request"),
+        json_request("POST", "/v1/core/context-pack", request),
     )
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&body, "BAD_REQUEST");
     assert_eq!(
-        body["details"]["field"],
+        error_envelope(&body)["details"]["field"],
         Value::from("session_rag.session_id")
     );
 }
 
 #[tokio::test]
 async fn context_pack_v4_session_state_is_partitioned_by_caller() {
-    let (_dir, server) = test_server();
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let caller_a = seeded_test_entity_id(0x1741_0003).to_hex();
+    let caller_b = seeded_test_entity_id(0x1741_0004).to_hex();
     let request = json!({
         "query": "eiri v4 partition needle",
         "context_version": "v4",
@@ -9261,16 +9249,16 @@ async fn context_pack_v4_session_state_is_partitioned_by_caller() {
     });
 
     let eiri_request = |caller: &str| {
-        Request::builder()
-            .method("POST")
-            .uri("/api/context-pack")
-            .header(CONTENT_TYPE, "application/json")
-            .header("x-oneiron-caller", caller)
-            .body(Body::from(request.to_string()))
-            .expect("request")
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            caller,
+            Some(&request),
+        )
     };
 
-    let (status, caller_a_first) = route_json(server.clone(), eiri_request("caller-a")).await;
+    let (status, caller_a_first) = route_json(server.clone(), eiri_request(&caller_a)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         caller_a_first["memory_board"]["companion"]["caller"],
@@ -9282,14 +9270,14 @@ async fn context_pack_v4_session_state_is_partitioned_by_caller() {
     );
     assert_eq!(caller_a_first["session_rag"]["query_count"], Value::from(1));
 
-    let (status, caller_a_second) = route_json(server.clone(), eiri_request("caller-a")).await;
+    let (status, caller_a_second) = route_json(server.clone(), eiri_request(&caller_a)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         caller_a_second["session_rag"]["query_count"],
         Value::from(2)
     );
 
-    let (status, caller_b_first) = route_json(server.clone(), eiri_request("caller-b")).await;
+    let (status, caller_b_first) = route_json(server.clone(), eiri_request(&caller_b)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(caller_b_first["session_rag"]["query_count"], Value::from(1));
 
@@ -9298,12 +9286,13 @@ async fn context_pack_v4_session_state_is_partitioned_by_caller() {
             .method("POST")
             .uri("/api/companion/resume")
             .header(CONTENT_TYPE, "application/json")
+            .header("x-oneiron-secret", "secret")
             .header("x-oneiron-caller", caller)
             .body(Body::from("{}"))
             .expect("resume request")
     };
 
-    let (status, caller_a_resume) = route_json(server.clone(), resume_request("caller-a")).await;
+    let (status, caller_a_resume) = route_json(server.clone(), resume_request(&caller_a)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         caller_a_resume["session"]["rag_state"]["session_id"],
@@ -9314,7 +9303,7 @@ async fn context_pack_v4_session_state_is_partitioned_by_caller() {
         Value::from(2)
     );
 
-    let (status, caller_b_resume) = route_json(server, resume_request("caller-b")).await;
+    let (status, caller_b_resume) = route_json(server, resume_request(&caller_b)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         caller_b_resume["session"]["rag_state"]["session_id"],
@@ -9364,7 +9353,7 @@ async fn context_pack_route_projects_json_response_controls() {
         server.clone(),
         json_request(
             "POST",
-            "/api/context-pack",
+            "/v1/core/context-pack",
             json!({
                 "query": "projection budget needle",
                 "limit": 5,
@@ -9388,12 +9377,12 @@ async fn context_pack_route_projects_json_response_controls() {
         server.clone(),
         json_request(
             "POST",
-            "/api/context-pack",
+            "/v1/core/context-pack",
             json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
-                "maxItemTokens": 48
+                "budget": { "max_item_tokens": 48 }
             }),
         ),
     )
@@ -9417,7 +9406,7 @@ async fn context_pack_route_projects_json_response_controls() {
         server.clone(),
         json_request(
             "POST",
-            "/api/context-pack",
+            "/v1/core/context-pack",
             json!({
                 "query": "projection budget needle",
                 "limit": 5,
@@ -9460,12 +9449,12 @@ async fn context_pack_route_projects_json_response_controls() {
         server.clone(),
         json_request(
             "POST",
-            "/api/context-pack",
+            "/v1/core/context-pack",
             json!({
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
-                "maxItemTokens": 1
+                "budget": { "max_item_tokens": 1 }
             }),
         ),
     )
@@ -9534,7 +9523,7 @@ async fn context_pack_route_rejects_malformed_controls() {
         server.clone(),
         json_request(
             "POST",
-            "/api/context-pack",
+            "/v1/core/context-pack",
             json!({
                 "query": "recent decisions",
                 "depth": { "edge_hop": oneiron::context_pack::MAX_EDGE_HOP + 1 }
@@ -9544,10 +9533,13 @@ async fn context_pack_route_rejects_malformed_controls() {
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], Value::from("BAD_REQUEST"));
-    assert_eq!(body["details"]["field"], Value::from("depth.edge_hop"));
+    assert_error_envelope(&body, "BAD_REQUEST");
+    assert_eq!(
+        error_envelope(&body)["details"]["field"],
+        Value::from("depth.edge_hop")
+    );
     assert!(
-        body["message"]
+        error_envelope(&body)["message"]
             .as_str()
             .is_some_and(|message| message.contains("edge_hop")),
         "control error should name the malformed field: {body:?}"
@@ -9557,7 +9549,7 @@ async fn context_pack_route_rejects_malformed_controls() {
         server.clone(),
         json_request(
             "POST",
-            "/api/context-pack",
+            "/v1/core/context-pack",
             json!({
                 "query": "recent decisions",
                 "edge_hop": oneiron::context_pack::MAX_EDGE_HOP + 1
@@ -9567,14 +9559,17 @@ async fn context_pack_route_rejects_malformed_controls() {
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], Value::from("BAD_REQUEST"));
-    assert_eq!(body["details"]["field"], Value::from("edge_hop"));
+    assert_error_envelope(&body, "BAD_REQUEST");
+    assert_eq!(
+        error_envelope(&body)["details"]["field"],
+        Value::from("edge_hop")
+    );
 
     let (status, body) = route_json(
         server.clone(),
         json_request(
             "POST",
-            "/api/context-pack",
+            "/v1/core/context-pack",
             json!({
                 "query": "recent decisions",
                 "max_neighbors": oneiron::context_pack::MAX_CONTEXT_NEIGHBORS + 1
@@ -9584,14 +9579,17 @@ async fn context_pack_route_rejects_malformed_controls() {
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], Value::from("BAD_REQUEST"));
-    assert_eq!(body["details"]["field"], Value::from("max_neighbors"));
+    assert_error_envelope(&body, "BAD_REQUEST");
+    assert_eq!(
+        error_envelope(&body)["details"]["field"],
+        Value::from("max_neighbors")
+    );
 
     let (status, body) = route_json(
         server,
         json_request(
             "POST",
-            "/api/context-pack",
+            "/v1/core/context-pack",
             json!({
                 "query": "recent decisions",
                 "time": {
@@ -9605,10 +9603,13 @@ async fn context_pack_route_rejects_malformed_controls() {
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], Value::from("BAD_REQUEST"));
-    assert_eq!(body["details"]["field"], Value::from("time.since"));
+    assert_error_envelope(&body, "BAD_REQUEST");
+    assert_eq!(
+        error_envelope(&body)["details"]["field"],
+        Value::from("time.since")
+    );
     assert!(
-        body["message"]
+        error_envelope(&body)["message"]
             .as_str()
             .is_some_and(|message| message.contains("learned_end")),
         "control error should name the contradictory learned bound: {body:?}"

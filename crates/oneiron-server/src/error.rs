@@ -53,8 +53,6 @@ pub enum ErrorCode {
     CrdtUnknownTag,
     #[serde(rename = "4004")]
     CrdtFrameTooLarge,
-    #[serde(rename = "4005")]
-    CrdtBulkDecodeFailure,
     #[serde(rename = "4006")]
     CrdtVersionMismatch,
 }
@@ -82,7 +80,6 @@ impl ErrorCode {
         Self::CrdtDecodeError,
         Self::CrdtUnknownTag,
         Self::CrdtFrameTooLarge,
-        Self::CrdtBulkDecodeFailure,
         Self::CrdtVersionMismatch,
     ];
 
@@ -108,7 +105,6 @@ impl ErrorCode {
             Self::CrdtDecodeError => "4002",
             Self::CrdtUnknownTag => "4003",
             Self::CrdtFrameTooLarge => "4004",
-            Self::CrdtBulkDecodeFailure => "4005",
             Self::CrdtVersionMismatch => "4006",
         }
     }
@@ -118,7 +114,6 @@ impl ErrorCode {
             Self::BadRequest
             | Self::CrdtDecodeError
             | Self::CrdtUnknownTag
-            | Self::CrdtBulkDecodeFailure
             | Self::CrdtVersionMismatch => StatusCode::BAD_REQUEST,
             Self::Unauthorized | Self::CrdtAuthExpired => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
@@ -211,8 +206,6 @@ pub enum ApiErrorDetails {
         max_bytes: Option<usize>,
         received_bytes: Option<usize>,
     },
-    #[serde(rename = "4005")]
-    CrdtBulkDecodeFailure,
     #[serde(rename = "4006", rename_all = "camelCase")]
     CrdtVersionMismatch {
         expected_version: Option<u16>,
@@ -243,7 +236,6 @@ impl ApiErrorDetails {
             Self::CrdtDecodeError => ErrorCode::CrdtDecodeError,
             Self::CrdtUnknownTag { .. } => ErrorCode::CrdtUnknownTag,
             Self::CrdtFrameTooLarge { .. } => ErrorCode::CrdtFrameTooLarge,
-            Self::CrdtBulkDecodeFailure => ErrorCode::CrdtBulkDecodeFailure,
             Self::CrdtVersionMismatch { .. } => ErrorCode::CrdtVersionMismatch,
         }
     }
@@ -701,8 +693,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
         | ErrorCode::NotImplemented
         | ErrorCode::InternalServerError
         | ErrorCode::CrdtAuthExpired
-        | ErrorCode::CrdtDecodeError
-        | ErrorCode::CrdtBulkDecodeFailure => {}
+        | ErrorCode::CrdtDecodeError => {}
     }
 
     json!({

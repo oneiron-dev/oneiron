@@ -161,7 +161,6 @@ const API_LEVEL: &str = "v1";
         update_companion_register_record,
         retire_companion_register_record,
         end_companion_register_relationship,
-        context_pack,
         record_usage_event,
         get_usage_rollup,
         get_consumer_usage,
@@ -302,7 +301,6 @@ const API_LEVEL: &str = "v1";
         CompanionRegisterRecordResponse,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
-        ContextPackRequest,
         ConsumerAllowanceState,
         ConsumerAllowanceWarning,
         ConsumerAllowanceWarningLevel,
@@ -427,8 +425,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/edges/{id}", get(get_edges))
         .nest("/v1/core", core_routes)
         .nest("/v1/companion", companion_routes)
-        // context-pack is POST since it takes a complex options body
-        .route("/api/context-pack", post(context_pack))
         .route("/api/companion/resume", post(resume))
         .route("/v1/consumer/usage", get(get_consumer_usage))
         .route(
