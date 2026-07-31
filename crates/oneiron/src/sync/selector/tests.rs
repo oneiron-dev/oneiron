@@ -580,7 +580,7 @@ fn federated_admission_rejects_foreign_authority_log() {
     let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xB2));
     let local = authority_genesis_entry(0x51);
     vault
-        .put_authority_log_entry(&entity_id(0x51), &local, TimeRange { start: 1, end: 1 }, 1)
+        .put_authority_log_entry(&local, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
 
     let foreign = authority_genesis_entry(0x52);
@@ -1387,20 +1387,10 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     );
     let connect_hash = authority_entry_hash(&connect).unwrap();
     vault
-        .put_authority_log_entry(
-            &entity_id(0x5E),
-            &genesis,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
     vault
-        .put_authority_log_entry(
-            &entity_id(0xE2),
-            &connect,
-            TimeRange { start: 2, end: 2 },
-            2,
-        )
+        .put_authority_log_entry(&connect, TimeRange { start: 2, end: 2 }, 2)
         .unwrap();
 
     let unilateral = |kind: FederationLifecycleKind, seq: u64| {
@@ -1505,10 +1495,9 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
         // Two concurrent equal-epoch repacts with divergent digests.
         PactSeedStatus::Suspended => vec![repact(2, 0x21, 0x66), repact(3, 0x22, 0x67)],
     };
-    for (index, entry) in extras.into_iter().enumerate() {
-        let row = entity_id(0xE3 + u8::try_from(index).unwrap());
+    for entry in extras {
         vault
-            .put_authority_log_entry(&row, &entry, TimeRange { start: 3, end: 3 }, 3)
+            .put_authority_log_entry(&entry, TimeRange { start: 3, end: 3 }, 3)
             .unwrap();
     }
 }
@@ -1555,4 +1544,47 @@ fn selector_authorization_gates_on_pact_activation() {
             "{name}: wrong denial: {err:?}"
         );
     }
+}
+
+/// ONE-1604-D1 T10 (the 1632 seam floor): the keystone changes no
+/// authorization outcome. A rejected divergent-overwrite attempt against an
+/// admitted type-122 row leaves `authorize_sync_selector` deciding exactly as
+/// it did before — 1631 hardens the store, it does not move the
+/// authorization edge that 1632 will later split.
+#[test]
+fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
+    let member = entity_id(0x34);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Active);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("precondition: the pact-bound grant authorizes");
+
+    // Attempt a body-divergent write at an admitted authority row's key.
+    let foreign = authority_genesis_entry(0x77);
+    let foreign_body = encode_authority_log_entry_body(&foreign).unwrap();
+    let occupied = vault
+        .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("an authority row must be seeded");
+    let err = vault
+        .batch()
+        .put_replicated(
+            &occupied,
+            ENTITY_TYPE_AUTHORITY_LOG,
+            TimeRange { start: 9, end: 9 },
+            9,
+            &foreign_body,
+        )
+        .commit()
+        .expect_err("a divergent body at an occupied type-122 key must be rejected");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
+    );
+
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("authorization must be byte-for-byte unchanged after the rejected overwrite");
 }

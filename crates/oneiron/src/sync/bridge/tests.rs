@@ -232,12 +232,7 @@ fn over_quota_peer_rejected() -> Result<()> {
     let owner = authority_test_key(31);
     let genesis = authority_genesis_fixture(31);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
-    vault.put_authority_log_entry(
-        &EntityId::now(),
-        &genesis,
-        TimeRange { start: 1, end: 1 },
-        1,
-    )?;
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
 
     let first = authority_enroll_fixture(vault_id, &genesis, &owner, 32, 1);
     let second = authority_enroll_fixture(vault_id, &genesis, &owner, 33, 2);
@@ -252,7 +247,7 @@ fn over_quota_peer_rejected() -> Result<()> {
             wtxn,
             &tombstones,
             "2026-03",
-            &EntityId::now().to_hex(),
+            &crate::authority::authority_log_entity_id(&first)?.to_hex(),
             &first_blob,
             crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
         )?;
@@ -263,7 +258,7 @@ fn over_quota_peer_rejected() -> Result<()> {
         Ok(())
     })?;
 
-    let second_id = EntityId::now();
+    let second_id = crate::authority::authority_log_entity_id(&second)?;
     let err = vault
         .with_write_txn(|wtxn| {
             materialize_entity_blob_in_txn(
@@ -296,6 +291,119 @@ fn over_quota_peer_rejected() -> Result<()> {
             .get(&rtxn, second_id.as_bytes())?
             .is_none(),
         "over-quota authority replay-door blob must not be stored"
+    );
+    Ok(())
+}
+
+/// ONE-1604-D1 T6/T8: a peer row whose id does not match its content hash is
+/// refused at the replicated door BEFORE the maintenance-ingest quota debit,
+/// so a hostile peer cannot burn a victim's ingest quota with rows that were
+/// never admissible. Local bytes and the fold are untouched.
+#[cfg(feature = "sync")]
+#[test]
+fn store_key_mismatched_authority_row_from_peer_is_rejected_without_quota_debit() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(41);
+    let genesis = authority_genesis_fixture(41);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let fold_before = vault.authority_fold()?.vault_id;
+
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 42, 1);
+    let blob = authority_log_entity_blob(&enroll, 2)?;
+    let derived = crate::authority::authority_log_entity_id(&enroll)?;
+    let wrong_id = EntityId::now();
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+
+    let err = vault
+        .with_write_txn(|wtxn| {
+            materialize_entity_blob_in_txn(
+                &vault,
+                wtxn,
+                &tombstones,
+                "2026-03",
+                &wrong_id.to_hex(),
+                &blob,
+                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+            )
+            .map(|_| ())
+        })
+        .expect_err("a type-122 row under a non-derived id must be refused at the peer door");
+
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
+    );
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
+        "the rejection must classify as remote so the batch quarantines and continues"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.store.entities.get(&rtxn, wrong_id.as_bytes())?.is_none());
+    assert!(vault.store.entities.get(&rtxn, derived.as_bytes())?.is_none());
+    drop(rtxn);
+    assert!(
+        quota::maintenance_ingest_quota_snapshots(&vault)?.is_empty(),
+        "a pre-quota rejection must not debit maintenance-ingest quota"
+    );
+    assert_eq!(vault.authority_fold()?.vault_id, fold_before);
+    Ok(())
+}
+
+/// ONE-1604-D1/D5 T7 (mandated adversarial regression): a tombstone naming a
+/// derived authority id that arrives and replays BEFORE the row itself must
+/// not be able to poison the later materialization. AUTHORITY_LOG is
+/// delete-protected, so the row still materializes and no `dt:` marker
+/// survives to block it — a peer cannot pre-delete authority history it has
+/// not seen yet.
+#[cfg(feature = "sync")]
+#[test]
+fn tombstone_before_authority_row_cannot_poison_materialization() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(43);
+    let genesis = authority_genesis_fixture(43);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 44, 1);
+    let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
+    let id = crate::authority::authority_log_entity_id(&enroll)?;
+    let blob = authority_log_entity_blob(&enroll, 2)?;
+
+    // The tombstone lands first: no local row, no map carrier yet.
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+    tombstones.insert(&id.to_hex(), b"1").unwrap();
+    doc.commit();
+
+    vault.with_write_txn(|wtxn| {
+        let wrote = materialize_entity_blob_in_txn(
+            &vault,
+            wtxn,
+            &tombstones,
+            "2026-03",
+            &id.to_hex(),
+            &blob,
+            crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+        )?;
+        assert!(
+            wrote,
+            "a delete-protected authority row must materialize despite an earlier tombstone"
+        );
+        Ok(())
+    })?;
+
+    assert_eq!(
+        read_dt_marker(&vault, &id),
+        None,
+        "no dt: poison may survive over a delete-protected authority row"
+    );
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(enroll));
+    let fold = vault.authority_fold()?;
+    assert!(
+        fold.pending_widens.contains_key(&enroll_hash) || fold.valid_entries.contains(&enroll_hash),
+        "the fold must see the admitted entry"
     );
     Ok(())
 }

@@ -1346,6 +1346,7 @@ pub fn forward_rematerialize(
                         crate::batch::validate_replicated_authority_log_for_local_vault(
                             &vault.store,
                             wtxn,
+                            &id,
                             data,
                         )?;
                     let peer_key = if validation.signer_known {
@@ -1372,6 +1373,17 @@ pub fn forward_rematerialize(
                             data,
                         )
                         .apply(wtxn)?;
+                    // ONE-1604-D1/D5 parity with the bridge arm: a tombstone
+                    // that arrived before this row may have minted a `dt:`
+                    // marker on the headerless path; it never represented
+                    // valid delete authority over a delete-protected kind, so
+                    // it must not linger as permanent poison on this ingest
+                    // path.
+                    vault.neutralize_delete_protected_marker_in_txn(
+                        wtxn,
+                        &id,
+                        ENTITY_TYPE_AUTHORITY_LOG,
+                    )?;
                     Ok(true)
                 })
             } else if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {

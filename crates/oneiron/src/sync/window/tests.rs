@@ -2536,3 +2536,97 @@ fn forward_rematerialization_malformed_type_76_envelope_preserves_delete_wins() 
     );
     Ok(())
 }
+
+#[cfg(feature = "sync")]
+fn authority_genesis_fixture_for_window(seed: u8) -> crate::authority::AuthorityLogEntry {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let signing = SigningKey::from_bytes(&[seed; 32]);
+    let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let mut entry = crate::authority::AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: None,
+        seq: 0,
+        parent_hashes: Vec::new(),
+        op: crate::authority::AuthorityOp::Genesis {
+            device: crate::authority::DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [0; 32],
+                attestation: crate::authority::AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: crate::authority::AuthorityTier::Software,
+                roles: crate::authority::ROLE_OWNER,
+            },
+            genesis_nonce: [seed.wrapping_add(1); 32],
+            tier_floor: crate::authority::AuthorityTier::Software,
+            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
+        },
+        signer: crate::authority::AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: u64::from(seed),
+    };
+    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+/// ONE-1604-D1/D5 T9: the window-path twin of the bridge tombstone
+/// regression, covering the neutralize-parity call this lane adds to the
+/// window's AUTHORITY_LOG arm. A replica that already carries a stale `dt:`
+/// marker for a derived authority id must still admit the row when it
+/// arrives, and must clear the poison — the marker never represented valid
+/// delete authority over a delete-protected kind.
+#[cfg(feature = "sync")]
+#[test]
+fn window_authority_row_admission_neutralizes_stale_dt_marker() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let genesis = authority_genesis_fixture_for_window(0x67);
+    let id = crate::authority::authority_log_entity_id(&genesis)?;
+    let body = crate::authority::encode_authority_log_entry_body(&genesis)?;
+
+    // Seed the local root so the replicated door has a vault id to match.
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    // Then simulate a replica poisoned by the pre-fix headerless path.
+    vault.with_write_txn(|wtxn| {
+        vault.store.sync_state.put(
+            wtxn,
+            &crate::deletion::local_hard_delete_key(&id),
+            &[0_u8; crate::deletion::TOMBSTONE_VALUE_V2_LEN],
+        )?;
+        Ok(())
+    })?;
+
+    // The row arrives again through the window arm with divergent metadata,
+    // so the byte-identical short circuit does not apply.
+    let doc = create_window_doc("remote-poisoned-authority", &window_key);
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &id.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_AUTHORITY_LOG, 2, &body),
+    )?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+
+    assert_eq!(
+        vault.get_authority_log_entry(&id)?,
+        Some(genesis),
+        "the authority row must survive a stale dt: marker"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &crate::deletion::local_hard_delete_key(&id))?
+            .is_none(),
+        "authority row admission must neutralize the stale dt: poison marker"
+    );
+    Ok(())
+}

@@ -2683,11 +2683,9 @@ fn authority_log_first_seen_sidecar_drives_live_fold() -> Result<()> {
     let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
     let enroll_sidecar = crate::authority::authority_first_seen_sync_key(&enroll_hash);
     let enroll_key = authority_key_from_signing(&authority_test_key(75));
-    let genesis_id = EntityId::now();
-    let enroll_id = EntityId::now();
 
-    vault.put_authority_log_entry(&genesis_id, &genesis, test_time_range(1, 1), 1)?;
-    vault.put_authority_log_entry(&enroll_id, &enroll, test_time_range(2, 2), 2)?;
+    vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
+    let enroll_id = vault.put_authority_log_entry(&enroll, test_time_range(2, 2), 2)?;
 
     let first_seen = authority_first_seen_for_test(&vault, &enroll_sidecar)?
         .expect("authority log put must create first-seen sidecar");
@@ -2695,7 +2693,11 @@ fn authority_log_first_seen_sidecar_drives_live_fold() -> Result<()> {
     assert!(fold.pending_widens.contains_key(&enroll_hash));
     assert!(!fold.roster.contains_key(&enroll_key));
 
-    vault.put_authority_log_entry(&enroll_id, &enroll, test_time_range(3, 3), 999_999)?;
+    let replayed_id = vault.put_authority_log_entry(&enroll, test_time_range(3, 3), 999_999)?;
+    assert_eq!(
+        replayed_id, enroll_id,
+        "a byte-identical replay must land on the same content-derived store key"
+    );
     assert_eq!(
         authority_first_seen_for_test(&vault, &enroll_sidecar)?,
         Some(first_seen),
@@ -2722,13 +2724,103 @@ fn authority_log_first_seen_sidecar_drives_live_fold() -> Result<()> {
     Ok(())
 }
 
+/// ONE-1604-D1 T4: the write door derives the store key from the entry's
+/// content hash and returns it; the row is readable under exactly that id.
+#[cfg(feature = "sync")]
+#[test]
+fn put_authority_log_entry_returns_derived_id() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let genesis = authority_genesis_fixture(90);
+    let hash = crate::authority::authority_entry_hash(&genesis)?;
+
+    let id = vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
+
+    assert_eq!(
+        id.as_bytes(),
+        &hash[..16],
+        "the store key must be the first 16 bytes of the entry hash"
+    );
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(genesis));
+    Ok(())
+}
+
+/// ONE-1604-D1 T1: the ONE-1604 regression — an existing type-122 row can no
+/// longer be body-replaced at its store key. A replicated write carrying a
+/// DIFFERENT valid signed body for an occupied derived id is rejected (the
+/// divergent body derives a different key, so the bind refuses it); the
+/// stored bytes and the fold are unchanged. This is the LWW hole closing:
+/// before the keystone this same write silently overwrote folded history.
+#[cfg(feature = "sync")]
+#[test]
+fn authority_log_body_divergent_overwrite_rejected_at_store_key() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let genesis = authority_genesis_fixture(91);
+    let id = vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
+    let stored = vault.get_raw(&id)?.expect("authority row must be stored");
+    let vault_id_before = vault.authority_fold()?.vault_id;
+
+    // A different, independently valid signed entry — divergent bytes staged
+    // at the FIRST entry's occupied store key.
+    let divergent = authority_genesis_fixture(92);
+    let divergent_body = crate::authority::encode_authority_log_entry_body(&divergent)?;
+    let err = vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_AUTHORITY_LOG,
+            test_time_range(2, 2),
+            2,
+            &divergent_body,
+        )
+        .commit()
+        .expect_err("body-divergent overwrite of a type-122 row must be rejected");
+
+    assert_eq!(err.kind(), ErrorKind::AuthorityLogStoreKeyMismatch);
+    assert_eq!(vault.get_raw(&id)?, Some(stored), "local bytes must be kept");
+    assert_eq!(vault.authority_fold()?.vault_id, vault_id_before);
+    Ok(())
+}
+
+/// ONE-1604-D1 T2: a valid entry offered under a NON-derived id is refused at
+/// the chokepoint, and nothing is stored under either key.
+#[cfg(feature = "sync")]
+#[test]
+fn authority_log_store_key_mismatch_rejected() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let genesis = authority_genesis_fixture(95);
+    vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    let owner = authority_test_key(95);
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 96, 1);
+    let enroll_body = crate::authority::encode_authority_log_entry_body(&enroll)?;
+    let derived = crate::authority::authority_log_entity_id(&enroll)?;
+    let wrong_id = EntityId::now();
+
+    let err = vault
+        .batch()
+        .put_replicated(
+            &wrong_id,
+            ENTITY_TYPE_AUTHORITY_LOG,
+            test_time_range(2, 2),
+            2,
+            &enroll_body,
+        )
+        .commit()
+        .expect_err("a type-122 row under a non-derived id must be rejected");
+
+    assert_eq!(err.kind(), ErrorKind::AuthorityLogStoreKeyMismatch);
+    assert!(!vault.entity_exists(&wrong_id)?);
+    assert!(!vault.entity_exists(&derived)?);
+    Ok(())
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn authority_log_write_does_not_mark_legacy_backfill_complete() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let genesis = authority_genesis_fixture(86);
 
-    vault.put_authority_log_entry(&EntityId::now(), &genesis, test_time_range(1, 1), 1)?;
+    vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
 
     let rtxn = vault.store.env.read_txn()?;
     assert!(
@@ -2755,12 +2847,7 @@ fn authority_log_first_seen_ignores_future_learned_at_metadata() -> Result<()> {
     let future_learned_at = crate::unix_seconds_now()
         .saturating_add(crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS);
 
-    vault.put_authority_log_entry(
-        &EntityId::now(),
-        &genesis,
-        test_time_range(1, 1),
-        future_learned_at,
-    )?;
+    vault.put_authority_log_entry(&genesis, test_time_range(1, 1), future_learned_at)?;
 
     let first_seen = authority_first_seen_for_test(&vault, &genesis_sidecar)?
         .expect("authority log put must create first-seen sidecar");
@@ -2783,8 +2870,8 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
     let enroll_sidecar = crate::authority::authority_first_seen_sync_key(&enroll_hash);
     let enroll_key = authority_key_from_signing(&authority_test_key(85));
 
-    vault.put_authority_log_entry(&EntityId::now(), &genesis, test_time_range(1, 1), 1)?;
-    vault.put_authority_log_entry(&EntityId::now(), &enroll, test_time_range(2, 2), 2)?;
+    vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
+    vault.put_authority_log_entry(&enroll, test_time_range(2, 2), 2)?;
     vault.with_write_txn(|wtxn| {
         vault
             .store
@@ -2832,14 +2919,18 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
 fn replicated_authority_log_rejects_foreign_vault_root() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let local = authority_genesis_fixture(72);
-    vault.put_authority_log_entry(&EntityId::now(), &local, test_time_range(1, 1), 1)?;
+    vault.put_authority_log_entry(&local, test_time_range(1, 1), 1)?;
 
+    // The row carries its own CORRECT content-derived id, so the store-key
+    // bind passes and the foreign-root rejection is what is actually under
+    // test (ONE-1604-D1 checks precede the vault-id fold check).
     let foreign = authority_genesis_fixture(73);
     let foreign_body = crate::authority::encode_authority_log_entry_body(&foreign)?;
+    let foreign_id = crate::authority::authority_log_entity_id(&foreign)?;
     let err = vault
         .batch()
         .put_replicated(
-            &EntityId::now(),
+            &foreign_id,
             ENTITY_TYPE_AUTHORITY_LOG,
             test_time_range(2, 2),
             2,
@@ -3491,3 +3582,4 @@ fn child_of_overlay_orders_entity_clear_against_same_pair_edge() {
         "clearing the child after touching the ChildOf pair must win"
     );
 }
+
