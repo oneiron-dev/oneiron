@@ -97,3 +97,60 @@ impl SealError {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::VerifyReport;
+
+    fn report() -> VerifyReport {
+        VerifyReport {
+            valid: false,
+            achieved_profile: None,
+            evidence_sha256: [0; 32],
+            checks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn retryable_taxonomy_matches_section_6() {
+        let cases = [
+            (
+                SealError::Retryable {
+                    stage: SealStage::BackendSign,
+                    code: RetryableCode::TemporaryBackendFailure,
+                    retry_after_ms: None,
+                },
+                true,
+            ),
+            (
+                SealError::VerifyFailed {
+                    report: Box::new(report()),
+                },
+                true,
+            ),
+            (
+                SealError::BackendUnavailable {
+                    retry_after_ms: Some(100),
+                },
+                true,
+            ),
+            (
+                SealError::Fatal {
+                    stage: SealStage::CmsAssembly,
+                    code: FatalCode::CmsEncodingFailed,
+                },
+                false,
+            ),
+            (
+                SealError::InputInvalid {
+                    code: InputInvalidCode::EncryptedPdf,
+                },
+                false,
+            ),
+        ];
+        for (err, expected) in cases {
+            assert_eq!(err.is_retryable(), expected, "{err}");
+        }
+    }
+}

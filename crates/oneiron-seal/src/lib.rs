@@ -12,9 +12,9 @@ mod native;
 
 pub use api::{
     BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, PadesProfile,
-    PdfSealEngine, SealBackend, SealClock, SealRequest, SealWarning, SealedPdf, Sha256Digest,
-    SignDigestRequest, SignatureAlgorithm, SigningIdentity, VerifyCheck, VerifyCheckKind,
-    VerifyCheckStatus, VerifyFindingCode, VerifyReport,
+    PdfSealEngine, ProfileDegradeReason, SealBackend, SealClock, SealRequest, SealWarning,
+    SealedPdf, Sha256Digest, SignDigestRequest, SignatureAlgorithm, SigningIdentity, VerifyCheck,
+    VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport,
 };
 #[cfg(feature = "native")]
 pub use api::{

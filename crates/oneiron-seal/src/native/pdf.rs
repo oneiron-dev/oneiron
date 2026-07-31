@@ -73,10 +73,8 @@ fn scan_objects(doc: &Document) -> Result<(), SealError> {
                 return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
             }
         }
-        if let Ok(ft) = dict.get(b"FT") {
-            if name_is(ft, b"Sig") {
-                return Err(input_invalid(InputInvalidCode::ExistingSignature));
-            }
+        if dict.get(b"FT").is_ok_and(|ft| name_is(ft, b"Sig")) {
+            return Err(input_invalid(InputInvalidCode::ExistingSignature));
         }
         if dict.has(b"AA") {
             return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
@@ -84,10 +82,11 @@ fn scan_objects(doc: &Document) -> Result<(), SealError> {
         if dict.has(b"Lock") {
             return Err(input_invalid(InputInvalidCode::ExistingSignature));
         }
-        if let Ok(s) = dict.get(b"S") {
-            if name_is(s, b"JavaScript") || name_is(s, b"Launch") {
-                return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
-            }
+        if dict
+            .get(b"S")
+            .is_ok_and(|s| name_is(s, b"JavaScript") || name_is(s, b"Launch"))
+        {
+            return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
         }
     }
     Ok(())
@@ -99,22 +98,21 @@ fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), SealError> {
     if root.has(b"OpenAction") {
         return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
     }
-    if let Ok(names) = root.get(b"Names") {
-        if let Some(nd) = deref_dict(doc, names) {
-            if nd.has(b"JavaScript") {
-                return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
-            }
-            if nd.has(b"EmbeddedFiles") {
-                return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
-            }
+    if let Ok(names) = root.get(b"Names")
+        && let Some(nd) = deref_dict(doc, names)
+    {
+        if nd.has(b"JavaScript") {
+            return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
+        }
+        if nd.has(b"EmbeddedFiles") {
+            return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
         }
     }
-    if let Ok(perms) = root.get(b"Perms") {
-        if let Some(pd) = deref_dict(doc, perms) {
-            if pd.has(b"DocMDP") || pd.has(b"FieldMDP") || pd.has(b"UR3") {
-                return Err(input_invalid(InputInvalidCode::ExistingSignature));
-            }
-        }
+    if let Ok(perms) = root.get(b"Perms")
+        && let Some(pd) = deref_dict(doc, perms)
+        && (pd.has(b"DocMDP") || pd.has(b"FieldMDP") || pd.has(b"UR3"))
+    {
+        return Err(input_invalid(InputInvalidCode::ExistingSignature));
     }
     Ok(())
 }
@@ -225,6 +223,25 @@ fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionState, SealErr
     })
 }
 
+/// §7.1 rule 2: reject malformed or repaired xref structures. Every
+/// uncompressed in-use xref entry must point at its object header; a reader
+/// that silently skipped unloadable objects leaves exactly this signature.
+fn xref_offsets_consistent(doc: &Document, bytes: &[u8]) -> bool {
+    doc.reference_table
+        .entries
+        .iter()
+        .all(|(id, entry)| match entry {
+            lopdf::xref::XrefEntry::Normal { offset, generation } => {
+                let off = usize::try_from(*offset).unwrap_or(usize::MAX);
+                let header = format!("{id} {generation} obj");
+                bytes
+                    .get(off..off + header.len())
+                    .is_some_and(|w| w == header.as_bytes())
+            }
+            _ => true,
+        })
+}
+
 fn load_strict(bytes: &[u8], limits: &SealResourceLimits) -> Result<Document, SealError> {
     let options = LoadOptions {
         strict: true,
@@ -259,6 +276,9 @@ pub(crate) fn validate_prepared(
     }
     if doc.objects.len() > limits.max_pdf_objects {
         return Err(input_invalid(InputInvalidCode::ObjectLimitExceeded));
+    }
+    if !xref_offsets_consistent(&doc, bytes) {
+        return Err(input_invalid(InputInvalidCode::MalformedXref));
     }
     if doc.get_pages().is_empty() {
         return Err(input_invalid(InputInvalidCode::MissingPage));
@@ -324,7 +344,7 @@ fn write_object(obj: &Object, out: &mut Vec<u8>) -> Result<(), SealError> {
         }
         Object::Dictionary(d) => {
             out.extend_from_slice(b"<< ");
-            for (k, v) in d.iter() {
+            for (k, v) in d {
                 write_name(k, out);
                 out.push(b' ');
                 write_object(v, out)?;
@@ -442,11 +462,13 @@ fn sig_dict_body(
 /// `(object number, generation, body)` triples plus the sig-dict-relative
 /// placeholder offsets when the revision carries a signature dictionary.
 #[allow(clippy::too_many_lines)]
+type NewObjects = (Vec<(u32, u16, Vec<u8>)>, Option<(u32, usize, usize)>);
+
 fn build_objects(
     state: &RevisionState,
     kind: &RevisionKind,
     capacity: usize,
-) -> Result<(Vec<(u32, u16, Vec<u8>)>, Option<(u32, usize, usize)>), SealError> {
+) -> Result<NewObjects, SealError> {
     let mut next = state.max_obj + 1;
     let mut objs: Vec<(u32, u16, Vec<u8>)> = Vec::new();
     let mut sig_info = None;
@@ -557,7 +579,7 @@ fn emit_xref_table(state: &RevisionState, objs: &[ObjOut], size: u32, out: &mut 
         let count = end - start + 1;
         out.extend_from_slice(format!("{start} {count}\n").as_bytes());
         for o in &sorted[idx + 1 - count as usize..=idx] {
-            out.extend_from_slice(format!("{:010} {:05} n \r\n", o.offset, o.generation).as_bytes());
+            out.extend_from_slice(format!("{:010} {:05} n\r\n", o.offset, o.generation).as_bytes());
         }
         idx += 1;
     }
@@ -626,12 +648,12 @@ pub(crate) fn append_revision(
     for (num, generation, body) in &objs {
         let offset = out.len() as u64;
         out.extend_from_slice(format!("{num} {generation} obj\n").as_bytes());
-        if let Some((sig_num, br_rel, lt_rel)) = sig_info {
-            if sig_num == *num {
-                let base = out.len();
-                br_patch = Some(base + br_rel);
-                contents_gap = Some((base + lt_rel, base + lt_rel + 1 + capacity * 2));
-            }
+        if let Some((sig_num, br_rel, lt_rel)) = sig_info
+            && sig_num == *num
+        {
+            let base = out.len();
+            br_patch = Some(base + br_rel);
+            contents_gap = Some((base + lt_rel, base + lt_rel + 1 + capacity * 2));
         }
         out.extend_from_slice(body);
         out.extend_from_slice(b"\nendobj\n");
@@ -672,7 +694,7 @@ pub(crate) fn append_revision(
 fn patch_byterange(out: &mut [u8], pos: usize, br: [u64; 4]) -> Result<(), SealError> {
     for (i, v) in br[1..4].iter().enumerate() {
         let at = pos + i * (BYTERANGE_DIGITS + 1);
-        let field = format!("{v:0width$}", width = BYTERANGE_DIGITS);
+        let field = format!("{v:0BYTERANGE_DIGITS$}");
         if field.len() != BYTERANGE_DIGITS || at + BYTERANGE_DIGITS > out.len() {
             return Err(fatal_pdf(FatalCode::PdfInvariantFailed));
         }
@@ -745,3 +767,127 @@ pub(crate) fn pdf_date(unix_ms: u64) -> String {
     let digits: String = rfc.chars().filter(char::is_ascii_digit).take(14).collect();
     format!("D:{digits}Z")
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use sha2::Digest;
+
+    use super::*;
+
+    fn classic_pdf() -> Vec<u8> {
+        std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("fixture")
+    }
+
+    fn stream_pdf() -> Vec<u8> {
+        std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/stream_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("fixture")
+    }
+
+    fn prepared(bytes: &[u8]) -> PreparedInput {
+        validate_prepared(bytes, &SealResourceLimits::default()).expect("prepared")
+    }
+
+    fn sign_revision(p: &PreparedInput, capacity: usize) -> DraftRevision {
+        let kind = RevisionKind::Signature {
+            field_name: field_name_for("unit-op"),
+            date_str: pdf_date(1_785_398_400_000),
+        };
+        append_revision(&p.bytes, &p.state, &kind, capacity).expect("revision")
+    }
+
+    #[test]
+    fn byterange_patch_is_length_preserving_and_spans_cover_all_but_gap() {
+        let p = prepared(&classic_pdf());
+        let draft = sign_revision(&p, 1024);
+        let br = draft.byte_range.expect("br");
+        let (lt, gt) = draft.contents_gap.expect("gap");
+        assert_eq!(br[0], 0);
+        assert_eq!(br[1] as usize, lt, "span1 ends at the '<'");
+        assert_eq!(br[2] as usize, gt + 1, "span2 starts after the '>'");
+        assert_eq!(
+            (br[2] + br[3]) as usize,
+            draft.bytes.len(),
+            "span2 ends at final EOF"
+        );
+        // Hash spans cover everything except the gap, angle brackets included.
+        let digest = hash_byte_range(&draft.bytes, br).expect("hash");
+        let mut h = sha2::Sha256::new();
+        h.update(&draft.bytes[..lt]);
+        h.update(&draft.bytes[gt + 1..]);
+        assert_eq!(digest, <[u8; 32]>::from(h.finalize()));
+    }
+
+    #[test]
+    fn append_preserves_prior_bytes_prev_size_root_and_eof() {
+        for fixture in [classic_pdf(), stream_pdf()] {
+            let p = prepared(&fixture);
+            let prev_sx = last_startxref(&fixture).expect("sx");
+            let draft = sign_revision(&p, 2048);
+            assert!(draft.bytes.starts_with(&fixture), "prior bytes preserved");
+            assert!(draft.bytes.ends_with(b"%%EOF"));
+            let body = String::from_utf8_lossy(&draft.bytes);
+            assert!(
+                body.contains(&format!("/Prev {prev_sx} ")),
+                "Prev points at the immediately preceding startxref"
+            );
+            assert!(body.contains("/Root 1 0 R"), "Root preserved");
+        }
+    }
+
+    #[test]
+    fn xref_style_of_revision_matches_input() {
+        let classic = prepared(&classic_pdf());
+        let d1 = sign_revision(&classic, 1024);
+        let tail1 = &d1.bytes[classic.bytes.len()..];
+        let sx1 = last_startxref(&d1.bytes).expect("sx1");
+        assert_eq!(&d1.bytes[sx1 as usize..sx1 as usize + 4], b"xref");
+        assert!(tail1.windows(7).any(|w| w == b"trailer"));
+
+        let stream = prepared(&stream_pdf());
+        let d2 = sign_revision(&stream, 1024);
+        let sx2 = last_startxref(&d2.bytes).expect("sx2");
+        assert_ne!(&d2.bytes[sx2 as usize..sx2 as usize + 4], b"xref");
+    }
+
+    #[test]
+    fn patch_contents_overflow_reports_capacity_not_truncation() {
+        let p = prepared(&classic_pdf());
+        let mut draft = sign_revision(&p, 64);
+        let der = vec![0xABu8; 65];
+        let err = patch_contents(&mut draft, &der).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::Fatal {
+                code: FatalCode::ContentsCapacityExceeded,
+                ..
+            }
+        ));
+        // Fitting DER lands at the start with zero padding after.
+        let der = vec![0xCDu8; 40];
+        patch_contents(&mut draft, &der).expect("patch");
+        let (lt, _gt) = draft.contents_gap.expect("gap");
+        assert_eq!(draft.bytes[lt + 1], b'C');
+        assert_eq!(draft.bytes[lt + 2], b'D');
+        assert_eq!(draft.bytes[lt + 1 + 80], b'0');
+    }
+
+    #[test]
+    fn field_name_is_deterministic_and_op_scoped() {
+        assert_eq!(field_name_for("op-a"), field_name_for("op-a"));
+        assert_ne!(field_name_for("op-a"), field_name_for("op-b"));
+    }
+
+    #[test]
+    fn pdf_date_format() {
+        assert_eq!(pdf_date(1_785_398_400_000), "D:20260730080000Z");
+    }
+}
+

@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use const_oid::AssociatedOid;
 use der::{Decode, Encode};
 use rsa::rand_core::RngCore;
 
@@ -244,9 +245,7 @@ async fn try_capacity(
         date_str: pdf::pdf_date(ctx.clock_ms),
     };
     let mut draft = pdf::append_revision(&prepared.bytes, &prepared.state, &kind, capacity)?;
-    let br = draft
-        .byte_range
-        .ok_or_else(|| SealError::Fatal {
+    let br = draft.byte_range.ok_or(SealError::Fatal {
             stage: SealStage::PdfIncrementalUpdate,
             code: FatalCode::PdfInvariantFailed,
         })?;
@@ -296,7 +295,6 @@ fn crl_urls_for(cert_der: &[u8]) -> Vec<url::Url> {
         return Vec::new();
     };
     let mut urls = Vec::new();
-    use const_oid::AssociatedOid;
     for ext in exts {
         if ext.extn_id != x509_cert::ext::pkix::CrlDistributionPoints::OID {
             continue;
@@ -316,12 +314,10 @@ fn crl_urls_for(cert_der: &[u8]) -> Vec<url::Url> {
                 if let x509_cert::ext::pkix::name::GeneralName::UniformResourceIdentifier(
                     uri,
                 ) = gn
+                    && let Ok(u) = url::Url::parse(uri.as_str())
+                    && matches!(u.scheme(), "http" | "https")
                 {
-                    if let Ok(u) = url::Url::parse(uri.as_str()) {
-                        if matches!(u.scheme(), "http" | "https") {
-                            urls.push(u);
-                        }
-                    }
+                    urls.push(u);
                 }
             }
         }
@@ -457,7 +453,7 @@ async fn append_doc_timestamp(
         let state = pdf::reparse_revision(bytes, &ctx.config.resource_limits)?;
         let mut draft =
             pdf::append_revision(bytes, &state, &pdf::RevisionKind::DocumentTimestamp, capacity)?;
-        let br = draft.byte_range.ok_or_else(|| SealError::Fatal {
+        let br = draft.byte_range.ok_or(SealError::Fatal {
             stage: SealStage::DocumentTimestamp,
             code: FatalCode::PdfInvariantFailed,
         })?;
@@ -572,4 +568,81 @@ pub(crate) async fn assemble(
         achieved,
         warnings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::api::{BackendError, BackendRejectCode};
+
+    #[test]
+    fn sub_operation_id_stable_and_phase_capacity_distinct() {
+        let sha = [1u8; 32];
+        let a = sub_operation_id("op", &sha, "sign", 65536);
+        assert_eq!(a, sub_operation_id("op", &sha, "sign", 65536));
+        assert_ne!(a, sub_operation_id("op", &sha, "sign", 131072));
+        assert_ne!(a, sub_operation_id("op", &sha, "doc-ts", 65536));
+        assert_ne!(a, sub_operation_id("op", &[2u8; 32], "sign", 65536));
+        assert!(a.starts_with("op:"));
+    }
+
+    #[test]
+    fn backend_error_mapping_matches_taxonomy() {
+        let unavailable = map_backend_error(BackendError::Unavailable {
+            retry_after_ms: Some(5),
+        });
+        assert!(matches!(
+            unavailable,
+            SealError::BackendUnavailable {
+                retry_after_ms: Some(5)
+            }
+        ));
+        assert!(unavailable.is_retryable());
+        let limited = map_backend_error(BackendError::RateLimited {
+            retry_after_ms: None,
+        });
+        assert!(matches!(
+            limited,
+            SealError::Retryable {
+                stage: SealStage::BackendSign,
+                code: RetryableCode::TemporaryBackendFailure,
+                ..
+            }
+        ));
+        let rejected = map_backend_error(BackendError::Rejected {
+            code: BackendRejectCode::Unauthorized,
+        });
+        assert!(matches!(
+            rejected,
+            SealError::Fatal {
+                stage: SealStage::BackendSign,
+                code: FatalCode::BackendRejected,
+            }
+        ));
+        assert!(!rejected.is_retryable());
+    }
+
+    #[test]
+    fn dss_uses_global_arrays_and_omits_vri() {
+        let material = DssMaterial {
+            certs_der: vec![vec![0x30, 0x03, 0x02, 0x01, 0x01]],
+            ocsps_der: vec![vec![0x30, 0x00]],
+            crls_der: vec![vec![0x30, 0x00]],
+        };
+        let (objs, dss_num) = build_dss_objects(&material, 10);
+        let dss = objs
+            .iter()
+            .find(|(n, _)| *n == dss_num)
+            .map(|(_, b)| String::from_utf8_lossy(b).into_owned())
+            .unwrap();
+        assert!(dss.contains("/Type /DSS"));
+        assert!(dss.contains("/Certs [10 0 R]"));
+        assert!(dss.contains("/OCSPs [11 0 R]"));
+        assert!(dss.contains("/CRLs [12 0 R]"));
+        assert!(!dss.contains("/VRI"), "VRI is not emitted in v1");
+        // Stream objects carry exact lengths.
+        let cert_obj = &objs.iter().find(|(n, _)| *n == 10).unwrap().1;
+        assert!(cert_obj.starts_with(b"<< /Length 5 >>\nstream\n"));
+    }
 }

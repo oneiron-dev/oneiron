@@ -292,3 +292,96 @@ mod http {
 
 #[cfg(feature = "network-fetch")]
 pub use http::SsrfGuardedHttpFetcher;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use super::*;
+
+    fn policy() -> FetchPolicy {
+        FetchPolicy {
+            allowed_origins: vec![url::Url::parse("https://ca.example.test").unwrap()],
+            allowed_cidrs: Vec::new(),
+            ..FetchPolicy::default()
+        }
+    }
+
+    #[test]
+    fn origin_matching_is_exact_scheme_host_port() {
+        let p = policy();
+        assert!(origin_allowed(
+            &p,
+            &url::Url::parse("https://ca.example.test/ocsp?x=1").unwrap()
+        ));
+        assert!(origin_allowed(
+            &p,
+            &url::Url::parse("https://ca.example.test:443/").unwrap()
+        ));
+        assert!(!origin_allowed(
+            &p,
+            &url::Url::parse("http://ca.example.test/").unwrap()
+        ));
+        assert!(!origin_allowed(
+            &p,
+            &url::Url::parse("https://ca.example.test:444/").unwrap()
+        ));
+        assert!(!origin_allowed(
+            &p,
+            &url::Url::parse("https://sub.ca.example.test/").unwrap()
+        ));
+        assert!(!origin_allowed(
+            &p,
+            &url::Url::parse("ftp://ca.example.test/").unwrap()
+        ));
+    }
+
+    #[test]
+    fn address_classes_denied_unless_cidr_admits() {
+        let cidrs: Vec<ipnet::IpNet> = Vec::new();
+        let denied_v4 = [
+            Ipv4Addr::new(127, 0, 0, 1),
+            Ipv4Addr::new(10, 0, 0, 8),
+            Ipv4Addr::new(172, 16, 3, 4),
+            Ipv4Addr::new(192, 168, 1, 1),
+            Ipv4Addr::new(169, 254, 0, 1),
+            Ipv4Addr::new(224, 0, 0, 1),
+            Ipv4Addr::new(0, 0, 0, 0),
+            Ipv4Addr::new(100, 64, 0, 1),
+        ];
+        for ip in denied_v4 {
+            assert!(!addr_allowed(IpAddr::V4(ip), &cidrs), "{ip} must be denied");
+        }
+        assert!(addr_allowed(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), &cidrs));
+        let denied_v6 = [
+            Ipv6Addr::LOCALHOST,
+            Ipv6Addr::UNSPECIFIED,
+            "fe80::1".parse::<Ipv6Addr>().unwrap(),
+            "fc00::1".parse::<Ipv6Addr>().unwrap(),
+            "ff02::1".parse::<Ipv6Addr>().unwrap(),
+        ];
+        for ip in denied_v6 {
+            assert!(!addr_allowed(IpAddr::V6(ip), &cidrs), "{ip} must be denied");
+        }
+        assert!(addr_allowed(
+            IpAddr::V6("2606:4700:4700::1111".parse().unwrap()),
+            &cidrs
+        ));
+        // Explicit CIDR admission overrides the class denial.
+        let admit: Vec<ipnet::IpNet> = vec!["10.0.0.0/8".parse().unwrap()];
+        assert!(addr_allowed(IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9)), &admit));
+    }
+
+    #[test]
+    fn purpose_caps_come_from_policy() {
+        let p = FetchPolicy::default();
+        assert_eq!(purpose_cap(&p, FetchPurpose::Crl), 8_388_608);
+        assert_eq!(purpose_cap(&p, FetchPurpose::Timestamp), 1_048_576);
+        assert_eq!(purpose_cap(&p, FetchPurpose::Ocsp), 1_048_576);
+        assert_eq!(
+            purpose_cap(&p, FetchPurpose::AuthorityInformationAccess),
+            1_048_576
+        );
+    }
+}

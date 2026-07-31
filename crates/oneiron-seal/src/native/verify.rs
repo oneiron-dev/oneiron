@@ -226,16 +226,13 @@ fn verify_cades_sig(
     };
     let cms_der = unpadded_cms(&e.contents);
     let parsed = cms_der.and_then(|d| cms::parse_cms(d).ok());
-    let env_ok = parsed
-        .as_ref()
-        .map(|p| {
+    let env_ok = parsed.as_ref().is_some_and(|p| {
             p.content_oid == cms::OID_SIGNED_DATA.as_bytes()
                 && p.econtent.is_none()
                 && p.econtent_oid == cms::OID_DATA.as_bytes()
                 && p.digest_algs == vec![cms::sha256_oid_bytes()]
                 && p.signer.digest_alg_oid == cms::sha256_oid_bytes()
-        })
-        .unwrap_or(false);
+        });
     checks.record(VerifyCheckKind::CmsEnvelope, env_ok, VerifyFindingCode::InvalidCms);
     let Some(parsed) = parsed.filter(|_| env_ok) else {
         checks.record(
@@ -345,7 +342,8 @@ fn verify_signer(
                 .certificates
                 .iter()
                 .enumerate()
-                .filter_map(|(i, c)| (i != idx).then(|| c.clone())),
+                .filter(|(i, _)| *i != idx)
+                .map(|(_, c)| c.clone()),
         )
         .collect();
     checks.record(
@@ -425,14 +423,13 @@ fn verify_doc_ts(
             .byte_range
             .get(2..4)
             .and_then(|v| u64::checked_add(v[0], v[1]))
-            .map(|end| {
+            .is_some_and(|end| {
                 let mut tail = &bytes[usize::try_from(end).unwrap_or(usize::MAX).min(bytes.len())..];
                 while let [b'\r' | b'\n', rest @ ..] = tail {
                     tail = rest;
                 }
                 tail.is_empty()
-            })
-            .unwrap_or(false);
+            });
     let token_ok = unpadded_cms(&e.contents)
         .and_then(|der| {
             let imprint = pdf::hash_byte_range(bytes, e.byte_range).ok()?;

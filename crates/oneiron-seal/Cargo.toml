@@ -71,11 +71,18 @@ tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
 url = { version = "2", optional = true }
 
 [dev-dependencies]
+der = { version = "=0.7.10", features = ["alloc", "derive", "oid", "std"] }
+p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
 proptest = "1"
 rcgen = "0.14"
+rsa = { version = "=0.9.10", default-features = false, features = ["sha2", "std", "getrandom"] }
+rustls-pki-types = "1"
 serde_json = { workspace = true }
+sha2 = "=0.10.9"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt"] }
+url = "2"
+x509-tsp = "=0.1.0"
 
 [[test]]
 name = "oracle"

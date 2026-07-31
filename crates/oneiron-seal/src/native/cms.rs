@@ -290,7 +290,6 @@ pub(crate) fn build_signed_data(
 /// Extract the issuer Name and serialNumber TLVs from a certificate DER.
 pub(crate) fn issuer_and_serial(cert_der: &[u8]) -> Result<(Vec<u8>, Vec<u8>), SealError> {
     let cert = x509_cert::Certificate::from_der(cert_der).map_err(|_| cms_err())?;
-    use der::Encode;
     let issuer = cert
         .tbs_certificate
         .issuer
@@ -357,10 +356,8 @@ fn parse_signer_info(tlv_bytes: &[u8]) -> Result<ParsedSignerInfo, SealError> {
     let mut signed_attrs = Vec::new();
     while !attrs_r.is_done() {
         let a = attrs_r.expect(0x30)?;
-        if let Some(last) = signed_attrs.last() {
-            if *last >= a.full.to_vec() {
-                return Err(cms_err()); // unsorted or duplicate
-            }
+        if signed_attrs.last().is_some_and(|last: &Vec<u8>| last.as_slice() >= a.full) {
+            return Err(cms_err()); // unsorted or duplicate
         }
         signed_attrs.push(a.full.to_vec());
     }
@@ -590,8 +587,7 @@ pub(crate) fn cert_signature_algorithm(
             .parameters
             .as_ref()
             .and_then(|p| p.decode_as::<der::asn1::ObjectIdentifier>().ok())
-            .map(|p| p == OID_P256)
-            .unwrap_or(false);
+            .is_some_and(|p| p == OID_P256);
         if params_ok {
             return Ok(SignatureAlgorithm::EcdsaP256Sha256);
         }
@@ -654,4 +650,133 @@ pub(crate) fn is_denied_alg_oid(oid_bytes: &[u8]) -> bool {
 
 pub(crate) fn sha256_oid_bytes() -> Vec<u8> {
     OID_SHA256.as_bytes().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    fn cert_der() -> Vec<u8> {
+        // Ephemeral throwaway identity, generated fresh for the test run.
+        let key_pair = rcgen::KeyPair::generate().expect("keygen");
+        let params = rcgen::CertificateParams::new(Vec::<String>::new()).expect("params");
+        params.self_signed(&key_pair).expect("cert").der().to_vec()
+    }
+
+    fn baseline_attrs() -> (ParsedCms, Vec<u8>) {
+        let cert = cert_der();
+        let (issuer, serial) = issuer_and_serial(&cert).expect("issuer/serial");
+        let attrs = vec![
+            attr_content_type_data(),
+            attr_message_digest(&[7u8; 32]),
+            attr_signing_cert_v2(&cert, &issuer, &serial),
+        ];
+        let (wire, signing) = assemble_signed_attrs(attrs);
+        let material = SignerMaterial {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_cert_der: &cert,
+            issuer_name_der: &issuer,
+            serial_der: &serial,
+            chain_ders: &[],
+        };
+        let der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
+        let parsed = parse_cms(&der).expect("parse");
+        (parsed, signing)
+    }
+
+    #[test]
+    fn baseline_has_exactly_three_attributes_once_each_sorted() {
+        let (parsed, _) = baseline_attrs();
+        let signer = &parsed.signer;
+        // parse_cms already rejected anything but DER-sorted full octets.
+        assert_eq!(signer.signed_attrs.len(), 3);
+        let mut oids: Vec<Vec<u8>> = signer
+            .signed_attrs
+            .iter()
+            .map(|a| parse_attribute(a).expect("attr").0)
+            .collect();
+        oids.sort();
+        oids.dedup();
+        assert_eq!(oids.len(), 3, "each baseline attribute exactly once");
+        let md = check_baseline_attrs(signer).expect("baseline ok");
+        assert_eq!(md, [7u8; 32]);
+    }
+
+    #[test]
+    fn rfc5652_signature_input_uses_universal_set_tag() {
+        let (parsed, signing) = baseline_attrs();
+        assert_eq!(signing[0], 0x31, "signature input is the universal SET OF");
+        // On-wire field is the IMPLICIT [0] with identical content octets.
+        assert!(signing.ends_with(&parsed.signer.signed_attrs_content));
+        let rebuilt = signed_attrs_signature_input(&parsed.signer);
+        assert_eq!(rebuilt, signing);
+    }
+
+    #[test]
+    fn ess_omits_default_hash_algorithm_and_binds_full_cert() {
+        let cert = cert_der();
+        let (issuer, serial) = issuer_and_serial(&cert).expect("i/s");
+        let attr = attr_signing_cert_v2(&cert, &issuer, &serial);
+        // The SHA-256 AlgorithmIdentifier OID must NOT appear inside: DER
+        // omits DEFAULT-valued fields.
+        let sha256_oid = oid_tlv(&OID_SHA256);
+        assert!(
+            !attr
+                .windows(sha256_oid.len())
+                .any(|w| w == sha256_oid.as_slice()),
+            "DEFAULT hashAlgorithm must be omitted"
+        );
+        check_ess_binding(&attr, &cert, &issuer, &serial).expect("binding");
+        // One flipped cert byte must break the full-certificate digest.
+        let mut wrong = cert;
+        let n = wrong.len();
+        wrong[n - 20] ^= 0x01;
+        assert!(check_ess_binding(&attr, &wrong, &issuer, &serial).is_err());
+    }
+
+    #[test]
+    fn duplicate_and_foreign_attributes_are_rejected() {
+        let (mut parsed, _) = baseline_attrs();
+        // Duplicate the content-type attribute.
+        let dup = parsed.signer.signed_attrs[0].clone();
+        parsed.signer.signed_attrs.push(dup);
+        assert!(check_baseline_attrs(&parsed.signer).is_err());
+    }
+
+    #[test]
+    fn der_reader_rejects_indefinite_and_nonminimal_lengths() {
+        // BER indefinite length.
+        assert!(DerReader::new(&[0x30, 0x80, 0x00, 0x00]).read().is_err());
+        // Non-minimal long form for a short length.
+        assert!(DerReader::new(&[0x30, 0x81, 0x01, 0x00]).read().is_err());
+        // Truncated content.
+        assert!(DerReader::new(&[0x30, 0x05, 0x01]).read().is_err());
+    }
+
+    #[test]
+    fn unsorted_signed_attribute_set_is_rejected_on_parse() {
+        let cert = cert_der();
+        let (issuer, serial) = issuer_and_serial(&cert).expect("i/s");
+        // Deliberately wrong order: message-digest before content-type.
+        let attrs = vec![
+            attr_message_digest(&[7u8; 32]),
+            attr_content_type_data(),
+            attr_signing_cert_v2(&cert, &issuer, &serial),
+        ];
+        let mut content = Vec::new();
+        for a in &attrs {
+            content.extend_from_slice(a);
+        }
+        let wire = tlv(0xA0, &content);
+        let material = SignerMaterial {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_cert_der: &cert,
+            issuer_name_der: &issuer,
+            serial_der: &serial,
+            chain_ders: &[],
+        };
+        let der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
+        assert!(parse_cms(&der).is_err(), "unsorted SET must fail");
+    }
 }

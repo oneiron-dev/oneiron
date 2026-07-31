@@ -175,11 +175,16 @@ pub(crate) fn validate_response(
     let signing_input = cms::signed_attrs_signature_input(signer);
     cms::verify_signature_value(tsa_alg, tsa_cert_der, &signing_input, &signer.signature)?;
     let chain_ders: Vec<Vec<u8>> = std::iter::once(tsa_cert_der.clone())
-        .chain(parsed.certificates.iter().enumerate().filter_map(|(i, c)| {
-            (i != tsa_idx).then(|| c.clone())
-        }))
+        .chain(
+            parsed
+                .certificates
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != tsa_idx)
+                .map(|(_, c)| c.clone()),
+        )
         .collect();
-    let gen_time_unix = generalized_time_unix(&tst)?;
+    let gen_time_unix = generalized_time_unix(&tst);
     validate_tsa_chain(&chain_ders, anchors, gen_time_unix)?;
     Ok(ValidatedToken {
         content_info_der: token_ci,
@@ -215,9 +220,8 @@ fn check_tst_fields(
     Ok(())
 }
 
-fn generalized_time_unix(tst: &TstInfo) -> Result<u64, SealError> {
-    let dur = tst.gen_time.to_unix_duration();
-    Ok(u64::try_from(dur.as_secs()).map_err(|_| ts_err())?)
+fn generalized_time_unix(tst: &TstInfo) -> u64 {
+    tst.gen_time.to_unix_duration().as_secs()
 }
 
 /// Locate the CMS certificate whose ESS binding matches the token signer.
@@ -307,10 +311,59 @@ pub(crate) fn validate_token_for_verify(
                 .certificates
                 .iter()
                 .enumerate()
-                .filter_map(|(i, c)| (i != idx).then(|| c.clone())),
+                .filter(|(i, _)| *i != idx)
+                .map(|(_, c)| c.clone()),
         )
         .collect();
-    let gen_time_unix = generalized_time_unix(&tst)?;
+    let gen_time_unix = generalized_time_unix(&tst);
     validate_tsa_chain(&chain_ders, anchors, gen_time_unix)?;
     Ok(gen_time_unix)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    #[test]
+    fn request_sets_sha256_certreq_and_nonzero_nonce() {
+        use der::Decode;
+        let imprint = [3u8; 32];
+        let nonce = [7u8; 16];
+        let der = build_request(&imprint, &nonce).expect("request");
+        let req = x509_tsp::TimeStampReq::from_der(&der).expect("parse");
+        assert_eq!(req.message_imprint.hash_algorithm.oid, OID_SHA256);
+        assert_eq!(req.message_imprint.hashed_message.as_bytes(), &imprint);
+        assert!(req.cert_req, "certReq must be true");
+        let got = req.nonce.expect("nonce present");
+        assert!(got.as_bytes().iter().any(|b| *b != 0), "nonzero nonce");
+        let mut expect_nonce = nonce.to_vec();
+        if expect_nonce[0] & 0x80 != 0 {
+            expect_nonce.insert(0, 0);
+        }
+        assert_eq!(got.as_bytes(), expect_nonce.as_slice());
+    }
+
+    #[test]
+    fn all_zero_nonce_is_rejected() {
+        assert!(build_request(&[3u8; 32], &[0u8; 16]).is_err());
+    }
+
+    #[test]
+    fn granted_status_without_token_fails() {
+        // TimeStampResp { status granted, no token }.
+        let status = cms::tlv(0x30, &cms::tlv(0x02, &[0]));
+        let resp = cms::tlv(0x30, &status);
+        assert!(extract_token(&resp).is_err());
+    }
+
+    #[test]
+    fn non_granted_status_fails() {
+        // status = rejection(2), with a dummy token present.
+        let status = cms::tlv(0x30, &cms::tlv(0x02, &[2]));
+        let mut body = status;
+        body.extend_from_slice(&cms::tlv(0x30, &[0x05, 0x00]));
+        let resp = cms::tlv(0x30, &body);
+        assert!(extract_token(&resp).is_err());
+    }
 }
