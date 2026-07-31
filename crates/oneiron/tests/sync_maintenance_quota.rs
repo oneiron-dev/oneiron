@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use loro::{ExportMode, LoroDoc};
+use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
 use oneiron::sync::quarantine::{QuarantineContainer, pending_remat_windows, quarantined_records};
 use oneiron::sync::quota::{
@@ -49,13 +50,6 @@ fn set_quota(vault: &Vault, max_ops_per_peer_window: u32, quota_window_secs: u64
         },
     )
     .unwrap();
-}
-
-fn entity_id(tag: u8) -> EntityId {
-    let mut bytes = [0u8; 16];
-    bytes[0] = 0x10;
-    bytes[15] = tag;
-    EntityId::from_bytes(bytes).unwrap()
 }
 
 fn authority_key_from_ed(key: &SigningKey) -> AuthorityKey {
@@ -263,14 +257,19 @@ fn quota_quarantine_count(vault: &Vault) -> usize {
 }
 
 fn invalid_authority_log_quarantine_count(vault: &Vault) -> usize {
+    entity_quarantine_reasons(vault)
+        .into_iter()
+        .filter(|reason| reason == "InvalidAuthorityLogBody")
+        .count()
+}
+
+fn entity_quarantine_reasons(vault: &Vault) -> Vec<String> {
     quarantined_records(vault)
         .unwrap()
         .into_iter()
-        .filter(|(_, record)| {
-            record.container == QuarantineContainer::Entities
-                && record.reason_code == "InvalidAuthorityLogBody"
-        })
-        .count()
+        .filter(|(_, record)| record.container == QuarantineContainer::Entities)
+        .map(|(_, record)| record.reason_code)
+        .collect()
 }
 
 #[test]
@@ -628,6 +627,16 @@ fn honest_burst_quarantines_then_lazily_readmits_once_under_quota() {
     );
 }
 
+/// The named rollback path is the POST-DEBIT one: the row must clear the
+/// replicated authority door (which is what debits quota) and then be
+/// rejected by `apply_put`'s envelope time-range gate. That only happens when
+/// the blob sits at its own CONTENT-DERIVED store key — a caller-chosen id
+/// rejects as `AuthorityLogStoreKeyMismatch` inside the door, BEFORE the
+/// debit, and would silently retire the coverage this test is named for.
+///
+/// The derived key also carries a cross-type occupant, so the assertions
+/// cover the ONE-1604-D1 dominance side effect on the same rejection: a
+/// rejected row rolls back its quota debit AND leaves the squatter in place.
 #[test]
 fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
     let (_dir, vault) = test_vault();
@@ -643,11 +652,32 @@ fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
         .unwrap();
 
     let bad_entry = set_tier_floor_entry(vault_id, parent_hash, &owner_key, 1);
+    let bad_id = oneiron::authority::authority_log_entity_id(&bad_entry).unwrap();
+    // A hostile peer pre-squats the derived id with an ordinary row.
+    vault
+        .put_entity(
+            &bad_id,
+            ENTITY_TYPE_EVENT,
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+            b"occupant",
+        )
+        .unwrap();
+    let occupant = vault.get_raw(&bad_id).unwrap().expect("occupant stored");
+
     let bad_blob =
         authority_blob_with_times(&bad_entry, LEARNED_AT + 10, LEARNED_AT, LEARNED_AT + 10);
-    insert_authority_blob(&doc, entity_id(0xb0), &bad_blob);
+    insert_authority_blob(&doc, bad_id, &bad_blob);
     doc.commit();
 
+    assert_eq!(
+        entity_quarantine_reasons(&vault),
+        vec!["InvalidTimeRange".to_owned()],
+        "the rejection must be the post-debit envelope gate, not a pre-debit key mismatch"
+    );
     assert_eq!(
         vault
             .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
@@ -661,9 +691,19 @@ fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
             .is_empty(),
         "remote apply rejection must roll back the quota debit"
     );
+    assert_eq!(
+        vault.get_raw(&bad_id).unwrap(),
+        Some(occupant),
+        "a rejected authority row must not evict the occupant of its derived key"
+    );
 
+    // Same entry, well-formed envelope. Signing is deterministic, so this
+    // re-lands on `bad_id` — the rejected row's rollback must have left both
+    // the quota budget AND the key's occupant exactly as the retry found
+    // them.
     let valid_entry = set_tier_floor_entry(vault_id, parent_hash, &owner_key, 1);
-    insert_authority_entry(&doc, &valid_entry);
+    let valid_id = insert_authority_entry(&doc, &valid_entry);
+    assert_eq!(valid_id, bad_id, "content addressing must reuse the key");
     doc.commit();
 
     assert_eq!(
@@ -672,6 +712,13 @@ fn observer_b_rolls_back_quota_when_replicated_apply_rejects() {
             .unwrap(),
         before + 1,
         "valid sibling must still have the peer quota available"
+    );
+    // The dominance side effect belongs to the ACCEPTED row, not the rejected
+    // one: only now does the squatter go.
+    assert_eq!(
+        vault.get_authority_log_entry(&bad_id).unwrap(),
+        Some(valid_entry),
+        "the admitted row must displace the squatter and own its derived key"
     );
     let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
     assert_eq!(snapshots.len(), 1);

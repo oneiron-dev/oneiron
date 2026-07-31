@@ -2754,6 +2754,10 @@ fn apply_put(
     let mut new_agent_definition = None;
     let mut decoded_claim_body = None;
     let mut authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash> = None;
+    // ONE-1604-D1 dominance VERDICT, recorded by the AUTHORITY_LOG arm below
+    // and acted on only at the pre-write site: see the eviction comment there
+    // for why the mutation cannot ride along with the check.
+    let mut authority_dominates_key_squatter = false;
     if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
@@ -2886,14 +2890,12 @@ fn apply_put(
         let entry_hash = crate::authority::authority_entry_hash(&entry)?;
         // ONE-1604-D1 chokepoint: every materialization path funnels through
         // here, so the store-key bind, the append-only guard, and the
-        // cross-type dominance are applied on every import/replay door in one
-        // place. Eviction happens HERE (never in the shared checker) because
-        // this is the one site that goes on to write the authority row.
-        if check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
-            == AuthorityLogKeyOccupant::CrossTypeSquatter
-        {
-            evict_authority_log_store_key_squatter(store, wtxn, &id)?;
-        }
+        // cross-type dominance verdict are computed on every import/replay
+        // door in one place. The CHECK runs here (it can still reject); the
+        // eviction it authorizes is deferred to the pre-write site below.
+        authority_dominates_key_squatter =
+            check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
+                == AuthorityLogKeyOccupant::CrossTypeSquatter;
         authority_entry_hash_pin = Some(entry_hash);
     } else if entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
@@ -2928,6 +2930,28 @@ fn apply_put(
             start: occurred.start,
             end: occurred.end,
         });
+    }
+    // ONE-1604-D1 dominance MUTATION (fix-leg 2, P2): every side-effect-free
+    // check that can reject this row REMOTELY has now run — including the
+    // envelope's time-range validation directly above. That ordering is the
+    // whole point: `InvalidTimeRange` is a `remote_rejection_reason`, so
+    // Observer B quarantines it and COMMITS the transaction (sync/bridge.rs
+    // quarantine-and-continue). An eviction performed before that check would
+    // therefore survive the rejection as a durable side effect — a rejected
+    // authority row would empty the key it failed to claim. A rejected input
+    // must be a pure no-op, so the squatter is deindexed only here, past the
+    // last remotely-rejectable gate.
+    //
+    // Placed BEFORE short-id planning and the old-record arm below (rather
+    // than at the `store.entities.put` line) because both read the row this
+    // eviction removes: the old-record arm would otherwise reject the
+    // dominant row with `EntityTypeImmutable`, and a short-id plan built from
+    // the squatter's rows would outlive them. Everything still fallible
+    // between here and the write is LOCAL-class (storage/overflow), which
+    // aborts the whole batch instead of committing — so it cannot strand this
+    // mutation either.
+    if authority_dominates_key_squatter {
+        evict_authority_log_store_key_squatter(store, wtxn, &id)?;
     }
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
@@ -3290,6 +3314,12 @@ fn check_authority_log_store_key(
 /// incident edges go with it — a squatter must leave no stale carrier — and
 /// the eviction is confined to the single write chokepoint so the replicated
 /// validator stays side-effect-free.
+///
+/// Call ONLY from `apply_put`'s pre-write site, never from
+/// `check_authority_log_store_key`: the check runs while remotely-rejectable
+/// preflight is still outstanding, and a remote rejection COMMITS
+/// (quarantine-and-continue), so an eviction taken at check time would
+/// outlive a rejected row.
 fn evict_authority_log_store_key_squatter(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

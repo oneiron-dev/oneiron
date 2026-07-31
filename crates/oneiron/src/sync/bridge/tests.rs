@@ -707,26 +707,109 @@ fn forged_authority_row_cannot_displace_a_key_occupant() -> Result<()> {
     );
     let doc = LoroDoc::new();
     let tombstones = doc.get_map("tombstones");
-    let err = vault
-        .with_write_txn(|wtxn| {
-            materialize_entity_blob_in_txn(
-                &vault,
-                wtxn,
-                &tombstones,
-                "2026-03",
-                &target_id.to_hex(),
-                &forged_blob,
-                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-            )
-            .map(|_| ())
-        })
+    // Production does NOT abort the transaction on a remote rejection:
+    // Observer B quarantines the row and COMMITS (quarantine-and-continue,
+    // sync/bridge.rs). Returning the error from `with_write_txn` would roll
+    // the whole LMDB txn back, so the occupant assertion below would pass
+    // even if dominance had evicted before validation. Catch the rejection
+    // inside the txn — exactly as the observer does — and COMMIT, so the
+    // assertion sees whatever side effects a rejected row actually leaves
+    // behind.
+    let kind = vault.with_write_txn(|wtxn| {
+        let err = materialize_entity_blob_in_txn(
+            &vault,
+            wtxn,
+            &tombstones,
+            "2026-03",
+            &target_id.to_hex(),
+            &forged_blob,
+            crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+        )
+        .map(|_| ())
         .expect_err("a forged authority row must fail validation before any dominance");
+        assert!(
+            crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
+            "the forged row must classify as a remote rejection (commit-on-rejection), got {err:?}"
+        );
+        Ok(err.kind())
+    })?;
 
-    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
+    assert_eq!(kind, crate::error::ErrorKind::InvalidAuthorityLogBody);
     assert_eq!(
         vault.get_raw(&target_id)?,
         Some(occupant),
         "a forged row must not evict the key's occupant"
+    );
+    Ok(())
+}
+
+/// ONE-1604-D1 fix-leg 2, P2 — a REJECTED authority row must be a pure no-op,
+/// even though its rejection COMMITS. A fully valid entry carried in an
+/// envelope with an inverted occurred range clears every body/signature check
+/// (so it reaches the dominance verdict) and is then rejected by the envelope
+/// time-range gate. `InvalidTimeRange` is a `remote_rejection_reason`, so
+/// Observer B quarantines the row and commits the transaction — if the
+/// squatter eviction ran before that gate, the commit would durably empty a
+/// key the rejected row never earned. The occupant must survive intact.
+#[cfg(feature = "sync")]
+#[test]
+fn rejected_authority_envelope_leaves_a_key_squatter_untouched() -> Result<()> {
+    let vault = test_vault();
+    let genesis = authority_genesis_fixture(56);
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    let owner = authority_test_key(56);
+    // A genuinely valid entry: body, origin signature, and vault-id fold all
+    // pass, so nothing but the envelope can reject it.
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 57, 1);
+    let target_id = crate::authority::authority_log_entity_id(&enroll)?;
+
+    // The attacker pre-squats the derived id with an ordinary row.
+    vault.put_entity(
+        &target_id,
+        crate::registry::ENTITY_TYPE_EVENT,
+        TimeRange { start: 2, end: 2 },
+        2,
+        b"occupant",
+    )?;
+    let occupant = vault.get_raw(&target_id)?.expect("occupant stored");
+
+    let body = crate::authority::encode_authority_log_entry_body(&enroll)?;
+    // start > end: rejected by the envelope gate, AFTER the dominance verdict.
+    let blob = entity_blob(
+        ENTITY_TYPE_AUTHORITY_LOG,
+        TimeRange { start: 9, end: 3 },
+        9,
+        &body,
+    );
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    map_insert_bytes(&doc.get_map("entities"), &target_id.to_hex(), &blob)
+        .expect("insert authority blob");
+    doc.commit();
+
+    // The real Observer-B path ran and committed its transaction.
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)?
+            .iter()
+            .any(|(_, record)| {
+                record.reason_code == "InvalidTimeRange"
+                    && record.container == crate::sync::quarantine::QuarantineContainer::Entities
+            }),
+        "the invalid-time authority envelope must quarantine-and-continue"
+    );
+    assert_eq!(
+        vault.get_raw(&target_id)?,
+        Some(occupant),
+        "a rejected authority row must not evict the occupant of its derived key"
+    );
+    assert!(
+        !vault
+            .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)?
+            .contains(&target_id),
+        "the rejected row must not have materialized either"
     );
     Ok(())
 }
