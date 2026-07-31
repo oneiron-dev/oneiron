@@ -4418,20 +4418,26 @@ fn assert_invalid_facet_of_edge(
 /// The admitted table: CLAIM → FACET, TURN → FACET, EVENT → FACET.
 ///
 /// Two semantics ride one edge kind. CLAIM|TURN-sourced stamps are
-/// DISCLOSURE-SCOPING — they are what `claim_facet_scope` prefix-scans and
-/// what strict-mode filtering acts on; TURN is admitted alongside CLAIM
-/// because per-turn facet stamps are what transcript filtering rides.
-/// EVENT-sourced stamps are WORLD-MODEL and disclosure-INERT: the read side
-/// keeps every non-CLAIM entity unconditionally, so they exist only for
-/// ARCH-0039 PPR traversal (`facet_of` λ 0.05). Rejecting EVENT would make a
-/// ratified traversal contract unwritable.
+/// DISCLOSURE-SCOPING — CLAIM adjacency is what `claim_facet_scope`
+/// prefix-scans and what strict-mode filtering acts on; TURN is admitted
+/// alongside CLAIM because per-turn facet stamps are what transcript filtering
+/// rides. EVENT-sourced stamps are WORLD-MODEL: they exist for ARCH-0039 PPR
+/// traversal (`facet_of` λ 0.05), and rejecting EVENT would make a ratified
+/// traversal contract unwritable.
+///
+/// "World-model" is scoped to the LOCAL QUERY door, not to disclosure at
+/// large. `apply_facet_filter` keeps every non-CLAIM entity unconditionally,
+/// so an EVENT-sourced stamp is inert THERE — but the federation selector
+/// scopes by `FacetOf` source with no source-type check, so the same stamp is
+/// disclosure-EFFECTIVE on that door (pinned by
+/// `sync::selector::tests::selector_denies_event_scoped_to_unselected_facet`).
 #[test]
 fn facet_of_edge_valid_source_types_accepted() -> Result<()> {
     for (label, src_type) in [
         ("claim source", ENTITY_TYPE_CLAIM),
         ("turn source", ENTITY_TYPE_TURN),
         (
-            "event source (world-model, disclosure-inert)",
+            "event source (world-model; federation-door effective)",
             ENTITY_TYPE_EVENT,
         ),
     ] {

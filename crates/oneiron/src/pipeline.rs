@@ -424,6 +424,11 @@ pub struct DreamerWorkingSet {
 
 /// A claim's facet scope relative to the query's active facet, derived from
 /// its outgoing `FacetOf` (`CLAIM → FACET`, u8 17) adjacency.
+///
+/// CLAIM-sourced adjacency only — this is the local query door. The write
+/// table also admits `TURN | EVENT → FACET`, and those stamps carry disclosure
+/// weight on the federation selector door even though they never reach this
+/// enum (see [`crate::batch::validate_facet_of_edge`]).
 enum ClaimFacetScope {
     /// No `FacetOf` edge — a relevance-neutral claim. Passes every mode.
     ///
@@ -3036,6 +3041,13 @@ fn import_claim_gate_decisions_for_scores(
 /// sensitivity floor (`claim_sensitivity_band` reads band 2 on a missing
 /// stamp) today, and the ONE-1646 `disclosable_set` conjunct inside
 /// `admits()` next. Relevance never bypasses that conjunct (P7).
+///
+/// Scope of the CLAIM-only reading: this stage is the LOCAL QUERY door, and a
+/// non-CLAIM `FacetOf` stamp being inert HERE is not a statement about the
+/// entity's exposure anywhere else. `crate::sync::selector` is a second door
+/// that scopes by `FacetOf` source with NO source-type check, so a TURN- or
+/// EVENT-sourced stamp is disclosure-effective there. "Inert on this door"
+/// never generalizes to "disclosure-inert".
 fn apply_facet_filter(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
