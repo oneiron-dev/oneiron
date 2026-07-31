@@ -299,21 +299,20 @@ fn crl_urls_for(cert_der: &[u8]) -> Vec<url::Url> {
         if ext.extn_id != x509_cert::ext::pkix::CrlDistributionPoints::OID {
             continue;
         }
-        let Ok(dps) = x509_cert::ext::pkix::CrlDistributionPoints::from_der(
-            ext.extn_value.as_bytes(),
-        ) else {
+        let Ok(dps) =
+            x509_cert::ext::pkix::CrlDistributionPoints::from_der(ext.extn_value.as_bytes())
+        else {
             continue;
         };
         for dp in &dps.0 {
-            let Some(names) = &dp.distribution_point else { continue };
-            let x509_cert::ext::pkix::name::DistributionPointName::FullName(gns) = names
-            else {
+            let Some(names) = &dp.distribution_point else {
+                continue;
+            };
+            let x509_cert::ext::pkix::name::DistributionPointName::FullName(gns) = names else {
                 continue;
             };
             for gn in gns {
-                if let x509_cert::ext::pkix::name::GeneralName::UniformResourceIdentifier(
-                    uri,
-                ) = gn
+                if let x509_cert::ext::pkix::name::GeneralName::UniformResourceIdentifier(uri) = gn
                     && let Ok(u) = url::Url::parse(uri.as_str())
                     && matches!(u.scheme(), "http" | "https")
                 {
@@ -326,7 +325,8 @@ fn crl_urls_for(cert_der: &[u8]) -> Vec<url::Url> {
 }
 
 /// Fetch + minimally validate one CRL: parses, signature verifies against
-/// the issuing certificate, and is fresh at the applicable time.
+/// the issuing certificate, and is fresh at the applicable time
+/// (thisUpdate not in the future; a present nextUpdate not in the past).
 async fn fetch_valid_crl(
     ctx: &SealContext<'_>,
     issuer_cert_der: &[u8],
@@ -348,12 +348,12 @@ async fn fetch_valid_crl(
     let tbs = crl.tbs_cert_list.to_der().ok()?;
     cms::verify_signature_value(alg, issuer_cert_der, &tbs, crl.signature.raw_bytes()).ok()?;
     let now_secs = ctx.clock_ms / 1000;
-    let this_secs: u64 = match crl.tbs_cert_list.this_update {
-        x509_cert::time::Time::UtcTime(t) => t.to_unix_duration().as_secs(),
-        x509_cert::time::Time::GeneralTime(t) => t.to_unix_duration().as_secs(),
-    };
-    if now_secs < this_secs {
-        return None; // not yet valid
+    if !verify::evidence_fresh(
+        crl.tbs_cert_list.this_update,
+        crl.tbs_cert_list.next_update,
+        now_secs,
+    ) {
+        return None; // not yet valid, or stale
     }
     Some(resp.body)
 }
@@ -445,8 +445,12 @@ async fn append_doc_timestamp(
 ) -> Result<Option<Vec<u8>>, SealError> {
     for capacity in CAPACITY_LADDER {
         let state = pdf::reparse_revision(bytes, &ctx.config.resource_limits)?;
-        let mut draft =
-            pdf::append_revision(bytes, &state, &pdf::RevisionKind::DocumentTimestamp, capacity)?;
+        let mut draft = pdf::append_revision(
+            bytes,
+            &state,
+            &pdf::RevisionKind::DocumentTimestamp,
+            capacity,
+        )?;
         let br = draft.byte_range.ok_or(SealError::Fatal {
             stage: SealStage::DocumentTimestamp,
             code: FatalCode::PdfInvariantFailed,
@@ -489,9 +493,16 @@ pub(crate) async fn assemble(
     let input_sha = cms::sha256(&prepared.bytes);
     let mut candidate = None;
     for capacity in CAPACITY_LADDER {
-        candidate =
-            try_capacity(ctx, prepared, operation_id, &input_sha, &identity, target, capacity)
-                .await?;
+        candidate = try_capacity(
+            ctx,
+            prepared,
+            operation_id,
+            &input_sha,
+            &identity,
+            target,
+            capacity,
+        )
+        .await?;
         if candidate.is_some() {
             break;
         }

@@ -173,7 +173,9 @@ mod guarded_live {
         let hops2 = hops.clone();
         std::thread::spawn(move || {
             for _ in 0..2 {
-                let Ok((mut sock, _)) = listener.accept() else { break };
+                let Ok((mut sock, _)) = listener.accept() else {
+                    break;
+                };
                 hops2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let mut buf = [0u8; 1024];
                 let _ = sock.read(&mut buf);

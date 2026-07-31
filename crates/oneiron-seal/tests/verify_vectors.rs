@@ -12,7 +12,7 @@ use oneiron_seal::{
     VerifyFindingCode, VerifyReport,
 };
 
-use support::{p256_identity, FixtureBackend, FixedClock, TestIdentity, TEST_TIME_MS};
+use support::{FixedClock, FixtureBackend, TEST_TIME_MS, TestIdentity, p256_identity};
 
 fn fixture_pdf(name: &str) -> Vec<u8> {
     let path = format!(
@@ -64,7 +64,17 @@ fn prepared_input_rejection_matrix() {
     let (engine, _) = sealed_b();
     let cases: &[(&str, InputInvalidCode)] = &[
         ("neg_signed.pdf", InputInvalidCode::ExistingSignature),
+        ("neg_docts.pdf", InputInvalidCode::ExistingSignature),
+        ("neg_sigpair.pdf", InputInvalidCode::ExistingSignature),
         ("neg_openaction.pdf", InputInvalidCode::ActiveContentPresent),
+        ("neg_aa.pdf", InputInvalidCode::ActiveContentPresent),
+        ("neg_js.pdf", InputInvalidCode::ActiveContentPresent),
+        (
+            "neg_js_indirect.pdf",
+            InputInvalidCode::ActiveContentPresent,
+        ),
+        ("neg_launch.pdf", InputInvalidCode::ActiveContentPresent),
+        ("neg_names_js.pdf", InputInvalidCode::ActiveContentPresent),
         ("neg_embedded.pdf", InputInvalidCode::EmbeddedFilePresent),
         ("neg_nopages.pdf", InputInvalidCode::MissingPage),
         ("neg_malformed.pdf", InputInvalidCode::MalformedXref),

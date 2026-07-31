@@ -53,9 +53,7 @@ impl PdfSealEngine for NativeSealEngine {
         input_bytes: &[u8],
         seal_request: &SealRequest,
     ) -> Result<SealedPdf, SealError> {
-        if seal_request.operation_id.is_empty()
-            || seal_request.operation_id.len() > 256
-        {
+        if seal_request.operation_id.is_empty() || seal_request.operation_id.len() > 256 {
             return Err(SealError::Fatal {
                 stage: SealStage::InputValidation,
                 code: FatalCode::InvalidConfiguration,
@@ -68,9 +66,13 @@ impl PdfSealEngine for NativeSealEngine {
             fetcher: &self.fetcher,
             clock_ms: self.clock.unix_time_ms(),
         };
-        let outcome =
-            profile::assemble(&ctx, &prepared, &seal_request.operation_id, seal_request.target_profile)
-                .await?;
+        let outcome = profile::assemble(
+            &ctx,
+            &prepared,
+            &seal_request.operation_id,
+            seal_request.target_profile,
+        )
+        .await?;
         let report = self.verify_sealed_pdf(&outcome.bytes)?;
         if !report.passes_self_verify() {
             return Err(SealError::VerifyFailed {

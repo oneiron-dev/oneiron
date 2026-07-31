@@ -30,9 +30,15 @@ fn effective_port(u: &url::Url) -> u16 {
 
 /// Rule 2: address classes. Deny loopback, link-local, private, multicast,
 /// unspecified, and other non-global ranges unless an explicit configured
-/// CIDR row admits the address.
+/// CIDR row admits the address. IPv4-mapped IPv6 addresses are unmapped
+/// first so a mapped form cannot smuggle a denied v4 class past the v6
+/// arm; CIDR admission matches the unmapped form too.
 #[cfg_attr(not(feature = "network-fetch"), allow(dead_code))]
 pub(crate) fn addr_allowed(ip: IpAddr, allowed_cidrs: &[ipnet::IpNet]) -> bool {
+    let ip = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        other => other,
+    };
     if allowed_cidrs.iter().any(|c| c.contains(&ip)) {
         return true;
     }
@@ -50,6 +56,7 @@ fn is_globally_routable(ip: IpAddr) -> bool {
                 || v4.is_unspecified()
                 || v4.is_broadcast()
                 || v4.octets()[0] == 0
+                || v4.octets()[0] >= 240 // 240.0.0.0/4 reserved (incl. broadcast)
                 || v4.is_documentation()
                 || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64) // CGNAT
                 || (v4.octets()[0] == 192 && v4.octets()[1] == 0 && v4.octets()[2] == 0)
@@ -89,7 +96,9 @@ mod http {
     use async_trait::async_trait;
     use futures_util::StreamExt;
 
-    use crate::api::{FetchError, FetchMethod, FetchPolicy, FetchRequest, FetchResponse, SealFetcher};
+    use crate::api::{
+        FetchError, FetchMethod, FetchPolicy, FetchRequest, FetchResponse, SealFetcher,
+    };
 
     use super::{addr_allowed, origin_allowed, purpose_cap};
 
@@ -150,7 +159,9 @@ mod http {
         }
 
         fn cache_put(&self, key: String, resp: &FetchResponse) {
-            let Ok(mut cache) = self.cache.lock() else { return };
+            let Ok(mut cache) = self.cache.lock() else {
+                return;
+            };
             if cache.len() >= CACHE_MAX_ENTRIES {
                 cache.retain(|_, e| e.inserted.elapsed() <= CACHE_TTL);
                 if cache.len() >= CACHE_MAX_ENTRIES {
@@ -172,7 +183,10 @@ mod http {
         /// address set for this request. DNS rebinding between validation
         /// and connection cannot escape this set: the client override pins
         /// exactly these addresses for the connection.
-        async fn pinned_addrs(&self, url: &url::Url) -> Result<Vec<std::net::SocketAddr>, FetchError> {
+        async fn pinned_addrs(
+            &self,
+            url: &url::Url,
+        ) -> Result<Vec<std::net::SocketAddr>, FetchError> {
             let host = url.host_str().ok_or(FetchError::Denied)?.to_string();
             let port = url.port_or_known_default().ok_or(FetchError::Denied)?;
             let looked_up = tokio::net::lookup_host((host.as_str(), port))
@@ -222,13 +236,10 @@ mod http {
                 }
             };
             let send = builder.send();
-            let resp = tokio::time::timeout(
-                Duration::from_millis(self.policy.timeout_ms),
-                send,
-            )
-            .await
-            .map_err(|_| FetchError::Timeout)?
-            .map_err(|_| FetchError::Unavailable)?;
+            let resp = tokio::time::timeout(Duration::from_millis(self.policy.timeout_ms), send)
+                .await
+                .map_err(|_| FetchError::Timeout)?
+                .map_err(|_| FetchError::Unavailable)?;
             Ok(resp)
         }
 
@@ -373,6 +384,37 @@ mod tests {
         // Explicit CIDR admission overrides the class denial.
         let admit: Vec<ipnet::IpNet> = vec!["10.0.0.0/8".parse().unwrap()];
         assert!(addr_allowed(IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9)), &admit));
+    }
+
+    #[test]
+    fn ipv4_mapped_ipv6_is_unmapped_before_the_class_check() {
+        let cidrs: Vec<ipnet::IpNet> = Vec::new();
+        // ::ffff:7f00:1 is mapped 127.0.0.1 — denied via the v4 loopback arm.
+        let mapped_loopback: Ipv6Addr = "::ffff:7f00:1".parse().unwrap();
+        assert!(!addr_allowed(IpAddr::V6(mapped_loopback), &cidrs));
+        // ::ffff:808:808 is mapped 8.8.8.8 — global, allowed.
+        let mapped_global: Ipv6Addr = "::ffff:808:808".parse().unwrap();
+        assert!(addr_allowed(IpAddr::V6(mapped_global), &cidrs));
+        // A v4 CIDR admit row matches the unmapped form.
+        let admit: Vec<ipnet::IpNet> = vec!["127.0.0.0/8".parse().unwrap()];
+        assert!(addr_allowed(IpAddr::V6(mapped_loopback), &admit));
+    }
+
+    #[test]
+    fn reserved_240_4_is_denied() {
+        let cidrs: Vec<ipnet::IpNet> = Vec::new();
+        assert!(!addr_allowed(
+            IpAddr::V4(Ipv4Addr::new(240, 0, 0, 1)),
+            &cidrs
+        ));
+        assert!(!addr_allowed(
+            IpAddr::V4(Ipv4Addr::new(250, 1, 2, 3)),
+            &cidrs
+        ));
+        // 239.x stays covered by the multicast arm; 238.x is multicast too,
+        // so pin the boundary on the v6-mapped form instead: ::ffff:f000:1.
+        let mapped_reserved: Ipv6Addr = "::ffff:f000:1".parse().unwrap();
+        assert!(!addr_allowed(IpAddr::V6(mapped_reserved), &cidrs));
     }
 
     #[test]

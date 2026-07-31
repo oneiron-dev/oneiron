@@ -7,13 +7,14 @@ mod support;
 use std::sync::Arc;
 
 use oneiron_seal::{
-    FetchPolicy, NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine, ProfileDegradeReason,
-    SealConfig, SealError, SealRequest, SealResourceLimits, SealWarning, TsaEndpoint,
+    FetchPolicy, NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine,
+    ProfileDegradeReason, SealConfig, SealError, SealRequest, SealResourceLimits, SealWarning,
+    TsaEndpoint,
 };
 
 use support::{
-    p256_identity, rsa_identity, FixtureBackend, FixtureFetcher, FixedClock, TestIdentity,
-    TEST_TIME_MS,
+    FixedClock, FixtureBackend, FixtureFetcher, TEST_TIME_MS, TestIdentity, p256_identity,
+    rsa_identity,
 };
 
 fn fixture_pdf(name: &str) -> Vec<u8> {
@@ -65,8 +66,16 @@ fn engine_with(
 
 #[tokio::test]
 async fn seal_baseline_b_both_suites_and_fixtures() {
-    for (mk, name) in [(p256_identity as fn(bool) -> TestIdentity, "p256"), (rsa_identity, "rsa")] {
-        for pdf in ["classic_1page.pdf", "stream_1page.pdf", "acroform.pdf", "multipage.pdf"] {
+    for (mk, name) in [
+        (p256_identity as fn(bool) -> TestIdentity, "p256"),
+        (rsa_identity, "rsa"),
+    ] {
+        for pdf in [
+            "classic_1page.pdf",
+            "stream_1page.pdf",
+            "acroform.pdf",
+            "multipage.pdf",
+        ] {
             let id = mk(false);
             let anchor = id.cert_der.clone();
             let (engine, _backend) = engine_with(
@@ -136,7 +145,10 @@ async fn seal_baseline_lt_and_lta_full_assembly() {
     let fetcher2 = Arc::new(FixtureFetcher::with_tsa(tsa2));
     let (engine2, _b2) = engine_with(signer2, fetcher2, config_for(anchors2, true));
     let out2 = engine2
-        .seal_pdf(&fixture_pdf("classic_1page.pdf"), &request(PadesProfile::BaselineLta))
+        .seal_pdf(
+            &fixture_pdf("classic_1page.pdf"),
+            &request(PadesProfile::BaselineLta),
+        )
         .await
         .unwrap();
     assert_eq!(out2.achieved_profile, PadesProfile::BaselineLta);
@@ -191,7 +203,10 @@ async fn target_b_t_offline_degrades_to_b_with_timestamp_warning_only() {
         config_for(vec![anchor], true),
     );
     let out = engine
-        .seal_pdf(&fixture_pdf("classic_1page.pdf"), &request(PadesProfile::BaselineT))
+        .seal_pdf(
+            &fixture_pdf("classic_1page.pdf"),
+            &request(PadesProfile::BaselineT),
+        )
         .await
         .unwrap();
     assert_eq!(out.achieved_profile, PadesProfile::BaselineB);
@@ -244,9 +259,14 @@ async fn p1363_backend_output_is_rejected() {
         Arc::new(OfflineFetcher),
         config_for(vec![anchor], false),
     );
-    backend.raw_p1363.store(true, std::sync::atomic::Ordering::SeqCst);
+    backend
+        .raw_p1363
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let err = engine
-        .seal_pdf(&fixture_pdf("classic_1page.pdf"), &request(PadesProfile::BaselineB))
+        .seal_pdf(
+            &fixture_pdf("classic_1page.pdf"),
+            &request(PadesProfile::BaselineB),
+        )
         .await
         .unwrap_err();
     assert!(matches!(

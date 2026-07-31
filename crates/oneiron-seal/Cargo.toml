@@ -19,6 +19,7 @@ native = [
   "dep:p256",
   "dep:pkix-chain",
   "dep:rsa",
+  "dep:sha1",
   "dep:sha2",
   "dep:signature",
   "dep:spki",
@@ -54,6 +55,9 @@ pkix-chain = { version = "=0.4.1", features = ["crl", "ocsp"], optional = true }
 # carries RUSTSEC-2023-0071 with no patched release; exposure here is
 # signing-only. Recorded in deny.toml advisories.ignore.
 rsa = { version = "=0.9.10", default-features = false, features = ["sha2", "std", "getrandom"], optional = true }
+# RFC 6960 CertID/ResponderID hash forms are SHA-1 by default; verification
+# only (never a signature primitive here).
+sha1 = { version = "=0.10.6", optional = true }
 sha2 = { version = "=0.10.9", features = ["oid"], optional = true }
 signature = { version = "=2.2.0", features = ["std"], optional = true }
 spki = { version = "=0.7.3", features = ["std"], optional = true }

@@ -6,9 +6,7 @@ use x509_tsp::{TspVersion, TstInfo};
 use crate::api::Sha256Digest;
 use crate::error::{FatalCode, SealError, SealStage};
 
-use super::cms::{
-    self, DerReader, OID_ATTR_MESSAGE_DIGEST, OID_ATTR_SIGNING_CERT_V2, OID_SHA256,
-};
+use super::cms::{self, DerReader, OID_ATTR_MESSAGE_DIGEST, OID_ATTR_SIGNING_CERT_V2, OID_SHA256};
 
 pub(crate) const OID_TST_INFO: &[u8] = b"\x2a\x86\x48\x86\xf7\x0d\x01\x09\x10\x01\x04";
 
@@ -96,10 +94,7 @@ fn token_message_digest(signer: &cms::ParsedSignerInfo) -> Result<Sha256Digest, 
 }
 
 /// Signer-certificate binding inside the token's signingCertificateV2 attr.
-fn token_ess_check(
-    signer: &cms::ParsedSignerInfo,
-    tsa_cert_der: &[u8],
-) -> Result<(), SealError> {
+fn token_ess_check(signer: &cms::ParsedSignerInfo, tsa_cert_der: &[u8]) -> Result<(), SealError> {
     let (issuer, serial) = cms::issuer_and_serial(tsa_cert_der)?;
     for attr in &signer.signed_attrs {
         let (oid, _) = cms::parse_attribute(attr)?;
@@ -221,10 +216,7 @@ fn generalized_time_unix(tst: &TstInfo) -> u64 {
 }
 
 /// Locate the CMS certificate whose ESS binding matches the token signer.
-fn find_bound_cert(
-    certs: &[Vec<u8>],
-    signer: &cms::ParsedSignerInfo,
-) -> Result<usize, SealError> {
+fn find_bound_cert(certs: &[Vec<u8>], signer: &cms::ParsedSignerInfo) -> Result<usize, SealError> {
     for (i, cert) in certs.iter().enumerate() {
         if token_ess_check(signer, cert).is_ok() {
             return Ok(i);

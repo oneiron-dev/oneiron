@@ -61,19 +61,48 @@ fn deref_dict<'d>(doc: &'d Document, obj: &'d Object) -> Option<&'d Dictionary> 
     }
 }
 
+/// Resolve bounded indirection for security-critical name slots: `/Type`,
+/// `/FT`, and `/S` hidden behind a reference chain must still be compared
+/// against the denied names (§7.1 rules 6-7, §7.6 closing law). An
+/// unresolvable or cyclic chain keeps the last seen object, which then
+/// fails the direct-name comparison.
+fn resolved<'d>(doc: &'d Document, mut obj: &'d Object) -> &'d Object {
+    for _ in 0..8 {
+        match obj {
+            Object::Reference(r) => match doc.get_object(*r) {
+                Ok(next) => obj = next,
+                Err(_) => return obj,
+            },
+            _ => return obj,
+        }
+    }
+    obj
+}
+
 /// Scan every object for prepared-input contract violations (§7.1 rules 6-7).
 fn scan_objects(doc: &Document) -> Result<(), SealError> {
     for obj in doc.objects.values() {
-        let Some(dict) = deref_dict(doc, obj) else { continue };
+        let Some(dict) = deref_dict(doc, obj) else {
+            continue;
+        };
         if let Ok(t) = dict.get(b"Type") {
-            if name_is(t, b"Sig") {
+            let t = resolved(doc, t);
+            if name_is(t, b"Sig") || name_is(t, b"DocTimeStamp") {
                 return Err(input_invalid(InputInvalidCode::ExistingSignature));
             }
             if name_is(t, b"Filespec") {
                 return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
             }
         }
-        if dict.get(b"FT").is_ok_and(|ft| name_is(ft, b"Sig")) {
+        if dict
+            .get(b"FT")
+            .is_ok_and(|ft| name_is(resolved(doc, ft), b"Sig"))
+        {
+            return Err(input_invalid(InputInvalidCode::ExistingSignature));
+        }
+        // A signature-shaped dictionary is rejected even without a /Type
+        // marker: /ByteRange + /Contents together only exist for signing.
+        if dict.has(b"ByteRange") && dict.has(b"Contents") {
             return Err(input_invalid(InputInvalidCode::ExistingSignature));
         }
         if dict.has(b"AA") {
@@ -82,10 +111,10 @@ fn scan_objects(doc: &Document) -> Result<(), SealError> {
         if dict.has(b"Lock") {
             return Err(input_invalid(InputInvalidCode::ExistingSignature));
         }
-        if dict
-            .get(b"S")
-            .is_ok_and(|s| name_is(s, b"JavaScript") || name_is(s, b"Launch"))
-        {
+        if dict.get(b"S").is_ok_and(|s| {
+            let s = resolved(doc, s);
+            name_is(s, b"JavaScript") || name_is(s, b"Launch")
+        }) {
             return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
         }
     }
@@ -199,12 +228,7 @@ fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionState, SealErr
         .and_then(|d| d.get(b"Fields").ok())
         .and_then(|f| f.as_array().ok().cloned())
         .unwrap_or_default();
-    let max_obj = doc
-        .objects
-        .keys()
-        .map(|(num, _)| *num)
-        .max()
-        .unwrap_or(0);
+    let max_obj = doc.objects.keys().map(|(num, _)| *num).max().unwrap_or(0);
     Ok(RevisionState {
         max_obj,
         root,
@@ -307,8 +331,7 @@ pub(crate) fn reparse_revision(
     bytes: &[u8],
     limits: &SealResourceLimits,
 ) -> Result<RevisionState, SealError> {
-    let doc = load_strict(bytes, limits)
-        .map_err(|_| fatal_pdf(FatalCode::PdfInvariantFailed))?;
+    let doc = load_strict(bytes, limits).map_err(|_| fatal_pdf(FatalCode::PdfInvariantFailed))?;
     revision_state(&doc, bytes)
 }
 
@@ -396,10 +419,16 @@ fn write_literal_string(data: &str, out: &mut Vec<u8>) {
 #[derive(Debug)]
 pub(crate) enum RevisionKind {
     /// Invisible signature field + widget + AcroForm update + sig dictionary.
-    Signature { field_name: String, date_str: String },
+    Signature {
+        field_name: String,
+        date_str: String,
+    },
     /// DSS dictionary plus validation-material stream objects, and a catalog
     /// update pointing at it. No signature dictionary in this revision.
-    Dss { material_objects: Vec<(u32, Vec<u8>)>, dss_obj: u32 },
+    Dss {
+        material_objects: Vec<(u32, Vec<u8>)>,
+        dss_obj: u32,
+    },
     /// Archival document timestamp: sig dictionary only, no field/widget.
     DocumentTimestamp,
 }
@@ -429,7 +458,11 @@ fn sig_dict_body(
     // Returns (body, byterange_patch_rel, contents_lt_rel).
     let mut body = Vec::with_capacity(capacity * 2 + 256);
     body.extend_from_slice(b"<< /Type ");
-    body.extend_from_slice(if kind_is_ts { b"/DocTimeStamp" } else { b"/Sig" });
+    body.extend_from_slice(if kind_is_ts {
+        b"/DocTimeStamp"
+    } else {
+        b"/Sig"
+    });
     body.extend_from_slice(b" /Filter /Adobe.PPKLite /SubFilter ");
     body.extend_from_slice(if kind_is_ts {
         b"/ETSI.RFC3161"
@@ -470,7 +503,10 @@ fn build_objects(
     let mut objs: Vec<(u32, u16, Vec<u8>)> = Vec::new();
     let mut sig_info = None;
     match kind {
-        RevisionKind::Signature { field_name, date_str } => {
+        RevisionKind::Signature {
+            field_name,
+            date_str,
+        } => {
             let (sig_body, br_rel, lt_rel) = sig_dict_body(false, Some(date_str), capacity);
             let sig_num = next;
             next += 1;
@@ -507,9 +543,7 @@ fn build_objects(
                 _ => {
                     // No AcroForm: new AcroForm object + catalog update.
                     let af_num = next;
-                    let af = format!(
-                        "<< /Fields [{field_num} 0 R] /SigFlags 3 >>"
-                    );
+                    let af = format!("<< /Fields [{field_num} 0 R] /SigFlags 3 >>");
                     objs.push((af_num, 0, af.into_bytes()));
                     let mut catalog = state.root_dict.clone();
                     catalog.set(b"AcroForm", Object::Reference((af_num, 0)));
@@ -701,10 +735,7 @@ fn patch_byterange(out: &mut [u8], pos: usize, br: [u64; 4]) -> Result<(), SealE
 /// Write the DER CMS into the `/Contents` hex gap, zero-padding the rest.
 /// Returns `Err(ContentsCapacityExceeded)` when the DER does not fit; the
 /// caller discards this candidate and rebuilds at the next capacity.
-pub(crate) fn patch_contents(
-    draft: &mut DraftRevision,
-    der: &[u8],
-) -> Result<(), SealError> {
+pub(crate) fn patch_contents(draft: &mut DraftRevision, der: &[u8]) -> Result<(), SealError> {
     let (lt, gt) = draft
         .contents_gap
         .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
@@ -755,8 +786,8 @@ pub(crate) fn field_name_for(operation_id: &str) -> String {
 pub(crate) fn pdf_date(unix_ms: u64) -> String {
     use time::format_description::well_known::Rfc3339;
     let secs = i64::try_from(unix_ms / 1000).unwrap_or(i64::MAX);
-    let dt = time::OffsetDateTime::from_unix_timestamp(secs)
-        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    let dt =
+        time::OffsetDateTime::from_unix_timestamp(secs).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
     // D:YYYYMMDDHHmmSSZ
     let rfc = dt.format(&Rfc3339).unwrap_or_default();
     let digits: String = rfc.chars().filter(char::is_ascii_digit).take(14).collect();
@@ -885,4 +916,3 @@ mod tests {
         assert_eq!(pdf_date(1_785_398_400_000), "D:20260730080000Z");
     }
 }
-

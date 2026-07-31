@@ -16,7 +16,7 @@ use oneiron_seal::{
     SealRequest, SealResourceLimits,
 };
 
-use support::{p256_identity, FixtureBackend, FixedClock, TEST_TIME_MS};
+use support::{FixedClock, FixtureBackend, TEST_TIME_MS, p256_identity};
 
 fn oracle_available() -> bool {
     Command::new("python3")

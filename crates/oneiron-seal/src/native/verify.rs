@@ -107,9 +107,7 @@ fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
             };
             br[i] = u64::try_from(*v).map_err(|_| malformed_input())?;
         }
-        let Object::String(contents, _) =
-            d.get(b"Contents").map_err(|_| malformed_input())?
-        else {
+        let Object::String(contents, _) = d.get(b"Contents").map_err(|_| malformed_input())? else {
             return Err(malformed_input());
         };
         out.push(SigEntry {
@@ -173,7 +171,9 @@ fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
     if s1 != 0 || l1 >= s2 {
         return false; // span1 must start at 0 and end before span2
     }
-    let Some(end2) = s2.checked_add(l2) else { return false };
+    let Some(end2) = s2.checked_add(l2) else {
+        return false;
+    };
     if end2 > bytes.len() {
         return false; // out of bounds
     }
@@ -209,7 +209,11 @@ fn verify_cades_sig(
     checks: &mut Checks,
 ) {
     let br_ok = check_byte_range(bytes, e);
-    checks.record(VerifyCheckKind::ByteRange, br_ok, VerifyFindingCode::InvalidByteRange);
+    checks.record(
+        VerifyCheckKind::ByteRange,
+        br_ok,
+        VerifyFindingCode::InvalidByteRange,
+    );
     let spans_digest = if br_ok {
         pdf::hash_byte_range(bytes, e.byte_range).ok()
     } else {
@@ -225,14 +229,22 @@ fn verify_cades_sig(
             && cms::is_sha256_oid(&p.digest_algs[0])
             && cms::is_sha256_oid(&p.signer.digest_alg_oid)
     });
-    checks.record(VerifyCheckKind::CmsEnvelope, env_ok, VerifyFindingCode::InvalidCms);
+    checks.record(
+        VerifyCheckKind::CmsEnvelope,
+        env_ok,
+        VerifyFindingCode::InvalidCms,
+    );
     let Some(parsed) = parsed.filter(|_| env_ok) else {
         checks.record(
             VerifyCheckKind::SignedAttributes,
             false,
             VerifyFindingCode::InvalidSignedAttributes,
         );
-        checks.record(VerifyCheckKind::ContentDigest, false, VerifyFindingCode::DigestMismatch);
+        checks.record(
+            VerifyCheckKind::ContentDigest,
+            false,
+            VerifyFindingCode::DigestMismatch,
+        );
         checks.record(
             VerifyCheckKind::SignatureValue,
             false,
@@ -279,7 +291,9 @@ fn verify_signer(
         VerifyFindingCode::DigestMismatch,
     );
     let signer_idx = parsed.certificates.iter().position(|c| {
-        let Ok((iss, ser)) = cms::issuer_and_serial(c) else { return false };
+        let Ok((iss, ser)) = cms::issuer_and_serial(c) else {
+            return false;
+        };
         parsed
             .signer
             .signed_attrs
@@ -411,12 +425,12 @@ fn verify_doc_ts(
 ) {
     let br_ok = check_byte_range(bytes, e);
     let covers_end = !is_last
-        || e
-            .byte_range
+        || e.byte_range
             .get(2..4)
             .and_then(|v| u64::checked_add(v[0], v[1]))
             .is_some_and(|end| {
-                let mut tail = &bytes[usize::try_from(end).unwrap_or(usize::MAX).min(bytes.len())..];
+                let mut tail =
+                    &bytes[usize::try_from(end).unwrap_or(usize::MAX).min(bytes.len())..];
                 while let [b'\r' | b'\n', rest @ ..] = tail {
                     tail = rest;
                 }
@@ -436,8 +450,12 @@ fn verify_doc_ts(
 }
 
 /// Validate the DSS revision when the catalog carries `/DSS` (§7.5/§7.7):
-/// global arrays only, every entry must parse.
-fn verify_dss(doc: &Document, checks: &mut Checks) {
+/// global arrays only, and every present entry must cryptographically
+/// validate — CRLs against an embedded/anchored issuer cert with a fresh
+/// thisUpdate/nextUpdate window, OCSP responses with signature, responder
+/// authorization, and cert-serial binding. Present-but-invalid evidence
+/// fails ValidationMaterial; it is never AbsentAllowed.
+fn verify_dss(doc: &Document, anchors: &[EmbeddedCert], at_unix: u64, checks: &mut Checks) {
     let Ok(catalog) = doc.catalog() else {
         checks.absent(VerifyCheckKind::ValidationMaterial);
         return;
@@ -446,7 +464,10 @@ fn verify_dss(doc: &Document, checks: &mut Checks) {
         checks.absent(VerifyCheckKind::ValidationMaterial);
         return;
     };
-    let dss = doc.dereference(dss_obj).ok().and_then(|(_, o)| o.as_dict().ok());
+    let dss = doc
+        .dereference(dss_obj)
+        .ok()
+        .and_then(|(_, o)| o.as_dict().ok());
     let Some(dss) = dss else {
         checks.record(
             VerifyCheckKind::ValidationMaterial,
@@ -463,9 +484,7 @@ fn verify_dss(doc: &Document, checks: &mut Checks) {
         );
         return;
     }
-    let ok = dss_array_valid(doc, dss, b"Certs", MaterialKind::Cert)
-        && dss_array_valid(doc, dss, b"OCSPs", MaterialKind::Ocsp)
-        && dss_array_valid(doc, dss, b"CRLs", MaterialKind::Crl);
+    let ok = dss_material_valid(doc, dss, anchors, at_unix);
     checks.record(
         VerifyCheckKind::ValidationMaterial,
         ok,
@@ -473,44 +492,360 @@ fn verify_dss(doc: &Document, checks: &mut Checks) {
     );
 }
 
-enum MaterialKind {
-    Cert,
-    Ocsp,
-    Crl,
+fn dss_material_valid(
+    doc: &Document,
+    dss: &lopdf::Dictionary,
+    anchors: &[EmbeddedCert],
+    at_unix: u64,
+) -> bool {
+    // /Certs first: CRL and OCSP issuer lookups draw from it. Absent is
+    // allowed; a present-but-empty array breaks profile completeness.
+    let embedded: Vec<EmbeddedCert> = match dss_array(doc, dss, b"Certs") {
+        DssArray::Absent => Vec::new(),
+        DssArray::Malformed => return false,
+        DssArray::Entries(entries) => {
+            if entries.is_empty() {
+                return false;
+            }
+            let mut v = Vec::with_capacity(entries.len());
+            for e in &entries {
+                let Some(c) = EmbeddedCert::from_der(e) else {
+                    return false;
+                };
+                v.push(c);
+            }
+            v
+        }
+    };
+    match dss_array(doc, dss, b"CRLs") {
+        DssArray::Absent => {}
+        DssArray::Malformed => return false,
+        DssArray::Entries(entries) => {
+            if entries
+                .iter()
+                .any(|e| !crl_entry_valid(e, &embedded, anchors, at_unix))
+            {
+                return false;
+            }
+        }
+    }
+    match dss_array(doc, dss, b"OCSPs") {
+        DssArray::Absent => {}
+        DssArray::Malformed => return false,
+        DssArray::Entries(entries) => {
+            if entries
+                .iter()
+                .any(|e| !ocsp_entry_valid(e, &embedded, anchors, at_unix))
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 
-fn dss_array_valid(doc: &Document, dss: &lopdf::Dictionary, key: &[u8], kind: MaterialKind) -> bool {
+/// A parsed certificate with its source DER (signature verification takes
+/// the DER form).
+struct EmbeddedCert {
+    der: Vec<u8>,
+    cert: x509_cert::Certificate,
+}
+
+impl EmbeddedCert {
+    fn from_der(der_bytes: &[u8]) -> Option<Self> {
+        use der::Decode;
+        Some(Self {
+            der: der_bytes.to_vec(),
+            cert: x509_cert::Certificate::from_der(der_bytes).ok()?,
+        })
+    }
+}
+
+/// Seconds-since-epoch for an X.509 time choice.
+fn time_secs(t: x509_cert::time::Time) -> u64 {
+    match t {
+        x509_cert::time::Time::UtcTime(t) => t.to_unix_duration().as_secs(),
+        x509_cert::time::Time::GeneralTime(t) => t.to_unix_duration().as_secs(),
+    }
+}
+
+/// Freshness window shared by CRL and OCSP evidence (§7.5 step 3): issued
+/// at or before the applicable time, and a present nextUpdate not in the
+/// past. Also used by the seal-side CRL fetcher.
+pub(crate) fn evidence_fresh(
+    this_update: x509_cert::time::Time,
+    next_update: Option<x509_cert::time::Time>,
+    at_unix: u64,
+) -> bool {
+    time_secs(this_update) <= at_unix && next_update.is_none_or(|n| at_unix <= time_secs(n))
+}
+
+enum DssArray {
+    Absent,
+    Entries(Vec<Vec<u8>>),
+    Malformed,
+}
+
+/// Extract the decoded stream contents of one DSS array.
+fn dss_array(doc: &Document, dss: &lopdf::Dictionary, key: &[u8]) -> DssArray {
     let Ok(arr_obj) = dss.get(key) else {
-        return true; // array absent is fine
+        return DssArray::Absent;
     };
     let Some(arr) = doc
         .dereference(arr_obj)
         .ok()
         .and_then(|(_, o)| o.as_array().ok())
     else {
-        return false;
+        return DssArray::Malformed;
     };
-    if arr.is_empty() && matches!(kind, MaterialKind::Cert) {
-        return false; // profile completeness: signer chain certs must be embedded
-    }
-    arr.iter().all(|item| {
-        let data = doc
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        let Some(data) = doc
             .dereference(item)
             .ok()
-            .and_then(|(_, o)| o.as_stream().ok().map(|s| s.content.clone()));
-        let Some(data) = data else { return false };
-        match kind {
-            MaterialKind::Cert => der::Decode::from_der(&data)
-                .map(|_: x509_cert::Certificate| ())
-                .is_ok(),
-            MaterialKind::Crl => der::Decode::from_der(&data)
-                .map(|_: x509_cert::crl::CertificateList| ())
-                .is_ok(),
-            MaterialKind::Ocsp => der::Decode::from_der(&data)
-                .map(|_: x509_ocsp::OcspResponse| ())
-                .is_ok(),
+            .and_then(|(_, o)| o.as_stream().ok().map(|s| s.content.clone()))
+        else {
+            return DssArray::Malformed;
+        };
+        out.push(data);
+    }
+    DssArray::Entries(out)
+}
+
+/// Find the certificate whose subject is `issuer` among embedded DSS certs
+/// first, then trust anchors.
+fn find_issuer<'a>(
+    issuer: &x509_cert::name::Name,
+    embedded: &'a [EmbeddedCert],
+    anchors: &'a [EmbeddedCert],
+) -> Option<&'a EmbeddedCert> {
+    embedded
+        .iter()
+        .chain(anchors.iter())
+        .find(|c| c.cert.tbs_certificate.subject == *issuer)
+}
+
+/// One DSS CRL entry: parses, signature verifies against an
+/// embedded/anchored issuer cert with a consistent algorithm, and is fresh
+/// at the applicable time (§7.5 step 3).
+fn crl_entry_valid(
+    data: &[u8],
+    embedded: &[EmbeddedCert],
+    anchors: &[EmbeddedCert],
+    at_unix: u64,
+) -> bool {
+    use der::{Decode, Encode};
+    let Ok(crl) = x509_cert::crl::CertificateList::from_der(data) else {
+        return false;
+    };
+    let Some(issuer) = find_issuer(&crl.tbs_cert_list.issuer, embedded, anchors) else {
+        return false;
+    };
+    let Ok(alg) = cms::cert_signature_algorithm(&issuer.der) else {
+        return false;
+    };
+    let oid = crl.signature_algorithm.oid.as_bytes();
+    if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
+        return false;
+    }
+    let Ok(tbs) = crl.tbs_cert_list.to_der() else {
+        return false;
+    };
+    if cms::verify_signature_value(alg, &issuer.der, &tbs, crl.signature.raw_bytes()).is_err() {
+        return false;
+    }
+    evidence_fresh(
+        crl.tbs_cert_list.this_update,
+        crl.tbs_cert_list.next_update,
+        at_unix,
+    )
+}
+
+/// id-sha1 (RFC 6960 default CertID hash) and id-kp-OCSPSigning.
+const OID_SHA1_BYTES: &[u8] = b"\x2b\x0e\x03\x02\x1a";
+const OID_OCSP_SIGNING: &[u8] = b"\x2b\x06\x01\x05\x05\x07\x03\x09";
+
+/// Hash `data` with the CertID hash algorithm; only SHA-1 and SHA-256 are
+/// recognized evidence-hash forms.
+fn cert_id_hash(oid_bytes: &[u8], data: &[u8]) -> Option<Vec<u8>> {
+    if cms::is_sha256_oid(oid_bytes) {
+        return Some(cms::sha256(data).to_vec());
+    }
+    if oid_bytes == OID_SHA1_BYTES {
+        use sha1::Digest;
+        return Some(sha1::Sha1::digest(data).to_vec());
+    }
+    None
+}
+
+/// The cert a SingleResponse binds to: serial match against an embedded or
+/// anchored cert, and the CertID issuer hashes recompute against that
+/// cert's issuer (§7.5 step 3 certificate identity/serial).
+fn ocsp_cert_binding<'a>(
+    cert_id: &x509_ocsp::CertId,
+    embedded: &'a [EmbeddedCert],
+    anchors: &'a [EmbeddedCert],
+) -> Option<(&'a EmbeddedCert, &'a EmbeddedCert)> {
+    let target = embedded
+        .iter()
+        .chain(anchors.iter())
+        .find(|c| c.cert.tbs_certificate.serial_number == cert_id.serial_number)?;
+    let issuer = find_issuer(&target.cert.tbs_certificate.issuer, embedded, anchors)?;
+    let oid = cert_id.hash_algorithm.oid.as_bytes();
+    let subject_der = der::Encode::to_der(&issuer.cert.tbs_certificate.subject).ok()?;
+    let key_bytes = issuer
+        .cert
+        .tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .raw_bytes();
+    if cert_id_hash(oid, &subject_der)? != cert_id.issuer_name_hash.as_bytes() {
+        return None;
+    }
+    if cert_id_hash(oid, key_bytes)? != cert_id.issuer_key_hash.as_bytes() {
+        return None;
+    }
+    Some((target, issuer))
+}
+
+/// RFC 6960 §2.6: the responder is the issuer itself, or a delegate issued
+/// by the issuer carrying the id-kp-OCSPSigning EKU whose certificate
+/// signature verifies under the issuer's key.
+fn ocsp_responder_authorized(responder: &EmbeddedCert, issuer: &EmbeddedCert) -> bool {
+    use der::{Decode, Encode};
+    if responder.der == issuer.der {
+        return true;
+    }
+    if responder.cert.tbs_certificate.issuer != issuer.cert.tbs_certificate.subject {
+        return false;
+    }
+    let has_eku = responder
+        .cert
+        .tbs_certificate
+        .extensions
+        .as_ref()
+        .is_some_and(|exts| {
+            exts.iter().any(|e| {
+                e.extn_id.as_bytes() == b"\x55\x1d\x25"
+                    && x509_cert::ext::pkix::ExtendedKeyUsage::from_der(e.extn_value.as_bytes())
+                        .is_ok_and(|eku| eku.0.iter().any(|o| o.as_bytes() == OID_OCSP_SIGNING))
+            })
+        });
+    if !has_eku {
+        return false;
+    }
+    let Ok(alg) = cms::cert_signature_algorithm(&issuer.der) else {
+        return false;
+    };
+    let oid = responder.cert.signature_algorithm.oid.as_bytes();
+    if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
+        return false;
+    }
+    let Ok(tbs) = responder.cert.tbs_certificate.to_der() else {
+        return false;
+    };
+    cms::verify_signature_value(alg, &issuer.der, &tbs, responder.cert.signature.raw_bytes())
+        .is_ok()
+}
+
+/// Does this candidate certificate match the BasicOCSPResponse responderID?
+fn ocsp_responder_matches(rid: &x509_ocsp::ResponderId, cert: &x509_cert::Certificate) -> bool {
+    match rid {
+        x509_ocsp::ResponderId::ByName(name) => *name == cert.tbs_certificate.subject,
+        x509_ocsp::ResponderId::ByKey(hash) => {
+            use sha1::Digest;
+            let key = cert
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .raw_bytes();
+            sha1::Sha1::digest(key).as_slice() == hash.as_bytes()
         }
-    })
+    }
+}
+
+/// One DSS OCSP entry: successful basic response whose signature verifies
+/// under an authorized responder, with every SingleResponse bound to an
+/// embedded/anchored cert serial and fresh at the applicable time.
+fn ocsp_entry_valid(
+    data: &[u8],
+    embedded: &[EmbeddedCert],
+    anchors: &[EmbeddedCert],
+    at_unix: u64,
+) -> bool {
+    use const_oid::AssociatedOid;
+    use der::{Decode, Encode};
+    let Ok(resp) = x509_ocsp::OcspResponse::from_der(data) else {
+        return false;
+    };
+    if resp.response_status != x509_ocsp::OcspResponseStatus::Successful {
+        return false;
+    }
+    let Some(bytes) = &resp.response_bytes else {
+        return false;
+    };
+    if bytes.response_type != x509_ocsp::BasicOcspResponse::OID {
+        return false;
+    }
+    let Ok(basic) = x509_ocsp::BasicOcspResponse::from_der(bytes.response.as_bytes()) else {
+        return false;
+    };
+    if basic.tbs_response_data.responses.is_empty() {
+        return false;
+    }
+    // Candidate responder certs: response-embedded, then DSS, then anchors.
+    let mut candidates: Vec<EmbeddedCert> = Vec::new();
+    if let Some(certs) = &basic.certs {
+        for c in certs {
+            let Ok(der_bytes) = c.to_der() else {
+                return false;
+            };
+            candidates.push(EmbeddedCert {
+                der: der_bytes,
+                cert: c.clone(),
+            });
+        }
+    }
+    let Some(responder) = candidates
+        .iter()
+        .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
+        .or_else(|| {
+            embedded
+                .iter()
+                .chain(anchors.iter())
+                .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
+        })
+    else {
+        return false;
+    };
+    for single in &basic.tbs_response_data.responses {
+        let Some((_target, issuer)) = ocsp_cert_binding(&single.cert_id, embedded, anchors) else {
+            return false;
+        };
+        if !ocsp_responder_authorized(responder, issuer) {
+            return false;
+        }
+        if !evidence_fresh(
+            x509_cert::time::Time::GeneralTime(single.this_update.0),
+            single
+                .next_update
+                .map(|n| x509_cert::time::Time::GeneralTime(n.0)),
+            at_unix,
+        ) {
+            return false;
+        }
+    }
+    let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
+        return false;
+    };
+    let oid = basic.signature_algorithm.oid.as_bytes();
+    if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
+        return false;
+    }
+    let Ok(tbs) = basic.tbs_response_data.to_der() else {
+        return false;
+    };
+    cms::verify_signature_value(alg, &responder.der, &tbs, basic.signature.raw_bytes()).is_ok()
 }
 
 /// Full document verification and profile classification (§7.7).
@@ -555,6 +890,12 @@ pub(crate) fn verify_document(
         VerifyFindingCode::InvalidPdfRevision,
     );
     let anchors = anchors(ctx.config);
+    let anchor_certs: Vec<EmbeddedCert> = ctx
+        .config
+        .trust_anchors_der
+        .iter()
+        .filter_map(|d| EmbeddedCert::from_der(d))
+        .collect();
     let sigs = collect_signatures(&doc)?;
     let last_idx = sigs.len().saturating_sub(1);
     let mut saw_cades = false;
@@ -569,7 +910,7 @@ pub(crate) fn verify_document(
     if !saw_cades {
         checks.absent(VerifyCheckKind::SignatureTimestamp);
     }
-    verify_dss(&doc, &mut checks);
+    verify_dss(&doc, &anchor_certs, ctx.clock_ms / 1000, &mut checks);
     let valid = saw_cades
         && eof_ok
         && !checks
@@ -601,5 +942,284 @@ fn classify(checks: &Checks, valid: bool) -> Option<PadesProfile> {
         Some(PadesProfile::BaselineT)
     } else {
         Some(PadesProfile::BaselineB)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use const_oid::AssociatedOid;
+    use der::{Decode, Encode};
+    use lopdf::{Object, Stream};
+
+    use super::*;
+
+    /// 2026-07-30T08:00:00Z — the applicable verification time.
+    const AT_UNIX: u64 = 1_785_398_400;
+
+    struct TestCa {
+        cert_der: Vec<u8>,
+        cert: x509_cert::Certificate,
+        key: p256::ecdsa::SigningKey,
+    }
+
+    fn test_ca(cn: &str) -> TestCa {
+        use p256::pkcs8::DecodePrivateKey;
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        let cert = params.self_signed(&key_pair).unwrap();
+        let cert_der = cert.der().to_vec();
+        let key = p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap();
+        let cert = x509_cert::Certificate::from_der(&cert_der).unwrap();
+        TestCa {
+            cert_der,
+            cert,
+            key,
+        }
+    }
+
+    fn sign_p256(key: &p256::ecdsa::SigningKey, data: &[u8]) -> Vec<u8> {
+        use p256::ecdsa::signature::hazmat::PrehashSigner;
+        use sha2::Digest;
+        let digest = sha2::Sha256::digest(data);
+        let sig: p256::ecdsa::Signature = key.sign_prehash(&digest).unwrap();
+        sig.to_der().as_bytes().to_vec()
+    }
+
+    fn ecdsa_alg() -> spki::AlgorithmIdentifierOwned {
+        spki::AlgorithmIdentifierOwned {
+            oid: cms::OID_ECDSA_SHA256,
+            parameters: None,
+        }
+    }
+
+    fn gt(secs: u64) -> der::asn1::GeneralizedTime {
+        der::asn1::GeneralizedTime::from_unix_duration(std::time::Duration::from_secs(secs))
+            .unwrap()
+    }
+
+    fn x509_time(secs: u64) -> x509_cert::time::Time {
+        x509_cert::time::Time::GeneralTime(gt(secs))
+    }
+
+    fn build_crl(
+        ca: &TestCa,
+        this: u64,
+        next: Option<u64>,
+        sign_with: Option<&p256::ecdsa::SigningKey>,
+    ) -> Vec<u8> {
+        let alg = ecdsa_alg();
+        let tbs = x509_cert::crl::TbsCertList {
+            version: x509_cert::Version::V2,
+            signature: alg.clone(),
+            issuer: ca.cert.tbs_certificate.subject.clone(),
+            this_update: x509_time(this),
+            next_update: next.map(x509_time),
+            revoked_certificates: None,
+            crl_extensions: None,
+        };
+        let tbs_der = tbs.to_der().unwrap();
+        let sig = sign_p256(sign_with.unwrap_or(&ca.key), &tbs_der);
+        x509_cert::crl::CertificateList {
+            tbs_cert_list: tbs,
+            signature_algorithm: alg,
+            signature: der::asn1::BitString::from_bytes(&sig).unwrap(),
+        }
+        .to_der()
+        .unwrap()
+    }
+
+    fn build_ocsp(
+        ca: &TestCa,
+        serial: x509_cert::serial_number::SerialNumber,
+        this: u64,
+        next: Option<u64>,
+    ) -> Vec<u8> {
+        use sha1::Digest;
+        let subject_der = ca.cert.tbs_certificate.subject.to_der().unwrap();
+        let key_bytes = ca
+            .cert
+            .tbs_certificate
+            .subject_public_key_info
+            .subject_public_key
+            .raw_bytes();
+        let cert_id = x509_ocsp::CertId {
+            hash_algorithm: spki::AlgorithmIdentifierOwned {
+                oid: der::asn1::ObjectIdentifier::new_unwrap("1.3.14.3.2.26"),
+                parameters: Some(der::asn1::Null.into()),
+            },
+            issuer_name_hash: der::asn1::OctetString::new(
+                sha1::Sha1::digest(&subject_der).to_vec(),
+            )
+            .unwrap(),
+            issuer_key_hash: der::asn1::OctetString::new(sha1::Sha1::digest(key_bytes).to_vec())
+                .unwrap(),
+            serial_number: serial,
+        };
+        let single = x509_ocsp::SingleResponse {
+            cert_id,
+            cert_status: x509_ocsp::CertStatus::good(),
+            this_update: x509_ocsp::OcspGeneralizedTime(gt(this)),
+            next_update: next.map(|n| x509_ocsp::OcspGeneralizedTime(gt(n))),
+            single_extensions: None,
+        };
+        let data = x509_ocsp::ResponseData {
+            version: Default::default(),
+            responder_id: x509_ocsp::ResponderId::ByName(ca.cert.tbs_certificate.subject.clone()),
+            produced_at: x509_ocsp::OcspGeneralizedTime(gt(this)),
+            responses: vec![single],
+            response_extensions: None,
+        };
+        let tbs_der = data.to_der().unwrap();
+        let sig = sign_p256(&ca.key, &tbs_der);
+        let basic = x509_ocsp::BasicOcspResponse {
+            tbs_response_data: data,
+            signature_algorithm: ecdsa_alg(),
+            signature: der::asn1::BitString::from_bytes(&sig).unwrap(),
+            certs: None,
+        };
+        let basic_der = basic.to_der().unwrap();
+        x509_ocsp::OcspResponse {
+            response_status: x509_ocsp::OcspResponseStatus::Successful,
+            response_bytes: Some(x509_ocsp::ResponseBytes {
+                response_type: x509_ocsp::BasicOcspResponse::OID,
+                response: der::asn1::OctetString::new(basic_der).unwrap(),
+            }),
+        }
+        .to_der()
+        .unwrap()
+    }
+
+    /// In-memory document carrying a catalog `/DSS` with the given global
+    /// arrays (empty arrays are omitted).
+    fn dss_doc(certs: &[Vec<u8>], crls: &[Vec<u8>], ocsps: &[Vec<u8>]) -> Document {
+        let mut doc = Document::with_version("1.4");
+        let mut dss = lopdf::Dictionary::new();
+        dss.set("Type", Object::Name(b"DSS".to_vec()));
+        for (key, items) in [("Certs", certs), ("CRLs", crls), ("OCSPs", ocsps)] {
+            if items.is_empty() {
+                continue;
+            }
+            let refs: Vec<Object> = items
+                .iter()
+                .map(|d| {
+                    let s = Stream::new(lopdf::Dictionary::new(), d.clone());
+                    Object::Reference(doc.add_object(Object::Stream(s)))
+                })
+                .collect();
+            dss.set(key, Object::Array(refs));
+        }
+        let dss_id = doc.add_object(Object::Dictionary(dss));
+        let mut catalog = lopdf::Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("DSS", Object::Reference(dss_id));
+        let cat_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+        doc
+    }
+
+    fn dss_check(doc: &Document) -> Checks {
+        let mut checks = Checks::new();
+        verify_dss(doc, &[], AT_UNIX, &mut checks);
+        checks
+    }
+
+    fn dss_finding(checks: &Checks) -> (VerifyCheckStatus, Option<VerifyFindingCode>) {
+        let c = checks
+            .list
+            .iter()
+            .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+            .unwrap();
+        (c.status, c.finding)
+    }
+
+    #[test]
+    fn dss_valid_crl_and_ocsp_pass() {
+        let ca = test_ca("dss-ca");
+        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None);
+        let ocsp = build_ocsp(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[ocsp]);
+        let checks = dss_check(&doc);
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn dss_crl_bad_signature_fails_validation_material() {
+        let ca = test_ca("dss-ca");
+        let other = test_ca("dss-other");
+        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), Some(&other.key));
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[]);
+        let checks = dss_check(&doc);
+        assert_eq!(
+            dss_finding(&checks),
+            (
+                VerifyCheckStatus::Fail,
+                Some(VerifyFindingCode::ValidationMaterialInvalid)
+            )
+        );
+    }
+
+    #[test]
+    fn dss_crl_stale_next_update_fails_never_absent() {
+        let ca = test_ca("dss-ca");
+        let crl = build_crl(&ca, AT_UNIX - 7200, Some(AT_UNIX - 60), None);
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[]);
+        let checks = dss_check(&doc);
+        assert_eq!(
+            dss_finding(&checks),
+            (
+                VerifyCheckStatus::Fail,
+                Some(VerifyFindingCode::ValidationMaterialInvalid)
+            )
+        );
+    }
+
+    #[test]
+    fn dss_ocsp_unbound_serial_fails() {
+        let ca = test_ca("dss-ca");
+        let serial = x509_cert::serial_number::SerialNumber::new(&[0x7f, 0x7f, 0x01]).unwrap();
+        let ocsp = build_ocsp(&ca, serial, AT_UNIX - 60, None);
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
+        let checks = dss_check(&doc);
+        assert_eq!(
+            dss_finding(&checks),
+            (
+                VerifyCheckStatus::Fail,
+                Some(VerifyFindingCode::ValidationMaterialInvalid)
+            )
+        );
+    }
+
+    #[test]
+    fn dss_ocsp_stale_next_update_fails() {
+        let ca = test_ca("dss-ca");
+        let ocsp = build_ocsp(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 7200,
+            Some(AT_UNIX - 60),
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
+        let checks = dss_check(&doc);
+        assert_eq!(
+            dss_finding(&checks),
+            (
+                VerifyCheckStatus::Fail,
+                Some(VerifyFindingCode::ValidationMaterialInvalid)
+            )
+        );
     }
 }

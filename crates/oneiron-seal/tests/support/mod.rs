@@ -45,8 +45,7 @@ pub(crate) const OID_SIGNED_DATA: &[u8] = b"\x2a\x86\x48\x86\xf7\x0d\x01\x07\x02
 pub(crate) const OID_TST_INFO: &[u8] = b"\x2a\x86\x48\x86\xf7\x0d\x01\x09\x10\x01\x04";
 pub(crate) const OID_ATTR_CONTENT_TYPE: &[u8] = b"\x2a\x86\x48\x86\xf7\x0d\x01\x09\x03";
 pub(crate) const OID_ATTR_MESSAGE_DIGEST: &[u8] = b"\x2a\x86\x48\x86\xf7\x0d\x01\x09\x04";
-pub(crate) const OID_ATTR_SIGNING_CERT_V2: &[u8] =
-    b"\x2a\x86\x48\x86\xf7\x0d\x01\x09\x10\x02\x2f";
+pub(crate) const OID_ATTR_SIGNING_CERT_V2: &[u8] = b"\x2a\x86\x48\x86\xf7\x0d\x01\x09\x10\x02\x2f";
 pub(crate) const OID_SHA256_WITH_RSA: &[u8] = b"\x2a\x86\x48\x86\xf7\x0d\x01\x01\x0b";
 pub(crate) const OID_ECDSA_SHA256: &[u8] = b"\x2a\x86\x48\xce\x3d\x04\x03\x02";
 
@@ -145,13 +144,17 @@ pub(crate) struct TestIdentity {
 pub(crate) fn self_signed_cert(key_pair: &rcgen::KeyPair, is_tsa: bool) -> Vec<u8> {
     let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     params.distinguished_name = rcgen::DistinguishedName::new();
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, if is_tsa { "test-tsa" } else { "test-signer" });
+    params.distinguished_name.push(
+        rcgen::DnType::CommonName,
+        if is_tsa { "test-tsa" } else { "test-signer" },
+    );
     params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
     if is_tsa {
         // Exactly one critical id-kp-timeStamping EKU (RFC 3161 §2.3).
-        let eku = tlv(0x30, &oid_tlv(&[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x08]));
+        let eku = tlv(
+            0x30,
+            &oid_tlv(&[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x08]),
+        );
         let mut ext = rcgen::CustomExtension::from_oid_content(&[2, 5, 29, 37], eku);
         ext.set_criticality(true);
         params.custom_extensions.push(ext);

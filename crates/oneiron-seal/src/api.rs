@@ -207,10 +207,7 @@ pub trait PdfSealEngine: Send + Sync {
         seal_request: &SealRequest,
     ) -> Result<SealedPdf, SealError>;
 
-    fn verify_sealed_pdf(
-        &self,
-        sealed_bytes: &[u8],
-    ) -> Result<VerifyReport, SealError>;
+    fn verify_sealed_pdf(&self, sealed_bytes: &[u8]) -> Result<VerifyReport, SealError>;
 }
 
 pub trait SealClock: Send + Sync {

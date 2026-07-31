@@ -65,22 +65,13 @@ pub enum SealError {
         retry_after_ms: Option<u64>,
     },
     #[error("fatal seal failure at {stage:?}: {code:?}")]
-    Fatal {
-        stage: SealStage,
-        code: FatalCode,
-    },
+    Fatal { stage: SealStage, code: FatalCode },
     #[error("sealed PDF failed native self-verification")]
-    VerifyFailed {
-        report: Box<VerifyReport>,
-    },
+    VerifyFailed { report: Box<VerifyReport> },
     #[error("seal backend unavailable")]
-    BackendUnavailable {
-        retry_after_ms: Option<u64>,
-    },
+    BackendUnavailable { retry_after_ms: Option<u64> },
     #[error("invalid prepared PDF input: {code:?}")]
-    InputInvalid {
-        code: InputInvalidCode,
-    },
+    InputInvalid { code: InputInvalidCode },
 }
 
 impl SealError {
@@ -91,9 +82,7 @@ impl SealError {
     pub const fn is_retryable(&self) -> bool {
         matches!(
             self,
-            Self::Retryable { .. }
-                | Self::VerifyFailed { .. }
-                | Self::BackendUnavailable { .. }
+            Self::Retryable { .. } | Self::VerifyFailed { .. } | Self::BackendUnavailable { .. }
         )
     }
 }

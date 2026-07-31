@@ -12,8 +12,7 @@ use sha2::Digest;
 use crate::api::{Sha256Digest, SignatureAlgorithm};
 use crate::error::{FatalCode, SealError, SealStage};
 
-pub(crate) const OID_DATA: ObjectIdentifier =
-    ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
+pub(crate) const OID_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
 pub(crate) const OID_SIGNED_DATA: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
 pub(crate) const OID_SHA256: ObjectIdentifier =
@@ -28,8 +27,7 @@ pub(crate) const OID_ECDSA_SHA256: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
 pub(crate) const OID_EC_PUBLIC_KEY: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
-pub(crate) const OID_P256: ObjectIdentifier =
-    ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
+pub(crate) const OID_P256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
 pub(crate) const OID_ATTR_CONTENT_TYPE: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.3");
 pub(crate) const OID_ATTR_MESSAGE_DIGEST: ObjectIdentifier =
@@ -351,7 +349,10 @@ fn parse_signer_info(tlv_bytes: &[u8]) -> Result<ParsedSignerInfo, SealError> {
     let mut signed_attrs = Vec::new();
     while !attrs_r.is_done() {
         let a = attrs_r.expect(0x30)?;
-        if signed_attrs.last().is_some_and(|last: &Vec<u8>| last.as_slice() >= a.full) {
+        if signed_attrs
+            .last()
+            .is_some_and(|last: &Vec<u8>| last.as_slice() >= a.full)
+        {
             return Err(cms_err()); // unsorted or duplicate
         }
         signed_attrs.push(a.full.to_vec());
@@ -478,9 +479,7 @@ pub(crate) fn parse_attribute(attr_der: &[u8]) -> Result<(Vec<u8>, Tlv<'_>), Sea
 
 /// Enforce the exact three-attribute PAdES baseline (§7.3). Returns the
 /// `message-digest` value.
-pub(crate) fn check_baseline_attrs(
-    signer: &ParsedSignerInfo,
-) -> Result<Sha256Digest, SealError> {
+pub(crate) fn check_baseline_attrs(signer: &ParsedSignerInfo) -> Result<Sha256Digest, SealError> {
     if signer.signed_attrs.len() != 3 {
         return Err(cms_err());
     }
@@ -564,9 +563,7 @@ pub(crate) fn check_ess_binding(
 
 /// Map a certificate's public-key algorithm to a frozen signature suite.
 /// Rejects RSA-PSS and any algorithm outside the §7.3 allowlist.
-pub(crate) fn cert_signature_algorithm(
-    cert_der: &[u8],
-) -> Result<SignatureAlgorithm, SealError> {
+pub(crate) fn cert_signature_algorithm(cert_der: &[u8]) -> Result<SignatureAlgorithm, SealError> {
     let cert = x509_cert::Certificate::from_der(cert_der).map_err(|_| SealError::Fatal {
         stage: SealStage::CmsAssembly,
         code: FatalCode::InvalidSigningIdentity,
@@ -617,17 +614,13 @@ pub(crate) fn verify_signature_value(
         SignatureAlgorithm::EcdsaP256Sha256 => {
             use p256::ecdsa::signature::hazmat::PrehashVerifier;
             let key_bytes = spki.subject_public_key.raw_bytes();
-            let key = p256::ecdsa::VerifyingKey::from_sec1_bytes(key_bytes)
-                .map_err(|_| cms_err())?;
+            let key =
+                p256::ecdsa::VerifyingKey::from_sec1_bytes(key_bytes).map_err(|_| cms_err())?;
             let sig = p256::ecdsa::Signature::from_der(signature).map_err(|_| cms_err())?;
             key.verify_prehash(&digest, &sig).is_ok()
         }
     };
-    if ok {
-        Ok(())
-    } else {
-        Err(cms_err())
-    }
+    if ok { Ok(()) } else { Err(cms_err()) }
 }
 
 /// Consistency between the CMS signatureAlgorithm OID and the frozen suite.
