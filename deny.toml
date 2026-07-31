@@ -26,6 +26,8 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    # CDLA-Permissive-2.0: webpki-roots root-store data (rustls ecosystem standard), via reqwest rustls-tls-webpki-roots (ONE-1837 network-fetch)
+    "CDLA-Permissive-2.0",
     "ISC",
     "MPL-2.0",
     "Unicode-3.0",
