@@ -3500,15 +3500,15 @@ pub(crate) fn stored_entity_type(
 ///   prefix-scans `edges_out` under a CLAIM source only. CLAIM-sourced stamps
 ///   are effective here; TURN- and EVENT-sourced stamps are INERT on this door.
 /// * FEDERATION door — `crate::sync::selector`. `facet_scope_by_source` builds
-///   a `FacetScope` for every `FacetOf` source THIS TABLE ADMITS (it runs
-///   [`facet_of_source_type_admitted`] as a read mirror), and
+///   a `FacetScope` for every `FacetOf` row THIS TABLE ADMITS ON BOTH ENDS (it
+///   runs [`facet_of_endpoint_types_on_table`] as a read mirror), and
 ///   `entity_selector_decision` withholds an entity of ANY type whose scope is
 ///   malformed or touches an unselected facet from a facet-limited peer.
 ///   CLAIM-, TURN-, AND EVENT-sourced stamps are all disclosure-EFFECTIVE here:
-///   an EVENT stamped to an unselected facet is withheld from that peer. A
-///   source OUTSIDE the admitted set carries no scope on this door either —
-///   the shape is unwritable, so a copy that slipped past a write door is not
-///   honored on read.
+///   an EVENT stamped to an unselected facet is withheld from that peer. A row
+///   OFF the table on either end carries no scope on this door — the shape is
+///   unwritable, so a copy that slipped past a write door is not honored on
+///   read.
 ///
 /// The teeth are unchanged by the widening: a missing endpoint still fails
 /// closed, the target must still be a FACET, and every source type outside
@@ -3526,7 +3526,7 @@ pub(crate) fn stored_entity_type(
 /// bypass exposure gating. The gate table is derived from CURRENT door
 /// behavior — `crate::sync::selector::tests` pins the federation half — and it
 /// stays derivable BY CONSTRUCTION now that the selector mirrors this very
-/// predicate: widening or narrowing the admitted set here moves both doors and
+/// pair predicate: widening or narrowing the table here moves both doors and
 /// the gate table together. This function is the hook; it deliberately
 /// validates types only.
 pub(crate) fn validate_facet_of_edge(
@@ -3574,11 +3574,15 @@ pub(crate) fn validate_facet_of_edge(
 ///   unknowable DEFERS to the replay door instead of failing closed, because a
 ///   not-yet-arrived endpoint must not wedge out-of-order delivery (H2).
 /// * the FEDERATION SELECTOR's read mirror
-///   (`crate::sync::selector::entity_selector_decision`). It honors a
-///   `FacetOf` scope only from a source entity whose OWN blob types it into
-///   the admitted set, so it calls [`facet_of_source_type_admitted`] directly:
-///   the target half is irrelevant there, because an unadmitted source carries
-///   no scope regardless of what it points at.
+///   (`crate::sync::selector::facet_scope_by_source`). It honors a `FacetOf`
+///   scope only when BOTH endpoints resolve onto this table, so it calls the
+///   PAIR predicate. Types resolve STORED-FIRST (as at the admission door),
+///   with a document blob that CONFLICTS with a stored type carrying no scope:
+///   a conflicting blob is a write the immutability gate rejected, so the row
+///   it types is not one the engine accepted. A row failing either half is
+///   SCOPE-INERT — never a seed, never a withhold — because letting an
+///   unwritable row DENY would hand a peer a suppression primitive against the
+///   host's own entities.
 ///
 /// A second copy of the pair table would drift from this one silently; the
 /// admission door's whole job is to reject exactly what the replay door

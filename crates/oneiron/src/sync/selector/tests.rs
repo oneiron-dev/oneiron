@@ -37,6 +37,7 @@ use crate::sync::bridge::encode_edge_value_for_crdt;
 use crate::sync::client::{SyncClient, SyncClientConfig};
 use crate::sync::loro_support::map_get_bytes;
 use crate::sync::manager::WindowManager;
+use crate::sync::quarantine::{QuarantineContainer, quarantined_records};
 use crate::temporal::TimeRange;
 
 fn entity_id(byte: u8) -> EntityId {
@@ -1591,6 +1592,467 @@ fn selector_ignores_off_table_stamp_to_an_unselected_facet() {
         "control: EVENT is ON the table, so the SAME stamp shape still \
          withholds — the mirror narrows by SOURCE TYPE, it does not give up"
     );
+    assert!(
+        !ids.contains(&facet_unselected),
+        "unselected facet entity leaked"
+    );
+}
+
+/// TARGET-SIDE MIRROR GAP — the half a source-only read mirror leaves open.
+///
+/// Membership in `selector.facets` is a list of ids the PEER NAMED. It is not
+/// evidence that the id exists, still less that it is a FACET. So a stamp
+/// `CLAIM -> <selected but ABSENT id>` has an on-table SOURCE and a target
+/// that resolves to nothing — and a mirror that checks only the source half
+/// reads it as a seed, moving the CLAIM and its one-hop neighbor across the
+/// disclosure boundary on the strength of an id the document never typed.
+///
+/// Arm 1 then makes it worse in the way that matters: the target LATER arrives
+/// as a PERSON. Nothing re-examines the resident stamp, so the forged seed
+/// stays live forever under a source-only mirror. The correct behavior is
+/// SCOPE-INERT — the row is neither a seed nor a withhold until a FACET blob
+/// for that id exists.
+///
+/// Arm 2 is the healing control: the same split delivery with the target
+/// arriving as a real FACET must scope normally. Without it the fix could be
+/// "never honor a late target", which would break honest out-of-order
+/// delivery — the H2 line this lane exists to respect.
+///
+/// Both arms run the PRODUCTION federated entry (`SyncClient` over a real
+/// `WindowManager`) for BOTH roles: a mirror that holds for members but not
+/// guests reads as protection while being none.
+#[test]
+fn selector_target_must_resolve_to_a_facet_before_any_scope_is_honored() {
+    for (role, seed) in [
+        (FederationAdmissionRole::Member, 0x94_u8),
+        (FederationAdmissionRole::Guest, 0x98_u8),
+    ] {
+        for target_arrives_as_facet in [false, true] {
+            let window = "2026-09";
+            let member = entity_id(seed);
+            let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
+            // The seed CLAIM is federated, so it needs the Imported auto-permit
+            // row or it queues for consent and never reaches the doc.
+            put_imported_source_trust(&vault);
+
+            let named = entity_id(seed + 1);
+            let claim = entity_id(seed + 2);
+            let neighbor = entity_id(seed + 3);
+
+            // Frame 1: the stamp names an id absent everywhere. BOTH the
+            // admission door and the remat gate must defer (H2), so the row
+            // lands resident in the live doc — the residue this mirror owns.
+            let first = create_window_doc("federation-peer", &WindowKey::new(window));
+            insert_blob(&first, claim, &public_claim_blob());
+            insert_entity(&first, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
+            insert_edge(&first, claim, EdgeKind::FacetOf, named);
+            insert_edge(&first, claim, EdgeKind::Supports, neighbor);
+            first.commit();
+            import_federated(&mut client, window, &first, role);
+
+            let live = client
+                .window(window)
+                .expect("federated import opens window");
+            assert!(
+                map_get_bytes(
+                    &live.doc.get_map("edges"),
+                    &edge_key(claim, EdgeKind::FacetOf, named),
+                )
+                .is_some(),
+                "{role:?}/{target_arrives_as_facet}: precondition — the \
+                 unknowable-TARGET stamp must SURVIVE admission, or this test \
+                 proves nothing about the residue"
+            );
+
+            // Frame 2: the named id materializes — as a PERSON (the forgery)
+            // or as a real FACET (the honest late delivery).
+            let second = create_window_doc("federation-peer", &WindowKey::new(window));
+            if target_arrives_as_facet {
+                insert_entity(&second, named, ENTITY_TYPE_FACET, b"facet");
+            } else {
+                insert_entity(&second, named, ENTITY_TYPE_PERSON, b"person");
+            }
+            second.commit();
+            import_federated(&mut client, window, &second, role);
+
+            let live = client.window(window).expect("window still loaded");
+            assert!(
+                map_get_bytes(&live.doc.get_map("entities"), &named.to_hex()).is_some(),
+                "{role:?}/{target_arrives_as_facet}: precondition — the named id \
+                 must be present in the live doc"
+            );
+
+            let selector = SyncSelector::new(
+                grant_id,
+                member,
+                SyncSelectorWorld::All,
+                vec![named],
+                vec![],
+            );
+            let exported = filtered_window_doc(
+                &vault,
+                &live.doc,
+                &WindowKey::new(window),
+                test_selector_scope(),
+                &selector,
+            )
+            .unwrap()
+            .export(ExportMode::all_updates())
+            .unwrap();
+            let ids = import_ids(&exported);
+
+            if target_arrives_as_facet {
+                assert!(
+                    ids.contains(&claim),
+                    "{role:?}: a stamp whose TARGET arrived one frame late as a \
+                     real FACET must HEAL into ordinary scoping — the mirror \
+                     gates on the target's TYPE, not on when it became knowable"
+                );
+                assert!(
+                    ids.contains(&neighbor),
+                    "{role:?}: the healed seed's one-hop neighbor must ride its \
+                     closure"
+                );
+                assert!(
+                    ids.contains(&named),
+                    "{role:?}: the selected facet is visible to its own selector"
+                );
+            } else {
+                assert!(
+                    !ids.contains(&claim),
+                    "{role:?}: a stamp aimed at a selected-but-NON-FACET id \
+                     carries NO scope — being NAMED in the selector is not \
+                     evidence the id is a FACET, and honoring it would seed \
+                     closure from an id no write door would have accepted"
+                );
+                assert!(
+                    !ids.contains(&neighbor),
+                    "{role:?}: the one-hop neighbor is reachable ONLY through \
+                     the CLAIM — exporting it would prove the inert row still \
+                     scopes closure"
+                );
+                assert!(
+                    !ids.contains(&named),
+                    "{role:?}: a selected id that turned out to be a PERSON is \
+                     not a facet and must not export as one"
+                );
+            }
+        }
+    }
+}
+
+/// SOURCE TRUTH IS NOT THE CRDT WINNER — the LWW forgery a document-blob-first
+/// mirror hands a peer for free.
+///
+/// Entity type is IMMUTABLE per id (`Error::EntityTypeImmutable`). The write
+/// door enforces it by QUARANTINING the re-type, which means LMDB keeps the
+/// FIRST-writer type — but the Loro map is last-write-wins and keeps the
+/// HIGHER-LAMPORT blob. The two therefore disagree by construction after a
+/// rejected re-type, and the disagreement is entirely peer-controlled.
+///
+/// The three frames build exactly that state:
+///
+/// 1. the forged `S -> <selected FACET>` stamp, with S absent everywhere (the
+///    H2 defer the admission door must honor);
+/// 2. S materializes as a PERSON — off-table, so the row is inert;
+/// 3. a CRDT-WINNING EVENT blob for the SAME id. The write door rejects it
+///    (`EntityTypeImmutable` quarantine, LMDB stays PERSON) but the doc map now
+///    types S as an admitted EVENT.
+///
+/// A mirror reading the document blob first sees EVENT and honors the stamp,
+/// exporting the PERSON and its one-hop neighbor on the strength of a type the
+/// engine REFUSED to write. Reading STORED-FIRST — the same order the
+/// admission door uses, and permanent truth because the type is immutable —
+/// closes it. The middle assertions are the load-bearing ones: they pin that
+/// the quarantine really fired and LMDB really held PERSON, so the export
+/// assertions are testing the mirror's ORDER rather than a doc that never
+/// flipped.
+///
+/// Both roles: a mirror that holds for members but not guests reads as
+/// protection while being none.
+#[test]
+fn selector_source_type_resolves_stored_first_against_a_winning_retype_blob() {
+    for (role, seed) in [
+        (FederationAdmissionRole::Member, 0xC0_u8),
+        (FederationAdmissionRole::Guest, 0xC8_u8),
+    ] {
+        let window = "2026-10";
+        let member = entity_id(seed);
+        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
+
+        let facet_selected = entity_id(seed + 1);
+        let source = entity_id(seed + 2);
+        let neighbor = entity_id(seed + 3);
+        let event = entity_id(seed + 4);
+
+        // Frame 1: the forged stamp lands while its SOURCE is unknowable
+        // everywhere. The FACET target rides along so the row names a facet
+        // this peer will select, and the EVENT control is stamped to the same
+        // facet so a broken mirror is distinguishable from a dead one.
+        let first = create_window_doc("federation-peer", &WindowKey::new(window));
+        insert_entity(&first, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
+        insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
+        insert_edge(&first, source, EdgeKind::FacetOf, facet_selected);
+        insert_edge(&first, event, EdgeKind::FacetOf, facet_selected);
+        first.commit();
+        import_federated(&mut client, window, &first, role);
+
+        // Frame 2: S materializes as PERSON. This is the write that reaches
+        // LMDB, and immutability makes it permanent truth about this id.
+        let second = create_window_doc("federation-peer", &WindowKey::new(window));
+        insert_entity(&second, source, ENTITY_TYPE_PERSON, b"person");
+        insert_entity(&second, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
+        insert_edge(&second, source, EdgeKind::Mentions, neighbor);
+        second.commit();
+        import_federated(&mut client, window, &second, role);
+
+        assert_eq!(
+            vault.get_raw(&source).unwrap().map(|blob| blob[0]),
+            Some(ENTITY_TYPE_PERSON),
+            "{role:?}: precondition — the first-writer type must be in LMDB"
+        );
+
+        // Frame 3: the re-type. Each admitted frame is authored in a FRESH doc
+        // whose Lamport clock starts at zero, so "later frame" alone does not
+        // mean "higher Lamport" — a lone re-type op ties frame 2's and the
+        // winner falls to a peer-id tiebreak. The benign rows below are ids
+        // that sort ahead of the source, so admission re-authors them first
+        // and the re-type lands at a Lamport strictly above frame 2's. This is
+        // what an ordinary multi-row window update looks like anyway; the
+        // precondition assert right after is what keeps the test honest if
+        // Loro's ordering ever shifts under it.
+        let third = create_window_doc("federation-peer", &WindowKey::new(window));
+        for pad in [0x02_u8, 0x03, 0x04, 0x05, 0x06] {
+            insert_entity(&third, entity_id(pad), ENTITY_TYPE_PERSON, b"unrelated");
+        }
+        insert_entity(&third, source, ENTITY_TYPE_EVENT, b"forged-event");
+        third.commit();
+        import_federated(&mut client, window, &third, role);
+
+        let live = client.window(window).expect("window still loaded");
+        let doc_blob = map_get_bytes(&live.doc.get_map("entities"), &source.to_hex())
+            .expect("the re-type blob is resident in the live doc");
+        assert_eq!(
+            EntityMetadataHeader::parse(&doc_blob).unwrap().entity_type,
+            ENTITY_TYPE_EVENT,
+            "{role:?}: precondition — the re-type must WIN the CRDT map, or a \
+             blob-first mirror would pass this test vacuously"
+        );
+        assert_eq!(
+            vault.get_raw(&source).unwrap().map(|blob| blob[0]),
+            Some(ENTITY_TYPE_PERSON),
+            "{role:?}: precondition — the immutability gate must keep LMDB at \
+             the first-writer PERSON type"
+        );
+        assert!(
+            quarantined_records(&vault)
+                .unwrap()
+                .iter()
+                .any(|(_, record)| record.reason_code == "EntityTypeImmutable"
+                    && record.container == QuarantineContainer::Entities),
+            "{role:?}: precondition — the re-type must be QUARANTINED, which is \
+             what makes the stored type permanent truth the mirror can rely on"
+        );
+
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![facet_selected],
+            vec![],
+        );
+        let exported = filtered_window_doc(
+            &vault,
+            &live.doc,
+            &WindowKey::new(window),
+            test_selector_scope(),
+            &selector,
+        )
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+        let ids = import_ids(&exported);
+
+        assert!(
+            !ids.contains(&source),
+            "{role:?}: the mirror must read the STORED PERSON type, not the \
+             CRDT-winning EVENT blob the immutability gate refused to write — \
+             otherwise a peer buys facet scope with a rejected re-type"
+        );
+        assert!(
+            !ids.contains(&neighbor),
+            "{role:?}: the one-hop neighbor is reachable ONLY through the \
+             forged source — exporting it would prove the fake type still \
+             scopes closure"
+        );
+        assert!(
+            ids.contains(&event),
+            "{role:?}: control — the honest EVENT stamped to the SAME selected \
+             facet must still export; stored-first removes the fake, not facet \
+             scoping"
+        );
+        assert!(
+            ids.contains(&facet_selected),
+            "{role:?}: control — the selected facet is always visible to its \
+             selector"
+        );
+    }
+}
+
+/// A CONFLICTING document blob carries NO scope — not the stored type's scope.
+///
+/// Stored-first ORDERING alone is not the whole rule, and the difference is
+/// only observable in the WITHHOLD direction. Consider a source stored as an
+/// admitted EVENT whose winning doc blob says PERSON. Ordering alone reads
+/// EVENT and honors the stamp; the rule here reads NO TYPE and makes the row
+/// inert. Both agree that the PERSON blob must not BUY scope — they disagree
+/// about whether it can still SPEND it.
+///
+/// No-scope is right because the two values disagreeing at all means the doc
+/// blob is a write the immutability gate REJECTED. A rejected write is not
+/// evidence about anything, so the row it types is not a row the engine
+/// accepted, and the mirror only honors rows the engine would have accepted.
+/// Honoring the stored type instead would let a peer aim a REJECTED blob at an
+/// entity it does not control and withhold it from a legitimate grant — the
+/// same suppression primitive the inert-not-fail-closed rule exists to deny,
+/// arriving through the conflict door instead.
+///
+/// The fixture puts the stamp on an UNSELECTED facet so the two readings
+/// diverge: under ordering-only the EVENT is withheld, under the conflict rule
+/// it exports on the seed's closure like any unstamped entity.
+#[test]
+fn selector_conflicting_document_blob_carries_no_scope_in_either_direction() {
+    let member = entity_id(0x26);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-12");
+
+    let facet_selected = entity_id(0x7F);
+    let facet_unselected = entity_id(0x8F);
+    let claim_seed = entity_id(0x9F);
+    let conflicted = entity_id(0xAF);
+
+    // Stored as an ADMITTED source type — the half a mirror could wrongly
+    // spend on a withhold.
+    for (id, entity_type) in [
+        (facet_selected, ENTITY_TYPE_FACET),
+        (facet_unselected, ENTITY_TYPE_FACET),
+        (conflicted, ENTITY_TYPE_EVENT),
+    ] {
+        vault
+            .put_entity(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, b"row")
+            .unwrap();
+    }
+
+    let doc = create_window_doc("source", &window_key);
+    insert_entity(&doc, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
+    insert_entity(&doc, facet_unselected, ENTITY_TYPE_FACET, b"facet-b");
+    insert_blob(&doc, claim_seed, &claim_blob(None));
+    // The CONFLICT: the doc types this id PERSON while LMDB holds EVENT.
+    insert_entity(&doc, conflicted, ENTITY_TYPE_PERSON, b"rejected-retype");
+    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_selected);
+    insert_edge(&doc, conflicted, EdgeKind::FacetOf, facet_unselected);
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, conflicted);
+    doc.commit();
+
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_selected],
+        vec![],
+    );
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+
+    assert!(
+        ids.contains(&claim_seed),
+        "control: the selected-facet claim must seed closure, or the assertion \
+         below would hold vacuously"
+    );
+    assert!(
+        ids.contains(&conflicted),
+        "a stamp whose source blob CONFLICTS with the stored type is a \
+         NON-STATEMENT: the conflicting blob is a rejected write, so it may \
+         neither buy scope nor spend the stored type's scope on a withhold — \
+         spending it would hand a peer a suppression primitive"
+    );
+    assert!(
+        !ids.contains(&facet_unselected),
+        "unselected facet entity leaked"
+    );
+}
+
+/// POSITIVE CONTROL for the stored-first order: when the stored type and the
+/// document blob AGREE, an admitted source scopes exactly as before. Without
+/// this pin, "resolve stored-first" could be implemented as "ignore the
+/// document entirely" or "treat any stored row as disqualifying", and both
+/// would silently kill facet scoping for every normally-replicated entity.
+///
+/// The EVENT is stored AND present in the doc as an EVENT, stamped to a facet
+/// the peer did NOT select, and hangs off a genuine selected-facet CLAIM seed
+/// — so it would ride that seed's closure but for the withhold. Its absence is
+/// therefore proof the agreeing stamp is still disclosure-effective.
+#[test]
+fn selector_honors_scope_when_stored_and_document_source_types_agree() {
+    let member = entity_id(0x2B);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-11");
+
+    let facet_selected = entity_id(0x3F);
+    let facet_unselected = entity_id(0x4F);
+    let claim_seed = entity_id(0x5F);
+    let event = entity_id(0x6F);
+
+    // The stored rows are the truth source the mirror consults first; the doc
+    // blobs below agree with them, which is the ordinary replicated state.
+    for (id, entity_type) in [
+        (facet_selected, ENTITY_TYPE_FACET),
+        (facet_unselected, ENTITY_TYPE_FACET),
+        (event, ENTITY_TYPE_EVENT),
+    ] {
+        vault
+            .put_entity(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, b"row")
+            .unwrap();
+    }
+
+    let doc = create_window_doc("source", &window_key);
+    insert_entity(&doc, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
+    insert_entity(&doc, facet_unselected, ENTITY_TYPE_FACET, b"facet-b");
+    insert_blob(&doc, claim_seed, &claim_blob(None));
+    insert_entity(&doc, event, ENTITY_TYPE_EVENT, b"event");
+    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_selected);
+    insert_edge(&doc, event, EdgeKind::FacetOf, facet_unselected);
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, event);
+    doc.commit();
+
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_selected],
+        vec![],
+    );
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+
+    assert!(
+        ids.contains(&claim_seed),
+        "control: the selected-facet claim must seed closure, or the \
+         assertion below would hold vacuously"
+    );
+    assert!(
+        !ids.contains(&event),
+        "an EVENT whose STORED and DOCUMENT types agree is on the table, so its \
+         unselected-facet stamp must still withhold it — stored-first resolves \
+         the type, it does not discard the scope"
+    );
+    assert!(ids.contains(&facet_selected));
     assert!(
         !ids.contains(&facet_unselected),
         "unselected facet entity leaked"

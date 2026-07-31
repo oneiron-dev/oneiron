@@ -5,7 +5,6 @@
 //! sync builds a synthetic window doc containing only the authorized closed
 //! subgraph and exports from that doc instead.
 
-use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Cursor;
 
@@ -261,7 +260,7 @@ pub fn filtered_window_doc(
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
     authorize_sync_selector(vault, grant_scope, selector)?;
-    Ok(filter_window_doc(source, key, grant_scope, selector))
+    filter_window_doc(vault, source, key, grant_scope, selector)
 }
 
 /// Builds and signs a guest-share envelope from selector-filtered window bytes.
@@ -293,7 +292,7 @@ pub fn guest_share_envelope_body(
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
     authorize_sync_selector(vault, grant_scope, selector)?;
-    let filtered = filter_window_doc(source, key, grant_scope, selector);
+    let filtered = filter_window_doc(vault, source, key, grant_scope, selector)?;
     let stripped = strip_guest_share_metadata(&filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())
@@ -673,8 +672,8 @@ enum AdmittedEdgeVerdict {
 /// This is the H2 line — an unknowable type is not evidence of a forgery, and
 /// treating it as one would wedge out-of-order delivery permanently. That
 /// residue is inert on the export path regardless, because
-/// [`facet_scope_by_source`] now honors a scope only from a source entity the
-/// document itself types into the admitted set.
+/// [`facet_scope_by_source`] now honors a scope only from a row whose BOTH
+/// endpoints resolve onto this same table.
 ///
 /// The table itself is [`crate::batch::facet_of_endpoint_types_on_table`] and
 /// its halves, the single copy the write/replay door also runs.
@@ -844,11 +843,12 @@ fn guest_share_metadata_blob(blob: &[u8]) -> bool {
 }
 
 fn filter_window_doc(
+    vault: &Vault,
     source: &LoroDoc,
     key: &WindowKey,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
-) -> LoroDoc {
+) -> Result<LoroDoc> {
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -862,7 +862,7 @@ fn filter_window_doc(
         tombstoned.insert(id);
     });
 
-    let facet_scope = facet_scope_by_source(&source_entities, &source_edges, selector);
+    let facet_scope = facet_scope_by_source(vault, &source_entities, &source_edges, selector)?;
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
@@ -958,15 +958,16 @@ fn filter_window_doc(
     });
 
     out.commit();
-    out
+    Ok(out)
 }
 
 /// One source entity's `FacetOf` scope, as read by [`facet_scope_by_source`].
 ///
 /// A source with NO entry is Unfaceted — either it carries no `FacetOf` rows
-/// at all, or every row it carries was disregarded because the document does
-/// not type it into the admitted set. The two are deliberately the same state:
-/// an unadmitted stamp is not a withhold, it is a non-statement.
+/// at all, or every row it carries was SCOPE-INERT (the source is not typed
+/// into the admitted set, or the row's target does not resolve to a FACET).
+/// The two are deliberately the same state: an inert stamp is not a withhold,
+/// it is a non-statement.
 #[derive(Debug, Default)]
 struct FacetScope {
     any: bool,
@@ -982,8 +983,9 @@ struct EntitySelectorDecision {
 }
 
 /// Builds the per-source facet scope a facet-limited peer's export is filtered
-/// against, honoring a `FacetOf` row's scope ONLY when the source entity's own
-/// blob types it into the ONE-1645 admitted set (`CLAIM | TURN | EVENT`).
+/// against, honoring a `FacetOf` row's scope ONLY when BOTH endpoints resolve
+/// onto the ONE-1645 table: the source into the admitted set
+/// (`CLAIM | TURN | EVENT`) and the target to a FACET.
 ///
 /// READ MIRROR OF THE WRITE TABLE — the why. This door reads the RAW Loro map,
 /// never LMDB, so it sees rows no write door would have accepted: the local
@@ -996,21 +998,46 @@ struct EntitySelectorDecision {
 /// PERSON and its one-hop neighbors across the disclosure boundary, which is
 /// an authorization bypass, not a schema violation.
 ///
-/// So the read side runs the SAME predicate the write side runs
-/// ([`crate::batch::facet_of_source_type_admitted`], the source half of the
-/// single shared table): a stamp is honored here exactly when it is a stamp
-/// the engine would have let be WRITTEN. An unadmitted source's `FacetOf`
-/// edges carry NO facet scope at all — neither a seed nor a withhold — so that
-/// entity is simply Unfaceted, judged on the selector's other filters like any
-/// unstamped entity. The target half is not consulted: an unadmitted source
-/// carries no scope regardless of what it points at, and a stamp aimed at a
-/// non-FACET target cannot name a selected facet anyway.
+/// So the read side runs the SAME table the write side runs, on BOTH endpoints
+/// ([`crate::batch::facet_of_endpoint_types_on_table`]): a stamp is honored
+/// here exactly when it is a stamp the engine would have let be WRITTEN. A row
+/// failing either half is SCOPE-INERT — never a seed, never a withhold — so
+/// its source is simply Unfaceted, judged on the selector's other filters like
+/// any unstamped entity.
 ///
-/// A source ABSENT from this document (or carrying an unparsable blob) is
-/// vacuous rather than a special case: [`entity_selector_decision`] runs only
-/// over entities the document holds and parses, and `seeds` is drawn from
-/// those same candidates, so a scope entry for such a source could never be
-/// consulted.
+/// BOTH HALVES ARE LOAD-BEARING, and the target half is the subtler one. A
+/// selector's `facets` list is a set of ids the peer NAMED; membership in it
+/// is not evidence the id exists, still less that it is a FACET. A forged
+/// `<on-table src> -> <selected id>` row aimed at an ABSENT id would, under a
+/// source-only mirror, seed closure from an id the document never typed — and
+/// a later frame delivering that id as a PERSON would keep the seed live,
+/// because nothing re-examines a resident row. Requiring the target to RESOLVE
+/// TO A FACET makes the row inert until such a blob actually exists, at which
+/// point the row HEALS into ordinary scoping.
+///
+/// ENDPOINT TYPES RESOLVE STORED-FIRST, the same two-source order
+/// [`admitted_endpoint_type`] uses at the admission boundary:
+///
+/// 1. the LOCAL vault row — entity type is immutable per id
+///    ([`Error::EntityTypeImmutable`]), so a stored type is PERMANENT truth
+///    about that id, and the quarantine door that enforces it leaves LMDB
+///    holding the first-writer type;
+/// 2. else the document blob.
+///
+/// Reading the document blob FIRST would be LWW-gameable: a peer stores the
+/// source as PERSON (the type-conflict quarantine correctly leaves LMDB at
+/// PERSON) while a higher-Lamport EVENT blob wins the Loro map, and a
+/// blob-first mirror reads the fake. Where the two disagree at all, the blob
+/// is a rejected write by construction, so a CONFLICTING blob carries NO scope
+/// rather than the stored type's scope: the peer has proven the row is not one
+/// the engine accepted.
+///
+/// The asymmetry — inert rather than fail-closed — is deliberate. Making the
+/// mirror "helpfully" withhold on an unwritable row would hand a hostile peer
+/// a SUPPRESSION primitive: spray `<host's PERSON> -> <any facet>` rows into
+/// the window and the host's own entities vanish from a legitimate grant.
+/// Refusing to READ an unwritable row is the fix; letting it DENY is the same
+/// bug with the sign flipped.
 ///
 /// SCOPE OF THIS MIRROR: it is the read-side twin of THIS lane's write table,
 /// nothing wider. The broader exposure-gate design — which disclosure surfaces
@@ -1020,34 +1047,56 @@ struct EntitySelectorDecision {
 /// EVENT is admitted, so EVENT-sourced stamps stay disclosure-effective here
 /// (pinned by `tests::selector_denies_event_scoped_to_unselected_facet`).
 fn facet_scope_by_source(
+    vault: &Vault,
     entities: &loro::LoroMap,
     edges: &loro::LoroMap,
     selector: &SyncSelector,
-) -> HashMap<EntityId, FacetScope> {
+) -> Result<HashMap<EntityId, FacetScope>> {
     let selected: HashSet<EntityId> = selector.facets.iter().copied().collect();
     let mut scopes = HashMap::<EntityId, FacetScope>::new();
     if selected.is_empty() {
-        return scopes;
+        return Ok(scopes);
     }
 
+    let rtxn = vault.store.env.read_txn()?;
+    // Endpoint types are read once per id, not once per row: a source may
+    // carry many stamps and a facet may be named by many sources.
+    let mut types = HashMap::<EntityId, Option<u8>>::new();
+    let mut result = Ok(());
     map_for_each_value_bytes(edges, |raw_key, maybe_value| {
+        if result.is_err() {
+            return;
+        }
         let Some((src, kind, tgt)) = parse_edge_key(raw_key) else {
             return;
         };
         if kind != EdgeKind::FacetOf {
             return;
         }
-        // An occupied slot was admitted when it was created, so the type read
-        // happens once per source however many stamps it carries.
-        let entry = match scopes.entry(src) {
-            Entry::Occupied(occupied) => occupied.into_mut(),
-            Entry::Vacant(vacant) => {
-                if !facet_of_source_admitted_in_doc(entities, &src) {
-                    return;
-                }
-                vacant.insert(FacetScope::default())
+        // BOTH endpoints must resolve onto the table. A LOCAL fault reading
+        // stored types (corrupted header, heed read error) is our defect, not
+        // the peer's: fail the export closed rather than silently drop a scope
+        // and over-disclose.
+        let (src_type, tgt_type) = match (
+            mirrored_endpoint_type(vault, &rtxn, entities, &mut types, &src),
+            mirrored_endpoint_type(vault, &rtxn, entities, &mut types, &tgt),
+        ) {
+            (Ok(src_type), Ok(tgt_type)) => (src_type, tgt_type),
+            (Err(local), _) | (_, Err(local)) => {
+                result = Err(local);
+                return;
             }
         };
+        // A row that fails either half is SCOPE-INERT: not a seed, and not a
+        // withhold either. The target half is the one a source-only mirror
+        // misses — a selector's `facets` list is ids the peer NAMED, which is
+        // no evidence any of them exists or is a FACET.
+        let on_table = matches!((src_type, tgt_type), (Some(src_type), Some(tgt_type))
+            if crate::batch::facet_of_endpoint_types_on_table(src_type, tgt_type));
+        if !on_table {
+            return;
+        }
+        let entry = scopes.entry(src).or_default();
         entry.any = true;
         if maybe_value.is_none() {
             entry.malformed = true;
@@ -1059,19 +1108,39 @@ fn facet_scope_by_source(
             entry.unselected = true;
         }
     });
-    scopes
+    result.map(|()| scopes)
 }
 
-/// Reads one `FacetOf` source's type from THIS document and runs the write
-/// table's source half on it. Absent, non-binary, or header-unparsable reads
-/// `false` — all three are entities [`entity_selector_decision`] would refuse
-/// to export anyway, so withholding their scope changes nothing they could
-/// have disclosed.
-fn facet_of_source_admitted_in_doc(entities: &loro::LoroMap, src: &EntityId) -> bool {
-    super::loro_support::map_get_bytes(entities, &src.to_hex())
+/// One `FacetOf` endpoint's type byte for the read mirror, memoized per id.
+///
+/// Resolution order is [`admitted_endpoint_type`]'s: the STORED row first
+/// (permanent truth — entity type is immutable per id), then the document
+/// blob. A document blob that CONFLICTS with an existing stored type yields
+/// `None` (no scope): the conflicting write is one the engine rejected, so the
+/// row it would type is not a row the engine accepted either. Absent,
+/// non-binary, and header-unparsable all read `None` — unknowable, hence
+/// scope-inert until the endpoint really lands.
+fn mirrored_endpoint_type(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    entities: &loro::LoroMap,
+    cache: &mut HashMap<EntityId, Option<u8>>,
+    id: &EntityId,
+) -> Result<Option<u8>> {
+    if let Some(cached) = cache.get(id) {
+        return Ok(*cached);
+    }
+    let in_doc = super::loro_support::map_get_bytes(entities, &id.to_hex())
         .as_deref()
         .and_then(EntityMetadataHeader::parse)
-        .is_some_and(|header| crate::batch::facet_of_source_type_admitted(header.entity_type))
+        .map(|header| header.entity_type);
+    let resolved = match crate::batch::stored_entity_type(&vault.store, rtxn, id)? {
+        Some(stored) if in_doc.is_none_or(|in_doc| in_doc == stored) => Some(stored),
+        Some(_) => None,
+        None => in_doc,
+    };
+    cache.insert(*id, resolved);
+    Ok(resolved)
 }
 
 fn entity_selector_decision(
