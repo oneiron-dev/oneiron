@@ -3444,3 +3444,101 @@ fn forward_remat_defers_facet_of_with_absent_endpoints_instead_of_quarantining()
     );
     Ok(())
 }
+
+/// ONE-1124 fail-closed split at the replay table (P3 retrofit).
+///
+/// `validate_facet_of_edge` surfaces TWO error classes: the remote-op
+/// rejection `InvalidFacetOfEdge` (off-table stamp — quarantine and continue)
+/// and LOCAL faults, notably `CorruptedIndex("entity header")` when a STORED
+/// endpoint row will not parse. The pre-retrofit code quarantined every `Err`
+/// alike, which is wrong twice over: it swallows the engine's own storage
+/// defect behind a continue instead of aborting the drain, and the `x:` row it
+/// writes is PERMANENT false evidence blaming the peer for a forgery it never
+/// sent.
+///
+/// Fixture: an endpoint row whose stored bytes are shorter than the 25-byte
+/// entity envelope. The endpoint EXISTS (so the pass clears the
+/// endpoint-existence check and reaches the table), but its header cannot be
+/// read — exactly the local-defect shape.
+#[test]
+fn forward_remat_aborts_on_corrupted_endpoint_header_instead_of_quarantining() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let turn_src = EntityId::from_bytes([0xF1; 16])?;
+    let facet = EntityId::from_bytes([0xF2; 16])?;
+    vault.put_entity(
+        &turn_src,
+        ENTITY_TYPE_TURN,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"turn fixture",
+    )?;
+    // A row too short to carry the entity header — a LOCAL corruption, not a
+    // missing endpoint (which would defer) and not a wrong type (which would
+    // quarantine).
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.put(wtxn, facet.as_bytes(), b"trunc")?;
+        Ok(())
+    })?;
+
+    let doc = create_window_doc("remote", &window_key);
+    map_insert_bytes(
+        &doc.get_map("edges"),
+        &format_edge_key(&turn_src, EdgeKind::FacetOf, &facet),
+        &encode_edge_value_for_crdt(EdgeKind::FacetOf, 0.7, 10, None, None)?,
+    )?;
+    doc.commit();
+
+    let err = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)
+        .expect_err("a corrupted stored endpoint header must ABORT the drain");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::CorruptedIndex,
+        "the local defect must propagate typed, not be re-cast as a peer rejection"
+    );
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)?.is_empty(),
+        "a LOCAL fault must never leave an x: row misattributing it to the peer"
+    );
+    Ok(())
+}
+
+/// The retrofit's other arm, pinned in the same neighborhood so a future
+/// refactor cannot satisfy the abort test by disabling the gate entirely: an
+/// off-table PERSON -> FACET stamp — both endpoints present and parseable —
+/// still QUARANTINES and lets the window continue.
+#[test]
+fn forward_remat_still_quarantines_off_table_when_endpoint_rows_are_healthy() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let person = EntityId::from_bytes([0xF3; 16])?;
+    let facet = EntityId::from_bytes([0xF4; 16])?;
+    for (id, entity_type) in [
+        (&person, crate::registry::ENTITY_TYPE_PERSON),
+        (&facet, crate::registry::ENTITY_TYPE_FACET),
+    ] {
+        vault.put_entity(
+            id,
+            entity_type,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"fixture",
+        )?;
+    }
+
+    let doc = create_window_doc("remote", &window_key);
+    map_insert_bytes(
+        &doc.get_map("edges"),
+        &format_edge_key(&person, EdgeKind::FacetOf, &facet),
+        &encode_edge_value_for_crdt(EdgeKind::FacetOf, 0.7, 10, None, None)?,
+    )?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)
+        .expect("an off-table stamp quarantines; it must never abort (H2)");
+    assert!(!vault.edge_exists(&person, EdgeKind::FacetOf, &facet)?);
+    let records = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].1.reason_code, "InvalidFacetOfEdge");
+    Ok(())
+}

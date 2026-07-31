@@ -2051,10 +2051,15 @@ pub(crate) fn apply_ops_with_gate_mode(
             // instead.
             //
             // Ungated is not unvalidated: the ONE-1645 `FacetOf` type table
-            // runs at the REPLAY chokepoint instead — `sync::window`'s
-            // forward-remat edge write calls `validate_facet_of_edge` and
-            // QUARANTINES an off-table stamp (never aborts), so a federation
-            // peer cannot replay a facet stamp local writers may not write.
+            // runs on every path INTO this arm instead, as a
+            // quarantine-and-continue rejection rather than an abort —
+            // `sync::window`'s forward-remat edge write and
+            // `sync::bridge`'s Observer-B edge batch both call
+            // `validate_facet_of_edge` after endpoint readiness, and
+            // `sync::selector`'s federation admission door drops a provably
+            // off-table row before it ever enters the admitted document. A
+            // federation peer therefore cannot replay a facet stamp local
+            // writers may not write.
             BatchOp::EdgeWithCreatedAt {
                 src,
                 kind,
@@ -3668,8 +3673,15 @@ fn apply_vector(
 }
 
 /// Reads an entity's registry type byte. `None` means no entity row exists —
-/// the type is unknowable, not merely unexpected.
-fn stored_entity_type(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
+/// the type is unknowable, not merely unexpected. A row that exists but whose
+/// header will not parse is a LOCAL defect ([`Error::CorruptedIndex`]), never
+/// an unknowable type: callers must fail closed on it rather than charge it to
+/// a peer.
+pub(crate) fn stored_entity_type(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<u8>> {
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
@@ -3742,12 +3754,9 @@ pub(crate) fn validate_facet_of_edge(
     }
     let src_type = stored_entity_type(store, rtxn, &src)?;
     let tgt_type = stored_entity_type(store, rtxn, &tgt)?;
-    let src_ok = matches!(
-        src_type,
-        Some(ENTITY_TYPE_CLAIM | ENTITY_TYPE_TURN | ENTITY_TYPE_EVENT)
-    );
-    let tgt_ok = tgt_type == Some(ENTITY_TYPE_FACET);
-    if src_ok && tgt_ok {
+    if let (Some(src_type), Some(tgt_type)) = (src_type, tgt_type)
+        && facet_of_endpoint_types_on_table(src_type, tgt_type)
+    {
         return Ok(());
     }
     Err(Error::InvalidFacetOfEdge {
@@ -3756,6 +3765,33 @@ pub(crate) fn validate_facet_of_edge(
         tgt,
         tgt_type,
     })
+}
+
+/// The ONE-1645 `FacetOf` table as a pure predicate over KNOWN endpoint types.
+///
+/// Two doors run the same table and resolve types differently, so the table
+/// itself lives here exactly once:
+///
+/// * [`validate_facet_of_edge`] — the write/replay door. Types come from
+///   STORED entity rows, and an endpoint with no row is unknowable, which that
+///   door treats as fail-closed (a stamp's endpoints must be established facts
+///   before the stamp).
+/// * the FEDERATION ADMISSION boundary
+///   (`crate::sync::selector::admit_federated_window_update`). Types come from
+///   the local vault OR from the admitted update's own entities map, and an
+///   endpoint that is unknowable there DEFERS to the replay door instead of
+///   failing closed — a not-yet-arrived endpoint must not wedge out-of-order
+///   delivery (H2).
+///
+/// A second copy of the pair table would drift from this one silently; the
+/// admission door's whole job is to reject exactly what the replay door
+/// rejects, one layer earlier.
+#[must_use]
+pub(crate) const fn facet_of_endpoint_types_on_table(src_type: u8, tgt_type: u8) -> bool {
+    matches!(
+        src_type,
+        ENTITY_TYPE_CLAIM | ENTITY_TYPE_TURN | ENTITY_TYPE_EVENT
+    ) && tgt_type == ENTITY_TYPE_FACET
 }
 
 /// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind

@@ -913,6 +913,54 @@ fn materialize_edges_from_delta(
                         }
                     }
 
+                    // ONE-1645 `FacetOf` type table, Observer-B door.
+                    //
+                    // This is the SYNCHRONOUS path a member/guest import takes
+                    // into a LOADED window: `import_federated_window_update`
+                    // imports the admitted bytes into the live doc, Observer B
+                    // fires inline, and the edge lands through the
+                    // deliberately UNGATED `BatchOp::EdgeWithCreatedAt` arm —
+                    // never crossing forward rematerialization, where the
+                    // replay gate lives. Without this call the whole table is
+                    // absent from production's hottest federation path.
+                    //
+                    // Ordered AFTER endpoint hydration/readiness for the same
+                    // reason as the remat gate: the table reads endpoint types
+                    // from entity ROWS, and the match above has just proved
+                    // both endpoints present (hydrating them from the CRDT
+                    // when needed). Running it earlier would read `None` for a
+                    // legitimate same-frame endpoint and reject it.
+                    //
+                    // Guarded (ONE-1124): only a remote-classifiable rejection
+                    // quarantines; a LOCAL fault (corrupted stored header,
+                    // heed read error) aborts the batch. An `x:` row for our
+                    // own defect would be permanent false evidence against the
+                    // peer.
+                    match crate::batch::validate_facet_of_edge(
+                        &vault.store,
+                        &*wtxn,
+                        src,
+                        kind,
+                        tgt,
+                    ) {
+                        Ok(()) => {}
+                        Err(off_table)
+                            if remote_rejection_reason(&off_table).is_some() =>
+                        {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key.as_ref(),
+                                &off_table,
+                                buf,
+                            )?;
+                            continue;
+                        }
+                        Err(local) => return Err(local),
+                    }
+
                     applied_edges.push((
                         src,
                         Store::encode_edge_key(&src, kind, &tgt),
