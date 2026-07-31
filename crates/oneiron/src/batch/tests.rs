@@ -3790,11 +3790,14 @@ fn non_facet_of_edges_unaffected() -> Result<()> {
 }
 
 /// The sync-replay arm stays UNGATED by design (H2). A replicated LWW winner
-/// must never wedge local sync into a permanent abort, so provenance of
-/// replayed edges is the sync channel's trust boundary rather than this
-/// gate's. Pinned deliberately: an ill-typed FacetOf edge still applies here,
-/// and the internal builder is `pub(crate)` — no local actor reaches this arm
-/// without sync replay.
+/// must never wedge local sync into a permanent abort, so the type table is
+/// enforced one layer up, at the REPLAY chokepoint, where an off-table row
+/// can be quarantined instead of aborting the window: see
+/// `sync::window::tests::forward_remat_quarantines_off_table_facet_of_and_admits_the_on_table_row`.
+/// Pinned deliberately: an ill-typed FacetOf edge still applies at THIS arm,
+/// and the internal builder is `pub(crate)` — no local actor reaches it
+/// without sync replay, and no replay reaches it without passing the
+/// chokepoint's table.
 #[test]
 fn facet_of_edge_sync_replay_arm_ungated() -> Result<()> {
     let (_dir, vault) = open_test_vault();

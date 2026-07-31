@@ -1594,6 +1594,41 @@ pub fn forward_rematerialize(
                 if !src_exists || !tgt_exists {
                     return Ok(EdgeRematOutcome::Deferred);
                 }
+
+                // ONE-1645 replay door for the FacetOf type table. The batch
+                // arm this write lands on (`BatchOp::EdgeWithCreatedAt`) is
+                // deliberately UNGATED — a hard abort there would wedge sync
+                // permanently (H2) — so the table is enforced HERE, at the
+                // remat chokepoint, as a quarantine-and-continue rejection.
+                //
+                // Without it a federation peer could replay an off-table
+                // stamp (e.g. PERSON -> FACET) that no local public writer
+                // can write, and the grant-backed selector treats ANY
+                // `FacetOf` source as a facet seed
+                // (`selector::facet_scope_by_source`, no source-type check) —
+                // an authorization-boundary bypass via replay.
+                //
+                // Ordered AFTER the endpoint-existence check on purpose: a
+                // cross-window endpoint that has not arrived yet is a
+                // DEFERRAL, not a rejection, and the type table reads
+                // endpoint types from the entity rows this check just proved
+                // present. Reversing the order would burn a legitimate
+                // out-of-order replay as a permanent quarantine.
+                if let Err(off_table) =
+                    crate::batch::validate_facet_of_edge(&vault.store, &*wtxn, src, kind, tgt)
+                {
+                    quarantine::quarantine_rejected_op_in_txn(
+                        vault,
+                        wtxn,
+                        window_key.as_str(),
+                        QuarantineContainer::Edges,
+                        key,
+                        &off_table,
+                        buf,
+                    )?;
+                    return Ok(EdgeRematOutcome::Quarantined);
+                }
+
                 let out_key = Store::encode_edge_key(&src, kind, &tgt);
                 let in_key = Store::encode_edge_key(&tgt, kind, &src);
                 let out_matches = vault
