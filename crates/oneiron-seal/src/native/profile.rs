@@ -579,7 +579,7 @@ pub(crate) async fn assemble(
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::api::{BackendError, BackendRejectCode};
+    use crate::api::{BackendError, BackendRejectCode, FetchPolicy};
 
     #[test]
     fn sub_operation_id_stable_and_phase_capacity_distinct() {
@@ -649,5 +649,158 @@ mod tests {
         // Stream objects carry exact lengths.
         let cert_obj = &objs.iter().find(|(n, _)| *n == 10).unwrap().1;
         assert!(cert_obj.starts_with(b"<< /Length 5 >>\nstream\n"));
+    }
+
+    // --- fetch_valid_crl seal-side rows (§7.5 step 3 freshness) -----------
+
+    /// 2026-07-30T08:00:00Z — matches the verify-side applicable time.
+    const CRL_NOW_SECS: u64 = 1_785_398_400;
+
+    struct StaticFetcher(Vec<u8>);
+
+    #[async_trait::async_trait]
+    impl SealFetcher for StaticFetcher {
+        async fn fetch(
+            &self,
+            _request: FetchRequest,
+        ) -> Result<crate::api::FetchResponse, crate::api::FetchError> {
+            Ok(crate::api::FetchResponse {
+                body: self.0.clone(),
+                content_type: None,
+            })
+        }
+    }
+
+    struct NoopBackend;
+
+    #[async_trait::async_trait]
+    impl SealBackend for NoopBackend {
+        fn signing_identity(&self) -> Result<SigningIdentity, BackendError> {
+            Err(BackendError::Unavailable {
+                retry_after_ms: None,
+            })
+        }
+
+        async fn sign_digest(
+            &self,
+            _request: SignDigestRequest,
+        ) -> Result<crate::api::BackendSignature, BackendError> {
+            Err(BackendError::Unavailable {
+                retry_after_ms: None,
+            })
+        }
+    }
+
+    struct CrlCa {
+        cert_der: Vec<u8>,
+        key: p256::ecdsa::SigningKey,
+        subject: x509_cert::name::Name,
+    }
+
+    fn crl_ca() -> CrlCa {
+        use der::Decode;
+        use p256::pkcs8::DecodePrivateKey;
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "crl-ca".to_string());
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        let cert = params.self_signed(&key_pair).unwrap();
+        let cert_der = cert.der().to_vec();
+        let parsed = x509_cert::Certificate::from_der(&cert_der).unwrap();
+        CrlCa {
+            cert_der,
+            key: p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap(),
+            subject: parsed.tbs_certificate.subject,
+        }
+    }
+
+    fn x509_time(secs: u64) -> x509_cert::time::Time {
+        x509_cert::time::Time::GeneralTime(
+            der::asn1::GeneralizedTime::from_unix_duration(std::time::Duration::from_secs(secs))
+                .unwrap(),
+        )
+    }
+
+    fn signed_crl(ca: &CrlCa, this: u64, next: Option<u64>) -> Vec<u8> {
+        use der::Encode;
+        use p256::ecdsa::signature::hazmat::PrehashSigner;
+        use sha2::Digest;
+        let alg = spki::AlgorithmIdentifierOwned {
+            oid: cms::OID_ECDSA_SHA256,
+            parameters: None,
+        };
+        let tbs = x509_cert::crl::TbsCertList {
+            version: x509_cert::Version::V2,
+            signature: alg.clone(),
+            issuer: ca.subject.clone(),
+            this_update: x509_time(this),
+            next_update: next.map(x509_time),
+            revoked_certificates: None,
+            crl_extensions: None,
+        };
+        let tbs_der = tbs.to_der().unwrap();
+        let digest = sha2::Sha256::digest(&tbs_der);
+        let sig: p256::ecdsa::Signature = ca.key.sign_prehash(&digest).unwrap();
+        x509_cert::crl::CertificateList {
+            tbs_cert_list: tbs,
+            signature_algorithm: alg,
+            signature: der::asn1::BitString::from_bytes(sig.to_der().as_bytes()).unwrap(),
+        }
+        .to_der()
+        .unwrap()
+    }
+
+    fn crl_ctx<'a>(
+        config: &'a SealConfig,
+        backend: &'a Arc<dyn SealBackend>,
+        fetcher: &'a Arc<dyn SealFetcher>,
+    ) -> SealContext<'a> {
+        SealContext {
+            config,
+            backend,
+            fetcher,
+            clock_ms: CRL_NOW_SECS * 1000,
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_valid_crl_accepts_fresh_crl() {
+        let ca = crl_ca();
+        let crl = signed_crl(&ca, CRL_NOW_SECS - 3600, Some(CRL_NOW_SECS + 3600));
+        let config = SealConfig {
+            trust_anchors_der: Vec::new(),
+            timestamp_authorities: Vec::new(),
+            fetch_policy: FetchPolicy::default(),
+            resource_limits: crate::api::SealResourceLimits::default(),
+        };
+        let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+        let fetcher: Arc<dyn SealFetcher> = Arc::new(StaticFetcher(crl.clone()));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
+        let got = fetch_valid_crl(&ctx, &ca.cert_der, url).await;
+        assert_eq!(got, Some(crl));
+    }
+
+    #[tokio::test]
+    async fn fetch_valid_crl_rejects_stale_next_update() {
+        let ca = crl_ca();
+        let crl = signed_crl(&ca, CRL_NOW_SECS - 7200, Some(CRL_NOW_SECS - 60));
+        let config = SealConfig {
+            trust_anchors_der: Vec::new(),
+            timestamp_authorities: Vec::new(),
+            fetch_policy: FetchPolicy::default(),
+            resource_limits: crate::api::SealResourceLimits::default(),
+        };
+        let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+        let fetcher: Arc<dyn SealFetcher> = Arc::new(StaticFetcher(crl));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
+        assert!(fetch_valid_crl(&ctx, &ca.cert_der, url).await.is_none());
     }
 }

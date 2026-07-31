@@ -63,20 +63,22 @@ fn deref_dict<'d>(doc: &'d Document, obj: &'d Object) -> Option<&'d Dictionary> 
 
 /// Resolve bounded indirection for security-critical name slots: `/Type`,
 /// `/FT`, and `/S` hidden behind a reference chain must still be compared
-/// against the denied names (§7.1 rules 6-7, §7.6 closing law). An
-/// unresolvable or cyclic chain keeps the last seen object, which then
-/// fails the direct-name comparison.
-fn resolved<'d>(doc: &'d Document, mut obj: &'d Object) -> &'d Object {
+/// against the denied names (§7.1 rules 6-7, §7.6 closing law). Returns
+/// `None` when the chain dangles or exceeds the 8-reference budget: an
+/// unresolvable security slot is a rejection in the matching violation
+/// class, never a silent non-match (a 9-hop `/S -> … -> /JavaScript`
+/// must not bypass the prepared-input rejection).
+fn resolved<'d>(doc: &'d Document, mut obj: &'d Object) -> Option<&'d Object> {
     for _ in 0..8 {
         match obj {
             Object::Reference(r) => match doc.get_object(*r) {
                 Ok(next) => obj = next,
-                Err(_) => return obj,
+                Err(_) => return None,
             },
-            _ => return obj,
+            _ => return Some(obj),
         }
     }
-    obj
+    None
 }
 
 /// Scan every object for prepared-input contract violations (§7.1 rules 6-7).
@@ -86,7 +88,9 @@ fn scan_objects(doc: &Document) -> Result<(), SealError> {
             continue;
         };
         if let Ok(t) = dict.get(b"Type") {
-            let t = resolved(doc, t);
+            let Some(t) = resolved(doc, t) else {
+                return Err(input_invalid(InputInvalidCode::ExistingSignature));
+            };
             if name_is(t, b"Sig") || name_is(t, b"DocTimeStamp") {
                 return Err(input_invalid(InputInvalidCode::ExistingSignature));
             }
@@ -94,11 +98,13 @@ fn scan_objects(doc: &Document) -> Result<(), SealError> {
                 return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
             }
         }
-        if dict
-            .get(b"FT")
-            .is_ok_and(|ft| name_is(resolved(doc, ft), b"Sig"))
-        {
-            return Err(input_invalid(InputInvalidCode::ExistingSignature));
+        if let Ok(ft) = dict.get(b"FT") {
+            let Some(ft) = resolved(doc, ft) else {
+                return Err(input_invalid(InputInvalidCode::ExistingSignature));
+            };
+            if name_is(ft, b"Sig") {
+                return Err(input_invalid(InputInvalidCode::ExistingSignature));
+            }
         }
         // A signature-shaped dictionary is rejected even without a /Type
         // marker: /ByteRange + /Contents together only exist for signing.
@@ -111,11 +117,13 @@ fn scan_objects(doc: &Document) -> Result<(), SealError> {
         if dict.has(b"Lock") {
             return Err(input_invalid(InputInvalidCode::ExistingSignature));
         }
-        if dict.get(b"S").is_ok_and(|s| {
-            let s = resolved(doc, s);
-            name_is(s, b"JavaScript") || name_is(s, b"Launch")
-        }) {
-            return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
+        if let Ok(s) = dict.get(b"S") {
+            let Some(s) = resolved(doc, s) else {
+                return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
+            };
+            if name_is(s, b"JavaScript") || name_is(s, b"Launch") {
+                return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
+            }
         }
     }
     Ok(())

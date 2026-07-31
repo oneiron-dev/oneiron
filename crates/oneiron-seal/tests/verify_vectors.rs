@@ -73,6 +73,10 @@ fn prepared_input_rejection_matrix() {
             "neg_js_indirect.pdf",
             InputInvalidCode::ActiveContentPresent,
         ),
+        (
+            "neg_js_deep_indirect.pdf",
+            InputInvalidCode::ActiveContentPresent,
+        ),
         ("neg_launch.pdf", InputInvalidCode::ActiveContentPresent),
         ("neg_names_js.pdf", InputInvalidCode::ActiveContentPresent),
         ("neg_embedded.pdf", InputInvalidCode::EmbeddedFilePresent),

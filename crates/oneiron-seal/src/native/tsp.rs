@@ -252,12 +252,14 @@ fn validate_tsa_chain(
 /// Verify-time token validation (§7.7): imprint match, token signature,
 /// signer-cert binding, TSA path, critical-and-sole timestamping EKU. The
 /// request nonce/policy checks are seal-time only. Returns the token's
-/// genTime as unix seconds for applicable-time path validation.
+/// genTime as unix seconds for applicable-time path validation plus the
+/// validated TSA chain DERs so the DSS binding can require the profile
+/// material to speak about this chain (§7.5 step 3).
 pub(crate) fn validate_token_for_verify(
     token_der: &[u8],
     expected_imprint: &Sha256Digest,
     anchors: &[pkix_chain::TrustAnchor],
-) -> Result<u64, SealError> {
+) -> Result<(u64, Vec<Vec<u8>>), SealError> {
     let parsed = cms::parse_cms(token_der)?;
     if parsed.econtent_oid != OID_TST_INFO {
         return Err(ts_err());
@@ -297,7 +299,7 @@ pub(crate) fn validate_token_for_verify(
         .collect();
     let gen_time_unix = generalized_time_unix(&tst);
     validate_tsa_chain(&chain_ders, anchors, gen_time_unix)?;
-    Ok(gen_time_unix)
+    Ok((gen_time_unix, chain_ders))
 }
 
 #[cfg(test)]
