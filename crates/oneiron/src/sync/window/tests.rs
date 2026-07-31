@@ -208,7 +208,12 @@ fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases(
     assert!(vault.sync_state_get(&promoted_marker)?.is_some());
     assert!(vault.sync_state_get(&fenced_marker)?.is_some());
 
-    vault.promote_off_record_turn("sess-defer-sync", &promoted, &owner_actor(), OWNER_PRINCIPAL)?;
+    vault.promote_off_record_turn(
+        "sess-defer-sync",
+        &promoted,
+        &owner_actor(),
+        OWNER_PRINCIPAL,
+    )?;
 
     // Promotion lifts exactly one fence. Its pending mirror can now flow;
     // the other fenced body remains device-local, and reverse packing only

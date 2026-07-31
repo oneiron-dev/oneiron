@@ -32,9 +32,9 @@ use crate::ppr;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
     ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD,
-    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FACET, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -3461,11 +3461,7 @@ fn apply_vector(
 /// representation.
 /// Reads an entity's registry type byte. `None` means no entity row exists —
 /// the type is unknowable, not merely unexpected.
-fn stored_entity_type(
-    store: &Store,
-    rtxn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<Option<u8>> {
+fn stored_entity_type(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
@@ -3474,16 +3470,31 @@ fn stored_entity_type(
 }
 
 /// ONE-1645 write-time type table for `FacetOf` (u8 17) edges: a facet stamp
-/// may only run `CLAIM | TURN → FACET`. Anything else — including an endpoint
-/// with no entity row, whose type is unknowable — is a typed
+/// may only run `CLAIM | TURN | EVENT → FACET`. Anything else — including an
+/// endpoint with no entity row, whose type is unknowable — is a typed
 /// [`Error::InvalidFacetOfEdge`] that aborts the batch atomically. This
 /// mirrors the fail-closed-on-missing shape [`Error::InvalidFacet`] already
 /// uses on the read side: a stamp's endpoints must be established facts
 /// before the stamp.
 ///
-/// TURN is admitted alongside CLAIM because per-turn facet stamps are what
-/// transcript filtering rides; the write door must accept the stamp the
-/// design requires.
+/// TWO SEMANTICS ride one edge kind, and the table admits both:
+///
+/// * `CLAIM | TURN → FACET` — DISCLOSURE-SCOPING. These are the stamps
+///   [`crate::pipeline`]'s facet filter reads: `claim_facet_scope`
+///   prefix-scans `edges_out` under a CLAIM source, and strict mode drops
+///   claims scoped exclusively to other facets. TURN is admitted alongside
+///   CLAIM because per-turn facet stamps are what transcript filtering rides;
+///   the write door must accept the stamp the design requires.
+/// * `EVENT → FACET` — WORLD-MODEL, disclosure-INERT. `apply_facet_filter`
+///   keeps every non-CLAIM entity unconditionally and never resolves a scope
+///   for it, so an EVENT-sourced stamp can neither widen nor narrow any
+///   disclosure decision. It exists for ARCH-0039 PPR traversal, where
+///   `facet_of` carries a pinned λ of 0.05 ([`crate::ppr::lambda_for_kind`]).
+///   Rejecting it would make a ratified traversal contract unwritable.
+///
+/// The teeth are unchanged by the widening: a missing endpoint still fails
+/// closed, the target must still be a FACET, and every source type outside
+/// {CLAIM, TURN, EVENT} is still rejected.
 ///
 /// Ordering: ops apply in order inside one write txn, so an entity put and
 /// the edge that stamps it commit together in a single batch. An edge that
@@ -3492,6 +3503,8 @@ fn stored_entity_type(
 /// Seam (ONE-1646): the exposure-consent gate — rejecting a private→public
 /// restamp without a consent-ledger row, and gating `FacetOf` deletes on
 /// exposure state — lands at THIS call site once facet exposure state exists.
+/// That gate keys on `CLAIM | TURN`-sourced stamps ONLY: EVENT-sourced edges
+/// are not disclosure scopes, so they bypass exposure gating entirely.
 /// This function is the hook; it deliberately validates types only.
 pub(crate) fn validate_facet_of_edge(
     store: &Store,
@@ -3505,7 +3518,10 @@ pub(crate) fn validate_facet_of_edge(
     }
     let src_type = stored_entity_type(store, rtxn, &src)?;
     let tgt_type = stored_entity_type(store, rtxn, &tgt)?;
-    let src_ok = matches!(src_type, Some(ENTITY_TYPE_CLAIM | ENTITY_TYPE_TURN));
+    let src_ok = matches!(
+        src_type,
+        Some(ENTITY_TYPE_CLAIM | ENTITY_TYPE_TURN | ENTITY_TYPE_EVENT)
+    );
     let tgt_ok = tgt_type == Some(ENTITY_TYPE_FACET);
     if src_ok && tgt_ok {
         return Ok(());

@@ -182,6 +182,24 @@ fn internal_source_trust_claim(source: ClaimSource) -> ClaimBody {
     body
 }
 
+/// Stamps `sensitivity: public` (band 0) on a claim body.
+///
+/// The ONE-1645 provenance floor makes an UNSTAMPED claim read band 2, which
+/// exceeds the `max_auto_sensitivity: 0` source-trust rows these fixtures
+/// install and sends the import to the consent queue. The fixtures below test
+/// FEDERATED ADMISSION — restamping to `Imported`, once-only admission,
+/// stale-claim retention — not the sensitivity ceiling, so they stamp public
+/// to keep exercising admission. The floor itself is pinned directly by
+/// `gate_source_trust_unstamped_claim_hits_floor_band`.
+fn public_source_trust_claim(source: ClaimSource) -> ClaimBody {
+    let mut body = source_trust_claim(source);
+    body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("public"),
+    )]));
+    body
+}
+
 fn test_selector() -> SyncSelector {
     SyncSelector::new(
         test_entity_id(0x51),
@@ -801,7 +819,7 @@ fn federated_import_seam_restamps_before_observed_import() {
     .expect("put policy manifest");
 
     let id = test_entity_id(0x8B);
-    let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+    let remote_body = public_source_trust_claim(ClaimSource::ToolOutput);
     let update = federated_claim_update(&id, &remote_body);
     client
         .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
@@ -839,7 +857,7 @@ fn federated_generated_auto_claim_restamps_but_stays_non_consolidatable() {
     .expect("put policy manifest");
 
     let id = test_entity_id(0x8D);
-    let remote_body = source_trust_claim(ClaimSource::Generated);
+    let remote_body = public_source_trust_claim(ClaimSource::Generated);
     let update = federated_claim_update(&id, &remote_body);
     client
         .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
@@ -886,7 +904,7 @@ fn federated_selector_member_response_enters_admission_once() {
     assert_eq!(request_sub_tag, window_sub_tags::SELECTOR_VV_REQUEST);
 
     let id = test_entity_id(0x94);
-    let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+    let remote_body = public_source_trust_claim(ClaimSource::ToolOutput);
     let update = federated_claim_update(&id, &remote_body);
 
     client
@@ -941,7 +959,7 @@ fn federated_selector_member_stale_claim_is_restamped_and_retained() {
     .expect("put policy manifest");
 
     let id = test_entity_id(0x9C);
-    let mut remote_body = source_trust_claim(ClaimSource::ToolOutput);
+    let mut remote_body = public_source_trust_claim(ClaimSource::ToolOutput);
     remote_body.stale = true;
     let update = federated_claim_update(&id, &remote_body);
 
