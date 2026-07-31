@@ -31,9 +31,10 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD,
+    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FACET, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -2022,6 +2023,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                 weight,
                 vad,
             } => {
+                validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
                 apply_edge(store, wtxn, src, kind, tgt, weight, vad)?;
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
                 had_graph_mutation = true;
@@ -2034,6 +2036,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                 created_at,
                 vad,
             } => {
+                validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
                 apply_public_edge_with_created_at(
                     store, wtxn, src, kind, tgt, weight, created_at, vad,
                 )?;
@@ -3675,6 +3678,65 @@ fn apply_vector(
 /// read-back mirrors `restamp_edge_flags`). A plain put on a bare or absent
 /// edge is unchanged: absence of provenance is itself the anonymous
 /// representation.
+/// Reads an entity's registry type byte. `None` means no entity row exists —
+/// the type is unknowable, not merely unexpected.
+fn stored_entity_type(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<u8>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    Ok(Some(header.entity_type))
+}
+
+/// ONE-1645 write-time type table for `FacetOf` (u8 17) edges: a facet stamp
+/// may only run `CLAIM | TURN → FACET`. Anything else — including an endpoint
+/// with no entity row, whose type is unknowable — is a typed
+/// [`Error::InvalidFacetOfEdge`] that aborts the batch atomically. This
+/// mirrors the fail-closed-on-missing shape [`Error::InvalidFacet`] already
+/// uses on the read side: a stamp's endpoints must be established facts
+/// before the stamp.
+///
+/// TURN is admitted alongside CLAIM because per-turn facet stamps are what
+/// transcript filtering rides; the write door must accept the stamp the
+/// design requires.
+///
+/// Ordering: ops apply in order inside one write txn, so an entity put and
+/// the edge that stamps it commit together in a single batch. An edge that
+/// precedes its endpoint's put fails closed.
+///
+/// Seam (ONE-1646): the exposure-consent gate — rejecting a private→public
+/// restamp without a consent-ledger row, and gating `FacetOf` deletes on
+/// exposure state — lands at THIS call site once facet exposure state exists.
+/// This function is the hook; it deliberately validates types only.
+pub(crate) fn validate_facet_of_edge(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+) -> Result<()> {
+    if kind != EdgeKind::FacetOf {
+        return Ok(());
+    }
+    let src_type = stored_entity_type(store, rtxn, &src)?;
+    let tgt_type = stored_entity_type(store, rtxn, &tgt)?;
+    let src_ok = matches!(src_type, Some(ENTITY_TYPE_CLAIM | ENTITY_TYPE_TURN));
+    let tgt_ok = tgt_type == Some(ENTITY_TYPE_FACET);
+    if src_ok && tgt_ok {
+        return Ok(());
+    }
+    Err(Error::InvalidFacetOfEdge {
+        src,
+        src_type,
+        tgt,
+        tgt_type,
+    })
+}
+
 fn apply_edge(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

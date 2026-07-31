@@ -833,6 +833,11 @@ impl Vault {
     }
 
     /// Stores a directed edge and its reverse index entry.
+    ///
+    /// `FacetOf` edges pass the commit-time type table (ONE-1645): the source
+    /// must be an existing CLAIM or TURN and the target an existing FACET, or
+    /// the commit fails closed with [`Error::InvalidFacetOfEdge`] and writes
+    /// nothing. Every other edge kind is unaffected.
     pub fn put_edge(
         &self,
         src: &EntityId,

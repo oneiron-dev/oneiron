@@ -4312,3 +4312,244 @@ fn child_of_overlay_orders_entity_clear_against_same_pair_edge() {
         "clearing the child after touching the ChildOf pair must win"
     );
 }
+
+// ─── ONE-1645 FacetOf write-time type table ─────────────────────────────────
+
+/// Writes a minimal entity row of the given type. CLAIM rows carry a real
+/// encoded claim body so they survive the write-door body validation; every
+/// other type takes an opaque payload.
+fn put_typed(vault: &Vault, id: &EntityId, entity_type: u8) -> Result<()> {
+    let payload = if entity_type == ENTITY_TYPE_CLAIM {
+        let body = ClaimBody::new(
+            "facet.type_table_probe",
+            ClaimSubject::Entity(*id),
+            Value::from("v"),
+            0.9,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        crate::claim::encode_claim_body(&body)?
+    } else {
+        b"payload".to_vec()
+    };
+    vault.put_entity(id, entity_type, test_time_range(1, 1), 1, &payload)
+}
+
+fn facet_of_edge_stored(vault: &Vault, src: &EntityId, tgt: &EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let key = Store::encode_edge_key(src, EdgeKind::FacetOf, tgt);
+    Ok(vault.store.edges_out.get(&rtxn, &key)?.is_some())
+}
+
+fn assert_invalid_facet_of_edge(
+    err: &Error,
+    expected_src_type: Option<u8>,
+    expected_tgt_type: Option<u8>,
+    context: &str,
+) {
+    match err {
+        Error::InvalidFacetOfEdge {
+            src_type, tgt_type, ..
+        } => {
+            assert_eq!(*src_type, expected_src_type, "{context}: src type");
+            assert_eq!(*tgt_type, expected_tgt_type, "{context}: tgt type");
+        }
+        other => panic!("{context}: expected InvalidFacetOfEdge, got {other:?}"),
+    }
+}
+
+/// The admitted table: CLAIM → FACET and TURN → FACET. TURN is admitted
+/// alongside CLAIM because per-turn facet stamps are what transcript
+/// filtering rides.
+#[test]
+fn facet_of_edge_valid_source_types_accepted() -> Result<()> {
+    for (label, src_type) in [
+        ("claim source", ENTITY_TYPE_CLAIM),
+        ("turn source", ENTITY_TYPE_TURN),
+    ] {
+        let (_dir, vault) = open_test_vault();
+        let src = EntityId::now();
+        let facet = EntityId::now();
+        put_typed(&vault, &src, src_type)?;
+        put_typed(&vault, &facet, ENTITY_TYPE_FACET)?;
+
+        vault
+            .batch()
+            .edge(&src, EdgeKind::FacetOf, &facet, 0.7)
+            .commit()?;
+        assert!(
+            facet_of_edge_stored(&vault, &src, &facet)?,
+            "{label} must be admitted"
+        );
+    }
+    Ok(())
+}
+
+/// The rejected table. Every row aborts the batch atomically and reports the
+/// types actually found — including `None` for an endpoint with no entity
+/// row, whose type is unknowable rather than merely wrong.
+#[test]
+fn facet_of_edge_type_table_rejects_off_table_endpoints() -> Result<()> {
+    // (label, src type, tgt type) — `None` means "write no entity row".
+    let table: [(&str, Option<u8>, Option<u8>); 4] = [
+        ("wrong target type", Some(ENTITY_TYPE_CLAIM), Some(ENTITY_TYPE_PERSON)),
+        ("wrong source type", Some(ENTITY_TYPE_PERSON), Some(ENTITY_TYPE_FACET)),
+        ("missing source row", None, Some(ENTITY_TYPE_FACET)),
+        ("missing target row", Some(ENTITY_TYPE_CLAIM), None),
+    ];
+    for (label, src_type, tgt_type) in table {
+        let (_dir, vault) = open_test_vault();
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        if let Some(t) = src_type {
+            put_typed(&vault, &src, t)?;
+        }
+        if let Some(t) = tgt_type {
+            put_typed(&vault, &tgt, t)?;
+        }
+
+        let err = vault
+            .batch()
+            .edge(&src, EdgeKind::FacetOf, &tgt, 0.7)
+            .commit()
+            .expect_err(label);
+        assert_invalid_facet_of_edge(&err, src_type, tgt_type, label);
+        assert_eq!(err.kind(), ErrorKind::InvalidFacetOfEdge, "{label}");
+        assert!(
+            !facet_of_edge_stored(&vault, &src, &tgt)?,
+            "{label}: the rejected edge must not be stored"
+        );
+    }
+    Ok(())
+}
+
+/// Ops apply in order inside one write txn, so an entity put and the edge
+/// that stamps it commit together in a single batch.
+#[test]
+fn facet_of_edge_same_batch_entity_then_edge_accepted() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim = EntityId::now();
+    let facet = EntityId::now();
+    let claim_body = crate::claim::encode_claim_body(&ClaimBody::new(
+        "facet.type_table_probe",
+        ClaimSubject::Entity(claim),
+        Value::from("v"),
+        0.9,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    ))?;
+
+    vault
+        .batch()
+        .put(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            1,
+            &claim_body,
+        )
+        .put(&facet, ENTITY_TYPE_FACET, test_time_range(1, 1), 1, b"f")
+        .edge(&claim, EdgeKind::FacetOf, &facet, 0.7)
+        .commit()?;
+
+    assert!(facet_of_edge_stored(&vault, &claim, &facet)?);
+    Ok(())
+}
+
+/// The gate covers the public timestamped builder arm too, with the same
+/// table — the public write door is one boundary, not two.
+#[test]
+fn facet_of_edge_via_public_created_at_builder_rejected_same_table() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim = EntityId::now();
+    let person = EntityId::now();
+    put_typed(&vault, &claim, ENTITY_TYPE_CLAIM)?;
+    put_typed(&vault, &person, ENTITY_TYPE_PERSON)?;
+
+    let err = vault
+        .batch()
+        .edge_with_created_at(&claim, EdgeKind::FacetOf, &person, 0.7, 5)
+        .commit()
+        .expect_err("public timestamped arm must run the same type table");
+    assert_invalid_facet_of_edge(
+        &err,
+        Some(ENTITY_TYPE_CLAIM),
+        Some(ENTITY_TYPE_PERSON),
+        "public created_at arm",
+    );
+    assert!(!facet_of_edge_stored(&vault, &claim, &person)?);
+
+    // Control: the same builder admits a well-typed stamp.
+    let facet = EntityId::now();
+    put_typed(&vault, &facet, ENTITY_TYPE_FACET)?;
+    vault
+        .batch()
+        .edge_with_created_at(&claim, EdgeKind::FacetOf, &facet, 0.7, 5)
+        .commit()?;
+    assert!(facet_of_edge_stored(&vault, &claim, &facet)?);
+    Ok(())
+}
+
+/// Collateral check: the gate keys on `FacetOf` alone. Any other edge kind
+/// between arbitrary typed entities commits exactly as it did before.
+#[test]
+fn non_facet_of_edges_unaffected() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let person_a = EntityId::now();
+    let person_b = EntityId::now();
+    put_typed(&vault, &person_a, ENTITY_TYPE_PERSON)?;
+    put_typed(&vault, &person_b, ENTITY_TYPE_PERSON)?;
+
+    vault
+        .batch()
+        .edge(&person_a, EdgeKind::Mentions, &person_b, 0.7)
+        .commit()?;
+    assert!(vault.edge_exists(&person_a, EdgeKind::Mentions, &person_b)?);
+
+    // Even an edge whose endpoints do not exist at all stays ungated when the
+    // kind is not FacetOf.
+    let ghost_a = EntityId::now();
+    let ghost_b = EntityId::now();
+    vault
+        .batch()
+        .edge(&ghost_a, EdgeKind::Mentions, &ghost_b, 0.7)
+        .commit()?;
+    assert!(vault.edge_exists(&ghost_a, EdgeKind::Mentions, &ghost_b)?);
+    Ok(())
+}
+
+/// The sync-replay arm stays UNGATED by design (H2). A replicated LWW winner
+/// must never wedge local sync into a permanent abort, so provenance of
+/// replayed edges is the sync channel's trust boundary rather than this
+/// gate's. Pinned deliberately: an ill-typed FacetOf edge still applies here,
+/// and the internal builder is `pub(crate)` — no local actor reaches this arm
+/// without sync replay.
+#[test]
+fn facet_of_edge_sync_replay_arm_ungated() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim = EntityId::now();
+    let person = EntityId::now();
+    put_typed(&vault, &claim, ENTITY_TYPE_CLAIM)?;
+    put_typed(&vault, &person, ENTITY_TYPE_PERSON)?;
+
+    vault
+        .batch()
+        .edge_with_value_fields(
+            &claim,
+            EdgeKind::FacetOf,
+            &person,
+            EdgeValueFields {
+                weight: 0.7,
+                created_at: 1,
+                vad: Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .commit()?;
+
+    assert!(
+        facet_of_edge_stored(&vault, &claim, &person)?,
+        "the replay arm must apply a wrong-typed FacetOf edge unchanged"
+    );
+    Ok(())
+}

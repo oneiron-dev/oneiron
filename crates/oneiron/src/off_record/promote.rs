@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::genui::ConsentActorIdentity;
 
 use super::lifecycle::{
     FloorWrites, OFF_RECORD_CLOSED_FENCE_VALUE, live_session_entry, off_record_fence_key,
@@ -17,14 +18,30 @@ const OFF_RECORD_PROMOTE_RECEIPT_VERSION: u8 = 0;
 
 /// Durable, user-initiated receipt minted by promote. It carries opaque ids
 /// only and survives the in-process session record.
+///
+/// The initiator fields record WHO consented, bound at mint time by
+/// `ConsentActorIdentity::authenticates_principal` (ONE-1645) — never a
+/// literal. A receipt therefore only ever names an actor that authenticated
+/// the owner principal for this promotion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OffRecordPromoteReceipt {
     pub version: u8,
     pub session_ref: String,
     pub turn: [u8; 16],
     pub promoted_at: u64,
-    /// Explicit-consent initiator class.
-    pub initiator: String,
+    /// The authenticated actor's opaque reference.
+    pub initiator_ref: String,
+    /// The `ConsentActorIdentity` variant that authenticated:
+    /// `"surface_actor"` or `"voice_path"` (the pinned serde tags).
+    pub initiator_kind: String,
+}
+
+/// The `ConsentActorIdentity` serde tag recorded on a promote receipt.
+const fn consent_actor_kind(actor: &ConsentActorIdentity) -> &'static str {
+    match actor {
+        ConsentActorIdentity::SurfaceActor { .. } => "surface_actor",
+        ConsentActorIdentity::VoicePath { .. } => "voice_path",
+    }
 }
 
 pub(super) fn off_record_promote_key(id: &EntityId) -> Vec<u8> {
@@ -84,11 +101,35 @@ impl FloorWrites<'_> {
 impl Vault {
     /// Promotes exactly one legacy-fenced turn under the session's
     /// per-session lock, so close and promote cannot race.
+    ///
+    /// Promotion is a widening op (P2): it moves a fenced turn into the
+    /// durable vault, so consent is authenticated once, AT the op, by the same
+    /// actor-identity vocabulary every other consent surface uses. `actor`
+    /// must authenticate `owner_principal_ref` or the call fails closed with
+    /// [`Error::OffRecordPromoteUnauthenticated`] before any state is read;
+    /// the receipt then records that authenticated actor rather than a
+    /// literal.
+    ///
+    /// Seam (ONE-1647): the engine does not verify voice-print anchoring here.
+    /// `ConsentActorIdentity` is consumed as-is, so when the voice-print bool
+    /// becomes engine-anchored this path inherits the hardening unchanged.
+    /// Promote must not grow its own voice logic.
     pub fn promote_off_record_turn(
         &self,
         session_ref: &str,
         turn_id: &EntityId,
+        actor: &ConsentActorIdentity,
+        owner_principal_ref: &str,
     ) -> Result<OffRecordPromoteReceipt> {
+        // Authenticate BEFORE any state read: an unauthenticated promote must
+        // not even learn whether the turn is fenced. Blank refs on either side
+        // are rejected by `authenticates_principal` itself.
+        if !actor.authenticates_principal(owner_principal_ref) {
+            return Err(Error::OffRecordPromoteUnauthenticated {
+                session_ref: session_ref.to_owned(),
+                actor_ref: actor.actor_ref().to_owned(),
+            });
+        }
         vet_off_record_session_ref(session_ref)?;
         let entry = live_session_entry(&self.store, session_ref)?;
         // Hold the per-session state lock across the closing/gone check, the
@@ -123,7 +164,8 @@ impl Vault {
                 session_ref: session_ref.to_owned(),
                 turn: *turn_id.as_bytes(),
                 promoted_at: crate::unix_seconds_now(),
-                initiator: "user".to_owned(),
+                initiator_ref: actor.actor_ref().to_owned(),
+                initiator_kind: consent_actor_kind(actor).to_owned(),
             };
             self.with_write_txn(|wtxn| {
                 FloorWrites::new(&self.store).commit_promote(wtxn, turn_id, &receipt)
