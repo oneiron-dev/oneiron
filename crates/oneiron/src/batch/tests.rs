@@ -3607,8 +3607,8 @@ fn assert_invalid_facet_of_edge(
 /// "World-model" is scoped to the LOCAL QUERY door, not to disclosure at
 /// large. `apply_facet_filter` keeps every non-CLAIM entity unconditionally,
 /// so an EVENT-sourced stamp is inert THERE — but the federation selector
-/// scopes by `FacetOf` source with no source-type check, so the same stamp is
-/// disclosure-EFFECTIVE on that door (pinned by
+/// scopes by every source type THIS table admits, EVENT included, so the same
+/// stamp is disclosure-EFFECTIVE on that door (pinned by
 /// `sync::selector::tests::selector_denies_event_scoped_to_unselected_facet`).
 #[test]
 fn facet_of_edge_valid_source_types_accepted() -> Result<()> {

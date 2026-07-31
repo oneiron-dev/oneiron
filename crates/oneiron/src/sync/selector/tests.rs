@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ed25519_dalek::{Signer, SigningKey};
 use loro::{ExportMode, LoroDoc};
 
@@ -32,7 +34,9 @@ use crate::registry::{
 };
 use crate::store::Store;
 use crate::sync::bridge::encode_edge_value_for_crdt;
+use crate::sync::client::{SyncClient, SyncClientConfig};
 use crate::sync::loro_support::map_get_bytes;
+use crate::sync::manager::WindowManager;
 use crate::temporal::TimeRange;
 
 fn entity_id(byte: u8) -> EntityId {
@@ -94,6 +98,29 @@ fn claim_blob(world: Option<EntityId>) -> Vec<u8> {
         ClaimLifecycleStatus::Active,
     );
     claim.world = world;
+    entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
+}
+
+/// `claim_blob` with an explicit `sensitivity: public` (band 0) stamp, for
+/// fixtures that cross FEDERATED ADMISSION rather than being handed straight
+/// to the selector. The ONE-1645 provenance floor makes an UNSTAMPED claim read
+/// band 2, which exceeds the `max_auto_sensitivity: 0` Imported row
+/// `put_imported_source_trust` installs, so an unstamped claim would queue for
+/// consent instead of admitting — a detour past the facet-scoping behavior
+/// those fixtures exist to exercise.
+fn public_claim_blob() -> Vec<u8> {
+    let mut claim = ClaimBody::new(
+        "selector.test",
+        ClaimSubject::Entity(entity_id(0x90)),
+        Value::from("value"),
+        0.8,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    claim.scope = Some(Value::Map(vec![(
+        Value::from("sensitivity"),
+        Value::from("public"),
+    )]));
     entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
 }
 
@@ -262,16 +289,18 @@ fn insert_blob(doc: &LoroDoc, id: EntityId, blob: &[u8]) {
     map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), blob).unwrap();
 }
 
+fn edge_key(src: EntityId, kind: EdgeKind, tgt: EntityId) -> String {
+    format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex())
+}
+
 fn insert_edge(doc: &LoroDoc, src: EntityId, kind: EdgeKind, tgt: EntityId) {
-    let key = format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex());
     let value = encode_edge_value_for_crdt(kind, 0.7, 1, Some(Vad::NEUTRAL), None).unwrap();
-    map_insert_bytes(&doc.get_map("edges"), &key, &value).unwrap();
+    map_insert_bytes(&doc.get_map("edges"), &edge_key(src, kind, tgt), &value).unwrap();
 }
 
 fn insert_malformed_edge(doc: &LoroDoc, src: EntityId, kind: EdgeKind, tgt: EntityId) {
-    let key = format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex());
     doc.get_map("edges")
-        .insert(key.as_str(), "not-binary")
+        .insert(edge_key(src, kind, tgt).as_str(), "not-binary")
         .unwrap();
 }
 
@@ -372,12 +401,7 @@ fn test_selector_scope() -> FederationGrantScope {
     FederationGrantScope::vault(7)
 }
 
-fn test_vault_with_grant_scope(
-    member_ref: EntityId,
-    scope: FederationGrantScope,
-) -> (tempfile::TempDir, Vault, EntityId) {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+fn put_test_grant(vault: &Vault, member_ref: EntityId, scope: FederationGrantScope) -> EntityId {
     let grant_id = EntityId::now();
     let grant = FederationGrant::new(
         scope,
@@ -397,11 +421,57 @@ fn test_vault_with_grant_scope(
         )
         .commit()
         .unwrap();
+    grant_id
+}
+
+fn test_vault_with_grant_scope(
+    member_ref: EntityId,
+    scope: FederationGrantScope,
+) -> (tempfile::TempDir, Vault, EntityId) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let grant_id = put_test_grant(&vault, member_ref, scope);
     (dir, vault, grant_id)
 }
 
 fn test_vault_with_grant(member_ref: EntityId) -> (tempfile::TempDir, Vault, EntityId) {
     test_vault_with_grant_scope(member_ref, test_selector_scope())
+}
+
+/// The PRODUCTION federation ingest stack: a real [`SyncClient`] over a real
+/// [`WindowManager`], so an import lands through
+/// `SyncClient::import_federated_window_update` into a LOADED window and
+/// materializes through Observer B exactly as it does in the field.
+fn test_client_with_grant(
+    member_ref: EntityId,
+    window: &str,
+) -> (tempfile::TempDir, Arc<Vault>, EntityId, SyncClient) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let grant_id = put_test_grant(&vault, member_ref, test_selector_scope());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(crate::sync::bridge::Materializer::new()),
+        "selector-test",
+    ));
+    let (client, _rx) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    // LOADED, not cold: this is the arm a federated import materializes
+    // through synchronously.
+    client.ensure_window(window).unwrap();
+    (dir, vault, grant_id, client)
+}
+
+/// Admits `doc` through the production federated entry for `role`.
+fn import_federated(
+    client: &mut SyncClient,
+    window: &str,
+    doc: &LoroDoc,
+    role: FederationAdmissionRole,
+) {
+    let update = doc.export(ExportMode::all_updates()).unwrap();
+    client
+        .import_federated_window_update(window, &update, role)
+        .unwrap_or_else(|e| panic!("{role:?}: federated import must not fail closed: {e:?}"));
 }
 
 #[test]
@@ -1250,6 +1320,280 @@ fn forged_facet_seed_cannot_move_entities_across_the_disclosure_boundary() {
     assert!(
         ids.contains(&facet_selected),
         "control: the selected facet itself is always visible to its selector"
+    );
+}
+
+/// OUT-OF-ORDER RESIDUE — the leg the admission drop alone cannot close, and
+/// the reason the selector needs a read mirror of the write table.
+///
+/// The forger splits the delivery. Update 1 carries the stamp
+/// `P -> <selected FACET>` with P absent everywhere: BOTH endpoint types are
+/// genuinely unknowable, so the admission boundary passes it through — it must,
+/// or every legitimate out-of-order first delivery burns permanently (H2).
+/// Update 2 then delivers P as a PERSON. Nothing re-examines the stamp already
+/// resident in the live doc, so a selector that honors raw `FacetOf` rows from
+/// any source would read it as a facet seed and move P plus its one-hop
+/// neighbor across the disclosure boundary.
+///
+/// Everything runs on the PRODUCTION stack: `SyncClient` over a real
+/// `WindowManager`, both updates through
+/// `SyncClient::import_federated_window_update` into a LOADED window, then the
+/// real selector over that same live doc. The neighbor's only adjacency is to
+/// P, so exporting it would prove the residue still scopes closure; the EVENT
+/// control is stamped to the same selected facet, so its ABSENCE would prove
+/// the mirror broke facet scoping instead of the forgery.
+///
+/// Both roles: a mirror that holds for members but not guests reads as
+/// protection while being none.
+#[test]
+fn out_of_order_off_table_residue_cannot_scope_the_export_for_either_role() {
+    for (role, seed) in [
+        (FederationAdmissionRole::Member, 0x60_u8),
+        (FederationAdmissionRole::Guest, 0x70_u8),
+    ] {
+        let window = "2026-05";
+        let member = entity_id(seed);
+        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
+
+        let facet_selected = entity_id(seed + 1);
+        let person = entity_id(seed + 2);
+        let neighbor = entity_id(seed + 3);
+        let event = entity_id(seed + 4);
+
+        // Update 1: the stamp lands while its SOURCE is unknowable everywhere
+        // — the H2 defer the admission door must honor. The FACET target rides
+        // along so the row names a facet this peer will select.
+        let first = create_window_doc("federation-peer", &WindowKey::new(window));
+        insert_entity(&first, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
+        insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
+        insert_edge(&first, person, EdgeKind::FacetOf, facet_selected);
+        insert_edge(&first, event, EdgeKind::FacetOf, facet_selected);
+        first.commit();
+        import_federated(&mut client, window, &first, role);
+
+        let live = client
+            .window(window)
+            .expect("federated import opens window");
+        assert!(
+            map_get_bytes(
+                &live.doc.get_map("edges"),
+                &edge_key(person, EdgeKind::FacetOf, facet_selected),
+            )
+            .is_some(),
+            "{role:?}: precondition — the unknowable-source stamp must SURVIVE \
+             admission, or this test proves nothing about the residue"
+        );
+
+        // Update 2: P arrives typed PERSON. The stamp from update 1 is already
+        // resident and is never revisited.
+        let second = create_window_doc("federation-peer", &WindowKey::new(window));
+        insert_entity(&second, person, ENTITY_TYPE_PERSON, b"person");
+        insert_entity(&second, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
+        insert_edge(&second, person, EdgeKind::Mentions, neighbor);
+        second.commit();
+        import_federated(&mut client, window, &second, role);
+
+        let live = client.window(window).expect("window still loaded");
+        assert!(
+            map_get_bytes(&live.doc.get_map("entities"), &person.to_hex()).is_some(),
+            "{role:?}: precondition — PERSON P must be present in the live doc, \
+             or its absence from the export below would hold vacuously"
+        );
+
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![facet_selected],
+            vec![],
+        );
+        let exported = filtered_window_doc(
+            &vault,
+            &live.doc,
+            &WindowKey::new(window),
+            test_selector_scope(),
+            &selector,
+        )
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+        let ids = import_ids(&exported);
+
+        assert!(
+            !ids.contains(&person),
+            "{role:?}: an off-table source's FacetOf row carries NO facet scope \
+             on the read side — the residue admission had to defer must not \
+             become a seed once the source arrives typed PERSON"
+        );
+        assert!(
+            !ids.contains(&neighbor),
+            "{role:?}: the one-hop neighbor is reachable ONLY through P — \
+             exporting it would prove the residue still scopes closure"
+        );
+        assert!(
+            ids.contains(&event),
+            "{role:?}: control — the on-table EVENT stamped to the SAME selected \
+             facet must still export; the mirror removes forged scope, not \
+             facet scoping"
+        );
+        assert!(
+            ids.contains(&facet_selected),
+            "{role:?}: control — the selected facet is always visible to its \
+             selector"
+        );
+    }
+}
+
+/// The mirror must not punish HONEST out-of-order delivery. Same split
+/// timeline as the regression above, but the late-arriving source is a CLAIM —
+/// an admitted type — so its stamp scopes exactly as if it had arrived in one
+/// frame: the CLAIM exports under its selected facet, and its one-hop neighbor
+/// rides the seed's closure.
+///
+/// Without this pin the read mirror could be "fixed" by refusing every stamp
+/// whose source was unknown at admission time, which would silently break
+/// every legitimate two-frame delivery.
+#[test]
+fn out_of_order_on_table_source_still_scopes_after_the_mirror() {
+    let window = "2026-06";
+    let member = entity_id(0x80);
+    let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
+    // Admission restamps a federated claim to `Imported`, which requires an
+    // explicit auto-permit row; without one the CLAIM queues for consent and
+    // never reaches the doc, making the scoping assertions vacuous.
+    put_imported_source_trust(&vault);
+
+    let facet_selected = entity_id(0x81);
+    let claim = entity_id(0x82);
+    let neighbor = entity_id(0x83);
+
+    let first = create_window_doc("federation-peer", &WindowKey::new(window));
+    insert_entity(&first, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
+    insert_edge(&first, claim, EdgeKind::FacetOf, facet_selected);
+    first.commit();
+    import_federated(&mut client, window, &first, FederationAdmissionRole::Member);
+
+    let second = create_window_doc("federation-peer", &WindowKey::new(window));
+    insert_blob(&second, claim, &public_claim_blob());
+    insert_entity(&second, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
+    insert_edge(&second, claim, EdgeKind::Supports, neighbor);
+    second.commit();
+    import_federated(
+        &mut client,
+        window,
+        &second,
+        FederationAdmissionRole::Member,
+    );
+
+    let live = client.window(window).expect("window still loaded");
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_selected],
+        vec![],
+    );
+    let exported = filtered_window_doc(
+        &vault,
+        &live.doc,
+        &WindowKey::new(window),
+        test_selector_scope(),
+        &selector,
+    )
+    .unwrap()
+    .export(ExportMode::all_updates())
+    .unwrap();
+    let ids = import_ids(&exported);
+
+    assert!(
+        ids.contains(&claim),
+        "a CLAIM whose facet stamp arrived one frame ahead of it must still \
+         scope to the selected facet — the mirror gates on the source's TYPE, \
+         not on whether that type was knowable at admission time"
+    );
+    assert!(
+        ids.contains(&neighbor),
+        "the honest seed's one-hop neighbor must still ride its closure"
+    );
+    assert!(ids.contains(&facet_selected));
+}
+
+/// The mirror's WITHHOLD half. An off-table source stamped ONLY to an
+/// UNSELECTED facet reads as Unfaceted — a NON-STATEMENT, not a withhold — so
+/// the entity is judged on the selector's other rules exactly like any
+/// unstamped entity, closure included.
+///
+/// The distinction is only observable through closure, which is what this
+/// fixture builds: both the PERSON and the EVENT hang off a genuine
+/// selected-facet CLAIM seed, so each would ride that seed's closure on its
+/// own. The EVENT's stamp is ON the table and withholds it; the PERSON's is
+/// not, so nothing withholds the PERSON and it exports.
+///
+/// This asymmetry is deliberate and worth pinning: making the mirror
+/// "helpfully" fail closed on an unadmitted stamp would hand a hostile peer a
+/// SUPPRESSION primitive — spray `<host's PERSON> -> <any facet>` rows into the
+/// window and the host's own entities vanish from a legitimate grant. Refusing
+/// to read an unwritable row is the fix; letting it deny is the same bug with
+/// the sign flipped.
+#[test]
+fn selector_ignores_off_table_stamp_to_an_unselected_facet() {
+    let member = entity_id(0x3E);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-12");
+
+    let facet_selected = entity_id(0xAE);
+    let facet_unselected = entity_id(0xBE);
+    let claim_seed = entity_id(0x0E);
+    let person = entity_id(0x1E);
+    let event = entity_id(0x2E);
+
+    let doc = create_window_doc("source", &window_key);
+    insert_entity(&doc, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
+    insert_entity(&doc, facet_unselected, ENTITY_TYPE_FACET, b"facet-b");
+    insert_blob(&doc, claim_seed, &claim_blob(None));
+    insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
+    insert_entity(&doc, event, ENTITY_TYPE_EVENT, b"event");
+    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_selected);
+    // Identical shape, differing only in SOURCE TYPE — the one variable.
+    insert_edge(&doc, person, EdgeKind::FacetOf, facet_unselected);
+    insert_edge(&doc, event, EdgeKind::FacetOf, facet_unselected);
+    // Both hang off the seed, so each would export but for a withhold.
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, person);
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, event);
+    doc.commit();
+
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_selected],
+        vec![],
+    );
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+
+    assert!(
+        ids.contains(&claim_seed),
+        "control: the selected-facet claim must seed closure, or both \
+         assertions below would hold vacuously"
+    );
+    assert!(
+        ids.contains(&person),
+        "an unadmitted source's FacetOf row is a NON-STATEMENT, not a withhold: \
+         honoring it would hand a peer a suppression primitive against the \
+         host's own entities on a legitimate grant"
+    );
+    assert!(
+        !ids.contains(&event),
+        "control: EVENT is ON the table, so the SAME stamp shape still \
+         withholds — the mirror narrows by SOURCE TYPE, it does not give up"
+    );
+    assert!(
+        !ids.contains(&facet_unselected),
+        "unselected facet entity leaked"
     );
 }
 

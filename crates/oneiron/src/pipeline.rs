@@ -3045,7 +3045,7 @@ fn import_claim_gate_decisions_for_scores(
 /// Scope of the CLAIM-only reading: this stage is the LOCAL QUERY door, and a
 /// non-CLAIM `FacetOf` stamp being inert HERE is not a statement about the
 /// entity's exposure anywhere else. `crate::sync::selector` is a second door
-/// that scopes by `FacetOf` source with NO source-type check, so a TURN- or
+/// that scopes by every source type the ONE-1645 table admits, so a TURN- or
 /// EVENT-sourced stamp is disclosure-effective there. "Inert on this door"
 /// never generalizes to "disclosure-inert".
 fn apply_facet_filter(

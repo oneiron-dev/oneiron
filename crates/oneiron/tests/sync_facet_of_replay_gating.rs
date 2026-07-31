@@ -9,13 +9,14 @@
 //! rematerialization runs the table at the write chokepoint, QUARANTINING an
 //! off-table row and continuing the window.
 //!
-//! Why this is an authorization boundary and not schema hygiene: the
-//! grant-backed federation selector (`sync::selector::facet_scope_by_source`)
-//! builds a facet scope for EVERY `FacetOf` source with no source-type check.
-//! An off-table stamp injected by a member/guest peer — say `PERSON -> FACET`,
-//! a shape no local public writer can produce — would therefore be read as a
-//! facet seed and move entities plus their one-hop neighbors across the facet
-//! disclosure boundary.
+//! Why this is an authorization boundary and not schema hygiene: an off-table
+//! stamp injected by a member/guest peer — say `PERSON -> FACET`, a shape no
+//! local public writer can produce — would otherwise land in LMDB, the
+//! retrieval truth every local disclosure surface reads. The grant-backed
+//! federation selector mirrors this same table on its read side
+//! (`sync::selector::facet_scope_by_source`) and so will not honor such a
+//! source as a facet seed; keeping the unwritable shape out of storage in the
+//! first place is THIS door's job.
 //!
 //! This suite drives the REAL member/guest entry point
 //! (`admit_federated_window_update` → forward rematerialization) rather than

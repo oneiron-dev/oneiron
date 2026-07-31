@@ -2572,12 +2572,13 @@ fn forward_rematerialization_malformed_type_76_envelope_preserves_delete_wins() 
 /// rematerialization therefore runs the table itself at the write chokepoint
 /// and QUARANTINES the off-table row.
 ///
-/// Why it matters: the federation selector (`selector::facet_scope_by_source`)
-/// treats ANY `FacetOf` source as a facet seed with no source-type check, so a
-/// member/guest peer replaying a `PERSON -> FACET` stamp — a shape no local
-/// public writer can produce — would move entities and their one-hop
-/// neighbors across the facet disclosure boundary. That is an authorization
-/// bypass through replay, not a mere schema violation.
+/// Why it matters: a member/guest peer replaying a `PERSON -> FACET` stamp — a
+/// shape no local public writer can produce — would otherwise land it in LMDB,
+/// the retrieval truth every local disclosure surface reads. The federation
+/// selector mirrors this same table on its read side
+/// (`selector::facet_scope_by_source`) and so ignores such a source, but
+/// keeping the unwritable shape out of storage is this door's job. That is an
+/// authorization bypass through replay, not a mere schema violation.
 ///
 /// Both arms of the table are pinned in ONE window: the off-table PERSON
 /// stamp quarantines with the typed reason while the on-table EVENT stamp

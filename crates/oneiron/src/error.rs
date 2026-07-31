@@ -797,9 +797,9 @@ pub enum Error {
     ///
     /// Every admitted source type is disclosure-effective on at least one door:
     /// CLAIM on the local query filter (`apply_facet_filter`), and CLAIM | TURN
-    /// | EVENT alike on the federation selector, which scopes by `FacetOf`
-    /// source with no source-type check. `batch::validate_facet_of_edge` holds
-    /// the full two-door reading.
+    /// | EVENT alike on the federation selector, which mirrors this same table
+    /// on its read side. `batch::validate_facet_of_edge` holds the full
+    /// two-door reading.
     #[error(
         "invalid FacetOf edge {} (type {src_type:?}) -> {} (type {tgt_type:?}): expected CLAIM/TURN/EVENT -> FACET",
         src.to_hex(),
