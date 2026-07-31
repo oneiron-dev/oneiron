@@ -3719,11 +3719,15 @@ pub(crate) fn stored_entity_type(
 ///   prefix-scans `edges_out` under a CLAIM source only. CLAIM-sourced stamps
 ///   are effective here; TURN- and EVENT-sourced stamps are INERT on this door.
 /// * FEDERATION door — `crate::sync::selector`. `facet_scope_by_source` builds
-///   a `FacetScope` for EVERY `FacetOf` source with NO source-type check, and
+///   a `FacetScope` for every `FacetOf` source THIS TABLE ADMITS (it runs
+///   [`facet_of_source_type_admitted`] as a read mirror), and
 ///   `entity_selector_decision` withholds an entity of ANY type whose scope is
 ///   malformed or touches an unselected facet from a facet-limited peer.
 ///   CLAIM-, TURN-, AND EVENT-sourced stamps are all disclosure-EFFECTIVE here:
-///   an EVENT stamped to an unselected facet is withheld from that peer.
+///   an EVENT stamped to an unselected facet is withheld from that peer. A
+///   source OUTSIDE the admitted set carries no scope on this door either —
+///   the shape is unwritable, so a copy that slipped past a write door is not
+///   honored on read.
 ///
 /// The teeth are unchanged by the widening: a missing endpoint still fails
 /// closed, the target must still be a FACET, and every source type outside
@@ -3739,9 +3743,11 @@ pub(crate) fn stored_entity_type(
 /// That gate keys on ALL admitted source types (`CLAIM | TURN | EVENT`): each
 /// is disclosure-effective on at least one of the two doors above, so none may
 /// bypass exposure gating. The gate table is derived from CURRENT door
-/// behavior — `crate::sync::selector::tests` pins the federation half, and if
-/// the selector ever grows a source-type check the table must be re-derived.
-/// This function is the hook; it deliberately validates types only.
+/// behavior — `crate::sync::selector::tests` pins the federation half — and it
+/// stays derivable BY CONSTRUCTION now that the selector mirrors this very
+/// predicate: widening or narrowing the admitted set here moves both doors and
+/// the gate table together. This function is the hook; it deliberately
+/// validates types only.
 pub(crate) fn validate_facet_of_edge(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -3769,8 +3775,11 @@ pub(crate) fn validate_facet_of_edge(
 
 /// The ONE-1645 `FacetOf` table as a pure predicate over KNOWN endpoint types.
 ///
-/// Two doors run the same table and resolve types differently, so the table
-/// itself lives here exactly once:
+/// Every door runs the same table and they resolve types differently, so the
+/// table itself lives here exactly once, decomposed into its two independent
+/// per-endpoint halves ([`facet_of_source_type_admitted`] /
+/// [`facet_of_target_type_admitted`]) so a door that knows only ONE endpoint
+/// can still consult it without forking a second copy:
 ///
 /// * [`validate_facet_of_edge`] — the write/replay door. Types come from
 ///   STORED entity rows, and an endpoint with no row is unknowable, which that
@@ -3778,20 +3787,75 @@ pub(crate) fn validate_facet_of_edge(
 ///   before the stamp).
 /// * the FEDERATION ADMISSION boundary
 ///   (`crate::sync::selector::admit_federated_window_update`). Types come from
-///   the local vault OR from the admitted update's own entities map, and an
-///   endpoint that is unknowable there DEFERS to the replay door instead of
-///   failing closed — a not-yet-arrived endpoint must not wedge out-of-order
-///   delivery (H2).
+///   the local vault OR from the admitted update's own entities map, and it
+///   rejects on ANY SUFFICIENT FACT via
+///   [`facet_of_endpoints_provably_off_table`] — an endpoint that stays
+///   unknowable DEFERS to the replay door instead of failing closed, because a
+///   not-yet-arrived endpoint must not wedge out-of-order delivery (H2).
+/// * the FEDERATION SELECTOR's read mirror
+///   (`crate::sync::selector::entity_selector_decision`). It honors a
+///   `FacetOf` scope only from a source entity whose OWN blob types it into
+///   the admitted set, so it calls [`facet_of_source_type_admitted`] directly:
+///   the target half is irrelevant there, because an unadmitted source carries
+///   no scope regardless of what it points at.
 ///
 /// A second copy of the pair table would drift from this one silently; the
 /// admission door's whole job is to reject exactly what the replay door
-/// rejects, one layer earlier.
+/// rejects, one layer earlier, and the selector's is to READ exactly what the
+/// write doors would have let be WRITTEN.
 #[must_use]
 pub(crate) const fn facet_of_endpoint_types_on_table(src_type: u8, tgt_type: u8) -> bool {
+    facet_of_source_type_admitted(src_type) && facet_of_target_type_admitted(tgt_type)
+}
+
+/// Source half of the table: the types that may STAMP a facet.
+#[must_use]
+pub(crate) const fn facet_of_source_type_admitted(src_type: u8) -> bool {
     matches!(
         src_type,
         ENTITY_TYPE_CLAIM | ENTITY_TYPE_TURN | ENTITY_TYPE_EVENT
-    ) && tgt_type == ENTITY_TYPE_FACET
+    )
+}
+
+/// Target half of the table: the only type a facet stamp may point AT.
+#[must_use]
+const fn facet_of_target_type_admitted(tgt_type: u8) -> bool {
+    tgt_type == ENTITY_TYPE_FACET
+}
+
+/// ONE-SIDED verdict over PARTIALLY-known endpoint types: is this row's
+/// off-table status already PROVEN by the facts in hand?
+///
+/// The table is a CONJUNCTION of two independent per-endpoint predicates, so
+/// either conjunct alone can falsify it. Requiring both endpoints to be known
+/// before rejecting — the over-narrow reading fix-4 shipped — hands a forger a
+/// free pass: bundle a provably-bad PERSON source with a target that has not
+/// arrived, and a "both known" check reads the row as merely unknowable and
+/// copies it through.
+///
+/// * source known and outside the admitted set → PROVEN off-table, whatever
+///   the target turns out to be;
+/// * target known and not a FACET → PROVEN off-table, whatever the source
+///   turns out to be;
+/// * everything else (both known and on-table, or the deciding endpoint still
+///   unknowable) → NOT proven here. Both-known-and-on-table is a genuine pass;
+///   genuinely-unknowable defers to the replay door (H2).
+///
+/// `false` therefore means "no proof yet", never "proven fine".
+#[must_use]
+pub(crate) const fn facet_of_endpoints_provably_off_table(
+    src_type: Option<u8>,
+    tgt_type: Option<u8>,
+) -> bool {
+    let source_disproves = match src_type {
+        Some(src_type) => !facet_of_source_type_admitted(src_type),
+        None => false,
+    };
+    let target_disproves = match tgt_type {
+        Some(tgt_type) => !facet_of_target_type_admitted(tgt_type),
+        None => false,
+    };
+    source_disproves || target_disproves
 }
 
 /// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind

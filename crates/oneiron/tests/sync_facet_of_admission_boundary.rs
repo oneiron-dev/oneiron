@@ -5,20 +5,25 @@
 //! The replay chokepoint (`sync_facet_of_replay_gating`) stops an off-table
 //! stamp from reaching LMDB. That is not the whole exposure, because the
 //! federation SELECTOR does not read LMDB — `facet_scope_by_source` walks the
-//! RAW Loro edges map and builds a facet scope for EVERY `FacetOf` source with
-//! no source-type check. A forged `PERSON -> <selected FACET>` row that merely
-//! SITS in the admitted / live document therefore still scopes what this vault
-//! exports to a facet-limited peer, quarantined or not.
+//! RAW Loro edges map. A forged `PERSON -> <selected FACET>` row that merely
+//! SITS in the admitted / live document is therefore visible to the export
+//! path, quarantined or not.
 //!
 //! So the table also runs at the trust boundary, with a deliberately
 //! ASYMMETRIC invariant:
 //!
-//! * PROVABLY off-table — both endpoint types knowable NOW, from the local
-//!   vault or from the admitted update itself — is DROPPED with a typed
-//!   `InvalidFacetOfEdge` quarantine record. It never enters the doc.
-//! * UNKNOWABLE endpoint type — the endpoint has not arrived yet — PASSES
-//!   THROUGH to the remat gate's defer-then-validate. A hard verdict here
-//!   would burn legitimate out-of-order delivery permanently (H2).
+//! * PROVABLY off-table — on ANY SUFFICIENT FACT, from the local vault or from
+//!   the admitted update itself: a KNOWN off-table source alone, or a KNOWN
+//!   non-FACET target alone — is DROPPED with a typed `InvalidFacetOfEdge`
+//!   quarantine record. It never enters the doc. Waiting for BOTH endpoints
+//!   would let a forger buy a pass by withholding the endpoint that is not the
+//!   incriminating one.
+//! * UNKNOWABLE deciding endpoint — it has not arrived yet — PASSES THROUGH to
+//!   the remat gate's defer-then-validate. A hard verdict here would burn
+//!   legitimate out-of-order delivery permanently (H2). That residue is inert
+//!   on the export path regardless: the selector mirrors the same table on its
+//!   read side, so an unadmitted source's stamps carry no facet scope even
+//!   after the missing endpoint lands off-table.
 //!
 //! And it runs on the OBSERVER-B door, which a member/guest import into a
 //! LOADED window takes synchronously through the ungated
@@ -114,7 +119,8 @@ fn admitted_edge_keys(
 /// P1/P2 ROOT FIX: a provably off-table `PERSON -> FACET` row never enters the
 /// admitted document, so the selector — which reads the raw Loro map — cannot
 /// read it as a facet seed. Both endpoint types are knowable from the local
-/// vault, which is what makes the verdict PROVABLE rather than a guess.
+/// vault here, the easiest case; the one-sided cases below are the load-bearing
+/// ones.
 ///
 /// Run once per role: a table enforced for members but not guests (or the
 /// reverse) is worse than no table, because it reads as protection.
@@ -227,6 +233,91 @@ fn admission_drops_off_table_row_whose_endpoints_arrive_in_the_same_frame() {
         "an endpoint bundled with its own forged stamp is still PROVABLY \
          off-table — the admitted update's entities map is a type source"
     );
+}
+
+/// ONE-SIDED SOURCE. The table is a conjunction, so a KNOWN off-table source
+/// falsifies it alone: `PERSON -> <target absent everywhere>` is proven bad
+/// with the target's type still unknown, because NO target type could rescue a
+/// PERSON stamp.
+///
+/// A "both endpoints known" reading would copy this row through, and the
+/// bypass is trivial to drive: the forger simply withholds the endpoint that
+/// is not the incriminating one, then delivers it in a later update.
+///
+/// Both roles: a table enforced for one and not the other reads as protection
+/// while being none.
+#[test]
+fn admission_drops_one_sided_off_table_source_with_unknown_target() {
+    for role in [
+        FederationAdmissionRole::Member,
+        FederationAdmissionRole::Guest,
+    ] {
+        let (_dir, vault) = test_vault();
+        let window_key = WindowKey::new(WINDOW);
+        let person = EntityId::from_bytes([0xE1; 16]).unwrap();
+        // Target is seeded NOWHERE — not the vault, not the update.
+        let unknown_target = EntityId::from_bytes([0xE2; 16]).unwrap();
+        seed(&vault, &person, ENTITY_TYPE_PERSON);
+
+        let remote = create_window_doc("federation-peer", &window_key);
+        let forged_key = format_edge_key(&person, EdgeKind::FacetOf, &unknown_target);
+        map_insert_bytes(&remote.get_map("edges"), &forged_key, &facet_of_value(T0));
+        remote.commit();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+
+        let keys = admitted_edge_keys(&vault, &window_key, &update, role);
+        assert!(
+            !keys.contains(&forged_key),
+            "{role:?}: a KNOWN off-table source proves the row bad on its own — \
+             no target type could make PERSON -> anything a legal facet stamp, \
+             so waiting for the target hands the forger a free pass"
+        );
+
+        let records = quarantined_records(&vault).unwrap();
+        assert_eq!(records.len(), 1, "{role:?}: exactly the forged row");
+        assert_eq!(
+            records[0].1.reason_code, "InvalidFacetOfEdge",
+            "{role:?}: the one-sided drop carries the typed table reason"
+        );
+    }
+}
+
+/// ONE-SIDED TARGET, the mirror image: a KNOWN non-FACET target falsifies the
+/// table alone. `<source absent everywhere> -> PERSON` is proven bad with the
+/// source's type still unknown, because NO source type may stamp a non-FACET.
+#[test]
+fn admission_drops_one_sided_non_facet_target_with_unknown_source() {
+    for role in [
+        FederationAdmissionRole::Member,
+        FederationAdmissionRole::Guest,
+    ] {
+        let (_dir, vault) = test_vault();
+        let window_key = WindowKey::new(WINDOW);
+        // Source is seeded NOWHERE — not the vault, not the update.
+        let unknown_source = EntityId::from_bytes([0xE3; 16]).unwrap();
+        let person_target = EntityId::from_bytes([0xE4; 16]).unwrap();
+        seed(&vault, &person_target, ENTITY_TYPE_PERSON);
+
+        let remote = create_window_doc("federation-peer", &window_key);
+        let forged_key = format_edge_key(&unknown_source, EdgeKind::FacetOf, &person_target);
+        map_insert_bytes(&remote.get_map("edges"), &forged_key, &facet_of_value(T0));
+        remote.commit();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+
+        let keys = admitted_edge_keys(&vault, &window_key, &update, role);
+        assert!(
+            !keys.contains(&forged_key),
+            "{role:?}: a KNOWN non-FACET target proves the row bad on its own — \
+             CLAIM, TURN and EVENT alike may only stamp a FACET"
+        );
+
+        let records = quarantined_records(&vault).unwrap();
+        assert_eq!(records.len(), 1, "{role:?}: exactly the forged row");
+        assert_eq!(
+            records[0].1.reason_code, "InvalidFacetOfEdge",
+            "{role:?}: the one-sided drop carries the typed table reason"
+        );
+    }
 }
 
 /// H2 line: a row whose endpoint types are UNKNOWABLE — absent from the vault

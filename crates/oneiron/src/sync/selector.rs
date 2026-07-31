@@ -5,6 +5,7 @@
 //! sync builds a synthetic window doc containing only the authorized closed
 //! subgraph and exports from that doc instead.
 
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Cursor;
 
@@ -580,25 +581,25 @@ fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> R
 /// ONE-1645 admission boundary for the `FacetOf` type table. The replay
 /// chokepoint (`window::forward_rematerialize`) already quarantines an
 /// off-table stamp before it reaches LMDB, but the FEDERATION SELECTOR reads
-/// the RAW Loro map, not LMDB: `selector::facet_scope_by_source` builds a
-/// facet scope for EVERY `FacetOf` source with no source-type check, so a
-/// forged `PERSON -> <selected FACET>` row that merely SITS in the admitted /
-/// live document still scopes what this vault exports to a facet-limited
-/// peer — quarantined-but-present is enough. The only complete fix is here,
-/// at the trust boundary: a provably off-table row never enters the admitted
-/// doc at all.
+/// the RAW Loro map, not LMDB: a forged `PERSON -> <selected FACET>` row that
+/// merely SITS in the admitted / live document could scope what this vault
+/// exports to a facet-limited peer — quarantined-but-present is enough. The
+/// complete fix is layered: this door keeps a PROVABLY off-table row out of
+/// the doc, and [`facet_scope_by_source`] mirrors the same table on the READ
+/// side so whatever residue survives the H2 defer is inert anyway.
 ///
-/// The invariant is deliberately asymmetric, and the asymmetry is the whole
-/// design (see [`admitted_facet_of_verdict`]):
+/// The invariant here is deliberately asymmetric, and the asymmetry is the
+/// whole design (see [`admitted_facet_of_verdict`]):
 ///
-/// * PROVABLY off-table — both endpoint types knowable NOW — is DROPPED with
-///   a typed [`Error::InvalidFacetOfEdge`] quarantine record. The row is not
+/// * PROVABLY off-table on the facts in hand — a KNOWN off-table source, or a
+///   KNOWN non-FACET target, either one sufficient ALONE — is DROPPED with a
+///   typed [`Error::InvalidFacetOfEdge`] quarantine record. The row is not
 ///   copied, so the selector can never read it.
-/// * UNKNOWABLE endpoint type — the endpoint has not arrived yet — PASSES
+/// * UNKNOWABLE deciding endpoint — the endpoint has not arrived yet — PASSES
 ///   THROUGH. The remat gate's defer-then-validate owns those: a hard verdict
-///   here would burn a legitimate out-of-order delivery permanently (H2), and
-///   the row cannot scope an export while its endpoint is missing anyway,
-///   because the selector only emits entities it can see.
+///   here would burn a legitimate out-of-order delivery permanently (H2). The
+///   read mirror is what makes that pass-through safe even after the missing
+///   endpoint later lands off-table.
 ///
 /// Dropping the edge while still admitting its source entity is harmless: the
 /// entity arrives UNSTAMPED, which is strictly less disclosure than the peer
@@ -659,11 +660,12 @@ fn copy_admitted_edges(
 /// What the admission boundary does with one parsed edge row.
 #[cfg(feature = "sync")]
 enum AdmittedEdgeVerdict {
-    /// On-table, not a `FacetOf` row at all, or a row whose endpoint types are
-    /// not knowable yet — copy it and let the replay gate own it.
+    /// On-table, not a `FacetOf` row at all, or a row whose DECIDING endpoint
+    /// type is not knowable yet — copy it and let the replay gate own it.
     Copy,
-    /// PROVABLY off-table: both endpoint types are knowable now and the pair
-    /// is outside the table. Drop with this typed rejection.
+    /// PROVABLY off-table on the facts in hand: a known off-table source, or a
+    /// known non-FACET target, is each sufficient alone. Drop with this typed
+    /// rejection.
     DropOffTable(Error),
 }
 
@@ -679,14 +681,25 @@ enum AdmittedEdgeVerdict {
 ///    here is what keeps a well-formed peer from being forced through the
 ///    defer path on every first delivery.
 ///
-/// `None` from BOTH means the type is unknowable NOW: the endpoint has not
-/// arrived, and the row is passed through for the remat gate's
-/// defer-then-validate. This is the H2 line — an unknowable type is not
-/// evidence of a forgery, and treating it as one would wedge out-of-order
-/// delivery permanently.
+/// The verdict is ONE-SIDED-sufficient
+/// ([`crate::batch::facet_of_endpoints_provably_off_table`]): the table is a
+/// conjunction of two independent per-endpoint predicates, so a KNOWN off-table
+/// source alone proves the row bad no matter what its target turns out to be,
+/// and a KNOWN non-FACET target alone proves it bad no matter what its source
+/// turns out to be. Demanding BOTH endpoints before rejecting would let a
+/// forger buy a pass by simply withholding the endpoint that is not the
+/// incriminating one.
 ///
-/// The table itself is [`crate::batch::facet_of_endpoint_types_on_table`], the
-/// single copy the write/replay door also runs.
+/// Only a row whose DECIDING endpoint stays unknowable passes through: the
+/// endpoint has not arrived, and the remat gate's defer-then-validate owns it.
+/// This is the H2 line — an unknowable type is not evidence of a forgery, and
+/// treating it as one would wedge out-of-order delivery permanently. That
+/// residue is inert on the export path regardless, because
+/// [`facet_scope_by_source`] now honors a scope only from a source entity the
+/// document itself types into the admitted set.
+///
+/// The table itself is [`crate::batch::facet_of_endpoint_types_on_table`] and
+/// its halves, the single copy the write/replay door also runs.
 #[cfg(feature = "sync")]
 fn admitted_facet_of_verdict(
     vault: &Vault,
@@ -701,10 +714,7 @@ fn admitted_facet_of_verdict(
     }
     let src_type = admitted_endpoint_type(vault, rtxn, source_entities, &src)?;
     let tgt_type = admitted_endpoint_type(vault, rtxn, source_entities, &tgt)?;
-    let (Some(known_src), Some(known_tgt)) = (src_type, tgt_type) else {
-        return Ok(AdmittedEdgeVerdict::Copy);
-    };
-    if crate::batch::facet_of_endpoint_types_on_table(known_src, known_tgt) {
+    if !crate::batch::facet_of_endpoints_provably_off_table(src_type, tgt_type) {
         return Ok(AdmittedEdgeVerdict::Copy);
     }
     Ok(AdmittedEdgeVerdict::DropOffTable(
@@ -874,7 +884,7 @@ fn filter_window_doc(
         tombstoned.insert(id);
     });
 
-    let facet_scope = facet_scope_by_source(&source_edges, selector);
+    let facet_scope = facet_scope_by_source(&source_entities, &source_edges, selector);
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
@@ -973,6 +983,12 @@ fn filter_window_doc(
     out
 }
 
+/// One source entity's `FacetOf` scope, as read by [`facet_scope_by_source`].
+///
+/// A source with NO entry is Unfaceted — either it carries no `FacetOf` rows
+/// at all, or every row it carries was disregarded because the document does
+/// not type it into the admitted set. The two are deliberately the same state:
+/// an unadmitted stamp is not a withhold, it is a non-statement.
 #[derive(Debug, Default)]
 struct FacetScope {
     any: bool,
@@ -988,15 +1004,45 @@ struct EntitySelectorDecision {
 }
 
 /// Builds the per-source facet scope a facet-limited peer's export is filtered
-/// against. Deliberately scopes by `FacetOf` source with NO source-type check:
-/// every admitted source type (`CLAIM | TURN | EVENT`) is disclosure-effective
-/// here, unlike the local query door, which reads CLAIM adjacency only.
+/// against, honoring a `FacetOf` row's scope ONLY when the source entity's own
+/// blob types it into the ONE-1645 admitted set (`CLAIM | TURN | EVENT`).
 ///
-/// Whether this door SHOULD type-check facet scoping is an open design
-/// question deferred to S-DISC2; the current behavior is pinned by
-/// `tests::selector_denies_event_scoped_to_unselected_facet`, and ONE-1646's
-/// exposure-gate table is derived from it.
+/// READ MIRROR OF THE WRITE TABLE — the why. This door reads the RAW Loro map,
+/// never LMDB, so it sees rows no write door would have accepted: the local
+/// batch door aborts an off-table stamp, the remat chokepoint quarantines one,
+/// and [`copy_admitted_edges`] drops a PROVABLY off-table one at the
+/// federation trust boundary — but the H2 defer deliberately lets a row whose
+/// deciding endpoint is not knowable YET pass through, and that row is still
+/// sitting in the document after its endpoint later arrives typed off-table.
+/// Honoring it would let a forged `PERSON -> <selected FACET>` stamp pull the
+/// PERSON and its one-hop neighbors across the disclosure boundary, which is
+/// an authorization bypass, not a schema violation.
+///
+/// So the read side runs the SAME predicate the write side runs
+/// ([`crate::batch::facet_of_source_type_admitted`], the source half of the
+/// single shared table): a stamp is honored here exactly when it is a stamp
+/// the engine would have let be WRITTEN. An unadmitted source's `FacetOf`
+/// edges carry NO facet scope at all — neither a seed nor a withhold — so that
+/// entity is simply Unfaceted, judged on the selector's other filters like any
+/// unstamped entity. The target half is not consulted: an unadmitted source
+/// carries no scope regardless of what it points at, and a stamp aimed at a
+/// non-FACET target cannot name a selected facet anyway.
+///
+/// A source ABSENT from this document (or carrying an unparsable blob) is
+/// vacuous rather than a special case: [`entity_selector_decision`] runs only
+/// over entities the document holds and parses, and `seeds` is drawn from
+/// those same candidates, so a scope entry for such a source could never be
+/// consulted.
+///
+/// SCOPE OF THIS MIRROR: it is the read-side twin of THIS lane's write table,
+/// nothing wider. The broader exposure-gate design — which disclosure surfaces
+/// should consult facet scope at all, and how facet exposure state is
+/// consented — is S-DISC2's, and ONE-1646's gate table is derived from door
+/// behavior that this function's admitted set now defines on both sides.
+/// EVENT is admitted, so EVENT-sourced stamps stay disclosure-effective here
+/// (pinned by `tests::selector_denies_event_scoped_to_unselected_facet`).
 fn facet_scope_by_source(
+    entities: &loro::LoroMap,
     edges: &loro::LoroMap,
     selector: &SyncSelector,
 ) -> HashMap<EntityId, FacetScope> {
@@ -1013,7 +1059,17 @@ fn facet_scope_by_source(
         if kind != EdgeKind::FacetOf {
             return;
         }
-        let entry = scopes.entry(src).or_default();
+        // An occupied slot was admitted when it was created, so the type read
+        // happens once per source however many stamps it carries.
+        let entry = match scopes.entry(src) {
+            Entry::Occupied(occupied) => occupied.into_mut(),
+            Entry::Vacant(vacant) => {
+                if !facet_of_source_admitted_in_doc(entities, &src) {
+                    return;
+                }
+                vacant.insert(FacetScope::default())
+            }
+        };
         entry.any = true;
         if maybe_value.is_none() {
             entry.malformed = true;
@@ -1026,6 +1082,18 @@ fn facet_scope_by_source(
         }
     });
     scopes
+}
+
+/// Reads one `FacetOf` source's type from THIS document and runs the write
+/// table's source half on it. Absent, non-binary, or header-unparsable reads
+/// `false` — all three are entities [`entity_selector_decision`] would refuse
+/// to export anyway, so withholding their scope changes nothing they could
+/// have disclosed.
+fn facet_of_source_admitted_in_doc(entities: &loro::LoroMap, src: &EntityId) -> bool {
+    super::loro_support::map_get_bytes(entities, &src.to_hex())
+        .as_deref()
+        .and_then(EntityMetadataHeader::parse)
+        .is_some_and(|header| crate::batch::facet_of_source_type_admitted(header.entity_type))
 }
 
 fn entity_selector_decision(

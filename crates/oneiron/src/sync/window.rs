@@ -1638,10 +1638,13 @@ pub fn forward_rematerialize(
                 //
                 // Without it a federation peer could replay an off-table
                 // stamp (e.g. PERSON -> FACET) that no local public writer
-                // can write, and the grant-backed selector treats ANY
-                // `FacetOf` source as a facet seed
-                // (`selector::facet_scope_by_source`, no source-type check) —
-                // an authorization-boundary bypass via replay.
+                // can write, and it would reach LMDB — where the local query
+                // door reads facet adjacency with no admitted-set filter of
+                // its own. The federation selector no longer honors such a
+                // source (`selector::facet_scope_by_source` mirrors this same
+                // table on read), but the LMDB write is still an
+                // authorization-boundary bypass via replay: this door is what
+                // keeps the shape out of the retrieval truth at all.
                 //
                 // Ordered AFTER the endpoint-existence check on purpose: a
                 // cross-window endpoint that has not arrived yet is a
