@@ -484,7 +484,11 @@ fn verify_doc_ts(
 /// speak about the document's covered CMS signer/TSA chains: every covered
 /// certificate must appear in `/Certs` or be a trust anchor. A present DSS
 /// with no arrays at all is evidence-free and fails. Present-but-invalid
-/// evidence fails ValidationMaterial; it is never AbsentAllowed.
+/// evidence fails ValidationMaterial; it is never AbsentAllowed. A trailer
+/// `/Root` that cannot be read as a catalog (e.g. a spec-invalid direct
+/// dictionary) is present-but-unreadable, not absent: it classifies
+/// Invalid so a `/DSS` hidden inside it cannot dodge the failed-evidence
+/// classification.
 fn verify_dss(
     doc: &Document,
     anchors: &[EmbeddedCert],
@@ -492,9 +496,20 @@ fn verify_dss(
     at_unix: u64,
     checks: &mut Checks,
 ) {
-    let Ok(catalog) = doc.catalog() else {
-        checks.absent(VerifyCheckKind::ValidationMaterial);
-        return;
+    let catalog = match doc.catalog() {
+        Ok(c) => c,
+        Err(_) => {
+            if doc.trailer.has(b"Root") {
+                checks.record(
+                    VerifyCheckKind::ValidationMaterial,
+                    false,
+                    VerifyFindingCode::ValidationMaterialInvalid,
+                );
+            } else {
+                checks.absent(VerifyCheckKind::ValidationMaterial);
+            }
+            return;
+        }
     };
     let Ok(dss_obj) = catalog.get(b"DSS") else {
         checks.absent(VerifyCheckKind::ValidationMaterial);
@@ -577,31 +592,60 @@ fn dss_material_valid(
     if !bound {
         return false;
     }
-    match crls {
-        DssArray::Absent => {}
+    // Every CRL entry must be valid; collect the issuer names the valid
+    // CRLs speak for so the coverage rule below can match them against
+    // each covered certificate's issuer.
+    let crl_issuers: Vec<x509_cert::name::Name> = match crls {
+        DssArray::Absent => Vec::new(),
         DssArray::Malformed => return false,
         DssArray::Entries(entries) => {
-            if entries.is_empty()
-                || entries
-                    .iter()
-                    .any(|e| !crl_entry_valid(e, &embedded, anchors, covered, at_unix))
-            {
+            if entries.is_empty() {
                 return false;
             }
+            let mut v = Vec::with_capacity(entries.len());
+            for e in &entries {
+                let Some(issuer) = crl_entry_valid(e, &embedded, anchors, covered, at_unix) else {
+                    return false;
+                };
+                v.push(issuer);
+            }
+            v
         }
-    }
+    };
+    // Every OCSP entry must be valid; collect the DERs of the target
+    // certificates the valid responses bind to with a `good` status.
+    let mut ocsp_targets: Vec<Vec<u8>> = Vec::new();
     match ocsps {
         DssArray::Absent => {}
         DssArray::Malformed => return false,
         DssArray::Entries(entries) => {
-            if entries.is_empty()
-                || entries
-                    .iter()
-                    .any(|e| !ocsp_entry_valid(e, &embedded, anchors, at_unix))
-            {
+            if entries.is_empty() {
                 return false;
             }
+            for e in &entries {
+                let Some(targets) = ocsp_entry_valid(e, &embedded, anchors, at_unix) else {
+                    return false;
+                };
+                ocsp_targets.extend(targets);
+            }
         }
+    }
+    // Revocation coverage (§7.5 steps 2-3): every covered NON-ANCHOR chain
+    // certificate needs at least one valid evidence item speaking ABOUT it
+    // — a CRL issued by its issuer (signature valid, fresh, its serial not
+    // listed, all established by crl_entry_valid) or an OCSP SingleResponse
+    // bound to it with `cert_status` good. Anchor certificates ride anchor
+    // trust and need no coverage. A cert-only DSS or evidence about an
+    // irrelevant issuer fails here — never AbsentAllowed.
+    let covered_ok = covered.iter().all(|c| {
+        if anchors.iter().any(|a| a.der == c.der) {
+            return true;
+        }
+        let issuer = &c.cert.tbs_certificate.issuer;
+        crl_issuers.iter().any(|n| n == issuer) || ocsp_targets.contains(&c.der)
+    });
+    if !covered_ok {
+        return false;
     }
     true
 }
@@ -692,40 +736,40 @@ fn find_issuer<'a>(
 /// the applicable time, and lists no in-scope serial on its revoked list
 /// (§7.5 step 3). In-scope means every cert in the validation set
 /// (embedded, anchors, and the report's covered chains) issued by this
-/// CRL's issuer; any listed serial invalidates the evidence.
+/// CRL's issuer; any listed serial invalidates the evidence. On success
+/// returns the CRL issuer name so the coverage rule can match it against
+/// each covered certificate's issuer.
 fn crl_entry_valid(
     data: &[u8],
     embedded: &[EmbeddedCert],
     anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
-) -> bool {
+) -> Option<x509_cert::name::Name> {
     use der::{Decode, Encode};
     let Ok(crl) = x509_cert::crl::CertificateList::from_der(data) else {
-        return false;
+        return None;
     };
-    let Some(issuer) = find_issuer(&crl.tbs_cert_list.issuer, embedded, anchors) else {
-        return false;
-    };
+    let issuer = find_issuer(&crl.tbs_cert_list.issuer, embedded, anchors)?;
     let Ok(alg) = cms::cert_signature_algorithm(&issuer.der) else {
-        return false;
+        return None;
     };
     let oid = crl.signature_algorithm.oid.as_bytes();
     if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
-        return false;
+        return None;
     }
     let Ok(tbs) = crl.tbs_cert_list.to_der() else {
-        return false;
+        return None;
     };
     if cms::verify_signature_value(alg, &issuer.der, &tbs, crl.signature.raw_bytes()).is_err() {
-        return false;
+        return None;
     }
     if !evidence_fresh(
         crl.tbs_cert_list.this_update,
         crl.tbs_cert_list.next_update,
         at_unix,
     ) {
-        return false;
+        return None;
     }
     // Revocation evaluation: a validation-set certificate issued by this
     // CRL's issuer whose serial is on the revoked list makes the evidence
@@ -741,11 +785,11 @@ fn crl_entry_valid(
                 .iter()
                 .any(|r| r.serial_number == cert.cert.tbs_certificate.serial_number)
             {
-                return false;
+                return None;
             }
         }
     }
-    true
+    Some(crl.tbs_cert_list.issuer.clone())
 }
 
 /// id-sha1 (RFC 6960 default CertID hash) and id-kp-OCSPSigning.
@@ -855,39 +899,41 @@ fn ocsp_responder_matches(rid: &x509_ocsp::ResponderId, cert: &x509_cert::Certif
 /// under an authorized responder, with every SingleResponse bound to an
 /// embedded/anchored cert serial, fresh at the applicable time, and
 /// asserting `good`. A `revoked` status invalidates the evidence; `unknown`
-/// fails closed (the blueprint leaves it unpinned, §7.5/§7.7).
+/// fails closed (the blueprint leaves it unpinned, §7.5/§7.7). On success
+/// returns the DERs of the target certificates the SingleResponses bind
+/// to, so the coverage rule can match them against the covered chain.
 fn ocsp_entry_valid(
     data: &[u8],
     embedded: &[EmbeddedCert],
     anchors: &[EmbeddedCert],
     at_unix: u64,
-) -> bool {
+) -> Option<Vec<Vec<u8>>> {
     use const_oid::AssociatedOid;
     use der::{Decode, Encode};
     let Ok(resp) = x509_ocsp::OcspResponse::from_der(data) else {
-        return false;
+        return None;
     };
     if resp.response_status != x509_ocsp::OcspResponseStatus::Successful {
-        return false;
+        return None;
     }
     let Some(bytes) = &resp.response_bytes else {
-        return false;
+        return None;
     };
     if bytes.response_type != x509_ocsp::BasicOcspResponse::OID {
-        return false;
+        return None;
     }
     let Ok(basic) = x509_ocsp::BasicOcspResponse::from_der(bytes.response.as_bytes()) else {
-        return false;
+        return None;
     };
     if basic.tbs_response_data.responses.is_empty() {
-        return false;
+        return None;
     }
     // Candidate responder certs: response-embedded, then DSS, then anchors.
     let mut candidates: Vec<EmbeddedCert> = Vec::new();
     if let Some(certs) = &basic.certs {
         for c in certs {
             let Ok(der_bytes) = c.to_der() else {
-                return false;
+                return None;
             };
             candidates.push(EmbeddedCert {
                 der: der_bytes,
@@ -895,7 +941,7 @@ fn ocsp_entry_valid(
             });
         }
     }
-    let Some(responder) = candidates
+    let responder = candidates
         .iter()
         .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
         .or_else(|| {
@@ -903,16 +949,12 @@ fn ocsp_entry_valid(
                 .iter()
                 .chain(anchors.iter())
                 .find(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
-        })
-    else {
-        return false;
-    };
+        })?;
+    let mut targets: Vec<Vec<u8>> = Vec::with_capacity(basic.tbs_response_data.responses.len());
     for single in &basic.tbs_response_data.responses {
-        let Some((_target, issuer)) = ocsp_cert_binding(&single.cert_id, embedded, anchors) else {
-            return false;
-        };
+        let (target, issuer) = ocsp_cert_binding(&single.cert_id, embedded, anchors)?;
         if !ocsp_responder_authorized(responder, issuer) {
-            return false;
+            return None;
         }
         if !evidence_fresh(
             x509_cert::time::Time::GeneralTime(single.this_update.0),
@@ -921,24 +963,27 @@ fn ocsp_entry_valid(
                 .map(|n| x509_cert::time::Time::GeneralTime(n.0)),
             at_unix,
         ) {
-            return false;
+            return None;
         }
         // Evaluate the asserted status: only `good` supports validity.
         if !matches!(single.cert_status, x509_ocsp::CertStatus::Good(_)) {
-            return false;
+            return None;
         }
+        targets.push(target.der.clone());
     }
     let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
-        return false;
+        return None;
     };
     let oid = basic.signature_algorithm.oid.as_bytes();
     if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
-        return false;
+        return None;
     }
     let Ok(tbs) = basic.tbs_response_data.to_der() else {
-        return false;
+        return None;
     };
-    cms::verify_signature_value(alg, &responder.der, &tbs, basic.signature.raw_bytes()).is_ok()
+    cms::verify_signature_value(alg, &responder.der, &tbs, basic.signature.raw_bytes())
+        .is_ok()
+        .then_some(targets)
 }
 
 /// Full document verification and profile classification (§7.7).
@@ -1485,5 +1530,171 @@ mod tests {
         let covered = covered_of(&[&ca.cert_der]);
         let checks = dss_check(&doc, &covered);
         assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_cert_only_fails_revocation_coverage() {
+        // A /Certs-only DSS (chain DERs present, /CRLs and /OCSPs absent)
+        // carries zero revocation material and must not inflate B-LT.
+        let ca = test_ca("dss-ca");
+        let leaf_der = leaf_under(&ca, "leaf");
+        let doc = dss_doc(&[ca.cert_der.clone(), leaf_der.clone()], &[], &[]);
+        let covered = covered_of(&[&ca.cert_der, &leaf_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_irrelevant_issuer_evidence_fails_coverage() {
+        // Authentic-but-irrelevant evidence: an attacker-embedded
+        // self-signed "issuer" with its own fresh CRL/OCSP says nothing
+        // about the covered chain.
+        let real_ca = test_ca("real-ca");
+        let leaf_der = leaf_under(&real_ca, "signer");
+        let evil = test_ca("evil-ca");
+        let evil_crl = build_crl(&evil, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
+        let evil_ocsp = build_ocsp(
+            &evil,
+            evil.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+        );
+        let doc = dss_doc(
+            &[real_ca.cert_der.clone(), leaf_der.clone(), evil.cert_der],
+            &[evil_crl],
+            &[evil_ocsp],
+        );
+        let covered = covered_of(&[&real_ca.cert_der, &leaf_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_crl_covers_chain_passes() {
+        // One CRL issued by the CA covers both the CA (self-issued) and the
+        // leaf it issued.
+        let ca = test_ca("dss-ca");
+        let leaf_der = leaf_under(&ca, "leaf");
+        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
+        let doc = dss_doc(&[ca.cert_der.clone(), leaf_der.clone()], &[crl], &[]);
+        let covered = covered_of(&[&ca.cert_der, &leaf_der]);
+        let checks = dss_check(&doc, &covered);
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn dss_ocsp_covers_chain_passes() {
+        // OCSP responses bound to each covered cert with `good` status.
+        let ca = test_ca("dss-ca");
+        let leaf_der = leaf_under(&ca, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let ocsp_ca = build_ocsp(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+        );
+        let ocsp_leaf = build_ocsp(
+            &ca,
+            leaf.tbs_certificate.serial_number,
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+        );
+        let doc = dss_doc(
+            &[ca.cert_der.clone(), leaf_der.clone()],
+            &[],
+            &[ocsp_ca, ocsp_leaf],
+        );
+        let covered = covered_of(&[&ca.cert_der, &leaf_der]);
+        let checks = dss_check(&doc, &covered);
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn dss_mixed_crl_ocsp_coverage_passes() {
+        // Mixed chain: the CA rides a CRL, the leaf rides an OCSP response.
+        let ca = test_ca("dss-ca");
+        let leaf_der = leaf_under(&ca, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
+        let ocsp_leaf = build_ocsp(
+            &ca,
+            leaf.tbs_certificate.serial_number,
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+        );
+        let doc = dss_doc(
+            &[ca.cert_der.clone(), leaf_der.clone()],
+            &[crl],
+            &[ocsp_leaf],
+        );
+        let covered = covered_of(&[&ca.cert_der, &leaf_der]);
+        let checks = dss_check(&doc, &covered);
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn dss_anchor_exempt_from_coverage_passes() {
+        // Anchor certificates ride anchor trust: the covered anchor needs
+        // no evidence of its own; the non-anchor intermediate is covered by
+        // an OCSP response bound to it.
+        let anchor_ca = test_ca("anchor-ca");
+        let inter_der = leaf_under(&anchor_ca, "intermediate");
+        let inter = x509_cert::Certificate::from_der(&inter_der).unwrap();
+        let ocsp_inter = build_ocsp(
+            &anchor_ca,
+            inter.tbs_certificate.serial_number,
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+        );
+        let doc = dss_doc(
+            &[anchor_ca.cert_der.clone(), inter_der.clone()],
+            &[],
+            &[ocsp_inter],
+        );
+        let anchor = EmbeddedCert::from_der(&anchor_ca.cert_der).unwrap();
+        let covered = covered_of(&[&anchor_ca.cert_der, &inter_der]);
+        let mut checks = Checks::new();
+        verify_dss(
+            &doc,
+            std::slice::from_ref(&anchor),
+            &covered,
+            AT_UNIX,
+            &mut checks,
+        );
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn dss_direct_dict_root_classifies_invalid() {
+        // lopdf catalog() errs on a spec-invalid direct-dictionary trailer
+        // /Root; a /DSS hidden inside it must classify Invalid, never
+        // Absent.
+        let mut doc = Document::with_version("1.4");
+        let mut dss = lopdf::Dictionary::new();
+        dss.set("Type", Object::Name(b"DSS".to_vec()));
+        let mut catalog = lopdf::Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("DSS", Object::Dictionary(dss));
+        doc.trailer.set("Root", Object::Dictionary(catalog));
+        let checks = dss_check(&doc, &[]);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_no_trailer_root_stays_absent() {
+        // A genuinely DSS-free document (no trailer /Root at all) keeps the
+        // AbsentAllowed classification.
+        let doc = Document::with_version("1.4");
+        let checks = dss_check(&doc, &[]);
+        assert_eq!(
+            dss_finding(&checks),
+            (VerifyCheckStatus::AbsentAllowed, None)
+        );
     }
 }
