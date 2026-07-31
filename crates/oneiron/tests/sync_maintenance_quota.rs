@@ -222,19 +222,13 @@ fn insert_authority_blob(doc: &LoroDoc, id: EntityId, blob: &[u8]) {
         .unwrap();
 }
 
-/// The content-derived type-122 store key (ONE-1604-D1): the first 16 bytes
-/// of the entry's BLAKE3 `authority_entry_hash`. Peers learn this id from
-/// `put_authority_log_entry`; a hand-built CRDT fixture derives it here so
-/// remote rows carry the same key the engine would have chosen.
-fn authority_log_entity_id(entry: &AuthorityLogEntry) -> EntityId {
-    let hash = authority_entry_hash(entry).unwrap();
-    EntityId::from_bytes(hash[..16].try_into().unwrap()).unwrap()
-}
-
 /// Inserts an authority entry under its CONTENT-DERIVED store key
 /// (ONE-1604-D1: type-122 ids are never caller-chosen) and returns that id.
+/// The hand-built CRDT fixture derives the key through the engine's own
+/// `authority_log_entity_id` so remote rows carry the same key the engine
+/// would have chosen.
 fn insert_authority_entry(doc: &LoroDoc, entry: &AuthorityLogEntry) -> EntityId {
-    let id = authority_log_entity_id(entry);
+    let id = oneiron::authority::authority_log_entity_id(entry).unwrap();
     insert_authority_blob(doc, id, &authority_blob(entry));
     id
 }

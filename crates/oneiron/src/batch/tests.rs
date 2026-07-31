@@ -2776,7 +2776,11 @@ fn authority_log_body_divergent_overwrite_rejected_at_store_key() -> Result<()> 
         .expect_err("body-divergent overwrite of a type-122 row must be rejected");
 
     assert_eq!(err.kind(), ErrorKind::AuthorityLogStoreKeyMismatch);
-    assert_eq!(vault.get_raw(&id)?, Some(stored), "local bytes must be kept");
+    assert_eq!(
+        vault.get_raw(&id)?,
+        Some(stored),
+        "local bytes must be kept"
+    );
     assert_eq!(vault.authority_fold()?.vault_id, vault_id_before);
     Ok(())
 }
@@ -3582,4 +3586,3 @@ fn child_of_overlay_orders_entity_clear_against_same_pair_edge() {
         "clearing the child after touching the ChildOf pair must win"
     );
 }
-

@@ -340,8 +340,20 @@ fn store_key_mismatched_authority_row_from_peer_is_rejected_without_quota_debit(
         "the rejection must classify as remote so the batch quarantines and continues"
     );
     let rtxn = vault.store.env.read_txn()?;
-    assert!(vault.store.entities.get(&rtxn, wrong_id.as_bytes())?.is_none());
-    assert!(vault.store.entities.get(&rtxn, derived.as_bytes())?.is_none());
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, wrong_id.as_bytes())?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, derived.as_bytes())?
+            .is_none()
+    );
     drop(rtxn);
     assert!(
         quota::maintenance_ingest_quota_snapshots(&vault)?.is_empty(),

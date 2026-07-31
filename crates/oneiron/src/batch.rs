@@ -2884,21 +2884,10 @@ fn apply_put(
         }
         let entry = crate::authority::decode_authority_log_entry_body(data)?;
         let entry_hash = crate::authority::authority_entry_hash(&entry)?;
-        // ONE-1604-D1 store-key bind: every materialization path funnels
-        // through this chokepoint, so key == hash(canonical signed body) is
-        // verified on every import/replay door in one place.
-        if crate::authority::authority_log_entity_id_from_hash(&entry_hash)? != id {
-            return Err(Error::AuthorityLogStoreKeyMismatch { id });
-        }
-        // ONE-1604-D1 append-only guard: an existing row's BODY is immutable
-        // at its store key. Byte-identical body re-puts stay admitted
-        // (idempotent replay; metadata-only occurred/learned updates), so no
-        // legitimate convergence path is narrowed.
-        if let Some(existing) = store.entities.get(wtxn, id.as_bytes())?
-            && existing[ENTITY_METADATA_HEADER_LEN..] != *data
-        {
-            return Err(Error::AuthorityLogAppendOnlyViolation { id });
-        }
+        // ONE-1604-D1 chokepoint: every materialization path funnels through
+        // here, so the store-key bind and append-only guard are verified on
+        // every import/replay door in one place.
+        check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?;
         authority_entry_hash_pin = Some(entry_hash);
     } else if entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
@@ -3228,6 +3217,31 @@ pub(crate) struct ReplicatedAuthorityLogValidation {
     pub(crate) local_vault_id: crate::authority::AuthorityVaultId,
 }
 
+/// ONE-1604-D1 store-key checks shared by every AUTHORITY_LOG write door:
+/// the row's id must equal the key derived from its canonical signed body
+/// hash (store-key bind: replacement-at-key cannot edit fold history), and
+/// an existing row's BODY is immutable at that key (append-only guard).
+/// Byte-identical body re-puts stay admitted — idempotent replay with
+/// metadata-only occurred/learned updates — so no legitimate convergence
+/// path is narrowed.
+fn check_authority_log_store_key(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entry_hash: &crate::authority::AuthorityEntryHash,
+    data: &[u8],
+) -> Result<()> {
+    if crate::authority::authority_log_entity_id_from_hash(entry_hash)? != *id {
+        return Err(Error::AuthorityLogStoreKeyMismatch { id: *id });
+    }
+    if let Some(existing) = store.entities.get(wtxn, id.as_bytes())?
+        && existing[ENTITY_METADATA_HEADER_LEN..] != *data
+    {
+        return Err(Error::AuthorityLogAppendOnlyViolation { id: *id });
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_replicated_authority_log_for_local_vault(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -3236,19 +3250,12 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
 ) -> Result<ReplicatedAuthorityLogValidation> {
     crate::authority::validate_authority_log_entry_body_bytes(data)?;
     let entry = crate::authority::decode_authority_log_entry_body(data)?;
+    let entry_hash = crate::authority::authority_entry_hash(&entry)?;
     // ONE-1604-D1 mirror at the replicated door: content-address + append-only
     // are STORE checks, not ancestry checks — the door stays structural +
     // origin-sig + vault_id (ONE-1604-D2). Rejecting here (before the quota
     // debit) quarantines hostile rows without consuming ingest quota.
-    let entry_hash = crate::authority::authority_entry_hash(&entry)?;
-    if crate::authority::authority_log_entity_id_from_hash(&entry_hash)? != *id {
-        return Err(Error::AuthorityLogStoreKeyMismatch { id: *id });
-    }
-    if let Some(existing) = store.entities.get(wtxn, id.as_bytes())?
-        && existing[ENTITY_METADATA_HEADER_LEN..] != *data
-    {
-        return Err(Error::AuthorityLogAppendOnlyViolation { id: *id });
-    }
+    check_authority_log_store_key(store, wtxn, id, &entry_hash, data)?;
     let entry_vault_id = match &entry.op {
         crate::authority::AuthorityOp::Genesis { .. } => {
             crate::authority::genesis_vault_id(&entry)?
