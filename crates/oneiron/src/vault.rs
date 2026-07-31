@@ -838,6 +838,12 @@ impl Vault {
     /// must be an existing CLAIM, TURN, or EVENT and the target an existing
     /// FACET, or the commit fails closed with [`Error::InvalidFacetOfEdge`]
     /// and writes nothing. Every other edge kind is unaffected.
+    ///
+    /// A stamp from ANY admitted source type can move a disclosure decision:
+    /// the federation selector scopes by `FacetOf` source without a source-type
+    /// check, so an EVENT- or TURN-sourced stamp to an unselected facet
+    /// withholds that entity from a facet-limited peer even though the local
+    /// query filter reads CLAIM-sourced stamps only.
     pub fn put_edge(
         &self,
         src: &EntityId,

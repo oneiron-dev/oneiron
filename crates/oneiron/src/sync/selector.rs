@@ -808,6 +808,15 @@ struct EntitySelectorDecision {
     facet_seed: bool,
 }
 
+/// Builds the per-source facet scope a facet-limited peer's export is filtered
+/// against. Deliberately scopes by `FacetOf` source with NO source-type check:
+/// every admitted source type (`CLAIM | TURN | EVENT`) is disclosure-effective
+/// here, unlike the local query door, which reads CLAIM adjacency only.
+///
+/// Whether this door SHOULD type-check facet scoping is an open design
+/// question deferred to S-DISC2; the current behavior is pinned by
+/// `tests::selector_denies_event_scoped_to_unselected_facet`, and ONE-1646's
+/// exposure-gate table is derived from it.
 fn facet_scope_by_source(
     edges: &loro::LoroMap,
     selector: &SyncSelector,

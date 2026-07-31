@@ -3468,12 +3468,25 @@ fn stored_entity_type(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> R
 ///   claims scoped exclusively to other facets. TURN is admitted alongside
 ///   CLAIM because per-turn facet stamps are what transcript filtering rides;
 ///   the write door must accept the stamp the design requires.
-/// * `EVENT → FACET` — WORLD-MODEL, disclosure-INERT. `apply_facet_filter`
-///   keeps every non-CLAIM entity unconditionally and never resolves a scope
-///   for it, so an EVENT-sourced stamp can neither widen nor narrow any
-///   disclosure decision. It exists for ARCH-0039 PPR traversal, where
-///   `facet_of` carries a pinned λ of 0.05 ([`crate::ppr::lambda_for_kind`]).
-///   Rejecting it would make a ratified traversal contract unwritable.
+/// * `EVENT → FACET` — WORLD-MODEL traversal, and disclosure-effective on the
+///   FEDERATION door. It exists for ARCH-0039 PPR traversal, where `facet_of`
+///   carries a pinned λ of 0.05 ([`crate::ppr::lambda_for_kind`]) — rejecting
+///   it would make a ratified traversal contract unwritable — but "world-model"
+///   is not "disclosure-inert". See the two-door reading below.
+///
+/// TWO DISCLOSURE DOORS read `FacetOf`, and a source type may be effective on
+/// one while inert on the other. Neither door is the whole exposure surface:
+///
+/// * LOCAL QUERY door — [`crate::pipeline`]'s facet filter. `apply_facet_filter`
+///   keeps every non-CLAIM entity unconditionally and `claim_facet_scope`
+///   prefix-scans `edges_out` under a CLAIM source only. CLAIM-sourced stamps
+///   are effective here; TURN- and EVENT-sourced stamps are INERT on this door.
+/// * FEDERATION door — `crate::sync::selector`. `facet_scope_by_source` builds
+///   a `FacetScope` for EVERY `FacetOf` source with NO source-type check, and
+///   `entity_selector_decision` withholds an entity of ANY type whose scope is
+///   malformed or touches an unselected facet from a facet-limited peer.
+///   CLAIM-, TURN-, AND EVENT-sourced stamps are all disclosure-EFFECTIVE here:
+///   an EVENT stamped to an unselected facet is withheld from that peer.
 ///
 /// The teeth are unchanged by the widening: a missing endpoint still fails
 /// closed, the target must still be a FACET, and every source type outside
@@ -3486,8 +3499,11 @@ fn stored_entity_type(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> R
 /// Seam (ONE-1646): the exposure-consent gate — rejecting a private→public
 /// restamp without a consent-ledger row, and gating `FacetOf` deletes on
 /// exposure state — lands at THIS call site once facet exposure state exists.
-/// That gate keys on `CLAIM | TURN`-sourced stamps ONLY: EVENT-sourced edges
-/// are not disclosure scopes, so they bypass exposure gating entirely.
+/// That gate keys on ALL admitted source types (`CLAIM | TURN | EVENT`): each
+/// is disclosure-effective on at least one of the two doors above, so none may
+/// bypass exposure gating. The gate table is derived from CURRENT door
+/// behavior — `crate::sync::selector::tests` pins the federation half, and if
+/// the selector ever grows a source-type check the table must be re-derived.
 /// This function is the hook; it deliberately validates types only.
 pub(crate) fn validate_facet_of_edge(
     store: &Store,

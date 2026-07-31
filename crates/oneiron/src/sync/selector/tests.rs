@@ -27,7 +27,8 @@ use crate::provenance::{
     encode_edge_provenance_value,
 };
 use crate::registry::{
-    ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_WORLD,
 };
 use crate::store::Store;
 use crate::sync::bridge::encode_edge_value_for_crdt;
@@ -1046,6 +1047,108 @@ fn selector_denies_entity_with_any_unselected_facet_of() {
     assert!(
         !ids.contains(&person),
         "neighbors of a denied dual-facet entity leaked"
+    );
+}
+
+/// The federation door is disclosure-effective for EVERY `FacetOf` source
+/// type, not just CLAIM. `facet_scope_by_source` builds a scope for every
+/// `FacetOf` source with no source-type check, and `entity_selector_decision`
+/// withholds an unselected-scoped entity of ANY type — so an EVENT stamped to
+/// a facet this peer did not select is withheld, and the same EVENT restamped
+/// to a selected facet replicates.
+///
+/// This is the behavior ONE-1646's exposure-consent gate keys on: the gate
+/// covers `CLAIM | TURN | EVENT` precisely because each is effective on at
+/// least one door, and EVENT's door is this one (it is inert on the local
+/// query filter, which reads CLAIM adjacency only). If the selector ever grows
+/// a source-type check for facet scoping — the design question deferred to
+/// S-DISC2 — ONE-1646's gate table must be re-derived, and this test is the
+/// tripwire that will fail first.
+#[test]
+fn selector_denies_event_scoped_to_unselected_facet() {
+    let member = entity_id(0x3C);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-11");
+
+    let facet_selected = entity_id(0xAC);
+    let facet_unselected = entity_id(0xBC);
+    let event = entity_id(0x1C);
+    let claim_seed = entity_id(0x2C);
+
+    // Arm 1: EVENT stamped to a facet the peer did NOT select. The EVENT is
+    // adjacent to a CLAIM that IS scoped to the selected facet, so closure
+    // WOULD pull it into the export — absence therefore proves the facet-scope
+    // gate withheld it, not that it was merely unreachable. This is what makes
+    // the test a tripwire: were `facet_scope_by_source` to skip EVENT sources,
+    // the EVENT would become an unscoped candidate and leak through closure.
+    let doc = create_window_doc("source", &window_key);
+    insert_entity(&doc, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
+    insert_entity(&doc, facet_unselected, ENTITY_TYPE_FACET, b"facet-b");
+    insert_entity(&doc, event, ENTITY_TYPE_EVENT, b"event");
+    insert_blob(&doc, claim_seed, &claim_blob(None));
+    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_selected);
+    insert_edge(&doc, event, EdgeKind::FacetOf, facet_unselected);
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, event);
+    doc.commit();
+
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_selected],
+        vec![],
+    );
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+
+    assert!(ids.contains(&facet_selected));
+    assert!(
+        ids.contains(&claim_seed),
+        "control: the selected-facet claim must seed closure, or the EVENT \
+         assertion below would hold vacuously"
+    );
+    assert!(
+        !ids.contains(&event),
+        "an EVENT scoped only to an unselected facet must be withheld even when \
+         a selected-facet seed is adjacent: EVENT-sourced FacetOf is \
+         disclosure-effective on the federation door"
+    );
+    assert!(
+        !ids.contains(&facet_unselected),
+        "unselected facet entity leaked"
+    );
+
+    // Arm 2: the same EVENT restamped to the SELECTED facet replicates.
+    let restamped = create_window_doc("source", &window_key);
+    insert_entity(&restamped, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
+    insert_entity(&restamped, facet_unselected, ENTITY_TYPE_FACET, b"facet-b");
+    insert_entity(&restamped, event, ENTITY_TYPE_EVENT, b"event");
+    insert_edge(&restamped, event, EdgeKind::FacetOf, facet_selected);
+    restamped.commit();
+
+    let update = filtered_window_doc(
+        &vault,
+        &restamped,
+        &window_key,
+        test_selector_scope(),
+        &selector,
+    )
+    .unwrap()
+    .export(ExportMode::all_updates())
+    .unwrap();
+    let ids = import_ids(&update);
+
+    assert!(
+        ids.contains(&event),
+        "an EVENT scoped to the selected facet must replicate"
+    );
+    assert!(ids.contains(&facet_selected));
+    assert!(
+        !ids.contains(&facet_unselected),
+        "unselected facet entity leaked on the restamped arm"
     );
 }
 

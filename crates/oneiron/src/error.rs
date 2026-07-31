@@ -794,8 +794,14 @@ pub enum Error {
     /// (`None`) and rejected on the same footing as a wrong type — a facet
     /// stamp's endpoints must be established facts before the stamp. The batch
     /// aborts atomically; nothing was written.
+    ///
+    /// Every admitted source type is disclosure-effective on at least one door:
+    /// CLAIM on the local query filter (`apply_facet_filter`), and CLAIM | TURN
+    /// | EVENT alike on the federation selector, which scopes by `FacetOf`
+    /// source with no source-type check. `batch::validate_facet_of_edge` holds
+    /// the full two-door reading.
     #[error(
-        "invalid FacetOf edge {} (type {src_type:?}) -> {} (type {tgt_type:?}): expected CLAIM/TURN -> FACET",
+        "invalid FacetOf edge {} (type {src_type:?}) -> {} (type {tgt_type:?}): expected CLAIM/TURN/EVENT -> FACET",
         src.to_hex(),
         tgt.to_hex()
     )]
