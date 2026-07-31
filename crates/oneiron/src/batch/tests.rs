@@ -2818,6 +2818,84 @@ fn authority_log_store_key_mismatch_rejected() -> Result<()> {
     Ok(())
 }
 
+/// ONE-1604-D1 (fix-leg 1, P2-a — chokepoint half): the local write door
+/// applies the same dominance as the replicated one. A cross-type squatter at
+/// a derived type-122 key is evicted WITH its indexes — a stale type_index or
+/// short-id row pointing at an authority body would corrupt reads — and the
+/// same-type append-only rule is untouched by the change.
+#[cfg(feature = "sync")]
+#[test]
+fn authority_log_put_evicts_cross_type_squatter_and_its_indexes() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let genesis = authority_genesis_fixture(97);
+    let derived = crate::authority::authority_log_entity_id(&genesis)?;
+
+    vault.put_entity(
+        &derived,
+        crate::registry::ENTITY_TYPE_EVENT,
+        test_time_range(1, 1),
+        1,
+        b"squatter",
+    )?;
+    assert!(vault.entity_exists(&derived)?);
+
+    let id = vault.put_authority_log_entry(&genesis, test_time_range(2, 2), 2)?;
+    assert_eq!(id, derived);
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(genesis.clone()));
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(
+                &rtxn,
+                &Store::encode_type_key(crate::registry::ENTITY_TYPE_EVENT, &id)
+            )?
+            .is_none(),
+        "the evicted squatter must leave no type_index row behind"
+    );
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(
+                &rtxn,
+                &Store::encode_type_key(ENTITY_TYPE_AUTHORITY_LOG, &id)
+            )?
+            .is_some(),
+        "the authority row must own the type_index entry at its derived key"
+    );
+    assert!(
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .is_none(),
+        "the squatter's short-id rows must not survive the eviction"
+    );
+    drop(rtxn);
+
+    // Same-type append-only is unchanged: a divergent body still cannot
+    // overwrite an admitted authority row (it derives a different key).
+    let divergent = authority_genesis_fixture(98);
+    let divergent_body = crate::authority::encode_authority_log_entry_body(&divergent)?;
+    let err = vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_AUTHORITY_LOG,
+            test_time_range(3, 3),
+            3,
+            &divergent_body,
+        )
+        .commit()
+        .expect_err("dominance must not weaken the same-type append-only guard");
+    assert_eq!(err.kind(), ErrorKind::AuthorityLogStoreKeyMismatch);
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(genesis));
+    Ok(())
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn authority_log_write_does_not_mark_legacy_backfill_complete() -> Result<()> {

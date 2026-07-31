@@ -2576,12 +2576,19 @@ fn authority_genesis_fixture_for_window(seed: u8) -> crate::authority::Authority
     entry
 }
 
-/// ONE-1604-D1/D5 T9: the window-path twin of the bridge tombstone
-/// regression, covering the neutralize-parity call this lane adds to the
-/// window's AUTHORITY_LOG arm. A replica that already carries a stale `dt:`
-/// marker for a derived authority id must still admit the row when it
-/// arrives, and must clear the poison — the marker never represented valid
-/// delete authority over a delete-protected kind.
+/// ONE-1604-D1/D5 T9 (fix-leg 1, P2-b): the window-path twin of the bridge
+/// tombstone regression, covering the neutralize-parity call this lane adds
+/// to the window's AUTHORITY_LOG arm — pinned at the state the pre-fix code
+/// could NOT repair.
+///
+/// The replica is in the exact pre-fix shape: the authority row is already
+/// materialized BYTE-FOR-BYTE (local blob == CRDT blob, so the fast path
+/// fires) while a tombstone-first replay left a `dt:` marker behind. When the
+/// byte comparison ran in the shared pre-door pass, this replica returned
+/// early and kept the false delete marker forever — and the ARCH-0038
+/// hard-erase sweep would later treat the id as erased and scrub append-only
+/// authority evidence. Routing the comparison through this door's own write
+/// txn (type-76 parity) lets the exact match still neutralize the marker.
 #[cfg(feature = "sync")]
 #[test]
 fn window_authority_row_admission_neutralizes_stale_dt_marker() -> Result<()> {
@@ -2591,9 +2598,18 @@ fn window_authority_row_admission_neutralizes_stale_dt_marker() -> Result<()> {
     let id = crate::authority::authority_log_entity_id(&genesis)?;
     let body = crate::authority::encode_authority_log_entry_body(&genesis)?;
 
-    // Seed the local root so the replicated door has a vault id to match.
-    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
-    // Then simulate a replica poisoned by the pre-fix headerless path.
+    // `make_entity_blob` stamps occurred_start == occurred_end == learned_at,
+    // so putting with the same value makes the local row and the CRDT
+    // carrier byte-identical — the fast path this fix must not exit through.
+    let blob = make_entity_blob(ENTITY_TYPE_AUTHORITY_LOG, 2, &body);
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 2, end: 2 }, 2)?;
+    assert_eq!(
+        vault.get_raw(&id)?.as_deref(),
+        Some(blob.as_slice()),
+        "the local row must be byte-identical to the arriving carrier"
+    );
+
+    // A tombstone-first replay on this replica left `dt:` poison behind.
     vault.with_write_txn(|wtxn| {
         vault.store.sync_state.put(
             wtxn,
@@ -2603,13 +2619,12 @@ fn window_authority_row_admission_neutralizes_stale_dt_marker() -> Result<()> {
         Ok(())
     })?;
 
-    // The row arrives again through the window arm with divergent metadata,
-    // so the byte-identical short circuit does not apply.
     let doc = create_window_doc("remote-poisoned-authority", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob)?;
     map_insert_bytes(
-        &doc.get_map("entities"),
+        &doc.get_map("tombstones"),
         &id.to_hex(),
-        &make_entity_blob(ENTITY_TYPE_AUTHORITY_LOG, 2, &body),
+        &2_u64.to_be_bytes(),
     )?;
     doc.commit();
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
@@ -2626,7 +2641,53 @@ fn window_authority_row_admission_neutralizes_stale_dt_marker() -> Result<()> {
             .sync_state
             .get(&rtxn, &crate::deletion::local_hard_delete_key(&id))?
             .is_none(),
-        "authority row admission must neutralize the stale dt: poison marker"
+        "a byte-identical authority carrier must still neutralize the stale dt: poison marker"
+    );
+    drop(rtxn);
+    let quarantined = quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Tombstones);
+    assert_eq!(quarantined[0].1.reason_code, "MaintenanceKindNotWritable");
+    Ok(())
+}
+
+/// ONE-1604-D1 (fix-leg 1, P2-a — outbound half): the presence-only carrier
+/// check let a cross-type squatter keep the CRDT slot at an authority row's
+/// content-derived key even after the local write door evicted it. That
+/// re-exports the row the authority substrate refused and re-imports it onto
+/// peers that have not seen the entry yet. A local type-122 row now
+/// overwrites a NON-authority carrier at its own key; ordinary rows keep
+/// presence-only semantics.
+#[cfg(feature = "sync")]
+#[test]
+fn reverse_rematerialization_replaces_cross_type_authority_key_squatter() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let genesis = authority_genesis_fixture_for_window(0x68);
+    let id = crate::authority::authority_log_entity_id(&genesis)?;
+    vault.put_authority_log_entry(
+        &genesis,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+    )?;
+    let local = vault.get_raw(&id)?.expect("authority row stored");
+
+    // The window still carries the attacker's ordinary row at that key.
+    let doc = create_window_doc("squatted-window", &window_key);
+    let squatter = make_entity_blob(crate::registry::ENTITY_TYPE_EVENT, learned_at, b"squatter");
+    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &squatter)?;
+    doc.commit();
+
+    reverse_rematerialize(&vault, &doc, &window_key)?;
+
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
+        Some(local),
+        "the validated authority row must replace the cross-type carrier at its derived key"
     );
     Ok(())
 }

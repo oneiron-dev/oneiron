@@ -1150,18 +1150,26 @@ pub fn forward_rematerialize(
             }
 
             // Track the local record for most ids: byte-identical →
-            // idempotent skip (return). Two kinds make this decision later
+            // idempotent skip (return). Three kinds make this decision later
             // inside their own replay door instead: type-120 receipts
             // (inside the same write txn as their lease verification and
             // replicated put, so a stale long-lived `rtxn` cannot hide a
-            // mid-flight finalized/divergent receipt) and ARCH-0055
+            // mid-flight finalized/divergent receipt), ARCH-0055
             // type-76 events (whose door preserves immutable divergence and
             // seq-clock checks on byte-identical replay while short-circuiting
-            // before the full-family reconciliation DoS surface).
+            // before the full-family reconciliation DoS surface), and
+            // ONE-1604-D5 type-122 authority rows (whose door must reach the
+            // `dt:` neutralization even on an exact-byte match: a replica
+            // whose authority row is already materialized byte-for-byte while
+            // a tombstone-first replay left a `dt:` marker behind would
+            // otherwise keep that false delete marker forever, and the
+            // hard-erase sweep would later scrub append-only authority
+            // evidence for an id it believes was erased).
             let byte_compare_in_door = matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_REDACTION_AUDIT
                     | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+                    | ENTITY_TYPE_AUTHORITY_LOG
             );
             if !byte_compare_in_door {
                 if let Some(latest) = materialized_blobs.get(&id) {
@@ -1337,9 +1345,24 @@ pub fn forward_rematerialize(
                 })
             } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
                 vault.with_write_txn(|wtxn| {
+                    // ONE-1604-D5: the byte comparison runs inside this
+                    // door's own write txn (type-76 parity) so an exact
+                    // match still reaches the `dt:` neutralization below.
+                    // Returning early here — as the pre-fix shared
+                    // byte-compare did — left a tombstone-first replica's
+                    // false delete marker permanent, and the hard-erase
+                    // sweep would then scrub append-only authority evidence.
                     if let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())?
                         && *local == *blob
                     {
+                        vault.neutralize_delete_protected_marker_in_txn(
+                            wtxn,
+                            &id,
+                            ENTITY_TYPE_AUTHORITY_LOG,
+                        )?;
+                        // Still a byte-identical skip for ONE-1147 purposes:
+                        // clearing poison is a repair, not a healing write,
+                        // so parity alone must not discharge an `rm:` marker.
                         return Ok(false);
                     }
                     let validation =
@@ -2051,8 +2074,16 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        if !map_contains_binary(&entities_map, &hex_id)
-            && !reverse_remat_skip_redaction_receipt_mirror(&raw)
+        // Presence alone decides for ordinary rows (delete-wins and remote
+        // history are not rewritten here). ONE-1604-D1 adds one exception:
+        // a validated local type-122 row DOMINATES a cross-type occupant of
+        // its content-derived key. The local vault already evicted that
+        // squatter at the write door, so leaving it as the CRDT carrier
+        // would re-export the very row the authority substrate refused —
+        // and re-import it onto peers that have not yet seen the entry.
+        if !reverse_remat_skip_redaction_receipt_mirror(&raw)
+            && (!map_contains_binary(&entities_map, &hex_id)
+                || authority_row_dominates_map_carrier(&entities_map, &hex_id, &raw))
         {
             map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
             wrote_any = true;
@@ -2211,6 +2242,28 @@ fn delete_edges_touching_entities(edges_map: &LoroMap, ids: &HashSet<EntityId>) 
 fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw)
         .is_some_and(|header| header.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
+}
+
+/// ONE-1604-D1 dominance on the outbound door: `true` when the LOCAL row is a
+/// type-122 authority row and the CRDT map carries a NON-authority row at the
+/// same key — the cross-type squatter the local write door already evicted.
+/// Overwriting it is the outbound half of the same rule; without it a
+/// squatter that pre-occupied a revocation's derived id keeps circulating and
+/// keeps that revocation out of peers' folds.
+///
+/// Presence-only semantics are preserved everywhere else, including when both
+/// rows are type-122 (the store key is a pure function of the signed body, so
+/// two authority rows at one key are byte-identical by construction).
+fn authority_row_dominates_map_carrier(entities_map: &LoroMap, hex_id: &str, local: &[u8]) -> bool {
+    let local_is_authority = EntityMetadataHeader::parse(local)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_AUTHORITY_LOG);
+    if !local_is_authority {
+        return false;
+    }
+    map_get_bytes(entities_map, hex_id).is_some_and(|carrier| {
+        EntityMetadataHeader::parse(&carrier)
+            .is_none_or(|header| header.entity_type != ENTITY_TYPE_AUTHORITY_LOG)
+    })
 }
 
 /// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the

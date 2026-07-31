@@ -2885,9 +2885,15 @@ fn apply_put(
         let entry = crate::authority::decode_authority_log_entry_body(data)?;
         let entry_hash = crate::authority::authority_entry_hash(&entry)?;
         // ONE-1604-D1 chokepoint: every materialization path funnels through
-        // here, so the store-key bind and append-only guard are verified on
-        // every import/replay door in one place.
-        check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?;
+        // here, so the store-key bind, the append-only guard, and the
+        // cross-type dominance are applied on every import/replay door in one
+        // place. Eviction happens HERE (never in the shared checker) because
+        // this is the one site that goes on to write the authority row.
+        if check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
+            == AuthorityLogKeyOccupant::CrossTypeSquatter
+        {
+            evict_authority_log_store_key_squatter(store, wtxn, &id)?;
+        }
         authority_entry_hash_pin = Some(entry_hash);
     } else if entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
@@ -3217,27 +3223,89 @@ pub(crate) struct ReplicatedAuthorityLogValidation {
     pub(crate) local_vault_id: crate::authority::AuthorityVaultId,
 }
 
+/// What currently occupies a validated type-122 row's content-derived store
+/// key. `CrossTypeSquatter` is NOT a rejection — see
+/// [`check_authority_log_store_key`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthorityLogKeyOccupant {
+    /// The key is free, or already holds this exact authority row.
+    Admissible,
+    /// A non-authority row occupies the key and must be evicted before the
+    /// authority row is written.
+    CrossTypeSquatter,
+}
+
 /// ONE-1604-D1 store-key checks shared by every AUTHORITY_LOG write door:
 /// the row's id must equal the key derived from its canonical signed body
 /// hash (store-key bind: replacement-at-key cannot edit fold history), and
-/// an existing row's BODY is immutable at that key (append-only guard).
-/// Byte-identical body re-puts stay admitted — idempotent replay with
-/// metadata-only occurred/learned updates — so no legitimate convergence
-/// path is narrowed.
+/// an existing AUTHORITY_LOG row's BODY is immutable at that key (append-only
+/// guard). Byte-identical body re-puts stay admitted — idempotent replay with
+/// metadata-only occurred/learned updates — so no legitimate convergence path
+/// is narrowed. A NON-authority occupant is reported, not rejected: see the
+/// cross-type squat reasoning inline.
 fn check_authority_log_store_key(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     entry_hash: &crate::authority::AuthorityEntryHash,
     data: &[u8],
-) -> Result<()> {
+) -> Result<AuthorityLogKeyOccupant> {
     if crate::authority::authority_log_entity_id_from_hash(entry_hash)? != *id {
         return Err(Error::AuthorityLogStoreKeyMismatch { id: *id });
     }
-    if let Some(existing) = store.entities.get(wtxn, id.as_bytes())?
-        && existing[ENTITY_METADATA_HEADER_LEN..] != *data
-    {
-        return Err(Error::AuthorityLogAppendOnlyViolation { id: *id });
+    let Some(existing) = store.entities.get(wtxn, id.as_bytes())? else {
+        return Ok(AuthorityLogKeyOccupant::Admissible);
+    };
+    let existing_type = EntityMetadataHeader::parse(&existing)
+        .ok_or(Error::CorruptedIndex("entity header"))?
+        .entity_type;
+    // ONE-1604-D1 cross-type squat: the derived id lives in the SAME global
+    // entity namespace every other kind is keyed in, and signing is
+    // deterministic over predictable RevokeDevice/Dissolve bodies — so a
+    // hostile peer (including the very device a pending RevokeDevice names)
+    // can precompute the revocation's derived id and pre-occupy it with an
+    // ordinary row. If that squatter won, the append-only guard below would
+    // quarantine the REVOCATION and the revoked key would stay active: the
+    // guard meant to protect authority history would suppress it instead.
+    //
+    // A type-122 write that reaches this check has already cleared FULL
+    // validation at its door — canonical encoding, origin signature, and (at
+    // the replicated door) the local vault-id fold — and its id is a pure
+    // function of exactly those verified bytes. That is what licenses
+    // dominance, and it is why a FORGED authority row cannot use it: such a
+    // row fails validation and never gets here, so any occupant a real entry
+    // displaces is by construction a squatter at a key it could not have
+    // derived. Same-type occupants keep the append-only rule unchanged.
+    if existing_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
+        if existing[ENTITY_METADATA_HEADER_LEN..] != *data {
+            return Err(Error::AuthorityLogAppendOnlyViolation { id: *id });
+        }
+        return Ok(AuthorityLogKeyOccupant::Admissible);
+    }
+    Ok(AuthorityLogKeyOccupant::CrossTypeSquatter)
+}
+
+/// Evicts a non-authority occupant of a validated type-122 row's store key so
+/// the authority row can be written (ONE-1604-D1 dominance). Index rows and
+/// incident edges go with it — a squatter must leave no stale carrier — and
+/// the eviction is confined to the single write chokepoint so the replicated
+/// validator stays side-effect-free.
+fn evict_authority_log_store_key_squatter(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    tracing::warn!(
+        entity = %id.to_hex(),
+        "authority log admission displaced a non-authority row squatting its content-derived store key"
+    );
+    let (_existed, had_vector, had_graph_mutation, neighbors) = deindex_entity(store, wtxn, id)?;
+    ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
+    if had_graph_mutation {
+        ppr::increment_graph_version(store, wtxn)?;
+    }
+    if had_vector {
+        crate::hnsw::increment_vector_version(store, wtxn)?;
     }
     Ok(())
 }
@@ -3254,8 +3322,11 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
     // ONE-1604-D1 mirror at the replicated door: content-address + append-only
     // are STORE checks, not ancestry checks — the door stays structural +
     // origin-sig + vault_id (ONE-1604-D2). Rejecting here (before the quota
-    // debit) quarantines hostile rows without consuming ingest quota.
-    check_authority_log_store_key(store, wtxn, id, &entry_hash, data)?;
+    // debit) quarantines hostile rows without consuming ingest quota. A
+    // cross-type squatter is not a rejection — this row dominates it — and
+    // the eviction itself belongs to the `apply_put` chokepoint that writes
+    // the row, so this validator stays a pure check.
+    let _ = check_authority_log_store_key(store, wtxn, id, &entry_hash, data)?;
     let entry_vault_id = match &entry.op {
         crate::authority::AuthorityOp::Genesis { .. } => {
             crate::authority::genesis_vault_id(&entry)?
