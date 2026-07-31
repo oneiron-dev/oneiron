@@ -152,3 +152,106 @@ mod guarded {
         assert!(!shown.contains("secret"));
     }
 }
+
+#[cfg(feature = "network-fetch")]
+mod guarded_live {
+    //! Loopback-socket legs: redirect hops re-run the policy, per-purpose
+    //! caps abort streaming, and an explicit CIDR row admits loopback.
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    use oneiron_seal::{FetchPolicy, SsrfGuardedHttpFetcher};
+
+    use super::*;
+
+    /// Serve `302 -> /next` then a 200 body of `body_len` bytes on a loopback
+    /// listener; returns (port, Arc<hop counter>).
+    fn serve(body_len: usize) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hops = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hops2 = hops.clone();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut sock, _)) = listener.accept() else { break };
+                hops2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf);
+                let is_next = String::from_utf8_lossy(&buf).contains("GET /next");
+                let (status, body) = if is_next {
+                    ("200 OK", vec![b'x'; body_len])
+                } else {
+                    ("302 Found", Vec::new())
+                };
+                let location = if is_next {
+                    String::new()
+                } else {
+                    format!("Location: http://127.0.0.1:{port}/next\r\n")
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\n{location}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes());
+                let _ = sock.write_all(&body);
+            }
+        });
+        (port, hops)
+    }
+
+    fn loopback_policy(port: u16, cap: usize) -> FetchPolicy {
+        FetchPolicy {
+            allowed_origins: vec![url::Url::parse(&format!("http://127.0.0.1:{port}")).unwrap()],
+            allowed_cidrs: vec!["127.0.0.0/8".parse().unwrap()],
+            max_ocsp_bytes: cap,
+            ..FetchPolicy::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn redirect_hop_reruns_policy_and_succeeds_when_admitted() {
+        let (port, hops) = serve(64);
+        let f = SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024));
+        let out = f
+            .fetch(FetchRequest {
+                purpose: FetchPurpose::Ocsp,
+                url: url::Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap(),
+                method: FetchMethod::Get,
+                request_body: Vec::new(),
+                content_type: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.body, vec![b'x'; 64]);
+        assert_eq!(hops.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // Second fetch hits the cache: no third hop.
+        let _ = f
+            .fetch(FetchRequest {
+                purpose: FetchPurpose::Ocsp,
+                url: url::Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap(),
+                method: FetchMethod::Get,
+                request_body: Vec::new(),
+                content_type: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(hops.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn purpose_cap_aborts_oversized_response() {
+        let (port, _hops) = serve(4096);
+        let f = SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024));
+        let err = f
+            .fetch(FetchRequest {
+                purpose: FetchPurpose::Ocsp,
+                url: url::Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap(),
+                method: FetchMethod::Get,
+                request_body: Vec::new(),
+                content_type: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, FetchError::ResponseTooLarge));
+    }
+}

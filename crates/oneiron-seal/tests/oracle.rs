@@ -86,3 +86,32 @@ fn native_seal_pyhanko_validate() {
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["valid"], serde_json::json!(true));
 }
+
+/// Oracle matrix row 4: native seal -> `pdfsig` validation (present in the
+/// pinned CI image). Skips cleanly where pdfsig is absent.
+#[test]
+fn native_seal_pdfsig_validate() {
+    let available = Command::new("pdfsig")
+        .arg("-v")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !available {
+        eprintln!("seal-oracle: pdfsig not installed; skipping (CI-only leg)");
+        return;
+    }
+    let sealed = seal_sample();
+    let dir = tempfile::tempdir().unwrap();
+    let pdf_path = dir.path().join("sealed.pdf");
+    std::fs::write(&pdf_path, &sealed).unwrap();
+    let out = Command::new("pdfsig").arg(&pdf_path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "pdfsig rejected the native seal: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Signature is Valid"),
+        "unexpected pdfsig verdict: {stdout}"
+    );
+}
