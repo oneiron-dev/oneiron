@@ -190,6 +190,7 @@ pub enum ErrorKind {
     MissingPostingEntry,
     InvalidEntityType,
     InvalidFacet,
+    InvalidFacetOfEdge,
     InvalidClaimBody,
     InvalidPsychProfileBody,
     InvalidPersonaSnapshot,
@@ -273,6 +274,7 @@ pub enum ErrorKind {
     OffRecordOverlayFull,
     OffRecordOverlayLeaseClosed,
     OffRecordTurnNotFenced,
+    OffRecordPromoteUnauthenticated,
     OffRecordFencedTurnWriteRejected,
     OffRecordTalkOnly,
     OffRecordExportRefused,
@@ -786,6 +788,23 @@ pub enum Error {
         facet.to_hex()
     )]
     InvalidFacet { facet: EntityId, found: Option<u8> },
+    /// A public `FacetOf` (u8 17) edge write failed the ONE-1645 write-time
+    /// type table: the source must be an existing CLAIM or TURN and the target
+    /// an existing FACET. A missing endpoint row is unknowable-typed
+    /// (`None`) and rejected on the same footing as a wrong type — a facet
+    /// stamp's endpoints must be established facts before the stamp. The batch
+    /// aborts atomically; nothing was written.
+    #[error(
+        "invalid FacetOf edge {} (type {src_type:?}) -> {} (type {tgt_type:?}): expected CLAIM/TURN -> FACET",
+        src.to_hex(),
+        tgt.to_hex()
+    )]
+    InvalidFacetOfEdge {
+        src: EntityId,
+        src_type: Option<u8>,
+        tgt: EntityId,
+        tgt_type: Option<u8>,
+    },
     /// A type-0 (CLAIM) entity body failed the pinned structural validation
     /// (D11 key set / D18 fail-closed gate). Nothing was written.
     #[error("invalid claim body: {0}")]
@@ -1353,6 +1372,19 @@ pub enum Error {
         session_ref: String,
         turn_ref: String,
     },
+    /// Promote (OF-326 / ONE-1645) is a widening op: it moves a fenced turn
+    /// into the durable vault, so it must be authenticated to the owner
+    /// principal by the same actor-identity vocabulary as every other consent
+    /// surface. The supplied actor did not authenticate the principal (ref
+    /// mismatch, blank ref, or an unverified voice path). The fence stands and
+    /// nothing was written.
+    #[error(
+        "off-record promote in session {session_ref} is not authenticated: actor {actor_ref} does not authenticate the owner principal"
+    )]
+    OffRecordPromoteUnauthenticated {
+        session_ref: String,
+        actor_ref: String,
+    },
     /// The entity write door found an off-record fence that is no longer
     /// owned by a live, mutable session. This is the permanent fail-closed
     /// guard for a tag-before-write turn after close; the error deliberately
@@ -1563,6 +1595,7 @@ impl Error {
             Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
             Self::InvalidFacet { .. } => ErrorKind::InvalidFacet,
+            Self::InvalidFacetOfEdge { .. } => ErrorKind::InvalidFacetOfEdge,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
             Self::InvalidPersonaSnapshot(_) => ErrorKind::InvalidPersonaSnapshot,
@@ -1656,6 +1689,9 @@ impl Error {
             Self::OffRecordOverlayFull { .. } => ErrorKind::OffRecordOverlayFull,
             Self::OffRecordOverlayLeaseClosed { .. } => ErrorKind::OffRecordOverlayLeaseClosed,
             Self::OffRecordTurnNotFenced { .. } => ErrorKind::OffRecordTurnNotFenced,
+            Self::OffRecordPromoteUnauthenticated { .. } => {
+                ErrorKind::OffRecordPromoteUnauthenticated
+            }
             Self::OffRecordFencedTurnWriteRejected { .. } => {
                 ErrorKind::OffRecordFencedTurnWriteRejected
             }

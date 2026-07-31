@@ -2285,6 +2285,47 @@ fn gate_evaluator_missing_source_preserves_write_gate_semantics() -> Result<()> 
     Ok(())
 }
 
+/// ONE-1645 write-path consequence, deliberate: a source under a band-capped
+/// trust row (`max_auto_sensitivity = 1`) still auto-approves an explicitly
+/// public claim, but an UNSTAMPED claim now reads the band-2 floor and
+/// exceeds the cap — it queues for consent instead of auto-writing. Hosts
+/// restore auto by stamping `public`; that is the floor doing its job, not a
+/// regression.
+#[test]
+fn gate_source_trust_unstamped_claim_hits_floor_band() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::UserStated, 1)]);
+    put_policy_manifest_bytes(&vault, test_id(0x77), &data)?;
+    let policy = resolve(&vault)?;
+
+    let table: [(&str, Option<Value>, bool); 3] = [
+        (
+            "explicit public stamp",
+            Some(Value::Map(vec![(
+                Value::from("sensitivity"),
+                Value::from("public"),
+            )])),
+            true,
+        ),
+        ("unstamped: no scope map", None, false),
+        (
+            "unstamped: scope map without a sensitivity key",
+            Some(Value::Map(vec![(
+                Value::from("federated_original_source"),
+                Value::from("user_stated"),
+            )])),
+            false,
+        ),
+    ];
+    for (label, scope, expect_auto) in table {
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.scope = scope;
+        let allowed = check_claim_source_trust(&body, &policy).is_ok();
+        assert_eq!(allowed, expect_auto, "{label}");
+    }
+    Ok(())
+}
+
 #[test]
 fn gate_evaluator_source_trust_respects_sensitivity_ceiling() -> Result<()> {
     let (_tmp, vault) = temp_vault();

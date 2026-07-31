@@ -188,7 +188,10 @@ pub(crate) fn disclosure_tier(
             return Ok(DisclosureTier::TierA);
         };
         // Rule 3 — sensitivity band: ambiguous (duplicate key) or >= 2
-        // ("sensitive"/"restricted") fails closed to Tier A.
+        // ("sensitive"/"restricted") fails closed to Tier A. A missing stamp
+        // reads band 2 (the ONE-1645 unstamped floor), so a claim with no
+        // recorded provenance is never disclosed to a non-owner party; only a
+        // positive `"sensitivity": public|0` stamp reaches Tier B here.
         match claim_sensitivity_band(body) {
             None => return Ok(DisclosureTier::TierA),
             Some(band) if band >= 2 => return Ok(DisclosureTier::TierA),

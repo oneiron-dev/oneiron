@@ -9,10 +9,21 @@ use crate::companion::{
 };
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::genui::ConsentActorIdentity;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::sync::WindowManager;
 use crate::temporal::TimeRange;
+
+/// The owner principal these sync-window promotes authenticate against;
+/// promote-auth itself is pinned in `off_record::tests`.
+const OWNER_PRINCIPAL: &str = "owner-test";
+
+fn owner_actor() -> ConsentActorIdentity {
+    ConsentActorIdentity::SurfaceActor {
+        actor_ref: OWNER_PRINCIPAL.to_owned(),
+    }
+}
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
@@ -197,7 +208,7 @@ fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases(
     assert!(vault.sync_state_get(&promoted_marker)?.is_some());
     assert!(vault.sync_state_get(&fenced_marker)?.is_some());
 
-    vault.promote_off_record_turn("sess-defer-sync", &promoted)?;
+    vault.promote_off_record_turn("sess-defer-sync", &promoted, &owner_actor(), OWNER_PRINCIPAL)?;
 
     // Promotion lifts exactly one fence. Its pending mirror can now flow;
     // the other fenced body remains device-local, and reverse packing only
@@ -277,7 +288,12 @@ fn off_record_promotion_catches_up_an_already_open_window() -> Result<()> {
     assert!(map_get_bytes(&edges, &promoted_edge).is_none());
     assert!(map_get_bytes(&edges, &fenced_edge).is_none());
 
-    vault.promote_off_record_turn("sess-live-promotion", &promoted)?;
+    vault.promote_off_record_turn(
+        "sess-live-promotion",
+        &promoted,
+        &owner_actor(),
+        OWNER_PRINCIPAL,
+    )?;
 
     // No unload/reopen is needed: the explicit promotion catches up the same
     // registry-owned doc, clears only its marker, and backfills only the edge
@@ -338,7 +354,12 @@ fn off_record_promotion_refreshes_cross_window_source_edges() -> Result<()> {
     assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_none());
     assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_none());
 
-    vault.promote_off_record_turn("sess-cross-window-promote", &target)?;
+    vault.promote_off_record_turn(
+        "sess-cross-window-promote",
+        &target,
+        &owner_actor(),
+        OWNER_PRINCIPAL,
+    )?;
 
     assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_some());
     assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_some());
