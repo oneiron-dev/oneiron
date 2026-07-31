@@ -789,8 +789,8 @@ pub enum Error {
     )]
     InvalidFacet { facet: EntityId, found: Option<u8> },
     /// A public `FacetOf` (u8 17) edge write failed the ONE-1645 write-time
-    /// type table: the source must be an existing CLAIM or TURN and the target
-    /// an existing FACET. A missing endpoint row is unknowable-typed
+    /// type table: the source must be an existing CLAIM, TURN, or EVENT and
+    /// the target an existing FACET. A missing endpoint row is unknowable-typed
     /// (`None`) and rejected on the same footing as a wrong type — a facet
     /// stamp's endpoints must be established facts before the stamp. The batch
     /// aborts atomically; nothing was written.
