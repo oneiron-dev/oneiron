@@ -1614,19 +1614,31 @@ pub fn forward_rematerialize(
                 // endpoint types from the entity rows this check just proved
                 // present. Reversing the order would burn a legitimate
                 // out-of-order replay as a permanent quarantine.
-                if let Err(off_table) =
-                    crate::batch::validate_facet_of_edge(&vault.store, &*wtxn, src, kind, tgt)
-                {
-                    quarantine::quarantine_rejected_op_in_txn(
-                        vault,
-                        wtxn,
-                        window_key.as_str(),
-                        QuarantineContainer::Edges,
-                        key,
-                        &off_table,
-                        buf,
-                    )?;
-                    return Ok(EdgeRematOutcome::Quarantined);
+                //
+                // The match is GUARDED (ONE-1124 fail-closed split): only a
+                // remote-classifiable error may quarantine. The table also
+                // surfaces LOCAL faults — `CorruptedIndex("entity header")`
+                // on a stored row it cannot parse, and heed read errors on
+                // the type lookups themselves — and those must ABORT the
+                // drain. Quarantining one would be doubly wrong: it swallows
+                // our own storage defect behind a continue, and the `x:` row
+                // it writes is PERMANENT false evidence accusing the peer of
+                // a forgery it never sent.
+                match crate::batch::validate_facet_of_edge(&vault.store, &*wtxn, src, kind, tgt) {
+                    Ok(()) => {}
+                    Err(off_table) if quarantine::remote_rejection_reason(&off_table).is_some() => {
+                        quarantine::quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            QuarantineContainer::Edges,
+                            key,
+                            &off_table,
+                            buf,
+                        )?;
+                        return Ok(EdgeRematOutcome::Quarantined);
+                    }
+                    Err(local) => return Err(local),
                 }
 
                 let out_key = Store::encode_edge_key(&src, kind, &tgt);

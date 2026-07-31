@@ -1152,6 +1152,107 @@ fn selector_denies_event_scoped_to_unselected_facet() {
     );
 }
 
+/// ONE-1645 RESIDUE REGRESSION — the pin that proves the ADMISSION BOUNDARY,
+/// not merely the replay gate.
+///
+/// The gate above (`window::forward_rematerialize`) stops an off-table stamp
+/// from reaching LMDB. That is not the exposure. `facet_scope_by_source` reads
+/// the RAW Loro edges map with no source-type check, so a forged
+/// `PERSON -> <selected FACET>` row that merely SITS in the admitted / live
+/// document still seeds facet scope — quarantined or not, LMDB never consulted.
+/// Only dropping the row at the trust boundary closes it.
+///
+/// The exercise is end-to-end on purpose: forge into a peer window, run the
+/// REAL admission door, forward-rematerialize, then filter THAT SAME document
+/// for a facet-limited peer. The one-hop neighbor's ONLY adjacency is to the
+/// forged seed, so its presence in the export would prove the seed still
+/// scopes closure; the EVENT control is stamped to the same selected facet, so
+/// its ABSENCE would prove the fix broke facet scoping instead of the forgery.
+#[test]
+fn forged_facet_seed_cannot_move_entities_across_the_disclosure_boundary() {
+    let member = entity_id(0x3D);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-03");
+
+    let facet_selected = entity_id(0xAD);
+    let person = entity_id(0x1D);
+    let neighbor = entity_id(0x2D);
+    let event = entity_id(0x4D);
+
+    // The hostile peer's window. Endpoint types are knowable from this update
+    // itself — the bundled-endpoint delivery a forger would actually use.
+    let remote = create_window_doc("federation-peer", &window_key);
+    insert_entity(&remote, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
+    insert_entity(&remote, person, ENTITY_TYPE_PERSON, b"person");
+    insert_entity(&remote, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
+    insert_entity(&remote, event, ENTITY_TYPE_EVENT, b"event");
+    insert_edge(&remote, person, EdgeKind::FacetOf, facet_selected);
+    // The neighbor is reachable EXCLUSIVELY through the forged seed.
+    insert_edge(&remote, person, EdgeKind::Mentions, neighbor);
+    insert_edge(&remote, event, EdgeKind::FacetOf, facet_selected);
+    remote.commit();
+    let update = remote.export(ExportMode::all_updates()).unwrap();
+
+    // Full production ingest, so the filtered doc below is the one this vault
+    // would really export.
+    let admitted = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect("a forged facet stamp must not fail the admission door closed");
+    let local = create_window_doc("local", &window_key);
+    local.import(&admitted).unwrap();
+    crate::sync::window::forward_rematerialize(
+        &vault,
+        &local,
+        &crate::sync::bridge::Materializer::new(),
+        &window_key,
+    )
+    .unwrap();
+
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_selected],
+        vec![],
+    );
+    let exported = filtered_window_doc(
+        &vault,
+        &local,
+        &window_key,
+        test_selector_scope(),
+        &selector,
+    )
+    .unwrap()
+    .export(ExportMode::all_updates())
+    .unwrap();
+    let ids = import_ids(&exported);
+
+    assert!(
+        !ids.contains(&person),
+        "the forged PERSON must not be exported: its facet scope came from a \
+         stamp the type table forbids, and only the admission boundary can \
+         keep the RAW-map selector from reading it"
+    );
+    assert!(
+        !ids.contains(&neighbor),
+        "the one-hop neighbor is reachable ONLY through the forged seed — \
+         exporting it would prove the seed still scopes closure"
+    );
+    assert!(
+        ids.contains(&event),
+        "control: the on-table EVENT stamped to the SAME selected facet must \
+         still export — the fix removes the forged seed, not facet scoping"
+    );
+    assert!(
+        ids.contains(&facet_selected),
+        "control: the selected facet itself is always visible to its selector"
+    );
+}
+
 #[test]
 fn selector_facet_closure_does_not_expand_from_facet_entities() {
     let member = entity_id(0x3A);
