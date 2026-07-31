@@ -3661,23 +3661,6 @@ fn apply_vector(
     })
 }
 
-/// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind
-/// `Vault::put_edge`, `Vault::put_edge_with_vad`, and the `edge` /
-/// `edge_checked` / `edge_with_vad` batch builders).
-///
-/// ONE-1113 reject-and-route gate (ARCH-0034 #write-protection, ratified
-/// 2026-06-13): a plain put carries no provenance, so re-encoding an edge
-/// whose stored value is the 26-byte provenanced layout would silently drop
-/// the two hot-flag bytes to 24 bytes in BOTH directions while the truth
-/// `edge.provenance` Claim stays live. "An unattributed write can never
-/// displace attributed truth as current state" — the put is rejected with
-/// the typed [`Error::EdgeIsProvenanced`], whose message routes the caller
-/// to the provenance path (`put_edge_provenance` / the `as_actor`-bound
-/// surface) and the operational setters (`set_edge_weight` /
-/// `set_edge_vad`). Layout dispatch is VALUE LENGTH (no tag byte; the
-/// read-back mirrors `restamp_edge_flags`). A plain put on a bare or absent
-/// edge is unchanged: absence of provenance is itself the anonymous
-/// representation.
 /// Reads an entity's registry type byte. `None` means no entity row exists —
 /// the type is unknowable, not merely unexpected.
 fn stored_entity_type(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
@@ -3753,6 +3736,23 @@ pub(crate) fn validate_facet_of_edge(
     })
 }
 
+/// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind
+/// `Vault::put_edge`, `Vault::put_edge_with_vad`, and the `edge` /
+/// `edge_checked` / `edge_with_vad` batch builders).
+///
+/// ONE-1113 reject-and-route gate (ARCH-0034 #write-protection, ratified
+/// 2026-06-13): a plain put carries no provenance, so re-encoding an edge
+/// whose stored value is the 26-byte provenanced layout would silently drop
+/// the two hot-flag bytes to 24 bytes in BOTH directions while the truth
+/// `edge.provenance` Claim stays live. "An unattributed write can never
+/// displace attributed truth as current state" — the put is rejected with
+/// the typed [`Error::EdgeIsProvenanced`], whose message routes the caller
+/// to the provenance path (`put_edge_provenance` / the `as_actor`-bound
+/// surface) and the operational setters (`set_edge_weight` /
+/// `set_edge_vad`). Layout dispatch is VALUE LENGTH (no tag byte; the
+/// read-back mirrors `restamp_edge_flags`). A plain put on a bare or absent
+/// edge is unchanged: absence of provenance is itself the anonymous
+/// representation.
 fn apply_edge(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
