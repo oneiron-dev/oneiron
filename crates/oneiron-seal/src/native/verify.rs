@@ -592,10 +592,10 @@ fn dss_material_valid(
     if !bound {
         return false;
     }
-    // Every CRL entry must be valid; collect the issuer names the valid
-    // CRLs speak for so the coverage rule below can match them against
-    // each covered certificate's issuer.
-    let crl_issuers: Vec<x509_cert::name::Name> = match crls {
+    // Every CRL entry must be valid; collect the key-bound issuer certs the
+    // valid CRLs authenticated under so the coverage rule below can match
+    // them against each covered certificate's ACTUAL issuer (name+key).
+    let crl_issuers: Vec<&EmbeddedCert> = match crls {
         DssArray::Absent => Vec::new(),
         DssArray::Malformed => return false,
         DssArray::Entries(entries) => {
@@ -632,17 +632,18 @@ fn dss_material_valid(
     }
     // Revocation coverage (§7.5 steps 2-3): every covered NON-ANCHOR chain
     // certificate needs at least one valid evidence item speaking ABOUT it
-    // — a CRL issued by its issuer (signature valid, fresh, its serial not
-    // listed, all established by crl_entry_valid) or an OCSP SingleResponse
-    // bound to it with `cert_status` good. Anchor certificates ride anchor
-    // trust and need no coverage. A cert-only DSS or evidence about an
-    // irrelevant issuer fails here — never AbsentAllowed.
+    // — a CRL whose key-bound issuer is that certificate's ACTUAL issuer
+    // (the covered cert's own signature verifies under the CRL-signing
+    // key) or an OCSP SingleResponse bound to it with `cert_status` good.
+    // Anchor certificates ride anchor trust and need no coverage. A
+    // cert-only DSS, evidence about an irrelevant issuer, or evidence
+    // authenticated by a same-subject/different-key shadow fails here —
+    // never AbsentAllowed.
     let covered_ok = covered.iter().all(|c| {
         if anchors.iter().any(|a| a.der == c.der) {
             return true;
         }
-        let issuer = &c.cert.tbs_certificate.issuer;
-        crl_issuers.iter().any(|n| n == issuer) || ocsp_targets.contains(&c.der)
+        crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der)
     });
     if !covered_ok {
         return false;
@@ -718,17 +719,45 @@ fn dss_array(doc: &Document, dss: &lopdf::Dictionary, key: &[u8]) -> DssArray {
     DssArray::Entries(out)
 }
 
-/// Find the certificate whose subject is `issuer` among embedded DSS certs
-/// first, then trust anchors.
-fn find_issuer<'a>(
-    issuer: &x509_cert::name::Name,
+/// Certificates whose subject is `issuer`, embedded DSS certs first, then
+/// trust anchors. X.509 issuer identity is name+key: subject matching is
+/// only the first sieve. Callers must confirm the candidate's KEY actually
+/// signed the certificate the evidence speaks for (`issued_by`) — a
+/// same-subject/different-key shadow must never authenticate evidence.
+fn issuer_candidates<'a, 'n>(
+    issuer: &'n x509_cert::name::Name,
     embedded: &'a [EmbeddedCert],
     anchors: &'a [EmbeddedCert],
-) -> Option<&'a EmbeddedCert> {
+) -> impl Iterator<Item = &'a EmbeddedCert> + 'n
+where
+    'a: 'n,
+{
     embedded
         .iter()
         .chain(anchors.iter())
-        .find(|c| c.cert.tbs_certificate.subject == *issuer)
+        .filter(|c| c.cert.tbs_certificate.subject == *issuer)
+}
+
+/// Is `cert` actually issued by `issuer`: issuer-name match AND `cert`'s
+/// own signature verifies under `issuer`'s key with a consistent, allowed
+/// algorithm. This binds issuer identity by key, defeating same-subject
+/// fake-issuer shadowing.
+fn issued_by(cert: &EmbeddedCert, issuer: &EmbeddedCert) -> bool {
+    use der::Encode;
+    if cert.cert.tbs_certificate.issuer != issuer.cert.tbs_certificate.subject {
+        return false;
+    }
+    let Ok(alg) = cms::cert_signature_algorithm(&issuer.der) else {
+        return false;
+    };
+    let oid = cert.cert.signature_algorithm.oid.as_bytes();
+    if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
+        return false;
+    }
+    let Ok(tbs) = cert.cert.tbs_certificate.to_der() else {
+        return false;
+    };
+    cms::verify_signature_value(alg, &issuer.der, &tbs, cert.cert.signature.raw_bytes()).is_ok()
 }
 
 /// One DSS CRL entry: parses, signature verifies against an
@@ -736,34 +765,35 @@ fn find_issuer<'a>(
 /// the applicable time, and lists no in-scope serial on its revoked list
 /// (§7.5 step 3). In-scope means every cert in the validation set
 /// (embedded, anchors, and the report's covered chains) issued by this
-/// CRL's issuer; any listed serial invalidates the evidence. On success
-/// returns the CRL issuer name so the coverage rule can match it against
-/// each covered certificate's issuer.
-fn crl_entry_valid(
+/// CRL's issuer; any listed serial invalidates the evidence. The issuer is
+/// the first name-matched candidate whose KEY verifies the CRL signature —
+/// a same-subject/different-key shadow can only authenticate a CRL it
+/// truly signed, and the coverage rule below counts that CRL only for
+/// certificates that shadow actually issued (`issued_by`). On success
+/// returns that key-bound issuer certificate.
+fn crl_entry_valid<'a>(
     data: &[u8],
-    embedded: &[EmbeddedCert],
-    anchors: &[EmbeddedCert],
+    embedded: &'a [EmbeddedCert],
+    anchors: &'a [EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
-) -> Option<x509_cert::name::Name> {
+) -> Option<&'a EmbeddedCert> {
     use der::{Decode, Encode};
     let Ok(crl) = x509_cert::crl::CertificateList::from_der(data) else {
         return None;
     };
-    let issuer = find_issuer(&crl.tbs_cert_list.issuer, embedded, anchors)?;
-    let Ok(alg) = cms::cert_signature_algorithm(&issuer.der) else {
-        return None;
-    };
-    let oid = crl.signature_algorithm.oid.as_bytes();
-    if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
-        return None;
-    }
     let Ok(tbs) = crl.tbs_cert_list.to_der() else {
         return None;
     };
-    if cms::verify_signature_value(alg, &issuer.der, &tbs, crl.signature.raw_bytes()).is_err() {
-        return None;
-    }
+    let oid = crl.signature_algorithm.oid.as_bytes();
+    let issuer = issuer_candidates(&crl.tbs_cert_list.issuer, embedded, anchors).find(|cand| {
+        let Ok(alg) = cms::cert_signature_algorithm(&cand.der) else {
+            return false;
+        };
+        cms::sig_alg_oid_matches(alg, oid)
+            && !cms::is_denied_alg_oid(oid)
+            && cms::verify_signature_value(alg, &cand.der, &tbs, crl.signature.raw_bytes()).is_ok()
+    })?;
     if !evidence_fresh(
         crl.tbs_cert_list.this_update,
         crl.tbs_cert_list.next_update,
@@ -773,7 +803,9 @@ fn crl_entry_valid(
     }
     // Revocation evaluation: a validation-set certificate issued by this
     // CRL's issuer whose serial is on the revoked list makes the evidence
-    // assert a revocation — it can never support validity.
+    // assert a revocation — it can never support validity. Name-matched
+    // scoping is deliberate (fail-closed): a shadow issuer listing a real
+    // serial still poisons its own CRL.
     if let Some(revoked) = &crl.tbs_cert_list.revoked_certificates {
         let in_scope = embedded
             .iter()
@@ -789,7 +821,7 @@ fn crl_entry_valid(
             }
         }
     }
-    Some(crl.tbs_cert_list.issuer.clone())
+    Some(issuer)
 }
 
 /// id-sha1 (RFC 6960 default CertID hash) and id-kp-OCSPSigning.
@@ -811,7 +843,10 @@ fn cert_id_hash(oid_bytes: &[u8], data: &[u8]) -> Option<Vec<u8>> {
 
 /// The cert a SingleResponse binds to: serial match against an embedded or
 /// anchored cert, and the CertID issuer hashes recompute against that
-/// cert's issuer (§7.5 step 3 certificate identity/serial).
+/// cert's ACTUAL issuer — the name-matched candidate whose key signed the
+/// target certificate (§7.5 step 3 certificate identity/serial). A
+/// same-subject/different-key shadow fails `issued_by`, so its name+key
+/// hashes can never authenticate the binding.
 fn ocsp_cert_binding<'a>(
     cert_id: &x509_ocsp::CertId,
     embedded: &'a [EmbeddedCert],
@@ -821,7 +856,8 @@ fn ocsp_cert_binding<'a>(
         .iter()
         .chain(anchors.iter())
         .find(|c| c.cert.tbs_certificate.serial_number == cert_id.serial_number)?;
-    let issuer = find_issuer(&target.cert.tbs_certificate.issuer, embedded, anchors)?;
+    let issuer = issuer_candidates(&target.cert.tbs_certificate.issuer, embedded, anchors)
+        .find(|cand| issued_by(target, cand))?;
     let oid = cert_id.hash_algorithm.oid.as_bytes();
     let subject_der = der::Encode::to_der(&issuer.cert.tbs_certificate.subject).ok()?;
     let key_bytes = issuer
@@ -839,16 +875,14 @@ fn ocsp_cert_binding<'a>(
     Some((target, issuer))
 }
 
-/// RFC 6960 §2.6: the responder is the issuer itself, or a delegate issued
-/// by the issuer carrying the id-kp-OCSPSigning EKU whose certificate
-/// signature verifies under the issuer's key.
+/// RFC 6960 §2.6: the responder is the issuer itself, or a delegate
+/// carrying the id-kp-OCSPSigning EKU whose certificate is actually issued
+/// BY the issuer (delegation chains to the key-bound actual issuer, never
+/// to a same-subject shadow).
 fn ocsp_responder_authorized(responder: &EmbeddedCert, issuer: &EmbeddedCert) -> bool {
-    use der::{Decode, Encode};
+    use der::Decode;
     if responder.der == issuer.der {
         return true;
-    }
-    if responder.cert.tbs_certificate.issuer != issuer.cert.tbs_certificate.subject {
-        return false;
     }
     let has_eku = responder
         .cert
@@ -862,21 +896,7 @@ fn ocsp_responder_authorized(responder: &EmbeddedCert, issuer: &EmbeddedCert) ->
                         .is_ok_and(|eku| eku.0.iter().any(|o| o.as_bytes() == OID_OCSP_SIGNING))
             })
         });
-    if !has_eku {
-        return false;
-    }
-    let Ok(alg) = cms::cert_signature_algorithm(&issuer.der) else {
-        return false;
-    };
-    let oid = responder.cert.signature_algorithm.oid.as_bytes();
-    if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
-        return false;
-    }
-    let Ok(tbs) = responder.cert.tbs_certificate.to_der() else {
-        return false;
-    };
-    cms::verify_signature_value(alg, &issuer.der, &tbs, responder.cert.signature.raw_bytes())
-        .is_ok()
+    has_eku && issued_by(responder, issuer)
 }
 
 /// Does this candidate certificate match the BasicOCSPResponse responderID?
@@ -1149,6 +1169,34 @@ mod tests {
         params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
         let issuer = rcgen::Issuer::from_params(&ca.rcgen_params, &ca.rcgen_key);
         params.signed_by(&key_pair, &issuer).unwrap().der().to_vec()
+    }
+
+    /// An intermediate CA issued by `parent` (fresh key pair).
+    fn child_ca(parent: &TestCa, cn: &str) -> TestCa {
+        use p256::pkcs8::DecodePrivateKey;
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let issuer = rcgen::Issuer::from_params(&parent.rcgen_params, &parent.rcgen_key);
+        let cert = params.signed_by(&key_pair, &issuer).unwrap();
+        let cert_der = cert.der().to_vec();
+        let key = p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap();
+        let cert = x509_cert::Certificate::from_der(&cert_der).unwrap();
+        TestCa {
+            cert_der,
+            cert,
+            key,
+            rcgen_params: params,
+            rcgen_key: key_pair,
+        }
     }
 
     fn sign_p256(key: &p256::ecdsa::SigningKey, data: &[u8]) -> Vec<u8> {
@@ -1615,26 +1663,92 @@ mod tests {
 
     #[test]
     fn dss_mixed_crl_ocsp_coverage_passes() {
-        // Mixed chain: the CA rides a CRL, the leaf rides an OCSP response.
-        let ca = test_ca("dss-ca");
-        let leaf_der = leaf_under(&ca, "leaf");
+        // Three-tier chain where each evidence kind proves its own path:
+        // the root and the intermediate it issued ride the root's CRL (the
+        // CRL cannot cover the leaf — the leaf's ACTUAL issuer is the
+        // intermediate, not the CRL signer), and the leaf rides an OCSP
+        // response bound to it via the intermediate. Dropping either entry
+        // must fail coverage.
+        let root = test_ca("root");
+        let inter = child_ca(&root, "intermediate");
+        let leaf_der = leaf_under(&inter, "leaf");
         let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
-        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
+        let crl = build_crl(&root, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
         let ocsp_leaf = build_ocsp(
-            &ca,
+            &inter,
             leaf.tbs_certificate.serial_number,
             AT_UNIX - 60,
             Some(AT_UNIX + 3600),
             x509_ocsp::CertStatus::good(),
         );
         let doc = dss_doc(
-            &[ca.cert_der.clone(), leaf_der.clone()],
+            &[
+                root.cert_der.clone(),
+                inter.cert_der.clone(),
+                leaf_der.clone(),
+            ],
             &[crl],
             &[ocsp_leaf],
         );
-        let covered = covered_of(&[&ca.cert_der, &leaf_der]);
+        let covered = covered_of(&[&root.cert_der, &inter.cert_der, &leaf_der]);
         let checks = dss_check(&doc, &covered);
         assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn dss_crl_same_dn_fake_issuer_rejected() {
+        // Same-subject fake-issuer shadowing on the CRL path: a real
+        // covered leaf issued by anchor A; /Certs orders [leaf, F] where F
+        // is attacker self-signed with subject DN == A's DN. A fresh EMPTY
+        // CRL signed by F (issuer = A's DN) must fail ValidationMaterial —
+        // never pass, never AbsentAllowed.
+        let anchor = test_ca("issuer");
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let fake = test_ca("issuer");
+        let crl = build_crl(&fake, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
+        let doc = dss_doc(&[leaf_der.clone(), fake.cert_der], &[crl], &[]);
+        let anchor_cert = EmbeddedCert::from_der(&anchor.cert_der).unwrap();
+        let covered = covered_of(&[&leaf_der]);
+        let mut checks = Checks::new();
+        verify_dss(
+            &doc,
+            std::slice::from_ref(&anchor_cert),
+            &covered,
+            AT_UNIX,
+            &mut checks,
+        );
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_ocsp_same_dn_fake_issuer_rejected() {
+        // Same shadowing on the OCSP path: a `good` SingleResponse for the
+        // real leaf's serial whose CertID issuer name/key hashes are
+        // computed against F and whose response is signed by F must fail
+        // ValidationMaterial.
+        let anchor = test_ca("issuer");
+        let leaf_der = leaf_under(&anchor, "leaf");
+        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
+        let fake = test_ca("issuer");
+        let ocsp = build_ocsp(
+            &fake,
+            leaf.tbs_certificate.serial_number,
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+        );
+        let doc = dss_doc(&[leaf_der.clone(), fake.cert_der], &[], &[ocsp]);
+        let anchor_cert = EmbeddedCert::from_der(&anchor.cert_der).unwrap();
+        let covered = covered_of(&[&leaf_der]);
+        let mut checks = Checks::new();
+        verify_dss(
+            &doc,
+            std::slice::from_ref(&anchor_cert),
+            &covered,
+            AT_UNIX,
+            &mut checks,
+        );
+        assert_material_fails(&checks);
     }
 
     #[test]
