@@ -114,6 +114,17 @@ fn edge_provenance_claim_blob() -> Vec<u8> {
     );
     claim.evidence = Some(encode_actor_class_evidence(EdgeActorClass::Human));
     claim.source = Some(ClaimSource::ToolOutput);
+    // Explicit `sensitivity: public` (band 0). The ONE-1645 provenance floor
+    // makes an UNSTAMPED claim read band 2, which exceeds the
+    // `max_auto_sensitivity: 0` Imported row `put_imported_source_trust`
+    // installs — the admission would queue for consent. The two fixtures using
+    // this blob test RESERVED-PREDICATE ADMISSION and duplicate-frame byte
+    // identity, not the sensitivity ceiling, so the stamp keeps them on the
+    // path they exist to exercise.
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("public"),
+    )]));
     entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
 }
 

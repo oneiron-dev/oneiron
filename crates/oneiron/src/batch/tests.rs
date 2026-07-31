@@ -526,8 +526,21 @@ fn seed_claim_of_edge(vault: &Vault, claim: &EntityId, subject: &EntityId) -> Re
     Ok(())
 }
 
+/// Deliberate gate consequence of the ONE-1645 provenance floor: unstamped
+/// ToolOutput queues for consent under the default manifest.
+///
+/// `default_policy_manifest()` ships ToolOutput `max_auto_sensitivity: 0`.
+/// Before the floor, an unstamped claim read band 0 and slipped under that
+/// ceiling — the unstamped = public = auto-write fail-open ONE-1645 exists to
+/// close. Post-floor the same claim reads band 2, exceeds the ceiling, and the
+/// write is rejected `pending` with `gate.pending.source_trust`.
+///
+/// The manifest ceiling is NOT raised to restore the old outcome: that would
+/// re-open the hole. The actor-ceiling grant this fixture also pins is still
+/// live and still `Auto` — the second arm proves it by stamping `public` and
+/// reaching auto through the very same default manifest.
 #[test]
-fn fresh_default_policy_manifest_grants_first_party_eiri_tool_output_auto() -> Result<()> {
+fn fresh_default_policy_manifest_queues_unstamped_tool_output_for_consent() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
 
     let first_party_eiri_actor = first_party_eiri_connector_actor_id()?;
@@ -568,19 +581,63 @@ fn fresh_default_policy_manifest_grants_first_party_eiri_tool_output_auto() -> R
         0.9,
     );
 
-    vault
+    let err = vault
         .batch()
         .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+        .commit()
+        .expect_err("unstamped ToolOutput must queue for consent, not auto-write");
+    match &err {
+        Error::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } => {
+            assert_eq!(*outcome, "pending");
+            assert_eq!(reason_codes.as_slice(), ["gate.pending.source_trust"]);
+        }
+        other => panic!("expected GateWriteRejected, got {other:?}"),
+    }
+    assert!(
+        vault.get_claim(&claim)?.is_none(),
+        "a consent-queued write must not land"
+    );
+
+    // Same actor, same default manifest, same source — only an explicit
+    // `public` stamp differs. The actor-ceiling grant is intact; it was the
+    // sensitivity ceiling, not the ceiling for this actor, that queued the
+    // first write.
+    let stamped_claim = EntityId::now();
+    let stamped_candidate = ClaimCandidate::new(
+        "profile.preference",
+        ClaimSubject::Entity(subject),
+        Value::from("sencha"),
+        0.9,
+    )
+    .with_scope(Value::Map(vec![(
+        Value::from("sensitivity"),
+        Value::from("public"),
+    )]));
+
+    vault
+        .batch()
+        .claim_candidate(
+            &stamped_claim,
+            stamped_candidate,
+            &envelope,
+            test_time_range(10, 10),
+            11,
+        )
         .commit()?;
 
-    let stored = vault.get_claim(&claim)?.expect("candidate claim stored");
+    let stored = vault
+        .get_claim(&stamped_claim)?
+        .expect("candidate claim stored");
     assert_eq!(stored.approval, ClaimApprovalStatus::Auto);
     assert_eq!(stored.source, Some(ClaimSource::ToolOutput));
 
     let decisions = vault.store.gate_decisions(10)?;
     let claim_decisions: Vec<_> = decisions
         .iter()
-        .filter(|decision| decision.claim_id == Some(*claim.as_bytes()))
+        .filter(|decision| decision.claim_id == Some(*stamped_claim.as_bytes()))
         .collect();
     assert_eq!(
         claim_decisions.len(),
@@ -4358,14 +4415,25 @@ fn assert_invalid_facet_of_edge(
     }
 }
 
-/// The admitted table: CLAIM → FACET and TURN → FACET. TURN is admitted
-/// alongside CLAIM because per-turn facet stamps are what transcript
-/// filtering rides.
+/// The admitted table: CLAIM → FACET, TURN → FACET, EVENT → FACET.
+///
+/// Two semantics ride one edge kind. CLAIM|TURN-sourced stamps are
+/// DISCLOSURE-SCOPING — they are what `claim_facet_scope` prefix-scans and
+/// what strict-mode filtering acts on; TURN is admitted alongside CLAIM
+/// because per-turn facet stamps are what transcript filtering rides.
+/// EVENT-sourced stamps are WORLD-MODEL and disclosure-INERT: the read side
+/// keeps every non-CLAIM entity unconditionally, so they exist only for
+/// ARCH-0039 PPR traversal (`facet_of` λ 0.05). Rejecting EVENT would make a
+/// ratified traversal contract unwritable.
 #[test]
 fn facet_of_edge_valid_source_types_accepted() -> Result<()> {
     for (label, src_type) in [
         ("claim source", ENTITY_TYPE_CLAIM),
         ("turn source", ENTITY_TYPE_TURN),
+        (
+            "event source (world-model, disclosure-inert)",
+            ENTITY_TYPE_EVENT,
+        ),
     ] {
         let (_dir, vault) = open_test_vault();
         let src = EntityId::now();
@@ -4388,12 +4456,30 @@ fn facet_of_edge_valid_source_types_accepted() -> Result<()> {
 /// The rejected table. Every row aborts the batch atomically and reports the
 /// types actually found — including `None` for an endpoint with no entity
 /// row, whose type is unknowable rather than merely wrong.
+///
+/// Admitting EVENT widened the source set to {CLAIM, TURN, EVENT}; it did not
+/// soften the teeth. Sources OUTSIDE that set are still rejected (the SESSION
+/// and PERSON rows pin this), the target must still be a FACET, and a missing
+/// endpoint row still fails closed.
 #[test]
 fn facet_of_edge_type_table_rejects_off_table_endpoints() -> Result<()> {
     // (label, src type, tgt type) — `None` means "write no entity row".
-    let table: [(&str, Option<u8>, Option<u8>); 4] = [
-        ("wrong target type", Some(ENTITY_TYPE_CLAIM), Some(ENTITY_TYPE_PERSON)),
-        ("wrong source type", Some(ENTITY_TYPE_PERSON), Some(ENTITY_TYPE_FACET)),
+    let table: [(&str, Option<u8>, Option<u8>); 5] = [
+        (
+            "wrong target type",
+            Some(ENTITY_TYPE_CLAIM),
+            Some(ENTITY_TYPE_PERSON),
+        ),
+        (
+            "wrong source type",
+            Some(ENTITY_TYPE_PERSON),
+            Some(ENTITY_TYPE_FACET),
+        ),
+        (
+            "off-table source stays rejected after the EVENT widening",
+            Some(crate::registry::ENTITY_TYPE_SESSION),
+            Some(ENTITY_TYPE_FACET),
+        ),
         ("missing source row", None, Some(ENTITY_TYPE_FACET)),
         ("missing target row", Some(ENTITY_TYPE_CLAIM), None),
     ];

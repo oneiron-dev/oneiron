@@ -62,6 +62,24 @@ fn test_config() -> VaultConfig {
     config
 }
 
+/// Stamps `sensitivity: public` (band 0) on a claim body.
+///
+/// The ONE-1645 provenance floor makes an UNSTAMPED claim read band 2, which
+/// exceeds the `max_auto_sensitivity: 0` row
+/// `seed_generated_auto_source_trust_manifest` installs — the write itself
+/// would be refused at the gate. The fixtures that pair these two helpers test
+/// the CONSOLIDATION rule (Auto/Generated claims are not consolidatable until
+/// vetted), which can only be observed once the claim actually lands, so they
+/// stamp public to get past the write door. The floor is pinned directly by
+/// `gate_source_trust_unstamped_claim_hits_floor_band`.
+fn public_stamped(mut body: ClaimBody) -> ClaimBody {
+    body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("public"),
+    )]));
+    body
+}
+
 fn seed_generated_auto_source_trust_manifest(vault: &Vault) -> Result<()> {
     let manifest = rmpv::Value::Map(vec![
         (
@@ -8329,7 +8347,7 @@ fn claim_vad_consolidation_rejects_auto_generated_claim_until_vetted() -> Result
     )?;
     seed_generated_auto_source_trust_manifest(&vault)?;
 
-    let mut body = claim_vad_fixture_body(subject, &[turn]);
+    let mut body = public_stamped(claim_vad_fixture_body(subject, &[turn]));
     body.source = Some(ClaimSource::Generated);
     vault.put_claim(&auto_generated, &body, test_time_range(30, 30), 30)?;
     let err = block_on_ready(vault.consolidate_claim_vad(&auto_generated, 100))
@@ -8410,7 +8428,7 @@ fn claim_vad_consolidation_clears_prior_outputs_when_claim_stops_consolidating()
         },
     )?;
 
-    let mut body = claim_vad_fixture_body(subject, &[turn]);
+    let mut body = public_stamped(claim_vad_fixture_body(subject, &[turn]));
     vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
     vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
 
@@ -8852,7 +8870,7 @@ fn coping_outcome_update_rejects_auto_generated_prior_claim_until_vetted() -> Re
     let outcome = EntityId::now();
 
     vault.put_entity(&person, ENTITY_TYPE_PERSON, test_time_range(1, 1), 1, b"p")?;
-    let mut body = coping_outcome_fixture_body(
+    let mut body = public_stamped(coping_outcome_fixture_body(
         person,
         strategy_ref,
         CopingStrategy::SitSel,
@@ -8860,7 +8878,7 @@ fn coping_outcome_update_rejects_auto_generated_prior_claim_until_vetted() -> Re
         0.6,
         ClaimLifecycleStatus::Active,
         50,
-    )?;
+    )?);
     body.source = Some(ClaimSource::Generated);
     seed_generated_auto_source_trust_manifest(&vault)?;
     vault.put_claim(&outcome, &body, test_time_range(50, 50), 50)?;
