@@ -1,0 +1,86 @@
+[package]
+name = "oneiron-seal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native PDF PAdES seal and verification engine"
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["native"]
+native = [
+  "dep:cms",
+  "dep:const-oid",
+  "dep:der",
+  "dep:ipnet",
+  "dep:lopdf",
+  "dep:p256",
+  "dep:pkix-chain",
+  "dep:rsa",
+  "dep:sha2",
+  "dep:signature",
+  "dep:spki",
+  "dep:time",
+  "dep:x509-cert",
+  "dep:url",
+  "dep:x509-ocsp",
+  "dep:x509-tsp",
+]
+network-fetch = [
+  "native",
+  "dep:futures-util",
+  "dep:reqwest",
+  "dep:tokio",
+]
+seal-oracle = ["native"]
+
+[dependencies]
+async-trait = "0.1"
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+
+# Exact-pinned PDF/CMS/X.509 and cryptographic wire stack. Any update to an
+# exact-pinned crypto/wire dependency requires the complete native + oracle
+# corpus before merge.
+cms = { version = "=0.2.3", default-features = false, features = ["std"], optional = true }
+const-oid = { version = "=0.9.6", optional = true }
+der = { version = "=0.7.10", features = ["alloc", "derive", "oid", "std", "time"], optional = true }
+lopdf = { version = "=0.44.0", default-features = false, optional = true }
+p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "std"], optional = true }
+pkix-chain = { version = "=0.4.1", features = ["crl", "ocsp"], optional = true }
+# A1 (GATE-1, card crypto:gseal): newest non-yanked 0.9 patch. The 0.9 line
+# carries RUSTSEC-2023-0071 with no patched release; exposure here is
+# signing-only. Recorded in deny.toml advisories.ignore.
+rsa = { version = "=0.9.10", default-features = false, features = ["sha2", "std", "getrandom"], optional = true }
+sha2 = { version = "=0.10.9", features = ["oid"], optional = true }
+signature = { version = "=2.2.0", features = ["std"], optional = true }
+spki = { version = "=0.7.3", features = ["std"], optional = true }
+time = { version = "=0.3.54", features = ["formatting"], optional = true }
+x509-cert = { version = "=0.2.5", default-features = false, features = ["std"], optional = true }
+# A2 (GATE-1): the guarded fetcher builds OCSP requests, so `builder` is on.
+x509-ocsp = { version = "=0.2.1", features = ["std", "builder"], optional = true }
+x509-tsp = { version = "=0.1.0", optional = true }
+
+# Production guarded fetcher; disabled in B-B/offline builds.
+futures-util = { version = "0.3", optional = true }
+ipnet = { version = "2", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "stream"], optional = true }
+tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
+url = { version = "2", optional = true }
+
+[dev-dependencies]
+proptest = "1"
+rcgen = "0.14"
+serde_json = { workspace = true }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[[test]]
+name = "oracle"
+path = "tests/oracle.rs"
+required-features = ["seal-oracle"]
+
+[lints]
+workspace = true
