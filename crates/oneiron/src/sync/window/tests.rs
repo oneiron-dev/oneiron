@@ -2576,6 +2576,94 @@ fn authority_genesis_fixture_for_window(seed: u8) -> crate::authority::Authority
     entry
 }
 
+/// A cosigned RevokeDevice naming `revoked_seed`'s key, parented on `genesis`.
+/// `put_authority_log_entry` validates canonical bytes + origin signature +
+/// the store-key bind, so this needs no full roster ancestry to materialize —
+/// which is all the reverse-remat door reads.
+#[cfg(feature = "sync")]
+fn authority_revoke_fixture_for_window(
+    genesis: &crate::authority::AuthorityLogEntry,
+    signer_seed: u8,
+    cosigner_seed: u8,
+    revoked_seed: u8,
+) -> crate::authority::AuthorityLogEntry {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let ed_key = |seed: u8| SigningKey::from_bytes(&[seed; 32]);
+    let authority_key = |signing: &SigningKey| {
+        crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
+    };
+    let signature_for =
+        |key: &crate::authority::AuthorityKey| crate::authority::AuthoritySignature {
+            suite: key.suite(),
+            public_key: key.clone(),
+            signature: vec![0; 64],
+        };
+
+    let (signer, cosigner) = (ed_key(signer_seed), ed_key(cosigner_seed));
+    let (signer_key, cosigner_key) = (authority_key(&signer), authority_key(&cosigner));
+    let mut entry = crate::authority::AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(crate::authority::genesis_vault_id(genesis).expect("vault id")),
+        seq: 1,
+        parent_hashes: vec![crate::authority::authority_entry_hash(genesis).expect("genesis hash")],
+        op: crate::authority::AuthorityOp::RevokeDevice {
+            revoked_key: authority_key(&ed_key(revoked_seed)),
+        },
+        signer: signature_for(&signer_key),
+        cosigns: vec![signature_for(&cosigner_key)],
+        ts: 900,
+    };
+    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+    for cosign in &mut entry.cosigns {
+        cosign.signature = cosigner.sign(&transcript).to_bytes().to_vec();
+    }
+    entry
+}
+
+/// Wraps `data` in the pinned 25-byte envelope with an explicitly chosen
+/// occurred range, so a test can mint the INVERTED range a hostile peer parks
+/// on a CRDT carrier (`put_replicated` rejects `start > end` with
+/// `InvalidTimeRange` before the authority validator ever runs).
+#[cfg(feature = "sync")]
+fn make_entity_blob_with_range(
+    entity_type: u8,
+    occurred_start: u64,
+    occurred_end: u64,
+    learned_at: u64,
+    data: &[u8],
+) -> Vec<u8> {
+    let mut blob = Vec::with_capacity(25 + data.len());
+    blob.push(entity_type);
+    blob.extend_from_slice(&occurred_start.to_be_bytes());
+    blob.extend_from_slice(&occurred_end.to_be_bytes());
+    blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(data);
+    blob
+}
+
+/// Rewrites a MessagePack authority payload into its LEGACY-GENESIS shape by
+/// dropping the `pending_widen_delay_secs` field wherever it appears (only the
+/// genesis op map carries it). That is exactly the delta between the current
+/// and legacy encodings/transcripts, so signing over the stripped transcript
+/// mints a genuinely legacy-signed entry without reaching into the private
+/// authority encoders.
+#[cfg(feature = "sync")]
+fn strip_genesis_delay_field(value: &Value) -> Value {
+    match value {
+        Value::Map(fields) => Value::Map(
+            fields
+                .iter()
+                .filter(|(key, _)| key.as_str() != Some("pending_widen_delay_secs"))
+                .map(|(key, val)| (key.clone(), strip_genesis_delay_field(val)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(strip_genesis_delay_field).collect()),
+        other => other.clone(),
+    }
+}
+
 /// ONE-1604-D1/D5 T9 (fix-leg 1, P2-b): the window-path twin of the bridge
 /// tombstone regression, covering the neutralize-parity call this lane adds
 /// to the window's AUTHORITY_LOG arm — pinned at the state the pre-fix code
@@ -2688,6 +2776,261 @@ fn reverse_rematerialization_replaces_cross_type_authority_key_squatter() -> Res
         map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
         Some(local),
         "the validated authority row must replace the cross-type carrier at its derived key"
+    );
+    Ok(())
+}
+
+/// ONE-1604-D1 (fix-leg 3, P2 — the external probe's exact assertion pair):
+/// the dominance check was TYPE-BYTE-blind. It preserved any carrier whose
+/// envelope header read type-122, resting on "two authority rows at one key
+/// are byte-identical by construction" — an invariant that holds only for
+/// rows through the VALIDATED write path. A raw CRDT carrier bypasses
+/// `apply_put`, so a hostile peer can park a POISONED type-122 row at a
+/// revocation's derived key: here, the revocation's own valid body wrapped in
+/// an INVERTED occurred range. Every receiving peer's replay door rejects
+/// that envelope with `InvalidTimeRange` before the authority validator runs,
+/// so preserving it exported the rejection and left downstream peers MISSING
+/// the revocation entirely (probe: local_replaced_fake=false,
+/// fake_survived=true).
+#[cfg(feature = "sync")]
+#[test]
+fn reverse_rematerialization_replaces_poisoned_authority_carrier_with_inverted_range() -> Result<()>
+{
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let genesis = authority_genesis_fixture_for_window(0x71);
+    let revoke = authority_revoke_fixture_for_window(&genesis, 0x71, 0x72, 0x73);
+    let id = crate::authority::authority_log_entity_id(&revoke)?;
+    vault.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+    )?;
+    let local = vault.get_raw(&id)?.expect("authority row stored");
+
+    // Same valid signed body, poisoned envelope: occurred_start > occurred_end.
+    let poisoned = make_entity_blob_with_range(
+        ENTITY_TYPE_AUTHORITY_LOG,
+        learned_at + 1,
+        learned_at,
+        learned_at,
+        &local[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    );
+    assert_ne!(
+        poisoned, local,
+        "the poisoned carrier must genuinely differ"
+    );
+    assert_eq!(
+        poisoned[0], ENTITY_TYPE_AUTHORITY_LOG,
+        "the carrier must read as type-122 — that is what made it type-byte-invisible"
+    );
+    let doc = create_window_doc("poisoned-authority-window", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &poisoned)?;
+    doc.commit();
+
+    reverse_rematerialize(&vault, &doc, &window_key)?;
+
+    let carrier = map_get_bytes(&doc.get_map("entities"), &id.to_hex());
+    assert_eq!(
+        carrier.as_deref(),
+        Some(local.as_slice()),
+        "local_replaced_fake: the fully validated local row must replace the poisoned carrier"
+    );
+    assert_ne!(
+        carrier.as_deref(),
+        Some(poisoned.as_slice()),
+        "fake_survived: the inadmissible carrier must NOT reach peers"
+    );
+    Ok(())
+}
+
+/// ONE-1604-D1 (fix-leg 3, P2 — regression 2): the other half of the poisoned
+/// type-122 surface. A carrier with a well-formed envelope but a DIVERGENT or
+/// MALFORMED body is equally unreplayable — it fails
+/// `decode_authority_log_entry_body` (canonical encoding + origin signature),
+/// or clears decode but hashes to a different content-derived key, so it
+/// could never be admitted under this id. Both shapes are dominated.
+#[cfg(feature = "sync")]
+#[test]
+fn reverse_rematerialization_replaces_divergent_and_malformed_authority_bodies() -> Result<()> {
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let genesis = authority_genesis_fixture_for_window(0x74);
+    let revoke = authority_revoke_fixture_for_window(&genesis, 0x74, 0x75, 0x76);
+    let id = crate::authority::authority_log_entity_id(&revoke)?;
+
+    // A DIFFERENT valid, fully signed authority entry — it decodes cleanly,
+    // but its content-derived key is not this one, so the key bind rejects it.
+    let foreign = authority_genesis_fixture_for_window(0x77);
+    let foreign_body = crate::authority::encode_authority_log_entry_body(&foreign)?;
+    assert_ne!(
+        crate::authority::authority_log_entity_id(&foreign)?,
+        id,
+        "the divergent body must derive a different store key"
+    );
+
+    for (label, body) in [
+        ("divergent", foreign_body),
+        ("malformed", b"not messagepack at all".to_vec()),
+    ] {
+        let (_dir, vault) = test_vault();
+        vault.put_authority_log_entry(
+            &revoke,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+        )?;
+        let local = vault.get_raw(&id)?.expect("authority row stored");
+
+        let poisoned = make_entity_blob_with_range(
+            ENTITY_TYPE_AUTHORITY_LOG,
+            learned_at,
+            learned_at,
+            learned_at,
+            &body,
+        );
+        let doc = create_window_doc("divergent-authority-window", &window_key);
+        map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &poisoned)?;
+        doc.commit();
+
+        reverse_rematerialize(&vault, &doc, &window_key)?;
+
+        assert_eq!(
+            map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
+            Some(local),
+            "a {label} type-122 body at the derived key must be dominated"
+        );
+    }
+    Ok(())
+}
+
+/// ONE-1604-D1 (fix-leg 3, P2 — regression 3): dominance is ADMISSIBILITY-
+/// based, never byte-difference-based, so presence-only survives untouched
+/// for a carrier every peer's replay door would admit. Here the carrier
+/// shares the local row's signed body but declares a DIFFERENT (still valid,
+/// non-inverted) occurred range: byte-different, fully admissible, preserved.
+#[cfg(feature = "sync")]
+#[test]
+fn reverse_rematerialization_preserves_admissible_authority_carrier() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let genesis = authority_genesis_fixture_for_window(0x79);
+    let id = crate::authority::authority_log_entity_id(&genesis)?;
+    vault.put_authority_log_entry(
+        &genesis,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+    )?;
+    let local = vault.get_raw(&id)?.expect("authority row stored");
+
+    let admissible = make_entity_blob_with_range(
+        ENTITY_TYPE_AUTHORITY_LOG,
+        learned_at - 30,
+        learned_at,
+        learned_at,
+        &local[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    );
+    assert_ne!(
+        admissible, local,
+        "the carrier must be byte-different for this to test the admissibility rule"
+    );
+    let doc = create_window_doc("admissible-authority-window", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &admissible)?;
+    doc.commit();
+
+    reverse_rematerialize(&vault, &doc, &window_key)?;
+
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
+        Some(admissible),
+        "an admissible carrier must be PRESERVED — byte difference alone never dominates"
+    );
+    Ok(())
+}
+
+/// ONE-1604-D1 (fix-leg 3, P2 — regression 3, legacy-genesis leg): the
+/// decode layer's dual-encoding posture must reach the dominance verdict
+/// UNCHANGED. `decode_authority_log_entry_body` admits both the exact
+/// canonical AND the exact legacy-genesis encoding (whose signed bytes omit
+/// `pending_widen_delay_secs`), and `authority_entry_hash` keys off whichever
+/// of the two actually verifies. So:
+///
+/// * a legacy-encoded carrier AT ITS OWN derived key is ADMISSIBLE and is
+///   preserved as-is — the codebase never normalizes legacy bytes, it keys
+///   off them (`authority/tests.rs::legacy_signed_genesis_derives_a_stable_
+///   store_key_from_its_legacy_bytes`), so there is no re-encode posture to
+///   follow here;
+/// * the current re-encoding of that same legacy-signed entry carries no
+///   verifying signature, so it fails the BODY check and is dominated — for
+///   INADMISSIBILITY, not for differing from the local bytes.
+///
+/// Asserted at the admissibility helper rather than through a full
+/// reverse-remat pass because no live door can put a legacy-signed row into a
+/// vault: `put_authority_log_entry` re-encodes canonically, and the
+/// replicated door needs a local authority root that a genesis row is itself
+/// the only source of. The helper is the whole dominance predicate, so its
+/// verdict IS the preserve/dominate decision.
+#[cfg(feature = "sync")]
+#[test]
+fn legacy_genesis_carrier_is_admissible_and_its_current_reencoding_is_not() -> Result<()> {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    const DOMAIN_LEN: usize = 20; // b"oneiron/authority/v1"
+    let mut legacy = authority_genesis_fixture_for_window(0x7A);
+    let signing = SigningKey::from_bytes(&[0x7A; 32]);
+
+    // Re-sign over the delay-free transcript, then encode the delay-free
+    // body: exactly the legacy-genesis pair the decode layer still accepts.
+    let canonical_transcript = crate::authority::authority_transcript(&legacy)?;
+    let mut cursor = std::io::Cursor::new(&canonical_transcript[DOMAIN_LEN..]);
+    let legacy_transcript_value =
+        strip_genesis_delay_field(&rmpv::decode::read_value(&mut cursor).expect("transcript"));
+    let mut legacy_transcript = canonical_transcript[..DOMAIN_LEN].to_vec();
+    rmpv::encode::write_value(&mut legacy_transcript, &legacy_transcript_value)
+        .expect("legacy transcript");
+    legacy.signer.signature = signing.sign(&legacy_transcript).to_bytes().to_vec();
+
+    let current_body = crate::authority::encode_authority_log_entry_body(&legacy)?;
+    let mut cursor = std::io::Cursor::new(current_body.as_slice());
+    let legacy_value =
+        strip_genesis_delay_field(&rmpv::decode::read_value(&mut cursor).expect("body"));
+    let mut legacy_body = Vec::new();
+    rmpv::encode::write_value(&mut legacy_body, &legacy_value).expect("legacy body");
+    assert_ne!(
+        legacy_body, current_body,
+        "the two encodings must genuinely differ for this to test the dual-encoding path"
+    );
+
+    let id = crate::authority::authority_log_entity_id(&legacy)?;
+    let envelope =
+        |body: &[u8]| make_entity_blob_with_range(ENTITY_TYPE_AUTHORITY_LOG, 5, 9, 9, body);
+
+    assert!(
+        crdt_carrier_is_admissible_authority_row(&id, &envelope(&legacy_body)),
+        "a legacy-encoded carrier at its own derived key must be ADMISSIBLE (preserved, not normalized)"
+    );
+    assert!(
+        !crdt_carrier_is_admissible_authority_row(&id, &envelope(&current_body)),
+        "the current re-encoding carries no verifying signature — dominated for inadmissibility"
+    );
+    // Same legacy bytes, inverted envelope: the envelope leg is independent
+    // of the body leg, so a legacy body cannot launder a poisoned range.
+    assert!(
+        !crdt_carrier_is_admissible_authority_row(
+            &id,
+            &make_entity_blob_with_range(ENTITY_TYPE_AUTHORITY_LOG, 9, 5, 9, &legacy_body)
+        ),
+        "an inverted occurred range must dominate even a legacy-valid body"
     );
     Ok(())
 }

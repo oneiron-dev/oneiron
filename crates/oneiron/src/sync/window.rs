@@ -2076,14 +2076,14 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
         // Presence alone decides for ordinary rows (delete-wins and remote
         // history are not rewritten here). ONE-1604-D1 adds one exception:
-        // a validated local type-122 row DOMINATES a cross-type occupant of
-        // its content-derived key. The local vault already evicted that
-        // squatter at the write door, so leaving it as the CRDT carrier
-        // would re-export the very row the authority substrate refused —
-        // and re-import it onto peers that have not yet seen the entry.
+        // a validated local type-122 row DOMINATES any occupant of its
+        // content-derived key that no peer's replay door would admit. The
+        // local vault already refused that occupant, so leaving it as the
+        // CRDT carrier would re-export the very row the authority substrate
+        // rejected — and starve peers that have not yet seen the entry.
         if !reverse_remat_skip_redaction_receipt_mirror(&raw)
             && (!map_contains_binary(&entities_map, &hex_id)
-                || authority_row_dominates_map_carrier(&entities_map, &hex_id, &raw))
+                || authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw))
         {
             map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
             wrote_any = true;
@@ -2245,25 +2245,77 @@ fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
 }
 
 /// ONE-1604-D1 dominance on the outbound door: `true` when the LOCAL row is a
-/// type-122 authority row and the CRDT map carries a NON-authority row at the
-/// same key — the cross-type squatter the local write door already evicted.
-/// Overwriting it is the outbound half of the same rule; without it a
-/// squatter that pre-occupied a revocation's derived id keeps circulating and
-/// keeps that revocation out of peers' folds.
+/// fully validated type-122 authority row and the CRDT map carries a row that
+/// would NOT survive the authority replay door at that key. Overwriting it is
+/// the outbound half of the write-door rule; without it a carrier that
+/// pre-occupied a revocation's derived id keeps circulating and keeps that
+/// revocation out of peers' folds.
 ///
-/// Presence-only semantics are preserved everywhere else, including when both
-/// rows are type-122 (the store key is a pure function of the signed body, so
-/// two authority rows at one key are byte-identical by construction).
-fn authority_row_dominates_map_carrier(entities_map: &LoroMap, hex_id: &str, local: &[u8]) -> bool {
+/// Dominance is ADMISSIBILITY-based, not type-byte-based (fix-leg 3). The
+/// earlier type-byte test rested on "two authority rows at one key are
+/// byte-identical by construction", which holds only for rows through the
+/// validated write path. A raw CRDT carrier bypasses `apply_put` entirely, so
+/// a hostile peer can park a poisoned type-122 row at a revocation's derived
+/// key — an inverted occurred range, or a divergent/malformed body. Every
+/// peer rejects such a carrier locally, so preserving it exports the
+/// rejection instead of the revocation.
+///
+/// Presence-only semantics stay intact for an ADMISSIBLE carrier: byte
+/// difference alone never triggers dominance, so the legacy-genesis
+/// dual-encoding is preserved rather than normalized — see
+/// [`crdt_carrier_is_admissible_authority_row`].
+fn authority_row_dominates_map_carrier(
+    entities_map: &LoroMap,
+    id: &EntityId,
+    hex_id: &str,
+    local: &[u8],
+) -> bool {
     let local_is_authority = EntityMetadataHeader::parse(local)
         .is_some_and(|header| header.entity_type == ENTITY_TYPE_AUTHORITY_LOG);
     if !local_is_authority {
         return false;
     }
-    map_get_bytes(entities_map, hex_id).is_some_and(|carrier| {
-        EntityMetadataHeader::parse(&carrier)
-            .is_none_or(|header| header.entity_type != ENTITY_TYPE_AUTHORITY_LOG)
-    })
+    map_get_bytes(entities_map, hex_id)
+        .is_some_and(|carrier| !crdt_carrier_is_admissible_authority_row(id, &carrier))
+}
+
+/// The full envelope/body/key admissibility triple a CRDT carrier must clear
+/// to be replayable as the AUTHORITY_LOG row at `id` — the outbound mirror of
+/// what every receiving peer's replay door computes:
+///
+/// * ENVELOPE — parses, reads type-122, and carries a non-inverted occurred
+///   range (`put_replicated` rejects an inverted range with `InvalidTimeRange`
+///   before the authority validator ever runs);
+/// * BODY — decodes through [`crate::authority::decode_authority_log_entry_body`],
+///   which is the same canonical-encoding + origin-signature validation the
+///   write door runs;
+/// * KEY — the entry's content-derived store key equals `id`, the bind
+///   `check_authority_log_store_key` enforces at the write door.
+///
+/// LEGACY-GENESIS: both checks delegate to the shared helpers, so the decode
+/// layer's dual-encoding posture is inherited unchanged. It admits the exact
+/// canonical AND the exact legacy-genesis encoding, and
+/// `authority_log_entity_id` hashes whichever of the two actually verifies —
+/// so a legacy-encoded carrier at its own derived key is ADMISSIBLE and is
+/// preserved as-is (no re-encode; the codebase never normalizes legacy bytes,
+/// it keys off them). The current re-encoding of a legacy-signed entry
+/// carries no verifying signature, so it fails the BODY check — dominated for
+/// inadmissibility, not for differing from the local bytes.
+fn crdt_carrier_is_admissible_authority_row(id: &EntityId, carrier: &[u8]) -> bool {
+    let Some(header) = EntityMetadataHeader::parse(carrier) else {
+        return false;
+    };
+    if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG
+        || header.occurred_start > header.occurred_end
+    {
+        return false;
+    }
+    let Ok(entry) =
+        crate::authority::decode_authority_log_entry_body(&carrier[ENTITY_METADATA_HEADER_LEN..])
+    else {
+        return false;
+    };
+    crate::authority::authority_log_entity_id(&entry).is_ok_and(|derived| derived == *id)
 }
 
 /// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
