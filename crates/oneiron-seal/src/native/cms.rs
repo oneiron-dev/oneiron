@@ -200,16 +200,17 @@ pub(crate) fn attr_signing_cert_v2(
     attribute(&OID_ATTR_SIGNING_CERT_V2, &signing_cert)
 }
 
+fn canonical_attribute_content(mut attrs: Vec<Vec<u8>>) -> Vec<u8> {
+    attrs.sort();
+    attrs.dedup();
+    attrs.concat()
+}
+
 /// Canonical signed-attribute pair: on-wire IMPLICIT `[0]` content and the
 /// RFC 5652 §5.4 universal-`SET OF` signature input. Both share the same
 /// canonically sorted content octets; only the tag differs.
-pub(crate) fn assemble_signed_attrs(mut attrs: Vec<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
-    attrs.sort();
-    attrs.dedup();
-    let mut content = Vec::new();
-    for a in &attrs {
-        content.extend_from_slice(a);
-    }
+pub(crate) fn assemble_signed_attrs(attrs: Vec<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
+    let content = canonical_attribute_content(attrs);
     let wire = tlv(0xA0, &content);
     let signing = tlv(0x31, &content);
     (wire, signing)
@@ -220,14 +221,8 @@ pub(crate) fn attr_ts_token(token_content_info_der: &[u8]) -> Vec<u8> {
     attribute(&OID_ATTR_TS_TOKEN, token_content_info_der)
 }
 
-pub(crate) fn assemble_unsigned_attrs(mut attrs: Vec<Vec<u8>>) -> Vec<u8> {
-    attrs.sort();
-    attrs.dedup();
-    let mut content = Vec::new();
-    for a in &attrs {
-        content.extend_from_slice(a);
-    }
-    tlv(0xA1, &content)
+pub(crate) fn assemble_unsigned_attrs(attrs: Vec<Vec<u8>>) -> Vec<u8> {
+    tlv(0xA1, &canonical_attribute_content(attrs))
 }
 
 // ---------------------------------------------------------------------------
@@ -648,8 +643,8 @@ pub(crate) fn is_denied_alg_oid(oid_bytes: &[u8]) -> bool {
     oid_bytes == OID_RSA_PSS.as_bytes()
 }
 
-pub(crate) fn sha256_oid_bytes() -> Vec<u8> {
-    OID_SHA256.as_bytes().to_vec()
+pub(crate) fn is_sha256_oid(oid_bytes: &[u8]) -> bool {
+    oid_bytes == OID_SHA256.as_bytes()
 }
 
 #[cfg(test)]

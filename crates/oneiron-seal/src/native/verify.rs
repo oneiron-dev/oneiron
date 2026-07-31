@@ -21,6 +21,12 @@ pub(crate) struct VerifyCtx<'a> {
     pub clock_ms: u64,
 }
 
+fn malformed_input() -> SealError {
+    SealError::InputInvalid {
+        code: InputInvalidCode::MalformedXref,
+    }
+}
+
 /// RFC 5280 path validation against configured trust anchors at the
 /// applicable time. Shared by the assembler (B-LT chain pre-check) and the
 /// verifier.
@@ -87,39 +93,24 @@ fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
         if !is_sig && !is_ts {
             continue;
         }
-        let br_obj = d.get(b"ByteRange").map_err(|_| SealError::InputInvalid {
-            code: InputInvalidCode::MalformedXref,
-        })?;
+        let br_obj = d.get(b"ByteRange").map_err(|_| malformed_input())?;
         let Object::Array(items) = br_obj else {
-            return Err(SealError::InputInvalid {
-                code: InputInvalidCode::MalformedXref,
-            });
+            return Err(malformed_input());
         };
         if items.len() != 4 {
-            return Err(SealError::InputInvalid {
-                code: InputInvalidCode::MalformedXref,
-            });
+            return Err(malformed_input());
         }
         let mut br = [0u64; 4];
         for (i, item) in items.iter().enumerate() {
             let Object::Integer(v) = item else {
-                return Err(SealError::InputInvalid {
-                    code: InputInvalidCode::MalformedXref,
-                });
+                return Err(malformed_input());
             };
-            br[i] = u64::try_from(*v).map_err(|_| SealError::InputInvalid {
-                code: InputInvalidCode::MalformedXref,
-            })?;
+            br[i] = u64::try_from(*v).map_err(|_| malformed_input())?;
         }
-        let Object::String(contents, _) = d.get(b"Contents").map_err(|_| {
-            SealError::InputInvalid {
-                code: InputInvalidCode::MalformedXref,
-            }
-        })?
+        let Object::String(contents, _) =
+            d.get(b"Contents").map_err(|_| malformed_input())?
         else {
-            return Err(SealError::InputInvalid {
-                code: InputInvalidCode::MalformedXref,
-            });
+            return Err(malformed_input());
         };
         out.push(SigEntry {
             is_doc_ts: is_ts,
@@ -227,12 +218,13 @@ fn verify_cades_sig(
     let cms_der = unpadded_cms(&e.contents);
     let parsed = cms_der.and_then(|d| cms::parse_cms(d).ok());
     let env_ok = parsed.as_ref().is_some_and(|p| {
-            p.content_oid == cms::OID_SIGNED_DATA.as_bytes()
-                && p.econtent.is_none()
-                && p.econtent_oid == cms::OID_DATA.as_bytes()
-                && p.digest_algs == vec![cms::sha256_oid_bytes()]
-                && p.signer.digest_alg_oid == cms::sha256_oid_bytes()
-        });
+        p.content_oid == cms::OID_SIGNED_DATA.as_bytes()
+            && p.econtent.is_none()
+            && p.econtent_oid == cms::OID_DATA.as_bytes()
+            && p.digest_algs.len() == 1
+            && cms::is_sha256_oid(&p.digest_algs[0])
+            && cms::is_sha256_oid(&p.signer.digest_alg_oid)
+    });
     checks.record(VerifyCheckKind::CmsEnvelope, env_ok, VerifyFindingCode::InvalidCms);
     let Some(parsed) = parsed.filter(|_| env_ok) else {
         checks.record(
@@ -548,11 +540,7 @@ pub(crate) fn verify_document(
         max_decompressed_size: Some(limits.max_input_bytes),
         ..LoadOptions::default()
     };
-    let doc = Document::load_mem_with_options(bytes, options).map_err(|_| {
-        SealError::InputInvalid {
-            code: InputInvalidCode::MalformedXref,
-        }
-    })?;
+    let doc = Document::load_mem_with_options(bytes, options).map_err(|_| malformed_input())?;
     let mut checks = Checks::new();
     // Legal revision chain and final EOF: the strict parse plus an EOF tail
     // (an optional single trailing EOL is tolerated for interoperability).

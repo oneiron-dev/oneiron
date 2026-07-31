@@ -75,7 +75,6 @@ async fn seal_baseline_b_both_suites_and_fixtures() {
                 config_for(vec![anchor], false),
             );
             let input = fixture_pdf(pdf);
-            let input_prefix = input.clone();
             let out = engine
                 .seal_pdf(&input, &request(PadesProfile::BaselineB))
                 .await
@@ -85,7 +84,7 @@ async fn seal_baseline_b_both_suites_and_fixtures() {
             assert!(out.self_verify_report.passes_self_verify());
             assert_eq!(out.evidence_sha256, support::sha256(&out.bytes));
             // Every pre-existing input byte is preserved (§7.1 rule 8).
-            assert!(out.bytes.starts_with(&input_prefix));
+            assert!(out.bytes.starts_with(&input));
             assert!(out.bytes.ends_with(b"%%EOF"));
             // Independent verify entry point agrees.
             let report = engine.verify_sealed_pdf(&out.bytes).unwrap();

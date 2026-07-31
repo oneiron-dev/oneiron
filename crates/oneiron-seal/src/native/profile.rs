@@ -246,9 +246,9 @@ async fn try_capacity(
     };
     let mut draft = pdf::append_revision(&prepared.bytes, &prepared.state, &kind, capacity)?;
     let br = draft.byte_range.ok_or(SealError::Fatal {
-            stage: SealStage::PdfIncrementalUpdate,
-            code: FatalCode::PdfInvariantFailed,
-        })?;
+        stage: SealStage::PdfIncrementalUpdate,
+        code: FatalCode::PdfInvariantFailed,
+    })?;
     let content_digest = pdf::hash_byte_range(&draft.bytes, br)?;
     let (issuer, serial) = cms::issuer_and_serial(&identity.signer_certificate_der)?;
     let attrs = vec![
@@ -399,10 +399,7 @@ async fn gather_validation_material(
             }
         }
     }
-    if need > 0 && covered < need {
-        return None;
-    }
-    if crls_der.is_empty() && need > 0 {
+    if covered < need {
         return None;
     }
     Some(DssMaterial {
@@ -445,10 +442,7 @@ fn append_dss(
 async fn append_doc_timestamp(
     bytes: &[u8],
     ctx: &SealContext<'_>,
-    operation_id: &str,
-    input_sha: &Sha256Digest,
 ) -> Result<Option<Vec<u8>>, SealError> {
-    let _ = sub_operation_id(operation_id, input_sha, "doc-ts", 0);
     for capacity in CAPACITY_LADDER {
         let state = pdf::reparse_revision(bytes, &ctx.config.resource_limits)?;
         let mut draft =
@@ -538,7 +532,7 @@ pub(crate) async fn assemble(
         ));
     }
     if target == PadesProfile::BaselineLta && achieved == PadesProfile::BaselineLt {
-        match append_doc_timestamp(&bytes, ctx, operation_id, &input_sha).await? {
+        match append_doc_timestamp(&bytes, ctx).await? {
             Some(b) => {
                 bytes = b;
                 achieved = PadesProfile::BaselineLta;

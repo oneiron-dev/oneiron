@@ -120,13 +120,10 @@ fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), SealError> {
 /// Offset recorded by the last `startxref` marker in the byte buffer.
 fn last_startxref(bytes: &[u8]) -> Result<u64, SealError> {
     const MARKER: &[u8] = b"startxref";
-    let mut pos = None;
-    for (i, w) in bytes.windows(MARKER.len()).enumerate() {
-        if w == MARKER {
-            pos = Some(i);
-        }
-    }
-    let i = pos.ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
+    let i = bytes
+        .windows(MARKER.len())
+        .rposition(|window| window == MARKER)
+        .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
     let rest = &bytes[i + MARKER.len()..];
     let mut num = 0u64;
     let mut seen = false;
@@ -534,7 +531,6 @@ fn build_objects(
         } => {
             for (num, body) in material_objects {
                 objs.push((*num, 0, body.clone()));
-                next = next.max(*num + 1);
             }
             let mut catalog = state.root_dict.clone();
             catalog.set(b"DSS", Object::Reference((*dss_obj, 0)));
@@ -683,7 +679,6 @@ pub(crate) fn append_revision(
         }
         _ => None,
     };
-    let _ = max_used;
     Ok(DraftRevision {
         bytes: out,
         contents_gap,

@@ -187,7 +187,10 @@ mod http {
             Ok(pinned)
         }
 
-        fn client_for(&self, host: &str, addrs: &[std::net::SocketAddr]) -> Result<reqwest::Client, FetchError> {
+        fn client_for(
+            host: &str,
+            addrs: &[std::net::SocketAddr],
+        ) -> Result<reqwest::Client, FetchError> {
             reqwest::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -206,7 +209,7 @@ mod http {
             }
             let addrs = self.pinned_addrs(url).await?;
             let host = url.host_str().ok_or(FetchError::Denied)?;
-            let client = self.client_for(host, &addrs)?;
+            let client = Self::client_for(host, &addrs)?;
             let builder = match request.method {
                 FetchMethod::Get => client.get(url.as_str()),
                 FetchMethod::Post => {
@@ -230,7 +233,6 @@ mod http {
         }
 
         async fn stream_body(
-            &self,
             resp: reqwest::Response,
             cap: usize,
         ) -> Result<FetchResponse, FetchError> {
@@ -283,7 +285,7 @@ mod http {
                 }
                 break resp;
             };
-            let out = self.stream_body(response, cap).await?;
+            let out = Self::stream_body(response, cap).await?;
             self.cache_put(key, &out);
             Ok(out)
         }

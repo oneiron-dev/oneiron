@@ -96,9 +96,8 @@ pub(crate) fn issuer_and_serial(cert_der: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let ((_cf, cert_content), _cr) = read_tlv(cert_der, 0x30);
     let ((_tf, tbs_content), _tr) = read_tlv(cert_content, 0x30);
     let mut rest = tbs_content;
-    let (v, r) = read_tlv(rest, 0xA0);
+    let (_, r) = read_tlv(rest, 0xA0);
     rest = r;
-    let _ = v;
     let (_serial, r) = read_tlv(rest, 0x02);
     let serial = &rest[..rest.len() - r.len()];
     rest = r;

@@ -15,6 +15,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::error::SealError;
+
 pub type Sha256Digest = [u8; 32];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -214,8 +216,6 @@ pub trait PdfSealEngine: Send + Sync {
 pub trait SealClock: Send + Sync {
     fn unix_time_ms(&self) -> u64;
 }
-
-use crate::error::SealError;
 
 // §5 native configuration and fetcher contract. These types ride the
 // `native` feature because they name `url::Url` / `ipnet::IpNet`; the

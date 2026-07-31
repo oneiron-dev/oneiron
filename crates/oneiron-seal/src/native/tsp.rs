@@ -38,11 +38,7 @@ pub(crate) fn build_request(
     let mut mi = sha256_alg_id();
     mi.extend_from_slice(&cms::tlv(0x04, imprint));
     body.extend_from_slice(&cms::tlv(0x30, &mi));
-    let mut nonce_be = nonce.to_vec();
-    if nonce_be[0] & 0x80 != 0 {
-        nonce_be.insert(0, 0);
-    }
-    body.extend_from_slice(&cms::tlv(0x02, &nonce_be));
+    body.extend_from_slice(&cms::tlv(0x02, &nonce_int_body(nonce)));
     body.extend_from_slice(&cms::tlv(0x01, &[0xFF])); // certReq TRUE
     Ok(cms::tlv(0x30, &body))
 }
@@ -160,7 +156,7 @@ pub(crate) fn validate_response(
     let tst = TstInfo::from_der(&econtent).map_err(|_| ts_err())?;
     check_tst_fields(&tst, expected_imprint, nonce, expected_policy_oid)?;
     let signer = &parsed.signer;
-    if signer.digest_alg_oid != cms::sha256_oid_bytes() {
+    if !cms::is_sha256_oid(&signer.digest_alg_oid) {
         return Err(ts_err());
     }
     if token_message_digest(signer)? != cms::sha256(&econtent) {
@@ -239,7 +235,7 @@ fn find_bound_cert(
 
 /// Token signature against the TSA cert, then path validation with the
 /// critical-and-sole timestamping EKU rule (pkix-chain verify_time_stamper).
-fn validate_tsa_chain_at(
+fn validate_tsa_chain(
     chain_ders: &[Vec<u8>],
     anchors: &[pkix_chain::TrustAnchor],
     at_unix: u64,
@@ -259,14 +255,6 @@ fn validate_tsa_chain_at(
         code: FatalCode::CertificatePathInvalid,
     })?;
     Ok(())
-}
-
-fn validate_tsa_chain(
-    chain_ders: &[Vec<u8>],
-    anchors: &[pkix_chain::TrustAnchor],
-    at_unix: u64,
-) -> Result<(), SealError> {
-    validate_tsa_chain_at(chain_ders, anchors, at_unix)
 }
 
 /// Verify-time token validation (§7.7): imprint match, token signature,
@@ -291,7 +279,7 @@ pub(crate) fn validate_token_for_verify(
         return Err(ts_err());
     }
     let signer = &parsed.signer;
-    if signer.digest_alg_oid != cms::sha256_oid_bytes() {
+    if !cms::is_sha256_oid(&signer.digest_alg_oid) {
         return Err(ts_err());
     }
     if token_message_digest(signer)? != cms::sha256(&econtent) {
