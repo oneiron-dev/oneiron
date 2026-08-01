@@ -212,7 +212,7 @@ fn bare_secret_bearer_is_owner_grade() {
     ] {
         assert!(auth.require(scope).is_ok(), "{scope:?} must be granted");
     }
-    assert!(auth.is_owner_session());
+    assert!(auth.is_owner_grade());
     assert_eq!(
         auth.idempotency_principal(),
         "core:bearer:scopes=__implicit_all_scopes__"
@@ -228,6 +228,7 @@ fn empty_claims_v2_token_is_owner_grade() {
     let auth = require_owner_auth(&headers, &config()).expect("empty-claims token");
 
     assert!(auth.require(CoreScope::Write).is_ok());
+    assert!(auth.is_owner_grade());
     assert_eq!(
         auth.idempotency_principal(),
         "core:bearer:scopes=__implicit_all_scopes__"
@@ -235,16 +236,25 @@ fn empty_claims_v2_token_is_owner_grade() {
 }
 
 /// T8 — the owner-grade boundary. Scoped tokens authenticate on `/v1` with
-/// exactly their claimed scopes but never reach `/ws` or legacy `/api/*`.
+/// exactly their claimed scopes but never reach `/ws` or legacy `/api/*`,
+/// and never read as owner-grade at the disclosure/consent gates.
+///
+/// Owner-grade requires BOTH narrowing axes absent. A `scope=…` token with no
+/// `principal_ref` is still a delegated instrument: holding a subset of the
+/// owner's capabilities is not evidence the owner is holding it. The earlier
+/// `principal_ref`-only predicate classified this credential as owner-grade,
+/// which suppressed the disclosure absence-clamp for delegated read-only
+/// tokens — the exact credential most likely to be handed to a third party.
 #[test]
 fn scoped_v2_token_is_not_owner_grade() {
     let scoped = bearer(&mint_core_token_v2(SECRET, "scope=core:read"));
     let auth = CoreAuth::from_headers(&scoped, &config()).expect("scoped token");
     assert!(auth.require(CoreScope::Read).is_ok());
     assert!(auth.require(CoreScope::Write).is_err());
+    assert_eq!(auth.principal_ref(), None);
     assert!(
-        auth.is_owner_session(),
-        "no principal_ref means no third-party narrowing"
+        !auth.is_owner_grade(),
+        "a scope list narrows the credential even with no principal_ref"
     );
     assert_unauthorized(
         require_owner_auth(&scoped, &config()),
@@ -260,11 +270,116 @@ fn scoped_v2_token_is_not_owner_grade() {
         auth.principal_ref(),
         Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
     );
-    assert!(!auth.is_owner_session());
+    assert!(!auth.is_owner_grade());
     assert_unauthorized(
         require_owner_auth(&bound, &config()),
         "principal-bound token on a full-vault surface",
     );
+}
+
+/// T8b — `is_owner_grade` is exactly the `require_owner_auth` admission rule,
+/// across every credential shape the server accepts. One predicate, one
+/// definition: a second reader of the old `principal_ref`-only rule cannot
+/// reappear without failing here.
+#[test]
+fn owner_grade_predicate_matches_the_full_vault_boundary() {
+    let cases = [
+        (bearer(SECRET), true, "bare trust root"),
+        (
+            bearer(&mint_core_token_v2(SECRET, "")),
+            true,
+            "empty claims",
+        ),
+        (
+            bearer(&mint_core_token_v2(SECRET, "scope=core:read")),
+            false,
+            "read-only scope, no principal_ref",
+        ),
+        (
+            bearer(&mint_core_token_v2(
+                SECRET,
+                "scope=core:read,core:write,core:auth,companion:profile:read,\
+                 companion:access-grant:write,companion:register:read,\
+                 companion:register:write",
+            )),
+            false,
+            "every scope listed explicitly is still a delegation",
+        ),
+        (
+            bearer(&mint_core_token_v2(
+                SECRET,
+                "scope=core:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )),
+            false,
+            "principal-bound",
+        ),
+    ];
+
+    for (headers, expected, what) in cases {
+        let auth = CoreAuth::from_headers(&headers, &config()).expect(what);
+        assert_eq!(auth.is_owner_grade(), expected, "is_owner_grade for {what}");
+        assert_eq!(
+            require_owner_auth(&headers, &config()).is_ok(),
+            expected,
+            "require_owner_auth must agree with is_owner_grade for {what}"
+        );
+    }
+
+    // Dev mode agrees on both arms of the same rule.
+    let dev = dev_config();
+    assert!(
+        CoreAuth::from_headers(&HeaderMap::new(), &dev)
+            .expect("dev fallthrough")
+            .is_owner_grade(),
+        "the dev fallthrough asserts no narrowing"
+    );
+    assert!(
+        !CoreAuth::from_headers(&bearer("v2.scope=core:read."), &dev)
+            .expect("dev scoped token")
+            .is_owner_grade(),
+        "a dev scoped token is narrowed like any other"
+    );
+}
+
+/// Guards the invariant that makes `is_owner_grade`'s two conjuncts
+/// independently load-bearing rather than one redundant clause.
+///
+/// TODAY the grammar refuses `principal_ref` without `scope` (T9), so
+/// `principal_ref.is_some()` already implies `!implicit_all_scopes` and
+/// either conjunct alone would compute the same answer. That equivalence is
+/// a property of the GRAMMAR, not of the predicate: relaxing the grammar to
+/// admit a bare `principal_ref` would silently make an
+/// `implicit_all_scopes`-only predicate classify a principal-bound token as
+/// owner-grade. This pins the coupling so such a relaxation fails HERE, at
+/// the sentence that explains it, instead of at a disclosure gate.
+#[test]
+fn owner_grade_conjuncts_are_not_redundant() {
+    assert_unauthorized(
+        auth_for_claims("principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        "an implicit-all-scopes token carrying principal_ref must not exist",
+    );
+
+    // Every credential the server DOES accept satisfies the implication the
+    // equivalence rests on: bound implies narrowed. An empty scope LIST is
+    // still a list — it narrows to zero capabilities rather than widening to
+    // all of them.
+    for claims in [
+        "",
+        "scope=core:read",
+        "scope=core:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;scope=",
+    ] {
+        let auth = auth_for_claims(claims).expect("accepted claims");
+        assert!(
+            !(auth.principal_ref.is_some() && auth.implicit_all_scopes),
+            "principal_ref without a scope list must be unreachable for {claims:?}"
+        );
+        assert_eq!(
+            auth.is_owner_grade(),
+            claims.is_empty(),
+            "only empty claims mint an owner-grade token: {claims:?}"
+        );
+    }
 }
 
 /// T9 — the claims grammar is unchanged; a valid MAC does not buy a token

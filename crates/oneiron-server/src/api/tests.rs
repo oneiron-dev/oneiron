@@ -2070,6 +2070,35 @@ fn contract_exchange(
     auth_scope: Option<&str>,
     request_body: Option<Value>,
     status: StatusCode,
+    response_body: Value,
+) -> Value {
+    contract_exchange_with_auth(
+        name,
+        method,
+        path,
+        auth_scope.map_or_else(
+            || json!({ "type": "none" }),
+            |scope| json!({ "type": "bearer", "scope": scope }),
+        ),
+        request_body,
+        status,
+        response_body,
+    )
+}
+
+/// Records one contract exchange under an explicitly described credential.
+///
+/// The `auth` descriptor is part of the contract, not decoration: a scoped
+/// bearer and an owner-grade one produce genuinely different context-pack
+/// bodies (the former is disclosure-clamped), so an exchange that documents
+/// the wrong credential documents an unreachable response.
+fn contract_exchange_with_auth(
+    name: &str,
+    method: &str,
+    path: &str,
+    auth: Value,
+    request_body: Option<Value>,
+    status: StatusCode,
     mut response_body: Value,
 ) -> Value {
     normalize_contract_body(&mut response_body);
@@ -2078,10 +2107,7 @@ fn contract_exchange(
         "request": {
             "method": method,
             "path": path,
-            "auth": auth_scope.map_or_else(
-                || json!({ "type": "none" }),
-                |scope| json!({ "type": "bearer", "scope": scope }),
-            ),
+            "auth": auth,
             "body": request_body.unwrap_or(Value::Null),
         },
         "response": {
@@ -2233,6 +2259,25 @@ async fn core_json(
     body: Option<&Value>,
 ) -> (StatusCode, Value) {
     route_json(server, core_request(method, uri, scope, body)).await
+}
+
+/// Drives a `/v1/core` route with the owner-grade credential.
+///
+/// A `scope=…` bearer is a delegated instrument and is NOT owner-grade
+/// (`CoreAuth::is_owner_grade`), so any assertion about owner-presence,
+/// `owner_present: true`, or the absent-disclosure-block byte-identity
+/// guarantee must travel on this helper rather than `core_json`.
+async fn owner_json(
+    server: Arc<SyncServer>,
+    method: &str,
+    uri: &str,
+    body: Option<&Value>,
+) -> (StatusCode, Value) {
+    route_json(
+        server,
+        core_request_with_authz(method, uri, owner_bearer(), body),
+    )
+    .await
 }
 
 fn seed_turn(server: &SyncServer, text: &str) -> oneiron::EntityId {
@@ -2523,11 +2568,13 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         "view": "full",
         "include_edges": false
     });
-    let (status, context_pack_body) = core_json(
+    // Owner-grade: this exchange documents the un-clamped context-pack shape,
+    // so it must travel on the credential that reaches it. On a scoped bearer
+    // the same request is disclosure-clamped and returns no results.
+    let (status, context_pack_body) = owner_json(
         server.clone(),
         "POST",
         "/v1/core/context-pack",
-        "core:read",
         Some(&context_pack_request),
     )
     .await;
@@ -2540,11 +2587,11 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
             .as_str()
             .expect("content hash")
     );
-    exchanges.push(contract_exchange(
+    exchanges.push(contract_exchange_with_auth(
         "core_context_pack",
         "POST",
         "/v1/core/context-pack",
-        Some("core:read"),
+        json!({ "type": "bearer", "grade": "owner" }),
         Some(context_pack_request),
         status,
         context_pack_body,
@@ -2593,11 +2640,11 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         context_pack_v4_body["session_rag"]["query_count"],
         Value::from(1)
     );
-    exchanges.push(contract_exchange(
+    exchanges.push(contract_exchange_with_auth(
         "core_context_pack_v4",
         "POST",
         "/v1/core/context-pack",
-        Some("core:read"),
+        json!({ "type": "bearer", "scope": "core:read", "principal_ref": "bound" }),
         Some(context_pack_v4_request),
         status,
         context_pack_v4_body,
@@ -7938,6 +7985,22 @@ async fn core_context_pack_owner_session_without_block_carries_no_interlocutors_
     let (_dir, server) = interlocutor_test_server();
     seed_turn(&server, "owner alone regression needle");
     let request = json!({ "query": "regression needle", "limit": 3 });
+    let (status, body) = owner_json(
+        server.clone(),
+        "POST",
+        "/v1/core/context-pack",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("interlocutors").is_none(),
+        "owner-grade auth with no block must stay byte-identical: {body:?}"
+    );
+
+    // The same request on a scope-narrowed token is NOT the owner-grade path:
+    // a delegated credential resolves an interlocutor set and gets echoed
+    // stamps even though it carries no principal_ref.
     let (status, body) = core_json(
         server,
         "POST",
@@ -7948,8 +8011,8 @@ async fn core_context_pack_owner_session_without_block_carries_no_interlocutors_
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        body.get("interlocutors").is_none(),
-        "owner-grade auth with no block must stay byte-identical: {body:?}"
+        body.get("interlocutors").is_some(),
+        "a scope-narrowed token is not owner-grade: {body:?}"
     );
 }
 
@@ -7973,14 +8036,7 @@ async fn core_context_pack_echoes_stamps_for_supplied_block_on_owner_session() {
             ]
         }
     });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
+    let (status, body) = owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
     assert_eq!(status, StatusCode::OK);
     let stamps = body["interlocutors"].as_array().expect("stamps echoed");
     assert_eq!(stamps.len(), 4);
@@ -8308,14 +8364,9 @@ async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
             "third_parties": [{ "contact_ref": contact_id.to_hex() }]
         }
     });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
+    // Supervised mode requires an owner-grade credential: `owner_present:
+    // true` is a 403 on any narrowed token.
+    let (status, body) = owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["disclosure"]["mode"], Value::from("supervised"));
     let notice = body["disclosure"]["notice"].as_str().expect("notice");
@@ -8550,14 +8601,7 @@ async fn core_context_pack_owner_auth_without_block_carries_no_disclosure_field(
     let (_dir, server) = interlocutor_test_server();
     seed_text_turn(&server, "owner alone regression needle24");
     let request = json!({ "query": "needle24", "limit": 3 });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
+    let (status, body) = owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         body.get("disclosure").is_none(),
@@ -8566,6 +8610,84 @@ async fn core_context_pack_owner_auth_without_block_carries_no_disclosure_field(
     assert!(
         !body["results"].as_array().expect("results").is_empty(),
         "owner-alone behavior unchanged"
+    );
+}
+
+/// P1 regression (`l1-r2-verdicts`): a v2 token narrowed by SCOPE ALONE — no
+/// `principal_ref` — is a delegated read-only credential, not the owner.
+///
+/// The old `is_owner_session` predicate read only `principal_ref.is_none()`,
+/// so this token classified as owner-present: `resolve_core_interlocutor_set`
+/// returned `None` and NO absence clamp applied, handing a delegated bearer
+/// the owner's full Tier-B vault. Both halves of the fix are pinned here: the
+/// clamp now applies, and `owner_present: true` is refused.
+#[tokio::test]
+async fn core_context_pack_scope_only_token_is_clamped_and_cannot_assert_owner_present() {
+    let (_dir, server) = interlocutor_test_server();
+    let diary = seed_text_turn(&server, "tier b memory needle25");
+    let request = json!({ "query": "needle25", "limit": 10 });
+
+    // The owner-grade credential still reads its own vault, unclamped.
+    let (status, owner_body) = owner_json(
+        server.clone(),
+        "POST",
+        "/v1/core/context-pack",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(owner_body.get("disclosure").is_none());
+    let diary_id = diary.to_hex();
+    assert!(
+        owner_body["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .filter_map(|entity| entity["id"].as_str())
+            .any(|id| id == diary_id),
+        "owner-grade verdict unchanged: {owner_body:?}"
+    );
+
+    // The same request on `scope=core:read` with NO principal_ref takes the
+    // absence clamp. No party is identified, so the deny-all scope applies.
+    let (status, body) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["disclosure"]["mode"],
+        Value::from("absence_clamp"),
+        "an unbound scoped token must receive the clamp: {body:?}"
+    );
+    assert!(
+        body["results"].as_array().expect("results").is_empty(),
+        "Tier-B memory must not reach a delegated read-only token: {body:?}"
+    );
+
+    // ...and it cannot buy the supervised path back by asserting presence.
+    let asserted = json!({
+        "query": "needle25",
+        "limit": 10,
+        "interlocutors": { "owner_present": true }
+    });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&asserted),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_error_envelope(&body, "FORBIDDEN");
+    assert_eq!(
+        body["error"]["details"]["requiredScope"],
+        Value::from("interlocutors.owner_present")
     );
 }
 
@@ -8581,11 +8703,10 @@ async fn core_context_pack_caps_the_third_parties_block() {
         "query": "hallway",
         "interlocutors": { "third_parties": at_cap }
     });
-    let (status, body) = core_json(
+    let (status, body) = owner_json(
         server.clone(),
         "POST",
         "/v1/core/context-pack",
-        "core:read",
         Some(&request),
     )
     .await;

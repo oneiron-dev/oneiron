@@ -135,12 +135,24 @@ impl CoreAuth {
         self.principal_ref.as_deref()
     }
 
-    /// Returns whether this auth is an un-narrowed owner-grade session.
+    /// Returns whether this auth is an un-narrowed owner-grade credential.
     ///
-    /// `principal_ref` is the third-party narrowing key: a bearer carrying it
-    /// is scoped to that principal and is never owner-grade (OF-365 ILD-1).
-    pub(crate) fn is_owner_session(&self) -> bool {
-        self.principal_ref.is_none()
+    /// BOTH narrowing axes must be absent. `principal_ref` is the third-party
+    /// narrowing key: a bearer carrying it is scoped to that principal
+    /// (OF-365 ILD-1). A scope list is the capability narrowing key: a bearer
+    /// carrying one is a delegated instrument, and delegation of a subset of
+    /// the owner's capabilities is not evidence that the owner is the one
+    /// holding it. Reading only `principal_ref` classified an unbound
+    /// `scope=core:read` token as owner-grade, which suppressed the
+    /// disclosure absence-clamp for exactly the credentials most likely to
+    /// be handed to a third party.
+    ///
+    /// Deliberately NOT named `owner_session`: that is the engine-side ILD
+    /// flag for "the owner is in the room", asserted per assembly. This is a
+    /// property of the credential. The consent gates derive the former from
+    /// the latter and must never conflate them.
+    pub(crate) fn is_owner_grade(&self) -> bool {
+        self.implicit_all_scopes && self.principal_ref.is_none()
     }
 
     pub(crate) fn idempotency_principal(&self) -> String {
@@ -186,7 +198,7 @@ pub(crate) fn require_owner_auth(
     config: &SyncServerConfig,
 ) -> Result<CoreAuth, ApiError> {
     let auth = CoreAuth::from_headers(headers, config)?;
-    if auth.implicit_all_scopes && auth.principal_ref.is_none() {
+    if auth.is_owner_grade() {
         Ok(auth)
     } else {
         Err(ApiError::unauthorized())

@@ -500,7 +500,7 @@ pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {
         spec,
         "CoreContextPackResponse",
         "interlocutors",
-        "Resolved per-speaker interlocutor stamps when an interlocutors block was supplied or the auth is principal_ref-scoped.",
+        "Resolved per-speaker interlocutor stamps when an interlocutors block was supplied or the auth is narrowed (scoped or principal_ref-bound).",
     );
     set_schema_property_description(
         spec,
