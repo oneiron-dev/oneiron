@@ -8,6 +8,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::{Instant as StdInstant, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
@@ -43,6 +44,15 @@ const MAX_EPHEMERAL_FUTURE_SKEW_MS: i64 = 60_000;
 const MAX_EPHEMERAL_RECORDS_PER_FRAME: usize = 1024;
 /// Flat ephemeral keys are control-plane identifiers, not arbitrary blobs.
 const MAX_EPHEMERAL_KEY_BYTES: usize = 256;
+/// Longest a queued outbound frame may wait without a revocation re-consult.
+///
+/// The flush re-consults whenever the sink parks, but a peer that simply
+/// stops reading produces no further wakeups at all — without a tick, one
+/// park would be the last check before an unbounded wait. This bounds the
+/// window between `token revoke` and the refusal of an already-queued frame;
+/// it does NOT bound cost per byte, since a flush that makes progress
+/// completes without ever reaching the tick.
+const FLUSH_RECONSULT_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Per-connection mutable state. This is intentionally local to one socket:
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
@@ -236,12 +246,56 @@ fn session_credential_revoked(revoked: &dyn RevokedTokenJtis, session_jti: Optio
     session_jti.is_some_and(|jti| is_revoked_or_unreadable(jti, revoked))
 }
 
+/// One step of draining the sink, distinguishing "made progress" from "the
+/// peer stopped reading" — the latter is where a revocation lands.
+enum FlushStep {
+    /// Everything queued reached the transport.
+    Flushed,
+    /// The flush parked on a full peer socket and has since been woken, so
+    /// the caller gets control back before the sink retries.
+    Parked,
+    /// The sink is gone.
+    Broken,
+}
+
+/// Drains the sink, yielding control back at every backpressure edge.
+///
+/// A plain `poll_flush(...).await` resolves only when the bytes are gone,
+/// which is exactly the outcome that must stay revocable: the future would
+/// own the whole wait and no consult could run inside it. This resolves to
+/// [`FlushStep::Parked`] the moment the sink wakes from a park instead, so
+/// the caller re-consults before the sink is polled again. Re-polling a
+/// parked `poll_flush` resumes it — sink flushes are idempotent, and no
+/// queued frame is lost by handing control back between attempts.
+async fn flush_step<S>(sink: &mut S) -> FlushStep
+where
+    S: SinkExt<WsMessage> + Unpin,
+{
+    let mut parked = false;
+    std::future::poll_fn(|cx| {
+        if std::mem::replace(&mut parked, false) {
+            return Poll::Ready(FlushStep::Parked);
+        }
+        match sink.poll_flush_unpin(cx) {
+            Poll::Ready(Ok(())) => Poll::Ready(FlushStep::Flushed),
+            Poll::Ready(Err(_)) => Poll::Ready(FlushStep::Broken),
+            Poll::Pending => {
+                parked = true;
+                Poll::Pending
+            }
+        }
+    })
+    .await
+}
+
 /// The one place this server writes a frame to a client socket.
 ///
 /// Every outbound frame on a connection goes through [`Self::send_binary`] —
 /// the Phase-1 root snapshot, the late-join ephemeral snapshot, direct
 /// answers to inbound requests, and unsolicited broadcast fan-out — and each
-/// one re-consults the revocation registry immediately before the write.
+/// one re-consults the revocation registry across BOTH waits a frame sits in
+/// on its way out: the capacity wait before the handover, and the flush wait
+/// after it.
 ///
 /// A chokepoint rather than a gate per send arm, because per-arm reasoning
 /// has been wrong twice. "The hello runs before dispatch" left the snapshot
@@ -255,7 +309,14 @@ fn session_credential_revoked(revoked: &dyn RevokedTokenJtis, session_jti: Optio
 /// the only thing this type consults, which also lets the fail-closed
 /// unreadable path be driven directly in tests.
 struct GuardedSink<S> {
-    sink: S,
+    /// `None` once the transport has been aborted.
+    ///
+    /// A revocation seen while a frame is already queued cannot be answered
+    /// with a graceful close: `poll_close` flushes the queue on its way out,
+    /// which IS the delivery being refused. Dropping the socket is the only
+    /// refusal that withholds bytes the sink is already holding, so the
+    /// abort path takes the sink here and never touches it again.
+    sink: Option<S>,
     revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
     session_jti: Option<String>,
     conn_id: u32,
@@ -272,62 +333,148 @@ where
         conn_id: u32,
     ) -> Self {
         Self {
-            sink,
+            sink: Some(sink),
             revoked,
             session_jti,
             conn_id,
         }
     }
 
+    fn credential_revoked(&self) -> bool {
+        session_credential_revoked(self.revoked.as_ref(), self.session_jti.as_deref())
+    }
+
     /// Sends one binary frame, refusing if the credential is no longer live.
     ///
     /// Returns whether the connection may continue. `false` means either the
     /// credential was revoked (or its registry unreadable) — in which case
-    /// the socket has already been closed and nothing was written — or the
-    /// peer's sink is gone. Both outcomes end the connection, so callers do
-    /// not distinguish them.
+    /// the transport has already been ended and the frame was NOT delivered —
+    /// or the peer's sink is gone. Both outcomes end the connection, so
+    /// callers do not distinguish them.
     ///
-    /// The send is spelled out rather than `SinkExt::send` because the ORDER
-    /// is the point: wait for the sink to have capacity, THEN consult, THEN
-    /// hand over the bytes. A frame can sit parked in that wait for as long
-    /// as the peer's socket stays full — an unbounded interval, and precisely
-    /// where an operator's `token revoke` lands. Consulting before the wait
-    /// would authorize a write performed an arbitrary time later. What
-    /// remains after the handover is the flush, where the bytes are already
-    /// committed to the transport and no gate exists anywhere.
+    /// The send is spelled out rather than `SinkExt::send` because a frame
+    /// crosses TWO unbounded waits on its way out, and a revocation can land
+    /// in either:
+    ///
+    /// 1. the capacity wait (`poll_ready`), before the frame is handed to the
+    ///    sink at all; and
+    /// 2. the flush wait (`poll_flush`), after the sink has taken the frame
+    ///    into its queue but before the bytes reach the socket. `start_send`
+    ///    is not wire handover — a real WebSocket sink normally just QUEUES
+    ///    there and returns immediately; the peer's backpressure surfaces
+    ///    here, so this is where the long park actually happens.
+    ///
+    /// So the consult runs after the capacity wait AND again every time the
+    /// flush parks (or a [`FLUSH_RECONSULT_INTERVAL`] tick elapses, since a
+    /// peer that simply stops reading never wakes the sink at all). Cadence
+    /// is bounded by those two events, never by bytes written.
+    ///
+    /// The residual gap after this is precisely one sliver: bytes the flush
+    /// already handed to the OS TCP send buffer. Those are gone from this
+    /// process — no userspace gate can recall them, and the kernel delivers
+    /// them whenever the peer reads. Everything still held in this process,
+    /// in the sink's own queue included, is revocable.
     #[must_use]
     async fn send_binary(&mut self, data: Vec<u8>) -> bool {
-        if std::future::poll_fn(|cx| self.sink.poll_ready_unpin(cx))
+        let Some(sink) = self.sink.as_mut() else {
+            return false;
+        };
+        if std::future::poll_fn(|cx| sink.poll_ready_unpin(cx))
             .await
             .is_err()
         {
             tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
             return false;
         }
-        if session_credential_revoked(self.revoked.as_ref(), self.session_jti.as_deref()) {
+        if self.credential_revoked() {
             tracing::warn!(
                 conn_id = self.conn_id,
                 "credential revoked — closing live session instead of sending"
             );
+            // Nothing is queued at this point, so the graceful close flushes
+            // no application bytes; the peer gets a close frame and no data.
             self.close().await;
             return false;
         }
-        if self
-            .sink
+        let Some(sink) = self.sink.as_mut() else {
+            return false;
+        };
+        if sink
             .start_send_unpin(WsMessage::Binary(data.into()))
             .is_err()
-            || std::future::poll_fn(|cx| self.sink.poll_flush_unpin(cx))
-                .await
-                .is_err()
         {
             tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
             return false;
         }
-        true
+        self.guarded_flush().await
+    }
+
+    /// Drains the queued frame, re-consulting the registry at every park.
+    ///
+    /// The loop exists because the alternative — awaiting `poll_flush` to
+    /// completion — hands the whole backpressure wait to a future with no
+    /// gate inside it. Revocation is recorded in the vault-resident registry
+    /// and can be performed by another process entirely (the operator CLI),
+    /// so it cannot arrive as an in-process wakeup: observing it means
+    /// re-reading the registry, which means getting control back.
+    async fn guarded_flush(&mut self) -> bool {
+        loop {
+            let Some(sink) = self.sink.as_mut() else {
+                return false;
+            };
+            let step = tokio::select! {
+                biased;
+                step = flush_step(sink) => step,
+                // A peer that stops reading never wakes the sink, so the park
+                // alone cannot be the only re-consult trigger.
+                () = tokio::time::sleep(FLUSH_RECONSULT_INTERVAL) => FlushStep::Parked,
+            };
+            match step {
+                FlushStep::Flushed => return true,
+                FlushStep::Broken => {
+                    tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
+                    return false;
+                }
+                FlushStep::Parked => {
+                    if self.credential_revoked() {
+                        tracing::warn!(
+                            conn_id = self.conn_id,
+                            "credential revoked while a frame awaited flush — aborting transport"
+                        );
+                        self.abort();
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ends the transport WITHOUT flushing what the sink still holds.
+    ///
+    /// A graceful `close` is wrong here: `poll_close` drains the queue on its
+    /// way out, which would deliver the very frame the revocation refuses.
+    /// Dropping the sink is the only refusal that withholds bytes already
+    /// handed to it, at the cost of an unclean WebSocket teardown — the right
+    /// trade when the alternative is serving a dead credential.
+    fn abort(&mut self) {
+        drop(self.sink.take());
     }
 
     async fn close(&mut self) {
-        let _ = self.sink.close().await;
+        if let Some(sink) = self.sink.as_mut() {
+            let _ = sink.close().await;
+        }
+    }
+
+    /// Sends one non-binary control frame, bypassing the revocation consult.
+    ///
+    /// The single documented exception to the chokepoint: the hello-rejection
+    /// close frame carries no vault state and IS the refusal, so gating it on
+    /// the credential's liveness could only turn one refusal into another.
+    async fn send_unguarded_close_frame(&mut self, close: WsMessage) {
+        if let Some(sink) = self.sink.as_mut() {
+            let _ = sink.send(close).await;
+        }
     }
 }
 
@@ -368,7 +515,7 @@ async fn handle_connection(
                 code: close_codes::VERSION_MISMATCH,
                 reason: Utf8Bytes::from_static(reason),
             }));
-            let _ = ws_sink.sink.send(close).await;
+            ws_sink.send_unguarded_close_frame(close).await;
             return;
         }
         HelloOutcome::Disconnected => {
@@ -422,7 +569,7 @@ async fn handle_connection(
     // fan-out is service the peer never asked for, and a direct response can
     // sit queued in this channel — or blocked mid-`send` — across the very
     // revocation that should have stopped it.
-    let outbound_handle = tokio::spawn(async move {
+    let mut outbound_handle = tokio::spawn(async move {
         loop {
             tokio::select! {
                 broadcast_result = subscriber.recv() => {
@@ -460,9 +607,21 @@ async fn handle_connection(
         }
     });
 
-    // Inbound loop: process messages from client
+    // Inbound loop: process messages from client.
+    //
+    // The outbound task is raced rather than merely joined at the end: when it
+    // stops — including because the chokepoint aborted the transport on a
+    // revocation — this half must stop too. Otherwise the stream half stays
+    // held here and the TCP connection outlives the refusal it was supposed
+    // to enact.
     loop {
-        let next_message = ws_stream.next().await;
+        let next_message = tokio::select! {
+            msg = ws_stream.next() => msg,
+            _ = &mut outbound_handle => {
+                tracing::debug!(conn_id, "outbound half ended — closing connection");
+                break;
+            }
+        };
         let Some(msg_result) = next_message else {
             break;
         };

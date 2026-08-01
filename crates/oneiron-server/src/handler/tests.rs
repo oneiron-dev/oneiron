@@ -1310,38 +1310,112 @@ async fn root_vv_replies_with_delta_and_rejects_malformed() {
 
 // ─── outbound chokepoint (GuardedSink) ───────────────────────────────────────
 
-/// A `Sink` whose readiness the test controls, recording what it accepts.
+/// A `Sink` whose two backpressure phases the test controls independently,
+/// recording what actually reaches the wire.
 ///
 /// Backpressure is the whole point: a real peer socket blocks for an
-/// unbounded interval, and a response parked in that block is precisely the
-/// frame an operator's `token revoke` is meant to stop. `unblock` releases
-/// the wait; `written` reports what actually crossed the wire.
-#[derive(Clone, Default)]
+/// unbounded interval, and a frame parked in that block is precisely what an
+/// operator's `token revoke` is meant to stop. Which phase blocks matters,
+/// because a real `tokio-tungstenite` sink parks in each for different
+/// reasons:
+///
+/// - `poll_ready` gates whether the sink will ACCEPT another frame;
+/// - `start_send` QUEUES the frame — it is not wire handover, and it never
+///   blocks;
+/// - `poll_flush` is where the peer's socket backpressure actually surfaces.
+///
+/// So `written` records only what `poll_flush` completes, never what
+/// `start_send` queued: a frame sitting in `queued` has crossed no wire and
+/// is still refusable. `ready_blocked` and `flush_blocked` are set
+/// separately so a test can pin exactly one phase and prove the guard covers
+/// it — a harness that blocks only `poll_ready` models the wrong phase and
+/// would pass a flush-phase hole.
+#[derive(Clone)]
 struct BlockableSink {
-    ready: Arc<std::sync::atomic::AtomicBool>,
+    ready_blocked: Arc<std::sync::atomic::AtomicBool>,
+    flush_blocked: Arc<std::sync::atomic::AtomicBool>,
+    /// Accepted by `start_send` but not yet flushed: in the sink, off the wire.
+    queued: Arc<std::sync::Mutex<Vec<WsMessage>>>,
     written: Arc<std::sync::Mutex<Vec<WsMessage>>>,
     closed: Arc<std::sync::atomic::AtomicBool>,
     waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
 }
 
 impl BlockableSink {
-    fn blocked() -> Self {
-        Self::default()
+    /// Blocks the capacity wait — the frame never reaches the sink at all.
+    fn ready_blocked() -> Self {
+        Self::new(true, false)
+    }
+
+    /// Blocks the flush wait — the frame is QUEUED, then stalls before the
+    /// wire. This is the shape of a real sink against a peer that stopped
+    /// reading.
+    fn flush_blocked() -> Self {
+        Self::new(false, true)
+    }
+
+    fn open() -> Self {
+        Self::new(false, false)
+    }
+
+    fn new(ready_blocked: bool, flush_blocked: bool) -> Self {
+        Self {
+            ready_blocked: Arc::new(std::sync::atomic::AtomicBool::new(ready_blocked)),
+            flush_blocked: Arc::new(std::sync::atomic::AtomicBool::new(flush_blocked)),
+            queued: Arc::default(),
+            written: Arc::default(),
+            closed: Arc::default(),
+            waker: Arc::default(),
+        }
     }
 
     fn unblock(&self) {
-        self.ready.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.ready_blocked
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.flush_blocked
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.wake();
+    }
+
+    fn wake(&self) {
         if let Some(waker) = self.waker.lock().unwrap().take() {
             waker.wake();
         }
     }
 
+    /// What crossed the wire. Queued-but-unflushed frames are excluded on
+    /// purpose: they are the bytes this leg must still be able to withhold.
     fn written(&self) -> Vec<WsMessage> {
         self.written.lock().unwrap().clone()
     }
 
+    fn queued(&self) -> Vec<WsMessage> {
+        self.queued.lock().unwrap().clone()
+    }
+
     fn was_closed(&self) -> bool {
         self.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn park(
+        &self,
+        cx: &std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::convert::Infallible>> {
+        *self.waker.lock().unwrap() = Some(cx.waker().clone());
+        std::task::Poll::Pending
+    }
+
+    /// Moves queued frames onto the wire, or parks if the peer is not reading.
+    fn drain(
+        &self,
+        cx: &std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::convert::Infallible>> {
+        if self.flush_blocked.load(std::sync::atomic::Ordering::SeqCst) {
+            return self.park(cx);
+        }
+        let drained = std::mem::take(&mut *self.queued.lock().unwrap());
+        self.written.lock().unwrap().extend(drained);
+        std::task::Poll::Ready(Ok(()))
     }
 }
 
@@ -1352,29 +1426,34 @@ impl futures_util::Sink<WsMessage> for BlockableSink {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        if self.ready.load(std::sync::atomic::Ordering::SeqCst) {
-            return std::task::Poll::Ready(Ok(()));
+        if self.ready_blocked.load(std::sync::atomic::Ordering::SeqCst) {
+            return self.park(cx);
         }
-        *self.waker.lock().unwrap() = Some(cx.waker().clone());
-        std::task::Poll::Pending
+        std::task::Poll::Ready(Ok(()))
     }
 
+    /// Queues only. A real sink hands nothing to the socket here.
     fn start_send(self: std::pin::Pin<&mut Self>, item: WsMessage) -> Result<(), Self::Error> {
-        self.written.lock().unwrap().push(item);
+        self.queued.lock().unwrap().push(item);
         Ok(())
     }
 
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        std::task::Poll::Ready(Ok(()))
+        self.drain(cx)
     }
 
+    /// A graceful close flushes on its way out, exactly like the real sink —
+    /// which is why the revoked-at-flush path must NOT take this route.
     fn poll_close(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
+        if self.drain(cx).is_pending() {
+            return std::task::Poll::Pending;
+        }
         self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
         std::task::Poll::Ready(Ok(()))
     }
@@ -1409,26 +1488,30 @@ impl crate::auth::RevokedTokenJtis for MutableRevocations {
 
 const TEST_JTI: &str = "0123456789abcdef0123456789abcdef";
 
+fn guarded(sink: &BlockableSink, registry: &Arc<MutableRevocations>) -> GuardedSink<BlockableSink> {
+    GuardedSink::new(
+        sink.clone(),
+        Arc::clone(registry) as Arc<dyn crate::auth::RevokedTokenJtis + Send + Sync>,
+        Some(TEST_JTI.to_owned()),
+        7,
+    )
+}
+
 /// Drives one `send_binary` to the point where it is parked on backpressure,
 /// then applies `revoke` and releases the sink.
 ///
-/// The revocation lands strictly BETWEEN the frame being queued and the sink
-/// accepting bytes — the window a direct response occupies while the peer's
-/// socket is full. Returns whether the send reported "keep going".
+/// The revocation lands strictly inside whichever wait `sink` blocks — the
+/// capacity wait or the flush wait. Returns whether the send reported "keep
+/// going".
 async fn send_racing_a_revocation(
     sink: &BlockableSink,
     registry: &Arc<MutableRevocations>,
     revoke: impl FnOnce(&MutableRevocations),
 ) -> bool {
-    let mut guarded = GuardedSink::new(
-        sink.clone(),
-        Arc::clone(registry) as Arc<dyn crate::auth::RevokedTokenJtis + Send + Sync>,
-        Some(TEST_JTI.to_owned()),
-        7,
-    );
+    let mut guarded = guarded(sink, registry);
     let mut send = Box::pin(guarded.send_binary(vec![1, 2, 3]));
 
-    // The send is queued and stalls on the blocked sink.
+    // The send stalls on the blocked sink.
     assert!(
         futures_util::poll!(send.as_mut()).is_pending(),
         "the sink must actually block, or this test proves nothing"
@@ -1443,9 +1526,10 @@ async fn send_racing_a_revocation(
     send.await
 }
 
+/// The revocation lands while the frame is still OUTSIDE the sink.
 #[tokio::test]
-async fn queued_frame_is_refused_when_revocation_lands_before_the_sink_drains() {
-    let sink = BlockableSink::blocked();
+async fn frame_is_refused_when_revocation_lands_during_the_capacity_wait() {
+    let sink = BlockableSink::ready_blocked();
     let registry = Arc::new(MutableRevocations::default());
 
     let keep_going = send_racing_a_revocation(&sink, &registry, |r| r.revoke(TEST_JTI)).await;
@@ -1453,14 +1537,15 @@ async fn queued_frame_is_refused_when_revocation_lands_before_the_sink_drains() 
     assert!(!keep_going, "a revoked session must not continue");
     assert!(
         sink.written().is_empty(),
-        "a frame queued before the revocation still reached the client"
+        "a frame awaiting capacity before the revocation still reached the client"
     );
+    assert!(sink.queued().is_empty(), "the frame never entered the sink");
     assert!(sink.was_closed(), "the socket must close, not idle");
 }
 
 #[tokio::test]
-async fn queued_frame_is_refused_when_the_registry_becomes_unreadable() {
-    let sink = BlockableSink::blocked();
+async fn frame_is_refused_when_the_registry_becomes_unreadable_during_the_capacity_wait() {
+    let sink = BlockableSink::ready_blocked();
     let registry = Arc::new(MutableRevocations::default());
 
     let keep_going =
@@ -1478,8 +1563,8 @@ async fn queued_frame_is_refused_when_the_registry_becomes_unreadable() {
 }
 
 #[tokio::test]
-async fn queued_frame_drains_normally_while_the_credential_stays_live() {
-    let sink = BlockableSink::blocked();
+async fn frame_drains_normally_while_the_credential_stays_live() {
+    let sink = BlockableSink::ready_blocked();
     let registry = Arc::new(MutableRevocations::default());
 
     // Same race, no revocation: the consult must not be a blanket refusal.
@@ -1500,7 +1585,7 @@ async fn queued_frame_drains_normally_while_the_credential_stays_live() {
 /// row would pass every test above for the wrong reason.
 #[tokio::test]
 async fn a_different_jti_revocation_does_not_close_this_session() {
-    let sink = BlockableSink::blocked();
+    let sink = BlockableSink::ready_blocked();
     let registry = Arc::new(MutableRevocations::default());
 
     let keep_going = send_racing_a_revocation(&sink, &registry, |r| {
@@ -1512,6 +1597,147 @@ async fn a_different_jti_revocation_does_not_close_this_session() {
     assert_eq!(sink.written().len(), 1);
 }
 
+// ─── the FLUSH phase ─────────────────────────────────────────────────────────
+//
+// The capacity wait above is the shorter of the two windows. A real
+// `tokio-tungstenite` sink is almost always ready to ACCEPT a frame — it
+// queues it in `start_send` and returns — and then parks in `poll_flush`
+// until the peer reads. That flush is where a socket stalls for an unbounded
+// interval, so it is where an operator's `token revoke` most often lands.
+//
+// The rows below therefore pin the harder shape: `poll_ready` READY,
+// `start_send` accepting into `queued`, `poll_flush` blocked. Nothing may be
+// reported as WRITTEN, and the transport must be dropped rather than closed
+// gracefully — a graceful close flushes the queue on its way out, which is
+// the delivery being refused.
+
+/// Drives `send_binary` until the frame is queued in the sink and the flush
+/// has parked, then revokes and releases.
+async fn send_racing_a_revocation_at_flush(
+    sink: &BlockableSink,
+    registry: &Arc<MutableRevocations>,
+    revoke: impl FnOnce(&MutableRevocations),
+) -> bool {
+    let mut guarded = guarded(sink, registry);
+    let mut send = Box::pin(guarded.send_binary(vec![1, 2, 3]));
+
+    assert!(
+        futures_util::poll!(send.as_mut()).is_pending(),
+        "the flush must actually block, or this test proves nothing"
+    );
+    // The distinguishing precondition: the sink ACCEPTED the frame. A harness
+    // that blocked `poll_ready` instead would fail this and be testing the
+    // phase already covered above.
+    assert_eq!(
+        sink.queued(),
+        vec![WsMessage::Binary(vec![1, 2, 3].into())],
+        "the frame must be QUEUED IN the sink — this row models the flush wait, \
+         not the capacity wait"
+    );
+    assert!(
+        sink.written().is_empty(),
+        "queuing is not wire handover; nothing may be written yet"
+    );
+
+    revoke(registry);
+    sink.unblock();
+    send.await
+}
+
+/// A frame already sitting in the sink's queue must not reach the wire when
+/// the credential is revoked mid-flush.
+#[tokio::test]
+async fn queued_frame_is_refused_when_revocation_lands_during_the_flush_wait() {
+    let sink = BlockableSink::flush_blocked();
+    let registry = Arc::new(MutableRevocations::default());
+
+    let keep_going =
+        send_racing_a_revocation_at_flush(&sink, &registry, |r| r.revoke(TEST_JTI)).await;
+
+    assert!(!keep_going, "a revoked session must not continue");
+    assert!(
+        sink.written().is_empty(),
+        "a frame queued in the sink drained to the client after its token was revoked"
+    );
+    assert!(
+        !sink.was_closed(),
+        "a graceful close flushes the queue — the transport must be DROPPED instead"
+    );
+}
+
+#[tokio::test]
+async fn queued_frame_is_refused_when_the_registry_becomes_unreadable_during_the_flush_wait() {
+    let sink = BlockableSink::flush_blocked();
+    let registry = Arc::new(MutableRevocations::default());
+
+    let keep_going =
+        send_racing_a_revocation_at_flush(&sink, &registry, MutableRevocations::make_unreadable)
+            .await;
+
+    assert!(
+        !keep_going,
+        "an unreadable registry is not evidence the token is live"
+    );
+    assert!(
+        sink.written().is_empty(),
+        "a queued frame drained despite an unreadable registry"
+    );
+    assert!(
+        !sink.was_closed(),
+        "the transport must be dropped, not closed"
+    );
+}
+
+/// The flush-phase guard must not become a blanket refusal: a live credential's
+/// queued frame still has to reach the wire once the peer resumes reading.
+#[tokio::test]
+async fn queued_frame_reaches_the_wire_when_the_flush_unblocks_and_the_token_is_live() {
+    let sink = BlockableSink::flush_blocked();
+    let registry = Arc::new(MutableRevocations::default());
+
+    let keep_going = send_racing_a_revocation_at_flush(&sink, &registry, |_| {}).await;
+
+    assert!(keep_going);
+    assert_eq!(
+        sink.written(),
+        vec![WsMessage::Binary(vec![1, 2, 3].into())],
+        "a live credential's queued frame must still be delivered"
+    );
+    assert!(sink.queued().is_empty());
+    assert!(!sink.was_closed());
+}
+
+/// A peer that stops reading never wakes the sink, so the park alone cannot be
+/// the only re-consult trigger — the bounded tick has to fire.
+///
+/// Here the flush stays blocked for the whole test and the sink is NEVER
+/// woken: a guard that re-consults only on a sink wakeup would park forever,
+/// which the timeout below turns into a failure.
+#[tokio::test]
+async fn a_silent_peer_still_gets_re_consulted_on_the_tick() {
+    let sink = BlockableSink::flush_blocked();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = guarded(&sink, &registry);
+    let mut send = Box::pin(guarded.send_binary(vec![1, 2, 3]));
+
+    assert!(futures_util::poll!(send.as_mut()).is_pending());
+    assert_eq!(sink.queued().len(), 1);
+
+    // The operator revokes. No socket event accompanies it: revocation is a
+    // vault write, possibly from another process entirely.
+    registry.revoke(TEST_JTI);
+
+    let keep_going = tokio::time::timeout(FLUSH_RECONSULT_INTERVAL * 20, send)
+        .await
+        .expect("the guard must re-consult on its own tick, not wait on the peer");
+
+    assert!(!keep_going);
+    assert!(
+        sink.written().is_empty(),
+        "the frame reached a peer whose token had been revoked"
+    );
+}
+
 /// A session with no revocable identity skips the registry entirely.
 ///
 /// The bare trust root and the dev fallthrough carry no `jti`; they are
@@ -1519,8 +1745,7 @@ async fn a_different_jti_revocation_does_not_close_this_session() {
 /// take them down with it.
 #[tokio::test]
 async fn a_session_without_a_jti_is_unaffected_by_an_unreadable_registry() {
-    let sink = BlockableSink::blocked();
-    sink.unblock();
+    let sink = BlockableSink::open();
     let registry = Arc::new(MutableRevocations::default());
     registry.make_unreadable();
 
