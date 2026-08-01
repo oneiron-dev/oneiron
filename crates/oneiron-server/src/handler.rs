@@ -26,7 +26,7 @@ use oneiron::sync::{
 };
 use tokio::time::{Duration, Instant};
 
-use crate::auth::{is_revoked_or_unreadable, require_owner_auth};
+use crate::auth::{RevokedTokenJtis, is_revoked_or_unreadable, require_owner_auth};
 use crate::broadcast::BroadcastSubscriber;
 use crate::protocol::{self, ProtocolError, SyncMessage, close_codes, window_sub_tags};
 use crate::server::SyncServer;
@@ -232,8 +232,103 @@ async fn ws_upgrade_handler(
 /// root or the dev fallthrough — so there is nothing to consult and the
 /// lookup is skipped entirely. Those are retired by rotating `auth_secret`,
 /// which invalidates them without any registry read.
-fn session_credential_revoked(server: &SyncServer, session_jti: Option<&str>) -> bool {
-    session_jti.is_some_and(|jti| is_revoked_or_unreadable(jti, server.vault().as_ref()))
+fn session_credential_revoked(revoked: &dyn RevokedTokenJtis, session_jti: Option<&str>) -> bool {
+    session_jti.is_some_and(|jti| is_revoked_or_unreadable(jti, revoked))
+}
+
+/// The one place this server writes a frame to a client socket.
+///
+/// Every outbound frame on a connection goes through [`Self::send_binary`] —
+/// the Phase-1 root snapshot, the late-join ephemeral snapshot, direct
+/// answers to inbound requests, and unsolicited broadcast fan-out — and each
+/// one re-consults the revocation registry immediately before the write.
+///
+/// A chokepoint rather than a gate per send arm, because per-arm reasoning
+/// has been wrong twice. "The hello runs before dispatch" left the snapshot
+/// sends uncovered; "direct sends only answer already-gated inbound
+/// messages" ignored that a response sits queued in the direct channel and
+/// drains AFTER the revocation that should have stopped it. One site cannot
+/// drift from itself, and a future send arm inherits the consult by
+/// construction instead of having to remember to classify itself.
+///
+/// The registry — not the whole server — is held here because the registry is
+/// the only thing this type consults, which also lets the fail-closed
+/// unreadable path be driven directly in tests.
+struct GuardedSink<S> {
+    sink: S,
+    revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
+    session_jti: Option<String>,
+    conn_id: u32,
+}
+
+impl<S> GuardedSink<S>
+where
+    S: SinkExt<WsMessage> + Unpin,
+{
+    fn new(
+        sink: S,
+        revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
+        session_jti: Option<String>,
+        conn_id: u32,
+    ) -> Self {
+        Self {
+            sink,
+            revoked,
+            session_jti,
+            conn_id,
+        }
+    }
+
+    /// Sends one binary frame, refusing if the credential is no longer live.
+    ///
+    /// Returns whether the connection may continue. `false` means either the
+    /// credential was revoked (or its registry unreadable) — in which case
+    /// the socket has already been closed and nothing was written — or the
+    /// peer's sink is gone. Both outcomes end the connection, so callers do
+    /// not distinguish them.
+    ///
+    /// The send is spelled out rather than `SinkExt::send` because the ORDER
+    /// is the point: wait for the sink to have capacity, THEN consult, THEN
+    /// hand over the bytes. A frame can sit parked in that wait for as long
+    /// as the peer's socket stays full — an unbounded interval, and precisely
+    /// where an operator's `token revoke` lands. Consulting before the wait
+    /// would authorize a write performed an arbitrary time later. What
+    /// remains after the handover is the flush, where the bytes are already
+    /// committed to the transport and no gate exists anywhere.
+    #[must_use]
+    async fn send_binary(&mut self, data: Vec<u8>) -> bool {
+        if std::future::poll_fn(|cx| self.sink.poll_ready_unpin(cx))
+            .await
+            .is_err()
+        {
+            tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
+            return false;
+        }
+        if session_credential_revoked(self.revoked.as_ref(), self.session_jti.as_deref()) {
+            tracing::warn!(
+                conn_id = self.conn_id,
+                "credential revoked — closing live session instead of sending"
+            );
+            self.close().await;
+            return false;
+        }
+        if self
+            .sink
+            .start_send_unpin(WsMessage::Binary(data.into()))
+            .is_err()
+            || std::future::poll_fn(|cx| self.sink.poll_flush_unpin(cx))
+                .await
+                .is_err()
+        {
+            tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
+            return false;
+        }
+        true
+    }
+
+    async fn close(&mut self) {
+        let _ = self.sink.close().await;
+    }
 }
 
 /// Main connection lifecycle.
@@ -244,12 +339,27 @@ async fn handle_connection(
     conn_id: u32,
     session_jti: Option<String>,
 ) {
-    let (mut ws_sink, mut ws_stream) = socket.split();
+    let (ws_sink, mut ws_stream) = socket.split();
+    // Every frame this connection ever writes goes through here, and each one
+    // re-consults the revocation registry first. The hello close below is the
+    // single deliberate exception: it carries no vault state and is the
+    // refusal itself.
+    let mut ws_sink = GuardedSink::new(
+        ws_sink,
+        Arc::clone(server.vault()) as Arc<dyn RevokedTokenJtis + Send + Sync>,
+        session_jti.clone(),
+        conn_id,
+    );
 
     // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
     // must be a supported protocol hello. Malformed frames or unsupported
     // versions close with 4006 BEFORE any sync payload flows, so wire breaks
     // are detectable instead of surfacing as garbled decode errors mid-sync.
+    //
+    // A token can idle here — upgraded but silent — for the whole hello
+    // timeout, so a revocation can land between the handshake and the first
+    // frame. The sends below therefore cannot rely on the handshake's proof
+    // of liveness, and do not: they consult at the chokepoint.
     let protocol_version = match await_protocol_hello(&mut ws_stream).await {
         HelloOutcome::Valid(version) => version,
         HelloOutcome::Reject(reason) => {
@@ -258,7 +368,7 @@ async fn handle_connection(
                 code: close_codes::VERSION_MISMATCH,
                 reason: Utf8Bytes::from_static(reason),
             }));
-            let _ = ws_sink.send(close).await;
+            let _ = ws_sink.sink.send(close).await;
             return;
         }
         HelloOutcome::Disconnected => {
@@ -275,7 +385,7 @@ async fn handle_connection(
     match server.export_root_snapshot() {
         Ok(snapshot) => {
             let msg = protocol::encode_root_update(&snapshot);
-            if ws_sink.send(WsMessage::Binary(msg.into())).await.is_err() {
+            if !ws_sink.send_binary(msg).await {
                 tracing::warn!(conn_id, "failed to send root snapshot");
                 return;
             }
@@ -288,7 +398,7 @@ async fn handle_connection(
 
     // Late-join/reconnect snapshot for the Loro-native ephemeral lane.
     if let Some(msg) = encode_late_join_ephemeral_snapshot(&server, conn_id)
-        && ws_sink.send(WsMessage::Binary(msg.into())).await.is_err()
+        && !ws_sink.send_binary(msg).await
     {
         tracing::warn!(conn_id, "failed to send ephemeral snapshot");
         return;
@@ -306,63 +416,49 @@ async fn handle_connection(
         federation_quota,
     );
 
-    // Spawn outbound task: forwards broadcast + direct messages to WebSocket sink
-    let outbound_handle = {
-        // Fan-out is sync service the peer never has to ask for, so the
-        // outbound task owns its own revocation consult: a revoked peer that
-        // simply stops sending must not keep receiving other clients' window
-        // updates. Direct sends are answers to inbound messages the loop
-        // below already gated, so only the unsolicited broadcast arm consults.
-        let outbound_server = Arc::clone(&server);
-        let outbound_jti = session_jti.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    broadcast_result = subscriber.recv() => {
-                        match broadcast_result {
-                            Ok(Some(data)) => {
-                                if !should_forward_broadcast(protocol_version, &data) {
-                                    continue;
-                                }
-                                if session_credential_revoked(&outbound_server, outbound_jti.as_deref()) {
-                                    tracing::warn!(
-                                        conn_id,
-                                        "credential revoked — closing live session before fan-out"
-                                    );
-                                    let _ = ws_sink.close().await;
-                                    break;
-                                }
-                                if ws_sink.send(WsMessage::Binary(data.into())).await.is_err() {
-                                    tracing::debug!(conn_id, "outbound sink closed");
-                                    break;
-                                }
+    // Spawn outbound task: forwards broadcast + direct messages to WebSocket
+    // sink. BOTH arms write through the guarded chokepoint, so neither
+    // unsolicited fan-out nor a direct answer can outlive the credential:
+    // fan-out is service the peer never asked for, and a direct response can
+    // sit queued in this channel — or blocked mid-`send` — across the very
+    // revocation that should have stopped it.
+    let outbound_handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                broadcast_result = subscriber.recv() => {
+                    match broadcast_result {
+                        Ok(Some(data)) => {
+                            if !should_forward_broadcast(protocol_version, &data) {
+                                continue;
                             }
-                            Ok(None) => break,
-                            Err(crate::broadcast::BroadcastError::Lagged(n)) => {
-                                tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
-                            }
-                            Err(crate::broadcast::BroadcastError::TooManyLags) => {
-                                tracing::warn!(conn_id, "too many lags — disconnecting");
-                                let _ = ws_sink.close().await;
+                            if !ws_sink.send_binary(data).await {
                                 break;
                             }
                         }
-                    }
-                    direct_msg = direct_rx.recv() => {
-                        match direct_msg {
-                            Some(data) => {
-                                if ws_sink.send(WsMessage::Binary(data.into())).await.is_err() {
-                                    tracing::debug!(conn_id, "outbound sink closed (direct)");
-                                    break;
-                                }
-                            }
-                            None => break,
+                        Ok(None) => break,
+                        Err(crate::broadcast::BroadcastError::Lagged(n)) => {
+                            tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
+                        }
+                        Err(crate::broadcast::BroadcastError::TooManyLags) => {
+                            tracing::warn!(conn_id, "too many lags — disconnecting");
+                            ws_sink.close().await;
+                            break;
                         }
                     }
                 }
+                direct_msg = direct_rx.recv() => {
+                    match direct_msg {
+                        Some(data) => {
+                            if !ws_sink.send_binary(data).await {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
             }
-        })
-    };
+        }
+    });
 
     // Inbound loop: process messages from client
     loop {
@@ -426,11 +522,13 @@ async fn handle_connection(
                 // Live revocation consult, ahead of every privileged sync
                 // message. The handshake established liveness at upgrade
                 // time only; a `jti` revoked since must get no further
-                // service on this socket. Frames that carry no vault state
-                // in either direction are exempt so an idle keepalive-shaped
-                // connection does not hit the registry per frame.
+                // service on this socket. This is the READ-side gate the
+                // outbound chokepoint cannot supply: refusing a request
+                // before it runs also stops its side effects, which for a
+                // write reach the hub store and every live peer rather than
+                // this socket's sink.
                 if privileged_sync_message(&msg)
-                    && session_credential_revoked(&server, session_jti.as_deref())
+                    && session_credential_revoked(server.vault().as_ref(), session_jti.as_deref())
                 {
                     tracing::warn!(
                         conn_id,
@@ -547,28 +645,35 @@ fn validate_protocol_hello(frame: &[u8]) -> Result<u8, u16> {
     }
 }
 
-/// Whether this message class moves vault state, and therefore requires a
+/// Whether this message class moves server state, and therefore requires a
 /// live credential.
 ///
 /// Everything that reads the vault out (root VV deltas, window VV exchange,
-/// selector fetches), writes into it (window updates), or registers device
-/// identity (lease) is privileged. Two classes are not, and are exempt so the
-/// registry is not read per frame on a chatty-but-harmless connection:
+/// selector fetches), writes into it (window updates), registers device
+/// identity (lease), or publishes to live peers (ephemeral presence/cursor
+/// state) is privileged. Exactly one class is not:
 ///
 /// - `RootUpdate` — the root doc is server-authoritative; the handler
 ///   discards client updates without touching any state, so a revoked peer
-///   sending one already achieves nothing.
-/// - `Ephemeral` — presence/cursor LWW state that expires on its own timeout.
-///   It carries no vault content, and the outbound guard already stops the
-///   revoked peer from RECEIVING the resulting fan-out.
+///   sending one already achieves nothing. Exempting it keeps an idle
+///   keepalive-shaped connection off the registry.
 ///
-/// The exemptions are the reason this is an explicit allow-list rather than a
+/// `Ephemeral` is deliberately NOT exempt, though it carries no vault
+/// content. The read-side argument for exempting it — the outbound guard
+/// stops the revoked peer from receiving the fan-out — says nothing about
+/// the write side: the handler applies the payload to the hub store and
+/// broadcasts it, so a revoked bearer would keep PUBLISHING presence and
+/// cursor state to every live peer after losing all read access. Revocation
+/// means no further service in either direction.
+///
+/// The exemption is the reason this is an explicit allow-list rather than a
 /// blanket check: a new privileged message variant must be classified here,
 /// and the compiler forces that decision by exhaustive match.
 fn privileged_sync_message(msg: &SyncMessage) -> bool {
     match msg {
-        SyncMessage::RootUpdate(_) | SyncMessage::Ephemeral(_) => false,
-        SyncMessage::RootVersionVector(_)
+        SyncMessage::RootUpdate(_) => false,
+        SyncMessage::Ephemeral(_)
+        | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::WindowSync { .. } => true,
     }

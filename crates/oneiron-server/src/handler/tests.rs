@@ -1308,6 +1308,234 @@ async fn root_vv_replies_with_delta_and_rejects_malformed() {
     assert!(direct_rx.try_recv().is_err());
 }
 
+// ─── outbound chokepoint (GuardedSink) ───────────────────────────────────────
+
+/// A `Sink` whose readiness the test controls, recording what it accepts.
+///
+/// Backpressure is the whole point: a real peer socket blocks for an
+/// unbounded interval, and a response parked in that block is precisely the
+/// frame an operator's `token revoke` is meant to stop. `unblock` releases
+/// the wait; `written` reports what actually crossed the wire.
+#[derive(Clone, Default)]
+struct BlockableSink {
+    ready: Arc<std::sync::atomic::AtomicBool>,
+    written: Arc<std::sync::Mutex<Vec<WsMessage>>>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
+    waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
+}
+
+impl BlockableSink {
+    fn blocked() -> Self {
+        Self::default()
+    }
+
+    fn unblock(&self) {
+        self.ready.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(waker) = self.waker.lock().unwrap().take() {
+            waker.wake();
+        }
+    }
+
+    fn written(&self) -> Vec<WsMessage> {
+        self.written.lock().unwrap().clone()
+    }
+
+    fn was_closed(&self) -> bool {
+        self.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl futures_util::Sink<WsMessage> for BlockableSink {
+    type Error = std::convert::Infallible;
+
+    fn poll_ready(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        if self.ready.load(std::sync::atomic::Ordering::SeqCst) {
+            return std::task::Poll::Ready(Ok(()));
+        }
+        *self.waker.lock().unwrap() = Some(cx.waker().clone());
+        std::task::Poll::Pending
+    }
+
+    fn start_send(self: std::pin::Pin<&mut Self>, item: WsMessage) -> Result<(), Self::Error> {
+        self.written.lock().unwrap().push(item);
+        Ok(())
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+/// A registry the test mutates mid-send, standing in for the operator act.
+#[derive(Default)]
+struct MutableRevocations {
+    revoked: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    unreadable: std::sync::atomic::AtomicBool,
+}
+
+impl MutableRevocations {
+    fn revoke(&self, jti: &str) {
+        self.revoked.lock().unwrap().insert(jti.to_owned());
+    }
+
+    fn make_unreadable(&self) {
+        self.unreadable
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl crate::auth::RevokedTokenJtis for MutableRevocations {
+    fn is_revoked(&self, jti: &str) -> Result<bool, ()> {
+        if self.unreadable.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(());
+        }
+        Ok(self.revoked.lock().unwrap().contains(jti))
+    }
+}
+
+const TEST_JTI: &str = "0123456789abcdef0123456789abcdef";
+
+/// Drives one `send_binary` to the point where it is parked on backpressure,
+/// then applies `revoke` and releases the sink.
+///
+/// The revocation lands strictly BETWEEN the frame being queued and the sink
+/// accepting bytes — the window a direct response occupies while the peer's
+/// socket is full. Returns whether the send reported "keep going".
+async fn send_racing_a_revocation(
+    sink: &BlockableSink,
+    registry: &Arc<MutableRevocations>,
+    revoke: impl FnOnce(&MutableRevocations),
+) -> bool {
+    let mut guarded = GuardedSink::new(
+        sink.clone(),
+        Arc::clone(registry) as Arc<dyn crate::auth::RevokedTokenJtis + Send + Sync>,
+        Some(TEST_JTI.to_owned()),
+        7,
+    );
+    let mut send = Box::pin(guarded.send_binary(vec![1, 2, 3]));
+
+    // The send is queued and stalls on the blocked sink.
+    assert!(
+        futures_util::poll!(send.as_mut()).is_pending(),
+        "the sink must actually block, or this test proves nothing"
+    );
+    assert!(
+        sink.written().is_empty(),
+        "nothing may reach the wire while the sink is blocked"
+    );
+
+    revoke(registry);
+    sink.unblock();
+    send.await
+}
+
+#[tokio::test]
+async fn queued_frame_is_refused_when_revocation_lands_before_the_sink_drains() {
+    let sink = BlockableSink::blocked();
+    let registry = Arc::new(MutableRevocations::default());
+
+    let keep_going = send_racing_a_revocation(&sink, &registry, |r| r.revoke(TEST_JTI)).await;
+
+    assert!(!keep_going, "a revoked session must not continue");
+    assert!(
+        sink.written().is_empty(),
+        "a frame queued before the revocation still reached the client"
+    );
+    assert!(sink.was_closed(), "the socket must close, not idle");
+}
+
+#[tokio::test]
+async fn queued_frame_is_refused_when_the_registry_becomes_unreadable() {
+    let sink = BlockableSink::blocked();
+    let registry = Arc::new(MutableRevocations::default());
+
+    let keep_going =
+        send_racing_a_revocation(&sink, &registry, MutableRevocations::make_unreadable).await;
+
+    assert!(
+        !keep_going,
+        "an unreadable registry is not evidence the token is live"
+    );
+    assert!(
+        sink.written().is_empty(),
+        "a frame drained despite an unreadable registry"
+    );
+    assert!(sink.was_closed());
+}
+
+#[tokio::test]
+async fn queued_frame_drains_normally_while_the_credential_stays_live() {
+    let sink = BlockableSink::blocked();
+    let registry = Arc::new(MutableRevocations::default());
+
+    // Same race, no revocation: the consult must not be a blanket refusal.
+    let keep_going = send_racing_a_revocation(&sink, &registry, |_| {}).await;
+
+    assert!(keep_going);
+    assert_eq!(
+        sink.written(),
+        vec![WsMessage::Binary(vec![1, 2, 3].into())],
+        "a live credential's queued frame must still be delivered"
+    );
+    assert!(!sink.was_closed());
+}
+
+/// Revoking a SIBLING token must not disturb this session.
+///
+/// The consult is keyed by `jti`; a registry that refused on any populated
+/// row would pass every test above for the wrong reason.
+#[tokio::test]
+async fn a_different_jti_revocation_does_not_close_this_session() {
+    let sink = BlockableSink::blocked();
+    let registry = Arc::new(MutableRevocations::default());
+
+    let keep_going = send_racing_a_revocation(&sink, &registry, |r| {
+        r.revoke("ffffffffffffffffffffffffffffffff");
+    })
+    .await;
+
+    assert!(keep_going);
+    assert_eq!(sink.written().len(), 1);
+}
+
+/// A session with no revocable identity skips the registry entirely.
+///
+/// The bare trust root and the dev fallthrough carry no `jti`; they are
+/// retired by rotating `auth_secret`, and an unreadable registry must not
+/// take them down with it.
+#[tokio::test]
+async fn a_session_without_a_jti_is_unaffected_by_an_unreadable_registry() {
+    let sink = BlockableSink::blocked();
+    sink.unblock();
+    let registry = Arc::new(MutableRevocations::default());
+    registry.make_unreadable();
+
+    let mut guarded = GuardedSink::new(
+        sink.clone(),
+        Arc::clone(&registry) as Arc<dyn crate::auth::RevokedTokenJtis + Send + Sync>,
+        None,
+        7,
+    );
+
+    assert!(guarded.send_binary(vec![9]).await);
+    assert_eq!(sink.written(), vec![WsMessage::Binary(vec![9].into())]);
+    assert!(!sink.was_closed());
+}
+
 #[test]
 fn protocol_hello_validation_literals() {
     // Contract literals: FED-005 scoped lease keys reject old v2/v3 peers
