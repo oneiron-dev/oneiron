@@ -53,6 +53,31 @@ const MAX_EPHEMERAL_KEY_BYTES: usize = 256;
 /// completes without ever reaching the tick.
 const FLUSH_RECONSULT_INTERVAL: Duration = Duration::from_millis(250);
 
+/// Out-buffer size an outbound frame must exceed before the WebSocket codec
+/// writes it straight to the socket, in bytes.
+///
+/// This is the setting that makes `start_send` a pure queue rather than a
+/// write. tungstenite's `FrameCodec::buffer_frame` appends the frame to its
+/// out-buffer and then, if the buffer is over this threshold, calls
+/// `write_out_buffer` — a synchronous write to the socket, INSIDE
+/// `start_send`, before any flush poll runs. At the 128-KiB library default a
+/// single window export clears it easily, so a revocation landing after the
+/// pre-handover consult would find the bytes already gone: the guard would be
+/// checking a frame that had left the process.
+///
+/// Set beyond any frame this server will ever hand over — `max_frame_size`
+/// bounds admissible frames and is asserted to sit below this — so the
+/// threshold is unreachable by construction and [`GuardedTransport::send_binary`]'s
+/// explicit flush is the only path to the wire. It does not raise memory use:
+/// a send queues exactly one frame and flushes it before returning, so the
+/// out-buffer never accumulates, and the hard ceiling below is unchanged from
+/// the library default.
+const WS_WRITE_BUFFER_SIZE: usize = usize::MAX - 1;
+/// Hard ceiling on the out-buffer — the library default, restated because
+/// tungstenite asserts it is strictly above [`WS_WRITE_BUFFER_SIZE`] and would
+/// otherwise panic at socket construction.
+const WS_MAX_WRITE_BUFFER_SIZE: usize = usize::MAX;
+
 /// Per-connection mutable state. This is intentionally local to one socket:
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
 struct ConnState {
@@ -223,8 +248,19 @@ async fn ws_upgrade_handler(
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new WebSocket connection");
 
+    // `write_buffer_size` is a security setting here, not a tuning knob: it is
+    // what keeps `start_send` from writing to the socket on its own. See
+    // [`WS_WRITE_BUFFER_SIZE`]. The debug assertion pins the invariant the
+    // threshold relies on — an admissible frame can never reach it.
+    debug_assert!(
+        server.config.max_frame_size < WS_WRITE_BUFFER_SIZE,
+        "max_frame_size must stay below the write-through threshold, or start_send \
+         can put application bytes on the wire before the revocation consult"
+    );
     Ok(ws
         .max_frame_size(server.config.max_frame_size)
+        .write_buffer_size(WS_WRITE_BUFFER_SIZE)
+        .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
         .on_upgrade(move |socket| handle_connection(socket, server, conn_id, session_jti)))
 }
 
@@ -390,10 +426,9 @@ where
     /// 1. the capacity wait (`poll_ready`), before the frame is handed to the
     ///    sink at all; and
     /// 2. the flush wait (`poll_flush`), after the sink has taken the frame
-    ///    into its queue but before the bytes reach the socket. `start_send`
-    ///    is not wire handover — a real WebSocket sink normally just QUEUES
-    ///    there and returns immediately; the peer's backpressure surfaces
-    ///    here, so this is where the long park actually happens.
+    ///    into its queue but before the bytes reach the socket. This is where
+    ///    the peer's backpressure surfaces, so it is where the long park
+    ///    actually happens.
     ///
     /// So the consult runs after the capacity wait, again BEFORE the first
     /// flush poll, and again before every subsequent one — at each park, or
@@ -404,11 +439,34 @@ where
     /// the frame on the wire with no flush-time check at all. Cadence is
     /// bounded by those events, never by bytes written.
     ///
-    /// The residual gap after this is precisely one sliver: bytes the flush
-    /// already handed to the OS TCP send buffer. Those are gone from this
+    /// # Why `start_send` must be kept from writing
+    ///
+    /// Those consults only bound anything because `start_send` QUEUES. It does
+    /// not do so on its own: tungstenite writes from inside `start_send` in two
+    /// cases, and both are shut off rather than reasoned around, because a
+    /// write there lands between the pre-handover consult and the first flush
+    /// poll — no gate covers it.
+    ///
+    /// - Buffer exceeded: `buffer_frame` writes the out-buffer through once it
+    ///   passes `write_buffer_size`, whose 128-KiB default a window export
+    ///   clears easily. [`WS_WRITE_BUFFER_SIZE`] raises the threshold past any
+    ///   admissible frame, so it is never crossed.
+    /// - Queued automatic pong: a pong owed for a peer Ping makes `_write`
+    ///   report "should flush", and `start_send` flushes the application frame
+    ///   out with it. The pre-drain above empties control frames while nothing
+    ///   application-level is pending, removing the trigger.
+    ///
+    /// The residual gap after this is precisely one sliver: bytes the OS has
+    /// already accepted into its TCP send buffer. Those are gone from this
     /// process — no userspace gate can recall them, and the kernel delivers
-    /// them whenever the peer reads. Everything still held in this process,
-    /// in the sink's own queue included, is revocable.
+    /// them whenever the peer reads. That sliver cannot leak sync data: a
+    /// frame reaches the OS only via the explicit flush below, which the
+    /// consult precedes, so what the kernel can hold from a REFUSED frame is
+    /// at most a partial frame from a write that parked mid-way. A partial
+    /// WebSocket frame is not sync data — the peer's codec buffers the
+    /// fragment, never delivers it as a message, and the dropped transport
+    /// means the remainder never arrives. Everything still held in this
+    /// process, the sink's own queue included, is revocable.
     #[must_use]
     async fn send_binary(&mut self, data: Vec<u8>) -> bool {
         let Some(socket) = self.socket.as_mut() else {
@@ -434,6 +492,31 @@ where
         let Some(socket) = self.socket.as_mut() else {
             return false;
         };
+        // Drain queued CONTROL frames before handing over application bytes.
+        //
+        // A pong the codec owes for a peer Ping makes the next `start_send`
+        // flush eagerly — tungstenite's `_write` emits the automatic frame and
+        // reports "should flush", and `Sink::start_send` obeys — carrying the
+        // application frame out with it, inside `start_send`, before any
+        // consult. Draining first removes the trigger. Nothing application-
+        // level is queued yet, so this can only emit control frames: no vault
+        // state crosses here and no consult is owed.
+        //
+        // Exactly ONE poll, never a park. This must not become a second
+        // unbounded wait: a peer that stopped reading would stall here with no
+        // re-consult and no tick, which is the hole `guarded_flush` exists to
+        // close. Parking is also harmless to skip — a sink that cannot take the
+        // pong cannot take an application frame either, so `start_send` has
+        // nothing to flush it out with, and the guarded flush below owns the
+        // wait as before.
+        match std::future::poll_fn(|cx| Poll::Ready(socket.poll_flush_unpin(cx))).await {
+            Poll::Ready(Err(_)) => {
+                tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
+                return false;
+            }
+            // Drained, or the peer is not reading — both are safe to proceed on.
+            Poll::Ready(Ok(())) | Poll::Pending => {}
+        }
         if socket
             .start_send_unpin(WsMessage::Binary(data.into()))
             .is_err()

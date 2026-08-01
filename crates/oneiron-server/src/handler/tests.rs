@@ -1320,16 +1320,30 @@ async fn root_vv_replies_with_delta_and_rejects_malformed() {
 /// reasons:
 ///
 /// - `poll_ready` gates whether the sink will ACCEPT another frame;
-/// - `start_send` QUEUES the frame — it is not wire handover, and it never
-///   blocks;
+/// - `start_send` normally queues the frame, but it CAN write — see below;
 /// - `poll_flush` is where the peer's socket backpressure actually surfaces.
 ///
-/// So `written` records only what `poll_flush` completes, never what
-/// `start_send` queued: a frame sitting in `queued` has crossed no wire and
-/// is still refusable. `ready_blocked` and `flush_blocked` are set
-/// separately so a test can pin exactly one phase and prove the guard covers
-/// it — a harness that blocks only `poll_ready` models the wrong phase and
-/// would pass a flush-phase hole.
+/// So `written` records what actually crossed the wire, from either path: a
+/// frame sitting only in `queued` has crossed no wire and is still refusable.
+/// `ready_blocked` and `flush_blocked` are set separately so a test can pin
+/// exactly one phase and prove the guard covers it — a harness that blocks
+/// only `poll_ready` models the wrong phase and would pass a flush-phase hole.
+///
+/// # `start_send` writes, and this double models it
+///
+/// Treating `start_send` as a pure queue is the assumption that produced the
+/// hole this harness now covers. tungstenite writes from inside it in two
+/// cases, both reproduced here because a double that only queues would let a
+/// regression pass:
+///
+/// - the out-buffer passes `write_buffer_size` (128 KiB by default), so
+///   `buffer_frame` writes it through — [`Self::write_through_over`];
+/// - a pong is owed for a peer Ping, so `_write` reports "should flush" and
+///   the application frame is flushed out alongside it —
+///   [`Self::owed_control`].
+///
+/// Both land BETWEEN the pre-handover consult and the first flush poll, which
+/// is why modelling them is what makes the rows below mean anything.
 ///
 /// It is a `Stream` as well as a `Sink` because the two halves are ONE
 /// transport, and the read half writes: tungstenite queues an automatic pong
@@ -1357,6 +1371,17 @@ struct BlockableTransport {
     /// the instant between the pre-handover consult and the first flush poll.
     #[expect(clippy::type_complexity)]
     on_start_send: Arc<std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>>,
+    /// Frame size at or above which `start_send` writes through, standing in
+    /// for tungstenite's `write_buffer_size`. `None` = the buffer is never
+    /// exceeded, which is what the production config now guarantees.
+    write_through_over: Arc<std::sync::Mutex<Option<usize>>>,
+    /// Control frames the codec owes the peer — an automatic pong for a Ping.
+    ///
+    /// Held apart from `queued` because the two are refusable on opposite
+    /// terms: a pong carries no vault state and is owed by the protocol, while
+    /// an application frame is exactly what a revocation must withhold. While
+    /// this is non-empty `start_send` flushes eagerly, which is mechanism 2.
+    owed_control: Arc<std::sync::Mutex<Vec<WsMessage>>>,
 }
 
 impl BlockableTransport {
@@ -1387,7 +1412,33 @@ impl BlockableTransport {
             inbound: Arc::default(),
             read_polls_while_pending: Arc::default(),
             on_start_send: Arc::default(),
+            write_through_over: Arc::default(),
+            owed_control: Arc::default(),
         }
+    }
+
+    /// Models tungstenite's `write_buffer_size`: a frame of `bytes` or more
+    /// is written straight to the wire inside `start_send`.
+    fn with_write_through_over(self, bytes: usize) -> Self {
+        *self.write_through_over.lock().unwrap() = Some(bytes);
+        self
+    }
+
+    /// The library's default write-through threshold — what the codec uses
+    /// when the upgrade handler does not raise it. Named so the rows below can
+    /// state which regime they are in.
+    const DEFAULT_WRITE_BUFFER: usize = 128 * 1024;
+
+    /// A double configured the way `ws_upgrade_handler` configures the real
+    /// socket.
+    ///
+    /// The disarm for the buffer-exceeded write-through is a CONFIG value, not
+    /// a branch in `GuardedTransport`, so a row that hard-codes a threshold
+    /// tests a socket this server never builds. Reading the production
+    /// constant is what makes the mutation probe bite: restore the library
+    /// default and the frame below is written through inside `start_send`.
+    fn as_configured_by_the_upgrade_handler() -> Self {
+        Self::open().with_write_through_over(WS_WRITE_BUFFER_SIZE)
     }
 
     /// Queues a frame from the peer for the read half to pick up.
@@ -1456,8 +1507,15 @@ impl BlockableTransport {
         if self.flush_blocked.load(std::sync::atomic::Ordering::SeqCst) {
             return self.park(cx);
         }
+        // An explicit flush emits the owed control frames FIRST — they were
+        // queued before the application frame — and that is precisely how the
+        // pre-drain disarms mechanism 2: afterwards nothing is left to force a
+        // write inside the next `start_send`.
+        let owed = std::mem::take(&mut *self.owed_control.lock().unwrap());
         let drained = std::mem::take(&mut *self.queued.lock().unwrap());
-        self.written.lock().unwrap().extend(drained);
+        let mut written = self.written.lock().unwrap();
+        written.extend(owed);
+        written.extend(drained);
         std::task::Poll::Ready(Ok(()))
     }
 }
@@ -1475,13 +1533,40 @@ impl futures_util::Sink<WsMessage> for BlockableTransport {
         std::task::Poll::Ready(Ok(()))
     }
 
-    /// Queues only. A real sink hands nothing to the socket here.
+    /// Queues — and WRITES, exactly where the real codec does.
+    ///
+    /// Modelling only the queue is what let the previous leg's guard look
+    /// sound: both branches below put application bytes on the wire between
+    /// the pre-handover consult and the first flush poll, so a double that
+    /// omitted them would score a hole as a pass.
     fn start_send(self: std::pin::Pin<&mut Self>, item: WsMessage) -> Result<(), Self::Error> {
+        let item_len = match &item {
+            WsMessage::Binary(data) => data.len(),
+            _ => 0,
+        };
         self.queued.lock().unwrap().push(item);
         // The revocation window this leg closes: the pre-handover consult has
         // passed, the frame is now IN the sink, and no flush poll has run yet.
         if let Some(hook) = self.on_start_send.lock().unwrap().take() {
             hook();
+        }
+        // Mechanism 1 — the out-buffer is exceeded, so `buffer_frame` writes it
+        // through. Independent of `flush_blocked`: this is a synchronous write
+        // from inside `start_send`, not the flush the peer's backpressure gates.
+        let exceeds_buffer = self
+            .write_through_over
+            .lock()
+            .unwrap()
+            .is_some_and(|limit| item_len >= limit);
+        // Mechanism 2 — a pong is owed, so `_write` emits it and reports
+        // "should flush"; the application frame goes out alongside it.
+        let owed = std::mem::take(&mut *self.owed_control.lock().unwrap());
+        let pong_forces_flush = !owed.is_empty();
+        if exceeds_buffer || pong_forces_flush {
+            let drained = std::mem::take(&mut *self.queued.lock().unwrap());
+            let mut written = self.written.lock().unwrap();
+            written.extend(owed);
+            written.extend(drained);
         }
         Ok(())
     }
@@ -1538,6 +1623,14 @@ impl futures_util::Stream for BlockableTransport {
         if matches!(msg, WsMessage::Ping(_) | WsMessage::Close(_)) {
             let drained = std::mem::take(&mut *self.queued.lock().unwrap());
             self.written.lock().unwrap().extend(drained);
+            // The pong is now OWED, not yet sent: tungstenite queues it here
+            // and the next write emits it — dragging any application frame
+            // handed over in the meantime out with it. That is mechanism 2,
+            // and it survives until something flushes.
+            self.owed_control
+                .lock()
+                .unwrap()
+                .push(WsMessage::Pong(Vec::new().into()));
         }
         std::task::Poll::Ready(Some(Ok(msg)))
     }
@@ -1923,6 +2016,129 @@ async fn queued_frame_is_refused_when_the_registry_becomes_unreadable_before_the
     assert_refused_without_delivery(&sink, &guarded);
 }
 
+// ─── `start_send` WRITES ─────────────────────────────────────────────────────
+//
+// Every row above was scored by a double that only queued in `start_send`,
+// which encoded the assumption the guard rested on. The real codec writes from
+// inside `start_send` in two cases, and each puts application bytes on the wire
+// AFTER the pre-handover consult and BEFORE the first flush poll — the one
+// stretch no consult covers, because there is no await in it to consult at.
+//
+// Consulting harder cannot close either: the write is synchronous and already
+// done by the time control returns. Both are therefore disarmed at the source —
+// the buffer threshold is put out of reach, and owed control frames are drained
+// while nothing application-level is pending. The rows below are the finder's
+// spec, and each fails if its disarm is removed.
+
+/// A frame larger than the write buffer must not reach the wire inside
+/// `start_send`.
+///
+/// The sink is OPEN and the revocation lands in `start_send` — after the
+/// handover consult, before any flush. With the library's 128-KiB default this
+/// frame would be written through on the spot; the production config raises the
+/// threshold past `max_frame_size`, so nothing is written until the guarded
+/// flush, which consults first.
+#[tokio::test]
+async fn a_frame_larger_than_the_write_buffer_is_refused_inside_start_send() {
+    let sink = BlockableTransport::as_configured_by_the_upgrade_handler();
+    let registry = Arc::new(MutableRevocations::default());
+    let registry_for_hook = Arc::clone(&registry);
+    sink.on_start_send(move || registry_for_hook.revoke(TEST_JTI));
+
+    // Comfortably over the LIBRARY default, so a default-configured socket
+    // writes this through inside `start_send` — and this one must not.
+    let oversized = vec![4u8; 2 * BlockableTransport::DEFAULT_WRITE_BUFFER];
+    let mut guarded = guarded(&sink, &registry);
+    let keep_going = guarded.send_binary(oversized).await;
+
+    assert!(!keep_going, "a revoked session must not continue");
+    assert!(
+        sink.written().is_empty(),
+        "a frame over the write buffer was written to the wire from inside start_send, \
+         before any flush-time consult could refuse it"
+    );
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must drop the full transport"
+    );
+    assert!(
+        !sink.was_closed(),
+        "a graceful close flushes the queue — the transport must be DROPPED instead"
+    );
+}
+
+/// A pong owed to the peer must not drag an application frame out with it.
+///
+/// The peer pings first, so the codec owes an automatic pong; that pending
+/// control frame is what makes the next `start_send` flush eagerly, however
+/// small the application frame is. The pre-drain empties it while nothing
+/// application-level is queued, so the eager flush has nothing left to trigger
+/// on and the revocation is still honoured.
+#[tokio::test]
+async fn a_pong_owed_to_the_peer_cannot_drag_a_small_frame_out_inside_start_send() {
+    let sink = BlockableTransport::open();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = guarded(&sink, &registry);
+
+    // Read the Ping FIRST: this is what leaves a pong owed. Nothing is pending
+    // at this point, so the read is legitimate.
+    sink.push_inbound(WsMessage::Ping(Vec::new().into()));
+    assert!(matches!(
+        guarded.read_next().await,
+        Some(Ok(WsMessage::Ping(_)))
+    ));
+
+    // The revocation lands in the same instant as before — inside `start_send`,
+    // with a pong still owed.
+    let registry_for_hook = Arc::clone(&registry);
+    sink.on_start_send(move || registry_for_hook.revoke(TEST_JTI));
+
+    let keep_going = guarded.send_binary(vec![1, 2, 3]).await;
+
+    assert!(!keep_going, "a revoked session must not continue");
+    assert_eq!(
+        sink.written(),
+        vec![WsMessage::Pong(Vec::new().into())],
+        "the only bytes owed here are the automatic pong: an application frame rode the \
+         pong-triggered eager flush out of start_send"
+    );
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must drop the full transport"
+    );
+    assert!(!sink.was_closed());
+}
+
+/// Neither disarm may become a blanket refusal: an oversized frame and a
+/// pong-owing socket must both still deliver while the credential is live.
+#[tokio::test]
+async fn oversized_and_pong_owing_sends_still_deliver_while_the_credential_is_live() {
+    let sink = BlockableTransport::as_configured_by_the_upgrade_handler();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = guarded(&sink, &registry);
+
+    let big = vec![4u8; 2 * BlockableTransport::DEFAULT_WRITE_BUFFER];
+    assert!(guarded.send_binary(big.clone()).await);
+    assert_eq!(
+        sink.written(),
+        vec![WsMessage::Binary(big.into())],
+        "a live credential's oversized frame must still be delivered"
+    );
+
+    sink.push_inbound(WsMessage::Ping(Vec::new().into()));
+    assert!(matches!(
+        guarded.read_next().await,
+        Some(Ok(WsMessage::Ping(_)))
+    ));
+    assert!(guarded.send_binary(vec![1, 2, 3]).await);
+    assert_eq!(
+        sink.written().last(),
+        Some(&WsMessage::Binary(vec![1, 2, 3].into())),
+        "a live credential's frame must still be delivered on a pong-owing socket"
+    );
+    assert!(!sink.was_closed());
+}
+
 /// The pre-first-poll consult must not become a blanket refusal on the fast
 /// path — the overwhelmingly common case is a live token and a ready sink.
 #[tokio::test]
@@ -2032,7 +2248,15 @@ async fn reads_flow_normally_when_no_application_frame_is_pending() {
     assert_eq!(sink.read_polls_while_pending(), 0);
 
     assert!(guarded.send_binary(vec![7]).await);
-    assert_eq!(sink.written(), vec![WsMessage::Binary(vec![7].into())]);
+    assert_eq!(
+        sink.written(),
+        vec![
+            // The pong owed for the Ping above, emitted by the pre-drain.
+            WsMessage::Pong(Vec::new().into()),
+            WsMessage::Binary(vec![7].into()),
+        ],
+        "a live credential's frame must be delivered, after the owed pong"
+    );
 }
 
 /// A session with no revocable identity skips the registry entirely.
