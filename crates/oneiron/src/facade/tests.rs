@@ -3771,6 +3771,189 @@ fn revocation_racing_a_gated_delete_refuses_and_tears_nothing() {
     }
 }
 
+/// fix-leg 6: a refusal must not publish.
+///
+/// fix-5 re-folded the owner at five destructive sites, but the sync leg's
+/// authority lived in `stage_deletion_gate_recovery`'s transaction, which
+/// COMMITS and drops its snapshot; `finish_crdt_tombstone_persist` then wrote
+/// the CRDT snapshot, the `u:w:` carrier and the delete-bearing `q:` row in a
+/// LATER transaction carrying no authority at all. A `RevokeActor` landing
+/// between the two therefore let the tombstone reach peers and only the purge
+/// re-check refused — `safe_delete` returned FORBIDDEN *after* an unauthorized
+/// deletion had already been published, which is unrecoverable: a peer that
+/// applied it has hard-deleted the entity.
+///
+/// The rendezvous fires exactly in that interval. The assertions are the
+/// no-publish invariant, carrier by carrier: no live-doc tombstone, no `d:w:`
+/// snapshot, no `u:w:` row, no `q:` queue row, and no pending gate sidecar
+/// that a later replay could redeem.
+#[cfg(feature = "sync")]
+#[test]
+fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
+    use std::sync::Arc;
+
+    use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    let owner = put_person(&vault, 0x94);
+    let subject = put_person(&vault, 0x95);
+    let revoke = root_binding_with_pending_revocation(&vault, 0x96, owner);
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "facade-publish-boundary",
+    ));
+    // A connected peer: `route_live` would hand it the tombstone the instant
+    // the publish leaked one.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    manager.outbound().attach(tx);
+    let window_key = WindowKey::from_timestamp(1);
+    let window = manager
+        .open_window(&window_key)
+        .expect("open live deletion window");
+
+    // Control: with the binding live, the same path publishes end to end — so
+    // the assertions below pin the refusal, not a broken fixture.
+    let warmup = put_person(&vault, 0x97);
+    facade_for(&vault, owner)
+        .safe_delete(&warmup.to_hex(), SafeDeleteReason::UserHardDelete)
+        .expect("control: a bound owner publishes a tombstone");
+    rx.try_recv().expect("control: the peer receives it");
+
+    // Two-phase rendezvous: `arrived` fires once the deleter's gate sidecar is
+    // durably staged (its txn committed, no lock held); `resume` releases it
+    // into the publish txn after the revocation has landed. The deleter's own
+    // staging txn takes the write lock, so the fix-5 held-txn trick would
+    // deadlock here — the revocation has to commit while the deleter parks.
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
+    crate::deletion::install_after_tombstone_gate_staged_signal(arrived_tx, resume_rx);
+
+    let (err, staged_decision_id) = std::thread::scope(|scope| {
+        let vault_ref = &vault;
+        let deleter = scope.spawn(move || {
+            facade_for(vault_ref, owner)
+                .safe_delete(&subject.to_hex(), SafeDeleteReason::UserHardDelete)
+        });
+        // The staged decision id: a refused delete returns no request id, so
+        // this is the only handle on the sidecar the refusal must withdraw.
+        let staged_decision_id = arrived_rx
+            .recv()
+            .expect("deleter must signal once its gate sidecar is staged");
+        // The pre-txn gate and the staging re-fold have BOTH already passed on
+        // the live binding; the delete is parked believing it is authorized.
+        vault
+            .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+            .expect("commit revocation inside the publish window");
+        resume_tx.send(()).expect("release the deleter");
+        let err = deleter
+            .join()
+            .expect("deleter thread must not panic")
+            .expect_err("a revocation landing before the publish commit must refuse");
+        (err, staged_decision_id)
+    });
+
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        err.message.contains("no active owner binding"),
+        "the parked pre-gate error must survive the publish boundary, not \
+         degrade to a generic concurrency code: {}",
+        err.message
+    );
+
+    // Victim intact.
+    assert_eq!(
+        vault.get_entity_type(&subject).expect("get subject"),
+        Some(ENTITY_TYPE_PERSON),
+        "a refused delete must leave the entity whole"
+    );
+
+    // No carrier published — live doc, snapshot, update row, queue row.
+    assert!(
+        window
+            .doc
+            .get_map("tombstones")
+            .get(&subject.to_hex())
+            .is_none(),
+        "a refused delete must not leave a tombstone in the shared live doc"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "a refused delete must not route an outbound update to the peer"
+    );
+    let snapshot = vault
+        .sync_state_get(&format!("d:w:{window_key}"))
+        .expect("read persisted window snapshot");
+    if let Some(snapshot) = snapshot {
+        let persisted = crate::sync::loro_support::doc_from_snapshot(&snapshot)
+            .expect("persisted snapshot decodes");
+        assert!(
+            persisted
+                .get_map("tombstones")
+                .get(&subject.to_hex())
+                .is_none(),
+            "the refused tombstone must not reach the d:w: snapshot"
+        );
+    }
+    for update_key in vault
+        .sync_state_keys_with_prefix(&format!("u:w:{window_key}:"))
+        .expect("read pending update rows")
+    {
+        let bytes = vault
+            .sync_state_get(&update_key)
+            .expect("read update row")
+            .expect("update row exists");
+        let replayed = crate::sync::schema::create_window_doc("probe", &window_key);
+        crate::sync::loro_support::import_doc(&replayed, &bytes).expect("update row imports");
+        assert!(
+            replayed
+                .get_map("tombstones")
+                .get(&subject.to_hex())
+                .is_none(),
+            "the refused tombstone must not reach a u:w: carrier ({update_key})"
+        );
+    }
+    let queue = crate::sync::SyncQueue::new(Arc::clone(&vault)).expect("open sync queue");
+    for queued in queue.drain_updates().expect("drain queued updates") {
+        let replayed = crate::sync::schema::create_window_doc("probe", &window_key);
+        crate::sync::loro_support::import_doc(&replayed, &queued.encoded)
+            .expect("queued update imports");
+        assert!(
+            replayed
+                .get_map("tombstones")
+                .get(&subject.to_hex())
+                .is_none(),
+            "the refused tombstone must not reach a delete-bearing q: row"
+        );
+    }
+
+    // No pending gate sidecar: the staging from the earlier txn must be
+    // withdrawn by the refusal itself, or a later replay would redeem it as a
+    // pending AUTHORIZED deletion.
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        vault
+            .store
+            .pending_deletion_gate_decision_in_txn(&rtxn, staged_decision_id)
+            .expect("read sidecar")
+            .is_none(),
+        "a refused publish must leave no redeemable authority sidecar"
+    );
+    drop(rtxn);
+    // ...and no authority record was minted for a deletion that never happened.
+    assert!(
+        vault
+            .gate_decisions(50)
+            .expect("gate decisions")
+            .iter()
+            .all(|decision| decision.decision_id != staged_decision_id),
+        "a refused publish must mint no gate decision"
+    );
+}
+
 /// P2-b: `fold.vault_id == None` is TWO states, and only one of them may pass.
 ///
 /// A log carrying two independent genesis roots folds to `vault_id: None` with
