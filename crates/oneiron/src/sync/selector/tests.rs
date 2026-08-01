@@ -1494,7 +1494,7 @@ fn admission_drop_leaves_no_pending_remat_work() {
     );
 }
 
-/// N forged rows in one admission cost a BOUNDED number of commits.
+/// N forged rows in one admission cost EXACTLY ONE extra transaction.
 ///
 /// The peer chooses N. A `write_txn` + commit per rejected row therefore hands
 /// it an amplification primitive: one admission, unbounded fsync traffic. The
@@ -1504,50 +1504,79 @@ fn admission_drop_leaves_no_pending_remat_work() {
 /// (`Env::info().last_txn_id`), which is the property that actually matters —
 /// asserting on a Rust-side counter would pass even if the batching were
 /// removed.
+///
+/// The pin is an exact DELTA against a baseline, not a loose upper bound. An
+/// admission also commits traffic that has nothing to do with rejections
+/// (policy-manifest resolution today, whatever the path grows tomorrow), so a
+/// bare `commits < N` would still pass with the batch sharded into sixteen
+/// write transactions — the amplification fix could regress by an order of
+/// magnitude without failing a green test. The BASELINE pass is the same
+/// fixture with an ON-TABLE source type: identical row count, identical key
+/// shape, identical vault construction, and nothing rejected, so its
+/// `TerminalRejectionBatch` takes no transaction at all. The forged pass must
+/// then cost the baseline PLUS EXACTLY ONE — the single batch commit.
 #[test]
 fn admission_drops_commit_in_one_bounded_batch() {
-    let member = entity_id(0x6B);
-    let (_dir, vault, _grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-05");
-
-    let facet = entity_id(0x6C);
     // Enough rows that a per-row commit is unmistakable against a one-txn pass.
-    let forged: Vec<EntityId> = (0x70_u8..0x90).map(entity_id).collect();
+    const STAMPER_COUNT: usize = 0x20;
 
-    let remote = create_window_doc("federation-peer", &window_key);
-    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
-    for id in &forged {
-        insert_entity(&remote, *id, ENTITY_TYPE_PERSON, b"person");
-        insert_edge(&remote, *id, EdgeKind::FacetOf, facet);
+    /// One admission over `STAMPER_COUNT` `FacetOf` rows whose sources carry
+    /// `source_type`. Returns the vault (temp dir held alive by the caller)
+    /// and the committed-transaction delta the admission itself cost.
+    fn admission_txn_delta(source_type: u8) -> (tempfile::TempDir, Vault, usize) {
+        let (dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x6B));
+        let window_key = WindowKey::new("2026-05");
+        let facet = entity_id(0x6C);
+
+        let remote = create_window_doc("federation-peer", &window_key);
+        insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
+        for id in (0x70_u8..0x90).map(entity_id) {
+            insert_entity(&remote, id, source_type, b"stamper");
+            insert_edge(&remote, id, EdgeKind::FacetOf, facet);
+        }
+        remote.commit();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+
+        let before = vault.store.env.info().last_txn_id;
+        admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Member,
+        )
+        .expect("neither pass may fail the admission closed");
+        let delta = vault.store.env.info().last_txn_id - before;
+        (dir, vault, delta)
     }
-    remote.commit();
-    let update = remote.export(ExportMode::all_updates()).unwrap();
 
-    let before = vault.store.env.info().last_txn_id;
-    admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect("forged rows must not fail the admission closed");
-    let commits = vault.store.env.info().last_txn_id - before;
+    // EVENT is on the `FacetOf` source table, PERSON is not: the two passes
+    // differ in ONE type byte, so their txn delta isolates the rejections.
+    let (_baseline_dir, baseline_vault, baseline_commits) = admission_txn_delta(ENTITY_TYPE_EVENT);
+    let (_forged_dir, forged_vault, forged_commits) = admission_txn_delta(ENTITY_TYPE_PERSON);
 
+    assert!(
+        quarantined_records(&baseline_vault).unwrap().is_empty(),
+        "the baseline must reject NOTHING — a baseline that also paid for a \
+         rejection batch would make the delta below vacuously true"
+    );
     assert_eq!(
-        quarantined_records(&vault).unwrap().len(),
-        forged.len(),
+        quarantined_records(&forged_vault).unwrap().len(),
+        STAMPER_COUNT,
         "every rejected row is still accounted with its own typed evidence \
          row — bounding the COMMITS must not bound the ACCOUNTING"
     );
-    assert!(
-        commits < forged.len(),
-        "{} forged rows cost {commits} commits — a peer-controlled row count \
-         must not translate into a peer-controlled commit count",
-        forged.len()
+
+    assert_eq!(
+        forged_commits,
+        baseline_commits + 1,
+        "{STAMPER_COUNT} forged rows cost {forged_commits} transactions \
+         against a {baseline_commits}-transaction rejection-free baseline — \
+         the whole pass owes EXACTLY ONE batch commit, so any sharding of it \
+         is a peer-controlled multiplier on our fsync traffic"
     );
 
     assert!(
-        crate::sync::quarantine::pending_remat_windows(&vault)
+        crate::sync::quarantine::pending_remat_windows(&forged_vault)
             .unwrap()
             .is_empty(),
         "the batch keeps the terminal no-marker shape for every row"
