@@ -1425,9 +1425,22 @@ pub(crate) fn is_indeterminate_first_seen(err: &Error) -> bool {
     matches!(err, Error::CorruptedIndex(msg) if *msg == AUTHORITY_FIRST_SEEN_INDETERMINATE)
 }
 
+/// One clock domain's monotonic ANCHOR: the observed second count
+/// `anchor_secs` and the [`Instant`] `anchor_instant` it was taken at.
+///
+/// The pair is an anchor, NOT a running total, and that is the whole point.
+/// `Duration::as_secs` truncates, so a fold at 09:00:00.4 and another at
+/// 09:00:00.9 each measure zero elapsed WHOLE seconds. Advancing the anchor on
+/// every call would bank those zeros and discard the 0.4 s and 0.5 s remainders
+/// forever — a caller folding faster than 1 Hz would freeze `now_secs` at its
+/// first observation, so no veto delay would ever mature and every owner verb
+/// resting on a delayable widen would wedge (fail-safe, but an availability
+/// hole). Keeping the anchor fixed makes each call measure real elapsed time
+/// from ONE origin, so the sub-second remainders accumulate and the second
+/// boundary is crossed exactly when it is crossed in wall time.
 struct AuthorityLocalClock {
-    last_instant: Instant,
-    last_secs: u64,
+    anchor_instant: Instant,
+    anchor_secs: u64,
 }
 
 fn authority_local_clocks() -> &'static Mutex<BTreeMap<usize, AuthorityLocalClock>> {
@@ -1446,19 +1459,30 @@ pub(crate) fn authority_observation_secs_for_domain(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     match clocks.get_mut(&clock_domain) {
         Some(clock) => {
-            let elapsed = now.saturating_duration_since(clock.last_instant).as_secs();
-            let observed = clock.last_secs.saturating_add(elapsed).max(previous_floor);
-            clock.last_secs = observed;
-            clock.last_instant = now;
-            observed
+            let elapsed = now
+                .saturating_duration_since(clock.anchor_instant)
+                .as_secs();
+            let anchored = clock.anchor_secs.saturating_add(elapsed);
+            // The persisted floor is the only thing that may REBASE the anchor:
+            // a floor above the anchor-derived value means another writer (or a
+            // reopen) advanced local observation past this domain's origin, so
+            // the floor becomes the new origin and `now` its instant. Rebasing
+            // here is safe precisely because it is monotone upward — it can
+            // delay a widen, never skip one.
+            if previous_floor > anchored {
+                clock.anchor_secs = previous_floor;
+                clock.anchor_instant = now;
+                return previous_floor;
+            }
+            anchored
         }
         None => {
             let observed = candidate_wall_secs.max(previous_floor);
             clocks.insert(
                 clock_domain,
                 AuthorityLocalClock {
-                    last_instant: now,
-                    last_secs: observed,
+                    anchor_instant: now,
+                    anchor_secs: observed,
                 },
             );
             observed
@@ -2177,12 +2201,7 @@ fn fork_winner_post_quarantine_issue(
             let Some(parent_state) = folded_parent_state_for_entry(entry, states) else {
                 return Some(AuthorityFoldIssue::MissingQuorum(hash));
             };
-            let independent_participants: BTreeSet<_> = std::iter::once(&entry.signer)
-                .chain(entry.cosigns.iter())
-                .map(|signature| &signature.public_key)
-                .filter(|key| *key != forked_key)
-                .cloned()
-                .collect();
+            let independent_participants = participants_without_key(entry, forked_key);
             if independent_participants.len() < 2
                 || active_roster_count_after_fork_quarantine(
                     &parent_state,
@@ -2198,6 +2217,33 @@ fn fork_winner_post_quarantine_issue(
                 return Some(AuthorityFoldIssue::MissingAuthorityConsent(hash));
             }
         }
+        // Binding ops MINT or MOVE actor identity, and a fork winner's signer
+        // is by construction the forked key — precisely the signature an
+        // attacker holds. fix-1 already kills a binding whose BOUND key is
+        // quarantined; that leaves the sibling hole this arm closes, where the
+        // quarantined key spends its last pre-quarantine act binding owner
+        // class onto a DIFFERENT, clean, owner-capable roster key. Nothing
+        // downstream can see that: `folded_actor_bindings` judges the bound
+        // key, which is spotless.
+        //
+        // The re-derivation demands NOTHING new — it is the entry's own two
+        // admission rules (`has_authority_consent` over its participants, and
+        // the peer-cosign quorum rule) run again with the forked key deleted
+        // from both sides. A bind an untainted owner-capable cosigner
+        // independently backs still stands; a bind whose only owner authority
+        // WAS the forked key does not.
+        AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => {
+            let independent_participants = participants_without_key(entry, forked_key);
+            if !has_authority_consent(state, &independent_participants) {
+                return Some(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+            }
+            if independent_participants.len() < 2
+                && active_roster_count_after_fork_quarantine(state, entry, context, hash, forked_key)
+                    >= 2
+            {
+                return Some(AuthorityFoldIssue::MissingQuorum(hash));
+            }
+        }
         AuthorityOp::Genesis { .. }
         | AuthorityOp::EnrollDevice { .. }
         | AuthorityOp::SetCeiling { .. }
@@ -2207,8 +2253,9 @@ fn fork_winner_post_quarantine_issue(
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
-        | AuthorityOp::BindActor { .. }
-        | AuthorityOp::RebindActor { .. }
+        // RevokeActor only raises a revocation watermark: it strips authority
+        // and can never mint it, so re-scrutinizing it could only resurrect a
+        // binding the quarantined key wanted gone.
         | AuthorityOp::RevokeActor { .. } => {}
     }
     None
@@ -2218,6 +2265,20 @@ fn entry_participants_include_key(entry: &AuthorityLogEntry, key: &AuthorityKey)
     std::iter::once(&entry.signer)
         .chain(entry.cosigns.iter())
         .any(|signature| signature.public_key == *key)
+}
+
+/// The entry's signer + cosigners with `key` deleted — the participant set a
+/// post-quarantine re-check must judge the entry on.
+fn participants_without_key(
+    entry: &AuthorityLogEntry,
+    key: &AuthorityKey,
+) -> BTreeSet<AuthorityKey> {
+    std::iter::once(&entry.signer)
+        .chain(entry.cosigns.iter())
+        .map(|signature| &signature.public_key)
+        .filter(|participant| *participant != key)
+        .cloned()
+        .collect()
 }
 
 fn folded_parent_state_for_entry(
@@ -4967,6 +5028,21 @@ impl Vault {
         &self,
         entries: &[(AuthorityLogEntry, TimeRange, u64)],
     ) -> Result<Vec<EntityId>> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let ids = self.put_authority_log_entries_in_txn(&mut wtxn, entries)?;
+        wtxn.commit()?;
+        Ok(ids)
+    }
+
+    /// [`Self::put_authority_log_entries`] against a CALLER-OWNED write
+    /// transaction, for composing an authority append with other writes that
+    /// must land atomically with it — and for tests that need to commit an
+    /// authority change at a precise instant relative to another thread.
+    pub(crate) fn put_authority_log_entries_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entries: &[(AuthorityLogEntry, TimeRange, u64)],
+    ) -> Result<Vec<EntityId>> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
         for (entry, occurred, learned_at) in entries {
@@ -4988,19 +5064,17 @@ impl Vault {
         if ops.is_empty() {
             return Ok(ids);
         }
-        let mut wtxn = self.store.env.write_txn()?;
         apply_ops(
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            wtxn,
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
         )?;
-        wtxn.commit()?;
         Ok(ids)
     }
 

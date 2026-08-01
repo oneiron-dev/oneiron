@@ -3639,6 +3639,138 @@ fn revoked_binding_forbids_owner_verbs() {
     );
 }
 
+/// Roots `vault`, binds `actor` as `human`, and returns the SIGNED
+/// `RevokeActor` that takes the binding away again — unpersisted, so a caller
+/// chooses the exact instant it lands.
+fn root_binding_with_pending_revocation(
+    vault: &crate::Vault,
+    seed: u8,
+    actor: EntityId,
+) -> crate::authority::AuthorityLogEntry {
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    let (genesis, signing) = authority_root(seed);
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
+    let owner_entry = |seq: u64, op: AuthorityOp, parents: Vec<[u8; 32]>| {
+        sign_authority(
+            AuthorityLogEntry {
+                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(vault_id),
+                seq,
+                parent_hashes: parents,
+                op,
+                signer: AuthoritySignature {
+                    suite: key.suite(),
+                    public_key: key.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: 100 + seq,
+            },
+            &signing,
+        )
+    };
+    let bind = owner_entry(
+        1,
+        AuthorityOp::BindActor {
+            authority_key: key.clone(),
+            actor_ref: actor,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        vec![genesis_hash],
+    );
+    let bind_hash = crate::authority::authority_entry_hash(&bind).expect("bind hash");
+    vault
+        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind, test_time(2), 2)])
+        .expect("root + bind");
+    owner_entry(
+        2,
+        AuthorityOp::RevokeActor {
+            authority_key: key.clone(),
+            epoch: 1,
+        },
+        vec![bind_hash],
+    )
+}
+
+/// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.
+///
+/// `evaluate_deletion_gate` folds the owner binding in a read txn it then
+/// DROPS. Everything the destructive transactions do afterwards runs on that
+/// dropped snapshot's authority — so a `RevokeActor` committed in the window
+/// between the two was, before this fix, never observed and the delete tore
+/// anyway. The sibling owner verbs (`claim_retract`, the structural arm) never
+/// had the hole because they fold INSIDE their write txns; this drives the race
+/// deterministically through the ONE-1149 rendezvous seam and pins the same
+/// behavior for deletion.
+#[test]
+fn revocation_racing_a_gated_delete_refuses_and_tears_nothing() {
+    for reason in [
+        SafeDeleteReason::UserDelete,
+        SafeDeleteReason::UserHardDelete,
+    ] {
+        let (_dir, vault) = open_vault();
+        let owner = put_person(&vault, 0x90);
+        let subject = put_person(&vault, 0x91);
+        let revoke = root_binding_with_pending_revocation(&vault, 0x92, owner);
+
+        // Control: the binding is live, so the gate passes end to end.
+        let warmup = put_person(&vault, 0x93);
+        facade_for(&vault, owner)
+            .safe_delete(&warmup.to_hex(), reason)
+            .expect("control: a bound owner deletes");
+
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+        // The rendezvous fires from inside the delete AFTER its header read
+        // proves the target exists and BEFORE it takes any write lock — i.e.
+        // squarely inside the gate-to-purge window this test is about.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+        crate::deletion::install_after_header_read_signal(tx);
+
+        let err = std::thread::scope(|scope| {
+            let deleter_gate = std::sync::Arc::clone(&gate);
+            let vault_ref = &vault;
+            let deleter = scope.spawn(move || {
+                deleter_gate.wait();
+                facade_for(vault_ref, owner).safe_delete(&subject.to_hex(), reason)
+            });
+            // Stage the revocation in a HELD write txn: LMDB MVCC keeps it
+            // invisible to the deleter's gate fold, so the gate is guaranteed
+            // to evaluate against the still-live binding.
+            let mut wtxn = vault.store.env.write_txn().expect("write txn");
+            vault
+                .put_authority_log_entries_in_txn(&mut wtxn, &[(revoke, test_time(3), 3)])
+                .expect("stage revocation");
+            gate.wait();
+            // The deleter has read its header and signalled; commit the
+            // revocation now and release the write lock it is about to want.
+            rx.recv()
+                .expect("deleter must signal after the header read");
+            wtxn.commit().expect("commit revocation");
+            deleter
+                .join()
+                .expect("deleter thread must not panic")
+                .expect_err("a revocation landing before the destructive commit must refuse")
+        });
+
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "reason {reason:?}");
+        assert!(
+            err.message.contains("no active owner binding"),
+            "reason {reason:?}: the refusal must name the real cause, not a \
+             generic concurrency error: {}",
+            err.message
+        );
+        // Nothing torn: the subject survives intact.
+        assert_eq!(
+            vault.get_entity_type(&subject).expect("get subject"),
+            Some(ENTITY_TYPE_PERSON),
+            "reason {reason:?}: a refused delete must leave the entity whole"
+        );
+    }
+}
+
 /// P2-b: `fold.vault_id == None` is TWO states, and only one of them may pass.
 ///
 /// A log carrying two independent genesis roots folds to `vault_id: None` with

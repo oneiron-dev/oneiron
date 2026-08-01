@@ -653,6 +653,63 @@ fn authority_clock_domain_release_drops_process_local_state() {
     release_authority_clock_domain(domain);
 }
 
+/// fix-leg 5 item 2: sub-second remainders must NOT be discarded.
+///
+/// `Duration::as_secs` truncates, so a per-call anchor reset banks a zero every
+/// time two folds land inside the same wall second — a sustained >1 Hz readonly
+/// fold would then freeze `now_secs` at its first observation and stall every
+/// veto delay. The anchor is stable, so real elapsed time crosses the boundary.
+#[test]
+fn sub_second_readonly_folds_still_advance_the_observed_clock() {
+    let domain = 0x1325_0004;
+    let first = authority_observation_secs_for_domain(domain, 0, 1_000);
+    assert_eq!(first, 1_000);
+
+    // Six sub-second calls inside one ~0.6 s window: each measures a truncated
+    // ZERO elapsed second and must leave the anchor alone.
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(
+            authority_observation_secs_for_domain(domain, first, 1_000),
+            first,
+            "a sub-second call must not advance the whole-second observation"
+        );
+    }
+    // Total real elapsed time is now > 1 s from the ORIGINAL anchor. With a
+    // per-call reset every one of those 100 ms gaps truncated to zero and this
+    // assert reads 1_000; with a stable anchor it reads 1_001.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, first, 1_000),
+        first + 1,
+        "sub-second remainders must accumulate: ~1.1 s of real time crosses a second boundary"
+    );
+    release_authority_clock_domain(domain);
+}
+
+/// The rebase half of the same anchor: a persisted floor ABOVE the
+/// anchor-derived value re-origins the clock (monotone upward), and the next
+/// call then advances from the NEW origin rather than from the stale one.
+#[test]
+fn persisted_floor_lift_rebases_the_authority_clock_anchor() {
+    let domain = 0x1325_0005;
+    let first = authority_observation_secs_for_domain(domain, 0, 1_000);
+    assert_eq!(first, 1_000);
+
+    // Another writer advanced the persisted floor well past this anchor.
+    let lifted = authority_observation_secs_for_domain(domain, 5_000, 1_000);
+    assert_eq!(lifted, 5_000, "a floor above the anchor must lift it");
+
+    // The lifted value is now the origin: a lower floor cannot pull it back,
+    // and elapsed time counts from the lift, not from the original anchor.
+    let held = authority_observation_secs_for_domain(domain, 0, 1_000);
+    assert_eq!(
+        held, lifted,
+        "the rebased anchor is monotone: a lower floor never moves it backward"
+    );
+    release_authority_clock_domain(domain);
+}
+
 #[test]
 fn authority_signature_suite_verifies_ed25519_and_p256() {
     let ed = genesis_entry(2, 172_800, 1);
@@ -9330,9 +9387,15 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
             .any(|fork| fork.signer == key && fork.status == AuthorityForkStatus::Quarantined),
         "fixture must actually quarantine the bound key"
     );
-    assert_eq!(
+    // fix-leg 5 item 3 STRENGTHENED this outcome. The bind is signed by the
+    // forked key with only a ROLE_AGENT cosigner, so post-quarantine scrutiny
+    // finds no independent owner consent and REFUSES both fork candidates —
+    // the binding never enters `actor_bindings` rather than entering and being
+    // marked `Revoked`. Both are fail-closed and the invariant below is the
+    // load-bearing one; what must never happen is `Active`.
+    assert_ne!(
         folded_status(&fold, &key),
-        Some(ActorBindingStatus::Revoked),
+        Some(ActorBindingStatus::Active),
         "an equivocation-quarantined key must not back a binding"
     );
     assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
@@ -9480,6 +9543,257 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
         "a revoked roster key must not back an agent-class binding either"
     );
     assert!(!actor_binding_is_active(&fold, &fixture.actor, "agent"));
+}
+
+/// A rooted vault where the owner key `K1` has enrolled a SECOND owner-capable
+/// key `K2`, then equivocated at one seq with two `BindActor(K2, …, "human")`
+/// legs naming DIFFERENT actors. `K1` is quarantined by the fork; `K2` is
+/// clean. The fork winner therefore decides which actor `K2` speaks for.
+struct QuarantinedBindFixture {
+    entries: Vec<AuthorityLogEntry>,
+    control: Vec<AuthorityLogEntry>,
+    signer_key: AuthorityKey,
+    bound_key: AuthorityKey,
+    actor_a: EntityId,
+    actor_b: EntityId,
+    /// Rebind fixtures only: the actor bound by a PREFORK entry the signer
+    /// made while still clean. It must survive — the quarantine is positional.
+    prefork_actor: Option<EntityId>,
+}
+
+fn quarantined_signer_bind_fixture(seed: u8, rebind: bool) -> QuarantinedBindFixture {
+    let fixture = bind_fixture(seed);
+    let bound = ed_key(seed.wrapping_add(2));
+    let bound_key = authority_key_from_ed(&bound);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    // K2 enters the roster owner-capable, so a "human" bind onto it satisfies
+    // `apply_actor_binding`'s OwnerCapabilityRequired leg.
+    let enroll_bound = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                bound_key.clone(),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+        102,
+    );
+    let enroll_bound_hash = authority_entry_hash(&enroll_bound).unwrap();
+    let actor_a = scope_entity(seed.wrapping_add(0x30));
+    let actor_b = scope_entity(seed.wrapping_add(0x40));
+    // Rebind needs a live binding to advance, so the rebind fixture lands a
+    // clean epoch-1 bind on a THIRD actor first and equivocates on the epoch-2
+    // REBIND. The seed actor doubles as the prefork control: an entry the
+    // signer made while still clean must NOT be retracted by a later fork.
+    let (base, fork_parent, fork_seq, op_a, op_b, prefork_actor) = if rebind {
+        let prefork_actor = scope_entity(seed.wrapping_add(0x50));
+        let seed_bind = cosigned_entry(
+            &fixture,
+            vec![enroll_bound_hash],
+            3,
+            bind_op(&bound_key, prefork_actor, "human", 1),
+            103,
+        );
+        let seed_hash = authority_entry_hash(&seed_bind).unwrap();
+        (
+            vec![
+                fixture.genesis.clone(),
+                fixture.enroll.clone(),
+                enroll_bound,
+                seed_bind,
+            ],
+            seed_hash,
+            4,
+            rebind_op(&bound_key, actor_a, "human", 2),
+            rebind_op(&bound_key, actor_b, "human", 2),
+            Some(prefork_actor),
+        )
+    } else {
+        (
+            vec![
+                fixture.genesis.clone(),
+                fixture.enroll.clone(),
+                enroll_bound,
+            ],
+            enroll_bound_hash,
+            3,
+            bind_op(&bound_key, actor_a, "human", 1),
+            bind_op(&bound_key, actor_b, "human", 1),
+            None,
+        )
+    };
+    let leg_a = cosigned_entry(&fixture, vec![fork_parent], fork_seq, op_a, 110);
+    let leg_b = cosigned_entry(&fixture, vec![fork_parent], fork_seq, op_b, 111);
+
+    let mut control = base.clone();
+    control.push(leg_a.clone());
+    let mut entries = base;
+    entries.push(leg_a);
+    entries.push(leg_b);
+    QuarantinedBindFixture {
+        entries,
+        control,
+        signer_key: fixture.owner_key,
+        bound_key,
+        actor_a,
+        actor_b,
+        prefork_actor,
+    }
+}
+
+/// fix-leg 5 item 3: a `BindActor`/`RebindActor` that WINS an equivocation
+/// group must survive the same post-quarantine scrutiny `RevokeDevice` gets.
+///
+/// fix-1 strips a binding only when the BOUND key is quarantined. A signer that
+/// equivocated is exactly the key an attacker holds — and it can spend its last
+/// pre-quarantine act binding owner authority onto a DIFFERENT, clean roster
+/// key, which fix-1 leaves Active. `fork_winner_post_quarantine_issue` is the
+/// place the fold already re-derives quorum + consent WITHOUT the forked key;
+/// the bind ops now take that same door, so a bind whose only owner-capable
+/// backing was the forked key itself is refused.
+#[test]
+fn fork_winner_bind_by_quarantined_signer_is_refused() {
+    for rebind in [false, true] {
+        let fixture =
+            quarantined_signer_bind_fixture(220_u8.wrapping_add(u8::from(rebind)), rebind);
+
+        // Control: without the divergent sibling the bind folds Active. The
+        // fixture is only interesting if the CLEAN path really works.
+        let control = fold_authority_log_without_seen_time_delay(&fixture.control);
+        assert_eq!(
+            folded_status(&control, &fixture.bound_key),
+            Some(ActorBindingStatus::Active),
+            "rebind={rebind}: control must bind the clean owner-capable key"
+        );
+        assert!(
+            actor_binding_is_active(&control, &fixture.actor_a, "human"),
+            "rebind={rebind}: control must bind actor_a"
+        );
+
+        let fold = fold_authority_log_without_seen_time_delay(&fixture.entries);
+        assert!(
+            fold.authority_forks
+                .iter()
+                .any(|fork| fork.signer == fixture.signer_key
+                    && fork.status == AuthorityForkStatus::Quarantined),
+            "rebind={rebind}: fixture must actually quarantine the SIGNING key"
+        );
+        assert!(
+            !fold.roster[&fixture.bound_key].revoked
+                && fold.roster[&fixture.bound_key].roles & (ROLE_OWNER | ROLE_ADMIN) != 0,
+            "rebind={rebind}: the BOUND key must stay clean and owner-capable — \
+             that is the fail-open fix-1 leaves open"
+        );
+
+        // The teeth: neither actor may hold owner authority through a bind the
+        // quarantined signer alone backed.
+        for actor in [fixture.actor_a, fixture.actor_b] {
+            assert!(
+                !actor_binding_is_active(&fold, &actor, "human"),
+                "rebind={rebind}: a fork-winner bind signed by a quarantined key \
+                 must not mint owner authority for {}",
+                actor.to_hex()
+            );
+        }
+        assert!(
+            fold.issues.iter().any(|issue| matches!(
+                issue,
+                AuthorityFoldIssue::MissingAuthorityConsent(_)
+                    | AuthorityFoldIssue::MissingQuorum(_)
+            )),
+            "rebind={rebind}: the refusal must be recorded, not silent: {:?}",
+            fold.issues
+        );
+
+        // Positional, not retroactive: the entry the signer made BEFORE it
+        // equivocated keeps its binding. Over-stripping here would let any
+        // later self-equivocation retract the vault's whole owner identity —
+        // a denial-of-authority the quarantine must not hand the attacker.
+        if let Some(prefork_actor) = fixture.prefork_actor {
+            assert!(
+                actor_binding_is_active(&fold, &prefork_actor, "human"),
+                "rebind={rebind}: a PREFORK binding must survive the later fork"
+            );
+        }
+    }
+}
+
+/// The other half of item 3, and the one that proves the gate is not just a
+/// blanket refusal: the SAME quarantined-signer shape, but the bind carries TWO
+/// independent owner-capable cosigners. Delete the forked key from both sides
+/// and the entry still satisfies its own admission rules — consent from a clean
+/// owner, quorum from a clean pair — so it must be ADMITTED.
+///
+/// Without this pin, "refuse every bind by a forked signer" would pass the
+/// refusal test above while silently converting any self-equivocation into a
+/// denial of the vault's owner identity. The fold re-derives; it does not
+/// blacklist.
+#[test]
+fn fork_winner_bind_with_independent_quorum_still_binds() {
+    let fixture = bind_fixture(240);
+    let clean_a = ed_key(243);
+    let clean_b = ed_key(244);
+    let bound = ed_key(245);
+    let (key_a, key_b, bound_key) = (
+        authority_key_from_ed(&clean_a),
+        authority_key_from_ed(&clean_b),
+        authority_key_from_ed(&bound),
+    );
+    let mut parent_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let mut entries = vec![fixture.genesis.clone(), fixture.enroll.clone()];
+    for (seq, key) in [(2, &key_a), (3, &key_b), (4, &bound_key)] {
+        let enroll = cosigned_entry(
+            &fixture,
+            vec![parent_hash],
+            seq,
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            100 + seq,
+        );
+        parent_hash = authority_entry_hash(&enroll).unwrap();
+        entries.push(enroll);
+    }
+    // The forked owner signs both legs; the cosigners are clean and owner-capable.
+    let bind_leg = |actor, ts| {
+        let entry = unsigned_entry(
+            Some(fixture.vault_id),
+            5,
+            vec![parent_hash],
+            bind_op(&bound_key, actor, "human", 1),
+            fixture.owner_key.clone(),
+            ts,
+        );
+        cosign_ed_two(entry, &fixture.owner, &clean_a, &clean_b)
+    };
+    let actor_a = scope_entity(0x81);
+    entries.push(bind_leg(actor_a, 120));
+    entries.push(bind_leg(scope_entity(0x82), 121));
+
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert!(
+        fold.authority_forks
+            .iter()
+            .any(|fork| fork.signer == fixture.owner_key
+                && fork.status == AuthorityForkStatus::Quarantined),
+        "fixture must still quarantine the signing key"
+    );
+    assert_eq!(
+        folded_status(&fold, &bound_key),
+        Some(ActorBindingStatus::Active),
+        "a bind an independent owner quorum backs must survive its signer's quarantine"
+    );
+    assert!(
+        actor_binding_is_active(&fold, &actor_a, "human"),
+        "the fork WINNER's actor keeps owner authority"
+    );
 }
 
 /// Divergent branches over one key's identity: both siblings parent on the

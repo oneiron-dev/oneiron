@@ -461,6 +461,46 @@ pub(crate) struct DeletionGateContext {
     read_frontier_hash: [u8; 32],
 }
 
+/// The facade's gated-deletion carrier: the evaluated decision record PLUS the
+/// authority re-check every destructive transaction on the path re-runs.
+///
+/// The two halves are deliberately separate. [`DeletionGateContext`] is a
+/// RECORD — the evidence minted once, before TXN1, and written verbatim into
+/// the gate ledger. `reverify` is a DECISION, and a decision made against a
+/// dropped read snapshot is worthless the instant the snapshot is stale: a
+/// `RevokeActor` (or any binding change) committed between gate evaluation and
+/// the purge would never be observed, and the delete would tear on authority
+/// that no longer exists. Re-running the fold INSIDE the txn that tears makes
+/// the two atomic under LMDB's single writer, matching what the sibling owner
+/// verbs already do (`claim_retract` and the structural arm fold inside their
+/// own write txns).
+pub(crate) struct GatedDeletion<'a> {
+    context: DeletionGateContext,
+    reverify: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
+}
+
+impl<'a> GatedDeletion<'a> {
+    pub(crate) fn new(
+        context: DeletionGateContext,
+        reverify: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Self {
+        Self { context, reverify }
+    }
+}
+
+/// Re-runs `gate`'s authority check against `txn`, or passes when the delete is
+/// ungated (the engine-internal `delete_entity_with_reason` door, which carries
+/// no owner claim to re-prove).
+fn reverify_deletion_authority(
+    gate: Option<&GatedDeletion<'_>>,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    match gate {
+        Some(gate) => (gate.reverify)(txn),
+        None => Ok(()),
+    }
+}
+
 impl DeletionGateContext {
     pub(crate) fn new(
         actor: EntityId,
@@ -1528,11 +1568,16 @@ impl Vault {
     }
 
     /// Facade delete seam carrying an owner gate evaluated before TXN1.
+    ///
+    /// `gate` carries BOTH the decision record and the authority re-check: the
+    /// record is minted from a read snapshot this call has already dropped, so
+    /// every destructive transaction below re-proves the owner binding against
+    /// its OWN view before tearing anything.
     pub(crate) fn delete_entity_with_reason_gated(
         &self,
         id: &EntityId,
         reason: DeleteReason,
-        gate: DeletionGateContext,
+        gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
         self.delete_entity_with_reason_impl(id, reason, Some(gate))
     }
@@ -1541,7 +1586,7 @@ impl Vault {
         &self,
         id: &EntityId,
         reason: DeleteReason,
-        gate: Option<DeletionGateContext>,
+        gate: Option<GatedDeletion<'_>>,
     ) -> Result<DeleteEntityOutcome> {
         let requested_at = unix_seconds_now();
         let Some(header) = self.read_entity_header(id)? else {
@@ -1569,9 +1614,10 @@ impl Vault {
             deleted_at: requested_at,
             request_id: *request_uuid.as_bytes(),
         };
-        let gate_decision = gate
-            .as_ref()
-            .map(|gate| gate.decision_record(*request_uuid.as_bytes(), id, reason, requested_at));
+        let gate_decision = gate.as_ref().map(|gate| {
+            gate.context
+                .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
+        });
         let window_label = window_label_from_timestamp(header.learned_at);
 
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
@@ -1588,6 +1634,11 @@ impl Vault {
             // side): a soft delete with NO cross-device record would leave
             // the deleted body live on every other device.
             let mut wtxn = self.store.env.write_txn()?;
+            // TOCTOU close: `user_delete` scrubs the body in THIS txn, so the
+            // owner authority is re-proven against THIS txn's view. A
+            // RevokeActor committed since the gate ran is visible here and
+            // refuses before a single byte is scrubbed.
+            reverify_deletion_authority(gate.as_ref(), &wtxn)?;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
@@ -1612,8 +1663,12 @@ impl Vault {
             }
             wtxn.commit()?;
             if existed {
+                // `None` gate decision: this soft path already appended the
+                // decision record in the scrub txn above, and that txn re-proved
+                // the authority, so the tombstone publish carries no second
+                // authority claim to re-check.
                 let crdt_persisted =
-                    self.write_crdt_tombstone(id, header.learned_at, &tombstone, None)?;
+                    self.write_crdt_tombstone(id, header.learned_at, &tombstone, None, None)?;
                 if crdt_persisted {
                     self.clear_pending_tombstone(&window_label, id)?;
                 }
@@ -1626,9 +1681,18 @@ impl Vault {
         }
 
         // LOCKED ordering (ARCH-0038): CRDT tombstone FIRST — prevents sync
-        // resurrection before the destructive purge touches payloads.
-        let crdt_persisted =
-            self.write_crdt_tombstone(id, header.learned_at, &tombstone, gate_decision.as_ref())?;
+        // resurrection before the destructive purge touches payloads. That
+        // ordering makes the tombstone the FIRST remote-visible act of a hard
+        // delete, so the authority behind it is re-proven atomically with the
+        // recovery sidecar that stages it (`stage_deletion_gate_recovery`) —
+        // a revoked owner must not publish a deletion other devices obey.
+        let crdt_persisted = self.write_crdt_tombstone(
+            id,
+            header.learned_at,
+            &tombstone,
+            gate_decision.as_ref(),
+            gate.as_ref(),
+        )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;
         #[cfg(not(all(test, feature = "sync")))]
@@ -1648,6 +1712,9 @@ impl Vault {
             // bodiless shell ⇒ `None`). The purge txn below re-runs the
             // refresh as an idempotent second pass.
             let mut wtxn = self.store.env.write_txn()?;
+            // This scrub is destructive on its own, so it re-proves authority
+            // against its own view like every other tearing txn on the path.
+            reverify_deletion_authority(gate.as_ref(), &wtxn)?;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
@@ -1668,6 +1735,10 @@ impl Vault {
         let receipt_id = EntityId::now();
         let scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
+        // The purge txn: the one that actually tears. Its authority check runs
+        // FIRST, ahead of the scope probe and the `dt:` marker, so a revoked
+        // owner leaves no local trace of the attempt at all.
+        reverify_deletion_authority(gate.as_ref(), &wtxn)?;
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
@@ -1770,7 +1841,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         requested_at: u64,
-        gate: Option<&DeletionGateContext>,
+        gate: Option<&GatedDeletion<'_>>,
     ) -> Result<DeleteEntityOutcome> {
         // Probe first so a fully-missing id stays a strict no-op — deleting
         // a nonexistent entity must not mint tombstones or receipts.
@@ -1794,17 +1865,22 @@ impl Vault {
             deleted_at: requested_at,
             request_id: *request_uuid.as_bytes(),
         };
-        let gate_decision = gate
-            .map(|gate| gate.decision_record(*request_uuid.as_bytes(), id, reason, requested_at));
+        let gate_decision = gate.map(|gate| {
+            gate.context
+                .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
+        });
         let window_label = window_label_from_timestamp(requested_at);
         let crdt_persisted =
-            self.write_crdt_tombstone(id, requested_at, &tombstone, gate_decision.as_ref())?;
+            self.write_crdt_tombstone(id, requested_at, &tombstone, gate_decision.as_ref(), gate)?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;
         #[cfg(not(all(test, feature = "sync")))]
         maybe_fail_after_tombstone_before_purge();
 
         let mut wtxn = self.store.env.write_txn()?;
+        // Same law on the headerless leg: the purge txn re-proves the owner
+        // binding before it erases residue or writes the `dt:` marker.
+        reverify_deletion_authority(gate, &wtxn)?;
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
         // the erasing txn (race-free under LMDB's single writer). The read
@@ -2469,6 +2545,7 @@ impl Vault {
         window_ts: u64,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
+        gate: Option<&GatedDeletion<'_>>,
     ) -> Result<bool> {
         use crate::sync::bridge::{
             DELETION_TOMBSTONE_ORIGIN, with_deletion_tombstone_observer_a_suppressed,
@@ -2496,7 +2573,7 @@ impl Vault {
             // itself.
             let merged_update_keys =
                 merge_persisted_state_into_doc(self, &window.doc, &window_key)?;
-            self.stage_deletion_gate_recovery(id, value, gate_decision)?;
+            self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
             // The tombstone commit + exports run UNDER the materializer
             // lock: Observer B's tombstone-check + LMDB-materialize is
             // atomic under that lock, so a concurrent remote re-put can no
@@ -2554,7 +2631,7 @@ impl Vault {
         };
         let vv_before = doc.oplog_vv();
         apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
-        self.stage_deletion_gate_recovery(id, value, gate_decision)?;
+        self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
@@ -2583,11 +2660,17 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
+        gate: Option<&GatedDeletion<'_>>,
     ) -> Result<()> {
         let Some(decision) = gate_decision else {
             return Ok(());
         };
         self.with_write_txn(|wtxn| {
+            // The authority-required marker is what makes the CRDT tombstone
+            // binding on every peer, so the owner binding is re-proven in the
+            // SAME txn that stages it — a revocation landing since the gate ran
+            // stops the deletion before it becomes remote truth.
+            reverify_deletion_authority(gate, wtxn)?;
             self.store.put_pending_deletion_gate_decision_in_txn(
                 wtxn,
                 decision,
@@ -2669,6 +2752,7 @@ impl Vault {
         _window_ts: u64,
         _value: &TombstoneValueV2,
         _gate_decision: Option<&GateDecisionRecord>,
+        _gate: Option<&GatedDeletion<'_>>,
     ) -> Result<bool> {
         // No CRDT in this build — the `pt:` marker written in the purge /
         // scrub txn is the deletion's durable propagation intent.

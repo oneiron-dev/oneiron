@@ -1120,6 +1120,44 @@ fn verify_owner_actor_binding_in_txn(
     ))
 }
 
+/// The COMPLETE deletion-authority predicate, evaluatable inside any read or
+/// write transaction: actor binding + human class + folded owner binding.
+///
+/// It exists as one function because it is evaluated TWICE per gated delete and
+/// the two evaluations must be identical. `evaluate_deletion_gate` runs it in
+/// its own read txn to mint the decision record; `delete_entity_with_reason_impl`
+/// runs it AGAIN inside the destructive write txn. Anything checked only in the
+/// first pass is checked in a snapshot that is already stale by the time the
+/// purge commits — a revocation landing in that window would be invisible, which
+/// is exactly the TOCTOU the second pass closes. Split the two lists and they
+/// drift; keep them here and they cannot.
+///
+/// The sibling owner verbs already fold inside their write txns
+/// (`claim_retract`, `put_structural`), so this makes deletion the third
+/// consistent arm rather than introducing a new rule.
+pub(crate) fn verify_deletion_authority_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+) -> FacadeResult<()> {
+    verify_actor_binding_in_txn(vault, txn, actor, actor_class)?;
+    if actor_class != EdgeActorClass::Human {
+        return Err(FacadeError::new(
+            FACADE_CODE_FORBIDDEN,
+            format!(
+                "actor class {} may not delete entities; deletion is an owner verb",
+                actor_class.gate_actor_class(),
+            ),
+            &[
+                "Bind a human-class owner actor key to delete.",
+                "Agents withdraw their own claims via claim_retract.",
+            ],
+        ));
+    }
+    verify_owner_actor_binding_in_txn(vault, txn, actor)
+}
+
 fn verify_actor_entity_type(
     actor: EntityId,
     actor_class: EdgeActorClass,
@@ -1368,21 +1406,7 @@ impl MemoryFacade<'_> {
 
     fn evaluate_deletion_gate(&self) -> FacadeResult<DeletionGateContext> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        verify_actor_binding_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
-        if self.actor_class != EdgeActorClass::Human {
-            return Err(FacadeError::new(
-                FACADE_CODE_FORBIDDEN,
-                format!(
-                    "actor class {} may not delete entities; deletion is an owner verb",
-                    self.actor_class.gate_actor_class(),
-                ),
-                &[
-                    "Bind a human-class owner actor key to delete.",
-                    "Agents withdraw their own claims via claim_retract.",
-                ],
-            ));
-        }
-        verify_owner_actor_binding_in_txn(self.vault, &rtxn, self.actor)?;
+        verify_deletion_authority_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
         Ok(DeletionGateContext::new(
             self.actor,
@@ -1644,9 +1668,34 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<DeleteReceipt> {
         let gate = self.evaluate_deletion_gate()?;
         let id = self.resolve_ref(entity_ref)?;
-        let outcome =
-            self.vault
-                .delete_entity_with_reason_gated(&id, reason.delete_reason(), gate)?;
+        // The re-check the destructive transactions re-run against their OWN
+        // views (fix-leg 5 item 1). `FacadeError` is a binding-layer type the
+        // engine's `Result` cannot carry, so the refusal is PARKED here and the
+        // engine is handed the accurate typed stand-in: a concurrent write
+        // invalidated the snapshot the gate decided on. `safe_delete` then swaps
+        // the parked error back, so a caller sees the EXACT code and message the
+        // pre-transaction gate would have produced (FORBIDDEN for a revoked
+        // binding, INVALID_STATE for a broken authority log) rather than a
+        // second, weaker vocabulary for the same refusal.
+        let refusal: std::cell::RefCell<Option<FacadeError>> = std::cell::RefCell::new(None);
+        let reverify = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
+            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class).map_err(
+                |err| {
+                    *refusal.borrow_mut() = Some(err);
+                    Error::ConcurrentWrite(
+                        "deletion authority changed before the destructive commit",
+                    )
+                },
+            )
+        };
+        let outcome = self
+            .vault
+            .delete_entity_with_reason_gated(
+                &id,
+                reason.delete_reason(),
+                crate::deletion::GatedDeletion::new(gate, &reverify),
+            )
+            .map_err(|err| refusal.take().unwrap_or_else(|| FacadeError::from(err)))?;
         Ok(DeleteReceipt {
             existed: outcome.existed,
             reason: reason.as_str().to_owned(),
