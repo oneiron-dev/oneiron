@@ -2760,6 +2760,22 @@ fn stamp_racing_into_the_purge_window_is_not_torn() -> Result<()> {
 /// `gate_facet_delete_against_live_clearances` — a different predicate on a
 /// different index — and only the SoftErase reasons can destroy state before
 /// the purge backstop speaks.
+///
+/// Staged into a HELD write txn like the stamp arm, rather than granted through
+/// `set_contact_facet_clearance` on the rendezvous. That door opens its own
+/// write txn, so the ordering was decided by which thread won the write lock —
+/// thread-timing luck, and it flipped with fix-5 (the deleter now takes one
+/// commit instead of two, wins the lock, and the grant then fails outright on
+/// an already-purged facet). Holding the lock removes the coin flip. The gate
+/// reads the `contact.clearance.v1:` `vault_meta` row and nothing else, so
+/// staging exactly the bytes the door writes is a faithful fixture.
+///
+/// WHICH WINDOW THIS PINS: the preflight → destructive-txn-open window, closed
+/// by the fix-4 in-txn re-evaluation. It cannot reach the window BETWEEN the
+/// two destructive phases, because under the pinned single-transaction shape no
+/// writer can be there at all — see
+/// `destructive_delete_phases_share_one_commit`, which pins that half with a
+/// reader at the phase boundary.
 #[test]
 fn clearance_racing_into_the_purge_window_is_honored() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -2768,19 +2784,24 @@ fn clearance_racing_into_the_purge_window_is_honored() -> Result<()> {
     let contact = test_id(0xC7);
     seed_contact(&vault, contact, "a@example.com");
     let body_before = vault.get(&facet)?.expect("facet body before");
+    let clearance_row = encode_facet_clearance_body(&FacetClearance::granted(vec![facet], 100)?)?;
 
     let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
     crate::deletion::install_after_header_read_signal(tx);
     let vault = &vault;
     let refusal = std::thread::scope(|scope| -> Result<crate::Error> {
-        // The clearance is granted through its own owner door, which needs its
-        // own txn — so it is committed on the rendezvous rather than staged.
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &facet_clearance_meta_key(&contact),
+            &clearance_row,
+        )?;
         let deleter = scope.spawn(move || {
             vault.delete_entity_with_reason(&facet, crate::DeleteReason::GdprDelete)
         });
         rx.recv()
             .expect("deleter must signal after the header read");
-        grant_clearance(vault, &contact, vec![facet]);
+        wtxn.commit()?;
         Ok(deleter
             .join()
             .expect("deleter thread must not panic")
@@ -2805,5 +2826,72 @@ fn clearance_racing_into_the_purge_window_is_honored() -> Result<()> {
         vec![facet],
         "the racing clearance stands"
     );
+    assert!(
+        !hard_delete_marker_exists(vault, &facet)?,
+        "a refused delete records no local hard-delete truth"
+    );
+    Ok(())
+}
+
+/// P2 REGRESSION (fix-5) — THE TWO DESTRUCTIVE PHASES SHARE ONE COMMIT.
+///
+/// The racing tests above prove the OUTCOME (a refusal leaves no damage) but
+/// only by racing; this one pins the SHAPE the outcome depends on, so a future
+/// re-split is caught by construction rather than by a flaky assertion.
+///
+/// `GdprDelete`/`PolicyDelete` erase in two phases: a SoftErase that truncates
+/// the body, then a purge that tears the rows. While those phases were two
+/// TRANSACTIONS the SoftErase committed first, so a stamp or clearance landing
+/// in the gap produced a refusal over a body that was ALREADY destroyed — a
+/// partial destructive delete with the caller told nothing happened.
+///
+/// The probe reads the entity from another thread at the exact phase boundary,
+/// where the deleter is fenced while holding the write lock. LMDB readers never
+/// block on that lock, so the read returns the last COMMITTED state. One
+/// transaction ⇒ the erase phase is invisible and the body is whole. Two
+/// transactions ⇒ the same read returns the 25 B shell.
+#[test]
+fn destructive_delete_phases_share_one_commit() -> Result<()> {
+    for reason in [
+        crate::DeleteReason::GdprDelete,
+        crate::DeleteReason::PolicyDelete,
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let facet = test_id(0xD1);
+        put_facet(&vault, &facet);
+        let body_before = vault.get(&facet)?.expect("facet body before");
+        assert!(!body_before.is_empty(), "fixture has a real body");
+
+        let (released_tx, released_rx) = std::sync::mpsc::sync_channel::<()>(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
+        crate::deletion::install_between_destructive_phases_fence(released_tx, resume_rx);
+        let vault = &vault;
+        let observed = std::thread::scope(|scope| -> Result<Option<Vec<u8>>> {
+            let deleter = scope.spawn(move || vault.delete_entity_with_reason(&facet, reason));
+            // The deleter has finished its erase phase and is fenced at the
+            // boundary, holding the write lock, before the purge.
+            released_rx
+                .recv()
+                .expect("deleter must reach the phase boundary");
+            let observed = vault.get(&facet)?;
+            // Release the deleter into the purge.
+            resume_tx.send(()).expect("deleter must still be fenced");
+            let outcome = deleter
+                .join()
+                .expect("deleter thread must not panic")
+                .expect("an ungated delete of a bare facet succeeds");
+            assert!(outcome.existed, "the delete erased the facet");
+            Ok(observed)
+        })?;
+
+        assert_eq!(
+            observed.as_deref(),
+            Some(body_before.as_slice()),
+            "at the phase boundary NOTHING destructive is committed yet — \
+             a truncated body here means the phases were re-split into two commits"
+        );
+        // And the completed delete is unaffected by the fence.
+        assert!(vault.get_entity_type(&facet)?.is_none(), "entity gone");
+    }
     Ok(())
 }

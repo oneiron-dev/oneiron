@@ -1406,6 +1406,73 @@ fn signal_after_header_read() {
 #[inline(always)]
 fn signal_after_header_read() {}
 
+/// ONE-1646 fix-5 phase-boundary seam. Fences the instant at which the
+/// destructive delete has finished its ERASE phase and is about to begin its
+/// PURGE phase — the seam the second commit used to occupy. A harness installs
+/// a `(released, resume)` channel pair: the seam sends on `released` to hand
+/// the boundary to the observer, then blocks on `resume` until the observer
+/// hands it back, so the observation runs strictly inside the boundary with no
+/// race against the commit that follows.
+///
+/// CHANNELS, NOT A `Barrier`, so a panicking or early-returning observer can
+/// never wedge the shared test binary: dropping either endpoint makes the
+/// seam's `send`/`recv` fail immediately and the delete proceeds. A `Barrier`
+/// would block the deleter forever and take the whole run down with it.
+///
+/// The observer must be a READER. Under the pinned single-transaction shape the
+/// deleter is holding LMDB's one write lock across this point, so a writer
+/// would block here until the delete committed — the property is exactly that
+/// nothing can interleave, and a writer-shaped harness could only "prove" it by
+/// deadlocking. Read txns never block on the write lock, so the reader sees the
+/// last COMMITTED state: with both phases in one txn that is the pre-delete
+/// entity, whole. Split the phases back into two commits and the same read
+/// returns the 25 B shell.
+#[cfg(test)]
+type PhaseBoundaryFence = (
+    std::sync::mpsc::SyncSender<()>,
+    std::sync::mpsc::Receiver<()>,
+);
+
+#[cfg(test)]
+static BETWEEN_DESTRUCTIVE_PHASES: std::sync::Mutex<Option<PhaseBoundaryFence>> =
+    std::sync::Mutex::new(None);
+
+/// Installs the one-shot phase-boundary fence consumed by
+/// [`signal_between_destructive_phases`]. `released` fires when the deleter
+/// reaches the boundary; the deleter then waits for one `resume` message.
+#[cfg(test)]
+pub(crate) fn install_between_destructive_phases_fence(
+    released: std::sync::mpsc::SyncSender<()>,
+    resume: std::sync::mpsc::Receiver<()>,
+) {
+    *BETWEEN_DESTRUCTIVE_PHASES
+        .lock()
+        .expect("BETWEEN_DESTRUCTIVE_PHASES poisoned") = Some((released, resume));
+}
+
+/// Fences the phase boundary exactly once if a fence is installed, then clears
+/// it so later deletes in the same serial run never wait on a stale one. A
+/// no-op when no harness installed a fence, and non-blocking once either
+/// endpoint is dropped.
+#[cfg(test)]
+fn signal_between_destructive_phases() {
+    let fence = BETWEEN_DESTRUCTIVE_PHASES
+        .lock()
+        .expect("BETWEEN_DESTRUCTIVE_PHASES poisoned")
+        .take();
+    if let Some((released, resume)) = fence {
+        // Errors mean the observer is gone; proceed rather than hang.
+        if released.send(()).is_ok() {
+            let _ = resume.recv();
+        }
+    }
+}
+
+/// Production no-op shim for the phase-boundary seam.
+#[cfg(not(test))]
+#[inline(always)]
+fn signal_between_destructive_phases() {}
+
 #[cfg(all(test, feature = "sync"))]
 thread_local! {
     static FAIL_AFTER_TOMBSTONE_BEFORE_PURGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -1676,42 +1743,46 @@ impl Vault {
         maybe_fail_after_tombstone_before_purge();
         let tombstone_complete_at = unix_seconds_now();
 
+        // ONE-1646 fix-5: ONE write txn spans BOTH destructive phases. The
+        // GdprDelete/PolicyDelete shape erases in two steps — a SoftErase that
+        // truncates the body, then the purge that tears the rows — and fix-4
+        // gated each step but left them in SEPARATE transactions. The SoftErase
+        // therefore COMMITTED before the purge txn even opened, so a stamp or
+        // clearance landing in the gap passed the SoftErase's in-txn gate,
+        // failed the purge's backstop, and left the caller with a refusal over
+        // a body that was already truncated to its 25 B shell: a partial
+        // destructive delete, the exact damage the gate exists to prevent.
+        //
+        // Sharing one txn makes the two phases one atomic act. LMDB's single
+        // writer admits no commit between them, so there is no gap to race
+        // into, and a refusal from EITHER gate — the explicit call below or
+        // `deindex_entity`'s backstop inside the purge — rolls the whole thing
+        // back: no truncated body, no torn edge, no `dt:` marker, no receipt.
+        // The tombstone publish stays where ARCH-0038 pins it (before the
+        // erasure, upstream of this txn) and the pre-TXN1 preflight stays the
+        // publish gate; this leg changes only how many commits the erasure
+        // takes.
+        let receipt_id = EntityId::now();
+        let scope = RedactionScope::entity(id);
+        let mut wtxn = self.store.env.write_txn()?;
+        // RE-EVALUATE the gate inside the destructive txn (fix-4). The
+        // pre-tombstone preflight ran in its own read txn which was dropped, so
+        // a `FacetOf` stamp or a clearance could have committed since. The
+        // entity type is re-read from THIS txn rather than reused from the
+        // pre-txn header, since the header read is exactly the stale snapshot
+        // in question. `deindex_entity`'s backstop re-checks the same predicate
+        // at the row-tearing site; both now abort the SAME transaction.
+        if let Some(entity_type) = crate::batch::stored_entity_type(&self.store, &wtxn, id)? {
+            crate::disclosure::gate_hard_delete_facet_state(&self.store, &wtxn, id, entity_type)?;
+        }
         let soft_complete_at = if matches!(
             reason,
             DeleteReason::GdprDelete | DeleteReason::PolicyDelete
         ) {
             // The SoftErase scrubs the truth-Claim's body — the ONLY carrier
-            // of the subject EdgeRef (D12) — so the D16 edge refresh MUST
-            // commit atomically with it, mirroring the user_delete branch
-            // above. Committing the SoftErase alone first would leave a
-            // crash window in which a stale 26 B flag outlives its
-            // truth-Claim and a RETRY cannot heal it (capture sees the
-            // bodiless shell ⇒ `None`). The purge txn below re-runs the
-            // refresh as an idempotent second pass.
-            let mut wtxn = self.store.env.write_txn()?;
-            // ONE-1646 fix-4: RE-EVALUATE the gate here, inside the txn that
-            // does the scrubbing. The pre-tombstone check above ran in its own
-            // read txn which was dropped, so a `FacetOf` stamp or a clearance
-            // could commit in the window between the two and this SoftErase
-            // would then destroy the body of a facet the gate now protects.
-            // This call closes that window for the DESTRUCTIVE step: LMDB's
-            // single writer means a stamp that commits after this read cannot
-            // have committed before it, so refusing here rolls back the whole
-            // scrub and the facet keeps its body. The entity type is re-read
-            // from THIS txn rather than reused from the pre-txn header, since
-            // the header read is exactly the stale snapshot in question.
-            //
-            // The purge txn below needs no equivalent call: `deindex_entity`'s
-            // backstop already evaluates the same predicate at the row-tearing
-            // site inside that txn, so a late stamp aborts the purge there.
-            if let Some(entity_type) = crate::batch::stored_entity_type(&self.store, &wtxn, id)? {
-                crate::disclosure::gate_hard_delete_facet_state(
-                    &self.store,
-                    &wtxn,
-                    id,
-                    entity_type,
-                )?;
-            }
+            // of the subject EdgeRef (D12) — so the D16 edge refresh rides the
+            // same txn, mirroring the user_delete branch above. The purge below
+            // re-runs the refresh as an idempotent second pass.
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
@@ -1723,15 +1794,12 @@ impl Vault {
                     &captured.subject,
                 )?;
             }
-            wtxn.commit()?;
             unix_seconds_now()
         } else {
             tombstone_complete_at
         };
-
-        let receipt_id = EntityId::now();
-        let scope = RedactionScope::entity(id);
-        let mut wtxn = self.store.env.write_txn()?;
+        // The seam a second commit would have occupied. No-op in production.
+        signal_between_destructive_phases();
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
