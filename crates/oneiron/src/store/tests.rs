@@ -1959,6 +1959,135 @@ BCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCB
     Ok(())
 }
 
+/// A v1 skeleton may NOT retain a `diff_handle`.
+///
+/// E-A's D1 table only length-capped the field on the redacted column, so a row
+/// that called itself redacted could keep a live binding to the exact body the
+/// redaction exists to scrub — a length cap cannot tell a scrubbed sentinel from
+/// a real handle. Empty is the only self-evidently scrubbed value, and this is
+/// the test that makes a later "just cap the length" relaxation fail.
+///
+/// The planted-row half is the one that bites: skeletons reach disk by in-place
+/// primary overwrite (never through `append_gate_decision_in_txn`), so the vet
+/// only protects anything if the READERS refuse a retained handle too.
+#[test]
+fn redacted_skeleton_must_not_retain_a_diff_handle() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim = [0x3D; 16];
+    let live = claim_bound_gate_decision(synthetic_gate_decision_id(0x95, 1), 1, &claim);
+    append_gate_decisions(&vault, std::slice::from_ref(&live))?;
+    assert!(
+        !live.diff_handle.is_empty(),
+        "v0 must still REQUIRE a handle — the tightening is v1-only",
+    );
+
+    let scrubbed = redacted_skeleton(&live, 9);
+    assert!(scrubbed.diff_handle.is_empty());
+    assert_eq!(
+        decode_gate_decision(&encode_gate_decision(&scrubbed)?)?,
+        scrubbed,
+        "the empty-handle skeleton is the accepted shape",
+    );
+
+    // The live binding itself, a one-byte stub, and a blob that exactly
+    // saturates the old length cap: all three are retained handles.
+    for handle in [
+        live.diff_handle,
+        vec![0x00],
+        vec![0x5A; GATE_DIFF_HANDLE_MAX_LEN],
+    ] {
+        let retained = GateDecisionRecord {
+            diff_handle: handle.clone(),
+            ..scrubbed.clone()
+        };
+        let encoded = rmp_serde::to_vec_named(&retained).expect("test encode");
+        assert!(
+            matches!(
+                decode_gate_decision(&encoded),
+                Err(Error::CorruptedIndex("gate decision ledger"))
+            ),
+            "a redacted skeleton keeping {} handle bytes must not vet",
+            handle.len(),
+        );
+
+        // Planted straight onto the primary, exactly as an in-place redaction
+        // writes. Every reader must fail closed instead of serving the binding.
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &gate_decision_key(retained.decision_id),
+            &encoded,
+        )?;
+        wtxn.commit()?;
+        let rtxn = vault.store.env.read_txn()?;
+        for (reader, result) in [
+            (
+                "point read",
+                vault
+                    .store
+                    .gate_decision_in_txn(&rtxn, retained.decision_id)
+                    .map(|_| ()),
+            ),
+            (
+                "claim discovery",
+                vault
+                    .store
+                    .gate_decisions_for_claim_in_txn(&rtxn, &claim)
+                    .map(|_| ()),
+            ),
+            (
+                "erasure verify",
+                vault
+                    .store
+                    .verify_claim_erasure_by_scan_in_txn(&rtxn, &claim)
+                    .map(|_| ()),
+            ),
+        ] {
+            assert!(
+                matches!(result, Err(Error::CorruptedIndex("gate decision ledger"))),
+                "{reader} must refuse a handle-retaining skeleton: {result:?}",
+            );
+        }
+        drop(rtxn);
+
+        // And the append door stays shut on it as well (born-redacted guard).
+        let appended =
+            vault.with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &retained));
+        assert!(
+            matches!(
+                appended,
+                Err(Error::InvariantViolation("gate decision born redacted"))
+            ),
+            "append must never mint a skeleton, handle-bearing or not: {appended:?}",
+        );
+    }
+
+    // Overwrite the corrupt primary with the properly scrubbed skeleton: the
+    // same readers recover, so the refusals above were about the handle and not
+    // about the row being redacted at all.
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.put(
+        &mut wtxn,
+        &gate_decision_key(scrubbed.decision_id),
+        &encode_gate_decision(&scrubbed)?,
+    )?;
+    wtxn.commit()?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault.store.gate_decisions_for_claim_in_txn(&rtxn, &claim)?,
+        vec![scrubbed],
+        "discovery still surfaces a correctly scrubbed skeleton",
+    );
+    assert!(
+        vault
+            .store
+            .verify_claim_erasure_by_scan_in_txn(&rtxn, &claim)?
+            .is_empty(),
+        "a scrubbed skeleton does not block erasure completeness",
+    );
+    Ok(())
+}
+
 /// The pushdown pin: the caller's filter runs DURING the cursor walk, so a
 /// filtered read never materializes the whole ledger first.
 ///

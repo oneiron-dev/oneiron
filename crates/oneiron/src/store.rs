@@ -4590,11 +4590,21 @@ fn decode_channel_identity_lifecycle_receipt(
 ///   redactor scrubbed something it must have retained — a real invariant
 ///   break, correctly fatal.
 ///
+/// `diff_handle` on the v1 skeleton must be EMPTY. This TIGHTENS E-A's D1
+/// table, which read "≤ `GATE_DIFF_HANDLE_MAX_LEN`, empty ALLOWED" and left the
+/// sentinel bytes to E-B (open question 4). A length cap alone cannot tell a
+/// fixed sentinel from a live handle, and the handle is a content binding — a
+/// pointer at the very body the redaction exists to scrub — so "empty allowed"
+/// let a redacted row keep one. Empty is the only self-evidently scrubbed
+/// value. E-B may still mint a sentinel, but only by pinning its bytes in a vet
+/// amendment here, which makes the sentinel checkable rather than assumed.
+///
 /// Pinned by `record_schema_v0_bytes_stable_and_v1_skeleton_vets` (empty-class
-/// v1 rejected, empty-class v0 accepted) and by
+/// v1 rejected, empty-class v0 accepted),
+/// `redacted_skeleton_must_not_retain_a_diff_handle`, and
 /// `gate::tests::effect_actor_class_spoof_fails_closed` (the deny path stays a
-/// deny). Tightening v0 is an E-B vet amendment, and needs the effect door to
-/// stop recording caller-asserted classes verbatim first.
+/// deny). Tightening v0's `actor_class` is an E-B vet amendment, and needs the
+/// effect door to stop recording caller-asserted classes verbatim first.
 fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
     let shared_ok = !record.outcome.is_empty()
         && !record.content_kind.is_empty()
@@ -4625,7 +4635,8 @@ fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
         // The skeleton keeps only the accountability fields the retention
         // design retains; everything claim-bearing must already be gone.
         // `actor_class` is required here and NOT on v0 — see the asymmetry
-        // note above.
+        // note above. `diff_handle` must be EMPTY, not merely bounded — see the
+        // handle note above.
         GATE_DECISION_LEDGER_VERSION_REDACTED => {
             record.redacted_at.is_some_and(|at| at > 0)
                 && !record.actor_class.is_empty()
@@ -4634,6 +4645,7 @@ fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
                 && record.system_notices.is_empty()
                 && record.actor_ref.is_none()
                 && record.grant_ref.is_none()
+                && record.diff_handle.is_empty()
         }
         _ => false,
     };
