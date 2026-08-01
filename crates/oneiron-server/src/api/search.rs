@@ -100,7 +100,7 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -212,7 +212,7 @@ pub(crate) struct TextSearchQuery {
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),

@@ -61,7 +61,7 @@ pub(crate) struct LeaseRevokeResponse {
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),

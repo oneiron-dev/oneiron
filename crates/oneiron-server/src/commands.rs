@@ -9,14 +9,17 @@ use serde_json::{Value as JsonValue, json};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
+use crate::auth::{mint_core_token_v2, validate_bearer_claims};
 use crate::build_app;
-use crate::cli::{ProvenanceArgs, RevokeArgs, SkillsPackArgs, VaultArgs};
+use crate::cli::{ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenMintArgs, VaultArgs};
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
 use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
 const MAX_MSGPACK_JSON_DEPTH: usize = 32;
+/// Below this the auth secret is weak MAC key material; warn, do not refuse.
+const MIN_RECOMMENDED_AUTH_SECRET_BYTES: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictSearchResolution {
@@ -69,6 +72,50 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+/// Mints a v2 core bearer token and prints it to stdout.
+///
+/// The secret resolves through the normal serve-config precedence and is
+/// never printed or logged. Claims are validated before minting, so a token
+/// that would 401 is never emitted.
+pub fn token_mint(args: TokenMintArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    let auth_secret = config
+        .sync_server_config()
+        .auth_secret
+        .filter(|secret| !secret.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no auth secret configured; set --auth-secret, ONEIRON_AUTH_SECRET, or auth_secret in the config file"
+            )
+        })?;
+
+    let claims = build_token_claims(args.scope.as_deref(), args.principal_ref.as_deref());
+    validate_bearer_claims(&claims).map_err(|_| {
+        anyhow::anyhow!("refusing to mint a token the server would reject: {claims}")
+    })?;
+
+    println!("{}", mint_core_token_v2(&auth_secret, &claims));
+    Ok(())
+}
+
+/// Assembles a claims string in the bearer grammar. No flags yields an empty
+/// claims string, which mints an owner-grade token.
+fn build_token_claims(scope: Option<&[String]>, principal_ref: Option<&str>) -> String {
+    let mut claims = String::new();
+    if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
+        claims.push_str("scope=");
+        claims.push_str(&scope.join(","));
+    }
+    if let Some(principal_ref) = principal_ref {
+        if !claims.is_empty() {
+            claims.push(';');
+        }
+        claims.push_str("principal_ref=");
+        claims.push_str(principal_ref);
+    }
+    claims
 }
 
 pub fn skills_pack(args: SkillsPackArgs) -> anyhow::Result<()> {
@@ -308,10 +355,17 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let vault = oneiron::Vault::open(&config.vault_path, vault_config)?;
 
     let server_config = config.sync_server_config();
-    if server_config.auth_secret.is_none() && !server_config.allow_unauthenticated {
-        tracing::warn!(
+    match server_config.auth_secret.as_deref() {
+        None if !server_config.allow_unauthenticated => tracing::warn!(
             "server started with no auth_secret and allow_unauthenticated=false; refusing all requests; set ONEIRON_AUTH_SECRET or pass --insecure-allow-unauthenticated for local dev"
-        );
+        ),
+        // The secret is MAC key material for every minted token, so its
+        // length bounds delegation integrity. A nudge, not a wall: short
+        // dev secrets keep working.
+        Some(secret) if secret.len() < MIN_RECOMMENDED_AUTH_SECRET_BYTES => tracing::warn!(
+            "configured auth_secret is shorter than {MIN_RECOMMENDED_AUTH_SECRET_BYTES} bytes; it is the MAC key for every minted bearer token"
+        ),
+        _ => {}
     }
     let cors_layer = build_cors_layer(&server_config)?;
 

@@ -164,7 +164,7 @@ async fn connect(
     if let Some(secret) = secret {
         request
             .headers_mut()
-            .insert("x-oneiron-secret", secret.parse().unwrap());
+            .insert("authorization", format!("Bearer {secret}").parse().unwrap());
     }
     let mut ws = tokio_tungstenite::connect_async(request)
         .await
@@ -238,7 +238,7 @@ async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String 
 async fn http_get_bytes(addr: SocketAddr, path: &str, secret: Option<&str>) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let secret_header = secret
-        .map(|secret| format!("x-oneiron-secret: {secret}\r\n"))
+        .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
         .unwrap_or_default();
     let request =
         format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{secret_header}\r\n");
@@ -261,7 +261,7 @@ async fn http_post(
 ) -> String {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let secret_header = secret
-        .map(|secret| format!("x-oneiron-secret: {secret}\r\n"))
+        .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
         .unwrap_or_default();
     let idempotency_header = idempotency_key
         .map(|key| format!("Idempotency-Key: {key}\r\n"))

@@ -727,7 +727,7 @@ async fn discover_advertises_outbound_manifest_schema_on_demand() {
 
     let request = Request::builder()
         .uri("/api/core/discover")
-        .header("x-oneiron-secret", "secret")
+        .header(AUTHORIZATION, owner_bearer())
         .body(Body::empty())
         .expect("discover request");
     let (status, body) = route_json(server, request).await;
@@ -1123,7 +1123,7 @@ async fn local_artifact_route_requires_api_auth_when_configured() {
         server,
         Request::builder()
             .uri("/a/site/")
-            .header("x-oneiron-secret", "secret")
+            .header(AUTHORIZATION, owner_bearer())
             .body(Body::empty())
             .expect("artifact request"),
     )
@@ -1188,8 +1188,21 @@ fn json_request(method: &str, uri: &str, body: Value) -> Request<Body> {
         .expect("request")
 }
 
+/// Mints a v2 token against the `"secret"` these tests configure everywhere.
+fn test_bearer(claims: &str) -> String {
+    format!(
+        "Bearer {}",
+        crate::auth::mint_core_token_v2("secret", claims)
+    )
+}
+
+/// Owner-grade credential: the bare trust root over the standard header.
+fn owner_bearer() -> String {
+    "Bearer secret".to_owned()
+}
+
 fn core_request(method: &str, uri: &str, scope: &str, body: Option<&Value>) -> Request<Body> {
-    core_request_with_authz(method, uri, format!("Bearer secret;scope={scope}"), body)
+    core_request_with_authz(method, uri, test_bearer(&format!("scope={scope}")), body)
 }
 
 fn core_request_with_principal_ref(
@@ -1202,7 +1215,7 @@ fn core_request_with_principal_ref(
     core_request_with_authz(
         method,
         uri,
-        format!("Bearer secret;scope={scope};principal_ref={principal_ref}"),
+        test_bearer(&format!("scope={scope};principal_ref={principal_ref}")),
         body,
     )
 }
@@ -2308,10 +2321,7 @@ fn v1_core_openapi_contract_snapshot_matches_fixture() {
             "paths": paths,
             "components": {
                 "schemas": schemas,
-                "securitySchemes": {
-                    "CoreBearer": spec["components"]["securitySchemes"]["CoreBearer"].clone(),
-                    "OneironSecret": spec["components"]["securitySchemes"]["OneironSecret"].clone(),
-                },
+                "securitySchemes": spec["components"]["securitySchemes"].clone(),
             },
         }),
         V1_CORE_OPENAPI_CONTRACT_SNAPSHOT,
@@ -3416,15 +3426,22 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "DiscoverResponse must reference the skill-pack discovery schema"
     );
 
-    assert_eq!(
-        spec["components"]["securitySchemes"]["OneironSecret"]["name"],
-        Value::from("x-oneiron-secret"),
-        "protected operations must document the x-oneiron-secret auth header"
+    assert!(
+        spec["components"]["securitySchemes"]
+            .get("OneironSecret")
+            .is_none(),
+        "the removed custom-header scheme must not be documented"
     );
     assert_eq!(
         spec["components"]["securitySchemes"]["CoreBearer"]["scheme"],
         Value::from("bearer"),
-        "v1 core operations must document bearer auth"
+        "protected operations must document bearer auth"
+    );
+    assert!(
+        !serde_json::to_string(&spec)
+            .expect("serialize spec")
+            .contains("x-oneiron-secret"),
+        "no description, example, or scheme in the spec may still name the removed header"
     );
     for (path, method) in [
         ("/api/openapi.json", "get"),
@@ -3438,14 +3455,6 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         ("/v1/consumer/usage", "get"),
         ("/v1/consumer/usage/details", "get"),
         ("/v1/consumer/top-up", "post"),
-    ] {
-        assert_eq!(
-            spec["paths"][path][method]["security"],
-            json!([{ "OneironSecret": [] }]),
-            "{method} {path} must require OneironSecret"
-        );
-    }
-    for (path, method) in [
         ("/v1/core/batch", "post"),
         ("/v1/core/query", "post"),
         ("/v1/core/context-pack", "post"),
@@ -3479,8 +3488,8 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
     ] {
         assert_eq!(
             spec["paths"][path][method]["security"],
-            json!([{ "CoreBearer": [] }, { "OneironSecret": [] }]),
-            "{method} {path} must accept scoped bearer auth with legacy secret fallback"
+            json!([{ "CoreBearer": [] }]),
+            "{method} {path} must require bearer auth as the single scheme"
         );
     }
 
@@ -3790,7 +3799,7 @@ async fn v1_core_route_rejects_valid_bearer_without_required_scope() {
         server,
         Request::builder()
             .uri("/v1/core/turns/annotate?turn_id=not-an-entity")
-            .header(AUTHORIZATION, "Bearer secret;scope=core:write")
+            .header(AUTHORIZATION, test_bearer("scope=core:write"))
             .body(Body::empty())
             .expect("request"),
     )
@@ -3815,7 +3824,7 @@ async fn v1_core_route_wraps_handler_errors_after_bearer_auth() {
         server,
         Request::builder()
             .uri("/v1/core/turns/annotate?turn_id=not-an-entity")
-            .header(AUTHORIZATION, "Bearer secret;scope=core:read")
+            .header(AUTHORIZATION, test_bearer("scope=core:read"))
             .body(Body::empty())
             .expect("request"),
     )
@@ -4509,10 +4518,10 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
         .uri(&refresh_query_path)
         .header(
             AUTHORIZATION,
-            format!(
-                "Bearer secret;scope=companion:profile:read;principal_ref={}",
+            test_bearer(&format!(
+                "scope=companion:profile:read;principal_ref={}",
                 principal_ref.to_hex()
-            ),
+            )),
         )
         .header(CONTENT_TYPE, "application/json")
         .body(Body::from("{"))
@@ -4626,7 +4635,7 @@ async fn v1_companion_access_grant_create_replays_idempotency_key() {
         Request::builder()
             .method("POST")
             .uri("/v1/companion/access-grants")
-            .header(AUTHORIZATION, "Bearer secret;scope=core:auth")
+            .header(AUTHORIZATION, test_bearer("scope=core:auth"))
             .header("Idempotency-Key", "companion-create-replay")
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(create_request.to_string()))
@@ -5205,7 +5214,10 @@ async fn v1_core_idempotency_read_only_token_cannot_replay_cached_write_success(
     let (write_status, write_body) = idempotent_core_annotate(
         server.clone(),
         "scoped-write-success",
-        (AUTHORIZATION.as_str(), "Bearer secret;scope=core:write"),
+        (
+            AUTHORIZATION.as_str(),
+            test_bearer("scope=core:write").as_str(),
+        ),
         &body,
     )
     .await;
@@ -5215,7 +5227,10 @@ async fn v1_core_idempotency_read_only_token_cannot_replay_cached_write_success(
     let (read_status, read_body) = idempotent_core_annotate(
         server,
         "scoped-write-success",
-        (AUTHORIZATION.as_str(), "Bearer secret;scope=core:read"),
+        (
+            AUTHORIZATION.as_str(),
+            test_bearer("scope=core:read").as_str(),
+        ),
         &body,
     )
     .await;
@@ -5239,7 +5254,10 @@ async fn v1_core_idempotency_write_token_retry_is_not_poisoned_by_read_only_403(
     let (read_status, read_body) = idempotent_core_annotate(
         server.clone(),
         "scoped-read-poison",
-        (AUTHORIZATION.as_str(), "Bearer secret;scope=core:read"),
+        (
+            AUTHORIZATION.as_str(),
+            test_bearer("scope=core:read").as_str(),
+        ),
         &body,
     )
     .await;
@@ -5249,7 +5267,10 @@ async fn v1_core_idempotency_write_token_retry_is_not_poisoned_by_read_only_403(
     let (write_status, write_body) = idempotent_core_annotate(
         server.clone(),
         "scoped-read-poison",
-        (AUTHORIZATION.as_str(), "Bearer secret;scope=core:write"),
+        (
+            AUTHORIZATION.as_str(),
+            test_bearer("scope=core:write").as_str(),
+        ),
         &body,
     )
     .await;
@@ -5276,7 +5297,7 @@ async fn v1_core_idempotency_legacy_shared_secret_still_replays_and_conflicts() 
     let (first_status, first_body) = idempotent_core_annotate(
         server.clone(),
         "legacy-core-idem",
-        ("x-oneiron-secret", "secret"),
+        (AUTHORIZATION.as_str(), owner_bearer().as_str()),
         &body,
     )
     .await;
@@ -5285,7 +5306,7 @@ async fn v1_core_idempotency_legacy_shared_secret_still_replays_and_conflicts() 
     let (replay_status, replay_body) = idempotent_core_annotate(
         server.clone(),
         "legacy-core-idem",
-        ("x-oneiron-secret", "secret"),
+        (AUTHORIZATION.as_str(), owner_bearer().as_str()),
         &body,
     )
     .await;
@@ -5296,7 +5317,7 @@ async fn v1_core_idempotency_legacy_shared_secret_still_replays_and_conflicts() 
     let (conflict_status, conflict_body) = idempotent_core_annotate(
         server,
         "legacy-core-idem",
-        ("x-oneiron-secret", "secret"),
+        (AUTHORIZATION.as_str(), owner_bearer().as_str()),
         &changed_body,
     )
     .await;
@@ -8791,7 +8812,7 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
         .method("POST")
         .uri("/api/companion/resume")
         .header(CONTENT_TYPE, "application/json")
-        .header("x-oneiron-secret", "secret")
+        .header(AUTHORIZATION, owner_bearer())
         .header("x-oneiron-caller", principal_ref.as_str())
         .body(Body::from("{}"))
         .expect("resume request");
@@ -9286,7 +9307,7 @@ async fn context_pack_v4_session_state_is_partitioned_by_caller() {
             .method("POST")
             .uri("/api/companion/resume")
             .header(CONTENT_TYPE, "application/json")
-            .header("x-oneiron-secret", "secret")
+            .header(AUTHORIZATION, owner_bearer())
             .header("x-oneiron-caller", caller)
             .body(Body::from("{}"))
             .expect("resume request")

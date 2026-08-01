@@ -26,7 +26,7 @@ use oneiron::sync::{
 };
 use tokio::time::{Duration, Instant};
 
-use crate::auth::check_auth;
+use crate::auth::require_owner_auth;
 use crate::broadcast::BroadcastSubscriber;
 use crate::protocol::{self, ProtocolError, SyncMessage, close_codes, window_sub_tags};
 use crate::server::SyncServer;
@@ -190,19 +190,20 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 
 /// Handles WebSocket upgrade requests.
 ///
-/// Phase-1 auth: when a shared secret is configured, the upgrade request
-/// must carry it in the `x-oneiron-secret` header (the same constant-time
-/// scheme as the HTTP API). An unauthenticated upgrade is rejected with 401
-/// BEFORE the socket upgrade (fail-closed) — without this gate any network
-/// peer could pull the full root snapshot and window exports. When no secret
-/// is configured, upgrades are rejected unless the explicit insecure dev
-/// escape hatch is enabled, matching `api::check_auth`.
+/// Auth: the upgrade request must present an owner-grade credential in the
+/// `Authorization: Bearer` header — the configured trust-root secret or an
+/// empty-claims v2 token. Scoped delegation tokens do not reach this surface.
+/// An unauthenticated upgrade is rejected with 401 BEFORE the socket upgrade
+/// (fail-closed) — without this gate any network peer could pull the full
+/// root snapshot and window exports. When no secret is configured, upgrades
+/// are rejected unless the explicit insecure dev escape hatch is enabled,
+/// matching `auth::require_owner_auth` on the HTTP side.
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    check_auth(&headers, &server.config)?;
+    require_owner_auth(&headers, &server.config).map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new WebSocket connection");

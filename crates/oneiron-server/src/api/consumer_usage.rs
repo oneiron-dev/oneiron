@@ -71,7 +71,7 @@ pub(crate) struct UsageRollupQuery {
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -122,7 +122,7 @@ pub(crate) async fn get_consumer_usage(
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -187,7 +187,7 @@ pub(crate) async fn get_consumer_usage_details(
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -266,7 +266,7 @@ pub(crate) async fn top_up_consumer(
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -345,7 +345,7 @@ pub(crate) fn usage_mode_for_event(
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),

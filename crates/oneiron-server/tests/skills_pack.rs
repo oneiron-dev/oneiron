@@ -234,7 +234,7 @@ fn tier3_error_catalog_uses_structured_recovery_fields() {
     );
     assert!(
         unauthorized.contains("\"recovery_suggestions\": [")
-            && unauthorized.contains("Send the configured x-oneiron-secret header and retry."),
+            && unauthorized.contains("Send Authorization: Bearer credentials and retry."),
         "UNAUTHORIZED catalog entry must include a non-empty recovery_suggestions array"
     );
 }

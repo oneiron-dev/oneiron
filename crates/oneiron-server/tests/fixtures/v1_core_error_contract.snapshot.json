@@ -50,7 +50,7 @@
           "message": "request is not authorized",
           "requestId": "<request-id>",
           "suggestions": [
-            "Send the configured x-oneiron-secret header and retry."
+            "Send Authorization: Bearer credentials and retry."
           ]
         }
       },

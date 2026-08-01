@@ -6,7 +6,7 @@
 //! Auth: shared secret header for Phase 1.
 
 use crate::auth::CoreAuth;
-use crate::auth::check_auth;
+use crate::auth::require_owner_auth;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ApiErrorDetails;
@@ -489,8 +489,12 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
     })
 }
 
+/// Gates the legacy `/api/*` routes on an owner-grade bearer.
+///
+/// These routes read the whole vault under one actor ref, so they stay a
+/// trust-root surface: scoped `/v1` delegation tokens do not reach them.
 fn check_api_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), ApiError> {
-    check_auth(headers, config).map_err(|_| ApiError::unauthorized())
+    require_owner_auth(headers, config).map(drop)
 }
 
 const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";
