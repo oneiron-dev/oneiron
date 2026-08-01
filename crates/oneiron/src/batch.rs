@@ -2473,9 +2473,18 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     // diverge local state from published truth. This call stays as the
     // structural backstop: the gate lives at the row-tearing site, so a future
     // caller that skips the pre-flight still cannot tear a stamp.
-    if let Some(entity_type) = stored_entity_type(store, &*wtxn, id)? {
-        crate::disclosure::gate_hard_delete_facet_state(store, &*wtxn, id, entity_type)?;
-    }
+    //
+    // The stored type is passed as an OPTION, not unwrapped away: an id with no
+    // entity row still has whatever `edges_in` and clearance rows name it, and
+    // `delete_related_edges` below tears them all. Skipping the gate on an
+    // unknowable type would unstamp every stamped record via a delete nobody
+    // consented to — the gate fails closed instead (fix-6 item 1).
+    crate::disclosure::gate_hard_delete_facet_state_for_stored_type(
+        store,
+        &*wtxn,
+        id,
+        stored_entity_type(store, &*wtxn, id)?,
+    )?;
 
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).

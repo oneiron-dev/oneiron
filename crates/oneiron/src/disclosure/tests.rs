@@ -2895,3 +2895,450 @@ fn destructive_delete_phases_share_one_commit() -> Result<()> {
     }
     Ok(())
 }
+// ─── ONE-1646 fix leg 6: the gate's unknown-type arm + mirror custody ───────
+
+/// P1 REGRESSION — A HEADERLESS ID STILL CANNOT BE UNSTAMPED BY DELETION.
+///
+/// The row-tearing gate used to be reached through
+/// `if let Some(entity_type) = stored_entity_type(..)`, so an id with LIVE
+/// inbound `FacetOf` stamps but no entity row skipped it entirely — and
+/// `delete_related_edges`, three lines later, tore every one of those stamps.
+/// The stamped records SURVIVE that tear (they are separate entities) and land
+/// unfaceted, which the P7 conjunct admits as the invariant/core class: a
+/// reclassification into wider rooms, with no consent event anywhere. That is
+/// the laundering class this lane exists to close, reached by deleting the one
+/// thing whose type nobody can vouch for.
+///
+/// The gate now treats an unknowable type as possibly-FACET and evaluates both
+/// arms. The consent-authorized op is unaffected: `unstamp_facet_of` removes
+/// the stamp with its ledger event, and the delete then proceeds.
+#[test]
+fn headerless_residue_cannot_tear_a_stamp_via_a_generic_delete() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x18);
+    put_facet(&vault, &facet);
+    let claim = test_id(0x19);
+    put_public_claim(&vault, &claim, test_id(0x1A));
+    stamp_facet_of(&vault, &claim, &facet);
+
+    // Strip the ENTITY ROW only, the way a concurrent delete that lost the
+    // purge race would: the stamp and every other index row stay live, so the
+    // id's type is now unknowable while its edges are not.
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.delete(wtxn, facet.as_bytes())?;
+        Ok(())
+    })?;
+    assert!(
+        vault.get_entity_type(&facet)?.is_none(),
+        "fixture is headerless"
+    );
+    assert!(
+        vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "and the stamp it is standing on is live"
+    );
+
+    // Both hard-delete doors refuse, naming the stamp in the way.
+    assert_eq!(
+        vault
+            .batch()
+            .delete(&facet)
+            .commit()
+            .expect_err("a generic hard delete must not tear the stamp")
+            .kind(),
+        ErrorKind::FacetUnstampWithoutConsent
+    );
+    assert_eq!(
+        vault
+            .delete_entity_with_reason(&facet, crate::DeleteReason::UserHardDelete)
+            .expect_err("the reason-aware door refuses identically")
+            .kind(),
+        ErrorKind::FacetUnstampWithoutConsent
+    );
+    assert!(
+        vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "the refusals tore nothing"
+    );
+
+    // The CONSENT-AUTHORIZED op is the way through, and it still works on a
+    // headerless target — the stamp is what it operates on, not the row.
+    assert!(vault.unstamp_facet_of(&claim, &facet, 400)?);
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?,
+        vec![FacetReclassificationConsent {
+            record: claim,
+            facet,
+            consented_at: 400,
+        }],
+        "and it left the consent event the tear-via-delete never would have"
+    );
+    vault.batch().delete(&facet).commit()?;
+    Ok(())
+}
+
+/// The other half: the fail-closed default is not a wall in front of harmless
+/// deletes. A headerless id with NO incident stamp and NO clearance naming it
+/// deletes exactly as it always did.
+#[test]
+fn headerless_residue_without_facet_state_still_deletes() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let stray = test_id(0x1B);
+    put_turn(&vault, &stray);
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.delete(wtxn, stray.as_bytes())?;
+        Ok(())
+    })?;
+
+    vault
+        .batch()
+        .delete(&stray)
+        .commit()
+        .expect("a headerless id naming no facet state is freely deletable");
+
+    // And a headerless id blocked only by a live CLEARANCE gets the clearance
+    // diagnostic, not the stamp one — both arms run without a type.
+    let facet = test_id(0x1C);
+    put_facet(&vault, &facet);
+    let contact = test_id(0x1D);
+    seed_contact(&vault, contact, "a@example.com");
+    grant_clearance(&vault, &contact, vec![facet]);
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.delete(wtxn, facet.as_bytes())?;
+        Ok(())
+    })?;
+    assert_eq!(
+        vault
+            .batch()
+            .delete(&facet)
+            .commit()
+            .expect_err("a live clearance still blocks a headerless facet delete")
+            .kind(),
+        ErrorKind::FacetDeleteWithLiveClearance
+    );
+    Ok(())
+}
+
+/// P2 REGRESSION — MIRROR CUSTODY: the cleanup tears OUR mirror, not whatever
+/// claim happens to sit at the derived id.
+///
+/// Mirror ids are public sha256 derivations, and `disclosure.*` is
+/// engine-reserved (item 3), so a foreign claim can no longer be minted at one
+/// through `put_claim`. What CAN sit there is another disclosure mirror: the
+/// derivations are independent hashes, so nothing structurally prevents one
+/// family's id from being another family's — and the old check ("a CLAIM whose
+/// predicate is anywhere in the disclosure family") admitted every one of them.
+/// Deleting a contact would then deindex an unrelated reclassification's ledger
+/// mirror.
+///
+/// The check is now the id's own round trip: exact predicate plus the subject
+/// (and, for ledger rows, the `(record, facet, sequence)` triple) the id was
+/// derived from. A mismatch leaves the row standing.
+#[test]
+fn mirror_cleanup_leaves_a_claim_that_is_not_the_expected_mirror() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let contact = test_id(0x1E);
+    seed_contact(&vault, contact, "a@example.com");
+    let facet = test_id(0x1F);
+    put_facet(&vault, &facet);
+    grant_clearance(&vault, &contact, vec![facet]);
+
+    // A SECOND disclosure mirror, of a different family, written through the
+    // engine door — then relocated onto the contact's clearance-mirror id, the
+    // way an id collision or a future derivation change would present it.
+    let clearance_mirror = facet_clearance_claim_id(&contact)?;
+    let exposure_mirror = facet_exposure_claim_id(&facet)?;
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+    let foreign = vault
+        .get_claim(&exposure_mirror)?
+        .expect("exposure mirror to relocate");
+    vault.with_write_txn(|wtxn| {
+        let raw = vault
+            .store
+            .entities
+            .get(&*wtxn, exposure_mirror.as_bytes())?
+            .expect("exposure mirror row")
+            .to_vec();
+        vault
+            .store
+            .entities
+            .put(wtxn, clearance_mirror.as_bytes(), &raw)?;
+        Ok(())
+    })?;
+
+    // Deleting the contact sweeps its clearance ROW, but the claim standing at
+    // the clearance-mirror id is a `disclosure.facet_exposure` about a facet —
+    // not this contact's clearance mirror — so it is left exactly as written.
+    vault.batch().delete(&contact).commit()?;
+    assert!(
+        vault.contact_facet_clearance(&contact)?.is_none(),
+        "the contact's own enforcement row is gone"
+    );
+    assert_eq!(
+        vault
+            .get_claim(&clearance_mirror)?
+            .expect("the non-matching claim survives"),
+        foreign,
+        "a claim that is not the expected mirror is never torn"
+    );
+
+    // And the REAL mirror is still removed: same delete shape, matching body.
+    let other_contact = test_id(0x23);
+    seed_contact(&vault, other_contact, "b@example.com");
+    grant_clearance(&vault, &other_contact, vec![facet]);
+    let real_mirror = facet_clearance_claim_id(&other_contact)?;
+    assert!(vault.get_claim(&real_mirror)?.is_some(), "fixture mirror");
+    vault.batch().delete(&other_contact).commit()?;
+    assert!(
+        vault.get_claim(&real_mirror)?.is_none(),
+        "the owned mirror is still swept"
+    );
+    Ok(())
+}
+
+/// P3 REGRESSION — `disclosure.*` IS RESERVED (D17), so the owner-visible
+/// consent mirrors cannot be forged.
+///
+/// The mirror ids are public derivations and the ledger mirror is the owner's
+/// audit surface for "which reclassifications did I consent to". While
+/// `disclosure.*` was publicly writable, any caller could `put_claim` a
+/// `disclosure.facet_reclassification` at a derived id and assert a consent
+/// event that never happened — or contradict the clearance the enforcement row
+/// actually holds. Audit-trail integrity is the one property an audit trail
+/// exists to have.
+#[test]
+fn disclosure_predicates_are_reserved_from_the_public_claim_door() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let subject = test_id(0x24);
+    put_turn(&vault, &subject);
+
+    for predicate in DISCLOSURE_CLAIM_PREDICATES {
+        let body = ClaimBody::new(
+            predicate,
+            ClaimSubject::Entity(subject),
+            Value::from("forged"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        let id = EntityId::now();
+        assert_eq!(
+            vault
+                .put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)
+                .expect_err("public put_claim must reject disclosure.*")
+                .kind(),
+            ErrorKind::ReservedPredicate,
+            "predicate {predicate} must be reserved"
+        );
+        // The raw entity door is the same door underneath, and rejects too.
+        assert_eq!(
+            vault
+                .put_entity(
+                    &id,
+                    ENTITY_TYPE_CLAIM,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &encode_claim_body(&body)?,
+                )
+                .expect_err("public put_entity must reject disclosure.*")
+                .kind(),
+            ErrorKind::ReservedPredicate
+        );
+        assert!(vault.get_claim(&id)?.is_none(), "nothing was written");
+    }
+
+    // An unreserved neighbour is unaffected — the reservation is namespace
+    // scoped, not a substring match.
+    let ok = ClaimBody::new(
+        "disclosures.note",
+        ClaimSubject::Entity(subject),
+        Value::from("not in the reserved namespace"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&EntityId::now(), &ok, TimeRange { start: 1, end: 1 }, 1)?;
+
+    // The ENGINE door still lands its mirrors: reservation closed the public
+    // path without closing the lane's own writes.
+    let facet = test_id(0x27);
+    put_facet(&vault, &facet);
+    let claim = test_id(0x28);
+    put_public_claim(&vault, &claim, test_id(0x29));
+    stamp_facet_of(&vault, &claim, &facet);
+    assert!(vault.unstamp_facet_of(&claim, &facet, 500)?);
+    let mirror = facet_reclassification_claim_id(&claim, &facet, 0)?;
+    assert_eq!(
+        vault
+            .get_claim(&mirror)?
+            .expect("the unstamp op's mirror still lands")
+            .predicate,
+        PREDICATE_DISCLOSURE_FACET_RECLASSIFICATION
+    );
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 600)?;
+    assert!(
+        vault
+            .get_claim(&facet_exposure_claim_id(&facet)?)?
+            .is_some(),
+        "and so does every other owner write op's mirror"
+    );
+    Ok(())
+}
+
+/// P4 REGRESSION — A DEEP MIRROR CHAIN COMPLETES WITHOUT STACK GROWTH.
+///
+/// The chain is built from ordinary public ops: a ledger MIRROR is a CLAIM, so
+/// it is `FacetOf`-stampable, and unstamping it through the consent door mints
+/// a ledger row whose `record` is that mirror — whose own cleanup therefore
+/// reaches a further mirror. The predecessor tore each level on the stack, so a
+/// chain of caller-chosen depth was a stack-overflow ABORT (process death, not
+/// a refusal). The traversal is now a worklist, so depth is heap-bounded.
+///
+/// The chain is run on a dedicated thread with a DELIBERATELY SMALL stack: at
+/// 256 KiB the old per-level frames could not survive this depth, so a pass
+/// here is evidence about stack growth rather than about the machine's default
+/// stack being generous.
+#[test]
+fn deep_mirror_chain_is_swept_without_stack_growth() -> Result<()> {
+    const DEPTH: usize = 300;
+
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x2A);
+    put_facet(&vault, &facet);
+    let root = test_id(0x2B);
+    put_public_claim(&vault, &root, test_id(0x2C));
+
+    // Build the chain: each level's unstamp mints a mirror, which becomes the
+    // next level's stamped record.
+    let mut level = root;
+    let mut mirrors = Vec::with_capacity(DEPTH);
+    for step in 0..DEPTH {
+        stamp_facet_of(&vault, &level, &facet);
+        assert!(
+            vault.unstamp_facet_of(&level, &facet, 1000 + step as u64)?,
+            "step {step} must remove the stamp it just wrote"
+        );
+        let mirror = facet_reclassification_claim_id(&level, &facet, 0)?;
+        assert!(
+            vault.get_claim(&mirror)?.is_some(),
+            "step {step} must mint a ledger mirror"
+        );
+        mirrors.push(mirror);
+        level = mirror;
+    }
+
+    // Deleting the ROOT sweeps its ledger row, which deindexes its mirror,
+    // which sweeps ITS ledger row — all the way down, in one transaction.
+    let vault_ref = &vault;
+    std::thread::scope(|scope| -> Result<()> {
+        let handle = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn_scoped(scope, move || -> Result<()> {
+                vault_ref.batch().delete(&root).commit()
+            })
+            .expect("spawn small-stack sweeper");
+        handle
+            .join()
+            .expect("the sweep must not overflow the stack")
+    })?;
+
+    for (step, mirror) in mirrors.iter().enumerate() {
+        assert!(
+            vault.get_claim(mirror)?.is_none(),
+            "mirror at depth {step} must be swept with the chain"
+        );
+    }
+    Ok(())
+}
+
+/// P5 REGRESSION — a ledger row whose BODY disagrees with its KEY is not
+/// returned as that key's event.
+///
+/// The key is the authority on which `(record, facet, sequence)` an event
+/// belongs to. Returning a body that names a DIFFERENT pair would show the
+/// owner, on the consent surface, a reclassification they never consented to
+/// for the facet they asked about — silent mis-attribution in the one record
+/// that exists to be attributable. It errors rather than skipping: a silent
+/// skip would render a damaged ledger as a shorter, plausible history.
+#[test]
+fn ledger_rejects_a_body_that_disagrees_with_its_row_key() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x2D);
+    let other_facet = test_id(0x2E);
+    put_facet(&vault, &facet);
+    put_facet(&vault, &other_facet);
+    let claim = test_id(0x2F);
+    put_public_claim(&vault, &claim, test_id(0x38));
+    stamp_facet_of(&vault, &claim, &facet);
+    assert!(vault.unstamp_facet_of(&claim, &facet, 700)?);
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?.len(),
+        1
+    );
+
+    // Overwrite the row's BODY with an event naming a different facet, leaving
+    // the key alone — the corrupt-row shape the read must not launder.
+    let key = facet_reclassification_meta_key(&claim, &facet, 0);
+    let forged = encode_facet_reclassification_body(
+        &FacetReclassificationConsent {
+            record: claim,
+            facet: other_facet,
+            consented_at: 700,
+        },
+        0,
+    )?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &key, &forged)?;
+        Ok(())
+    })?;
+
+    assert_eq!(
+        vault
+            .facet_reclassification_ledger(&claim, &facet)
+            .expect_err("a body disagreeing with its key is corruption")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
+    // The SEQUENCE half of the same rule.
+    let forged = encode_facet_reclassification_body(
+        &FacetReclassificationConsent {
+            record: claim,
+            facet,
+            consented_at: 700,
+        },
+        7,
+    )?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &key, &forged)?;
+        Ok(())
+    })?;
+    assert_eq!(
+        vault
+            .facet_reclassification_ledger(&claim, &facet)
+            .expect_err("a sequence disagreeing with its key is corruption")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
+    // A body that AGREES with its key reads back normally.
+    let honest = encode_facet_reclassification_body(
+        &FacetReclassificationConsent {
+            record: claim,
+            facet,
+            consented_at: 700,
+        },
+        0,
+    )?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &key, &honest)?;
+        Ok(())
+    })?;
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?,
+        vec![FacetReclassificationConsent {
+            record: claim,
+            facet,
+            consented_at: 700,
+        }]
+    );
+    Ok(())
+}

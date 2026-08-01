@@ -16,9 +16,10 @@
 //! The predicate gate (D17) is part of body validation: predicates must match
 //! the pinned grammar (≥2 segments of `[a-z][a-z0-9_]*` joined by `.`, total
 //! ≤128 bytes) or the write fails with [`Error::InvalidPredicate`]. The
-//! `edge.*` and `skill.*` namespaces are engine-reserved: public writes are
-//! rejected with [`Error::ReservedPredicate`]. Crate-private provenance and
-//! skill-hub doors own local writes, while the `sync` feature's replicated-put
+//! `edge.*`, `skill.*`, and `disclosure.*` namespaces are engine-reserved:
+//! public writes are rejected with [`Error::ReservedPredicate`]. Crate-private
+//! provenance, skill-hub, and disclosure doors own local writes, while the
+//! `sync` feature's replicated-put
 //! door (`put_replicated`) admits rematerialization; every door still runs
 //! full structural validation. Well-formed UNKNOWN predicates are accepted — the crate is
 //! predicate-agnostic for semantics (ARCH-0003 §G.1). Crate-owned
@@ -689,6 +690,21 @@ pub const RESERVED_PREDICATE_NAMESPACE: &str = "edge";
 /// the crate-private skill-hub doors, never by the generic public Claim API.
 pub(crate) const RESERVED_SKILL_PREDICATE_NAMESPACE: &str = "skill";
 
+/// Reserved disclosure predicate namespace: `disclosure.*` claims are the
+/// owner-visible MIRRORS of consent state — the exposure a facet carries, the
+/// facets a contact is cleared for, and the append-only ledger of every
+/// `FacetOf` reclassification the owner consented to. They are AUDIT records,
+/// so nothing in the engine spends them; that is exactly why forging one is a
+/// live harm. A public `put_claim` at a mirror's derived id could otherwise
+/// mint a `disclosure.facet_reclassification` row asserting the owner
+/// consented to a reclassification that never happened, or contradict the
+/// clearance the enforcement row actually holds — audit-trail integrity, the
+/// one property an audit trail exists to have.
+///
+/// Only [`crate::disclosure`]'s own writer door may author them, exactly as
+/// `edge.*` belongs to edge provenance and `skill.*` to the skill hub.
+pub(crate) const RESERVED_DISCLOSURE_PREDICATE_NAMESPACE: &str = "disclosure";
+
 /// Length of an EdgeRef subject encoding: source 16 ‖ kind u8 ‖ target 16.
 pub(crate) const EDGE_REF_LEN: usize = 33;
 
@@ -1162,13 +1178,14 @@ pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Resul
 }
 
 /// Returns `true` when `predicate`'s first dot-separated segment is one of the
-/// reserved `edge` or `skill` namespaces (D17). Their writes and lifecycle
-/// transitions are owned by dedicated crate-private doors, so the generic
-/// Claim API rejects them.
+/// reserved `edge`, `skill`, or `disclosure` namespaces (D17). Their writes and
+/// lifecycle transitions are owned by dedicated crate-private doors, so the
+/// generic Claim API rejects them.
 pub(crate) fn is_reserved_predicate(predicate: &str) -> bool {
     let namespace = predicate.split('.').next();
     namespace == Some(RESERVED_PREDICATE_NAMESPACE)
         || namespace == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
+        || namespace == Some(RESERVED_DISCLOSURE_PREDICATE_NAMESPACE)
 }
 
 fn is_edge_reserved_predicate(predicate: &str) -> bool {

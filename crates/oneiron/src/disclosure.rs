@@ -11,6 +11,8 @@
 //! assembly); this module owns mode/tier/scope classification, storage, and
 //! the agent-visible assembly block.
 
+use std::cell::RefCell;
+use std::collections::{HashSet, VecDeque};
 use std::io::Cursor;
 
 use heed::RoTxn;
@@ -1453,6 +1455,21 @@ impl Vault {
     /// This is audit history, not a capability: nothing in the engine consults
     /// it to decide whether an unstamp may proceed. LOUD on corruption, like
     /// every other owner-facing read in this module.
+    ///
+    /// BODY-TO-KEY BINDING (fix-6 item 5). The row KEY is the authority on
+    /// which `(record, facet, sequence)` an event belongs to — it is what the
+    /// prefix scan selected on and what
+    /// [`next_facet_reclassification_sequence_in_txn`] derives from. The body
+    /// repeats all three, so a body disagreeing with its key is a corrupt row,
+    /// and returning it anyway would MIS-ATTRIBUTE one pair's consent to
+    /// another: an owner auditing "what did I consent to reclassify for facet
+    /// F" would be shown an event that names a different facet. This is
+    /// exactly the class of silent substitution an audit trail cannot have, so
+    /// it ERRORS ([`Error::CorruptedIndex`]) rather than skipping — consistent
+    /// with the LOUD stance every owner-facing read in this module takes, and
+    /// with the undecodable-body case one line below, which already errors. A
+    /// silent skip would let a damaged ledger read as a SHORTER, plausible
+    /// history, which is the more dangerous failure of the two.
     pub fn facet_reclassification_ledger(
         &self,
         record: &EntityId,
@@ -1465,8 +1482,17 @@ impl Vault {
             .vault_meta
             .prefix_iter(&rtxn, &facet_reclassification_pair_prefix(record, facet_id))?
         {
-            let (_key, value) = row?;
-            events.push(decode_facet_reclassification_body(&value)?.0);
+            let (key, value) = row?;
+            let (consent, sequence) = decode_facet_reclassification_body(&value)?;
+            if consent.record != record_of_reclassification_key(&key)?
+                || consent.facet != facet_of_reclassification_key(&key)?
+                || sequence != sequence_of_reclassification_key(&key)?
+            {
+                return Err(Error::CorruptedIndex(
+                    "facet reclassification body disagrees with its row key",
+                ));
+            }
+            events.push(consent);
         }
         Ok(events)
     }
@@ -1553,10 +1579,19 @@ impl Vault {
     /// outside [`DISCLOSURE_CLAIM_PREDICATES`] before it writes. That makes
     /// the safety argument for skipping the write gate STRUCTURAL rather
     /// than a call-site convention — no body reaching this door can carry a
-    /// caller-chosen predicate through the gate-exempt path. The strict
-    /// pre-validation (`allow_reserved = false`) additionally rejects any
-    /// reserved `edge.*` predicate, and the body passes the full
-    /// disclosure-family structural validation either way.
+    /// caller-chosen predicate through the gate-exempt path. The allow-list is
+    /// STRICTLY NARROWER than the reserved-namespace check it stands in front
+    /// of: every `edge.*` / `skill.*` predicate, and every unlisted
+    /// `disclosure.*` one, is already gone before the body is encoded.
+    ///
+    /// THIS IS THE ONLY WRITER OF THE `disclosure.*` NAMESPACE (fix-6 item 3).
+    /// The namespace is D17-reserved alongside `edge.*` and `skill.*`, so the
+    /// public `put_claim` / `put_entity` doors reject these predicates with
+    /// [`Error::ReservedPredicate`] and the mirrors cannot be forged at their
+    /// (publicly derivable) ids. The reserved door is therefore opened on BOTH
+    /// validation legs here — the pre-validation and the `apply_ops` write —
+    /// because the family allow-list above, not the namespace check, is what
+    /// bounds what this door may author.
     fn put_disclosure_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1571,7 +1606,7 @@ impl Vault {
         }
         validate_disclosure_claim_structure(body)?;
         let data = encode_claim_body(body)?;
-        validate_claim_body_bytes(&data, false)?;
+        validate_claim_body_bytes(&data, true)?;
         let mut ops = vec![BatchOp::Put {
             id: *claim_id,
             entity_type: ENTITY_TYPE_CLAIM,
@@ -1694,8 +1729,8 @@ pub(crate) struct FacetStateCleanup {
 ///
 /// The mirror is a CLAIM entity, so it is removed through the ordinary deindex
 /// door rather than a raw row delete — it carries edges, indexes, and possibly
-/// a vector, exactly like any other claim. Recursion terminates in one step:
-/// a mirror is a CLAIM and matches neither branch below.
+/// a vector, exactly like any other claim. That re-entry is bounded by the
+/// worklist [`delete_disclosure_mirror_in_txn`] owns, not by the stack.
 ///
 /// Only the families THIS lane minted are registered here. The older
 /// `disclosure.scope.v1` / `disclosure.tier_a.v1` rows have the identical
@@ -1708,60 +1743,257 @@ pub(crate) fn delete_facet_state_for_entity_in_txn(
     entity_type: u8,
 ) -> Result<FacetStateCleanup> {
     let mut cleanup = delete_facet_reclassification_consents_in_txn(store, wtxn, id, entity_type)?;
-    let (meta_key, claim_id) = match entity_type {
-        ENTITY_TYPE_COUNTERPARTY_CONTACT => {
-            (facet_clearance_meta_key(id), facet_clearance_claim_id(id)?)
-        }
-        ENTITY_TYPE_FACET => (facet_exposure_meta_key(id), facet_exposure_claim_id(id)?),
+    let (meta_key, claim_id, identity) = match entity_type {
+        ENTITY_TYPE_COUNTERPARTY_CONTACT => (
+            facet_clearance_meta_key(id),
+            facet_clearance_claim_id(id)?,
+            DisclosureMirrorIdentity::Clearance { contact: *id },
+        ),
+        ENTITY_TYPE_FACET => (
+            facet_exposure_meta_key(id),
+            facet_exposure_claim_id(id)?,
+            DisclosureMirrorIdentity::FacetExposure { facet: *id },
+        ),
         _ => return Ok(cleanup),
     };
     store.vault_meta.delete(wtxn, &meta_key)?;
-    delete_disclosure_mirror_in_txn(store, wtxn, &claim_id, &mut cleanup)?;
+    delete_disclosure_mirror_in_txn(store, wtxn, &claim_id, identity, &mut cleanup)?;
     Ok(cleanup)
+}
+
+/// WHICH mirror a derived id is supposed to hold — the expectation
+/// [`delete_disclosure_mirror_in_txn`] checks the stored body against before it
+/// tears anything.
+///
+/// Every variant carries the SUBJECT the caller derived the id from, so the
+/// check is a round-trip: the id was computed from these fields, and the body
+/// must name them back. The reclassification variant additionally pins the
+/// `(record, facet, sequence)` triple its VALUE carries, which is the only part
+/// of a ledger mirror that distinguishes one event of a pair from another.
+#[derive(Debug, Clone, Copy)]
+enum DisclosureMirrorIdentity {
+    FacetExposure {
+        facet: EntityId,
+    },
+    Clearance {
+        contact: EntityId,
+    },
+    Reclassification {
+        record: EntityId,
+        facet: EntityId,
+        sequence: u64,
+    },
+}
+
+impl DisclosureMirrorIdentity {
+    /// The predicate this mirror family writes, for the refusal log line.
+    fn predicate(self) -> &'static str {
+        match self {
+            Self::FacetExposure { .. } => PREDICATE_DISCLOSURE_FACET_EXPOSURE,
+            Self::Clearance { .. } => PREDICATE_DISCLOSURE_CLEARANCE,
+            Self::Reclassification { .. } => PREDICATE_DISCLOSURE_FACET_RECLASSIFICATION,
+        }
+    }
+
+    fn matches(self, body: &ClaimBody) -> bool {
+        if body.predicate != self.predicate() {
+            return false;
+        }
+        match self {
+            Self::FacetExposure { facet } => body.subject == ClaimSubject::Entity(facet),
+            Self::Clearance { contact } => body.subject == ClaimSubject::Entity(contact),
+            Self::Reclassification {
+                record,
+                facet,
+                sequence,
+            } => {
+                body.subject == ClaimSubject::Entity(record)
+                    && decode_facet_reclassification_value(&body.value).is_ok_and(
+                        |(consent, stored_sequence)| {
+                            consent.record == record
+                                && consent.facet == facet
+                                && stored_sequence == sequence
+                        },
+                    )
+            }
+        }
+    }
+}
+
+/// CUSTODY CHECK (fix-6 item 2) — is the claim stored at `claim_id` actually
+/// the mirror this cleanup is entitled to remove?
+///
+/// Mirror ids are PUBLIC sha256 derivations over ids the caller already knows,
+/// so any party who can write a CLAIM can compute one. "It is a CLAIM and its
+/// predicate is somewhere in the disclosure family" was not custody: it
+/// admitted every OTHER disclosure record too, so deleting contact C could
+/// deindex the ledger mirror of an unrelated reclassification that happened to
+/// sit at C's clearance-mirror id. This checks the id's own round trip instead
+/// — the exact predicate the derivation belongs to, and the subject (plus, for
+/// ledger rows, the `(record, facet, sequence)` triple) the id was derived
+/// from.
+///
+/// A mismatch LEAVES the row and logs. Refusing the whole delete would let a
+/// foreign write at a derived id wall off an unrelated erasure — the reverse
+/// harm, and a strictly worse one, since erasure completeness is the property
+/// the caller is trying to establish. Leaving is also what
+/// [`Vault::clear_disclosure_tier_a`] already does at the same hazard.
+fn disclosure_mirror_matches(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    claim_id: &EntityId,
+    identity: DisclosureMirrorIdentity,
+) -> Result<bool> {
+    let Some(raw) = store.entities.get(txn, claim_id.as_bytes())? else {
+        return Ok(false);
+    };
+    let stored = EntityMetadataHeader::parse(&raw)
+        .filter(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+        .and_then(|_| raw.get(ENTITY_METADATA_HEADER_LEN..))
+        .and_then(|payload| decode_claim_body(payload, true).ok());
+    if stored.is_some_and(|body| identity.matches(&body)) {
+        return Ok(true);
+    }
+    tracing::warn!(
+        mirror = %claim_id.to_hex(),
+        expected_predicate = identity.predicate(),
+        "disclosure mirror cleanup left a foreign claim at a derived id untouched"
+    );
+    Ok(false)
+}
+
+// The mirror-cleanup WORKLIST for the current thread (fix-6 item 4).
+//
+// LMDB gives one writer per environment and a write txn is neither `Send` nor
+// `Sync`, so a run is exactly scoped to the transaction that opened it and a
+// thread-local is the right home for it.
+thread_local! {
+    static MIRROR_CLEANUP_RUN: RefCell<Option<MirrorCleanupRun>> = const { RefCell::new(None) };
+}
+
+#[derive(Default)]
+struct MirrorCleanupRun {
+    /// Every mirror already claimed by this run. Makes a CYCLE terminate: a
+    /// mirror reachable from its own cleanup is skipped rather than re-torn.
+    visited: HashSet<EntityId>,
+    /// Mirrors discovered by a nested frame, waiting for the outermost frame
+    /// to tear them. This is what keeps the traversal off the stack.
+    queue: VecDeque<EntityId>,
+}
+
+/// Opens a run when none is active. `Some` means THIS frame owns the drain;
+/// `None` means an ancestor frame does and this one must only enqueue.
+fn begin_mirror_cleanup_run() -> Option<MirrorCleanupRunGuard> {
+    MIRROR_CLEANUP_RUN.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_some() {
+            return None;
+        }
+        *slot = Some(MirrorCleanupRun::default());
+        Some(MirrorCleanupRunGuard)
+    })
+}
+
+/// Closes the run on EVERY exit, the error paths included: a run left open
+/// would make the next cleanup on this thread enqueue into a worklist nobody
+/// drains. The transaction is rolled back on those paths anyway, so the
+/// abandoned queue describes work that never needed doing.
+struct MirrorCleanupRunGuard;
+
+impl Drop for MirrorCleanupRunGuard {
+    fn drop(&mut self) {
+        MIRROR_CLEANUP_RUN.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+/// Claims `claim_id` for this run. `false` when it was already claimed.
+fn claim_mirror_for_cleanup(claim_id: &EntityId) -> bool {
+    MIRROR_CLEANUP_RUN.with(|cell| {
+        cell.borrow_mut()
+            .as_mut()
+            .is_some_and(|run| run.visited.insert(*claim_id))
+    })
+}
+
+fn enqueue_mirror_for_cleanup(claim_id: EntityId) {
+    MIRROR_CLEANUP_RUN.with(|cell| {
+        if let Some(run) = cell.borrow_mut().as_mut() {
+            run.queue.push_back(claim_id);
+        }
+    });
+}
+
+fn next_queued_mirror() -> Option<EntityId> {
+    MIRROR_CLEANUP_RUN.with(|cell| {
+        cell.borrow_mut()
+            .as_mut()
+            .and_then(|run| run.queue.pop_front())
+    })
 }
 
 /// Removes ONE derived claim mirror, folding its cost into `cleanup`.
 ///
-/// Only OUR mirror is removed. The derived id is a public sha256, so a foreign
-/// claim could be squatting it through the ordinary gated `put_claim` door —
-/// the same custody check `clear_disclosure_tier_a` makes before it rewrites a
-/// derived id.
+/// Only OUR mirror is removed — see [`disclosure_mirror_matches`] for the
+/// custody rule and why a mismatch leaves rather than refuses.
 ///
 /// The mirror is a CLAIM entity, so it goes through the ordinary deindex door
 /// rather than a raw row delete — it carries edges, indexes, and possibly a
 /// vector, exactly like any other claim.
 ///
-/// RECURSION TERMINATES IN ONE STEP. Deindexing a mirror re-enters
-/// [`delete_facet_state_for_entity_in_txn`] with the mirror's own id: the
-/// exposure/clearance dispatch matches no branch (a mirror is a CLAIM), and the
-/// consent sweep's record-side prefix scan is keyed by the mirror id, which is
-/// never the `record` half of any consent — nothing is stamped into a facet on
-/// a mirror's behalf, and the ids are sha256-derived. Both find nothing, so the
-/// second level does no work and there is no third.
+/// ITERATIVE, CYCLE-SAFE, NO DEPTH CAP (fix-6 item 4). Deindexing a mirror
+/// re-enters [`delete_facet_state_for_entity_in_txn`] with the mirror's OWN id,
+/// and a mirror is itself a stampable CLAIM: stamp a mirror into a facet,
+/// unstamp it through the consent door, and the ledger row that act mints has
+/// the MIRROR as its `record` — so the mirror's own deletion sweeps a further
+/// mirror. The predecessor's "recursion terminates in one step, a mirror is
+/// never the `record` half of any consent" was exactly this mistake. Chains of
+/// that shape are caller-constructible to ANY length from ordinary public ops,
+/// so the old recursion was a stack-overflow abort (an unrecoverable process
+/// failure, not a refusal) at attacker-chosen depth.
+///
+/// A DEPTH CAP IS NOT AVAILABLE HERE, which is why the traversal is iterative
+/// instead: at the cap the only choices are aborting an otherwise-legitimate
+/// erasure or leaving mirror rows standing, and both break the
+/// erasure-completeness property this sweep exists to establish. The outermost
+/// frame therefore owns a worklist; nested frames only ENQUEUE. Depth becomes
+/// one heap entry per reachable mirror and the stack stays flat, so there is
+/// nothing left to bound.
+///
+/// The visited set is the CYCLE guard. A cycle needs two mirrors that derive
+/// each other, and the ids are sha256 over `(record, facet, sequence)` — so one
+/// is not constructible today, and this does not rely on that staying true. It
+/// also makes the sweep idempotent against a mirror reached twice by any future
+/// caller. Every mirror in the run is torn inside the CALLER'S single
+/// transaction, so the erasure stays atomic and the whole run rolls back
+/// together on any error.
 fn delete_disclosure_mirror_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     claim_id: &EntityId,
+    identity: DisclosureMirrorIdentity,
     cleanup: &mut FacetStateCleanup,
 ) -> Result<()> {
-    let Some(raw) = store.entities.get(wtxn, claim_id.as_bytes())? else {
-        return Ok(());
-    };
-    let is_our_mirror = EntityMetadataHeader::parse(&raw)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
-        && raw
-            .get(ENTITY_METADATA_HEADER_LEN..)
-            .and_then(|payload| decode_claim_body(payload, true).ok())
-            .is_some_and(|body| is_disclosure_claim_predicate(&body.predicate));
-    if !is_our_mirror {
+    if !disclosure_mirror_matches(store, &*wtxn, claim_id, identity)? {
         return Ok(());
     }
-    let (_existed, had_vector, had_graph_mutation, neighbors) =
-        crate::batch::deindex_entity(store, wtxn, claim_id)?;
-    crate::ppr::invalidate_ppr_for_delete(store, wtxn, claim_id, &neighbors)?;
-    cleanup.had_vector |= had_vector;
-    cleanup.had_graph_mutation |= had_graph_mutation;
-    cleanup.neighbors.extend(neighbors);
+    let Some(_run) = begin_mirror_cleanup_run() else {
+        // An ancestor frame owns the drain. Hand it the mirror and return:
+        // tearing it here is exactly the unbounded recursion being removed.
+        enqueue_mirror_for_cleanup(*claim_id);
+        return Ok(());
+    };
+    let mut pending = Some(*claim_id);
+    while let Some(next) = pending.take().or_else(next_queued_mirror) {
+        if !claim_mirror_for_cleanup(&next) {
+            continue;
+        }
+        let (_existed, had_vector, had_graph_mutation, neighbors) =
+            crate::batch::deindex_entity(store, wtxn, &next)?;
+        crate::ppr::invalidate_ppr_for_delete(store, wtxn, &next, &neighbors)?;
+        cleanup.had_vector |= had_vector;
+        cleanup.had_graph_mutation |= had_graph_mutation;
+        cleanup.neighbors.extend(neighbors);
+    }
     Ok(())
 }
 
@@ -1825,7 +2057,17 @@ fn delete_facet_reclassification_consents_in_txn(
     for (key, record, facet, sequence) in doomed {
         store.vault_meta.delete(wtxn, &key)?;
         let claim_id = facet_reclassification_claim_id(&record, &facet, sequence)?;
-        delete_disclosure_mirror_in_txn(store, wtxn, &claim_id, &mut cleanup)?;
+        delete_disclosure_mirror_in_txn(
+            store,
+            wtxn,
+            &claim_id,
+            DisclosureMirrorIdentity::Reclassification {
+                record,
+                facet,
+                sequence,
+            },
+            &mut cleanup,
+        )?;
     }
     Ok(cleanup)
 }
@@ -1943,13 +2185,54 @@ pub(crate) fn gate_facet_of_unstamp(
 ///
 /// Non-FACET types pass: only a FACET's deletion cascades stamps or is named by
 /// clearances.
+///
+/// The type-KNOWN door. Callers holding only a stored-type lookup — which can
+/// come back `None` — must use [`gate_hard_delete_facet_state_for_stored_type`]
+/// so the unknown case fails closed instead of skipping.
 pub(crate) fn gate_hard_delete_facet_state(
     store: &Store,
     txn: &RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
 ) -> Result<()> {
-    if entity_type != ENTITY_TYPE_FACET {
+    gate_hard_delete_facet_state_for_stored_type(store, txn, id, Some(entity_type))
+}
+
+/// FAIL-CLOSED ON UNKNOWN TYPE (fix-6 item 1) — the gate as the row-tearing
+/// site must evaluate it, where the entity type is whatever
+/// [`crate::batch::stored_entity_type`] could prove and `None` is a real
+/// answer.
+///
+/// `None` means HEADERLESS RESIDUE: no entity row under the id, but the id can
+/// still be the target of live `FacetOf` stamps — a facet whose entity row was
+/// removed out from under its edges, or edges written ahead of the row. The
+/// gate used to be reached through `if let Some(entity_type)`, so that case
+/// SKIPPED it entirely while `delete_related_edges` went on to tear every
+/// inbound stamp. The stamped records SURVIVE that tear and are silently
+/// reclassified into the unfaceted class the P7 conjunct admits as invariant —
+/// unstamp-via-delete with no consent event anywhere, which is the exact
+/// laundering shape this gate exists to close, reached by deleting the one
+/// thing whose type nobody can vouch for.
+///
+/// So the unknown type is treated as POSSIBLY-FACET and both arms run. Only the
+/// type-DISPATCH is unavailable without a type; neither arm needs one — the
+/// stamp arm scans `edges_in` under the id and the clearance arm scans for
+/// rows naming it, both keyed by id alone. A headerless id with no incident
+/// stamp and no clearance naming it still deletes as the no-op it always was,
+/// so the fail-closed default costs an `edges_in` prefix probe (bounded by that
+/// id's inbound edges) plus, only when the id has no entity row, one pass over
+/// the clearance family.
+///
+/// The remedy is unchanged and mechanical: [`Vault::unstamp_facet_of`] is the
+/// consent-authorized op, and once the stamps are off through it the delete
+/// proceeds.
+pub(crate) fn gate_hard_delete_facet_state_for_stored_type(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: Option<u8>,
+) -> Result<()> {
+    if matches!(entity_type, Some(known) if known != ENTITY_TYPE_FACET) {
         return Ok(());
     }
     gate_facet_entity_delete(store, txn, id)
