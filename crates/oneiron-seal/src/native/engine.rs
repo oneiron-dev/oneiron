@@ -22,13 +22,8 @@ pub struct NativeSealEngine {
 }
 
 impl NativeSealEngine {
-    pub fn new(
-        config: SealConfig,
-        backend: Arc<dyn SealBackend>,
-        fetcher: Arc<dyn SealFetcher>,
-        clock: Arc<dyn SealClock>,
-    ) -> Result<Self, SealError> {
-        // Fail fast on unparsable trust-anchor material.
+    /// Fail fast on unparsable trust-anchor material.
+    fn validate_anchors(config: &SealConfig) -> Result<(), SealError> {
         for anchor in &config.trust_anchors_der {
             der::Decode::from_der(anchor)
                 .map(|_: x509_cert::Certificate| ())
@@ -37,6 +32,48 @@ impl NativeSealEngine {
                     code: FatalCode::InvalidConfiguration,
                 })?;
         }
+        Ok(())
+    }
+
+    /// Engine over a caller-supplied fetcher. The fetch policy lives on the
+    /// fetcher, not the engine, so this path cannot honor
+    /// `config.fetch_policy`: a non-default policy is REJECTED instead of
+    /// left as a silent dead knob. The wired alternative is
+    /// `with_guarded_fetcher` (feature `network-fetch`), which builds the
+    /// SSRF-guarded fetcher FROM `config.fetch_policy`.
+    pub fn new(
+        config: SealConfig,
+        backend: Arc<dyn SealBackend>,
+        fetcher: Arc<dyn SealFetcher>,
+        clock: Arc<dyn SealClock>,
+    ) -> Result<Self, SealError> {
+        Self::validate_anchors(&config)?;
+        if config.fetch_policy != crate::api::FetchPolicy::default() {
+            return Err(SealError::Fatal {
+                stage: SealStage::InputValidation,
+                code: FatalCode::InvalidConfiguration,
+            });
+        }
+        Ok(Self {
+            config,
+            backend,
+            fetcher,
+            clock,
+        })
+    }
+
+    /// Engine whose fetcher is the SSRF-guarded HTTP client built from
+    /// `config.fetch_policy` — the wired policy path (§5).
+    #[cfg(feature = "network-fetch")]
+    pub fn with_guarded_fetcher(
+        config: SealConfig,
+        backend: Arc<dyn SealBackend>,
+        clock: Arc<dyn SealClock>,
+    ) -> Result<Self, SealError> {
+        Self::validate_anchors(&config)?;
+        let fetcher: Arc<dyn SealFetcher> = Arc::new(super::fetch::SsrfGuardedHttpFetcher::new(
+            config.fetch_policy.clone(),
+        ));
         Ok(Self {
             config,
             backend,
@@ -98,7 +135,81 @@ impl PdfSealEngine for NativeSealEngine {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::api::PadesProfile;
+    use crate::api::{FetchPolicy, PadesProfile, SealResourceLimits};
+
+    struct NoopBackend;
+
+    #[async_trait]
+    impl SealBackend for NoopBackend {
+        fn signing_identity(
+            &self,
+        ) -> Result<crate::api::SigningIdentity, crate::api::BackendError> {
+            Err(crate::api::BackendError::Unavailable {
+                retry_after_ms: None,
+            })
+        }
+
+        async fn sign_digest(
+            &self,
+            _request: crate::api::SignDigestRequest,
+        ) -> Result<crate::api::BackendSignature, crate::api::BackendError> {
+            Err(crate::api::BackendError::Unavailable {
+                retry_after_ms: None,
+            })
+        }
+    }
+
+    struct Clock;
+
+    impl SealClock for Clock {
+        fn unix_time_ms(&self) -> u64 {
+            0
+        }
+    }
+
+    fn test_config(fetch_policy: FetchPolicy) -> SealConfig {
+        SealConfig {
+            trust_anchors_der: Vec::new(),
+            timestamp_authorities: Vec::new(),
+            fetch_policy,
+            resource_limits: SealResourceLimits::default(),
+        }
+    }
+
+    #[test]
+    fn injected_fetcher_path_rejects_a_non_default_fetch_policy() {
+        // The injected-fetcher path cannot honor config.fetch_policy: a
+        // configured policy must fail loud, never sit as a dead knob.
+        let policy = FetchPolicy {
+            allowed_origins: vec![url::Url::parse("https://ca.example.test").unwrap()],
+            ..FetchPolicy::default()
+        };
+        let err = NativeSealEngine::new(
+            test_config(policy),
+            Arc::new(NoopBackend),
+            Arc::new(crate::api::OfflineFetcher),
+            Arc::new(Clock),
+        )
+        .err()
+        .unwrap();
+        assert!(matches!(
+            err,
+            SealError::Fatal {
+                stage: SealStage::InputValidation,
+                code: FatalCode::InvalidConfiguration,
+            }
+        ));
+        // The default policy is accepted on this path.
+        assert!(
+            NativeSealEngine::new(
+                test_config(FetchPolicy::default()),
+                Arc::new(NoopBackend),
+                Arc::new(crate::api::OfflineFetcher),
+                Arc::new(Clock),
+            )
+            .is_ok()
+        );
+    }
 
     #[test]
     fn operation_id_contract_rejects_empty_and_oversized() {

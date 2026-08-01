@@ -32,17 +32,41 @@ fn effective_port(u: &url::Url) -> u16 {
 /// unspecified, and other non-global ranges unless an explicit configured
 /// CIDR row admits the address. IPv4-mapped IPv6 addresses are unmapped
 /// first so a mapped form cannot smuggle a denied v4 class past the v6
-/// arm; CIDR admission matches the unmapped form too.
+/// arm; NAT64 well-known-prefix (64:ff9b::/96, RFC 6052) addresses are
+/// decoded the same way — the embedded v4 address is what the packet
+/// actually reaches, so the v4 deny/admit rules decide it. CIDR admission
+/// matches the unmapped/decoded form too.
 #[cfg_attr(not(feature = "network-fetch"), allow(dead_code))]
 pub(crate) fn addr_allowed(ip: IpAddr, allowed_cidrs: &[ipnet::IpNet]) -> bool {
     let ip = match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        IpAddr::V6(v6) => match embedded_ipv4(&v6) {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(v6),
+        },
         other => other,
     };
     if allowed_cidrs.iter().any(|c| c.contains(&ip)) {
         return true;
     }
     is_globally_routable(ip)
+}
+
+/// Decode the embedded IPv4 form of a v4-mapped (::ffff:0:0/96) or NAT64
+/// well-known-prefix (64:ff9b::/96, RFC 6052 — the v4 sits in the low 32
+/// bits) address. The policy carries no other configured NAT64 prefixes, so
+/// the well-known /96 is the only translation decoded here; anything else
+/// stays on the v6 class rules.
+#[cfg_attr(not(feature = "network-fetch"), allow(dead_code))]
+fn embedded_ipv4(v6: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    if let Some(v4) = v6.to_ipv4_mapped() {
+        return Some(v4);
+    }
+    let seg = v6.segments();
+    if seg[0] == 0x0064 && seg[1] == 0xFF9B && seg[2..6] == [0, 0, 0, 0] {
+        let o = v6.octets();
+        return Some(std::net::Ipv4Addr::new(o[12], o[13], o[14], o[15]));
+    }
+    None
 }
 
 #[cfg_attr(not(feature = "network-fetch"), allow(dead_code))]
@@ -208,25 +232,27 @@ mod http {
         }
 
         /// Resolve DNS once, apply the address policy, and return the pinned
-        /// address set for this request. DNS rebinding between validation
-        /// and connection cannot escape this set: the client override pins
-        /// exactly these addresses for the connection.
+        /// address set for this request — all inside the request deadline:
+        /// a stalled resolver must not bypass `timeout_ms`. DNS rebinding
+        /// between validation and connection cannot escape this set: the
+        /// client override pins exactly these addresses for the connection.
         async fn pinned_addrs(
             &self,
             url: &url::Url,
+            deadline: tokio::time::Instant,
         ) -> Result<Vec<std::net::SocketAddr>, FetchError> {
             let host = url.host_str().ok_or(FetchError::Denied)?.to_string();
             let port = url.port_or_known_default().ok_or(FetchError::Denied)?;
-            let looked_up = tokio::net::lookup_host((host.as_str(), port))
-                .await
-                .map_err(|_| FetchError::Unavailable)?;
-            let pinned: Vec<_> = looked_up
-                .filter(|a| addr_allowed(a.ip(), &self.policy.allowed_cidrs))
-                .collect();
-            if pinned.is_empty() {
-                return Err(FetchError::Denied);
-            }
-            Ok(pinned)
+            resolve_pinned(
+                async move {
+                    tokio::net::lookup_host((host.as_str(), port))
+                        .await
+                        .map(std::iter::Iterator::collect::<Vec<_>>)
+                },
+                &self.policy.allowed_cidrs,
+                deadline,
+            )
+            .await
         }
 
         fn client_for(
@@ -250,7 +276,7 @@ mod http {
             if !origin_allowed(&self.policy, url) {
                 return Err(FetchError::Denied);
             }
-            let addrs = self.pinned_addrs(url).await?;
+            let addrs = self.pinned_addrs(url, deadline).await?;
             let host = url.host_str().ok_or(FetchError::Denied)?;
             let client = Self::client_for(host, &addrs)?;
             let builder = match request.method {
@@ -298,6 +324,28 @@ mod http {
             }
             Ok(FetchResponse { body, content_type })
         }
+    }
+
+    /// Resolve through `lookup`, filter by the address policy, bound by the
+    /// request deadline. A resolution that outlives the deadline is a
+    /// Timeout, never an unbounded wait.
+    async fn resolve_pinned(
+        lookup: impl std::future::Future<Output = std::io::Result<Vec<std::net::SocketAddr>>>,
+        allowed_cidrs: &[ipnet::IpNet],
+        deadline: tokio::time::Instant,
+    ) -> Result<Vec<std::net::SocketAddr>, FetchError> {
+        let looked_up = tokio::time::timeout_at(deadline, lookup)
+            .await
+            .map_err(|_| FetchError::Timeout)?
+            .map_err(|_| FetchError::Unavailable)?;
+        let pinned: Vec<_> = looked_up
+            .into_iter()
+            .filter(|a| addr_allowed(a.ip(), allowed_cidrs))
+            .collect();
+        if pinned.is_empty() {
+            return Err(FetchError::Denied);
+        }
+        Ok(pinned)
     }
 
     #[async_trait]
@@ -395,6 +443,26 @@ mod http {
                 fetcher.cache_get(&key, 512).is_none(),
                 "cached body larger than this request's purpose cap must not be served"
             );
+        }
+
+        #[tokio::test]
+        async fn dns_resolution_races_the_total_deadline() {
+            // A resolver that never answers must abort at the deadline, not
+            // hang past timeout_ms (test-double resolver).
+            let past = tokio::time::Instant::now() - Duration::from_secs(1);
+            let lookup = std::future::pending::<std::io::Result<Vec<std::net::SocketAddr>>>();
+            let err = super::resolve_pinned(lookup, &[], past).await.unwrap_err();
+            assert!(matches!(err, FetchError::Timeout));
+            // An immediate answer inside the deadline resolves and filters.
+            let later = tokio::time::Instant::now() + Duration::from_secs(60);
+            let ok_lookup = async {
+                Ok(vec![std::net::SocketAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8)),
+                    443,
+                )])
+            };
+            let pinned = super::resolve_pinned(ok_lookup, &[], later).await.unwrap();
+            assert_eq!(pinned.len(), 1);
         }
 
         #[tokio::test]
@@ -508,11 +576,7 @@ mod tests {
             IpAddr::V6("2606:4700:4700::1111".parse().unwrap()),
             &cidrs
         ));
-        // Well-known NAT64 64:ff9b::/96 and global 2001: space stay allowed.
-        assert!(addr_allowed(
-            IpAddr::V6("64:ff9b::808:808".parse().unwrap()),
-            &cidrs
-        ));
+        // Global 2001: space stays allowed.
         assert!(addr_allowed(
             IpAddr::V6("2001:4860:4860::8888".parse().unwrap()),
             &cidrs
@@ -520,6 +584,33 @@ mod tests {
         // Explicit CIDR admission overrides the class denial.
         let admit: Vec<ipnet::IpNet> = vec!["10.0.0.0/8".parse().unwrap()];
         assert!(addr_allowed(IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9)), &admit));
+    }
+
+    #[test]
+    fn nat64_well_known_prefix_decodes_the_embedded_v4() {
+        let cidrs: Vec<ipnet::IpNet> = Vec::new();
+        // 64:ff9b::/96 (RFC 6052): the embedded v4 decides the class rules.
+        // 64:ff9b::808:808 embeds 8.8.8.8 — global, allowed.
+        assert!(addr_allowed(
+            IpAddr::V6("64:ff9b::808:808".parse().unwrap()),
+            &cidrs
+        ));
+        // 64:ff9b::a9fe:a9fe embeds 169.254.169.254 — link-local, denied.
+        assert!(!addr_allowed(
+            IpAddr::V6("64:ff9b::a9fe:a9fe".parse().unwrap()),
+            &cidrs
+        ));
+        // 64:ff9b::7f00:1 embeds 127.0.0.1 — loopback, denied.
+        assert!(!addr_allowed(
+            IpAddr::V6("64:ff9b::7f00:1".parse().unwrap()),
+            &cidrs
+        ));
+        // A v4 CIDR admit row matches the decoded embedded address.
+        let admit: Vec<ipnet::IpNet> = vec!["169.254.0.0/16".parse().unwrap()];
+        assert!(addr_allowed(
+            IpAddr::V6("64:ff9b::a9fe:a9fe".parse().unwrap()),
+            &admit
+        ));
     }
 
     #[test]

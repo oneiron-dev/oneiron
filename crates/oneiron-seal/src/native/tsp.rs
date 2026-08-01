@@ -67,9 +67,14 @@ fn extract_token(resp_der: &[u8]) -> Result<Vec<u8>, SealError> {
     Ok(r.expect(0x30)?.full.to_vec())
 }
 
-/// Nonce as a DER INTEGER body (big-endian, sign-padded).
+/// Nonce as a DER INTEGER body: minimal-length two's complement — strip
+/// redundant leading zero octets while the next octet's high bit is clear,
+/// then sign-pad a set high bit.
 fn nonce_int_body(nonce: &[u8; 16]) -> Vec<u8> {
     let mut be = nonce.to_vec();
+    while be.len() > 1 && be[0] == 0 && be[1] & 0x80 == 0 {
+        be.remove(0);
+    }
     if be[0] & 0x80 != 0 {
         be.insert(0, 0);
     }
@@ -91,6 +96,22 @@ fn token_message_digest(signer: &cms::ParsedSignerInfo) -> Result<Sha256Digest, 
         }
     }
     found.ok_or_else(ts_err)
+}
+
+/// RFC 3161 §2.4.2: the token's signedAttrs MUST include a content-type
+/// attribute (exactly once) whose value is id-ct-TSTInfo.
+fn token_content_type_check(signer: &cms::ParsedSignerInfo) -> Result<(), SealError> {
+    let mut seen = false;
+    for attr in &signer.signed_attrs {
+        let (oid, value) = cms::parse_attribute(attr)?;
+        if oid == cms::OID_ATTR_CONTENT_TYPE.as_bytes() {
+            if seen || value.tag != 0x06 || value.content != OID_TST_INFO {
+                return Err(ts_err());
+            }
+            seen = true;
+        }
+    }
+    if seen { Ok(()) } else { Err(ts_err()) }
 }
 
 /// Signer-certificate binding inside the token's signingCertificateV2 attr.
@@ -154,6 +175,7 @@ pub(crate) fn validate_response(
     if !cms::is_sha256_oid(&signer.digest_alg_oid) {
         return Err(ts_err());
     }
+    token_content_type_check(signer)?;
     if token_message_digest(signer)? != cms::sha256(&econtent) {
         return Err(ts_err());
     }
@@ -276,6 +298,7 @@ pub(crate) fn validate_token_for_verify(
     if !cms::is_sha256_oid(&signer.digest_alg_oid) {
         return Err(ts_err());
     }
+    token_content_type_check(signer)?;
     if token_message_digest(signer)? != cms::sha256(&econtent) {
         return Err(ts_err());
     }
@@ -329,6 +352,35 @@ mod tests {
     #[test]
     fn all_zero_nonce_is_rejected() {
         assert!(build_request(&[3u8; 32], &[0u8; 16]).is_err());
+    }
+
+    #[test]
+    fn nonce_integer_body_is_minimal_twos_complement() {
+        // Redundant leading zero stripped when the next MSB is clear.
+        let mut n = [0u8; 16];
+        n[1] = 0x7F;
+        let body = nonce_int_body(&n);
+        assert_eq!(body[0], 0x7F, "leading 0x00 before a clear MSB is dropped");
+        assert_eq!(body.len(), 15);
+        // 0x00FF: the leading zero is SIGNIFICANT (next MSB set) and must be
+        // kept exactly once — 00 FF, never 00 00 FF.
+        let mut n = [0u8; 16];
+        n[1] = 0xFF;
+        let body = nonce_int_body(&n);
+        assert_eq!(&body[..2], &[0x00, 0xFF]);
+        assert_eq!(body.len(), 16);
+        // High bit set on the first octet: one sign pad.
+        let mut n = [0x80u8; 16];
+        n[0] = 0xFF;
+        let body = nonce_int_body(&n);
+        assert_eq!(&body[..2], &[0x00, 0xFF]);
+        assert_eq!(body.len(), 17);
+        // Multiple redundant zeros collapse.
+        let mut n = [0u8; 16];
+        n[3] = 0x01;
+        let body = nonce_int_body(&n);
+        assert_eq!(body[0], 0x01);
+        assert_eq!(body.len(), 13);
     }
 
     #[test]

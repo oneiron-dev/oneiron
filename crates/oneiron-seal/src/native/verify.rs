@@ -27,9 +27,42 @@ fn malformed_input() -> SealError {
     }
 }
 
+fn cert_path_err() -> SealError {
+    SealError::Fatal {
+        stage: crate::error::SealStage::Verification,
+        code: crate::error::FatalCode::CertificatePathInvalid,
+    }
+}
+
+/// Signer-leaf key-usage gate: when the leaf carries a KeyUsage extension it
+/// must permit signing — `digitalSignature` or `contentCommitment`
+/// (nonRepudiation). Any other class (e.g. keyEncipherment-only) cannot act
+/// as a signing identity. An ABSENT KeyUsage follows RFC 5280 §4.2.1.3 (the
+/// key is unconstrained) and passes; this mirrors the vendored pkix-chain
+/// TSA profile's treatment of a missing extension. The TSA chain does not
+/// ride this gate: tsp.rs keeps it on the vendored `verify_time_stamper`
+/// profile, which enforces the RFC 3161 signing-only shape.
+fn enforce_signer_leaf_key_usage(leaf: &x509_cert::Certificate) -> Result<(), SealError> {
+    use const_oid::AssociatedOid;
+    use der::Decode;
+    use x509_cert::ext::pkix::KeyUsage;
+    let Some(exts) = &leaf.tbs_certificate.extensions else {
+        return Ok(());
+    };
+    for ext in exts {
+        if ext.extn_id == KeyUsage::OID {
+            let ku = KeyUsage::from_der(ext.extn_value.as_bytes()).map_err(|_| cert_path_err())?;
+            if !ku.digital_signature() && !ku.non_repudiation() {
+                return Err(cert_path_err());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// RFC 5280 path validation against configured trust anchors at the
-/// applicable time. Shared by the assembler (B-LT chain pre-check) and the
-/// verifier.
+/// applicable time, plus the signer-leaf key-usage gate. Shared by the
+/// assembler (B-LT chain pre-check) and the verifier.
 pub(crate) fn validate_chain(
     chain_ders: &[Vec<u8>],
     anchors: &[pkix_chain::TrustAnchor],
@@ -40,10 +73,7 @@ pub(crate) fn validate_chain(
         .iter()
         .map(|d| x509_cert::Certificate::from_der(d))
         .collect::<Result<_, _>>()
-        .map_err(|_| SealError::Fatal {
-            stage: crate::error::SealStage::Verification,
-            code: crate::error::FatalCode::CertificatePathInvalid,
-        })?;
+        .map_err(|_| cert_path_err())?;
     pkix_chain::verify_chain(
         &chain,
         anchors,
@@ -52,11 +82,11 @@ pub(crate) fn validate_chain(
         &pkix_chain::NoRevocation,
         &pkix_chain::NoAiaFetcher,
     )
-    .map(|_| ())
-    .map_err(|_| SealError::Fatal {
-        stage: crate::error::SealStage::Verification,
-        code: crate::error::FatalCode::CertificatePathInvalid,
-    })
+    .map_err(|_| cert_path_err())?;
+    if let Some(leaf) = chain.first() {
+        enforce_signer_leaf_key_usage(leaf)?;
+    }
+    Ok(())
 }
 
 fn anchors(config: &SealConfig) -> Vec<pkix_chain::TrustAnchor> {
@@ -431,8 +461,9 @@ fn verify_ts_token(
 }
 
 /// Verify one DocTimeStamp dictionary (§7.6/§7.7): ByteRange coverage and
-/// the RFC 3161 token over the covered bytes. A validated token's TSA chain
-/// is recorded in `covered` for the DSS binding. Returns the token's
+/// the RFC 3161 token over the covered bytes. Only a FULLY accepted
+/// DocTimeStamp records its TSA chain in `covered` for the DSS binding — a
+/// rejected token leaves no trace in the binding set. Returns the token's
 /// genTime (unix seconds) when every check passes; the caller feeds it to
 /// DSS evidence freshness only when the ByteRange provably covers the final
 /// /DSS revision (`dss_revision_end`).
@@ -461,25 +492,22 @@ fn verify_doc_ts(
         let imprint = pdf::hash_byte_range(bytes, e.byte_range).ok()?;
         tsp::validate_token_for_verify(der, &imprint, anchors).ok()
     });
-    let token_ok = token.as_ref().is_some_and(|(_, tsa_chain_ders)| {
-        covered.extend(
-            tsa_chain_ders
-                .iter()
-                .filter_map(|d| EmbeddedCert::from_der(d)),
-        );
-        true
-    });
-    let ok = br_ok && covers_end && token_ok;
+    let ok = br_ok && covers_end && token.is_some();
     checks.record(
         VerifyCheckKind::DocumentTimestamp,
         ok,
         VerifyFindingCode::DocumentTimestampInvalid,
     );
-    if ok {
-        token.map(|(gen_time, _)| gen_time)
-    } else {
-        None
+    if !ok {
+        return None;
     }
+    let (gen_time, tsa_chain_ders) = token?;
+    covered.extend(
+        tsa_chain_ders
+            .iter()
+            .filter_map(|d| EmbeddedCert::from_der(d)),
+    );
+    Some(gen_time)
 }
 
 /// Validate the DSS revision when the catalog carries `/DSS` (§7.5/§7.7):
@@ -767,6 +795,27 @@ pub(crate) fn issued_by(cert: &EmbeddedCert, issuer: &EmbeddedCert) -> bool {
     cms::verify_signature_value(alg, &issuer.der, &tbs, cert.cert.signature.raw_bytes()).is_ok()
 }
 
+/// deltaCRLIndicator (2.5.29.46) and IssuingDistributionPoint (2.5.29.28).
+const OID_EXT_DELTA_CRL_INDICATOR: &[u8] = b"\x55\x1d\x2e";
+const OID_EXT_ISSUING_DISTRIBUTION_POINT: &[u8] = b"\x55\x1d\x1c";
+
+/// Complete-scope posture (fail-closed): a CRL carrying deltaCRLIndicator
+/// (changes since a base CRL) or IssuingDistributionPoint (subset coverage
+/// of the issuer's namespace) is NOT complete revocation evidence and must
+/// not count toward revocation coverage. Deliberate support for scoped CRLs
+/// can be added later; until then both seal and verify reject them.
+pub(crate) fn crl_complete_scope(crl: &x509_cert::crl::CertificateList) -> bool {
+    crl.tbs_cert_list
+        .crl_extensions
+        .as_ref()
+        .is_none_or(|exts| {
+            !exts.iter().any(|e| {
+                e.extn_id.as_bytes() == OID_EXT_DELTA_CRL_INDICATOR
+                    || e.extn_id.as_bytes() == OID_EXT_ISSUING_DISTRIBUTION_POINT
+            })
+        })
+}
+
 /// One DSS CRL entry: parses, signature verifies against an
 /// embedded/anchored issuer cert with a consistent algorithm, is fresh at
 /// the applicable time, and lists no in-scope serial on its revoked list
@@ -789,6 +838,9 @@ fn crl_entry_valid<'a>(
     let Ok(crl) = x509_cert::crl::CertificateList::from_der(data) else {
         return None;
     };
+    if !crl_complete_scope(&crl) {
+        return None;
+    }
     let Ok(tbs) = crl.tbs_cert_list.to_der() else {
         return None;
     };
@@ -833,6 +885,9 @@ fn crl_entry_valid<'a>(
 /// id-sha1 (RFC 6960 default CertID hash) and id-kp-OCSPSigning.
 const OID_SHA1_BYTES: &[u8] = b"\x2b\x0e\x03\x02\x1a";
 const OID_OCSP_SIGNING: &[u8] = b"\x2b\x06\x01\x05\x05\x07\x03\x09";
+
+/// Clock-skew tolerance for the OCSP producedAt sanity bound (seconds).
+const OCSP_PRODUCED_AT_MAX_SKEW_SECS: u64 = 300;
 
 /// Hash `data` with the CertID hash algorithm; only SHA-1 and SHA-256 are
 /// recognized evidence-hash forms.
@@ -889,12 +944,21 @@ fn ocsp_cert_binding<'a>(
 /// RFC 6960 §2.6: the responder is the issuer itself, or a delegate
 /// carrying the id-kp-OCSPSigning EKU whose certificate is actually issued
 /// BY the issuer (delegation chains to the key-bound actual issuer, never
-/// to a same-subject shadow).
-fn ocsp_responder_authorized(responder: &EmbeddedCert, issuer: &EmbeddedCert) -> bool {
+/// to a same-subject shadow). A delegate must additionally be TIME-VALID at
+/// the applicable time: delegation rides a certificate, and an expired or
+/// not-yet-valid delegate certificate authorizes nothing.
+fn ocsp_responder_authorized(
+    responder: &EmbeddedCert,
+    issuer: &EmbeddedCert,
+    at_unix: u64,
+) -> bool {
     use der::Decode;
     if responder.der == issuer.der {
         return true;
     }
+    let validity = &responder.cert.tbs_certificate.validity;
+    let time_valid =
+        time_secs(validity.not_before) <= at_unix && at_unix <= time_secs(validity.not_after);
     let has_eku = responder
         .cert
         .tbs_certificate
@@ -907,7 +971,7 @@ fn ocsp_responder_authorized(responder: &EmbeddedCert, issuer: &EmbeddedCert) ->
                         .is_ok_and(|eku| eku.0.iter().any(|o| o.as_bytes() == OID_OCSP_SIGNING))
             })
         });
-    has_eku && issued_by(responder, issuer)
+    time_valid && has_eku && issued_by(responder, issuer)
 }
 
 /// Does this candidate certificate match the BasicOCSPResponse responderID?
@@ -956,6 +1020,19 @@ fn ocsp_entry_valid(
     let Ok(basic) = x509_ocsp::BasicOcspResponse::from_der(bytes.response.as_bytes()) else {
         return None;
     };
+    // producedAt sanity bound: RFC 6960 assigns producedAt no freshness
+    // semantics, but a response claiming to be produced BEYOND the
+    // applicable time (plus a documented clock-skew tolerance) is not
+    // plausible evidence and is rejected.
+    let produced_at = basic
+        .tbs_response_data
+        .produced_at
+        .0
+        .to_unix_duration()
+        .as_secs();
+    if produced_at > at_unix.saturating_add(OCSP_PRODUCED_AT_MAX_SKEW_SECS) {
+        return None;
+    }
     if basic.tbs_response_data.responses.is_empty() {
         return None;
     }
@@ -984,7 +1061,7 @@ fn ocsp_entry_valid(
     let mut targets: Vec<Vec<u8>> = Vec::with_capacity(basic.tbs_response_data.responses.len());
     for single in &basic.tbs_response_data.responses {
         let (target, issuer) = ocsp_cert_binding(&single.cert_id, embedded, anchors)?;
-        if !ocsp_responder_authorized(responder, issuer) {
+        if !ocsp_responder_authorized(responder, issuer, at_unix) {
             return None;
         }
         if !evidence_fresh(
@@ -1181,6 +1258,12 @@ pub(crate) fn verify_document(
     // DocTimeStamp the verify clock applies and stale evidence fails.
     let dss_end = dss_revision_end(&doc, bytes);
     let mut archival_time: Option<u64> = None;
+    // Set when a VALIDATED DocTimeStamp provably covers the final /DSS
+    // revision (br_end >= dss_end — the archival_time condition). The LTA
+    // rung requires it: a validated DocTimeStamp that does NOT cover the
+    // /DSS keeps its DocumentTimestamp check for the report but confers no
+    // archival profile.
+    let mut covering_dts_valid = false;
     for (i, e) in sigs.iter().enumerate() {
         if e.is_doc_ts {
             if let Some(gen_time) =
@@ -1189,6 +1272,7 @@ pub(crate) fn verify_document(
                 let br_end = e.byte_range[2].saturating_add(e.byte_range[3]);
                 if dss_end.is_some_and(|end| br_end >= end) {
                     archival_time = Some(gen_time);
+                    covering_dts_valid = true;
                 }
             }
         } else {
@@ -1212,7 +1296,7 @@ pub(crate) fn verify_document(
             .list
             .iter()
             .any(|c| c.status == VerifyCheckStatus::Fail);
-    let achieved = classify(&checks, valid);
+    let achieved = classify(&checks, valid, covering_dts_valid);
     Ok(VerifyReport {
         valid,
         achieved_profile: achieved,
@@ -1221,14 +1305,18 @@ pub(crate) fn verify_document(
     })
 }
 
-/// Highest achieved baseline profile from the check outcomes.
-fn classify(checks: &Checks, valid: bool) -> Option<PadesProfile> {
+/// Highest achieved baseline profile from the check outcomes. The archival
+/// rung requires a VALIDATED DocTimeStamp that provably covers the final
+/// /DSS revision: `lt` already implies a present, valid DSS, so a
+/// non-covering (or absent) DocTimeStamp tops out at B-LT even when its
+/// DocumentTimestamp check passes.
+fn classify(checks: &Checks, valid: bool, covering_dts_valid: bool) -> Option<PadesProfile> {
     if !valid {
         return None;
     }
     let t = checks.passed(VerifyCheckKind::SignatureTimestamp);
     let lt = t && checks.passed(VerifyCheckKind::ValidationMaterial);
-    let lta = lt && checks.passed(VerifyCheckKind::DocumentTimestamp);
+    let lta = lt && checks.passed(VerifyCheckKind::DocumentTimestamp) && covering_dts_valid;
     if lta {
         Some(PadesProfile::BaselineLta)
     } else if lt {
@@ -1313,6 +1401,65 @@ mod tests {
         params.signed_by(&key_pair, &issuer).unwrap().der().to_vec()
     }
 
+    /// A leaf under `ca` with caller-chosen KeyUsage purposes (empty = no
+    /// KeyUsage extension).
+    fn leaf_with_ku(ca: &TestCa, cn: &str, kus: Vec<rcgen::KeyUsagePurpose>) -> Vec<u8> {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = kus;
+        params.is_ca = rcgen::IsCa::ExplicitNoCa;
+        let issuer = rcgen::Issuer::from_params(&ca.rcgen_params, &ca.rcgen_key);
+        params.signed_by(&key_pair, &issuer).unwrap().der().to_vec()
+    }
+
+    /// An OCSP delegate certificate issued by `issuer`: digitalSignature KU,
+    /// id-kp-OCSPSigning EKU, caller-chosen validity window.
+    fn ocsp_delegate(
+        issuer: &TestCa,
+        cn: &str,
+        not_before: (i32, u8, u8),
+        not_after: (i32, u8, u8),
+    ) -> TestCa {
+        use p256::pkcs8::DecodePrivateKey;
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+        params.not_before = rcgen::date_time_ymd(not_before.0, not_before.1, not_before.2);
+        params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
+        let eku = cms::tlv(
+            0x30,
+            &cms::oid_tlv(&der::asn1::ObjectIdentifier::new_unwrap(
+                "1.3.6.1.5.5.7.3.9",
+            )),
+        );
+        params
+            .custom_extensions
+            .push(rcgen::CustomExtension::from_oid_content(
+                &[2, 5, 29, 37],
+                eku,
+            ));
+        let issuer_rc = rcgen::Issuer::from_params(&issuer.rcgen_params, &issuer.rcgen_key);
+        let cert = params.signed_by(&key_pair, &issuer_rc).unwrap();
+        let cert_der = cert.der().to_vec();
+        let key = p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap();
+        let cert = x509_cert::Certificate::from_der(&cert_der).unwrap();
+        TestCa {
+            cert_der,
+            cert,
+            key,
+            rcgen_params: params,
+            rcgen_key: key_pair,
+        }
+    }
+
     /// An intermediate CA issued by `parent` (fresh key pair).
     fn child_ca(parent: &TestCa, cn: &str) -> TestCa {
         use p256::pkcs8::DecodePrivateKey;
@@ -1372,6 +1519,18 @@ mod tests {
         sign_with: Option<&p256::ecdsa::SigningKey>,
         revoked: Vec<x509_cert::serial_number::SerialNumber>,
     ) -> Vec<u8> {
+        build_crl_ext(ca, this, next, sign_with, revoked, Vec::new())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_crl_ext(
+        ca: &TestCa,
+        this: u64,
+        next: Option<u64>,
+        sign_with: Option<&p256::ecdsa::SigningKey>,
+        revoked: Vec<x509_cert::serial_number::SerialNumber>,
+        crl_extensions: Vec<x509_cert::ext::Extension>,
+    ) -> Vec<u8> {
         let alg = ecdsa_alg();
         let revoked_certificates = if revoked.is_empty() {
             None
@@ -1394,7 +1553,11 @@ mod tests {
             this_update: x509_time(this),
             next_update: next.map(x509_time),
             revoked_certificates,
-            crl_extensions: None,
+            crl_extensions: if crl_extensions.is_empty() {
+                None
+            } else {
+                Some(crl_extensions)
+            },
         };
         let tbs_der = tbs.to_der().unwrap();
         let sig = sign_p256(sign_with.unwrap_or(&ca.key), &tbs_der);
@@ -1414,9 +1577,27 @@ mod tests {
         next: Option<u64>,
         status: x509_ocsp::CertStatus,
     ) -> Vec<u8> {
+        build_ocsp_full(ca, serial, this, next, status, this, ca, false)
+    }
+
+    /// Full OCSP fixture: CertID hashes against `id_ca` (the target's
+    /// issuer), response signed by `responder` with responderID =
+    /// responder's subject, `produced_at` as given, and the responder
+    /// certificate embedded when `embed_responder` (the delegate shape).
+    #[allow(clippy::too_many_arguments)]
+    fn build_ocsp_full(
+        id_ca: &TestCa,
+        serial: x509_cert::serial_number::SerialNumber,
+        this: u64,
+        next: Option<u64>,
+        status: x509_ocsp::CertStatus,
+        produced_at: u64,
+        responder: &TestCa,
+        embed_responder: bool,
+    ) -> Vec<u8> {
         use sha1::Digest;
-        let subject_der = ca.cert.tbs_certificate.subject.to_der().unwrap();
-        let key_bytes = ca
+        let subject_der = id_ca.cert.tbs_certificate.subject.to_der().unwrap();
+        let key_bytes = id_ca
             .cert
             .tbs_certificate
             .subject_public_key_info
@@ -1444,18 +1625,24 @@ mod tests {
         };
         let data = x509_ocsp::ResponseData {
             version: Default::default(),
-            responder_id: x509_ocsp::ResponderId::ByName(ca.cert.tbs_certificate.subject.clone()),
-            produced_at: x509_ocsp::OcspGeneralizedTime(gt(this)),
+            responder_id: x509_ocsp::ResponderId::ByName(
+                responder.cert.tbs_certificate.subject.clone(),
+            ),
+            produced_at: x509_ocsp::OcspGeneralizedTime(gt(produced_at)),
             responses: vec![single],
             response_extensions: None,
         };
         let tbs_der = data.to_der().unwrap();
-        let sig = sign_p256(&ca.key, &tbs_der);
+        let sig = sign_p256(&responder.key, &tbs_der);
         let basic = x509_ocsp::BasicOcspResponse {
             tbs_response_data: data,
             signature_algorithm: ecdsa_alg(),
             signature: der::asn1::BitString::from_bytes(&sig).unwrap(),
-            certs: None,
+            certs: if embed_responder {
+                Some(vec![responder.cert.clone()])
+            } else {
+                None
+            },
         };
         let basic_der = basic.to_der().unwrap();
         x509_ocsp::OcspResponse {
@@ -1998,7 +2185,219 @@ mod tests {
         );
     }
 
+    // --- botfix3a gates: signer-leaf KU, CRL scope, OCSP delegate/producedAt,
+    // --- tsp content-type, covered-on-valid-only ------------------------------
+
+    fn anchors_of(ca: &TestCa) -> Vec<pkix_chain::TrustAnchor> {
+        vec![pkix_chain::TrustAnchor::from_cert(ca.cert.clone())]
+    }
+
+    #[test]
+    fn signer_leaf_key_encipherment_only_fails_certificate_path() {
+        let ca = test_ca("ku-ca");
+        let leaf = leaf_with_ku(
+            &ca,
+            "ku-leaf",
+            vec![rcgen::KeyUsagePurpose::KeyEncipherment],
+        );
+        assert!(
+            validate_chain(&[leaf], &anchors_of(&ca), AT_UNIX).is_err(),
+            "a keyEncipherment-only leaf must not pass as a signing identity"
+        );
+    }
+
+    #[test]
+    fn signer_leaf_digital_signature_or_absent_ku_passes() {
+        let ca = test_ca("ku-ca");
+        let ds = leaf_with_ku(
+            &ca,
+            "ds-leaf",
+            vec![rcgen::KeyUsagePurpose::DigitalSignature],
+        );
+        assert!(validate_chain(&[ds], &anchors_of(&ca), AT_UNIX).is_ok());
+        let cc = leaf_with_ku(
+            &ca,
+            "cc-leaf",
+            vec![rcgen::KeyUsagePurpose::ContentCommitment],
+        );
+        assert!(validate_chain(&[cc], &anchors_of(&ca), AT_UNIX).is_ok());
+        // No KeyUsage extension at all: RFC 5280-unconstrained, permitted.
+        let bare = leaf_with_ku(&ca, "bare-leaf", Vec::new());
+        assert!(validate_chain(&[bare], &anchors_of(&ca), AT_UNIX).is_ok());
+    }
+
+    fn crl_ext(oid: &str, value_der: Vec<u8>) -> x509_cert::ext::Extension {
+        x509_cert::ext::Extension {
+            extn_id: der::asn1::ObjectIdentifier::new_unwrap(oid),
+            critical: false,
+            extn_value: der::asn1::OctetString::new(value_der).unwrap(),
+        }
+    }
+
+    #[test]
+    fn dss_delta_crl_is_not_revocation_evidence() {
+        // deltaCRLIndicator (2.5.29.46): changes since a base, fail-closed.
+        let ca = test_ca("dss-ca");
+        let delta_ext = crl_ext(
+            "2.5.29.46",
+            der::asn1::Int::new(&[1]).unwrap().to_der().unwrap(),
+        );
+        let crl = build_crl_ext(
+            &ca,
+            AT_UNIX - 3600,
+            Some(AT_UNIX + 3600),
+            None,
+            vec![],
+            vec![delta_ext],
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_idp_scoped_crl_is_not_revocation_evidence() {
+        // IssuingDistributionPoint (2.5.29.28): subset coverage, fail-closed.
+        let ca = test_ca("dss-ca");
+        let idp_ext = crl_ext("2.5.29.28", vec![0x30, 0x00]);
+        let crl = build_crl_ext(
+            &ca,
+            AT_UNIX - 3600,
+            Some(AT_UNIX + 3600),
+            None,
+            vec![],
+            vec![idp_ext],
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_ocsp_future_produced_at_fails() {
+        // producedAt one day beyond the applicable time: not plausible
+        // evidence (skew tolerance is 300s).
+        let ca = test_ca("dss-ca");
+        let ocsp = build_ocsp_full(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+            AT_UNIX + 86_400,
+            &ca,
+            false,
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+        // The same response produced AT the applicable time passes.
+        let ok = build_ocsp_full(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+            AT_UNIX,
+            &ca,
+            false,
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ok]);
+        let checks = dss_check(&doc, &covered_of(&[&ca.cert_der]));
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn dss_ocsp_expired_delegate_response_fails() {
+        // Delegate cert expired before the applicable time: its `good`
+        // response authorizes nothing.
+        let ca = test_ca("dss-ca");
+        let delegate = ocsp_delegate(&ca, "ocsp-delegate", (2020, 1, 1), (2021, 1, 1));
+        let ocsp = build_ocsp_full(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+            AT_UNIX - 60,
+            &delegate,
+            true,
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_ocsp_time_valid_delegate_passes() {
+        let ca = test_ca("dss-ca");
+        let delegate = ocsp_delegate(&ca, "ocsp-delegate", (2020, 1, 1), (2030, 1, 1));
+        let ocsp = build_ocsp_full(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+            AT_UNIX - 60,
+            &delegate,
+            true,
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn tsp_token_without_content_type_attr_is_rejected() {
+        // RFC 3161 §2.4.2: signedAttrs must carry content-type id-ct-TSTInfo.
+        let tsa = tsa_ca();
+        let imprint = [9u8; 32];
+        let anchors = anchors_of(&tsa);
+        let missing = mint_token_shaped(&tsa, &imprint, AT_UNIX, false);
+        assert!(
+            tsp::validate_token_for_verify(&missing, &imprint, &anchors).is_err(),
+            "a token without the content-type attribute must fail"
+        );
+        let complete = mint_token_shaped(&tsa, &imprint, AT_UNIX, true);
+        assert!(tsp::validate_token_for_verify(&complete, &imprint, &anchors).is_ok());
+    }
+
+    #[test]
+    fn rejected_doc_ts_leaves_no_trace_in_covered() {
+        // A DocTimeStamp whose ByteRange is malformed must not extend the
+        // DSS binding set, even when its token would validate.
+        let tsa = tsa_ca();
+        let anchors = anchors_of(&tsa);
+        let bytes = b"%PDF-fake-body-for-hash";
+        let entry = SigEntry {
+            is_doc_ts: true,
+            byte_range: [4, 2, 10, 4], // s1 != 0: ByteRange check fails
+            contents: {
+                // Token over the (well-formed) span digest: it WOULD
+                // validate — the rejection comes from the ByteRange alone.
+                let mut spans = Vec::new();
+                spans.extend_from_slice(&bytes[4..6]);
+                spans.extend_from_slice(&bytes[10..14]);
+                mint_token(&tsa, &cms::sha256(&spans), AT_UNIX)
+            },
+        };
+        let mut checks = Checks::new();
+        let mut covered: Vec<EmbeddedCert> = Vec::new();
+        let got = verify_doc_ts(bytes, &entry, &anchors, &mut checks, false, &mut covered);
+        assert!(got.is_none(), "bad ByteRange rejects the DocTimeStamp");
+        assert!(
+            covered.is_empty(),
+            "a rejected DocTimeStamp leaves its TSA chain out of the binding set"
+        );
+    }
+
     // --- archival-time /DSS coverage binding: end-to-end through ----------
+
     // --- verify_sealed_pdf (the gap that let the bypass through) ----------
 
     use std::sync::Arc;
@@ -2058,6 +2457,17 @@ mod tests {
     /// Mint a TimeStampToken ContentInfo over `imprint` (RFC 3161, detached
     /// signature shape with eContent TSTInfo), signed by `tsa`.
     fn mint_token(tsa: &TestCa, imprint: &Sha256Digest, gen_time: u64) -> Vec<u8> {
+        mint_token_shaped(tsa, imprint, gen_time, true)
+    }
+
+    /// `mint_token` with a shape switch: `with_content_type` drops the
+    /// RFC 3161 §2.4.2 content-type signed attribute when false.
+    fn mint_token_shaped(
+        tsa: &TestCa,
+        imprint: &Sha256Digest,
+        gen_time: u64,
+        with_content_type: bool,
+    ) -> Vec<u8> {
         let tst = x509_tsp::TstInfo {
             version: x509_tsp::TspVersion::V1,
             policy: der::asn1::ObjectIdentifier::new_unwrap("1.2.3.4.5"),
@@ -2081,11 +2491,13 @@ mod tests {
         let ct_oid = der::asn1::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4");
         let mut ct_body = cms::oid_tlv(&cms::OID_ATTR_CONTENT_TYPE);
         ct_body.extend_from_slice(&cms::tlv(0x31, &cms::oid_tlv(&ct_oid)));
-        let attrs = vec![
-            cms::tlv(0x30, &ct_body),
+        let mut attrs = vec![
             cms::attr_message_digest(&cms::sha256(&tst_der)),
             cms::attr_signing_cert_v2(&tsa.cert_der, &issuer, &serial),
         ];
+        if with_content_type {
+            attrs.push(cms::tlv(0x30, &ct_body));
+        }
         let (wire, signing) = cms::assemble_signed_attrs(attrs);
         let sig = sign_p256(&tsa.key, &signing);
         let mut si = cms::tlv(0x02, &[1]);
@@ -2564,6 +2976,49 @@ mod tests {
         );
         assert!(report.valid, "attested evidence must validate: {report:?}");
         assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+    }
+
+    #[test]
+    fn non_covering_doc_timestamp_confers_lt_not_lta() {
+        // A VALID DocTimeStamp that does NOT cover the final /DSS keeps its
+        // DocumentTimestamp check but must not confer B-LTA: fresh-at-clock
+        // evidence plus a non-covering DTS classifies BaselineLt.
+        let signer = test_ca("nc-signer");
+        let signer2 = test_ca("nc-signer-two");
+        let tsa = tsa_ca();
+        let b1 = append_sig_revision(&base_input(), &signer, "nc-a", Some(&tsa), AT_UNIX);
+        // DocTimeStamp BEFORE the /DSS revision: it cannot cover it.
+        let b2 = append_doc_ts_revision(&b1, &tsa, AT_UNIX);
+        // Evidence fresh at the VERIFY clock, so ValidationMaterial passes
+        // without any archival time.
+        let crl = build_crl(
+            &signer,
+            AT_UNIX - 60,
+            Some(VERIFY_SECS + 3600),
+            None,
+            vec![],
+        );
+        let b3 = append_dss_revision(
+            &b2,
+            vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+            vec![crl],
+        );
+        let b4 = append_sig_revision(&b3, &signer2, "nc-b", None, 0);
+        let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
+        let engine = verify_engine(anchors, VERIFY_SECS);
+        let report = engine.verify_sealed_pdf(&b4).unwrap();
+        assert!(report.valid, "fresh evidence must validate: {report:?}");
+        let dts = report
+            .checks
+            .iter()
+            .find(|c| c.kind == VerifyCheckKind::DocumentTimestamp)
+            .unwrap();
+        assert_eq!(dts.status, VerifyCheckStatus::Pass);
+        assert_eq!(
+            report.achieved_profile,
+            Some(PadesProfile::BaselineLt),
+            "a non-covering DocTimeStamp confers no archival rung"
+        );
     }
 
     /// Probe B1 (dormant staging, activation by a LATER catalog /DSS key):

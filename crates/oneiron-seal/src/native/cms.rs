@@ -345,8 +345,8 @@ fn parse_signer_info(tlv_bytes: &[u8]) -> Result<ParsedSignerInfo, SealError> {
     }
     let sid = r.expect(0x30)?;
     let mut sid_r = DerReader::new(sid.content);
-    sid_r.expect(0x30)?; // issuer Name
-    sid_r.expect(0x02)?; // serialNumber
+    let sid_issuer = sid_r.expect(0x30)?.full.to_vec(); // issuer Name TLV
+    let sid_serial = sid_r.expect(0x02)?.full.to_vec(); // serialNumber TLV
     let digest_alg = r.expect(0x30)?;
     let digest_oid = parse_oid(DerReader::new(digest_alg.content).expect(0x06)?)?;
     let attrs_field = r.expect(0xA0)?;
@@ -362,6 +362,19 @@ fn parse_signer_info(tlv_bytes: &[u8]) -> Result<ParsedSignerInfo, SealError> {
             return Err(cms_err()); // unsorted or duplicate
         }
         signed_attrs.push(a.full.to_vec());
+    }
+    // sid/ESS consistency (conformance hardening): when a
+    // signingCertificateV2 attribute is present, its issuerSerial must name
+    // the SAME issuer/serial as the SignerInfo sid; a disagreement is
+    // rejected rather than silently decided by the ESS alone.
+    for attr in &signed_attrs {
+        let (oid, _) = parse_attribute(attr)?;
+        if oid == OID_ATTR_SIGNING_CERT_V2.as_bytes() {
+            let (_, ess_issuer, ess_serial) = ess_cert_id_v2(attr)?;
+            if ess_issuer != sid_issuer || ess_serial != sid_serial {
+                return Err(cms_err());
+            }
+        }
     }
     let sig_alg = r.expect(0x30)?;
     let sig_oid = parse_oid(DerReader::new(sig_alg.content).expect(0x06)?)?;
@@ -529,15 +542,15 @@ pub(crate) fn check_baseline_attrs(signer: &ParsedSignerInfo) -> Result<Sha256Di
     digest.ok_or_else(cms_err)
 }
 
-/// Verify the ESSCertIDv2 binding inside a signingCertificateV2 attribute:
-/// SHA-256 over the complete certificate DER, DEFAULT hashAlgorithm omitted,
-/// issuerSerial present and matching.
-pub(crate) fn check_ess_binding(
-    attr_der: &[u8],
-    signer_cert_der: &[u8],
-    issuer_name_der: &[u8],
-    serial_der: &[u8],
-) -> Result<(), SealError> {
+/// (cert hash content, issuer Name DER, serialNumber TLV) of one
+/// ESSCertIDv2.
+type EssCertIdParts = (Vec<u8>, Vec<u8>, Vec<u8>);
+
+/// Walk a signingCertificateV2 attribute down to its (single) ESSCertIDv2,
+/// returning (cert hash content, issuer Name DER, serialNumber TLV). The
+/// attribute must be the exact baseline shape: single value, one
+/// ESSCertIDv2, issuerSerial with one directoryName GeneralName.
+fn ess_cert_id_v2(attr_der: &[u8]) -> Result<EssCertIdParts, SealError> {
     let (oid, value) = parse_attribute(attr_der)?;
     if oid != OID_ATTR_SIGNING_CERT_V2.as_bytes() || value.tag != 0x30 {
         return Err(cms_err());
@@ -554,9 +567,6 @@ pub(crate) fn check_ess_binding(
     }
     let mut er = DerReader::new(ess.content);
     let hash = er.expect(0x04)?;
-    if hash.content != sha256(signer_cert_der) {
-        return Err(cms_err());
-    }
     let is = er.expect(0x30)?;
     if !er.is_done() {
         return Err(cms_err());
@@ -569,7 +579,27 @@ pub(crate) fn check_ess_binding(
     }
     let mut gr = DerReader::new(gn.content);
     let dir_name = gr.expect(0xA4)?;
-    if !gr.is_done() || dir_name.content != issuer_name_der || serial.full != serial_der {
+    if !gr.is_done() {
+        return Err(cms_err());
+    }
+    Ok((
+        hash.content.to_vec(),
+        dir_name.content.to_vec(),
+        serial.full.to_vec(),
+    ))
+}
+
+/// Verify the ESSCertIDv2 binding inside a signingCertificateV2 attribute:
+/// SHA-256 over the complete certificate DER, DEFAULT hashAlgorithm omitted,
+/// issuerSerial present and matching.
+pub(crate) fn check_ess_binding(
+    attr_der: &[u8],
+    signer_cert_der: &[u8],
+    issuer_name_der: &[u8],
+    serial_der: &[u8],
+) -> Result<(), SealError> {
+    let (hash, issuer, serial) = ess_cert_id_v2(attr_der)?;
+    if hash != sha256(signer_cert_der) || issuer != issuer_name_der || serial != serial_der {
         return Err(cms_err());
     }
     Ok(())
@@ -870,6 +900,34 @@ mod tests {
         assert!(
             low_pos < high_pos,
             "certificates SET OF members must be in ascending DER order"
+        );
+    }
+
+    #[test]
+    fn sid_ess_disagreement_is_rejected_on_parse() {
+        // sid names cert A's issuer/serial; the ESS issuerSerial names a
+        // DIFFERENT serial. Both well-formed: the disagreement alone must
+        // kill the parse.
+        let cert = cert_der();
+        let (issuer, serial) = issuer_and_serial(&cert).expect("i/s");
+        let attrs = vec![
+            attr_content_type_data(),
+            attr_message_digest(&[7u8; 32]),
+            attr_signing_cert_v2(&cert, &issuer, &serial),
+        ];
+        let (wire, _) = assemble_signed_attrs(attrs);
+        let foreign_serial = tlv(0x02, &[0x7E, 0x7E]);
+        let material = SignerMaterial {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_cert_der: &cert,
+            issuer_name_der: &issuer,
+            serial_der: &foreign_serial,
+            chain_ders: &[],
+        };
+        let der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
+        assert!(
+            parse_cms(&der).is_err(),
+            "sid/ESS issuerSerial disagreement must be rejected"
         );
     }
 

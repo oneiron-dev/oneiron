@@ -344,6 +344,9 @@ async fn fetch_valid_crl(
         .await
         .ok()?;
     let crl = x509_cert::crl::CertificateList::from_der(&resp.body).ok()?;
+    if !verify::crl_complete_scope(&crl) {
+        return None; // delta / IDP-scoped CRL: not complete evidence
+    }
     let alg = cms::cert_signature_algorithm(issuer_cert_der).ok()?;
     let tbs = crl.tbs_cert_list.to_der().ok()?;
     cms::verify_signature_value(alg, issuer_cert_der, &tbs, crl.signature.raw_bytes()).ok()?;
@@ -383,10 +386,14 @@ fn key_bound_issuer<'a>(
 }
 
 /// Gather complete validation material for B-LT (§7.5): signer + TSA chains
-/// and a valid CRL for every non-anchor certificate that advertises one.
-/// OCSP is preferred when reachable; v1 gathers CRLs through the guarded
-/// fetcher and treats unreachable/missing material as degradation, never as
-/// a seal failure.
+/// and a valid CRL for every NON-ANCHOR chain certificate. Certificates
+/// whose DER is a configured trust anchor ride anchor trust and are exempt;
+/// every other chain certificate counts toward `need`, including ones with
+/// no advertised CRL DP or an unresolvable issuer — those count uncovered,
+/// so the gather fails closed (degrade to B-T) instead of self-reporting
+/// B-LT on zero-evidence material. OCSP is preferred when reachable; v1
+/// gathers CRLs through the guarded fetcher and treats unreachable/missing
+/// material as degradation, never as a seal failure.
 async fn gather_validation_material(
     ctx: &SealContext<'_>,
     identity: &SigningIdentity,
@@ -411,11 +418,14 @@ async fn gather_validation_material(
     let mut need = 0usize;
     for chain in [signer_chain_ders.as_slice(), tsa_chain] {
         for cert in chain {
-            let urls = crl_urls_for(cert);
-            if urls.is_empty() {
-                continue;
+            if ctx.config.trust_anchors_der.iter().any(|a| a == cert) {
+                continue; // anchors ride anchor trust: no evidence owed
             }
             need += 1;
+            let urls = crl_urls_for(cert);
+            if urls.is_empty() {
+                continue; // no advertised CRL DP: uncovered by construction
+            }
             // Issuer identity is bound by key, never by position: the CMS
             // SET OF order is arbitrary, so a positional pick can verify the
             // CRL against the wrong cert and falsely degrade.
@@ -844,6 +854,15 @@ mod tests {
     }
 
     fn signed_crl(ca: &CrlCa, this: u64, next: Option<u64>) -> Vec<u8> {
+        signed_crl_ext(ca, this, next, Vec::new())
+    }
+
+    fn signed_crl_ext(
+        ca: &CrlCa,
+        this: u64,
+        next: Option<u64>,
+        crl_extensions: Vec<x509_cert::ext::Extension>,
+    ) -> Vec<u8> {
         use der::Encode;
         use p256::ecdsa::signature::hazmat::PrehashSigner;
         use sha2::Digest;
@@ -858,7 +877,11 @@ mod tests {
             this_update: x509_time(this),
             next_update: next.map(x509_time),
             revoked_certificates: None,
-            crl_extensions: None,
+            crl_extensions: if crl_extensions.is_empty() {
+                None
+            } else {
+                Some(crl_extensions)
+            },
         };
         let tbs_der = tbs.to_der().unwrap();
         let digest = sha2::Sha256::digest(&tbs_der);
@@ -918,6 +941,50 @@ mod tests {
         let ctx = crl_ctx(&config, &backend, &fetcher);
         let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
         assert!(fetch_valid_crl(&ctx, &ca.cert_der, url).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_valid_crl_rejects_delta_and_idp_scoped_crls() {
+        // The seal side mirrors the verify-side complete-scope posture: a
+        // delta or IDP-scoped CRL gathered here would fail the embedded
+        // self-verify, so it is refused at fetch time instead.
+        for ext in [
+            x509_cert::ext::Extension {
+                extn_id: der::asn1::ObjectIdentifier::new_unwrap("2.5.29.46"),
+                critical: false,
+                extn_value: der::asn1::OctetString::new(
+                    der::asn1::Int::new(&[1]).unwrap().to_der().unwrap(),
+                )
+                .unwrap(),
+            },
+            x509_cert::ext::Extension {
+                extn_id: der::asn1::ObjectIdentifier::new_unwrap("2.5.29.28"),
+                critical: false,
+                extn_value: der::asn1::OctetString::new(vec![0x30, 0x00]).unwrap(),
+            },
+        ] {
+            let ca = crl_ca();
+            let crl = signed_crl_ext(
+                &ca,
+                CRL_NOW_SECS - 3600,
+                Some(CRL_NOW_SECS + 3600),
+                vec![ext],
+            );
+            let config = SealConfig {
+                trust_anchors_der: Vec::new(),
+                timestamp_authorities: Vec::new(),
+                fetch_policy: FetchPolicy::default(),
+                resource_limits: crate::api::SealResourceLimits::default(),
+            };
+            let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+            let fetcher: Arc<dyn SealFetcher> = Arc::new(StaticFetcher(crl));
+            let ctx = crl_ctx(&config, &backend, &fetcher);
+            let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
+            assert!(
+                fetch_valid_crl(&ctx, &ca.cert_der, url).await.is_none(),
+                "scoped CRL must not be gathered as complete evidence"
+            );
+        }
     }
 
     // --- gather_validation_material issuer key-binding rows ----------------
@@ -1012,6 +1079,73 @@ mod tests {
             material.map(|m| m.crls_der.len()),
             Some(1),
             "anchor-omitted tip must gather its CRL against the anchor"
+        );
+    }
+
+    /// A CA-legal intermediate (keyCertSign present so path validation
+    /// accepts it) issued by `parent`, optionally carrying one CRL DP URL.
+    fn child_path_ca(parent: &CrlCa, cn: &str, dp: Option<&str>) -> CrlCa {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        if let Some(url) = dp {
+            params.crl_distribution_points = vec![rcgen::CrlDistributionPoint {
+                uris: vec![url.to_string()],
+            }];
+        }
+        let issuer = rcgen::Issuer::from_params(&parent.rcgen_params, &parent.rcgen_key);
+        let cert_der = params.signed_by(&key_pair, &issuer).unwrap().der().to_vec();
+        crl_ca_from(params, key_pair, cert_der)
+    }
+
+    #[tokio::test]
+    async fn gather_chain_cert_without_crl_dp_degrades_not_zero_evidence_lt() {
+        // The intermediate advertises no CRL DP: it counts UNCOVERED, so the
+        // gather fails closed (the assembler degrades to B-T with
+        // ValidationMaterialUnavailable) instead of self-reporting B-LT on
+        // material that says nothing about one chain certificate.
+        let root = crl_ca();
+        let inter = child_path_ca(&root, "inter-no-dp", None);
+        let leaf = leaf_with_crl_dp(&inter, "leaf", "https://crl.example.test/i.crl");
+        let inter_crl = signed_crl(&inter, CRL_NOW_SECS - 3600, Some(CRL_NOW_SECS + 3600));
+        let mut map = std::collections::HashMap::new();
+        map.insert("https://crl.example.test/i.crl".to_string(), inter_crl);
+        let config = gather_config(vec![root.cert_der.clone()]);
+        let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+        let fetcher: Arc<dyn SealFetcher> = Arc::new(MapFetcher(map));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        let identity = p256_identity_for(leaf, vec![inter.cert_der.clone()]);
+        let material = gather_validation_material(&ctx, &identity, None).await;
+        assert!(
+            material.is_none(),
+            "a non-anchor chain cert with no CRL DP must degrade the gather"
+        );
+        // Control: with the intermediate's DP advertised and served, the
+        // same chain gathers fully.
+        let inter_dp = child_path_ca(&root, "inter-dp", Some("https://crl.example.test/r.crl"));
+        let leaf2 = leaf_with_crl_dp(&inter_dp, "leaf", "https://crl.example.test/i.crl");
+        let root_crl = signed_crl(&root, CRL_NOW_SECS - 3600, Some(CRL_NOW_SECS + 3600));
+        let inter_crl2 = signed_crl(&inter_dp, CRL_NOW_SECS - 3600, Some(CRL_NOW_SECS + 3600));
+        let mut map = std::collections::HashMap::new();
+        map.insert("https://crl.example.test/i.crl".to_string(), inter_crl2);
+        map.insert("https://crl.example.test/r.crl".to_string(), root_crl);
+        let fetcher: Arc<dyn SealFetcher> = Arc::new(MapFetcher(map));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        let identity = p256_identity_for(leaf2, vec![inter_dp.cert_der.clone()]);
+        let material = gather_validation_material(&ctx, &identity, None).await;
+        assert_eq!(
+            material.map(|m| m.crls_der.len()),
+            Some(2),
+            "fully advertised chains still gather every CRL"
         );
     }
 }

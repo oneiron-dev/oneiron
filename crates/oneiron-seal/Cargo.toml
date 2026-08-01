@@ -78,6 +78,7 @@ url = { version = "2", optional = true }
 
 [dev-dependencies]
 der = { version = "=0.7.10", features = ["alloc", "derive", "oid", "std"] }
+ipnet = "2"
 p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
 proptest = "1"
 rcgen = "0.14"

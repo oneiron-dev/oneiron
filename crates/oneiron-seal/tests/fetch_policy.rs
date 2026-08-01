@@ -257,3 +257,158 @@ mod guarded_live {
         assert!(matches!(err, FetchError::ResponseTooLarge));
     }
 }
+
+#[cfg(feature = "network-fetch")]
+mod engine_entry {
+    //! `SealConfig.fetch_policy` is wired: the engine built by
+    //! `with_guarded_fetcher` enforces the CONFIGURED policy — a deny bites
+    //! through the engine entry and an admit reaches a live TSA.
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    use oneiron_seal::{
+        FetchPolicy, NativeSealEngine, PadesProfile, PdfSealEngine, ProfileDegradeReason,
+        SealConfig, SealRequest, SealResourceLimits, SealWarning, TsaEndpoint,
+    };
+
+    use super::support::{
+        FixedClock, FixtureBackend, TEST_TIME_MS, TestIdentity, p256_identity, tsa_response,
+    };
+
+    /// Serve one functional-TSA response on a loopback listener: reads one
+    /// POST, mints a real TimeStampResp for its request body.
+    fn serve_tsa(tsa: TestIdentity) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let Ok((mut sock, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 8192];
+            let (body_start, content_len) = loop {
+                let n = sock.read(&mut chunk).unwrap();
+                if n == 0 {
+                    return;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..pos]).to_lowercase();
+                    let cl = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    break (pos + 4, cl);
+                }
+            };
+            while buf.len() < body_start + content_len {
+                let n = sock.read(&mut chunk).unwrap();
+                if n == 0 {
+                    return;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            let reply = tsa_response(&tsa, &buf[body_start..body_start + content_len]).unwrap();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/timestamp-reply\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                reply.len()
+            );
+            sock.write_all(resp.as_bytes()).unwrap();
+            sock.write_all(&reply).unwrap();
+        });
+        port
+    }
+
+    fn engine_for(
+        port: u16,
+        allowed_cidrs: Vec<ipnet::IpNet>,
+        anchors: Vec<Vec<u8>>,
+        signer: TestIdentity,
+    ) -> NativeSealEngine {
+        let config = SealConfig {
+            trust_anchors_der: anchors,
+            timestamp_authorities: vec![TsaEndpoint {
+                url: url::Url::parse(&format!("http://127.0.0.1:{port}/tsa")).unwrap(),
+                expected_policy_oid: None,
+            }],
+            fetch_policy: FetchPolicy {
+                allowed_origins: vec![
+                    url::Url::parse(&format!("http://127.0.0.1:{port}")).unwrap(),
+                ],
+                allowed_cidrs,
+                ..FetchPolicy::default()
+            },
+            resource_limits: SealResourceLimits::default(),
+        };
+        NativeSealEngine::with_guarded_fetcher(
+            config,
+            Arc::new(FixtureBackend::new(signer)),
+            Arc::new(FixedClock(TEST_TIME_MS)),
+        )
+        .unwrap()
+    }
+
+    fn input_pdf() -> Vec<u8> {
+        std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn configured_deny_cidr_bites_through_the_engine_entry() {
+        // Origin listed but loopback NOT admitted: the configured address
+        // policy must deny the TSA fetch through the engine entry, so B-T
+        // degrades to B-B with TimestampUnavailable.
+        let signer = p256_identity(false);
+        let tsa = p256_identity(true);
+        let anchors = vec![signer.cert_der.clone(), tsa.cert_der.clone()];
+        let engine = engine_for(9, Vec::new(), anchors, signer);
+        let out = engine
+            .seal_pdf(
+                &input_pdf(),
+                &SealRequest {
+                    operation_id: "policy-deny".to_string(),
+                    target_profile: PadesProfile::BaselineT,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.achieved_profile, PadesProfile::BaselineB);
+        assert!(out.warnings.iter().any(|w| matches!(
+            w,
+            SealWarning::ProfileDegraded {
+                reason: ProfileDegradeReason::TimestampUnavailable,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test]
+    async fn configured_admit_cidr_reaches_the_tsa_through_the_engine() {
+        // Same shape with the loopback CIDR admitted: the wired policy lets
+        // the fetch through and the seal reaches B-T. This is the mutation
+        // probe for the wiring — a policy the engine ignored could never
+        // produce both outcomes.
+        let signer = p256_identity(false);
+        let tsa = p256_identity(true);
+        let tsa_cert = tsa.cert_der.clone();
+        let port = serve_tsa(tsa);
+        let anchors = vec![signer.cert_der.clone(), tsa_cert];
+        let engine = engine_for(port, vec!["127.0.0.0/8".parse().unwrap()], anchors, signer);
+        let out = engine
+            .seal_pdf(
+                &input_pdf(),
+                &SealRequest {
+                    operation_id: "policy-admit".to_string(),
+                    target_profile: PadesProfile::BaselineT,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.achieved_profile, PadesProfile::BaselineT);
+    }
+}
