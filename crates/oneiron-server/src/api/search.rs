@@ -117,7 +117,7 @@ pub(crate) async fn search_vector(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<SearchResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -229,7 +229,7 @@ pub(crate) async fn search_text(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<SearchResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 

@@ -7,6 +7,7 @@
 
 use crate::auth::CoreAuth;
 use crate::auth::require_owner_auth;
+#[cfg(test)]
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ApiErrorDetails;
@@ -493,8 +494,8 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
 ///
 /// These routes read the whole vault under one actor ref, so they stay a
 /// trust-root surface: scoped `/v1` delegation tokens do not reach them.
-fn check_api_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), ApiError> {
-    require_owner_auth(headers, config).map(drop)
+fn check_api_auth(headers: &HeaderMap, server: &SyncServer) -> Result<(), ApiError> {
+    require_owner_auth(headers, &server.config, server.vault().as_ref()).map(drop)
 }
 
 const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";

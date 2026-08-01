@@ -31,6 +31,75 @@ const CORE_TOKEN_V2_PREFIX: &str = "v2.";
 /// Changing it invalidates every minted token.
 const CORE_TOKEN_V2_KDF_CONTEXT: &str = "oneiron-server 2026-07 core-token-v2 mac";
 
+/// Length of a `jti` claim: 32 lowercase hex characters.
+const CORE_TOKEN_JTI_LEN: usize = 32;
+
+/// `sync_state` key prefix for the individual-token revocation registry.
+///
+/// One key per revoked `jti`; the key IS the fact, so the value is empty.
+const REVOKED_TOKEN_JTI_PREFIX: &str = "auth:revoked-token-jti:";
+
+/// The revoked-token registry the verify path consults.
+///
+/// Revocation is its own explicit act: a `jti` lands here only because an
+/// operator named it, never as a side effect of rotation (rotation rewraps
+/// the MAC key and invalidates every token at once — a different lever).
+///
+/// A trait rather than a bare `&Vault` so the crypto/grammar layer stays
+/// unit-testable against an in-memory set, and — load-bearing — so that
+/// EVERY caller must name a registry. There is deliberately no default and
+/// no empty variant: a call site cannot silently skip the consult.
+pub(crate) trait RevokedTokenJtis {
+    /// Returns whether `jti` has been revoked.
+    ///
+    /// `Err` means the registry could not be read. Callers fail closed: a
+    /// token whose liveness cannot be established is not authenticated.
+    fn is_revoked(&self, jti: &str) -> Result<bool, ()>;
+}
+
+/// The server-local persistent registry: one `sync_state` row per revoked
+/// `jti`, where the key IS the fact and the value is empty.
+impl RevokedTokenJtis for oneiron::Vault {
+    fn is_revoked(&self, jti: &str) -> Result<bool, ()> {
+        self.sync_state_get(&revoked_token_jti_key(jti))
+            .map(|row| row.is_some())
+            .map_err(drop)
+    }
+}
+
+/// Registry key for one revoked token identifier.
+pub(crate) fn revoked_token_jti_key(jti: &str) -> String {
+    format!("{REVOKED_TOKEN_JTI_PREFIX}{jti}")
+}
+
+/// Records `jti` as revoked. Returns whether this call was the revocation
+/// (`false` means it was already revoked — the op is idempotent).
+///
+/// Rejects a malformed `jti` rather than writing a row that no token could
+/// ever match, so a typo fails loudly at the CLI instead of silently
+/// appearing to revoke something.
+pub(crate) fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) -> anyhow::Result<bool> {
+    if parse_jti(jti).is_err() {
+        anyhow::bail!("token id must be exactly {CORE_TOKEN_JTI_LEN} lowercase hex characters");
+    }
+    let key = revoked_token_jti_key(jti);
+    if vault.sync_state_get(&key)?.is_some() {
+        return Ok(false);
+    }
+    vault.sync_state_put(&key, &[])?;
+    Ok(true)
+}
+
+/// Mints a fresh token identifier.
+///
+/// UUIDv7 hex: this needs UNIQUENESS, not unpredictability. A `jti` is
+/// public — it travels in the token's visible claims and an operator types
+/// it into `token revoke` — and guessing one buys nothing, because forging
+/// the token carrying it still requires the MAC key.
+pub(crate) fn mint_token_jti() -> String {
+    oneiron::EntityId::now().to_hex()
+}
+
 /// Canonical scopes for the `/v1/core/*` route shell.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CoreScope {
@@ -97,9 +166,10 @@ impl CoreAuth {
     pub(crate) fn from_headers(
         headers: &HeaderMap,
         config: &SyncServerConfig,
+        revoked: &dyn RevokedTokenJtis,
     ) -> Result<Self, ApiError> {
         if let Some(token) = bearer_token(headers)? {
-            return bearer_auth(token, config);
+            return bearer_auth(token, config, revoked);
         }
 
         // No credential presented: only the explicit unauthenticated-dev
@@ -181,7 +251,8 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        Self::from_headers(&parts.headers, &server.config).map_err(Into::into)
+        Self::from_headers(&parts.headers, &server.config, server.vault().as_ref())
+            .map_err(Into::into)
     }
 }
 
@@ -196,8 +267,9 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
 pub(crate) fn require_owner_auth(
     headers: &HeaderMap,
     config: &SyncServerConfig,
+    revoked: &dyn RevokedTokenJtis,
 ) -> Result<CoreAuth, ApiError> {
-    let auth = CoreAuth::from_headers(headers, config)?;
+    let auth = CoreAuth::from_headers(headers, config, revoked)?;
     if auth.is_owner_grade() {
         Ok(auth)
     } else {
@@ -217,11 +289,30 @@ pub(crate) fn core_token_mac(auth_secret: &str, claims: &str) -> [u8; 32] {
 
 /// Mints a v2 core token: `v2.<claims>.<mac-hex>`.
 ///
-/// Claims use the existing grammar (`scope=…[;principal_ref=…]`) and may be
-/// empty, which mints an owner-grade token.
+/// Claims use the existing grammar (`scope=…[;principal_ref=…][;jti=…]`) and
+/// may be empty, which mints an owner-grade token. This is the raw wire
+/// helper: it MACs exactly the claims it is handed and adds nothing. Ops
+/// mints go through [`mint_identified_core_token_v2`], which attaches the
+/// identity that makes the token individually revocable.
 pub(crate) fn mint_core_token_v2(auth_secret: &str, claims: &str) -> String {
     let mac = blake3::Hash::from(core_token_mac(auth_secret, claims));
     format!("{CORE_TOKEN_V2_PREFIX}{claims}.{}", mac.to_hex())
+}
+
+/// Mints a v2 token carrying a freshly generated `jti`, and returns both.
+///
+/// Every issued token gets an identity, so every issued token can be revoked
+/// individually. A side effect: minting is no longer a pure function of
+/// claims and secret — two mints of identical claims produce two distinct
+/// tokens, and revoking one leaves its sibling live.
+pub(crate) fn mint_identified_core_token_v2(auth_secret: &str, claims: &str) -> (String, String) {
+    let jti = mint_token_jti();
+    let identified = if claims.is_empty() {
+        format!("jti={jti}")
+    } else {
+        format!("{claims};jti={jti}")
+    };
+    (mint_core_token_v2(auth_secret, &identified), jti)
 }
 
 /// Checks a claims string against the grammar the server will enforce, so a
@@ -264,7 +355,11 @@ fn split_core_token_v2(token: &str) -> Option<(&str, &str)> {
     token.strip_prefix(CORE_TOKEN_V2_PREFIX)?.rsplit_once('.')
 }
 
-fn bearer_auth(token: &str, config: &SyncServerConfig) -> Result<CoreAuth, ApiError> {
+fn bearer_auth(
+    token: &str,
+    config: &SyncServerConfig,
+    revoked: &dyn RevokedTokenJtis,
+) -> Result<CoreAuth, ApiError> {
     let Some(expected) = config.auth_secret.as_ref() else {
         if config.allow_unauthenticated {
             // No secret exists to verify against, so the MAC segment is
@@ -273,13 +368,10 @@ fn bearer_auth(token: &str, config: &SyncServerConfig) -> Result<CoreAuth, ApiEr
             let (claims, _mac_hex) =
                 split_core_token_v2(token).ok_or_else(ApiError::unauthorized)?;
             let claims = parse_bearer_claims(claims)?;
-            let implicit_all_scopes = claims.scopes.is_none();
-            return Ok(CoreAuth {
-                principal: "dev-bearer".to_owned(),
-                principal_ref: claims.principal_ref,
-                scopes: claims.scopes.unwrap_or_else(CoreScope::all),
-                implicit_all_scopes,
-            });
+            // Revocation is checked in dev too: the registry is real state,
+            // and an operator who revoked a jti must not find it live merely
+            // because the MAC went unverified.
+            return core_auth_for_live_claims("dev-bearer", claims, revoked);
         }
         return Err(ApiError::unauthorized());
     };
@@ -287,35 +379,61 @@ fn bearer_auth(token: &str, config: &SyncServerConfig) -> Result<CoreAuth, ApiEr
         return Err(ApiError::unauthorized());
     }
 
-    // The `v2.` prefix is reserved framing: anything wearing it is judged as
-    // a token and never falls through to the bare-secret comparison.
-    if let Some((claims, mac_hex)) = split_core_token_v2(token) {
-        // Verify the literal bytes that are then parsed — no canonicalization
-        // gap between what the MAC covers and what the grammar reads.
-        let expected_mac = blake3::Hash::from(core_token_mac(expected, claims));
-        if !constant_time_eq(mac_hex, expected_mac.to_hex().as_str()) {
-            return Err(ApiError::unauthorized());
-        }
-        let claims = parse_bearer_claims(claims)?;
-        let implicit_all_scopes = claims.scopes.is_none();
+    // The configured trust root is matched VERBATIM first, before any token
+    // parsing. A secret is an opaque operator-chosen string: one that happens
+    // to be shaped like `v2.<x>.<y>` is still the owner credential, and
+    // judging it as a token would compare its own tail against a MAC and
+    // break owner auth outright.
+    if constant_time_eq(token, expected) {
         return Ok(CoreAuth {
             principal: "bearer".to_owned(),
-            principal_ref: claims.principal_ref,
-            scopes: claims.scopes.unwrap_or_else(CoreScope::all),
-            implicit_all_scopes,
+            principal_ref: None,
+            scopes: CoreScope::all(),
+            implicit_all_scopes: true,
         });
     }
 
-    // Bare trust-root secret presented over the standard header. The v1
-    // `secret;scope=…` grammar fails this comparison and is dead outright.
-    if !constant_time_eq(token, expected) {
+    // Not the root itself: `v2.` framing now marks a minted token.
+    let Some((claims, mac_hex)) = split_core_token_v2(token) else {
+        // Neither the root nor a token. The v1 `secret;scope=…` grammar
+        // lands here and is dead outright.
+        return Err(ApiError::unauthorized());
+    };
+    // Verify the literal bytes that are then parsed — no canonicalization
+    // gap between what the MAC covers and what the grammar reads.
+    let expected_mac = blake3::Hash::from(core_token_mac(expected, claims));
+    if !constant_time_eq(mac_hex, expected_mac.to_hex().as_str()) {
         return Err(ApiError::unauthorized());
     }
+    let claims = parse_bearer_claims(claims)?;
+    core_auth_for_live_claims("bearer", claims, revoked)
+}
+
+/// Builds the `CoreAuth` for authenticated claims, after confirming the
+/// token's identity has not been revoked.
+///
+/// Fails closed on an unreadable registry: an authentic MAC proves the token
+/// was minted, not that it is still live, and "we could not check" must not
+/// resolve to "still live".
+fn core_auth_for_live_claims(
+    principal: &str,
+    claims: BearerClaims,
+    revoked: &dyn RevokedTokenJtis,
+) -> Result<CoreAuth, ApiError> {
+    if let Some(jti) = claims.jti.as_deref()
+        && revoked.is_revoked(jti).map_err(|()| {
+            tracing::error!("revoked-token registry unreadable; refusing the credential");
+            ApiError::unauthorized()
+        })?
+    {
+        return Err(ApiError::unauthorized());
+    }
+    let implicit_all_scopes = claims.scopes.is_none();
     Ok(CoreAuth {
-        principal: "bearer".to_owned(),
-        principal_ref: None,
-        scopes: CoreScope::all(),
-        implicit_all_scopes: true,
+        principal: principal.to_owned(),
+        principal_ref: claims.principal_ref,
+        scopes: claims.scopes.unwrap_or_else(CoreScope::all),
+        implicit_all_scopes,
     })
 }
 
@@ -323,26 +441,50 @@ fn bearer_auth(token: &str, config: &SyncServerConfig) -> Result<CoreAuth, ApiEr
 struct BearerClaims {
     scopes: Option<BTreeSet<CoreScope>>,
     principal_ref: Option<String>,
+    jti: Option<String>,
 }
 
 fn parse_bearer_claims(token_claims: &str) -> Result<BearerClaims, ApiError> {
     let mut claims = BearerClaims::default();
-    let mut saw_claim = false;
+    let mut saw_narrowing_claim = false;
     for claim in token_claims.split(';').filter(|claim| !claim.is_empty()) {
-        saw_claim = true;
         let Some((key, value)) = claim.split_once('=') else {
             return Err(ApiError::unauthorized());
         };
         match key {
-            "scope" | "scopes" => claims.scopes = Some(parse_scope_list(value)?),
-            "principal_ref" => claims.principal_ref = Some(parse_principal_ref(value)?),
+            "scope" | "scopes" => {
+                saw_narrowing_claim = true;
+                claims.scopes = Some(parse_scope_list(value)?);
+            }
+            "principal_ref" => {
+                saw_narrowing_claim = true;
+                claims.principal_ref = Some(parse_principal_ref(value)?);
+            }
+            // Identity, not narrowing: a `jti` alone leaves the token
+            // owner-grade, so it must not trip the scope requirement below.
+            "jti" => claims.jti = Some(parse_jti(value)?),
             _ => return Err(ApiError::unauthorized()),
         }
     }
-    if saw_claim && claims.scopes.is_none() {
+    if saw_narrowing_claim && claims.scopes.is_none() {
         return Err(ApiError::unauthorized());
     }
     Ok(claims)
+}
+
+/// Parses a `jti` claim: exactly 32 lowercase hex characters.
+///
+/// Strict on shape so the registry has one canonical spelling per token —
+/// case or length variants would revoke a key no token presents.
+fn parse_jti(value: &str) -> Result<String, ApiError> {
+    if value.len() != CORE_TOKEN_JTI_LEN
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(ApiError::unauthorized());
+    }
+    Ok(value.to_owned())
 }
 
 fn parse_scope_list(value: &str) -> Result<BTreeSet<CoreScope>, ApiError> {

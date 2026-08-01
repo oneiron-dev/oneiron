@@ -365,7 +365,7 @@ pub(crate) async fn discover(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     discover_response(&server).map(Json)
 }
 

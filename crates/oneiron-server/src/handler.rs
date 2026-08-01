@@ -203,7 +203,8 @@ async fn ws_upgrade_handler(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_owner_auth(&headers, &server.config).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    require_owner_auth(&headers, &server.config, server.vault().as_ref())
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new WebSocket connection");

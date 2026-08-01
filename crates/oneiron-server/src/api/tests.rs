@@ -3800,6 +3800,83 @@ async fn v1_core_route_missing_auth_returns_typed_error_envelope() {
     assert_eq!(error_envelope(&body)["details"]["code"], "UNAUTHORIZED");
 }
 
+/// The revocation registry has teeth on the wire, not just in the auth unit
+/// tests: a revoked bearer gets the same uniform 401 as any other refusal,
+/// while a sibling minted from identical claims keeps working.
+#[tokio::test]
+async fn v1_core_route_rejects_a_revoked_bearer_and_admits_its_sibling() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+
+    let (revoked, revoked_jti) =
+        crate::auth::mint_identified_core_token_v2("secret", "scope=core:read");
+    let (sibling, _) = crate::auth::mint_identified_core_token_v2("secret", "scope=core:read");
+    let uri = "/v1/core/turns/annotate?turn_id=not-an-entity";
+
+    // Both authenticate before the revocation act (the 400 is the handler
+    // rejecting the deliberately malformed turn id — auth already passed).
+    for token in [&revoked, &sibling] {
+        let (status, _) = route_json(
+            server.clone(),
+            core_request_with_authz("GET", uri, format!("Bearer {token}"), None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "token must authenticate");
+    }
+
+    crate::auth::revoke_token_jti(server.vault(), &revoked_jti).expect("revoke");
+
+    let (status, body) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", uri, format!("Bearer {revoked}"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_error_envelope(&body, "UNAUTHORIZED");
+
+    let (status, _) = route_json(
+        server,
+        core_request_with_authz("GET", uri, format!("Bearer {sibling}"), None),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "revoking one token must not revoke its sibling"
+    );
+}
+
+/// The owner-grade surfaces consult the registry too: revocation binds to the
+/// token's identity, not to which plane it is presented on.
+#[tokio::test]
+async fn legacy_api_route_rejects_a_revoked_owner_grade_bearer() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+
+    let (token, jti) = crate::auth::mint_identified_core_token_v2("secret", "");
+    let uri = "/api/core/discover";
+
+    let (status, _) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", uri, format!("Bearer {token}"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "an identified owner token is live");
+
+    crate::auth::revoke_token_jti(server.vault(), &jti).expect("revoke");
+
+    let (status, _) = route_json(
+        server,
+        core_request_with_authz("GET", uri, format!("Bearer {token}"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn v1_core_idempotency_preflight_uses_typed_error_envelope() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {

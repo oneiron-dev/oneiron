@@ -57,7 +57,7 @@ pub(crate) async fn openapi_json(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<Value>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     Ok(Json(openapi_document()))
 }
 
@@ -91,7 +91,7 @@ pub(crate) async fn skills_pack(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     Ok((
         [(CONTENT_TYPE, skills_pack_artifact::MEDIA_TYPE)],
         skills_pack_artifact::CONTENT,

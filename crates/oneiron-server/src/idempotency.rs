@@ -299,12 +299,13 @@ pub(crate) async fn idempotency_middleware(
 ) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
     let is_core_auth_route = is_core_auth_route(request_path(&request));
-    let core_auth =
-        is_core_auth_route.then(|| CoreAuth::from_headers(request.headers(), &state.server.config));
+    let revoked = state.server.vault().as_ref();
+    let core_auth = is_core_auth_route
+        .then(|| CoreAuth::from_headers(request.headers(), &state.server.config, revoked));
     let auth_ok = match &core_auth {
         Some(Ok(auth)) => !auth.principal().is_empty(),
         Some(Err(_)) => false,
-        None => require_owner_auth(request.headers(), &state.server.config).is_ok(),
+        None => require_owner_auth(request.headers(), &state.server.config, revoked).is_ok(),
     };
     if has_idempotency_header && !auth_ok {
         return api_error_response(ApiError::unauthorized(), is_core_auth_route);

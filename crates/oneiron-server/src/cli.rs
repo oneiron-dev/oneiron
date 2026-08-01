@@ -46,6 +46,8 @@ pub enum Command {
 pub enum TokenCommand {
     /// Mint a scoped core bearer token and print it to stdout.
     Mint(Box<TokenMintArgs>),
+    /// Revoke one previously minted token by its id.
+    Revoke(Box<TokenRevokeArgs>),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -59,6 +61,20 @@ pub struct TokenMintArgs {
     /// characters. Requires `--scope`: an owner-grade token is never bound.
     #[arg(long = "principal-ref", requires = "scope")]
     pub principal_ref: Option<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// Revoking one token is an explicit act on one named identity. It is
+/// deliberately not a side effect of rotation: rotation rewraps the MAC key
+/// and invalidates every token at once, which is the other lever.
+#[derive(Args, Clone, Debug)]
+pub struct TokenRevokeArgs {
+    /// Token id (`jti`) to revoke, as 32 lowercase hex characters. It is
+    /// printed by `token mint` and carried in the token's visible claims.
+    #[arg(long)]
+    pub jti: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -169,6 +185,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Doctor(args) => commands::doctor(args),
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Mint(args)) => commands::token_mint(*args),
+        Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
     }
 }
 
@@ -402,6 +419,43 @@ mod tests {
             }
             _ => panic!("expected token mint command"),
         }
+    }
+
+    #[test]
+    fn token_revoke_parses_jti_and_serve_config_flags() {
+        let cli = Cli::try_parse_from([
+            "oneiron-server",
+            "token",
+            "revoke",
+            "--jti",
+            "0123456789abcdef0123456789abcdef",
+            "--vault-path",
+            "/tmp/oneiron-vault",
+        ])
+        .unwrap();
+
+        match cli.into_command() {
+            Command::Token(TokenCommand::Revoke(args)) => {
+                assert_eq!(args.jti, "0123456789abcdef0123456789abcdef");
+                assert_eq!(
+                    args.serve.vault_path,
+                    Some(PathBuf::from("/tmp/oneiron-vault"))
+                );
+            }
+            _ => panic!("expected token revoke command"),
+        }
+    }
+
+    /// Revocation names an identity; there is no "revoke everything" arm here,
+    /// because that lever is rotation.
+    #[test]
+    fn token_revoke_requires_a_jti() {
+        let err = match Cli::try_parse_from(["oneiron-server", "token", "revoke"]) {
+            Ok(_) => panic!("expected --jti to be required"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     /// Mirrors the server-side grammar rule: an owner-grade token is never

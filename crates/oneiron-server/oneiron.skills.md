@@ -35,11 +35,15 @@ ARCH-0006a/b conversation endpoints are design documents, not live routes in the
 One credential travels, in the standard header: `Authorization: Bearer <credential>`.
 
 - **Owner-grade** — the configured trust-root secret sent verbatim, or a minted token carrying no claims. Required by the legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
-- **Scoped** — a minted token of the form `v2.<claims>.<mac>`, where `<claims>` is `scope=…[;principal_ref=…]`. Accepted on `/v1/core/*` and companion control-plane routes with exactly the scopes it names. Mint one with `oneiron token mint --scope core:read[,…] [--principal-ref <hex32>]`.
+- **Scoped** — a minted token of the form `v2.<claims>.<mac>`, where `<claims>` is `scope=…[;principal_ref=…];jti=<hex32>`. Accepted on `/v1/core/*` and companion control-plane routes with exactly the scopes it names. Mint one with `oneiron token mint --scope core:read[,…] [--principal-ref <hex32>]`.
 
-The claims are visible but not editable: they are authenticated by a MAC keyed on the server's secret, which appears in no token. Editing, widening, or deleting the claims invalidates the token. Every authentication failure — absent, malformed, wrong MAC, unknown claim — returns the same `UNAUTHORIZED`; the response never says which.
+The claims are visible but not editable: they are authenticated by a MAC keyed on the server's secret, which appears in no token. Editing, widening, or deleting the claims invalidates the token. Every authentication failure — absent, malformed, wrong MAC, unknown claim, revoked — returns the same `UNAUTHORIZED`; the response never says which.
 
-**Rotating the secret.** Replace the configured value and restart. Rotation rewraps the key the tokens are MAC'd under, so previously minted tokens and derived credential hashes stop resolving and must be reissued; credentials minted under the new secret work immediately. Revoking an individual token is a separate, explicit act, never a side effect of rotation.
+Every minted token carries a `jti`, its identity. `token mint` prints the token on stdout and its id on stderr. Two mints of identical claims produce two distinct tokens, so one can be revoked without touching the other.
+
+**Revoking one token.** `oneiron token revoke --jti <hex32>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
+
+**Rotating the secret.** Replace the configured value and restart. Rotation rewraps the key the tokens are MAC'd under, so previously minted tokens and derived credential hashes stop resolving and must be reissued; credentials minted under the new secret work immediately. Rotation is the all-at-once lever; revoking an individual token is the separate, explicit act above, never a side effect of rotation.
 ## Tier-1: Endpoint Activation Index
 
 Fetch Tier-1 first. It contains one endpoint block per live route literal and no Tier-2 parameters or Tier-3 schemas.

@@ -404,6 +404,17 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
             },
             1,
         ),
+        // Server-plane auth metadata: one empty row per revoked bearer-token
+        // id (ONE-1636). Same class as the idempotency entry above — it writes
+        // no entity, edge, or vector, so no stamper applies to it.
+        (
+            RawHit {
+                path: "crates/oneiron-server/src/auth.rs".to_owned(),
+                ident: "sync_state_put".to_owned(),
+                line: "vault.sync_state_put(&key, &[])?;".to_owned(),
+            },
+            1,
+        ),
         (
             RawHit {
                 path: "crates/oneiron-server/src/server.rs".to_owned(),
