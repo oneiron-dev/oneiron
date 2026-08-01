@@ -603,6 +603,18 @@ fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> R
 /// Dropping the edge while still admitting its source entity is harmless: the
 /// entity arrives UNSTAMPED, which is strictly less disclosure than the peer
 /// asked for.
+///
+/// THE DROP IS TERMINAL, and the quarantine shape follows from that. A dropped
+/// row never enters the admitted doc, so no forward rematerialization can ever
+/// replay it — the evidence written here is the WHOLE account of that row, and
+/// it must not schedule retry work nobody can discharge. The rejections
+/// therefore ride a [`quarantine::TerminalRejectionBatch`]: no `rm:w:` marker
+/// (an unhealable marker would pend forever and permanently poison the erasure
+/// SLA channel `rm:` exists to carry), and ONE write transaction for the whole
+/// pass rather than one per rejected row (the peer chooses N, so a per-row
+/// commit is an amplification primitive it controls). Evidence is bounded at
+/// [`quarantine::MAX_QUARANTINE_ROWS_PER_PASS`] rows per pass; beyond that
+/// rejections are accounted by count, never silently.
 #[cfg(feature = "sync")]
 fn copy_admitted_edges(
     vault: &Vault,
@@ -612,6 +624,7 @@ fn copy_admitted_edges(
     target: &loro::LoroMap,
 ) -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
+    let mut rejections = quarantine::TerminalRejectionBatch::new(window_key.as_str());
     let mut result = Ok(());
     map_for_each_value_bytes(source, |key, value| {
         if result.is_err() {
@@ -628,15 +641,12 @@ fn copy_admitted_edges(
                     // Quarantine-and-continue: the peer's forged row gets
                     // typed durable evidence, the window's other N-1 rows
                     // still admit. `payload` is the raw value when present.
-                    result = quarantine::quarantine_rejected_op(
-                        vault,
-                        window_key.as_str(),
+                    rejections.push(
                         QuarantineContainer::Edges,
                         key,
                         &off_table,
                         value.unwrap_or(&[]),
-                    )
-                    .map(|_| ());
+                    );
                     return;
                 }
                 // A LOCAL fault reading endpoint types (corrupted stored
@@ -653,7 +663,13 @@ fn copy_admitted_edges(
             .ok_or(Error::InvalidKey)
             .and_then(|bytes| map_insert_bytes(target, key, bytes));
     });
-    result
+    result?;
+    // Evidence commits only once the copy pass itself succeeded: a pass that
+    // fails closed admits nothing, so recording peer rejections from a frame
+    // this vault refused whole would be an account of a thing that never
+    // happened.
+    drop(rtxn);
+    rejections.commit(vault)
 }
 
 /// What the admission boundary does with one parsed edge row.
