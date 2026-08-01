@@ -73,6 +73,10 @@ async fn seal_baseline_b_both_suites_and_fixtures() {
         for pdf in [
             "classic_1page.pdf",
             "stream_1page.pdf",
+            // P1-1 pin: a page with a real content stream carries /Contents
+            // without /ByteRange — mandatory self-verification must not
+            // false-reject it as a partial signature shape.
+            "content_1page.pdf",
             "acroform.pdf",
             "multipage.pdf",
         ] {

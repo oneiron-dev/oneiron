@@ -278,11 +278,19 @@ fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionState, SealErr
         Ok(Object::Dictionary(d)) => (None, Some(d.clone())),
         _ => (None, None),
     };
-    let acroform_fields = acroform_dict
-        .as_ref()
-        .and_then(|d| d.get(b"Fields").ok())
-        .and_then(|f| f.as_array().ok().cloned())
-        .unwrap_or_default();
+    // /Fields may itself be an INDIRECT array (a valid direct /AcroForm can
+    // hold `/Fields 7 0 R`): dereference through the document — bounded by
+    // lopdf's chain limit — so register_field rewrites the FULL field list.
+    // A present /Fields that does not resolve to an array fails closed:
+    // rewriting an unreadable list would silently orphan every field.
+    let acroform_fields = match acroform_dict.as_ref().and_then(|d| d.get(b"Fields").ok()) {
+        Some(f) => doc
+            .dereference(f)
+            .ok()
+            .and_then(|(_, o)| o.as_array().ok().cloned())
+            .ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?,
+        None => Vec::new(),
+    };
     let first_page_dict = doc
         .get_object(first_page)
         .ok()
@@ -1373,6 +1381,120 @@ mod tests {
             "the pre-existing text field must survive signing: {fields:?}"
         );
         assert_eq!(fields.len(), 2, "text field plus the new signature field");
+    }
+
+    #[test]
+    fn direct_acroform_indirect_fields_array_survives_signing() {
+        // P2-2: a valid DIRECT /AcroForm whose /Fields is an INDIRECT array
+        // must keep every old field reference — the array is dereferenced
+        // through the document before register_field rewrites it (a raw
+        // as_array read saw no array and hoisted an EMPTY field list,
+        // silently orphaning every existing field).
+        let mut doc = Document::with_version("1.4");
+        let mut text_field = Dictionary::new();
+        text_field.set("FT", Object::Name(b"Tx".to_vec()));
+        text_field.set("T", Object::string_literal(b"existing".to_vec()));
+        let text_id = doc.add_object(Object::Dictionary(text_field));
+        let fields_id = doc.add_object(Object::Array(vec![Object::Reference(text_id)]));
+        let mut page = Dictionary::new();
+        page.set("Type", Object::Name(b"Page".to_vec()));
+        page.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(200),
+                Object::Integer(200),
+            ]),
+        );
+        let page_id = doc.add_object(Object::Dictionary(page));
+        let mut pages = Dictionary::new();
+        pages.set("Type", Object::Name(b"Pages".to_vec()));
+        pages.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+        let Ok(Object::Dictionary(p)) = doc.get_object_mut(page_id) else {
+            panic!("page");
+        };
+        p.set("Parent", Object::Reference(pages_id));
+        let mut af = Dictionary::new();
+        af.set("Fields", Object::Reference(fields_id)); // INDIRECT array
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        catalog.set("AcroForm", Object::Dictionary(af)); // DIRECT dict
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save");
+        let prepared = prepared(&bytes);
+        assert_eq!(
+            prepared.state.acroform_fields,
+            vec![Object::Reference(text_id)],
+            "the indirect /Fields array must be dereferenced, not read as absent"
+        );
+        let draft = sign_revision(&prepared, 1024);
+        let out = Document::load_mem(&draft.bytes).expect("reload");
+        let catalog = out.catalog().expect("catalog");
+        let af = out
+            .dereference(catalog.get(b"AcroForm").expect("acroform"))
+            .ok()
+            .and_then(|(_, o)| o.as_dict().ok().cloned())
+            .expect("acroform dict");
+        let fields = af
+            .get(b"Fields")
+            .and_then(Object::as_array)
+            .expect("fields");
+        assert!(
+            fields
+                .iter()
+                .any(|f| matches!(f, Object::Reference(r) if *r == text_id)),
+            "the pre-existing text field must survive signing: {fields:?}"
+        );
+        assert_eq!(fields.len(), 2, "text field plus the new signature field");
+    }
+
+    #[test]
+    fn unresolvable_acroform_fields_fail_closed() {
+        // P2-2 fail-closed arm: a present /Fields that does not resolve to
+        // an array (dangling reference, wrong type) is malformed input —
+        // never rewritten as an empty field list.
+        for fields in [
+            Object::Reference((99, 0)), // dangling
+            Object::Integer(7),         // not an array at all
+        ] {
+            let mut doc = Document::with_version("1.4");
+            let mut page = Dictionary::new();
+            page.set("Type", Object::Name(b"Page".to_vec()));
+            let page_id = doc.add_object(Object::Dictionary(page));
+            let mut pages = Dictionary::new();
+            pages.set("Type", Object::Name(b"Pages".to_vec()));
+            pages.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+            pages.set("Count", Object::Integer(1));
+            let pages_id = doc.add_object(Object::Dictionary(pages));
+            let Ok(Object::Dictionary(p)) = doc.get_object_mut(page_id) else {
+                panic!("page");
+            };
+            p.set("Parent", Object::Reference(pages_id));
+            let mut af = Dictionary::new();
+            af.set("Fields", fields);
+            let af_id = doc.add_object(Object::Dictionary(af));
+            let mut catalog = Dictionary::new();
+            catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+            catalog.set("Pages", Object::Reference(pages_id));
+            catalog.set("AcroForm", Object::Reference(af_id));
+            let catalog_id = doc.add_object(Object::Dictionary(catalog));
+            doc.trailer.set("Root", Object::Reference(catalog_id));
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).expect("save");
+            let err = validate_prepared(&bytes, &SealResourceLimits::default()).unwrap_err();
+            assert!(matches!(
+                err,
+                SealError::InputInvalid {
+                    code: InputInvalidCode::MalformedXref
+                }
+            ));
+        }
     }
 
     #[test]

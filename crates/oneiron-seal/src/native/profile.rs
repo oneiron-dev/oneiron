@@ -15,7 +15,7 @@ use crate::api::{
     SealConfig, SealFetcher, SealWarning, Sha256Digest, SignDigestRequest, SignatureAlgorithm,
     SigningIdentity,
 };
-use crate::error::{FatalCode, RetryableCode, SealError, SealStage};
+use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 
 use super::{cms, pdf, tsp, verify};
 
@@ -183,34 +183,46 @@ pub(crate) struct DssMaterial {
     pub crls_der: Vec<Vec<u8>>,
 }
 
+/// Serialized DSS objects plus the DSS dictionary's own object number.
+type DssObjects = (Vec<(u32, Vec<u8>)>, u32);
+
 /// Serialize DSS stream objects and the DSS dictionary (which is included in
 /// the returned object list). Returns `(objects, dss_dict_obj_num)` with
-/// object numbers starting at `first_num`.
+/// object numbers starting at `first_num`. Object numbers are allocated with
+/// checked arithmetic: a crafted trailer `/Size` near `u32::MAX` must yield
+/// a clean `ObjectLimitExceeded`, never a wrap or panic.
 pub(crate) fn build_dss_objects(
     material: &DssMaterial,
     first_num: u32,
-) -> (Vec<(u32, Vec<u8>)>, u32) {
+) -> Result<DssObjects, SealError> {
     let mut objs: Vec<(u32, Vec<u8>)> = Vec::new();
     let mut next = first_num;
+    let mut alloc = || {
+        let n = next;
+        next = n.checked_add(1).ok_or(SealError::InputInvalid {
+            code: InputInvalidCode::ObjectLimitExceeded,
+        })?;
+        Ok(n)
+    };
     let mut cert_refs = Vec::new();
     let mut ocsp_refs = Vec::new();
     let mut crl_refs = Vec::new();
     for cert in &material.certs_der {
-        objs.push((next, stream_obj(cert)));
-        cert_refs.push(format!("{next} 0 R"));
-        next += 1;
+        let num = alloc()?;
+        objs.push((num, stream_obj(cert)));
+        cert_refs.push(format!("{num} 0 R"));
     }
     for ocsp in &material.ocsps_der {
-        objs.push((next, stream_obj(ocsp)));
-        ocsp_refs.push(format!("{next} 0 R"));
-        next += 1;
+        let num = alloc()?;
+        objs.push((num, stream_obj(ocsp)));
+        ocsp_refs.push(format!("{num} 0 R"));
     }
     for crl in &material.crls_der {
-        objs.push((next, stream_obj(crl)));
-        crl_refs.push(format!("{next} 0 R"));
-        next += 1;
+        let num = alloc()?;
+        objs.push((num, stream_obj(crl)));
+        crl_refs.push(format!("{num} 0 R"));
     }
-    let dss_num = next;
+    let dss_num = alloc()?;
     let mut dss = b"<< /Type /DSS ".to_vec();
     if !cert_refs.is_empty() {
         dss.extend_from_slice(format!("/Certs [{}] ", cert_refs.join(" ")).as_bytes());
@@ -223,7 +235,7 @@ pub(crate) fn build_dss_objects(
     }
     dss.extend_from_slice(b">>");
     objs.push((dss_num, dss));
-    (objs, dss_num)
+    Ok((objs, dss_num))
 }
 
 fn stream_obj(data: &[u8]) -> Vec<u8> {
@@ -478,11 +490,15 @@ fn append_dss(
     material: &DssMaterial,
 ) -> Result<Vec<u8>, SealError> {
     let state = pdf::reparse_revision(bytes, &ctx.config.resource_limits)?;
-    let first_num = state.max_obj.checked_add(1).ok_or(SealError::Fatal {
-        stage: SealStage::Dss,
-        code: FatalCode::PdfInvariantFailed,
-    })?;
-    let (objs, dss_num) = build_dss_objects(material, first_num);
+    // A crafted trailer /Size pushing allocation past the object-number
+    // space is invalid INPUT, not an internal invariant breach.
+    let first_num = state
+        .max_obj
+        .checked_add(1)
+        .ok_or(SealError::InputInvalid {
+            code: InputInvalidCode::ObjectLimitExceeded,
+        })?;
+    let (objs, dss_num) = build_dss_objects(material, first_num)?;
     let kind = pdf::RevisionKind::Dss {
         material_objects: objs,
         dss_obj: dss_num,
@@ -742,7 +758,7 @@ mod tests {
             ocsps_der: vec![vec![0x30, 0x00]],
             crls_der: vec![vec![0x30, 0x00]],
         };
-        let (objs, dss_num) = build_dss_objects(&material, 10);
+        let (objs, dss_num) = build_dss_objects(&material, 10).unwrap();
         let dss = objs
             .iter()
             .find(|(n, _)| *n == dss_num)
@@ -756,6 +772,67 @@ mod tests {
         // Stream objects carry exact lengths.
         let cert_obj = &objs.iter().find(|(n, _)| *n == 10).unwrap().1;
         assert!(cert_obj.starts_with(b"<< /Length 5 >>\nstream\n"));
+    }
+
+    #[test]
+    fn build_dss_objects_checked_at_object_number_boundary() {
+        // P2-1: object numbers are allocated with checked arithmetic — at
+        // the u32 boundary the assembler must fail clean, never panic
+        // (debug) or wrap (release).
+        let material = DssMaterial {
+            certs_der: vec![vec![0x30, 0x00]],
+            ocsps_der: Vec::new(),
+            crls_der: Vec::new(),
+        };
+        let err = build_dss_objects(&material, u32::MAX).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: crate::error::InputInvalidCode::ObjectLimitExceeded
+            }
+        ));
+        // Just inside the space still works: cert at MAX-2, DSS dict at
+        // MAX-1 (allocation mirrors pdf's next_obj: a number without a
+        // successor fails conservatively).
+        let (objs, dss_num) = build_dss_objects(&material, u32::MAX - 2).unwrap();
+        assert_eq!(dss_num, u32::MAX - 1);
+        assert_eq!(objs.len(), 2);
+    }
+
+    #[test]
+    fn near_boundary_trailer_size_dss_revision_fails_clean() {
+        // P2-1 end-to-end: a crafted trailer /Size lets the signature
+        // revision succeed, then B-LT DSS assembly must yield
+        // ObjectLimitExceeded — no panic, no wrap.
+        let bytes = std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        let patched = text.replace("/Size 4 ", "/Size 4294967294 ");
+        assert_ne!(patched, text, "trailer /Size must be patched");
+        let config = SealConfig {
+            trust_anchors_der: Vec::new(),
+            timestamp_authorities: Vec::new(),
+            fetch_policy: FetchPolicy::default(),
+            resource_limits: crate::api::SealResourceLimits::default(),
+        };
+        let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+        let fetcher: Arc<dyn SealFetcher> = Arc::new(StaticFetcher(Vec::new()));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        let material = DssMaterial {
+            certs_der: vec![vec![0x30, 0x00], vec![0x30, 0x00]],
+            ocsps_der: Vec::new(),
+            crls_der: vec![vec![0x30, 0x00]],
+        };
+        let err = append_dss(patched.as_bytes(), &ctx, &material).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: crate::error::InputInvalidCode::ObjectLimitExceeded
+            }
+        ));
     }
 
     // --- fetch_valid_crl seal-side rows (§7.5 step 3 freshness) -----------

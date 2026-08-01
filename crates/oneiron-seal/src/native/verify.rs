@@ -113,10 +113,12 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 
 /// Collect signature/timestamp dictionaries in revision order (earlier
 /// revisions cover fewer bytes). Discovery is by `/Type /Sig|DocTimeStamp`
-/// AND by the typeless interop shape (`/ByteRange` + `/Contents` present
-/// together) — real-world signers omit the optional `/Type`. A partial
-/// shape (only one of the two keys) is malformed input, never a silent
-/// skip.
+/// AND by the typeless interop shape (real-world signers omit the optional
+/// `/Type`). Typeless candidacy requires `/ByteRange`: dictionaries without
+/// it are never candidates, whatever `/Contents` holds — an ordinary `/Page`
+/// dictionary carries `/Contents` for its page content stream. A
+/// `/ByteRange` without `/Contents` is a partial signature shape: malformed
+/// input, never a silent skip.
 fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
     let mut out = Vec::new();
     for obj in doc.objects.values() {
@@ -124,12 +126,12 @@ fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
         let is_doc_ts = match d.get(b"Type") {
             Ok(t) if name_eq(t, b"Sig") => false,
             Ok(t) if name_eq(t, b"DocTimeStamp") => true,
+            _ if !d.has(b"ByteRange") => continue,
             _ => {
-                match (d.has(b"ByteRange"), d.has(b"Contents")) {
-                    (true, true) => false, // typeless signature shape
-                    (false, false) => continue,
-                    _ => return Err(malformed_input()),
+                if !d.has(b"Contents") {
+                    return Err(malformed_input());
                 }
+                false
             }
         };
         let br_obj = d.get(b"ByteRange").map_err(|_| malformed_input())?;
@@ -606,9 +608,14 @@ fn dss_material_valid(
     at_unix: u64,
     max_stream_bytes: usize,
 ) -> bool {
-    let certs = dss_array(doc, dss, b"Certs", max_stream_bytes);
-    let crls = dss_array(doc, dss, b"CRLs", max_stream_bytes);
-    let ocsps = dss_array(doc, dss, b"OCSPs", max_stream_bytes);
+    // ONE shared decompression budget across every DSS entry in all three
+    // arrays: all decoded vectors are retained, so N streams each expanding
+    // to the per-stream cap would multiply memory by N. The cumulative
+    // over-cap fails the material without decoding beyond the shared limit.
+    let mut remaining = max_stream_bytes;
+    let certs = dss_array(doc, dss, b"Certs", &mut remaining);
+    let crls = dss_array(doc, dss, b"CRLs", &mut remaining);
+    let ocsps = dss_array(doc, dss, b"OCSPs", &mut remaining);
     // A present DSS with all arrays absent is evidence-free: it must not
     // inflate a B-T document into B-LT.
     if matches!(certs, DssArray::Absent)
@@ -752,12 +759,15 @@ enum DssArray {
 /// Extract the decoded stream contents of one DSS array. Filtered streams
 /// (e.g. a FlateDecode-wrapped CRL) are decoded through the bounded
 /// decompression path; a malformed filter, a failed decode, or an over-limit
-/// expansion is Malformed, never a silent skip.
+/// expansion is Malformed, never a silent skip. `remaining` is the SHARED
+/// decode budget across every DSS array: each entry decodes against what is
+/// left (never the full per-document cap) and spends its decoded length, so
+/// cumulative expansion past the cap fails instead of decoding further.
 fn dss_array(
     doc: &Document,
     dss: &lopdf::Dictionary,
     key: &[u8],
-    max_stream_bytes: usize,
+    remaining: &mut usize,
 ) -> DssArray {
     let Ok(arr_obj) = dss.get(key) else {
         return DssArray::Absent;
@@ -778,9 +788,11 @@ fn dss_array(
         else {
             return DssArray::Malformed;
         };
-        let Ok(data) = stream.decompressed_content_with_limit(max_stream_bytes) else {
+        let Ok(data) = stream.decompressed_content_with_limit(*remaining) else {
             return DssArray::Malformed;
         };
+        // The decode cap guarantees data.len() <= *remaining.
+        *remaining = remaining.saturating_sub(data.len());
         out.push(data);
     }
     DssArray::Entries(out)
@@ -1126,20 +1138,36 @@ fn ocsp_entry_valid(
         .then_some(targets)
 }
 
+/// Total reference-chain traversal budget across every `/DSS` array in one
+/// `dss_revision_end` evaluation. Chains are followed per array OCCURRENCE,
+/// so N repetitions of one deep chain must not multiply work without bound:
+/// past this many total hops the measurement fails closed.
+const MAX_REFERENCE_WORK: usize = 16_384;
+
 /// Follow a reference chain exactly as `Document::dereference` does at
 /// evaluation time, recording every traversed object id (link and target
-/// alike). `None` on a dangling or over-limit chain: coverage of the
-/// terminal object is then unprovable and the caller fails closed. The hop
-/// bound mirrors lopdf's dereference limit (128); a chain the evaluator
-/// would reject as over-limit is unprovable here too.
+/// alike) into a set shared across all chains — repetitions of one chain
+/// collapse to its unique objects, so the id set can never expand past the
+/// document's object count no matter how often a chain appears in the DSS
+/// arrays. `work` accumulates hops across every chain and fails closed past
+/// [`MAX_REFERENCE_WORK`]. `None` on a dangling, cyclic, or over-limit
+/// chain: coverage of the terminal object is then unprovable and the
+/// caller fails closed. The per-chain hop bound mirrors lopdf's
+/// dereference limit (128); a chain the evaluator would reject as
+/// over-limit is unprovable here too.
 fn collect_reference_chain(
     doc: &Document,
     id: lopdf::ObjectId,
-    ids: &mut Vec<lopdf::ObjectId>,
+    ids: &mut std::collections::BTreeSet<lopdf::ObjectId>,
+    work: &mut usize,
 ) -> Option<()> {
     let mut current = id;
     for _ in 0..128 {
-        ids.push(current);
+        *work = work.checked_add(1)?;
+        if *work > MAX_REFERENCE_WORK {
+            return None;
+        }
+        ids.insert(current);
         let obj = doc.objects.get(&current)?;
         let Ok(next) = obj.as_reference() else {
             return Some(());
@@ -1170,12 +1198,13 @@ fn collect_reference_chain(
 fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
     let catalog = doc.catalog().ok()?;
     let dss_obj = catalog.get(b"DSS").ok()?;
-    let mut ids: Vec<lopdf::ObjectId> = Vec::new();
+    let mut ids: std::collections::BTreeSet<lopdf::ObjectId> = std::collections::BTreeSet::new();
+    let mut work = 0usize;
     if let Ok(root) = doc.trailer.get(b"Root").and_then(Object::as_reference) {
-        collect_reference_chain(doc, root, &mut ids)?;
+        collect_reference_chain(doc, root, &mut ids, &mut work)?;
     }
     if let Object::Reference(id) = dss_obj {
-        collect_reference_chain(doc, *id, &mut ids)?;
+        collect_reference_chain(doc, *id, &mut ids, &mut work)?;
     }
     let dss = doc
         .dereference(dss_obj)
@@ -1186,7 +1215,7 @@ fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
             continue;
         };
         if let Object::Reference(id) = arr_obj {
-            collect_reference_chain(doc, *id, &mut ids)?;
+            collect_reference_chain(doc, *id, &mut ids, &mut work)?;
         }
         let Some(arr) = doc
             .dereference(arr_obj)
@@ -1197,7 +1226,7 @@ fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
         };
         for item in arr {
             if let Object::Reference(id) = item {
-                collect_reference_chain(doc, *id, &mut ids)?;
+                collect_reference_chain(doc, *id, &mut ids, &mut work)?;
             }
         }
     }
@@ -2616,7 +2645,7 @@ mod tests {
             ocsps_der: Vec::new(),
             crls_der: crls,
         };
-        let (objs, dss_num) = profile::build_dss_objects(&material, state.max_obj + 1);
+        let (objs, dss_num) = profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
         let draft = pdf::append_revision(
             bytes,
             &state,
@@ -2961,7 +2990,7 @@ mod tests {
             crls_der: vec![crl],
         };
         // ts object first (m+1), then the DSS material (m+2..=dss_num).
-        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 2);
+        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 2).unwrap();
         let (ts_body, br_rel, lt_rel) = doc_ts_body(64 * 1024);
         let cat_body = catalog_body(&state, Some(dss_num));
         let mut objs: Vec<(u32, Vec<u8>)> = vec![(m + 1, ts_body)];
@@ -3085,7 +3114,7 @@ mod tests {
             ocsps_der: Vec::new(),
             crls_der: vec![crl],
         };
-        let (dss_objs, dss_num) = profile::build_dss_objects(&material, state.max_obj + 1);
+        let (dss_objs, dss_num) = profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
         // Dormant staging: material objects only, no catalog /DSS key.
         let (b2, _) = emit_revision(&b1, &state, &dss_objs, None);
         let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
@@ -3148,7 +3177,7 @@ mod tests {
             ocsps_der: Vec::new(),
             crls_der: vec![crl],
         };
-        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 1);
+        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 1).unwrap();
         let c2_num = dss_num + 1;
         dss_objs.push((c2_num, catalog_body(&state, Some(dss_num))));
         // Dormant staging: C2 present in bytes, trailer /Root unchanged.
@@ -3521,5 +3550,130 @@ mod tests {
             contents: vec![0xAB, 0xCD, 0xEF],
         };
         assert!(!check_byte_range(bytes, &long));
+    }
+
+    // --- bot-fix leg 4 pins -------------------------------------------------
+
+    #[test]
+    fn contents_without_byte_range_is_never_a_signature_candidate() {
+        // P1-1: ordinary /Page dictionaries carry /Contents (the page
+        // content stream) without /ByteRange — typeless candidacy requires
+        // /ByteRange, so these must be IGNORED, never rejected as malformed
+        // (leg 3b's XOR gate false-rejected every non-blank page).
+        let mut doc = Document::with_version("1.4");
+        let mut page = lopdf::Dictionary::new();
+        page.set("Type", Object::Name(b"Page".to_vec()));
+        page.set("Contents", Object::Reference((42, 0)));
+        doc.add_object(Object::Dictionary(page));
+        let mut bare = lopdf::Dictionary::new();
+        bare.set("Contents", Object::string_literal(b"BT ET".to_vec()));
+        doc.add_object(Object::Dictionary(bare));
+        let found = collect_signatures(&doc).unwrap();
+        assert!(found.is_empty(), "page /Contents is not a signature");
+    }
+
+    #[test]
+    fn byte_range_without_contents_stays_malformed() {
+        // P1-1 rejection pin: a /ByteRange dictionary with no /Contents is
+        // a partial signature shape — malformed, never a silent skip.
+        let mut doc = Document::with_version("1.4");
+        let mut d = lopdf::Dictionary::new();
+        d.set(
+            "ByteRange",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(1),
+                Object::Integer(2),
+                Object::Integer(3),
+            ]),
+        );
+        doc.add_object(Object::Dictionary(d));
+        assert!(collect_signatures(&doc).is_err());
+    }
+
+    /// A chain of `hops` reference-linked objects ending in a terminal
+    /// dictionary; returns the document and the chain's head id.
+    fn reference_chain_doc(hops: usize) -> (Document, lopdf::ObjectId) {
+        assert!(hops >= 1);
+        let mut doc = Document::with_version("1.4");
+        let terminal = doc.add_object(Object::Dictionary(lopdf::Dictionary::new()));
+        let mut head = terminal;
+        for _ in 1..hops {
+            head = doc.add_object(Object::Reference(head));
+        }
+        (doc, head)
+    }
+
+    #[test]
+    fn reference_chain_repetition_stays_bounded_by_unique_set() {
+        // P1-2: N repetitions of one deep chain (one per DSS array
+        // occurrence) must collapse into the chain's UNIQUE object set —
+        // the id collection can never expand to 128*N.
+        let (doc, head) = reference_chain_doc(128);
+        let mut ids = std::collections::BTreeSet::new();
+        let mut work = 0usize;
+        for _ in 0..128 {
+            collect_reference_chain(&doc, head, &mut ids, &mut work).unwrap();
+        }
+        assert_eq!(ids.len(), 128, "only unique objects are collected");
+        assert_eq!(work, 128 * 128, "work counts hops across all chains");
+        // The global budget fails closed past the cap: the 129th full
+        // traversal would exceed MAX_REFERENCE_WORK.
+        assert!(collect_reference_chain(&doc, head, &mut ids, &mut work).is_none());
+    }
+
+    #[test]
+    fn reference_chain_cycle_and_over_limit_stay_fail_closed() {
+        // P1-2: a reference cycle fails closed (the per-chain 128-hop bound
+        // is kept), as does a 129-hop chain; a 128-hop chain still
+        // resolves (the bound mirrors lopdf's dereference limit).
+        let mut doc = Document::with_version("1.4");
+        let a = doc.add_object(Object::Null);
+        let b = doc.add_object(Object::Null);
+        doc.objects.insert(a, Object::Reference(b));
+        doc.objects.insert(b, Object::Reference(a));
+        let mut ids = std::collections::BTreeSet::new();
+        let mut work = 0usize;
+        assert!(collect_reference_chain(&doc, a, &mut ids, &mut work).is_none());
+
+        let (doc, head_129) = reference_chain_doc(129);
+        let mut ids = std::collections::BTreeSet::new();
+        let mut work = 0usize;
+        assert!(collect_reference_chain(&doc, head_129, &mut ids, &mut work).is_none());
+
+        let (doc, head_128) = reference_chain_doc(128);
+        let mut ids = std::collections::BTreeSet::new();
+        let mut work = 0usize;
+        assert!(collect_reference_chain(&doc, head_128, &mut ids, &mut work).is_some());
+        assert_eq!(ids.len(), 128);
+    }
+
+    #[test]
+    fn dss_decode_budget_is_cumulative_across_entries() {
+        // P1-3: two FlateDecode DSS streams each individually under the cap
+        // but cumulatively over it must fail ValidationMaterial — the
+        // budget is ONE shared remaining across every DSS entry, not a
+        // per-stream allowance.
+        let ca = test_ca("budget-dss-ca");
+        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
+        let doc = dss_doc_flate_crl(std::slice::from_ref(&ca.cert_der), zlib_store(&crl));
+        let covered = covered_of(&[&ca.cert_der]);
+        let total = ca.cert_der.len() + crl.len();
+        // Control: a budget covering both entries validates (the streams
+        // are individually and cumulatively fine).
+        let mut checks = Checks::new();
+        verify_dss(&doc, &[], &covered, AT_UNIX, total, &mut checks);
+        assert!(
+            checks.passed(VerifyCheckKind::ValidationMaterial),
+            "cumulative-fitting evidence must validate"
+        );
+        // One byte short cumulatively: the /Certs entry still decodes (it
+        // fits the full cap alone), but the shared remainder is one byte
+        // too small for the FlateDecode-wrapped CRL — the material fails
+        // WITHOUT decoding beyond the shared limit. The pre-fix per-stream
+        // cap decoded both and validated.
+        let mut checks = Checks::new();
+        verify_dss(&doc, &[], &covered, AT_UNIX, total - 1, &mut checks);
+        assert_material_fails(&checks);
     }
 }
