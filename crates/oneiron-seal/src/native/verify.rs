@@ -1017,6 +1017,29 @@ fn ocsp_entry_valid(
         .then_some(targets)
 }
 
+/// Follow a reference chain exactly as `Document::dereference` does at
+/// evaluation time, recording every traversed object id (link and target
+/// alike). `None` on a dangling or over-limit chain: coverage of the
+/// terminal object is then unprovable and the caller fails closed. The hop
+/// bound mirrors lopdf's dereference limit (128); a chain the evaluator
+/// would reject as over-limit is unprovable here too.
+fn collect_reference_chain(
+    doc: &Document,
+    id: lopdf::ObjectId,
+    ids: &mut Vec<lopdf::ObjectId>,
+) -> Option<()> {
+    let mut current = id;
+    for _ in 0..128 {
+        ids.push(current);
+        let obj = doc.objects.get(&current)?;
+        let Ok(next) = obj.as_reference() else {
+            return Some(());
+        };
+        current = next;
+    }
+    None
+}
+
 /// Byte offset the effective `/DSS` revision provably ends before: the
 /// smallest xref-table offset beyond the newest DSS-related object (the
 /// final catalog, the `/DSS` dictionary, and its `/Certs` `/OCSPs` `/CRLs`
@@ -1029,15 +1052,21 @@ fn ocsp_entry_valid(
 /// archival-time selection must then fall back to the verification clock so
 /// stale evidence fails instead of laundering through an unrelated old
 /// timestamp.
+///
+/// The measured id set must mirror the EVALUATION dereference paths exactly:
+/// `Document::dereference` follows reference CHAINS, so every traversed
+/// object is collected — a bare-reference link collected without its target
+/// would let terminal evidence sit past the measured offsets, planted in a
+/// revision no DocTimeStamp attests (probe_c regression).
 fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
     let catalog = doc.catalog().ok()?;
     let dss_obj = catalog.get(b"DSS").ok()?;
     let mut ids: Vec<lopdf::ObjectId> = Vec::new();
     if let Ok(root) = doc.trailer.get(b"Root").and_then(Object::as_reference) {
-        ids.push(root);
+        collect_reference_chain(doc, root, &mut ids)?;
     }
     if let Object::Reference(id) = dss_obj {
-        ids.push(*id);
+        collect_reference_chain(doc, *id, &mut ids)?;
     }
     let dss = doc
         .dereference(dss_obj)
@@ -1048,7 +1077,7 @@ fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
             continue;
         };
         if let Object::Reference(id) = arr_obj {
-            ids.push(*id);
+            collect_reference_chain(doc, *id, &mut ids)?;
         }
         let Some(arr) = doc
             .dereference(arr_obj)
@@ -1059,7 +1088,7 @@ fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
         };
         for item in arr {
             if let Object::Reference(id) = item {
-                ids.push(*id);
+                collect_reference_chain(doc, *id, &mut ids)?;
             }
         }
     }
@@ -2296,6 +2325,436 @@ mod tests {
                 Some(VerifyFindingCode::ValidationMaterialInvalid)
             ),
             "stale uncovered evidence must fail ValidationMaterial"
+        );
+    }
+
+    // --- dss_revision_end adversarial probes: the re-checker's shapes -----
+    // --- (A filler span-craft, B dormant activation) plus the reference ---
+    // --- chain sharpening found while building them -----------------------
+
+    /// Classic-table incremental revision emitter for hand-crafted layouts
+    /// the writer machinery cannot express (mixed doc-ts + DSS revisions,
+    /// dormant objects, placeholder overwrites, trailer /Root switches).
+    /// Mirrors append_revision's table emission; /Info and /ID (both
+    /// optional) are omitted. Returns (bytes, [(num, obj_offset, body_start)]).
+    fn emit_revision(
+        input: &[u8],
+        state: &pdf::RevisionState,
+        objs: &[(u32, Vec<u8>)],
+        root: Option<lopdf::ObjectId>,
+    ) -> (Vec<u8>, Vec<(u32, u64, u64)>) {
+        assert_eq!(state.xref_style, pdf::XrefStyle::Table);
+        let mut out = input.to_vec();
+        let mut written: Vec<(u32, u64, u64)> = Vec::with_capacity(objs.len());
+        for (num, body) in objs {
+            let obj_offset = out.len() as u64;
+            out.extend_from_slice(format!("{num} 0 obj\n").as_bytes());
+            written.push((*num, obj_offset, out.len() as u64));
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let max_used = written
+            .iter()
+            .map(|w| w.0)
+            .max()
+            .unwrap_or(0)
+            .max(state.max_obj);
+        let xref_offset = out.len() as u64;
+        let mut sorted = written.clone();
+        sorted.sort_by_key(|w| w.0);
+        out.extend_from_slice(b"xref\n");
+        let mut idx = 0;
+        while idx < sorted.len() {
+            let start = sorted[idx].0;
+            let mut end = start;
+            while idx + 1 < sorted.len() && sorted[idx + 1].0 == end + 1 {
+                idx += 1;
+                end = sorted[idx].0;
+            }
+            let count = end - start + 1;
+            out.extend_from_slice(format!("{start} {count}\n").as_bytes());
+            for w in &sorted[idx + 1 - count as usize..=idx] {
+                out.extend_from_slice(format!("{:010} 00000 n\r\n", w.1).as_bytes());
+            }
+            idx += 1;
+        }
+        let (rn, rg) = root.unwrap_or(state.root);
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Prev {} /Root {rn} {rg} R >>\n",
+                max_used + 1,
+                state.prev_startxref
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(format!("startxref\n{xref_offset}\n%%EOF").as_bytes());
+        (out, written)
+    }
+
+    /// /ByteRange placeholder digits, mirroring pdf's BYTERANGE_DIGITS.
+    const BR_DIGITS: usize = 20;
+
+    /// DocTimeStamp dictionary body with patchable /ByteRange and /Contents
+    /// (mirrors pdf's sig_dict_body for the timestamp kind). Returns
+    /// (body, byterange_patch_rel, contents_lt_rel).
+    fn doc_ts_body(capacity: usize) -> (Vec<u8>, usize, usize) {
+        let mut body = Vec::with_capacity(capacity * 2 + 256);
+        body.extend_from_slice(
+            b"<< /Type /DocTimeStamp /Filter /Adobe.PPKLite /SubFilter /ETSI.RFC3161 /ByteRange [0 ",
+        );
+        let br_rel = body.len();
+        for i in 0..3 {
+            body.extend_from_slice(b"00000000000000000000");
+            if i < 2 {
+                body.push(b' ');
+            }
+        }
+        body.extend_from_slice(b"] /Contents <");
+        let lt_rel = body.len() - 1;
+        body.extend(std::iter::repeat_n(b'0', capacity * 2));
+        body.extend_from_slice(b"> >>");
+        (body, br_rel, lt_rel)
+    }
+
+    /// Patch the three trailing /ByteRange fields (l1 s2 l2) at `pos`.
+    fn patch_br(out: &mut [u8], pos: usize, br: [u64; 4]) {
+        for (i, v) in br[1..4].iter().enumerate() {
+            let at = pos + i * (BR_DIGITS + 1);
+            let field = format!("{v:0BR_DIGITS$}");
+            out[at..at + BR_DIGITS].copy_from_slice(field.as_bytes());
+        }
+    }
+
+    /// Write the token DER hex into the /Contents gap (zero padding stays).
+    fn fill_contents(out: &mut [u8], lt: usize, gt: usize, der: &[u8]) {
+        let hex: String = der.iter().map(|b| format!("{b:02x}")).collect();
+        assert!(hex.len() < gt - lt, "token exceeds contents capacity");
+        out[lt + 1..lt + 1 + hex.len()].copy_from_slice(hex.as_bytes());
+    }
+
+    /// Stream object body, mirroring profile's stream_obj.
+    fn stream_body(data: &[u8]) -> Vec<u8> {
+        let mut body = format!("<< /Length {} >>\nstream\n", data.len()).into_bytes();
+        body.extend_from_slice(data);
+        body.extend_from_slice(b"\nendstream");
+        body
+    }
+
+    /// Catalog body for hand-built revisions: the current catalog plus a
+    /// /DSS key. Reads /Pages and /AcroForm from the revision state.
+    fn catalog_body(state: &pdf::RevisionState, dss_num: Option<u32>) -> Vec<u8> {
+        let pages = state
+            .root_dict
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .unwrap();
+        let af = state.acroform.unwrap();
+        let dss = dss_num
+            .map(|n| format!(" /DSS {n} 0 R"))
+            .unwrap_or_default();
+        format!(
+            "<< /Type /Catalog /Pages {} {} R /AcroForm {} {} R{dss} >>",
+            pages.0, pages.1, af.0, af.1
+        )
+        .into_bytes()
+    }
+
+    /// Parse as the verifier does and return (doc, doc-ts br_end) for the
+    /// single DocTimeStamp in the file.
+    fn doc_and_ts_br_end(bytes: &[u8]) -> (Document, u64) {
+        let doc = Document::load_mem_with_options(
+            bytes,
+            LoadOptions {
+                strict: true,
+                max_decompressed_size: Some(SealResourceLimits::default().max_input_bytes),
+                ..LoadOptions::default()
+            },
+        )
+        .unwrap();
+        let sigs = collect_signatures(&doc).unwrap();
+        let ts = sigs.iter().find(|e| e.is_doc_ts).unwrap();
+        (doc, ts.byte_range[2] + ts.byte_range[3])
+    }
+
+    fn base_input() -> Vec<u8> {
+        std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap()
+    }
+
+    /// Probe A (the re-checker's first shape): one incremental revision
+    /// carrying an effective /DSS, a DocTimeStamp dictionary BEFORE the /DSS
+    /// objects in byte order, and filler objects after the newest
+    /// DSS-related object. The doc-ts /ByteRange span2 ends exactly at the
+    /// first filler object — the value dss_revision_end computes — which is
+    /// BEFORE the revision's own xref/trailer. Returns (final bytes,
+    /// anchors, br_end, revision xref offset, newest DSS-object offset).
+    fn span_craft_fixture() -> (Vec<u8>, Vec<Vec<u8>>, u64, u64, u64) {
+        let signer = test_ca("span-signer");
+        let signer2 = test_ca("span-signer-two");
+        let tsa = tsa_ca();
+        let b1 = append_sig_revision(&base_input(), &signer, "span-a", Some(&tsa), AT_UNIX);
+        let state = pdf::reparse_revision(&b1, &SealResourceLimits::default()).unwrap();
+        let m = state.max_obj;
+        let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
+        let material = profile::DssMaterial {
+            certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+            ocsps_der: Vec::new(),
+            crls_der: vec![crl],
+        };
+        // ts object first (m+1), then the DSS material (m+2..=dss_num).
+        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 2);
+        let (ts_body, br_rel, lt_rel) = doc_ts_body(64 * 1024);
+        let cat_body = catalog_body(&state, Some(dss_num));
+        let mut objs: Vec<(u32, Vec<u8>)> = vec![(m + 1, ts_body)];
+        objs.append(&mut dss_objs);
+        objs.push((state.root.0, cat_body));
+        let filler1 = dss_num + 1;
+        objs.push((filler1, b"<< /Probe /FillerOne >>".to_vec()));
+        objs.push((dss_num + 2, b"<< /Probe /FillerTwo >>".to_vec()));
+        let (mut bytes, written) = emit_revision(&b1, &state, &objs, None);
+        let at = |num: u32| written.iter().find(|w| w.0 == num).copied().unwrap();
+        let (_, _, ts_body_start) = at(m + 1);
+        let (_, x, _) = at(filler1);
+        let newest_dss = at(state.root.0).1;
+        let capacity = 64 * 1024;
+        let lt = (ts_body_start as usize) + lt_rel;
+        let gt = lt + 1 + capacity * 2;
+        let br = [0, lt as u64, gt as u64 + 1, x - (gt as u64 + 1)];
+        patch_br(&mut bytes, (ts_body_start as usize) + br_rel, br);
+        let imprint = pdf::hash_byte_range(&bytes, br).unwrap();
+        let token = mint_token(&tsa, &imprint, AT_UNIX);
+        fill_contents(&mut bytes, lt, gt, &token);
+        let rev_xref = pdf::last_startxref(&bytes).unwrap();
+        let b3 = append_sig_revision(&bytes, &signer2, "span-b", None, 0);
+        let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
+        (b3, anchors, x, rev_xref, newest_dss)
+    }
+
+    #[test]
+    fn probe_a_filler_span_craft_attests_every_evaluated_byte() {
+        // Precondition: filler objects after the newest DSS-related object
+        // let the doc-ts span2 stop at dss_revision_end BEFORE the owning
+        // revision's xref/trailer. The gate passes — and the grant is SOUND:
+        // every object the /DSS evaluation dereferences is in the measured
+        // id set, so its offset is <= newest < dss_end == br_end and its
+        // bytes sit inside the hashed spans (the only excluded range is the
+        // /Contents gap inside the doc-ts object itself). The uncovered
+        // filler/xref/trailer bytes feed no evidence evaluation; the xref
+        // chain is attested by the final covering signature. Regression pin:
+        // a gate change to revision-end semantics flips this honest-but-
+        // unusual document to Invalid (dss_revision_end no longer == br_end).
+        let (bytes, anchors, br_end, rev_xref, newest_dss) = span_craft_fixture();
+        assert!(
+            br_end < rev_xref,
+            "span2 must stop before the revision xref"
+        );
+        let (doc, ts_br_end) = doc_and_ts_br_end(&bytes);
+        assert_eq!(ts_br_end, br_end);
+        assert_eq!(dss_revision_end(&doc, &bytes), Some(br_end));
+        assert!(newest_dss < br_end);
+        let engine = verify_engine(anchors, VERIFY_SECS);
+        let report = engine.verify_sealed_pdf(&bytes).unwrap();
+        eprintln!(
+            "PROBE-A br_end={br_end} dss_end={:?} rev_xref={rev_xref} newest_dss={newest_dss} -> {:?}",
+            dss_revision_end(&doc, &bytes),
+            report.achieved_profile
+        );
+        assert!(report.valid, "attested evidence must validate: {report:?}");
+        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+    }
+
+    /// Probe B1 (dormant staging, activation by a LATER catalog /DSS key):
+    /// /DSS objects sit in pre-timestamp revisions (covered by the doc-ts)
+    /// but unnamed by the catalog; a post-timestamp revision's catalog
+    /// update activates them. The gate must FAIL: the final trailer /Root
+    /// object is itself in the measured id set, and the activating catalog
+    /// instance lives past the doc-ts ByteRange end, so dss_revision_end
+    /// exceeds br_end and the verification clock applies.
+    #[test]
+    fn probe_b1_late_catalog_activation_misses_archival_time() {
+        let signer = test_ca("dorm-signer");
+        let signer2 = test_ca("dorm-signer-two");
+        let tsa = tsa_ca();
+        let b1 = append_sig_revision(&base_input(), &signer, "dorm-a", Some(&tsa), AT_UNIX);
+        let state = pdf::reparse_revision(&b1, &SealResourceLimits::default()).unwrap();
+        let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
+        let material = profile::DssMaterial {
+            certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+            ocsps_der: Vec::new(),
+            crls_der: vec![crl],
+        };
+        let (dss_objs, dss_num) = profile::build_dss_objects(&material, state.max_obj + 1);
+        // Dormant staging: material objects only, no catalog /DSS key.
+        let (b2, _) = emit_revision(&b1, &state, &dss_objs, None);
+        let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
+        // Activation: a post-timestamp catalog update naming the staged DSS.
+        let state4 = pdf::reparse_revision(&b3, &SealResourceLimits::default()).unwrap();
+        let cat_body = catalog_body(&state4, Some(dss_num));
+        let (b4, written4) = emit_revision(&b3, &state4, &[(state4.root.0, cat_body)], None);
+        let cat_offset = written4[0].1;
+        let b5 = append_sig_revision(&b4, &signer2, "dorm-b", None, 0);
+        let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
+        let (doc, ts_br_end) = doc_and_ts_br_end(&b5);
+        let dss_end = dss_revision_end(&doc, &b5).unwrap();
+        eprintln!(
+            "PROBE-B1 ts_br_end={ts_br_end} dss_end={dss_end} activating_catalog@{cat_offset}"
+        );
+        assert!(cat_offset >= ts_br_end);
+        assert!(
+            dss_end > ts_br_end,
+            "gate must measure the activating catalog"
+        );
+        let engine = verify_engine(anchors, VERIFY_SECS);
+        let report = engine.verify_sealed_pdf(&b5).unwrap();
+        eprintln!("PROBE-B1 outcome -> {:?}", report.achieved_profile);
+        assert!(!report.valid, "stale unattested evidence must not launder");
+        assert_eq!(report.achieved_profile, None);
+        let vm = report
+            .checks
+            .iter()
+            .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+            .unwrap();
+        assert_eq!(
+            (vm.status, vm.finding),
+            (
+                VerifyCheckStatus::Fail,
+                Some(VerifyFindingCode::ValidationMaterialInvalid)
+            )
+        );
+    }
+
+    /// Probe B2 (dormant staging, activation by trailer /Root switch): the
+    /// staged bytes include a dormant ALTERNATE catalog C2 carrying the /DSS
+    /// key; a post-timestamp revision only switches the trailer /Root to C2.
+    /// The gate passes (every measured id resolves to a pre-timestamp
+    /// offset) — and the grant is SOUND: the timestamp attests C2 and every
+    /// /DSS object the evaluation reads; only the switching trailer is
+    /// unattested by the doc-ts, and it is attested by the final covering
+    /// signature. Regression pin: precondition dormant-staging; documents
+    /// that the offset gate measures object identity, not activation time.
+    #[test]
+    fn probe_b2_root_switch_attests_staged_catalog_and_evidence() {
+        let signer = test_ca("switch-signer");
+        let signer2 = test_ca("switch-signer-two");
+        let tsa = tsa_ca();
+        let b1 = append_sig_revision(&base_input(), &signer, "switch-a", Some(&tsa), AT_UNIX);
+        let state = pdf::reparse_revision(&b1, &SealResourceLimits::default()).unwrap();
+        let m = state.max_obj;
+        let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
+        let material = profile::DssMaterial {
+            certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+            ocsps_der: Vec::new(),
+            crls_der: vec![crl],
+        };
+        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 1);
+        let c2_num = dss_num + 1;
+        dss_objs.push((c2_num, catalog_body(&state, Some(dss_num))));
+        // Dormant staging: C2 present in bytes, trailer /Root unchanged.
+        let (b2, written2) = emit_revision(&b1, &state, &dss_objs, None);
+        let c2_offset = written2.iter().find(|w| w.0 == c2_num).unwrap().1;
+        let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
+        // Activation: trailer /Root switch only (one filler object carries
+        // the revision; the doc-ts does not cover this revision).
+        let state4 = pdf::reparse_revision(&b3, &SealResourceLimits::default()).unwrap();
+        let filler = state4.max_obj + 1;
+        let (b4, _) = emit_revision(
+            &b3,
+            &state4,
+            &[(filler, b"<< /Probe /RootSwitch >>".to_vec())],
+            Some((c2_num, 0)),
+        );
+        let b5 = append_sig_revision(&b4, &signer2, "switch-b", None, 0);
+        let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
+        let (doc, ts_br_end) = doc_and_ts_br_end(&b5);
+        let dss_end = dss_revision_end(&doc, &b5).unwrap();
+        eprintln!("PROBE-B2 ts_br_end={ts_br_end} dss_end={dss_end} staged_catalog_c2@{c2_offset}");
+        assert!(c2_offset < ts_br_end, "C2 is staged pre-timestamp");
+        assert!(dss_end <= ts_br_end, "gate passes over staged objects");
+        let engine = verify_engine(anchors, VERIFY_SECS);
+        let report = engine.verify_sealed_pdf(&b5).unwrap();
+        eprintln!("PROBE-B2 outcome -> {:?}", report.achieved_profile);
+        assert!(
+            report.valid,
+            "attested staged evidence must validate: {report:?}"
+        );
+        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+    }
+
+    /// Probe C (the sharpening found while building A/B): the /CRLs array
+    /// item is a REFERENCE CHAIN — a covered bare-reference object whose
+    /// target stream is planted in a POST-timestamp revision (a placeholder
+    /// reserves the object number pre-timestamp). The evaluation path
+    /// (dss_array -> Document::dereference) follows chains, so the verifier
+    /// reads the planted CRL; but dss_revision_end collected only the direct
+    /// reference, so the terminal stream escaped the measured offsets, the
+    /// gate passed, and stale-at-clock evidence validated at the archival
+    /// genTime. WITHOUT the dss_revision_end chain-resolution fix this test
+    /// FAILS (the document verifies BaselineLta): the mutation pin for the
+    /// laundering hole. WITH the fix the gate measures the planted stream's
+    /// post-timestamp offset and the verification clock applies.
+    #[test]
+    fn probe_c_reference_chain_cannot_smuggle_unattested_evidence() {
+        let signer = test_ca("chain-signer");
+        let signer2 = test_ca("chain-signer-two");
+        let tsa = tsa_ca();
+        let b1 = append_sig_revision(&base_input(), &signer, "chain-a", Some(&tsa), AT_UNIX);
+        let state = pdf::reparse_revision(&b1, &SealResourceLimits::default()).unwrap();
+        let m = state.max_obj;
+        let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
+        let (c1, c2, dss_n, link, hole) = (m + 1, m + 2, m + 3, m + 4, m + 5);
+        let dss_body =
+            format!("<< /Type /DSS /Certs [{c1} 0 R {c2} 0 R] /CRLs [{link} 0 R] >>").into_bytes();
+        let objs = vec![
+            (c1, stream_body(&signer.cert_der)),
+            (c2, stream_body(&tsa.cert_der)),
+            (dss_n, dss_body),
+            (link, format!("{hole} 0 R").into_bytes()),
+            (hole, b"null".to_vec()),
+            (state.root.0, catalog_body(&state, Some(dss_n))),
+        ];
+        let (b2, _) = emit_revision(&b1, &state, &objs, None);
+        let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
+        // Plant the terminal CRL stream AFTER the timestamp, overwriting the
+        // placeholder: the doc-ts attests "null", the evaluation reads this.
+        let state4 = pdf::reparse_revision(&b3, &SealResourceLimits::default()).unwrap();
+        let (b4, written4) = emit_revision(&b3, &state4, &[(hole, stream_body(&crl))], None);
+        let planted_offset = written4[0].1;
+        let b5 = append_sig_revision(&b4, &signer2, "chain-b", None, 0);
+        let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
+        let (doc, ts_br_end) = doc_and_ts_br_end(&b5);
+        let dss_end = dss_revision_end(&doc, &b5).unwrap();
+        eprintln!("PROBE-C ts_br_end={ts_br_end} dss_end={dss_end} planted_crl@{planted_offset}");
+        assert!(
+            planted_offset >= ts_br_end,
+            "planted evidence is post-timestamp"
+        );
+        let engine = verify_engine(anchors, VERIFY_SECS);
+        let report = engine.verify_sealed_pdf(&b5).unwrap();
+        eprintln!("PROBE-C outcome -> {:?}", report.achieved_profile);
+        assert!(
+            dss_end > ts_br_end,
+            "chain-resolved gate must measure the planted stream"
+        );
+        assert!(
+            !report.valid,
+            "unattested planted evidence laundered to {:?}",
+            report.achieved_profile
+        );
+        assert_eq!(report.achieved_profile, None);
+        let vm = report
+            .checks
+            .iter()
+            .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+            .unwrap();
+        assert_eq!(
+            (vm.status, vm.finding),
+            (
+                VerifyCheckStatus::Fail,
+                Some(VerifyFindingCode::ValidationMaterialInvalid)
+            )
         );
     }
 }
