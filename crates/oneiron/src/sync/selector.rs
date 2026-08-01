@@ -1046,13 +1046,15 @@ struct EntitySelectorDecision {
 ///    holding the first-writer type;
 /// 2. else the document blob.
 ///
-/// Reading the document blob FIRST would be LWW-gameable: a peer stores the
-/// source as PERSON (the type-conflict quarantine correctly leaves LMDB at
+/// Reading the document blob FIRST would be LWW-gameable: a peer stores an
+/// endpoint as PERSON (the type-conflict quarantine correctly leaves LMDB at
 /// PERSON) while a higher-Lamport EVENT blob wins the Loro map, and a
-/// blob-first mirror reads the fake. Where the two disagree at all, the blob
-/// is a rejected write by construction, so a CONFLICTING blob carries NO scope
-/// rather than the stored type's scope: the peer has proven the row is not one
-/// the engine accepted.
+/// blob-first mirror reads the fake.
+///
+/// WHERE THE TWO DISAGREE the rejected-write reading is ROLE-SPLIT, because a
+/// forged retype attacks the two endpoints from OPPOSITE directions: on the
+/// source it BUYS scope, on the target it ERASES scope.
+/// [`EndpointRole::resolve`] carries the rule and its full argument.
 ///
 /// The asymmetry — inert rather than fail-closed — is deliberate. Making the
 /// mirror "helpfully" withhold on an unwritable row would hand a hostile peer
@@ -1081,9 +1083,11 @@ fn facet_scope_by_source(
     }
 
     let rtxn = vault.store.env.read_txn()?;
-    // Endpoint types are read once per id, not once per row: a source may
-    // carry many stamps and a facet may be named by many sources.
-    let mut types = HashMap::<EntityId, Option<u8>>::new();
+    // The two RAW FACTS are read once per id, not once per row: a source may
+    // carry many stamps and a facet may be named by many sources. The role
+    // rule is a pure function of those facts, so an id appearing in both roles
+    // still costs one read.
+    let mut types = HashMap::<EntityId, EndpointTypeFacts>::new();
     let mut result = Ok(());
     map_for_each_value_bytes(edges, |raw_key, maybe_value| {
         if result.is_err() {
@@ -1099,16 +1103,14 @@ fn facet_scope_by_source(
         // stored types (corrupted header, heed read error) is our defect, not
         // the peer's: fail the export closed rather than silently drop a scope
         // and over-disclose.
-        let (src_type, tgt_type) = match (
-            mirrored_endpoint_type(vault, &rtxn, entities, &mut types, &src),
-            mirrored_endpoint_type(vault, &rtxn, entities, &mut types, &tgt),
-        ) {
-            (Ok(src_type), Ok(tgt_type)) => (src_type, tgt_type),
-            (Err(local), _) | (_, Err(local)) => {
-                result = Err(local);
-                return;
-            }
-        };
+        let (src_type, tgt_type) =
+            match mirrored_endpoint_types(vault, &rtxn, entities, &mut types, &src, &tgt) {
+                Ok(pair) => pair,
+                Err(local) => {
+                    result = Err(local);
+                    return;
+                }
+            };
         // A row that fails either half is SCOPE-INERT: not a seed, and not a
         // withhold either. The target half is the one a source-only mirror
         // misses — a selector's `facets` list is ids the peer NAMED, which is
@@ -1133,36 +1135,111 @@ fn facet_scope_by_source(
     result.map(|()| scopes)
 }
 
-/// One `FacetOf` endpoint's type byte for the read mirror, memoized per id.
+/// The two RAW type facts about one id, before any role rule is applied.
 ///
-/// Resolution order is [`admitted_endpoint_type`]'s: the STORED row first
-/// (permanent truth — entity type is immutable per id), then the document
-/// blob. A document blob that CONFLICTS with an existing stored type yields
-/// `None` (no scope): the conflicting write is one the engine rejected, so the
-/// row it would type is not a row the engine accepted either. Absent,
-/// non-binary, and header-unparsable all read `None` — unknowable, hence
-/// scope-inert until the endpoint really lands.
-fn mirrored_endpoint_type(
+/// Cached per id because a single id may appear in BOTH roles across the
+/// window's rows, and the roles read the same facts through different rules.
+#[derive(Clone, Copy)]
+struct EndpointTypeFacts {
+    /// The LMDB row's type. Permanent truth: entity type is immutable per id.
+    stored: Option<u8>,
+    /// The CRDT-winning document blob's type. Peer-controlled, and after a
+    /// rejected retype it disagrees with `stored` by construction.
+    in_doc: Option<u8>,
+}
+
+/// Which end of a `FacetOf` row an endpoint sits on. The two ends need
+/// DIFFERENT conflict rules, because a forged retype attacks them from
+/// opposite directions.
+#[derive(Clone, Copy)]
+enum EndpointRole {
+    Source,
+    Target,
+}
+
+impl EndpointRole {
+    /// Resolves one endpoint's effective type for the read mirror.
+    ///
+    /// Both roles resolve STORED-FIRST ([`admitted_endpoint_type`]'s order),
+    /// and both read `None` — unknowable, hence scope-inert — when neither
+    /// fact exists. They diverge only on CONFLICT, where the document blob is
+    /// a write the immutability gate REJECTED, and the question is what a
+    /// rejected write is allowed to do:
+    ///
+    /// * SOURCE ⇒ `None`. A conflicting blob may neither BUY scope (reading it
+    ///   would let a peer seed closure with a type the engine refused to
+    ///   write) nor SPEND the stored type's scope on a withhold (which would
+    ///   hand a peer a suppression primitive: aim a rejected blob at an entity
+    ///   it does not control and the host's own row vanishes from a legitimate
+    ///   grant). The stamp becomes a non-statement and its source is judged
+    ///   like any unstamped entity.
+    /// * TARGET ⇒ the STORED type. The target half decides whether a stamp
+    ///   CONTAINS its source, so going `None` here DELETES containment that a
+    ///   valid stored FACET had already established — a rejected retype would
+    ///   erase a scope instead of failing to create one. The stored row is
+    ///   authoritative when it exists, so a forged `PERSON` blob for a stored
+    ///   FACET leaves the withhold standing, and the inverse forgery (a
+    ///   `FACET` blob for a stored PERSON) still cannot manufacture a facet.
+    ///
+    /// FAIL-DIRECTION COHERENCE: the split is not two policies but one —
+    /// source-inert and target-stored BOTH fail toward LESS disclosure. A
+    /// peer-controlled conflict can never move a row from withheld to
+    /// exported, in either role, which is exactly the property a disclosure
+    /// mirror owes its host.
+    const fn resolve(self, facts: EndpointTypeFacts) -> Option<u8> {
+        match (self, facts.stored, facts.in_doc) {
+            (_, None, in_doc) => in_doc,
+            (_, Some(stored), None) => Some(stored),
+            (_, Some(stored), Some(in_doc)) if stored == in_doc => Some(stored),
+            (Self::Source, Some(_), Some(_)) => None,
+            (Self::Target, Some(stored), Some(_)) => Some(stored),
+        }
+    }
+}
+
+/// Both of one `FacetOf` row's effective type bytes, each resolved under the
+/// rule for ITS role — the single place the roles are assigned, so a call site
+/// cannot silently pair a source id with the target rule.
+fn mirrored_endpoint_types(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     entities: &loro::LoroMap,
-    cache: &mut HashMap<EntityId, Option<u8>>,
+    cache: &mut HashMap<EntityId, EndpointTypeFacts>,
+    src: &EntityId,
+    tgt: &EntityId,
+) -> Result<(Option<u8>, Option<u8>)> {
+    let src_type =
+        EndpointRole::Source.resolve(endpoint_type_facts(vault, rtxn, entities, cache, src)?);
+    let tgt_type =
+        EndpointRole::Target.resolve(endpoint_type_facts(vault, rtxn, entities, cache, tgt)?);
+    Ok((src_type, tgt_type))
+}
+
+/// One id's raw type facts, memoized: the stored row and the document blob's
+/// header, read once even when the id appears in both roles.
+///
+/// Absent, non-binary, and header-unparsable document blobs all read as no
+/// document fact. A LOCAL fault reading the stored row (unparsable header) is
+/// our defect, not the peer's, and propagates.
+fn endpoint_type_facts(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    entities: &loro::LoroMap,
+    cache: &mut HashMap<EntityId, EndpointTypeFacts>,
     id: &EntityId,
-) -> Result<Option<u8>> {
+) -> Result<EndpointTypeFacts> {
     if let Some(cached) = cache.get(id) {
         return Ok(*cached);
     }
-    let in_doc = super::loro_support::map_get_bytes(entities, &id.to_hex())
-        .as_deref()
-        .and_then(EntityMetadataHeader::parse)
-        .map(|header| header.entity_type);
-    let resolved = match crate::batch::stored_entity_type(&vault.store, rtxn, id)? {
-        Some(stored) if in_doc.is_none_or(|in_doc| in_doc == stored) => Some(stored),
-        Some(_) => None,
-        None => in_doc,
+    let facts = EndpointTypeFacts {
+        stored: crate::batch::stored_entity_type(&vault.store, rtxn, id)?,
+        in_doc: super::loro_support::map_get_bytes(entities, &id.to_hex())
+            .as_deref()
+            .and_then(EntityMetadataHeader::parse)
+            .map(|header| header.entity_type),
     };
-    cache.insert(*id, resolved);
-    Ok(resolved)
+    cache.insert(*id, facts);
+    Ok(facts)
 }
 
 fn entity_selector_decision(

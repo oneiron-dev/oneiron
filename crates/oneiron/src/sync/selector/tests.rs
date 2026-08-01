@@ -2145,6 +2145,330 @@ fn selector_honors_scope_when_stored_and_document_source_types_agree() {
     );
 }
 
+/// A REJECTED RETYPE MUST NOT ERASE A VALID SCOPE — the target half's mirror
+/// image of the source rule, and the reason the conflict policy is ROLE-SPLIT.
+///
+/// The source rule reads a conflicting blob as NO type, which is right there:
+/// on the source, scope is something the row BUYS, and a rejected write may
+/// not buy it. On the TARGET the same reading inverts into an attack. The
+/// target half decides whether a stamp CONTAINS its source, so resolving a
+/// conflicted target to `None` makes the row inert and DELETES containment a
+/// valid stored FACET had already established — a peer forges one PERSON blob
+/// for a facet it does not own and an entity that was withheld from a
+/// facet-limited peer starts exporting.
+///
+/// The fixture is the production repro: an EVENT scoped to a stored FACET T,
+/// adjacent to a genuinely selected-facet CLAIM seed, so closure WOULD carry
+/// it but for the withhold. Frame 2 lands a CRDT-winning PERSON blob for T.
+/// The middle assertions are load-bearing: they pin that the retype really
+/// won the map, that the immutability gate really quarantined it, and that
+/// LMDB really still holds FACET — otherwise the withhold below would pass on
+/// a document that never flipped.
+///
+/// Both roles through the production federated entry: a mirror that holds for
+/// members but not guests reads as protection while being none.
+#[test]
+fn selector_target_conflict_keeps_the_stored_facet_scope() {
+    for (role, seed) in [
+        (FederationAdmissionRole::Member, 0x60_u8),
+        (FederationAdmissionRole::Guest, 0x68_u8),
+    ] {
+        let window = "2026-08";
+        let member = entity_id(seed);
+        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
+        put_imported_source_trust(&vault);
+
+        let facet_t = entity_id(seed + 1);
+        let event = entity_id(seed + 2);
+        let facet_selected = entity_id(seed + 3);
+        let claim_seed = entity_id(seed + 4);
+
+        // Frame 1: the honest world. The EVENT is scoped to FACET T, which
+        // this peer did NOT select, and hangs off a CLAIM that IS scoped to
+        // the selected facet.
+        let first = create_window_doc("federation-peer", &WindowKey::new(window));
+        insert_entity(&first, facet_t, ENTITY_TYPE_FACET, b"facet-t");
+        insert_entity(&first, facet_selected, ENTITY_TYPE_FACET, b"facet-s");
+        insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
+        insert_blob(&first, claim_seed, &public_claim_blob());
+        insert_edge(&first, event, EdgeKind::FacetOf, facet_t);
+        insert_edge(&first, claim_seed, EdgeKind::FacetOf, facet_selected);
+        insert_edge(&first, claim_seed, EdgeKind::Supports, event);
+        first.commit();
+        import_federated(&mut client, window, &first, role);
+
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![facet_selected],
+            vec![],
+        );
+        let export_ids = |client: &mut SyncClient| {
+            let live = client.window(window).expect("window still loaded");
+            let update = filtered_window_doc(
+                &vault,
+                &live.doc,
+                &WindowKey::new(window),
+                test_selector_scope(),
+                &selector,
+            )
+            .unwrap()
+            .export(ExportMode::all_updates())
+            .unwrap();
+            import_ids(&update)
+        };
+
+        let ids = export_ids(&mut client);
+        assert!(
+            ids.contains(&claim_seed),
+            "{role:?}: precondition — the selected-facet claim must seed closure"
+        );
+        assert!(
+            !ids.contains(&event),
+            "{role:?}: precondition — the EVENT's stamp to the UNSELECTED facet \
+             T must withhold it, or the retype below erases nothing"
+        );
+
+        // Frame 2: the forged retype of T. The pad rows sort ahead of T, so
+        // admission re-authors them first and the retype lands at a Lamport
+        // strictly above frame 1's — a lone op would tie and fall to a peer-id
+        // tiebreak. The precondition asserts below keep this honest if Loro's
+        // ordering ever shifts.
+        let second = create_window_doc("federation-peer", &WindowKey::new(window));
+        for pad in [0x02_u8, 0x03, 0x04, 0x05, 0x06] {
+            insert_entity(&second, entity_id(pad), ENTITY_TYPE_PERSON, b"unrelated");
+        }
+        insert_entity(&second, facet_t, ENTITY_TYPE_PERSON, b"forged-person");
+        second.commit();
+        import_federated(&mut client, window, &second, role);
+
+        let live = client.window(window).expect("window still loaded");
+        let doc_blob = map_get_bytes(&live.doc.get_map("entities"), &facet_t.to_hex())
+            .expect("the retype blob is resident in the live doc");
+        assert_eq!(
+            EntityMetadataHeader::parse(&doc_blob).unwrap().entity_type,
+            ENTITY_TYPE_PERSON,
+            "{role:?}: precondition — the retype must WIN the CRDT map, or the \
+             conflict this test is about never exists"
+        );
+        assert_eq!(
+            vault.get_raw(&facet_t).unwrap().map(|blob| blob[0]),
+            Some(ENTITY_TYPE_FACET),
+            "{role:?}: precondition — the immutability gate must keep LMDB at \
+             the first-writer FACET type"
+        );
+        assert!(
+            quarantined_records(&vault)
+                .unwrap()
+                .iter()
+                .any(|(_, record)| record.reason_code == "EntityTypeImmutable"
+                    && record.container == QuarantineContainer::Entities),
+            "{role:?}: precondition — the retype must be QUARANTINED, which is \
+             what makes the stored FACET permanent truth the mirror relies on"
+        );
+
+        let ids = export_ids(&mut client);
+        assert!(
+            !ids.contains(&event),
+            "{role:?}: the EVENT is scoped to a facet this peer did not select \
+             and must STAY withheld — a REJECTED retype of the target may not \
+             erase containment a valid stored FACET established"
+        );
+        assert!(
+            ids.contains(&claim_seed),
+            "{role:?}: control — the honest selected-facet seed must still \
+             export; target-stored removes the erasure, not facet scoping"
+        );
+        assert!(
+            ids.contains(&facet_selected),
+            "{role:?}: control — the selected facet is visible to its selector"
+        );
+    }
+}
+
+/// THE INVERSE FORGERY: a fake retype must not CREATE a facet either.
+///
+/// Target-stored is authoritative in BOTH directions, and this is the arm that
+/// proves it is authority rather than a one-way bias toward withholding. The
+/// target is stored PERSON — off the ONE-1645 table — while a forged FACET
+/// document blob wins the map, and the peer names that very id in its selector
+/// so a mirror reading the blob would turn the stamp into a SEED and haul the
+/// source plus its one-hop neighbor across the disclosure boundary.
+///
+/// The second source pins the other half of "inert": a stamp aimed at a
+/// non-facet target is a NON-STATEMENT, not a withhold, so an entity carrying
+/// one still rides an honest seed's closure like any unstamped entity. Letting
+/// it deny would hand a peer a suppression primitive.
+#[test]
+fn selector_forged_facet_blob_cannot_retype_a_stored_person_target() {
+    let member = entity_id(0x2E);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-08");
+
+    let person_target = entity_id(0x7E);
+    let facet_real = entity_id(0x8E);
+    let forged_source = entity_id(0x9E);
+    let neighbor = entity_id(0xAE);
+    let claim_seed = entity_id(0xBE);
+    let riding_source = entity_id(0xCE);
+
+    // Stored truth: the target is a PERSON, permanently.
+    for (id, entity_type) in [
+        (person_target, ENTITY_TYPE_PERSON),
+        (facet_real, ENTITY_TYPE_FACET),
+        (forged_source, ENTITY_TYPE_EVENT),
+        (riding_source, ENTITY_TYPE_EVENT),
+    ] {
+        vault
+            .put_entity(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, b"row")
+            .unwrap();
+    }
+
+    let doc = create_window_doc("source", &window_key);
+    // The FORGERY: the doc types the stored PERSON as a FACET.
+    insert_entity(&doc, person_target, ENTITY_TYPE_FACET, b"forged-facet");
+    insert_entity(&doc, facet_real, ENTITY_TYPE_FACET, b"facet-real");
+    insert_entity(&doc, forged_source, ENTITY_TYPE_EVENT, b"forged-source");
+    insert_entity(&doc, riding_source, ENTITY_TYPE_EVENT, b"riding-source");
+    insert_entity(&doc, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
+    insert_blob(&doc, claim_seed, &claim_blob(None));
+    insert_edge(&doc, forged_source, EdgeKind::FacetOf, person_target);
+    insert_edge(&doc, forged_source, EdgeKind::Mentions, neighbor);
+    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_real);
+    insert_edge(&doc, riding_source, EdgeKind::FacetOf, person_target);
+    insert_edge(&doc, claim_seed, EdgeKind::Supports, riding_source);
+    doc.commit();
+
+    // The peer NAMES the forged id, which is the whole point: being selected
+    // is not evidence of being a FACET.
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![person_target, facet_real],
+        vec![],
+    );
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+
+    assert!(
+        ids.contains(&claim_seed),
+        "control: the genuine selected-facet claim must seed closure, or the \
+         assertions below hold vacuously"
+    );
+    assert!(
+        !ids.contains(&forged_source),
+        "a stamp whose TARGET is stored as a PERSON is off the table no matter \
+         what the document blob claims — the stored row is authoritative in \
+         BOTH directions, so a forged FACET blob cannot manufacture a seed"
+    );
+    assert!(
+        !ids.contains(&neighbor),
+        "the one-hop neighbor is reachable ONLY through the forged source — \
+         exporting it would prove the fake facet still seeded closure"
+    );
+    assert!(
+        ids.contains(&riding_source),
+        "an off-table stamp is a NON-STATEMENT, not a withhold: an entity \
+         carrying one still rides an honest seed's closure, or the mirror hands \
+         a peer a suppression primitive"
+    );
+}
+
+/// DOC-ONLY TARGET: with no stored row there is no conflict to split on, so
+/// both roles fall back to the document blob and the ONE-1645 table decides.
+///
+/// This is the branch fix-6's P1-1 pins reach through federated admission
+/// (which materializes a stored row along the way); here it is exercised
+/// directly, so a future "the stored row is always authoritative" reading
+/// cannot quietly turn every not-yet-materialized facet into an inert one and
+/// kill scoping for honest out-of-order delivery (the H2 line).
+#[test]
+fn selector_document_only_target_scopes_only_when_it_types_a_facet() {
+    let member = entity_id(0x2F);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-08");
+
+    let facet_doc_only = entity_id(0x7C);
+    let person_doc_only = entity_id(0x8C);
+    let claim_to_facet = entity_id(0x9C);
+    let neighbor_of_facet_claim = entity_id(0xAC);
+    let claim_to_person = entity_id(0xBC);
+    let neighbor_of_person_claim = entity_id(0xCC);
+
+    // No stored rows at all: every type below comes from the document.
+    let doc = create_window_doc("source", &window_key);
+    insert_entity(&doc, facet_doc_only, ENTITY_TYPE_FACET, b"facet");
+    insert_entity(&doc, person_doc_only, ENTITY_TYPE_PERSON, b"person");
+    insert_blob(&doc, claim_to_facet, &claim_blob(None));
+    insert_blob(&doc, claim_to_person, &claim_blob(None));
+    insert_entity(
+        &doc,
+        neighbor_of_facet_claim,
+        ENTITY_TYPE_PERSON,
+        b"neighbor-a",
+    );
+    insert_entity(
+        &doc,
+        neighbor_of_person_claim,
+        ENTITY_TYPE_PERSON,
+        b"neighbor-b",
+    );
+    insert_edge(&doc, claim_to_facet, EdgeKind::FacetOf, facet_doc_only);
+    insert_edge(
+        &doc,
+        claim_to_facet,
+        EdgeKind::Supports,
+        neighbor_of_facet_claim,
+    );
+    insert_edge(&doc, claim_to_person, EdgeKind::FacetOf, person_doc_only);
+    insert_edge(
+        &doc,
+        claim_to_person,
+        EdgeKind::Supports,
+        neighbor_of_person_claim,
+    );
+    doc.commit();
+
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet_doc_only, person_doc_only],
+        vec![],
+    );
+    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+        .unwrap()
+        .export(ExportMode::all_updates())
+        .unwrap();
+    let ids = import_ids(&update);
+
+    assert!(
+        ids.contains(&claim_to_facet),
+        "a document-only target that types a FACET scopes normally — absent a \
+         stored row there is no conflict, and refusing the blob here would \
+         break honest out-of-order delivery"
+    );
+    assert!(
+        ids.contains(&neighbor_of_facet_claim),
+        "the scoped seed's one-hop neighbor rides its closure"
+    );
+    assert!(
+        !ids.contains(&claim_to_person),
+        "a document-only target that types a PERSON is off the table, so the \
+         stamp is inert and seeds nothing — being NAMED in the selector is not \
+         evidence the id is a FACET"
+    );
+    assert!(
+        !ids.contains(&neighbor_of_person_claim),
+        "the inert stamp's neighbor is reachable only through it"
+    );
+}
+
 #[test]
 fn selector_facet_closure_does_not_expand_from_facet_entities() {
     let member = entity_id(0x3A);

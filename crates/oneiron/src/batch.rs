@@ -3796,12 +3796,15 @@ pub(crate) fn validate_facet_of_edge(
 ///   (`crate::sync::selector::facet_scope_by_source`). It honors a `FacetOf`
 ///   scope only when BOTH endpoints resolve onto this table, so it calls the
 ///   PAIR predicate. Types resolve STORED-FIRST (as at the admission door),
-///   with a document blob that CONFLICTS with a stored type carrying no scope:
-///   a conflicting blob is a write the immutability gate rejected, so the row
-///   it types is not one the engine accepted. A row failing either half is
-///   SCOPE-INERT — never a seed, never a withhold — because letting an
-///   unwritable row DENY would hand a peer a suppression primitive against the
-///   host's own entities.
+///   and a document blob that CONFLICTS with a stored type is a write the
+///   immutability gate rejected, so it is read ROLE-SPLIT: on the SOURCE it
+///   carries no scope at all (a rejected blob may not buy scope, nor spend the
+///   stored type's on a withhold), while on the TARGET the stored row stays
+///   authoritative (a rejected retype may not ERASE containment a valid stored
+///   FACET established). Both directions fail toward LESS disclosure. A row
+///   failing either half is SCOPE-INERT — never a seed, never a withhold —
+///   because letting an unwritable row DENY would hand a peer a suppression
+///   primitive against the host's own entities.
 ///
 /// A second copy of the pair table would drift from this one silently; the
 /// admission door's whole job is to reject exactly what the replay door
