@@ -182,6 +182,8 @@ pub enum ErrorKind {
     InvalidCounterpartyContactBody,
     InvalidCommRecordBody,
     InvalidDisclosureScope,
+    InvalidFacetExposure,
+    InvalidFacetClearance,
     DisclosureClampViolation,
     InvalidTaskBody,
     CorruptedIndex,
@@ -937,6 +939,19 @@ pub enum Error {
     /// was written.
     #[error("invalid disclosure scope: {0}")]
     InvalidDisclosureScope(&'static str),
+    /// A facet-exposure body failed pinned structural validation, or
+    /// `Vault::set_facet_exposure` was handed a non-FACET target. Nothing was
+    /// written. On the enforcement path a body that raises this is
+    /// quiet-narrowed to `private` instead.
+    #[error("invalid facet exposure: {0}")]
+    InvalidFacetExposure(&'static str),
+    /// A facet-clearance body failed pinned structural validation (cap
+    /// exceeded, unsorted or duplicated facets, bad status, bad hex,
+    /// `updated_at` before `created_at`). Nothing was written. On the
+    /// enforcement path a body that raises this is quiet-narrowed to the
+    /// EMPTY clearance instead.
+    #[error("invalid facet clearance: {0}")]
+    InvalidFacetClearance(&'static str),
     /// A non-admitted entity survived into an assembled context pack. The
     /// pack build FAILS rather than leaks (OF-365 fail-closed sweep).
     #[error("disclosure clamp violation: {0}")]
@@ -1593,6 +1608,8 @@ impl Error {
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDisclosureScope(_) => ErrorKind::InvalidDisclosureScope,
+            Self::InvalidFacetExposure(_) => ErrorKind::InvalidFacetExposure,
+            Self::InvalidFacetClearance(_) => ErrorKind::InvalidFacetClearance,
             Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,

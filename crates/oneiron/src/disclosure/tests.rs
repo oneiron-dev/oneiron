@@ -2,7 +2,7 @@ use super::*;
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyFirstTouch};
 use crate::interlocutor::Interlocutor;
 use crate::off_record::OffRecordBackendClass;
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 
 use crate::test_util::entity as test_id;
 
@@ -32,6 +32,59 @@ fn seed_contact(vault: &Vault, contact_id: EntityId, counterparty: &str) {
 
 fn known(contact_id: EntityId, label: &str) -> Interlocutor {
     Interlocutor::known_contact(contact_id, label, CounterpartyFirstTouch::UserIntroduction)
+}
+
+fn put_facet(vault: &Vault, id: &EntityId) {
+    vault
+        .put_entity(
+            id,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&serde_json::json!({ "name": "facet" })).expect("body"),
+        )
+        .expect("put facet");
+}
+
+/// A CLAIM carrying an explicit public sensitivity band, so the Tier-A
+/// conjunct passes and the FACET conjunct is the rule under test. The subject
+/// entity is seeded too — `put_claim` writes a `ClaimOf` edge to it.
+fn put_public_claim(vault: &Vault, id: &EntityId, subject: EntityId) {
+    put_turn(vault, &subject);
+    let mut body = ClaimBody::new(
+        "event.note",
+        ClaimSubject::Entity(subject),
+        Value::from("value"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.scope = Some(sensitivity_scope("public"));
+    vault
+        .put_claim(id, &body, TimeRange { start: 1, end: 1 }, 1)
+        .expect("put claim");
+}
+
+fn stamp_facet_of(vault: &Vault, claim_id: &EntityId, facet_id: &EntityId) {
+    vault
+        .batch()
+        .edge(claim_id, EdgeKind::FacetOf, facet_id, 1.0)
+        .commit()
+        .expect("stamp FacetOf");
+}
+
+fn grant_clearance(vault: &Vault, contact_id: &EntityId, facets: Vec<EntityId>) {
+    let clearance = FacetClearance::granted(facets, 100).expect("clearance");
+    vault
+        .set_contact_facet_clearance(contact_id, &clearance)
+        .expect("set clearance");
+}
+
+fn disclosable_facets(ctx: &DisclosureContext) -> Vec<EntityId> {
+    match ctx.disclosable() {
+        DisclosableSet::All => panic!("expected a resolved facet set, got All"),
+        DisclosableSet::Facets(facets) => facets.clone(),
+    }
 }
 
 fn claim_with_scope(predicate: &str, scope: Option<Value>) -> ClaimBody {
@@ -1033,5 +1086,561 @@ fn receipt_stamp_escapes_delimiters_and_round_trips_the_exact_labels() -> Result
             ("unknown", control.to_owned()),
         ]
     );
+    Ok(())
+}
+
+// ─── S-DISC2: the F2(d) disclosable-set conjunct (ONE-1646) ─────────────────
+
+/// T1 (P1 pin, RATIFY-mandated): the intersection over the EMPTY family of
+/// non-owner interlocutors is ALL facets. The owner alone is never locked out
+/// of their own private facets.
+#[test]
+fn disclosable_set_owner_alone_is_all() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xC1);
+    let claim = test_id(0xC2);
+    put_facet(&vault, &facet);
+    put_public_claim(&vault, &claim, test_id(0xC3));
+    stamp_facet_of(&vault, &claim, &facet);
+
+    let ctx = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;
+    assert_eq!(ctx.disclosable(), &DisclosableSet::All);
+    assert!(ctx.disclosable().contains(&facet), "All contains anything");
+
+    // The private-faceted claim and the facet entity itself are both admitted.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?);
+    assert!(ctx.admits(&vault.store, &rtxn, &facet, ENTITY_TYPE_FACET, None)?);
+    Ok(())
+}
+
+/// T2 (V3 fold matrix): `public ∪ (∩ clearances of all non-owner present)`.
+#[test]
+fn disclosable_set_multi_party_folds() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet_a = test_id(0xD1);
+    let facet_b = test_id(0xD2);
+    let facet_pub = test_id(0xD3);
+    put_facet(&vault, &facet_a);
+    put_facet(&vault, &facet_b);
+    put_facet(&vault, &facet_pub);
+    vault.set_facet_exposure(&facet_pub, FacetExposure::Public, 100)?;
+
+    let contact_a = test_id(0xD4);
+    let contact_b = test_id(0xD5);
+    let contact_c = test_id(0xD6);
+    seed_contact(&vault, contact_a, "a@example.com");
+    seed_contact(&vault, contact_b, "b@example.com");
+    seed_contact(&vault, contact_c, "c@example.com");
+    grant_clearance(&vault, &contact_a, vec![facet_a]);
+    grant_clearance(&vault, &contact_b, vec![facet_b]);
+    grant_clearance(&vault, &contact_c, vec![facet_a]);
+
+    let resolve = |entries: Vec<Interlocutor>| -> Result<Vec<EntityId>> {
+        let ctx = DisclosureContext::resolve(&vault, InterlocutorSet::without_owner(entries))?;
+        Ok(disclosable_facets(&ctx))
+    };
+
+    // (e) single contact cleared for A -> {public ∪ A}, NOT All: the identity
+    // element belongs to the EMPTY family only.
+    let mut expected_single = vec![facet_a, facet_pub];
+    expected_single.sort_unstable();
+    assert_eq!(
+        resolve(vec![known(contact_a, "a@example.com")])?,
+        expected_single
+    );
+
+    // (a) disjoint clearances {A} ∩ {B} = ∅ -> public only.
+    assert_eq!(
+        resolve(vec![
+            known(contact_a, "a@example.com"),
+            known(contact_b, "b@example.com"),
+        ])?,
+        vec![facet_pub]
+    );
+
+    // (b) cleared + uncleared contact -> public only.
+    let contact_none = test_id(0xD8);
+    seed_contact(&vault, contact_none, "n@example.com");
+    assert_eq!(
+        resolve(vec![
+            known(contact_a, "a@example.com"),
+            known(contact_none, "n@example.com"),
+        ])?,
+        vec![facet_pub]
+    );
+
+    // (c) an UNKNOWN party (no contact_ref) is an ∅-clearance MEMBER of the
+    // intersection, never an absence from it.
+    assert_eq!(
+        resolve(vec![
+            known(contact_a, "a@example.com"),
+            Interlocutor::unknown("guest", true),
+        ])?,
+        vec![facet_pub]
+    );
+
+    // (d) two contacts SHARING clearance {A} -> {public ∪ A}.
+    assert_eq!(
+        resolve(vec![
+            known(contact_a, "a@example.com"),
+            known(contact_c, "c@example.com"),
+        ])?,
+        expected_single
+    );
+    Ok(())
+}
+
+/// T3 (state defaults): born-private, and the exposure dial round-trips.
+#[test]
+fn facet_exposure_defaults_private() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xE3);
+    put_facet(&vault, &facet);
+    let contact = test_id(0xE4);
+    seed_contact(&vault, contact, "a@example.com");
+
+    let unknown_room = || InterlocutorSet::without_owner(vec![Interlocutor::unknown("g", true)]);
+    let contact_room = || InterlocutorSet::without_owner(vec![known(contact, "a@example.com")]);
+
+    // No exposure row at all: the engine default is PRIVATE.
+    assert_eq!(vault.facet_exposure(&facet)?, None);
+    let ctx = DisclosureContext::resolve(&vault, unknown_room())?;
+    assert!(!ctx.disclosable().contains(&facet));
+
+    // Public: in EVERY non-owner room, unknown-only included.
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+    assert_eq!(
+        vault.facet_exposure(&facet)?,
+        Some(FacetExposureState {
+            exposure: FacetExposure::Public,
+            updated_at: 100,
+        })
+    );
+    for set in [unknown_room(), contact_room()] {
+        let ctx = DisclosureContext::resolve(&vault, set)?;
+        assert!(ctx.disclosable().contains(&facet));
+    }
+
+    // Back to private: out again. Dial, not wall — one door both ways.
+    vault.set_facet_exposure(&facet, FacetExposure::Private, 200)?;
+    let ctx = DisclosureContext::resolve(&vault, unknown_room())?;
+    assert!(!ctx.disclosable().contains(&facet));
+    Ok(())
+}
+
+/// T4 (clearance lifecycle): Revoked and corrupt rows both narrow QUIETLY on
+/// the enforcement path while the owner-facing read stays LOUD.
+#[test]
+fn clearance_revoked_and_corrupt_narrow() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xF1);
+    put_facet(&vault, &facet);
+    let contact = test_id(0xF2);
+    seed_contact(&vault, contact, "a@example.com");
+    let room = || InterlocutorSet::without_owner(vec![known(contact, "a@example.com")]);
+
+    grant_clearance(&vault, &contact, vec![facet]);
+    let ctx = DisclosureContext::resolve(&vault, room())?;
+    assert_eq!(disclosable_facets(&ctx), vec![facet], "active grant holds");
+
+    // Revoked contributes ∅ — the record is preserved, the grant is not.
+    let mut revoked = FacetClearance::granted(vec![facet], 100)?;
+    revoked.status = DisclosureScopeStatus::Revoked;
+    revoked.updated_at = 200;
+    vault.set_contact_facet_clearance(&contact, &revoked)?;
+    assert_eq!(
+        vault
+            .contact_facet_clearance(&contact)?
+            .expect("row")
+            .status,
+        DisclosureScopeStatus::Revoked
+    );
+    assert!(disclosable_facets(&DisclosureContext::resolve(&vault, room())?).is_empty());
+
+    // A corrupt clearance row: quiet ∅ on resolve, LOUD on the owner read.
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &facet_clearance_meta_key(&contact),
+            b"not a msgpack clearance body",
+        )?;
+        wtxn.commit()?;
+    }
+    assert_eq!(
+        vault
+            .contact_facet_clearance(&contact)
+            .expect_err("owner read surfaces the corruption")
+            .kind(),
+        ErrorKind::InvalidFacetClearance
+    );
+    assert!(disclosable_facets(&DisclosureContext::resolve(&vault, room())?).is_empty());
+
+    // Same pair for a corrupt EXPOSURE row: quiet not-public / loud read.
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+    assert!(
+        disclosable_facets(&DisclosureContext::resolve(&vault, room())?).contains(&facet),
+        "public exposure reaches every room"
+    );
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &facet_exposure_meta_key(&facet),
+            b"not a msgpack exposure body",
+        )?;
+        wtxn.commit()?;
+    }
+    assert_eq!(
+        vault
+            .facet_exposure(&facet)
+            .expect_err("owner read surfaces the corruption")
+            .kind(),
+        ErrorKind::InvalidFacetExposure
+    );
+    assert!(disclosable_facets(&DisclosureContext::resolve(&vault, room())?).is_empty());
+    Ok(())
+}
+
+/// T5 (conjunct truth table): the facet rule composes as an AND with the
+/// shipped tier and presence-scope conjuncts, in BOTH non-owner modes.
+#[test]
+fn admits_facet_conjunct_composes() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let private_facet = test_id(0x31);
+    put_facet(&vault, &private_facet);
+    let contact = test_id(0x32);
+    seed_contact(&vault, contact, "a@example.com");
+    let faceted = test_id(0x33);
+    let unfaceted = test_id(0x34);
+    put_public_claim(&vault, &faceted, test_id(0x35));
+    put_public_claim(&vault, &unfaceted, test_id(0x35));
+    stamp_facet_of(&vault, &faceted, &private_facet);
+
+    // BOTH claims are on the presence-scope allowlist, so the facet conjunct
+    // is the only thing that can differ between them.
+    let scope = DisclosureScope::task_scoped("room", vec![faceted, unfaceted, private_facet], 100)?;
+    vault.set_counterparty_disclosure_scope(&contact, &scope)?;
+
+    // Presence-scope also allowlists a claim that the room will NOT be able
+    // to see, to prove the facet conjunct still binds after clearance lands.
+    let off_scope = test_id(0x36);
+    put_public_claim(&vault, &off_scope, test_id(0x37));
+    stamp_facet_of(&vault, &off_scope, &private_facet);
+
+    let both_rooms = |vault: &Vault| -> Result<Vec<DisclosureContext>> {
+        Ok(vec![
+            DisclosureContext::resolve(
+                vault,
+                InterlocutorSet::with_session_owner(vec![known(contact, "a@example.com")]),
+            )?,
+            DisclosureContext::resolve(
+                vault,
+                InterlocutorSet::without_owner(vec![known(contact, "a@example.com")]),
+            )?,
+        ])
+    };
+
+    {
+        let rooms = both_rooms(&vault)?;
+        let rtxn = vault.store.env.read_txn()?;
+        for ctx in &rooms {
+            // Faceted claim: rejected even though it IS allowlisted — ∧, not ∨.
+            assert!(!ctx.admits(&vault.store, &rtxn, &faceted, ENTITY_TYPE_CLAIM, None)?);
+            // The FACET entity's own existence is non-disclosable.
+            assert!(!ctx.admits(&vault.store, &rtxn, &private_facet, ENTITY_TYPE_FACET, None)?);
+            // Unfaceted material behaves exactly as before the conjunct.
+            assert!(ctx.admits(&vault.store, &rtxn, &unfaceted, ENTITY_TYPE_CLAIM, None)?);
+        }
+    }
+
+    // Clear the facet for the only present party: both now pass the conjunct.
+    grant_clearance(&vault, &contact, vec![private_facet]);
+    let rooms = both_rooms(&vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    for ctx in &rooms {
+        assert!(ctx.admits(&vault.store, &rtxn, &faceted, ENTITY_TYPE_CLAIM, None)?);
+        assert!(ctx.admits(&vault.store, &rtxn, &private_facet, ENTITY_TYPE_FACET, None)?);
+    }
+
+    // Presence-scope still binds AFTER the facet conjunct passes: a cleared
+    // facet does not widen the AbsenceClamp allowlist.
+    let clamped = &rooms[1];
+    assert_eq!(clamped.mode(), DisclosureMode::AbsenceClamp);
+    assert!(!clamped.admits(&vault.store, &rtxn, &off_scope, ENTITY_TYPE_CLAIM, None)?);
+    Ok(())
+}
+
+/// T6 (tier-first ordering): clearance can NEVER resurface Tier-A material.
+#[test]
+fn tier_a_wins_over_cleared_facet() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x41);
+    put_facet(&vault, &facet);
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+    let contact = test_id(0x4A);
+    seed_contact(&vault, contact, "a@example.com");
+    grant_clearance(&vault, &contact, vec![facet]);
+
+    let claim = test_id(0x43);
+    put_public_claim(&vault, &claim, test_id(0x44));
+    stamp_facet_of(&vault, &claim, &facet);
+    vault.set_disclosure_tier_a(&claim, 100)?;
+    let scope = DisclosureScope::task_scoped("room", vec![claim], 100)?;
+    vault.set_counterparty_disclosure_scope(&contact, &scope)?;
+
+    let rooms = [
+        DisclosureContext::resolve(
+            &vault,
+            InterlocutorSet::with_session_owner(vec![known(contact, "a@example.com")]),
+        )?,
+        DisclosureContext::resolve(
+            &vault,
+            InterlocutorSet::without_owner(vec![known(contact, "a@example.com")]),
+        )?,
+    ];
+    let rtxn = vault.store.env.read_txn()?;
+    for ctx in &rooms {
+        assert!(
+            ctx.disclosable().contains(&facet),
+            "the facet IS disclosable — only the tier rule rejects"
+        );
+        assert!(!ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?);
+    }
+    Ok(())
+}
+
+/// T7 (multi-stamp subset semantics): a claim stamped into {A, B} belongs to
+/// BOTH masks; a room cleared only for A must not see it.
+#[test]
+fn multi_facet_stamp_requires_all_cleared() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet_a = test_id(0x51);
+    let facet_b = test_id(0x52);
+    put_facet(&vault, &facet_a);
+    put_facet(&vault, &facet_b);
+    let contact = test_id(0x53);
+    seed_contact(&vault, contact, "a@example.com");
+    let claim = test_id(0x54);
+    put_public_claim(&vault, &claim, test_id(0x55));
+    stamp_facet_of(&vault, &claim, &facet_a);
+    stamp_facet_of(&vault, &claim, &facet_b);
+
+    let supervised = |vault: &Vault| {
+        DisclosureContext::resolve(
+            vault,
+            InterlocutorSet::with_session_owner(vec![known(contact, "a@example.com")]),
+        )
+    };
+
+    grant_clearance(&vault, &contact, vec![facet_a]);
+    {
+        let ctx = supervised(&vault)?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            !ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?,
+            "A-only clearance must not disclose B-linked material"
+        );
+    }
+
+    grant_clearance(&vault, &contact, vec![facet_a, facet_b]);
+    let ctx = supervised(&vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?);
+    Ok(())
+}
+
+/// T8 (dual-write): each owner write op produces the `vault_meta` enforcement
+/// row AND the owner-visible claim mirror at the derived id, Tier-A
+/// classified, CID-7 overwriting on re-set; validation failures write nothing.
+#[test]
+fn facet_exposure_and_clearance_dual_write() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x61);
+    let other_facet = test_id(0x62);
+    put_facet(&vault, &facet);
+    put_facet(&vault, &other_facet);
+    let contact = test_id(0x63);
+    seed_contact(&vault, contact, "a@example.com");
+
+    // ── exposure mirror ──
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+    let exposure_claim = facet_exposure_claim_id(&facet)?;
+    let stored = vault
+        .get_claim(&exposure_claim)?
+        .expect("exposure claim mirror");
+    assert_eq!(stored.predicate, PREDICATE_DISCLOSURE_FACET_EXPOSURE);
+    assert_eq!(stored.subject, ClaimSubject::Entity(facet));
+    assert_eq!(stored.value.as_str(), Some("public"));
+
+    // ── clearance mirror ──
+    grant_clearance(&vault, &contact, vec![facet]);
+    let clearance_claim = facet_clearance_claim_id(&contact)?;
+    let stored = vault
+        .get_claim(&clearance_claim)?
+        .expect("clearance claim mirror");
+    assert_eq!(stored.predicate, PREDICATE_DISCLOSURE_CLEARANCE);
+    assert_eq!(stored.subject, ClaimSubject::Entity(contact));
+    assert_eq!(
+        decode_facet_clearance_value(&stored.value)?.facets,
+        vec![facet]
+    );
+
+    // Both mirrors are Tier A by predicate prefix — the facet-privacy
+    // METADATA can never itself surface to a third party.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        for id in [exposure_claim, clearance_claim] {
+            assert_eq!(
+                disclosure_tier(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, None)?,
+                DisclosureTier::TierA
+            );
+        }
+    }
+
+    // CID-7 overwrite: a re-set rewrites the SAME claim id, no second record.
+    vault.set_facet_exposure(&facet, FacetExposure::Private, 200)?;
+    assert_eq!(facet_exposure_claim_id(&facet)?, exposure_claim);
+    assert_eq!(
+        vault
+            .get_claim(&exposure_claim)?
+            .expect("mirror")
+            .value
+            .as_str(),
+        Some("private")
+    );
+
+    // ── validation failures write NOTHING ──
+    let turn = test_id(0x64);
+    put_turn(&vault, &turn);
+    let missing = test_id(0x65);
+
+    // exposure: non-FACET target / absent target.
+    assert_eq!(
+        vault
+            .set_facet_exposure(&turn, FacetExposure::Public, 1)
+            .expect_err("non-FACET target")
+            .kind(),
+        ErrorKind::InvalidEntityType
+    );
+    assert_eq!(
+        vault
+            .set_facet_exposure(&missing, FacetExposure::Public, 1)
+            .expect_err("absent target")
+            .kind(),
+        ErrorKind::EntityNotFound
+    );
+    assert_eq!(vault.facet_exposure(&turn)?, None, "nothing written");
+
+    // clearance: non-contact subject, dangling facet, cap breach.
+    let grant = FacetClearance::granted(vec![facet], 100)?;
+    assert_eq!(
+        vault
+            .set_contact_facet_clearance(&turn, &grant)
+            .expect_err("non-contact subject")
+            .kind(),
+        ErrorKind::InvalidEntityType
+    );
+    let dangling = FacetClearance::granted(vec![facet, missing], 100)?;
+    assert_eq!(
+        vault
+            .set_contact_facet_clearance(&contact, &dangling)
+            .expect_err("dangling facet")
+            .kind(),
+        ErrorKind::EntityNotFound
+    );
+    assert_eq!(
+        vault
+            .contact_facet_clearance(&contact)?
+            .expect("prior grant survives the failed write")
+            .facets,
+        vec![facet]
+    );
+    // Cap breach: 257 distinct ids built directly (the sorted/deduped
+    // invariant must hold so the CAP is the rule under test).
+    let over_cap = FacetClearance {
+        facets: (0..=u16::try_from(MAX_FACET_CLEARANCE_ENTRIES).expect("cap fits"))
+            .map(|i| {
+                let mut bytes = [0_u8; 16];
+                bytes[..2].copy_from_slice(&i.to_be_bytes());
+                bytes[15] = 1;
+                EntityId::from_bytes(bytes).expect("id")
+            })
+            .collect(),
+        status: DisclosureScopeStatus::Active,
+        created_at: 1,
+        updated_at: 1,
+    };
+    assert_eq!(
+        vault
+            .set_contact_facet_clearance(&contact, &over_cap)
+            .expect_err("cap breach")
+            .kind(),
+        ErrorKind::InvalidFacetClearance
+    );
+    assert_eq!(
+        FacetClearance {
+            facets: vec![facet],
+            status: DisclosureScopeStatus::Active,
+            created_at: 200,
+            updated_at: 100,
+        }
+        .validate()
+        .expect_err("updated_at before created_at")
+        .kind(),
+        ErrorKind::InvalidFacetClearance
+    );
+    Ok(())
+}
+
+/// The two new predicates join the containment door and the codecs round-trip.
+#[test]
+fn facet_state_codecs_and_predicate_family() -> Result<()> {
+    assert_eq!(DISCLOSURE_CLAIM_PREDICATES.len(), 5);
+    for predicate in [
+        PREDICATE_DISCLOSURE_FACET_EXPOSURE,
+        PREDICATE_DISCLOSURE_CLEARANCE,
+    ] {
+        assert!(is_disclosure_claim_predicate(predicate));
+        // Rule 4 already classifies every `disclosure.*` predicate Tier A.
+        assert!(
+            DISCLOSURE_TIER_A_PREDICATE_PREFIXES
+                .iter()
+                .any(|prefix| predicate.starts_with(prefix))
+        );
+    }
+
+    let state = FacetExposureState {
+        exposure: FacetExposure::Public,
+        updated_at: 7,
+    };
+    let encoded = encode_facet_exposure_body(&state)?;
+    assert_eq!(decode_facet_exposure_body(&encoded)?, state);
+    let clearance = FacetClearance::granted(vec![test_id(0x02), test_id(0x01)], 3)?;
+    assert_eq!(clearance.facets, vec![test_id(0x01), test_id(0x02)]);
+    let encoded = encode_facet_clearance_body(&clearance)?;
+    assert_eq!(decode_facet_clearance_body(&encoded)?, clearance);
+
+    // Strict codecs: trailing bytes, unknown keys, and bad enum strings all
+    // reject with the family's own variant.
+    let mut trailing = encode_facet_exposure_body(&state)?;
+    trailing.push(0x00);
+    assert_eq!(
+        decode_facet_exposure_body(&trailing)
+            .expect_err("trailing bytes")
+            .kind(),
+        ErrorKind::InvalidFacetExposure
+    );
+    let mut clearance_trailing = encode_facet_clearance_body(&clearance)?;
+    clearance_trailing.push(0x00);
+    assert_eq!(
+        decode_facet_clearance_body(&clearance_trailing)
+            .expect_err("trailing bytes")
+            .kind(),
+        ErrorKind::InvalidFacetClearance
+    );
+    assert_eq!(FacetExposure::parse("public"), Some(FacetExposure::Public));
+    assert_eq!(FacetExposure::parse("PUBLIC"), None);
     Ok(())
 }

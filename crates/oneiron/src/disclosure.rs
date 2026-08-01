@@ -25,15 +25,15 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, claim_sensitivity_band,
     decode_claim_body, encode_claim_body, validate_claim_body_bytes,
 };
-use crate::edge::EdgeKind;
-use crate::entity_id::EntityId;
+use crate::edge::{EDGE_KEY_LEN, EdgeKind};
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, ErrorKind, Result};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FACET,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT,
 };
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -61,6 +61,25 @@ const KEY_STATUS: &str = DISCLOSURE_SCOPE_BODY_KEYS[4];
 const KEY_CREATED_AT: &str = DISCLOSURE_SCOPE_BODY_KEYS[5];
 const KEY_UPDATED_AT: &str = DISCLOSURE_SCOPE_BODY_KEYS[6];
 
+/// Pinned on-disk MessagePack key set for facet-exposure bodies.
+pub const FACET_EXPOSURE_BODY_KEYS: [&str; 3] = ["schema_version", "exposure", "updated_at"];
+
+const KEY_EXPOSURE: &str = FACET_EXPOSURE_BODY_KEYS[1];
+
+/// Pinned on-disk MessagePack key set for per-contact facet-clearance bodies.
+pub const FACET_CLEARANCE_BODY_KEYS: [&str; 5] = [
+    "schema_version",
+    "facets",
+    "status",
+    "created_at",
+    "updated_at",
+];
+
+const KEY_FACETS: &str = FACET_CLEARANCE_BODY_KEYS[1];
+
+/// Maximum facet ids one contact clearance may carry (mirrors the scope cap).
+pub const MAX_FACET_CLEARANCE_ENTRIES: usize = 256;
+
 /// Maximum explicit allowlist entries one scope may carry.
 pub const MAX_DISCLOSURE_SCOPE_ENTITIES: usize = 256;
 /// Maximum reserved topic tags one scope may carry.
@@ -73,14 +92,26 @@ const MAX_DISCLOSURE_SCOPE_PURPOSE_BYTES: usize = 512;
 const DISCLOSURE_SCOPE_KEY_PREFIX: &[u8] = b"disclosure.scope.v1:";
 /// `vault_meta` row key prefix for owner Tier-A mark rows.
 const DISCLOSURE_TIER_A_KEY_PREFIX: &[u8] = b"disclosure.tier_a.v1:";
+/// `vault_meta` row key prefix for per-facet exposure rows (F2(d) public set).
+/// A MISSING row means private — every facet is born private, fail-closed.
+const FACET_EXPOSURE_KEY_PREFIX: &[u8] = b"facet.exposure.v1:";
+/// `vault_meta` row key prefix for per-contact facet-clearance rows.
+const FACET_CLEARANCE_KEY_PREFIX: &[u8] = b"contact.clearance.v1:";
 
 /// Pinned `disclosure.*` claim predicates.
-pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 3] =
-    ["disclosure.scope", "disclosure.tier", "disclosure.topic"];
+pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 5] = [
+    "disclosure.scope",
+    "disclosure.tier",
+    "disclosure.topic",
+    "disclosure.facet_exposure",
+    "disclosure.clearance",
+];
 
 pub const PREDICATE_DISCLOSURE_SCOPE: &str = "disclosure.scope";
 pub const PREDICATE_DISCLOSURE_TIER: &str = "disclosure.tier";
 pub const PREDICATE_DISCLOSURE_TOPIC: &str = "disclosure.topic";
+pub const PREDICATE_DISCLOSURE_FACET_EXPOSURE: &str = "disclosure.facet_exposure";
+pub const PREDICATE_DISCLOSURE_CLEARANCE: &str = "disclosure.clearance";
 
 const DISCLOSURE_TIER_VALUE_TIER_A: &str = "tier_a";
 
@@ -409,6 +440,89 @@ fn truncate_at_char_boundary(mut value: String, max_bytes: usize) -> String {
     value
 }
 
+/// The room's facet-disclosure set (F2(d)): which facets may be the subject
+/// of disclosure given who is present. A DISTINCT AXIS from
+/// [`DisclosureScope`] (per-contact entity allowlist) — the two compose as
+/// conjuncts inside [`DisclosureContext::admits`] and must not be merged.
+///
+/// Resolved security state: computed per assembly like the mode, never
+/// persisted and never wire data (no `Serialize`/`Deserialize`, design §14.5
+/// item 8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisclosableSet {
+    /// P1 identity element: the intersection over the EMPTY family of
+    /// non-owner interlocutors is ALL facets. The owner alone is never locked
+    /// out of their own private facets.
+    All,
+    /// `public ∪ (∩ clearances of all non-owner present)`; sorted and deduped.
+    Facets(Vec<EntityId>),
+}
+
+impl DisclosableSet {
+    /// Whether `facet` may be the subject of disclosure in this room.
+    #[must_use]
+    pub fn contains(&self, facet: &EntityId) -> bool {
+        match self {
+            Self::All => true,
+            Self::Facets(facets) => facets.binary_search(facet).is_ok(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+}
+
+/// A facet's exposure class. The engine default for a facet with no stored
+/// row is `Private` — born-private, fail-closed. Stock defaults (which facet
+/// is "Base") are host configuration and are NEVER seeded by the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FacetExposure {
+    Public,
+    Private,
+}
+
+impl FacetExposure {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Private => "private",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "public" => Some(Self::Public),
+            "private" => Some(Self::Private),
+            _ => None,
+        }
+    }
+}
+
+/// The stored per-facet exposure row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FacetExposureState {
+    pub exposure: FacetExposure,
+    pub updated_at: u64,
+}
+
+/// The stored per-contact facet clearance: which facets this contact has been
+/// granted, under the OF-153 grant grammar ([`DisclosureScopeStatus`] is the
+/// generic Active/Revoked lifecycle — revocation preserves the record).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FacetClearance {
+    /// Cleared facet ids, sorted and deduped; at most
+    /// [`MAX_FACET_CLEARANCE_ENTRIES`].
+    pub facets: Vec<EntityId>,
+    pub status: DisclosureScopeStatus,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
 fn disclosure_scope_body_value(scope: &DisclosureScope) -> Value {
     Value::Map(vec![
         (
@@ -417,13 +531,7 @@ fn disclosure_scope_body_value(scope: &DisclosureScope) -> Value {
         ),
         (
             Value::from(KEY_ENTITIES),
-            Value::Array(
-                scope
-                    .entities
-                    .iter()
-                    .map(|id| Value::from(id.to_hex()))
-                    .collect(),
-            ),
+            entity_id_array_value(&scope.entities),
         ),
         (
             Value::from(KEY_TOPICS),
@@ -471,44 +579,36 @@ fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureScope> {
     let Value::Map(entries) = value else {
         return Err(invalid_scope());
     };
-    validate_keys(entries, &DISCLOSURE_SCOPE_BODY_KEYS)?;
+    validate_keys(entries, &DISCLOSURE_SCOPE_BODY_KEYS, invalid_scope)?;
 
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
+    if required_value(entries, KEY_SCHEMA_VERSION, invalid_scope)?.as_u64()
         != Some(DISCLOSURE_SCOPE_SCHEMA_VERSION)
     {
         return Err(invalid_scope());
     }
-    let Value::Array(raw_entities) = required_value(entries, KEY_ENTITIES)? else {
-        return Err(invalid_scope());
-    };
-    let entities = raw_entities
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .and_then(|hex| EntityId::from_hex(hex).ok())
-                .ok_or_else(invalid_scope)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let Value::Array(raw_topics) = required_value(entries, KEY_TOPICS)? else {
+    let entities = decode_entity_id_array(
+        required_value(entries, KEY_ENTITIES, invalid_scope)?,
+        invalid_scope,
+    )?;
+    let Value::Array(raw_topics) = required_value(entries, KEY_TOPICS, invalid_scope)? else {
         return Err(invalid_scope());
     };
     let topics = raw_topics
         .iter()
         .map(|value| value.as_str().map(str::to_owned).ok_or_else(invalid_scope))
         .collect::<Result<Vec<_>>>()?;
-    let purpose = required_value(entries, KEY_PURPOSE)?
+    let purpose = required_value(entries, KEY_PURPOSE, invalid_scope)?
         .as_str()
         .ok_or_else(invalid_scope)?
         .to_owned();
-    let status = required_value(entries, KEY_STATUS)?
+    let status = required_value(entries, KEY_STATUS, invalid_scope)?
         .as_str()
         .and_then(DisclosureScopeStatus::parse)
         .ok_or_else(invalid_scope)?;
-    let created_at = required_value(entries, KEY_CREATED_AT)?
+    let created_at = required_value(entries, KEY_CREATED_AT, invalid_scope)?
         .as_u64()
         .ok_or_else(invalid_scope)?;
-    let updated_at = required_value(entries, KEY_UPDATED_AT)?
+    let updated_at = required_value(entries, KEY_UPDATED_AT, invalid_scope)?
         .as_u64()
         .ok_or_else(invalid_scope)?;
 
@@ -524,34 +624,254 @@ fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureScope> {
     Ok(scope)
 }
 
-fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
+/// Strict key-set check shared by every body codec in this module: exactly
+/// the pinned keys, each present exactly once, no unknown keys. The caller
+/// supplies its own error constructor so each family reports its own variant.
+fn validate_keys(entries: &[(Value, Value)], keys: &[&str], invalid: fn() -> Error) -> Result<()> {
     let mut seen = vec![false; keys.len()];
     for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_scope)?;
+        let key = key.as_str().ok_or_else(invalid)?;
         let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_scope());
+            return Err(invalid());
         };
         if seen[index] {
-            return Err(invalid_scope());
+            return Err(invalid());
         }
         seen[index] = true;
     }
     if seen.into_iter().all(|value| value) {
         Ok(())
     } else {
-        Err(invalid_scope())
+        Err(invalid())
     }
 }
 
-fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
+fn required_value<'a>(
+    entries: &'a [(Value, Value)],
+    key: &str,
+    invalid: fn() -> Error,
+) -> Result<&'a Value> {
     entries
         .iter()
         .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(invalid_scope)
+        .ok_or_else(invalid)
 }
 
 fn invalid_scope() -> Error {
     Error::InvalidDisclosureScope("body failed validation")
+}
+
+fn invalid_exposure() -> Error {
+    Error::InvalidFacetExposure("body failed validation")
+}
+
+fn invalid_clearance() -> Error {
+    Error::InvalidFacetClearance("body failed validation")
+}
+
+/// Decodes the shared sorted-deduped hex entity-id array both the scope and
+/// clearance bodies store.
+fn decode_entity_id_array(value: &Value, invalid: fn() -> Error) -> Result<Vec<EntityId>> {
+    let Value::Array(raw) = value else {
+        return Err(invalid());
+    };
+    raw.iter()
+        .map(|value| {
+            value
+                .as_str()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .ok_or_else(invalid)
+        })
+        .collect()
+}
+
+fn entity_id_array_value(ids: &[EntityId]) -> Value {
+    Value::Array(ids.iter().map(|id| Value::from(id.to_hex())).collect())
+}
+
+impl FacetClearance {
+    /// Constructs a clearance grant: sorts and dedupes the facet list, starts
+    /// Active.
+    pub fn granted(mut facets: Vec<EntityId>, created_at: u64) -> Result<Self> {
+        facets.sort_unstable();
+        facets.dedup();
+        let clearance = Self {
+            facets,
+            status: DisclosureScopeStatus::Active,
+            created_at,
+            updated_at: created_at,
+        };
+        clearance.validate()?;
+        Ok(clearance)
+    }
+
+    /// Validates the pinned clearance invariants.
+    pub fn validate(&self) -> Result<()> {
+        if self.facets.len() > MAX_FACET_CLEARANCE_ENTRIES {
+            return Err(Error::InvalidFacetClearance(
+                "clearance facets exceed the 256-entry cap",
+            ));
+        }
+        if !self
+            .facets
+            .windows(2)
+            .all(|pair| pair[0].as_bytes() < pair[1].as_bytes())
+        {
+            return Err(Error::InvalidFacetClearance(
+                "clearance facets must be sorted and deduped",
+            ));
+        }
+        if self.updated_at < self.created_at {
+            return Err(Error::InvalidFacetClearance(
+                "clearance updated_at must not precede created_at",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The facets this clearance contributes to the room fold: an Active
+    /// grant contributes its set, a Revoked one contributes nothing.
+    fn granted_facets(&self) -> &[EntityId] {
+        match self.status {
+            DisclosureScopeStatus::Active => &self.facets,
+            DisclosureScopeStatus::Revoked => &[],
+        }
+    }
+}
+
+fn facet_exposure_body_value(state: &FacetExposureState) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(DISCLOSURE_SCOPE_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_EXPOSURE),
+            Value::from(state.exposure.as_str()),
+        ),
+        (Value::from(KEY_UPDATED_AT), Value::from(state.updated_at)),
+    ])
+}
+
+/// Encodes a facet-exposure body in canonical MessagePack key order.
+pub fn encode_facet_exposure_body(state: &FacetExposureState) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &facet_exposure_body_value(state))
+        .map_err(|_| Error::InvariantViolation("facet exposure body MessagePack encode failed"))?;
+    Ok(out)
+}
+
+/// Decodes and validates a facet-exposure body (strict key set, no
+/// duplicates, no trailing bytes).
+pub fn decode_facet_exposure_body(bytes: &[u8]) -> Result<FacetExposureState> {
+    let mut cursor = Cursor::new(bytes);
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_exposure())?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(invalid_exposure());
+    }
+    decode_facet_exposure_value(&value)
+}
+
+fn decode_facet_exposure_value(value: &Value) -> Result<FacetExposureState> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_exposure());
+    };
+    validate_keys(entries, &FACET_EXPOSURE_BODY_KEYS, invalid_exposure)?;
+    if required_value(entries, KEY_SCHEMA_VERSION, invalid_exposure)?.as_u64()
+        != Some(DISCLOSURE_SCOPE_SCHEMA_VERSION)
+    {
+        return Err(invalid_exposure());
+    }
+    let exposure = required_value(entries, KEY_EXPOSURE, invalid_exposure)?
+        .as_str()
+        .and_then(FacetExposure::parse)
+        .ok_or_else(invalid_exposure)?;
+    let updated_at = required_value(entries, KEY_UPDATED_AT, invalid_exposure)?
+        .as_u64()
+        .ok_or_else(invalid_exposure)?;
+    Ok(FacetExposureState {
+        exposure,
+        updated_at,
+    })
+}
+
+fn facet_clearance_body_value(clearance: &FacetClearance) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(DISCLOSURE_SCOPE_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_FACETS),
+            entity_id_array_value(&clearance.facets),
+        ),
+        (
+            Value::from(KEY_STATUS),
+            Value::from(clearance.status.as_str()),
+        ),
+        (
+            Value::from(KEY_CREATED_AT),
+            Value::from(clearance.created_at),
+        ),
+        (
+            Value::from(KEY_UPDATED_AT),
+            Value::from(clearance.updated_at),
+        ),
+    ])
+}
+
+/// Encodes a facet-clearance body in canonical MessagePack key order.
+pub fn encode_facet_clearance_body(clearance: &FacetClearance) -> Result<Vec<u8>> {
+    clearance.validate()?;
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &facet_clearance_body_value(clearance))
+        .map_err(|_| Error::InvariantViolation("facet clearance body MessagePack encode failed"))?;
+    Ok(out)
+}
+
+/// Decodes and validates a facet-clearance body (strict key set, no
+/// duplicates, no trailing bytes).
+pub fn decode_facet_clearance_body(bytes: &[u8]) -> Result<FacetClearance> {
+    let mut cursor = Cursor::new(bytes);
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_clearance())?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(invalid_clearance());
+    }
+    decode_facet_clearance_value(&value)
+}
+
+fn decode_facet_clearance_value(value: &Value) -> Result<FacetClearance> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_clearance());
+    };
+    validate_keys(entries, &FACET_CLEARANCE_BODY_KEYS, invalid_clearance)?;
+    if required_value(entries, KEY_SCHEMA_VERSION, invalid_clearance)?.as_u64()
+        != Some(DISCLOSURE_SCOPE_SCHEMA_VERSION)
+    {
+        return Err(invalid_clearance());
+    }
+    let facets = decode_entity_id_array(
+        required_value(entries, KEY_FACETS, invalid_clearance)?,
+        invalid_clearance,
+    )?;
+    let status = required_value(entries, KEY_STATUS, invalid_clearance)?
+        .as_str()
+        .and_then(DisclosureScopeStatus::parse)
+        .ok_or_else(invalid_clearance)?;
+    let created_at = required_value(entries, KEY_CREATED_AT, invalid_clearance)?
+        .as_u64()
+        .ok_or_else(invalid_clearance)?;
+    let updated_at = required_value(entries, KEY_UPDATED_AT, invalid_clearance)?
+        .as_u64()
+        .ok_or_else(invalid_clearance)?;
+    let clearance = FacetClearance {
+        facets,
+        status,
+        created_at,
+        updated_at,
+    };
+    clearance.validate()?;
+    Ok(clearance)
 }
 
 /// Returns whether `predicate` belongs to the disclosure claim family.
@@ -596,6 +916,18 @@ pub(crate) fn validate_disclosure_claim_structure(body: &ClaimBody) -> Result<()
             }
             Ok(())
         }
+        PREDICATE_DISCLOSURE_FACET_EXPOSURE => {
+            if body.value.as_str().and_then(FacetExposure::parse).is_some() {
+                Ok(())
+            } else {
+                Err(Error::InvalidClaimBody(
+                    "disclosure.facet_exposure value must be public or private",
+                ))
+            }
+        }
+        PREDICATE_DISCLOSURE_CLEARANCE => decode_facet_clearance_value(&body.value)
+            .map(|_| ())
+            .map_err(|_| Error::InvalidClaimBody("disclosure.clearance value invalid")),
         _ => Err(Error::InvalidClaimBody(
             "unknown disclosure claim predicate",
         )),
@@ -606,6 +938,21 @@ fn disclosure_scope_meta_key(contact_id: &EntityId) -> Vec<u8> {
     let mut key =
         Vec::with_capacity(DISCLOSURE_SCOPE_KEY_PREFIX.len() + contact_id.as_bytes().len());
     key.extend_from_slice(DISCLOSURE_SCOPE_KEY_PREFIX);
+    key.extend_from_slice(contact_id.as_bytes());
+    key
+}
+
+fn facet_exposure_meta_key(facet_id: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(FACET_EXPOSURE_KEY_PREFIX.len() + facet_id.as_bytes().len());
+    key.extend_from_slice(FACET_EXPOSURE_KEY_PREFIX);
+    key.extend_from_slice(facet_id.as_bytes());
+    key
+}
+
+fn facet_clearance_meta_key(contact_id: &EntityId) -> Vec<u8> {
+    let mut key =
+        Vec::with_capacity(FACET_CLEARANCE_KEY_PREFIX.len() + contact_id.as_bytes().len());
+    key.extend_from_slice(FACET_CLEARANCE_KEY_PREFIX);
     key.extend_from_slice(contact_id.as_bytes());
     key
 }
@@ -650,6 +997,34 @@ fn disclosure_tier_claim_id(id: &EntityId) -> Result<EntityId> {
     derive_disclosure_claim_id(b"disclosure.tier.claim.v1:", id)
 }
 
+fn facet_exposure_claim_id(facet_id: &EntityId) -> Result<EntityId> {
+    derive_disclosure_claim_id(b"disclosure.facet_exposure.claim.v1:", facet_id)
+}
+
+fn facet_clearance_claim_id(contact_id: &EntityId) -> Result<EntityId> {
+    derive_disclosure_claim_id(b"disclosure.clearance.claim.v1:", contact_id)
+}
+
+/// Reads the stored entity type for `id`, or `EntityNotFound` when no row
+/// exists — the `set_counterparty_disclosure_scope` precedent, factored out
+/// because three owner write ops now run the same existence+type check.
+fn stored_entity_type_in_txn(
+    store: &Store,
+    txn: &heed::RwTxn<'_>,
+    id: &EntityId,
+    expected: u8,
+) -> Result<()> {
+    let raw = store
+        .entities
+        .get(txn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != expected {
+        return Err(Error::InvalidEntityType(header.entity_type));
+    }
+    Ok(())
+}
+
 impl Vault {
     /// Sets (or replaces — dial-not-wall) the disclosure scope for a CID-7
     /// contact record: dual-writes the `vault_meta` enforcement row and the
@@ -664,16 +1039,12 @@ impl Vault {
         scope.validate()?;
         let data = encode_disclosure_scope_body(scope)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let raw = self
-            .store
-            .entities
-            .get(&wtxn, contact_id.as_bytes())?
-            .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
+        stored_entity_type_in_txn(
+            &self.store,
+            &wtxn,
+            contact_id,
+            ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        )?;
         self.store
             .vault_meta
             .put(&mut wtxn, &disclosure_scope_meta_key(contact_id), &data)?;
@@ -707,6 +1078,119 @@ impl Vault {
             return Ok(None);
         };
         decode_disclosure_scope_body(&bytes).map(Some)
+    }
+
+    /// Sets a facet's exposure class: dual-writes the `vault_meta`
+    /// enforcement row and the owner-visible `disclosure.facet_exposure`
+    /// claim in one wtxn.
+    ///
+    /// DIAL-NOT-WALL: the SAME door both widens (private -> public) and
+    /// narrows (public -> private). Widening is P2 owner-gated by
+    /// construction of the door — this is an owner-session Vault method with
+    /// no HTTP path (I6), and the claim mirror is the ledger record.
+    ///
+    /// The engine seeds NOTHING: a facet with no row is private, so a fresh
+    /// vault discloses no faceted material to any third party until the host
+    /// writes exposure state.
+    pub fn set_facet_exposure(
+        &self,
+        facet_id: &EntityId,
+        exposure: FacetExposure,
+        at: u64,
+    ) -> Result<()> {
+        let state = FacetExposureState {
+            exposure,
+            updated_at: at,
+        };
+        let data = encode_facet_exposure_body(&state)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        stored_entity_type_in_txn(&self.store, &wtxn, facet_id, ENTITY_TYPE_FACET)?;
+        self.store
+            .vault_meta
+            .put(&mut wtxn, &facet_exposure_meta_key(facet_id), &data)?;
+        let claim_id = facet_exposure_claim_id(facet_id)?;
+        let claim = ClaimBody::new(
+            PREDICATE_DISCLOSURE_FACET_EXPOSURE,
+            ClaimSubject::Entity(*facet_id),
+            Value::from(exposure.as_str()),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, at)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Reads a facet's stored exposure row. Missing row -> `Ok(None)`, which
+    /// the resolver reads as PRIVATE. LOUD on corruption so a damaged row
+    /// stays visible on the owner's consent surface.
+    pub fn facet_exposure(&self, facet_id: &EntityId) -> Result<Option<FacetExposureState>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(bytes) = self
+            .store
+            .vault_meta
+            .get(&rtxn, &facet_exposure_meta_key(facet_id))?
+        else {
+            return Ok(None);
+        };
+        decode_facet_exposure_body(&bytes).map(Some)
+    }
+
+    /// Sets (or replaces — CID-7 overwrite) a contact's facet clearance:
+    /// dual-writes the `vault_meta` enforcement row and the owner-visible
+    /// `disclosure.clearance` claim in one wtxn.
+    ///
+    /// Every cleared facet id must resolve to an existing FACET-typed entity:
+    /// a dangling clearance is a caller bug and errors LOUDLY rather than
+    /// silently granting nothing. Revocation is `status: Revoked` (the record
+    /// is preserved — OF-153 grant grammar), narrowing and widening are both
+    /// one owner call.
+    pub fn set_contact_facet_clearance(
+        &self,
+        contact_id: &EntityId,
+        clearance: &FacetClearance,
+    ) -> Result<()> {
+        let data = encode_facet_clearance_body(clearance)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        stored_entity_type_in_txn(
+            &self.store,
+            &wtxn,
+            contact_id,
+            ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        )?;
+        for facet_id in &clearance.facets {
+            stored_entity_type_in_txn(&self.store, &wtxn, facet_id, ENTITY_TYPE_FACET)?;
+        }
+        self.store
+            .vault_meta
+            .put(&mut wtxn, &facet_clearance_meta_key(contact_id), &data)?;
+        let claim_id = facet_clearance_claim_id(contact_id)?;
+        let claim = ClaimBody::new(
+            PREDICATE_DISCLOSURE_CLEARANCE,
+            ClaimSubject::Entity(*contact_id),
+            facet_clearance_body_value(clearance),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, clearance.updated_at)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Reads a contact's stored facet clearance. Missing row -> `Ok(None)`,
+    /// which the resolver reads as the EMPTY clearance. LOUD on corruption.
+    pub fn contact_facet_clearance(&self, contact_id: &EntityId) -> Result<Option<FacetClearance>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(bytes) = self
+            .store
+            .vault_meta
+            .get(&rtxn, &facet_clearance_meta_key(contact_id))?
+        else {
+            return Ok(None);
+        };
+        decode_facet_clearance_body(&bytes).map(Some)
     }
 
     /// Owner-marks an entity Tier A (design §7 rule 5): meta row plus the
@@ -847,15 +1331,94 @@ impl Vault {
     }
 }
 
+/// F2(d) room rule — THE single resolver (P1). Computes
+/// `public ∪ (∩ clearances of all non-owner present)`.
+///
+/// CORRUPTION STANCE mirrors [`DisclosureContext::resolve`]: on the
+/// enforcement path an undecodable clearance or exposure row contributes the
+/// NARROWING default (empty clearance / not-public) and never aborts
+/// assembly; storage I/O errors stay loud. The owner-facing Vault reads
+/// (`facet_exposure` / `contact_facet_clearance`) error loudly instead, so
+/// corruption stays visible on the consent surface.
+fn resolve_disclosable_set(vault: &Vault, set: &InterlocutorSet) -> Result<DisclosableSet> {
+    // P1 identity element, BEFORE any fold: the intersection over the empty
+    // family of non-owner interlocutors is ALL facets. The owner alone is
+    // never locked out of their own private facets, at zero reads.
+    if !set.has_non_owner() {
+        return Ok(DisclosableSet::All);
+    }
+
+    // Clearance fold. EVERY non-owner entry contributes a term, unidentified
+    // parties included (V3: present-unidentified is an ∅-clearance MEMBER of
+    // the intersection, never an absence from it). The `has_non_owner` guard
+    // above guarantees at least one term, so the accumulator never starts at
+    // ∅ by accident.
+    let mut cleared: Option<Vec<EntityId>> = None;
+    for entry in set.non_owner() {
+        let entry_facets = match entry.contact_ref() {
+            Some(hex) => {
+                let contact_id = EntityId::from_hex(hex)?;
+                match vault.contact_facet_clearance(&contact_id) {
+                    Ok(Some(clearance)) => clearance.granted_facets().to_vec(),
+                    Ok(None) => Vec::new(),
+                    Err(error) if error.kind() == ErrorKind::InvalidFacetClearance => Vec::new(),
+                    Err(error) => return Err(error),
+                }
+            }
+            None => Vec::new(),
+        };
+        cleared = Some(match cleared {
+            None => entry_facets,
+            Some(accumulated) => accumulated
+                .into_iter()
+                .filter(|id| entry_facets.binary_search(id).is_ok())
+                .collect(),
+        });
+    }
+
+    // Public union: one prefix scan over the exposure rows. Row count is the
+    // number of facets carrying explicit exposure state — small by
+    // construction. An undecodable row is skipped (= not public).
+    let mut facets = cleared.unwrap_or_default();
+    let rtxn = vault.store.env.read_txn()?;
+    for row in vault
+        .store
+        .vault_meta
+        .prefix_iter(&rtxn, FACET_EXPOSURE_KEY_PREFIX)?
+    {
+        let (key, value) = row?;
+        let Some(id_bytes) = key.get(FACET_EXPOSURE_KEY_PREFIX.len()..) else {
+            continue;
+        };
+        let Ok(id_bytes) = <[u8; ENTITY_ID_LEN]>::try_from(id_bytes) else {
+            continue;
+        };
+        let (Ok(facet_id), Ok(state)) = (
+            EntityId::from_bytes(id_bytes),
+            decode_facet_exposure_body(&value),
+        ) else {
+            continue;
+        };
+        if state.exposure == FacetExposure::Public {
+            facets.push(facet_id);
+        }
+    }
+    facets.sort_unstable();
+    facets.dedup();
+    Ok(DisclosableSet::Facets(facets))
+}
+
 /// The resolved disclosure state one context assembly is clamped against:
-/// mode, interlocutor set, and (owner-absent only) the DEC-0005-intersected
-/// scope. One value feeds builder, board, and response so the response can
-/// never describe a different clamp than the one applied (design §11 rule 6).
+/// mode, interlocutor set, the (owner-absent only) DEC-0005-intersected
+/// scope, and the F2(d) disclosable set. One value feeds builder, board, and
+/// response so the response can never describe a different clamp than the one
+/// applied (design §11 rule 6).
 #[derive(Debug, Clone)]
 pub struct DisclosureContext {
     mode: DisclosureMode,
     interlocutors: InterlocutorSet,
     scope: Option<DisclosureScope>,
+    disclosable: DisclosableSet,
 }
 
 impl DisclosureContext {
@@ -900,10 +1463,12 @@ impl DisclosureContext {
         } else {
             None
         };
+        let disclosable = resolve_disclosable_set(vault, &set)?;
         Ok(Self {
             mode,
             interlocutors: set,
             scope,
+            disclosable,
         })
     }
 
@@ -917,11 +1482,26 @@ impl DisclosureContext {
         &self.interlocutors
     }
 
-    /// The clamp's admission predicate: `OwnerAlone` admits everything;
-    /// `Supervised` admits everything not Tier A; `AbsenceClamp` admits only
-    /// non-Tier-A entities on the intersected allowlist, or claims ABOUT an
-    /// allowlisted entity. Tier is checked FIRST so scope can never override
-    /// tier (never-widen, I2).
+    /// The F2(d) disclosable set this clamp resolved.
+    #[must_use]
+    pub fn disclosable(&self) -> &DisclosableSet {
+        &self.disclosable
+    }
+
+    /// The clamp's admission predicate — THREE conjuncts, in this order:
+    ///
+    /// | mode / rule | outcome |
+    /// |---|---|
+    /// | `OwnerAlone` | admit (consistent with `DisclosableSet::All`) |
+    /// | Tier A | reject (checked FIRST — never-widen, I2) |
+    /// | facet conjunct fails | reject (BOTH `Supervised` and `AbsenceClamp`) |
+    /// | `Supervised` | admit |
+    /// | `AbsenceClamp` | presence-scope allowlist / about-subject |
+    ///
+    /// The facet conjunct (P7) is UNCONDITIONAL and set-valued: relevance can
+    /// never bypass it, because `admits` is the only admission door at all
+    /// four OF-365 enforcement points. Tier stays first so a cleared facet can
+    /// never resurface Tier-A material.
     pub(crate) fn admits(
         &self,
         store: &Store,
@@ -948,6 +1528,9 @@ impl DisclosureContext {
         if disclosure_tier(store, rtxn, id, entity_type, body)? == DisclosureTier::TierA {
             return Ok(false);
         }
+        if !self.facet_conjunct_admits(store, rtxn, id, entity_type)? {
+            return Ok(false);
+        }
         if self.mode == DisclosureMode::Supervised {
             return Ok(true);
         }
@@ -963,6 +1546,67 @@ impl DisclosureContext {
             return Ok(scope.allows_entity(&subject));
         }
         Ok(false)
+    }
+
+    /// The F2(d) facet conjunct: may this record's facet scope be the subject
+    /// of disclosure in this room?
+    ///
+    /// * `DisclosableSet::All` — total pass (unreachable past the
+    ///   `OwnerAlone` return above; kept so the conjunct is sound on its own).
+    /// * a FACET entity — admitted iff the facet itself is disclosable. A
+    ///   private facet's very EXISTENCE (its name, its description) is
+    ///   non-disclosable, so the entity only surfaces where it is public or
+    ///   cleared.
+    /// * a CLAIM — its outgoing `FacetOf` stamps decide. NO stamp -> admit:
+    ///   the unfaceted/core class IS the `{invariant}` term of P7's
+    ///   `facet ∈ disclosable_set ∪ {invariant}`. That is sound only because
+    ///   the ONE-1645 inheritance floor holds — material derived from private
+    ///   provenance either carries its stamp or floors to band >= 2, which the
+    ///   Tier-A conjunct above already rejected, so laundered unfaceted
+    ///   material never reaches this line. One or more stamps -> admit iff
+    ///   EVERY target is disclosable: a claim stamped into `{A, B}` belongs to
+    ///   both masks, and admitting it to a room cleared only for `A` would
+    ///   disclose `B`-linked material. Most-restrictive-of-stamps is the P3
+    ///   spirit applied to the read side.
+    /// * any other type -> admit. This is the v1 conjunct boundary: TURN
+    ///   bodies carry a `facet_ref`, but transcript filtering is P5
+    ///   barrier-event machinery (roster-widening abort/redact, per-turn stamp
+    ///   filtering) and NOT this ticket. Turns and events stay governed by
+    ///   Tier plus presence-scope exactly as before.
+    fn facet_conjunct_admits(
+        &self,
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+    ) -> Result<bool> {
+        if self.disclosable.is_all() {
+            return Ok(true);
+        }
+        if entity_type == ENTITY_TYPE_FACET {
+            return Ok(self.disclosable.contains(id));
+        }
+        if entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(true);
+        }
+        let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
+        prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
+        prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
+        for row in store.edges_out.prefix_iter(rtxn, prefix.as_slice())? {
+            let (key, _value) = row?;
+            if key.len() != EDGE_KEY_LEN {
+                return Err(Error::CorruptedIndex("edge record"));
+            }
+            let target = EntityId::from_bytes(
+                <[u8; ENTITY_ID_LEN]>::try_from(&key[ENTITY_ID_LEN + 1..])
+                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+            if !self.disclosable.contains(&target) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Builds the agent-visible assembly block for this clamp.
