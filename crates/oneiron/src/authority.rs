@@ -3229,16 +3229,14 @@ fn merge_actor_bindings(left: &ActorBindingState, right: &ActorBindingState) -> 
         Ordering::Greater => left.clone(),
         Ordering::Less => right.clone(),
         Ordering::Equal => {
-            let divergent = (left.actor_ref, left.actor_class.as_str())
-                != (right.actor_ref, right.actor_class.as_str());
-            let mut winner = if (left.actor_ref, left.actor_class.as_str())
-                <= (right.actor_ref, right.actor_class.as_str())
-            {
+            let left_tuple = (left.actor_ref, left.actor_class.as_str());
+            let right_tuple = (right.actor_ref, right.actor_class.as_str());
+            let mut winner = if left_tuple <= right_tuple {
                 left.clone()
             } else {
                 right.clone()
             };
-            winner.conflicted |= divergent || right.conflicted || left.conflicted;
+            winner.conflicted |= left_tuple != right_tuple || left.conflicted || right.conflicted;
             winner
         }
     }
