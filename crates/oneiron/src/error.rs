@@ -957,19 +957,22 @@ pub enum Error {
     /// A `FacetOf` unstamp would have RECLASSIFIED a surviving record out of a
     /// facet with no immutable consent record authorizing it (ONE-1646 seam).
     ///
+    /// A GENERIC delete tried to remove a `FacetOf` stamp (ONE-1646).
+    ///
     /// Tearing a stamp moves the stamped record between disclosure clamp
     /// classes — at the limit a record whose last stamp comes off becomes
     /// "unfaceted" and is admitted as the invariant term — so an unstamp is a
-    /// reclassification and takes a reclassification's consent. The
-    /// authorization is the per-`(record, facet)` reclassification-consent
-    /// record `Vault::unstamp_facet_of` writes ATOMICALLY with the removal; no
-    /// REVERSIBLE state (facet exposure above all) authorizes it, because a
-    /// state that can be flipped back after the irreversible act launders it.
-    /// `stamped_by` is the stamping record where one delete is at fault,
-    /// `None` when the whole facet is being torn out from under its stamps.
-    /// Nothing was written.
+    /// reclassification and takes a reclassification's consent. That consent is
+    /// only expressible as `Vault::unstamp_facet_of`, which consents and
+    /// removes in ONE commit; nothing stored anywhere authorizes a generic
+    /// delete to do it. Reversible state cannot (flip it back and the act is
+    /// laundered) and neither can a durable per-pair record (stamps are
+    /// re-creatable, so the record outlives the incarnation it was minted for
+    /// and the second unstamp rides the first one's consent). `stamped_by`
+    /// names the stamping record in the way — the record to unstamp through the
+    /// dedicated door first. Nothing was written.
     #[error(
-        "FacetOf unstamp of facet {} (stamped by {stamped_by:?}) requires a recorded reclassification consent",
+        "FacetOf unstamp of facet {} (stamped by {stamped_by:?}) must go through Vault::unstamp_facet_of, which records the reclassification in the same commit",
         facet.to_hex()
     )]
     FacetUnstampWithoutConsent {

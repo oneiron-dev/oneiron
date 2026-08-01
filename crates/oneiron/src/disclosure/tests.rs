@@ -104,6 +104,55 @@ fn sensitivity_scope(band: &str) -> Value {
     Value::Map(vec![(Value::from("sensitivity"), Value::from(band))])
 }
 
+/// Presence of the permanent `dt:{entity_hex}` local hard-delete marker — the
+/// delete path's own durable "this id was hard-deleted" truth.
+fn hard_delete_marker_exists(vault: &Vault, id: &EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .sync_state
+        .get(&rtxn, &crate::deletion::local_hard_delete_key(id))?
+        .is_some())
+}
+
+/// Whether ANY `pt:{window}:{entity_hex}` crash marker names `id`. Scanned by
+/// prefix rather than computed, so the check does not depend on guessing which
+/// window the delete would have addressed.
+fn pending_tombstone_exists(vault: &Vault, id: &EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let suffix = id.to_hex();
+    for row in vault
+        .store
+        .sync_state
+        .prefix_iter(&rtxn, crate::deletion::PENDING_TOMBSTONE_PREFIX)?
+    {
+        let (key, _value) = row?;
+        if key.ends_with(&suffix) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the CRDT window doc carries a tombstone for `id` — the truth a
+/// refused delete must never publish to other devices.
+#[cfg(feature = "sync")]
+fn crdt_tombstone_exists(vault: &Vault, id: &EntityId, learned_at: u64) -> Result<bool> {
+    use crate::sync::loro_support::map_contains_binary;
+    use crate::sync::types::WindowKey;
+
+    let window_key = WindowKey::from_timestamp(learned_at);
+    let doc = match crate::sync::window::load_window_from_state(vault, "local", &window_key) {
+        Ok(doc) => doc,
+        Err(Error::WindowNotFound { .. }) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    Ok(map_contains_binary(
+        &doc.get_map("tombstones"),
+        id.to_hex().as_str(),
+    ))
+}
+
 // ─── Mode table (design §6) ─────────────────────────────────────────────────
 
 #[test]
@@ -1647,9 +1696,9 @@ fn facet_state_codecs_and_predicate_family() -> Result<()> {
         facet: test_id(0x04),
         consented_at: 11,
     };
-    let encoded = encode_facet_reclassification_body(&consent)?;
-    assert_eq!(decode_facet_reclassification_body(&encoded)?, consent);
-    let mut consent_trailing = encode_facet_reclassification_body(&consent)?;
+    let encoded = encode_facet_reclassification_body(&consent, 7)?;
+    assert_eq!(decode_facet_reclassification_body(&encoded)?, (consent, 7));
+    let mut consent_trailing = encode_facet_reclassification_body(&consent, 7)?;
     consent_trailing.push(0x00);
     assert_eq!(
         decode_facet_reclassification_body(&consent_trailing)
@@ -1717,10 +1766,11 @@ fn facet_of_delete_cannot_launder_a_private_claim_unfaceted() -> Result<()> {
         vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
         "a refused unstamp writes nothing"
     );
-    assert_eq!(
-        vault.facet_reclassification_consent(&claim, &facet)?,
-        None,
-        "a refused unstamp mints no consent record either"
+    assert!(
+        vault
+            .facet_reclassification_ledger(&claim, &facet)?
+            .is_empty(),
+        "a refused unstamp appends no ledger event either"
     );
     {
         let ctx = room(&vault)?;
@@ -1736,21 +1786,19 @@ fn facet_of_delete_cannot_launder_a_private_claim_unfaceted() -> Result<()> {
     assert!(vault.unstamp_facet_of(&claim, &facet, 200)?);
     assert!(!vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?);
     assert_eq!(vault.facet_exposure(&facet)?, None, "facet stayed private");
-    let consent = vault
-        .facet_reclassification_consent(&claim, &facet)?
-        .expect("the unstamp recorded its consent");
     assert_eq!(
-        consent,
-        FacetReclassificationConsent {
+        vault.facet_reclassification_ledger(&claim, &facet)?,
+        vec![FacetReclassificationConsent {
             record: claim,
             facet,
             consented_at: 200,
-        }
+        }],
+        "the unstamp appended its own consent event"
     );
     // The owner-visible ledger mirror rides with it.
     assert!(
         vault
-            .get_claim(&facet_reclassification_claim_id(&claim, &facet)?)?
+            .get_claim(&facet_reclassification_claim_id(&claim, &facet, 0)?)?
             .is_some(),
         "the reclassification is on the owner's consent surface"
     );
@@ -1844,63 +1892,186 @@ fn public_window_cannot_launder_an_unstamp() -> Result<()> {
             "the consented reclassification takes effect"
         );
     }
-    assert!(
-        vault
-            .facet_reclassification_consent(&claim, &facet)?
-            .is_some(),
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?.len(),
+        1,
         "and unlike the window, it leaves a record that cannot be wound back"
     );
     Ok(())
 }
 
-/// The consent record is APPEND-ONLY: re-consenting the same pair keeps the
-/// FIRST `consented_at`, so a later call cannot restate when the owner
-/// reclassified. A no-op unstamp (no such stamp) mints NO record at all —
-/// otherwise it would be a free, pre-purchased authorization for a real unstamp
-/// of the same pair later.
+/// The ledger is APPEND-ONLY AND PER-EVENT: an unstamp of a re-created stamp
+/// appends its OWN row with its OWN timestamp rather than collapsing into the
+/// first one, so the owner's consent surface shows every reclassification that
+/// actually happened. A no-op unstamp (no such stamp) appends nothing — there
+/// was no reclassification to record.
 #[test]
-fn reclassification_consent_is_append_only_and_never_pre_minted() -> Result<()> {
+fn reclassification_ledger_appends_one_event_per_unstamp() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let facet = test_id(0xC6);
     put_facet(&vault, &facet);
     let claim = test_id(0xC7);
     put_public_claim(&vault, &claim, test_id(0xC8));
 
-    // No stamp yet: the no-op unstamp must not leave an authorization behind.
+    // No stamp yet: nothing happened, so nothing is recorded.
     assert!(!vault.unstamp_facet_of(&claim, &facet, 100)?);
-    assert_eq!(vault.facet_reclassification_consent(&claim, &facet)?, None);
-
-    // A real stamp is therefore still gated afterwards.
-    stamp_facet_of(&vault, &claim, &facet);
-    assert_eq!(
+    assert!(
         vault
-            .delete_edge(&claim, EdgeKind::FacetOf, &facet)
-            .expect_err("no pre-minted consent may exist")
-            .kind(),
-        ErrorKind::FacetUnstampWithoutConsent
+            .facet_reclassification_ledger(&claim, &facet)?
+            .is_empty()
     );
 
+    stamp_facet_of(&vault, &claim, &facet);
     assert!(vault.unstamp_facet_of(&claim, &facet, 200)?);
-    // Re-stamp and re-consent: the ORIGINAL timestamp stands.
+    // Re-stamp and unstamp again: TWO events, oldest first, each with its own
+    // timestamp and its own mirror.
     stamp_facet_of(&vault, &claim, &facet);
     assert!(vault.unstamp_facet_of(&claim, &facet, 900)?);
     assert_eq!(
         vault
-            .facet_reclassification_consent(&claim, &facet)?
-            .expect("consent")
-            .consented_at,
-        200,
-        "re-consent must not restate when the owner first reclassified"
+            .facet_reclassification_ledger(&claim, &facet)?
+            .iter()
+            .map(|event| event.consented_at)
+            .collect::<Vec<_>>(),
+        vec![200, 900],
+        "each unstamp is its own ledger event, oldest first"
     );
+    for sequence in [0, 1] {
+        assert!(
+            vault
+                .get_claim(&facet_reclassification_claim_id(&claim, &facet, sequence)?)?
+                .is_some(),
+            "event {sequence} has its own mirror — no event overwrites another"
+        );
+    }
+    Ok(())
+}
+
+/// P2-a REGRESSION (fix-3) — CONSENT MUST NOT REPLAY ACROSS STAMP
+/// INCARNATIONS.
+///
+/// Fix-2 made a durable per-`(record, facet)` consent record THE authorization
+/// the generic doors accepted. But stamps are freely re-creatable, so that
+/// record outlives the incarnation it was minted for: consent-unstamp `(C, F)`
+/// once, re-stamp `C → F`, and a GENERIC `delete_edge` / `BatchOp::DeleteEdge`
+/// passes on the stale record — a second, unconsented reclassification, after
+/// which C is unfaceted-admitted into rooms never cleared for F.
+///
+/// The fix binds authorization to the ACT, not to any record: every generic
+/// `FacetOf` deletion refuses unconditionally, and the dedicated door consents
+/// and removes in one commit, each time. The pin walks the replay: consent,
+/// re-stamp, then demand that BOTH generic doors and the facet-delete cascade
+/// still refuse with the stamp intact and the clamp holding — and that the
+/// fresh dedicated op succeeds and appends a SECOND event.
+#[test]
+fn consent_does_not_replay_across_stamp_incarnations() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xE4);
+    put_facet(&vault, &facet);
+    let contact = test_id(0xE5);
+    seed_contact(&vault, contact, "a@example.com");
+    let claim = test_id(0xE6);
+    put_public_claim(&vault, &claim, test_id(0xE7));
+    stamp_facet_of(&vault, &claim, &facet);
+
+    let room = |vault: &Vault| {
+        DisclosureContext::resolve(
+            vault,
+            InterlocutorSet::with_session_owner(vec![known(contact, "a@example.com")]),
+        )
+    };
+
+    // Step 1 — ONE legitimate, consented unstamp. This is what fix-2 recorded
+    // permanently, and what the replay would have spent twice.
+    assert!(vault.unstamp_facet_of(&claim, &facet, 100)?);
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?.len(),
+        1
+    );
+
+    // Step 2 — RE-STAMP. The claim is clamped again, and the consent above
+    // describes an incarnation of the stamp that no longer exists.
+    stamp_facet_of(&vault, &claim, &facet);
+    {
+        let ctx = room(&vault)?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            !ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?,
+            "the re-stamped claim is clamped again"
+        );
+    }
+
+    // Step 3 — THE REPLAY. Every generic removal refuses on the stale record.
+    for refusal in [
+        vault
+            .delete_edge(&claim, EdgeKind::FacetOf, &facet)
+            .expect_err("delete_edge must not spend the prior consent"),
+        vault
+            .batch()
+            .delete_edge(&claim, EdgeKind::FacetOf, &facet)
+            .commit()
+            .expect_err("BatchOp::DeleteEdge must not spend the prior consent"),
+        vault
+            .batch()
+            .delete(&facet)
+            .commit()
+            .expect_err("the FACET-delete cascade must not spend it either"),
+    ] {
+        assert_eq!(refusal.kind(), ErrorKind::FacetUnstampWithoutConsent);
+    }
+    assert!(
+        vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "the replay tore nothing"
+    );
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?.len(),
+        1,
+        "and appended nothing — the refusals are total"
+    );
+    {
+        let ctx = room(&vault)?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            !ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?,
+            "the clamp holds: the second reclassification never happened"
+        );
+    }
+
+    // Step 4 — a FRESH consent-then-act does the job, and says so.
+    assert!(vault.unstamp_facet_of(&claim, &facet, 500)?);
+    assert_eq!(
+        vault
+            .facet_reclassification_ledger(&claim, &facet)?
+            .iter()
+            .map(|event| event.consented_at)
+            .collect::<Vec<_>>(),
+        vec![100, 500],
+        "the second reclassification is its own consented event"
+    );
+    {
+        let ctx = room(&vault)?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?,
+            "and only now is the claim admitted"
+        );
+    }
     Ok(())
 }
 
 /// The FACET-entity hard delete is the same laundering path at its widest: the
-/// deindex cascade tears EVERY inbound stamp at once. Each stamp needs its OWN
-/// consent, and an unstamped facet stays freely deletable (nothing moves
-/// between clamp classes, so there is nothing to consent to).
+/// deindex cascade tears EVERY inbound stamp at once. The cascade is a GENERIC
+/// removal, so it refuses while ANY stamp stands — the owner unstamps each one
+/// through the dedicated door first, and only a facet nothing points at is
+/// deletable (nothing moves between clamp classes, so there is nothing to
+/// consent to).
+///
+/// Fix-3 note: a PRIOR consent no longer opens this door either. Unstamping
+/// then RE-stamping leaves the cascade refusing exactly as it did before the
+/// consent, because the record on disk describes a stamp incarnation that is
+/// gone.
 #[test]
-fn facet_entity_hard_delete_requires_consent_for_every_stamp() -> Result<()> {
+fn facet_entity_hard_delete_refuses_while_any_stamp_stands() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let stamped = test_id(0x86);
     let bare = test_id(0x87);
@@ -1932,23 +2103,34 @@ fn facet_entity_hard_delete_requires_consent_for_every_stamp() -> Result<()> {
     vault.batch().delete(&bare).commit()?;
     assert!(vault.get_entity_type(&bare)?.is_none());
 
-    // PARTIAL consent is not enough — the cascade would still reclassify the
-    // second record without authorization.
+    // Unstamping one is not enough — the OTHER stamp still stands.
     assert!(vault.unstamp_facet_of(&first, &stamped, 300)?);
-    stamp_facet_of(&vault, &first, &stamped);
     assert_eq!(
         vault
             .batch()
             .delete(&stamped)
             .commit()
-            .expect_err("one consent does not cover the other stamp")
+            .expect_err("the second stamp still blocks")
             .kind(),
         ErrorKind::FacetUnstampWithoutConsent
     );
 
-    // With EVERY stamp consented, the facet goes.
+    // RE-stamping the first one re-blocks it, prior consent notwithstanding.
+    stamp_facet_of(&vault, &first, &stamped);
     assert!(vault.unstamp_facet_of(&second, &stamped, 400)?);
-    stamp_facet_of(&vault, &second, &stamped);
+    assert_eq!(
+        vault
+            .batch()
+            .delete(&stamped)
+            .commit()
+            .expect_err("a re-created stamp blocks again despite its prior consent")
+            .kind(),
+        ErrorKind::FacetUnstampWithoutConsent
+    );
+
+    // With EVERY stamp actually removed through the dedicated door, the facet
+    // goes.
+    assert!(vault.unstamp_facet_of(&first, &stamped, 500)?);
     vault.batch().delete(&stamped).commit()?;
     assert!(vault.get_entity_type(&stamped)?.is_none());
     assert!(!vault.edge_exists(&first, EdgeKind::FacetOf, &stamped)?);
@@ -2271,39 +2453,198 @@ fn reclassification_consent_is_erased_with_either_named_entity() -> Result<()> {
     // ── record side: delete the stamped record ──
     stamp_facet_of(&vault, &claim, &facet);
     assert!(vault.unstamp_facet_of(&claim, &facet, 100)?);
-    let mirror = facet_reclassification_claim_id(&claim, &facet)?;
+    let mirror = facet_reclassification_claim_id(&claim, &facet, 0)?;
     assert!(vault.get_claim(&mirror)?.is_some());
     vault.batch().delete(&claim).commit()?;
-    assert_eq!(
-        vault.facet_reclassification_consent(&claim, &facet)?,
-        None,
-        "the consent must not outlive the record it reclassified"
+    assert!(
+        vault
+            .facet_reclassification_ledger(&claim, &facet)?
+            .is_empty(),
+        "the ledger event must not outlive the record it reclassified"
     );
     assert!(
         vault.get_claim(&mirror)?.is_none(),
         "its ledger mirror goes too"
     );
 
-    // A record re-minted at the same id is gated afresh.
+    // A record re-minted at the same id starts a fresh ledger, and its stamp
+    // is removable only through the dedicated door.
     put_public_claim(&vault, &claim, test_id(0xDE));
     stamp_facet_of(&vault, &claim, &facet);
     assert_eq!(
         vault
             .delete_edge(&claim, EdgeKind::FacetOf, &facet)
-            .expect_err("the stale consent must not be spendable")
+            .expect_err("generic doors never remove a stamp")
             .kind(),
         ErrorKind::FacetUnstampWithoutConsent
     );
+    assert!(vault.unstamp_facet_of(&claim, &facet, 150)?);
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?,
+        vec![FacetReclassificationConsent {
+            record: claim,
+            facet,
+            consented_at: 150,
+        }],
+        "the erased history did not carry over into the new incarnation"
+    );
 
-    // ── facet side: delete the facet the consent names ──
+    // ── facet side: delete the facet the events name ──
     assert!(!vault.unstamp_facet_of(&claim, &other_facet, 200)?);
     stamp_facet_of(&vault, &claim, &other_facet);
     assert!(vault.unstamp_facet_of(&claim, &other_facet, 300)?);
     vault.batch().delete(&other_facet).commit()?;
-    assert_eq!(
-        vault.facet_reclassification_consent(&claim, &other_facet)?,
-        None,
-        "the consent must not outlive the facet it named"
+    assert!(
+        vault
+            .facet_reclassification_ledger(&claim, &other_facet)?
+            .is_empty(),
+        "the ledger event must not outlive the facet it named"
+    );
+    Ok(())
+}
+
+// ─── ONE-1646 fix leg 3: refusals decide BEFORE the tombstone ───────────────
+
+/// P2-b REGRESSION — A REFUSED FACET DELETE PUBLISHES NOTHING.
+///
+/// `delete_entity_with_reason` writes the CRDT tombstone FIRST by locked
+/// ARCH-0038 ordering (it must precede the purge so sync cannot resurrect the
+/// body mid-erase), and fix-2's gates only spoke inside
+/// `purge_entity_active_store_in_txn`. A refused facet delete therefore
+/// published hard-delete truth for a delete that never happened: the facet, its
+/// stamps, its exposure row and every clearance naming it stayed whole locally,
+/// while every other device was told the id was erased. The refusing device
+/// cannot take a published tombstone back, so the divergence is permanent — an
+/// erasure-completeness failure of its own.
+///
+/// The gate now runs BEFORE TXN1. This pins the whole no-op: the refusal, then
+/// zero tombstone, zero `dt:`/`pt:` marker, zero receipt, and byte-identical
+/// local state.
+#[test]
+fn refused_facet_delete_publishes_no_tombstone_and_changes_no_state() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xF1);
+    put_facet(&vault, &facet);
+    let contact = test_id(0xF2);
+    seed_contact(&vault, contact, "a@example.com");
+    let claim = test_id(0xF3);
+    put_public_claim(&vault, &claim, test_id(0xF4));
+    stamp_facet_of(&vault, &claim, &facet);
+    grant_clearance(&vault, &contact, vec![facet]);
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+
+    for reason in [
+        crate::DeleteReason::UserHardDelete,
+        crate::DeleteReason::GdprDelete,
+        crate::DeleteReason::PolicyDelete,
+    ] {
+        let refusal = vault
+            .delete_entity_with_reason(&facet, reason)
+            .expect_err("a stamped facet must refuse on every hard reason");
+        assert_eq!(refusal.kind(), ErrorKind::FacetUnstampWithoutConsent);
+
+        // NOTHING was published. `dt:` is the permanent local hard-delete
+        // truth and `pt:` the crash marker — a refused delete writes neither,
+        // because it never reached TXN1. Both are read straight off
+        // `sync_state`, the rows the delete path itself writes.
+        assert!(
+            !hard_delete_marker_exists(&vault, &facet)?,
+            "a refused delete must not record local hard-delete truth"
+        );
+        assert!(
+            !pending_tombstone_exists(&vault, &facet)?,
+            "a refused delete must not leave a pending-tombstone marker"
+        );
+        // THE DEFECT ITSELF: the CRDT tombstone is the cross-device claim that
+        // this id is erased. Under fix-2's ordering it was already published by
+        // the time the gate spoke.
+        #[cfg(feature = "sync")]
+        assert!(
+            !crdt_tombstone_exists(&vault, &facet, 1)?,
+            "a refused delete must not publish hard-delete truth to other devices"
+        );
+
+        // And local state is EXACTLY as found — the facet, its stamp, its
+        // exposure row and the clearance naming it.
+        assert!(vault.get_entity_type(&facet)?.is_some(), "facet survives");
+        assert!(
+            vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+            "the stamp survives"
+        );
+        assert_eq!(
+            vault.facet_exposure(&facet)?.map(|state| state.exposure),
+            Some(FacetExposure::Public),
+            "the exposure row survives"
+        );
+        assert_eq!(
+            vault
+                .contact_facet_clearance(&contact)?
+                .expect("clearance")
+                .facets,
+            vec![facet],
+            "the clearance survives"
+        );
+    }
+
+    // The CLEARANCE arm of the gate refuses just as early: unstamp first, so
+    // only the live clearance stands in the way.
+    assert!(vault.unstamp_facet_of(&claim, &facet, 200)?);
+    let refusal = vault
+        .delete_entity_with_reason(&facet, crate::DeleteReason::UserHardDelete)
+        .expect_err("a live clearance must refuse before the tombstone too");
+    assert_eq!(refusal.kind(), ErrorKind::FacetDeleteWithLiveClearance);
+    assert!(!hard_delete_marker_exists(&vault, &facet)?);
+    assert!(vault.get_entity_type(&facet)?.is_some());
+    Ok(())
+}
+
+/// The other half of the same rule: an ACCEPTED hard delete still removes ALL
+/// facet state atomically — exposure row, ledger mirror, consent sweep, deindex
+/// — so moving the gate earlier bought the refusal path without weakening the
+/// accepted one.
+#[test]
+fn accepted_facet_hard_delete_removes_all_facet_state() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xF6);
+    put_facet(&vault, &facet);
+    let contact = test_id(0xF7);
+    seed_contact(&vault, contact, "a@example.com");
+    let claim = test_id(0xF8);
+    put_public_claim(&vault, &claim, test_id(0xF9));
+    stamp_facet_of(&vault, &claim, &facet);
+    grant_clearance(&vault, &contact, vec![facet]);
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+    let exposure_mirror = facet_exposure_claim_id(&facet)?;
+    let consent_mirror = facet_reclassification_claim_id(&claim, &facet, 0)?;
+
+    // Clear both blockers through their own owner doors, in order.
+    assert!(vault.unstamp_facet_of(&claim, &facet, 200)?);
+    assert!(vault.get_claim(&consent_mirror)?.is_some());
+    vault.set_contact_facet_clearance(&contact, &FacetClearance::granted(Vec::new(), 300)?)?;
+
+    let outcome = vault.delete_entity_with_reason(&facet, crate::DeleteReason::UserHardDelete)?;
+    assert!(outcome.existed, "the accepted delete erased the facet");
+    assert!(outcome.receipt_id.is_some(), "and minted its receipt");
+
+    assert!(vault.get_entity_type(&facet)?.is_none(), "entity gone");
+    assert_eq!(vault.facet_exposure(&facet)?, None, "exposure row gone");
+    assert!(
+        vault.get_claim(&exposure_mirror)?.is_none(),
+        "exposure mirror gone"
+    );
+    assert!(
+        vault
+            .facet_reclassification_ledger(&claim, &facet)?
+            .is_empty(),
+        "the consent events naming the facet are swept"
+    );
+    assert!(
+        vault.get_claim(&consent_mirror)?.is_none(),
+        "and so are their mirrors"
+    );
+    assert!(
+        hard_delete_marker_exists(&vault, &facet)?,
+        "an ACCEPTED hard delete does record local hard-delete truth"
     );
     Ok(())
 }

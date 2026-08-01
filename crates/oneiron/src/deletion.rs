@@ -1549,6 +1549,33 @@ impl Vault {
         if crate::registry::is_delete_protected_engine_record(header.entity_type) {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
+        // ONE-1646: every stamp/clearance condition is evaluated HERE, before
+        // TXN1 publishes anything. `deindex_entity` re-evaluates the same
+        // predicate at the row-tearing site, but a refusal THERE comes too late
+        // for this path: the CRDT tombstone is written FIRST by the locked
+        // ARCH-0038 ordering below (it must precede the purge so sync cannot
+        // resurrect the body mid-erase), so a late refusal leaves the entity
+        // whole locally while every other device has been told it is
+        // hard-deleted. Publishing hard-delete truth for a delete that did not
+        // happen is an erasure-completeness failure in its own right, and the
+        // refusing device cannot take a published tombstone back. Deciding
+        // first makes a refused delete a total no-op — no tombstone, no
+        // `dt:`/`pt:` marker, no receipt, no local state change.
+        //
+        // HARD REASONS ONLY, because only they tear rows. `user_delete`
+        // truncates the body to its 25 B shell and leaves every edge, the
+        // exposure row and every clearance standing — no stamp comes off and
+        // nothing moves between clamp classes, so gating it would be a wall in
+        // front of an act that discloses nothing.
+        if reason.active_store_hard_purge_v1() {
+            let rtxn = self.store.env.read_txn()?;
+            crate::disclosure::gate_hard_delete_facet_state(
+                &self.store,
+                &rtxn,
+                id,
+                header.entity_type,
+            )?;
+        }
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
         // lock-free `read_entity_header` read_txn has completed and committed
         // the headerful path) but no write lock is held yet. The deterministic

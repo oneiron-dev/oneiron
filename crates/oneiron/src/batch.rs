@@ -2458,16 +2458,23 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     let mut had_graph_mutation = false;
     let mut neighbors = Vec::new();
 
-    // ONE-1646 exposure-consent gate, BEFORE the first row comes off: hard
-    // deleting a FACET cascades away every inbound `FacetOf` stamp through
+    // ONE-1646 facet-state gate, BEFORE the first row comes off: hard deleting
+    // a FACET cascades away every inbound `FacetOf` stamp through
     // `delete_related_edges` below, unfaceting every claim that carried one —
     // the disclosure-laundering path at its widest. This is the shared
     // chokepoint for BOTH hard-delete doors (the `BatchOp::Delete` arm and
     // `deletion`'s purge), so neither can route around the gate. The soft-erase
     // path deliberately needs no gate: it truncates the body and leaves the
     // edges standing, so no stamp is torn and no clamp class moves.
-    if stored_entity_type(store, &*wtxn, id)? == Some(crate::registry::ENTITY_TYPE_FACET) {
-        crate::disclosure::gate_facet_entity_delete(store, &*wtxn, id)?;
+    //
+    // `deletion`'s door ALSO evaluates the same predicate before it publishes
+    // the CRDT tombstone, because reaching this point already means the
+    // tombstone is durable (locked ARCH-0038 ordering) and a refusal here would
+    // diverge local state from published truth. This call stays as the
+    // structural backstop: the gate lives at the row-tearing site, so a future
+    // caller that skips the pre-flight still cannot tear a stamp.
+    if let Some(entity_type) = stored_entity_type(store, &*wtxn, id)? {
+        crate::disclosure::gate_hard_delete_facet_state(store, &*wtxn, id, entity_type)?;
     }
 
     // Clean secondary indexes unconditionally — they may exist even without an
