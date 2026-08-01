@@ -153,6 +153,66 @@ fn crdt_tombstone_exists(vault: &Vault, id: &EntityId, learned_at: u64) -> Resul
     ))
 }
 
+/// Whether ANY persisted window carries a CRDT tombstone for `id`.
+///
+/// [`crdt_tombstone_exists`] must be told which window to look in, and callers
+/// derive that from a clock reading of their own. That derivation is only sound
+/// when the reading names the same `YYYY-MM` the delete used: a call that
+/// crosses a UTC month boundary publishes into the PRIOR window while a reading
+/// taken afterwards names the next one, and the check then passes against an
+/// empty window it was never going to find anything in — a silently vacuous
+/// assertion in exactly the test that is supposed to prove nothing was
+/// published. Bracketing the call narrows that to the boundary case but still
+/// assumes the delete's clock and the test's agree.
+///
+/// So this does not guess. It ENUMERATES the persisted windows — `d:w:{key}`
+/// snapshots and `u:w:{key}:{seq}` pending updates, the two row families a
+/// window's state can live in — and asks each one. Independent of any
+/// timestamp, so it holds on any day of any month.
+#[cfg(feature = "sync")]
+fn crdt_tombstone_exists_in_any_window(vault: &Vault, id: &EntityId) -> Result<bool> {
+    use crate::sync::loro_support::map_contains_binary;
+    use crate::sync::types::WindowKey;
+    use std::collections::BTreeSet;
+
+    let mut windows: BTreeSet<String> = BTreeSet::new();
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        for row in vault.store.sync_state.prefix_iter(&rtxn, "d:w:")? {
+            let (key, _value) = row?;
+            if let Some(label) = key.strip_prefix("d:w:") {
+                windows.insert(label.to_string());
+            }
+        }
+        // A window can have pending updates with no snapshot row yet, so the
+        // `u:w:` family is scanned too. Key shape is `u:w:{label}:{seq}`; the
+        // label never contains a colon (`YYYY-MM`), so the first one ends it.
+        for row in vault.store.sync_state.prefix_iter(&rtxn, "u:w:")? {
+            let (key, _value) = row?;
+            if let Some(rest) = key.strip_prefix("u:w:")
+                && let Some((label, _seq)) = rest.split_once(':')
+            {
+                windows.insert(label.to_string());
+            }
+        }
+    }
+
+    for label in windows {
+        let Some(window_key) = WindowKey::try_new(label) else {
+            continue;
+        };
+        let doc = match crate::sync::window::load_window_from_state(vault, "local", &window_key) {
+            Ok(doc) => doc,
+            Err(Error::WindowNotFound { .. }) => continue,
+            Err(error) => return Err(error),
+        };
+        if map_contains_binary(&doc.get_map("tombstones"), id.to_hex().as_str()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 // ─── Mode table (design §6) ─────────────────────────────────────────────────
 
 #[test]
@@ -3409,12 +3469,18 @@ fn refused_headerless_delete_publishes_no_tombstone_and_changes_no_state() -> Re
         assert_eq!(refusal.kind(), ErrorKind::FacetUnstampWithoutConsent);
 
         // THE DEFECT ITSELF: under fix-6's ordering the tombstone was already
-        // durable by the time the purge txn's backstop spoke. `requested_at` is
-        // "now" on this leg (there is no `learned_at` to address a window
-        // with), so the window under test is the one `now` names.
+        // durable by the time the purge txn's backstop spoke.
+        //
+        // Asked of EVERY persisted window, not of the one a clock reading taken
+        // here would name. `requested_at` is "now" on this leg (there is no
+        // `learned_at` to address a window with), so a guessed window is only
+        // the right one while the test's clock and the delete's agree on the
+        // `YYYY-MM` — which a call crossing a UTC month boundary breaks, and
+        // the assertion would then pass against an empty window instead of
+        // finding the tombstone in the prior one.
         #[cfg(feature = "sync")]
         assert!(
-            !crdt_tombstone_exists(&vault, &facet, crate::unix_seconds_now())?,
+            !crdt_tombstone_exists_in_any_window(&vault, &facet)?,
             "a refused headerless delete must not publish hard-delete truth"
         );
         assert!(
@@ -3452,18 +3518,62 @@ fn refused_headerless_delete_publishes_no_tombstone_and_changes_no_state() -> Re
 
     // The CLEARANCE arm refuses just as early: unstamp through the consent
     // door, and only the live clearance is left standing in the way.
+    //
+    // Driven through ALL FOUR reasons, exactly like the stamp arm above, and
+    // asserting the same full no-op rather than only the CRDT/`dt:` pair. The
+    // gate this leg installed is unconditional on reason (there is no
+    // soft-erase arm here — every reason purges), so a later hard-reason
+    // conditional slipped into it would let a headerless `UserDelete` purge a
+    // clearance-blocked facet through while a `UserHardDelete`-only check
+    // stayed green. This closes that hole by construction.
     assert!(vault.unstamp_facet_of(&claim, &facet, 800)?);
-    let refusal = vault
-        .delete_entity_with_reason(&facet, crate::DeleteReason::UserHardDelete)
-        .expect_err("a live clearance must refuse before the tombstone too");
-    assert_eq!(refusal.kind(), ErrorKind::FacetDeleteWithLiveClearance);
-    #[cfg(feature = "sync")]
-    assert!(!crdt_tombstone_exists(
-        &vault,
-        &facet,
-        crate::unix_seconds_now()
-    )?);
-    assert!(!hard_delete_marker_exists(&vault, &facet)?);
+    for reason in [
+        crate::DeleteReason::UserDelete,
+        crate::DeleteReason::UserHardDelete,
+        crate::DeleteReason::GdprDelete,
+        crate::DeleteReason::PolicyDelete,
+    ] {
+        let refusal = vault
+            .delete_entity_with_reason(&facet, reason)
+            .expect_err("a live clearance must refuse before the tombstone too");
+        assert_eq!(refusal.kind(), ErrorKind::FacetDeleteWithLiveClearance);
+
+        // Nothing published, on any reason — the same four surfaces the stamp
+        // arm pins, and the same window-independent tombstone scan.
+        #[cfg(feature = "sync")]
+        assert!(
+            !crdt_tombstone_exists_in_any_window(&vault, &facet)?,
+            "a clearance refusal must not publish hard-delete truth"
+        );
+        assert!(
+            !hard_delete_marker_exists(&vault, &facet)?,
+            "nor record local hard-delete truth"
+        );
+        assert!(
+            !pending_tombstone_exists(&vault, &facet)?,
+            "nor leave a pending-tombstone marker"
+        );
+        assert_eq!(
+            vault.count_entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)?,
+            receipts_before,
+            "nor mint a redaction receipt"
+        );
+
+        // And the state the refusal was protecting is EXACTLY as found: the
+        // clearance itself, and the unrelated edge a purge would have torn.
+        assert_eq!(
+            vault
+                .contact_facet_clearance(&contact)?
+                .expect("clearance")
+                .facets,
+            vec![facet],
+            "the clearance survives"
+        );
+        assert!(
+            vault.edge_exists(&mentioner, EdgeKind::Mentions, &facet)?,
+            "and so does the unrelated edge the purge would have torn"
+        );
+    }
 
     // Clear the last blocker and the SAME call goes through, so the gate is a
     // decision and not a wall: the headerless residue erases and publishes.
@@ -3604,6 +3714,128 @@ fn ledger_rejects_an_overlong_row_key() -> Result<()> {
             .expect_err("a short key is corrupt too")
             .kind(),
         ErrorKind::CorruptedIndex
+    );
+    Ok(())
+}
+
+/// The WRITE half of the same rule: the SEQUENCE ALLOCATOR rejects a corrupt
+/// key too, and rejects it ATOMICALLY — before `unstamp_facet_of` has removed
+/// a live stamp or appended anything.
+///
+/// `ledger_rejects_an_overlong_row_key` above exercises only the READ door
+/// (`facet_reclassification_ledger`). But the same key length is parsed on the
+/// WRITE path, by `next_facet_reclassification_sequence_in_txn`, and that call
+/// sits INSIDE `unstamp_facet_of`'s write txn alongside the edge deletes and
+/// the event/mirror writes. A rejection that fired after any of those had
+/// landed — or one that let them land and only then errored without unwinding
+/// — would be the worse outcome of the two: a stamp torn off a record with NO
+/// consent event recording it, which is precisely the laundering shape this
+/// lane exists to prevent, reached this time by corrupting a row rather than
+/// by calling a delete.
+///
+/// The whole op is one `with_write_txn`, which rolls back on `Err`, so the
+/// corrupt row makes the unstamp a strict no-op. This pins that: `CorruptedIndex`
+/// out, and the stamp, the canonical ledger rows, and the mirror set all
+/// byte-identical to what stood before the call.
+#[test]
+fn overlong_key_rejects_the_unstamp_before_any_side_effect() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x4B);
+    put_facet(&vault, &facet);
+    let claim = test_id(0x4C);
+    put_public_claim(&vault, &claim, test_id(0x4D));
+
+    // One honest unstamp first, so sequence 0 exists as real history and the
+    // corrupt row below is an ADDITION to a live pair rather than the only
+    // thing under the prefix.
+    stamp_facet_of(&vault, &claim, &facet);
+    assert!(vault.unstamp_facet_of(&claim, &facet, 900)?);
+    let honest_history = vec![FacetReclassificationConsent {
+        record: claim,
+        facet,
+        consented_at: 900,
+    }];
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?,
+        honest_history
+    );
+    let mirror_0 = facet_reclassification_claim_id(&claim, &facet, 0)?;
+    let mirror_1 = facet_reclassification_claim_id(&claim, &facet, 1)?;
+    assert!(vault.get_claim(&mirror_0)?.is_some(), "sequence 0 mirrored");
+    assert!(
+        vault.get_claim(&mirror_1)?.is_none(),
+        "and nothing beyond it"
+    );
+
+    // The corrupt row: honest body, key one byte too long. Same fixture the
+    // read-door test uses, so the two doors are pinned against one shape.
+    let mut overlong = facet_reclassification_meta_key(&claim, &facet, 0);
+    overlong.push(0x00);
+    let honest = encode_facet_reclassification_body(
+        &FacetReclassificationConsent {
+            record: claim,
+            facet,
+            consented_at: 900,
+        },
+        0,
+    )?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &overlong, &honest)?;
+        Ok(())
+    })?;
+
+    // RE-STAMP, so there is a LIVE stamp for the failing unstamp to tear.
+    // Without this the call would return `false` at the edge probe and never
+    // reach the allocator — the rejection has to be proven on the path that
+    // actually mutates.
+    stamp_facet_of(&vault, &claim, &facet);
+    assert!(
+        vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "fixture must have a live stamp to lose"
+    );
+
+    assert_eq!(
+        vault
+            .unstamp_facet_of(&claim, &facet, 1000)
+            .expect_err("a corrupt row must stop the unstamp, not be allocated past")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
+    // NOTHING moved. The stamp is the one that matters — it is what a
+    // successful-but-unrecorded unstamp would have torn.
+    assert!(
+        vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "the refused unstamp must not tear the stamp"
+    );
+    // No event and no mirror was appended: the canonical rows still read as the
+    // single honest event once the corrupt row is lifted, and the sequence-1
+    // mirror that a partial write would have minted does not exist.
+    assert!(
+        vault.get_claim(&mirror_1)?.is_none(),
+        "nor mint an event mirror for the sequence it never allocated"
+    );
+    assert!(
+        vault.get_claim(&mirror_0)?.is_some(),
+        "and the mirror that was already there is untouched"
+    );
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.delete(wtxn, &overlong)?;
+        Ok(())
+    })?;
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?,
+        honest_history,
+        "the canonical ledger rows are exactly the history from before the call"
+    );
+
+    // And with the corruption gone the SAME call goes through, so the
+    // rejection was the row's doing and not a wall in front of the op.
+    assert!(vault.unstamp_facet_of(&claim, &facet, 1000)?);
+    assert!(!vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?);
+    assert!(
+        vault.get_claim(&mirror_1)?.is_some(),
+        "the honest unstamp allocates the sequence the corrupt one could not"
     );
     Ok(())
 }
