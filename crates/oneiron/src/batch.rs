@@ -1744,10 +1744,11 @@ pub(crate) fn apply_ops_with_gate_mode(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
-    // ONE-1604-D1 (fix-leg 4): shell-edge sources orphaned by a dominance
-    // eviction. Their inducing type-76 rows are gone, so the full
-    // reconciler's surviving-events derivation can no longer reach them —
-    // they are reconciled explicitly at the end of the batch.
+    // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
+    // inducing type-76 rows are gone, so the full reconciler's
+    // surviving-events derivation can no longer reach them. Non-empty here
+    // also SIGNALS that a row left the ledger, which is what forces the
+    // wider post-eviction union pass at the end of the batch.
     let mut evicted_shell_sources = BTreeSet::new();
     let mut text_manifest_checked = false;
     let later_text_coverage_by_op = text_coverage_after_op(&ops);
@@ -2134,14 +2135,14 @@ pub(crate) fn apply_ops_with_gate_mode(
         wtxn,
         &materialized_entity_ids,
     )?;
-    // ONE-1604-D1 (fix-leg 4): the dominance eviction removed a type-76 event
-    // ROW, and the reconciler above only ever revisits sources named by
-    // SURVIVING events — so the shell edges the removed event installed on
-    // live participants are unreachable from there. Recompute those
-    // participants against the remaining fold, unwinding the evicted event's
-    // effects. Ordered after the materialization pass so both see the same
-    // final ledger, and it is a no-op on every batch without an eviction.
-    crate::identity_topology::reconcile_shell_edges_for_sources_in_txn(
+    // ONE-1604-D1 (fix-leg 5): the dominance eviction removed a type-76 event
+    // ROW, which both hides the removed event's own participants from the
+    // reconciler above (it enumerates SURVIVING rows) and replays the entire
+    // fold, so LATER events can flip effective/rejected and strand THEIR
+    // sources' edges too. Recompute the union of both families against one
+    // final fold. Ordered after the materialization pass so both see the same
+    // ledger, and a no-op on every batch without an eviction.
+    crate::identity_topology::reconcile_shell_edges_after_eviction_in_txn(
         store,
         config,
         analyzer,
@@ -3366,9 +3367,10 @@ fn check_authority_log_store_key(
 /// induced shell effects rather than orphaning them — a type-76 squatter that
 /// arrived by replicated ingest was enumerated by the ARCH-0055 reconciler
 /// like any ledger event, so it may have installed real `merged_into` /
-/// `split_into` edges on live participants, and those participants are
-/// reconciled against the SURVIVING fold below; for a copied row this is
-/// curative (the fold would otherwise see one event twice); (c) an
+/// `split_into` edges on live participants, and both those participants and
+/// every surviving merge/split source are reconciled against the fold that
+/// remains after the eviction; for a copied row this is curative (the fold
+/// would otherwise see one event twice); (c) an
 /// exemption would hand attackers a protected band to squat from, letting a
 /// planted row suppress a pending `RevokeDevice` — exactly the ONE-1604-D1
 /// attack this dominance exists to close. Pinned by
@@ -3376,19 +3378,22 @@ fn check_authority_log_store_key(
 /// eviction to spare protected kinds is a design decision, not an edit.
 ///
 /// Returns the shell-edge sources the evicted row induced (empty unless the
-/// occupant was a type-76 event). The caller MUST reconcile them once the row
-/// is gone: `deindex_entity` drops only edges incident to the EVENT id, while
-/// the reconciler installed the redirect edges on the merge/split
-/// PARTICIPANTS, and the removed event stops being enumerable — so the full
-/// reconciler, whose touched set derives from surviving events, can never
-/// reach them. Left unreconciled they are shell edges with no ledger writer:
-/// the ARCH-0055 wedge (participant undo → [`Error::EntityNotFound`]) reached
-/// through authority dominance, which is the state type-76 delete protection
-/// exists to prevent. See
-/// [`identity_topology::reconcile_shell_edges_for_sources_in_txn`].
+/// occupant was a type-76 event). A non-empty return means a row LEFT the
+/// ledger, and the caller MUST hand it to
+/// [`identity_topology::reconcile_shell_edges_after_eviction_in_txn`], which
+/// reconciles it together with the surviving family. Both halves are needed:
+/// `deindex_entity` drops only edges incident to the EVENT id while the
+/// redirect edges sit on the merge/split PARTICIPANTS, and the removed event
+/// stops being enumerable (so the surviving-set derivation misses them);
+/// meanwhile the removal replays the whole fold, so later events can flip
+/// effective/rejected and strand THEIR sources' edges (so the explicit
+/// capture alone misses those). Left unreconciled either way they are shell
+/// edges with no ledger writer: the ARCH-0055 wedge (participant undo →
+/// [`Error::EntityNotFound`]) reached through authority dominance, which is
+/// the state type-76 delete protection exists to prevent.
 ///
 /// [`registry::is_delete_protected_engine_record`]: crate::registry::is_delete_protected_engine_record
-/// [`identity_topology::reconcile_shell_edges_for_sources_in_txn`]: crate::identity_topology::reconcile_shell_edges_for_sources_in_txn
+/// [`identity_topology::reconcile_shell_edges_after_eviction_in_txn`]: crate::identity_topology::reconcile_shell_edges_after_eviction_in_txn
 fn evict_authority_log_store_key_squatter(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

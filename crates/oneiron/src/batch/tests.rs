@@ -2983,6 +2983,65 @@ fn put_identity_topology_event_for_test(
     Ok(())
 }
 
+/// Plants a type-76 record at `id` through the REPLICATED INGEST door, so the
+/// full ARCH-0055 shell reconciliation runs exactly as it does for an honest
+/// peer record — the only way to get a squatter that has really installed
+/// participant edges.
+#[cfg(feature = "sync")]
+fn ingest_replicated_identity_topology_event_for_test(
+    vault: &Vault,
+    id: &EntityId,
+    record: &crate::identity_topology::StoredIdentityOpEvent,
+) -> Result<()> {
+    let body = crate::identity_topology::encode_identity_topology_event_body(record)?;
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+    blob.push(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT);
+    blob.extend_from_slice(&1u64.to_be_bytes());
+    blob.extend_from_slice(&1u64.to_be_bytes());
+    blob.extend_from_slice(&1u64.to_be_bytes());
+    blob.extend_from_slice(&body);
+    let header = EntityMetadataHeader::parse(&blob).expect("blob header");
+    vault.with_write_txn(|wtxn| {
+        crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn(
+            vault, wtxn, id, &header, &blob, &body, 7,
+        )
+        .map(|_| ())
+    })
+}
+
+/// A structural (mergeable) participant row materialized at `id`.
+#[cfg(feature = "sync")]
+fn put_topology_participant_for_test(vault: &Vault, id: &EntityId, body: &[u8]) -> Result<()> {
+    vault.put_entity(id, ENTITY_TYPE_PERSON, test_time_range(1, 1), 1, body)
+}
+
+/// Asserts BOTH halves of the canonical shell pair agree with `present` — a
+/// one-sided sweep leaves the mirrored `edges_in` row naming a peer with no
+/// ledger writer, which is the residue these regressions exist to catch.
+fn assert_shell_edge_pair(
+    vault: &Vault,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+    present: bool,
+    context: &str,
+) -> Result<()> {
+    assert_eq!(
+        vault.edge_exists(src, kind, tgt)?,
+        present,
+        "{context}: outbound {kind:?} edge presence"
+    );
+    assert_eq!(
+        vault
+            .edges_in(tgt)?
+            .iter()
+            .any(|edge| edge.kind == kind && edge.target == *src),
+        present,
+        "{context}: inbound {kind:?} mirror presence"
+    );
+    Ok(())
+}
+
 /// ONE-1604-D1 PRECEDENCE PIN (fix-leg 3): authority dominance outranks
 /// delete protection. `registry::is_delete_protected_engine_record` covers
 /// type-76 IDENTITY_TOPOLOGY_EVENT, and every ordinary delete door refuses
@@ -3115,18 +3174,9 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
     // defers and no shell edge is ever installed (the bug needs a real one).
     let survivor = EntityId::from_bytes([0xE1; 16])?;
     let loser = EntityId::from_bytes([0xE2; 16])?;
-    for (id, body) in [(&survivor, b"survivor"), (&loser, b"loser___")] {
-        vault.put_entity(
-            id,
-            ENTITY_TYPE_PERSON,
-            test_time_range(1, 1),
-            1,
-            body.as_slice(),
-        )?;
-    }
+    put_topology_participant_for_test(&vault, &survivor, b"survivor")?;
+    put_topology_participant_for_test(&vault, &loser, b"loser___")?;
 
-    // Plant the squatter through the REPLICATED INGEST door, so the full
-    // shell reconciliation runs exactly as it does for an honest peer record.
     let squatter_record = crate::identity_topology::StoredIdentityOpEvent {
         seq: 50,
         at: 1,
@@ -3140,20 +3190,7 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
             survivor,
         },
     };
-    let body = crate::identity_topology::encode_identity_topology_event_body(&squatter_record)?;
-    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-    blob.push(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT);
-    blob.extend_from_slice(&1u64.to_be_bytes());
-    blob.extend_from_slice(&1u64.to_be_bytes());
-    blob.extend_from_slice(&1u64.to_be_bytes());
-    blob.extend_from_slice(&body);
-    let header = EntityMetadataHeader::parse(&blob).expect("blob header");
-    vault.with_write_txn(|wtxn| {
-        crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn(
-            &vault, wtxn, &derived, &header, &blob, &body, 7,
-        )
-        .map(|_| ())
-    })?;
+    ingest_replicated_identity_topology_event_for_test(&vault, &derived, &squatter_record)?;
 
     // PRECONDITION: the induced participant edge genuinely EXISTS. Without
     // it the test proves nothing about unwinding.
@@ -3211,6 +3248,286 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
         .undo_identity_topology_event(&event, &write, 4)
         .expect("undo must resolve, not hit EntityNotFound on an orphaned shell");
     assert!(!vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+    Ok(())
+}
+
+/// ONE-1604-D1 (fix-leg 5), direction 1 — evicting an APPLY event UNLOCKS a
+/// later merge, so an edge must be CREATED on a participant the evicted event
+/// never named.
+///
+/// Fold shape: squatter apply `T([A] -> B)` shells `A`, which makes the later
+/// honest merge `M([A, C] -> D)` fold to REJECTED (`A` is not Active), so `C`
+/// carries no edge. Dominance then evicts `T`. `A` folds back to Active, `M`
+/// becomes effective, and BOTH `A -> D` and `C -> D` are now mandated — but
+/// `C` is not in `T`'s captured source set, so leg 4's explicit-source-only
+/// pass never visits it.
+///
+/// Leg 4's pass alone leaves `C` Active with no edge while the ledger says
+/// Merged: the fold and the edge witness disagree, so an undo of `M` is
+/// rejected `NotCurrent` and `C`'s topology is permanently stuck.
+#[cfg(feature = "sync")]
+#[test]
+fn evicting_an_apply_creates_unlocked_merge_edges_on_undirect_sources() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let genesis = authority_genesis_fixture(105);
+    let derived = crate::authority::authority_log_entity_id(&genesis)?;
+
+    let a = EntityId::from_bytes([0x51; 16])?;
+    let b = EntityId::from_bytes([0x52; 16])?;
+    let c = EntityId::from_bytes([0x53; 16])?;
+    let d = EntityId::from_bytes([0x54; 16])?;
+    put_topology_participant_for_test(&vault, &a, b"aaaaaaaa")?;
+    put_topology_participant_for_test(&vault, &b, b"bbbbbbbb")?;
+    put_topology_participant_for_test(&vault, &c, b"cccccccc")?;
+    put_topology_participant_for_test(&vault, &d, b"dddddddd")?;
+
+    // T: the squatter apply, at the authority row's derived key.
+    ingest_replicated_identity_topology_event_for_test(
+        &vault,
+        &derived,
+        &crate::identity_topology::StoredIdentityOpEvent {
+            seq: 40,
+            at: 1,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: crate::identity_topology::StoredIdentityOpAction::Merge {
+                sources: vec![a],
+                survivor: b,
+            },
+        },
+    )?;
+    // M: a LATER multi-participant merge sharing only `A` with T. It folds
+    // rejected while T stands, so neither of its sources is shelled.
+    let m = EntityId::from_bytes([0x11; 16])?;
+    ingest_replicated_identity_topology_event_for_test(
+        &vault,
+        &m,
+        &crate::identity_topology::StoredIdentityOpEvent {
+            seq: 41,
+            at: 1,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: crate::identity_topology::StoredIdentityOpAction::Merge {
+                sources: vec![a, c],
+                survivor: d,
+            },
+        },
+    )?;
+
+    assert_shell_edge_pair(&vault, &a, EdgeKind::MergedInto, &b, true, "precondition T")?;
+    assert_shell_edge_pair(
+        &vault,
+        &c,
+        EdgeKind::MergedInto,
+        &d,
+        false,
+        "precondition M",
+    )?;
+    assert_eq!(
+        vault.entity_lifecycle_state(&c)?,
+        crate::identity_topology::EntityLifecycleState::Active,
+        "precondition: M is rejected while T shells A, so C is untouched"
+    );
+
+    // Dominance evicts T. The replay makes M effective.
+    assert_eq!(
+        vault.put_authority_log_entry(&genesis, test_time_range(2, 2), 2)?,
+        derived
+    );
+
+    assert_shell_edge_pair(&vault, &a, EdgeKind::MergedInto, &b, false, "T unwound")?;
+    assert_shell_edge_pair(
+        &vault,
+        &a,
+        EdgeKind::MergedInto,
+        &d,
+        true,
+        "M direct source",
+    )?;
+    // THE FINDING: C is only reachable through the SURVIVING family.
+    assert_shell_edge_pair(
+        &vault,
+        &c,
+        EdgeKind::MergedInto,
+        &d,
+        true,
+        "M's other source, never named by the evicted event",
+    )?;
+    for shelled in [&a, &c] {
+        assert_eq!(
+            vault.entity_lifecycle_state(shelled)?,
+            crate::identity_topology::EntityLifecycleState::Merged,
+            "the unlocked merge must shell BOTH of its sources"
+        );
+    }
+
+    // The fold and the edge witness must agree well enough that the follow-up
+    // undo of M resolves rather than rejecting NotCurrent.
+    let write = crate::identity_topology::IdentityOpWrite::auto(ClaimSource::UserStated);
+    vault
+        .undo_identity_topology_event(&m, &write, 3)
+        .expect("undoing the unlocked merge must resolve for BOTH sources");
+    assert_shell_edge_pair(&vault, &c, EdgeKind::MergedInto, &d, false, "M undone")?;
+    assert_eq!(
+        vault.entity_lifecycle_state(&c)?,
+        crate::identity_topology::EntityLifecycleState::Active
+    );
+    Ok(())
+}
+
+/// ONE-1604-D1 (fix-leg 5), direction 2 — evicting an UNDO event RE-LOCKS the
+/// event it reverted, so an edge must be REMOVED from a participant the
+/// evicted undo never named. This is the finder's exact shape and the
+/// MUTATION PROBE: drop the surviving-family half of
+/// `reconcile_shell_edges_after_eviction_in_txn` and this test fails on the
+/// surviving `C -> D` edge.
+///
+/// Fold shape: honest merge `T([A] -> B)`; squatter undo `U(T)` at the
+/// authority row's derived key, which reverts T and lets the later honest
+/// merge `M([A, C] -> D)` apply, shelling `A` and `C`. Dominance evicts `U`.
+/// T is effective again, so `M` folds to REJECTED and BOTH `A -> D` and
+/// `C -> D` must go. `U` names only `A` (through the one-hop walk to T), so
+/// leg 4's capture reaches `A` and stops — `C` keeps a `merged_into D` edge
+/// no surviving ledger event justifies, which is the ARCH-0055 wedge one hop
+/// out from where leg 4 closed it.
+#[cfg(feature = "sync")]
+#[test]
+fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let genesis = authority_genesis_fixture(106);
+    let derived = crate::authority::authority_log_entity_id(&genesis)?;
+
+    let a = EntityId::from_bytes([0x61; 16])?;
+    let b = EntityId::from_bytes([0x62; 16])?;
+    let c = EntityId::from_bytes([0x63; 16])?;
+    let d = EntityId::from_bytes([0x64; 16])?;
+    put_topology_participant_for_test(&vault, &a, b"aaaaaaaa")?;
+    put_topology_participant_for_test(&vault, &b, b"bbbbbbbb")?;
+    put_topology_participant_for_test(&vault, &c, b"cccccccc")?;
+    put_topology_participant_for_test(&vault, &d, b"dddddddd")?;
+
+    let t = EntityId::from_bytes([0x22; 16])?;
+    ingest_replicated_identity_topology_event_for_test(
+        &vault,
+        &t,
+        &crate::identity_topology::StoredIdentityOpEvent {
+            seq: 40,
+            at: 1,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: crate::identity_topology::StoredIdentityOpAction::Merge {
+                sources: vec![a],
+                survivor: b,
+            },
+        },
+    )?;
+    // U: the squatter, an UNDO of T, parked at the authority row's key.
+    ingest_replicated_identity_topology_event_for_test(
+        &vault,
+        &derived,
+        &crate::identity_topology::StoredIdentityOpEvent {
+            seq: 41,
+            at: 1,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: crate::identity_topology::StoredIdentityOpAction::Undo { target: t },
+        },
+    )?;
+    // M: applies only because U reverted T.
+    let m = EntityId::from_bytes([0x33; 16])?;
+    ingest_replicated_identity_topology_event_for_test(
+        &vault,
+        &m,
+        &crate::identity_topology::StoredIdentityOpEvent {
+            seq: 42,
+            at: 1,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: crate::identity_topology::StoredIdentityOpAction::Merge {
+                sources: vec![a, c],
+                survivor: d,
+            },
+        },
+    )?;
+
+    assert_shell_edge_pair(&vault, &a, EdgeKind::MergedInto, &b, false, "T reverted")?;
+    assert_shell_edge_pair(
+        &vault,
+        &a,
+        EdgeKind::MergedInto,
+        &d,
+        true,
+        "M direct source",
+    )?;
+    assert_shell_edge_pair(&vault, &c, EdgeKind::MergedInto, &d, true, "M other source")?;
+    assert_eq!(
+        vault.entity_lifecycle_state(&c)?,
+        crate::identity_topology::EntityLifecycleState::Merged
+    );
+
+    // Dominance evicts U. The replay re-locks T and rejects M.
+    assert_eq!(
+        vault.put_authority_log_entry(&genesis, test_time_range(2, 2), 2)?,
+        derived
+    );
+
+    assert_shell_edge_pair(&vault, &a, EdgeKind::MergedInto, &b, true, "T re-locked")?;
+    assert_shell_edge_pair(&vault, &a, EdgeKind::MergedInto, &d, false, "M rejected")?;
+    // THE FINDING / MUTATION PROBE: C is neither U's direct source nor
+    // reachable through U's one-hop walk to T.
+    assert_shell_edge_pair(
+        &vault,
+        &c,
+        EdgeKind::MergedInto,
+        &d,
+        false,
+        "M's other source must lose the edge no surviving event justifies",
+    )?;
+    assert_eq!(
+        vault.entity_lifecycle_state(&a)?,
+        crate::identity_topology::EntityLifecycleState::Merged,
+        "A is shelled by the re-locked T, not by the rejected M"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&c)?,
+        crate::identity_topology::EntityLifecycleState::Active,
+        "with M rejected, C must fold back to Active"
+    );
+
+    // C is an ordinary Active entity again: a fresh merge applies instead of
+    // rejecting NotActive, and its undo resolves instead of wedging.
+    let write = crate::identity_topology::IdentityOpWrite::auto(ClaimSource::UserStated);
+    let op =
+        crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
+            sources: vec![c],
+            survivor: d,
+            evidence: crate::identity_topology::IdentityOpEvidence::default(),
+            survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+        });
+    let event = match vault.apply_identity_topology_op(&op, &write, 3)? {
+        crate::identity_topology::IdentityOpOutcome::Applied { event, .. } => event,
+        other => panic!("a post-eviction merge on C must apply, got {other:?}"),
+    };
+    assert_shell_edge_pair(&vault, &c, EdgeKind::MergedInto, &d, true, "fresh merge")?;
+    vault
+        .undo_identity_topology_event(&event, &write, 4)
+        .expect("undo must resolve, not hit a stranded shell");
+    assert_shell_edge_pair(&vault, &c, EdgeKind::MergedInto, &d, false, "fresh undo")?;
     Ok(())
 }
 

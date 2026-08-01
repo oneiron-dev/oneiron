@@ -1614,17 +1614,14 @@ fn identity_topology_shell_peers_for_store_in_txn(
     Ok(peers)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn reconcile_identity_topology_edges_for_store_in_txn(
+/// Every entity the SURVIVING type-76 apply family names as a shell-edge
+/// source. This is the reconciler's touched set: the ids whose
+/// `merged_into` / `split_into` rows the current ledger can still speak for.
+fn surviving_shell_edge_sources_for_store_in_txn(
     store: &Store,
-    config: &crate::config::VaultConfig,
-    analyzer: &crate::analyzer::MultilingualAnalyzer,
-    text_index_trusted: bool,
-    wtxn: &mut heed::RwTxn<'_>,
-) -> Result<()> {
-    #[cfg(test)]
-    test_hooks::note_full_reconciliation();
-    let stored_events = identity_topology_events_for_store_in_txn(store, &*wtxn)?;
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let stored_events = identity_topology_events_for_store_in_txn(store, rtxn)?;
     let mut touched = BTreeSet::new();
     for event in &stored_events {
         match &event.action {
@@ -1640,6 +1637,20 @@ fn reconcile_identity_topology_edges_for_store_in_txn(
             | IdentityTopologyAction::Undo { .. } => {}
         }
     }
+    Ok(touched)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reconcile_identity_topology_edges_for_store_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_index_trusted: bool,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    #[cfg(test)]
+    test_hooks::note_full_reconciliation();
+    let touched = surviving_shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
     reconcile_shell_edges_for_sources_in_txn(
         store,
         config,
@@ -1650,22 +1661,66 @@ fn reconcile_identity_topology_edges_for_store_in_txn(
     )
 }
 
+/// Post-eviction shell reconciliation for ONE-1604-D1 authority dominance:
+/// the sources to recompute are the UNION of `evicted_sources` (the removed
+/// type-76 row's own participants, captured by
+/// [`identity_topology_shell_sources_for_store_in_txn`] before the row went)
+/// and the SURVIVING family's sources, all against one final fold.
+///
+/// Neither half is sufficient alone, because removing an event replays the
+/// WHOLE fold:
+///
+/// - The surviving-family derivation cannot see the removed event's
+///   participants — it enumerates rows, and that row is gone. Only the
+///   explicit capture reaches them (fix-leg 4).
+/// - The explicit capture reaches only DIRECT participants, but deleting an
+///   event changes which LATER events apply, and those events have their own
+///   sources. Concretely: merge `T(A→B)`, a squatter undo `U(T)` (so `T` is
+///   reverted and a later `M([A,C]→D)` applies), then dominance evicts `U`.
+///   `T` becomes effective again, `M` folds to rejected — and `C`, which `U`
+///   never named, is left holding a `merged_into D` edge no ledger event
+///   justifies. That is the same ARCH-0055 wedge the eviction unwind exists
+///   to prevent, one hop further out. The union closes the set: any event
+///   whose effectiveness the replay can flip is, by definition, a surviving
+///   event, so its sources are in the surviving half.
+///
+/// Runs only when `evicted_sources` is non-empty — a batch without an
+/// eviction is append-only, where the surviving derivation is already exact
+/// and the ordinary reconciler has already run.
+pub(crate) fn reconcile_shell_edges_after_eviction_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_index_trusted: bool,
+    wtxn: &mut heed::RwTxn<'_>,
+    evicted_sources: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if evicted_sources.is_empty() {
+        return Ok(());
+    }
+    let mut sources = surviving_shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
+    sources.extend(evicted_sources.iter().copied());
+    reconcile_shell_edges_for_sources_in_txn(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &sources,
+    )
+}
+
 /// Reconciles the canonical shell edges of EXACTLY `sources` against the
 /// current ledger fold: edges the fold no longer mandates are deleted,
 /// mandated edges are (re)written when both endpoints are materialized.
 ///
-/// The full reconciler above derives `sources` from the SURVIVING event
-/// family, which is the right derivation while events are only ever
-/// appended. It is the WRONG one when an event ROW disappears (ONE-1604-D1
-/// authority dominance evicting a type-76 squatter): the removed event is no
-/// longer enumerable, so the edges it induced on live participants would
-/// never enter the touched set and would outlive their ledger justification —
-/// the ARCH-0055 wedge (undo → [`Error::EntityNotFound`], shell edges with
-/// no current writer). The eviction door therefore captures the removed
-/// event's own sources with
-/// [`identity_topology_shell_sources_for_store_in_txn`] BEFORE the row goes
-/// and passes them here, so the surviving fold recomputes their truth.
-pub(crate) fn reconcile_shell_edges_for_sources_in_txn(
+/// Callers own the derivation of `sources`, and the two derivations are NOT
+/// interchangeable. Append-only batches use the surviving-family set
+/// ([`surviving_shell_edge_sources_for_store_in_txn`]); an eviction batch
+/// must use the union in
+/// [`reconcile_shell_edges_after_eviction_in_txn`], because a removed row is
+/// no longer enumerable AND its removal replays the whole fold.
+fn reconcile_shell_edges_for_sources_in_txn(
     store: &Store,
     config: &crate::config::VaultConfig,
     analyzer: &crate::analyzer::MultilingualAnalyzer,
