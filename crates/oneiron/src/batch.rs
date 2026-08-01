@@ -3328,6 +3328,25 @@ fn check_authority_log_store_key(
 /// preflight is still outstanding, and a remote rejection COMMITS
 /// (quarantine-and-continue), so an eviction taken at check time would
 /// outlive a rejected row.
+///
+/// DOMINANCE OUTRANKS DELETE PROTECTION — deliberately, and this is the one
+/// place in the engine where it does. The eviction does NOT exempt kinds in
+/// [`registry::is_delete_protected_engine_record`] (POLICY_MANIFEST,
+/// AUTHORITY_LOG, SKILL_CONTENT_ANCHOR, IDENTITY_TOPOLOGY_EVENT), because:
+/// (a) the key is a pure function of FULLY VALIDATED authority bytes, so any
+/// non-122 occupant sits at an address its own kind could never derive and is
+/// adversarial by construction; (b) a protected kind's protective invariants
+/// reference the row's OWN id — an ARCH-0055 type-76 event's shell edges name
+/// the real event id, not a foreign content-derived key — so eviction here
+/// orphans no legitimate structure, and for a COPIED type-76 row it is
+/// curative (the ledger fold would otherwise see one event twice); (c) an
+/// exemption would hand attackers a protected band to squat from, letting a
+/// planted row suppress a pending `RevokeDevice` — exactly the ONE-1604-D1
+/// attack this dominance exists to close. Pinned by
+/// `authority_log_put_evicts_delete_protected_squatter`; narrowing the
+/// eviction to spare protected kinds is a design decision, not an edit.
+///
+/// [`registry::is_delete_protected_engine_record`]: crate::registry::is_delete_protected_engine_record
 fn evict_authority_log_store_key_squatter(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

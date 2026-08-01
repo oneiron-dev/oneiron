@@ -2950,6 +2950,138 @@ fn authority_log_put_evicts_cross_type_squatter_incident_edges() -> Result<()> {
     Ok(())
 }
 
+/// Plants a type-76 (IDENTITY_TOPOLOGY_EVENT) row through the shared write
+/// chokepoint, the way the sync ingest door stores a replicated record.
+#[cfg(feature = "sync")]
+fn put_identity_topology_event_for_test(
+    vault: &Vault,
+    id: &EntityId,
+    record: &crate::identity_topology::StoredIdentityOpEvent,
+) -> Result<()> {
+    let data = crate::identity_topology::encode_identity_topology_event_body(record)?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        &mut wtxn,
+        vec![BatchOp::Put {
+            id: *id,
+            entity_type: crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            occurred: test_time_range(1, 1),
+            learned_at: 1,
+            data,
+            allow_maintenance: true,
+            allow_reserved_predicate: true,
+            hub_sync_imported: false,
+        }],
+        true,
+        false,
+        false,
+    )?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// ONE-1604-D1 PRECEDENCE PIN (fix-leg 3): authority dominance outranks
+/// delete protection. `registry::is_delete_protected_engine_record` covers
+/// type-76 IDENTITY_TOPOLOGY_EVENT, and every ordinary delete door refuses
+/// that kind — but a type-76 row squatting a validated type-122 row's
+/// CONTENT-DERIVED store key is evicted anyway. It has to be: the key is a
+/// pure function of fully-validated authority bytes, so a type-76 body can
+/// never legitimately hash there; ARCH-0055 shell edges name the real
+/// event's OWN id, so nothing legitimate is orphaned; and exempting the
+/// protected band would hand an attacker a squat that suppresses a pending
+/// RevokeDevice — the D1 attack dominance exists to close.
+///
+/// If someone later narrows the eviction to spare delete-protected kinds,
+/// THIS TEST MUST FAIL. That is its job: the precedence is a ratified design
+/// decision (`gseal-wave2-p1-adjudication`), so changing it needs a design
+/// conversation, not a silent edit.
+#[cfg(feature = "sync")]
+#[test]
+fn authority_log_put_evicts_delete_protected_squatter() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let genesis = authority_genesis_fixture(103);
+    let derived = crate::authority::authority_log_entity_id(&genesis)?;
+    let survivor = EntityId::from_bytes([0xD1; 16])?;
+    let loser = EntityId::from_bytes([0xD2; 16])?;
+    let squatter_record = crate::identity_topology::StoredIdentityOpEvent {
+        seq: 50,
+        at: 1,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: crate::identity_topology::StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+
+    // The squatter is a REAL delete-protected row at the derived key.
+    put_identity_topology_event_for_test(&vault, &derived, &squatter_record)?;
+    assert_eq!(
+        vault.identity_topology_event(&derived)?.as_ref(),
+        Some(&squatter_record),
+        "fixture must plant a genuine type-76 row at the derived authority key"
+    );
+
+    // Dominance wins: the protected occupant is evicted and the authority
+    // row owns its content-derived key.
+    let id = vault.put_authority_log_entry(&genesis, test_time_range(2, 2), 2).expect(
+        "authority dominance must evict a delete-protected squatter; if this now fails the eviction was narrowed to exempt protected kinds — that reopens the D1 revocation-suppression squat",
+    );
+    assert_eq!(id, derived);
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(genesis));
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(
+                &rtxn,
+                &Store::encode_type_key(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, &id)
+            )?
+            .is_none(),
+        "the evicted type-76 squatter must leave no type_index row behind"
+    );
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(
+                &rtxn,
+                &Store::encode_type_key(ENTITY_TYPE_AUTHORITY_LOG, &id)
+            )?
+            .is_some(),
+        "the authority row must own the type_index entry at its derived key"
+    );
+    // Curative, not destructive: the ledger fold no longer sees the copied
+    // event, so a replayed type-76 body cannot be counted twice.
+    assert!(
+        vault.identity_topology_events_in_txn(&rtxn)?.is_empty(),
+        "the evicted copy must leave the type-76 ledger family empty"
+    );
+    drop(rtxn);
+
+    // Control: delete protection for type-76 is genuinely LIVE at an
+    // ordinary id — the eviction above is a scoped precedence rule, not a
+    // hole in `is_delete_protected_engine_record`.
+    let protected = EntityId::from_bytes([0xD3; 16])?;
+    put_identity_topology_event_for_test(&vault, &protected, &squatter_record)?;
+    let err = vault
+        .batch()
+        .delete(&protected)
+        .commit()
+        .expect_err("type-76 rows must stay delete-protected at their own ids");
+    assert_eq!(err.kind(), ErrorKind::MaintenanceKindNotWritable);
+    assert!(vault.entity_exists(&protected)?);
+    Ok(())
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn authority_log_write_does_not_mark_legacy_backfill_complete() -> Result<()> {
