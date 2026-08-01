@@ -2896,6 +2896,60 @@ fn authority_log_put_evicts_cross_type_squatter_and_its_indexes() -> Result<()> 
     Ok(())
 }
 
+/// ONE-1604-D1 (fix-leg 4, LMDB door): evicting a squatter's ENTITY row is
+/// only half the eviction — its incident EDGES are keyed independently
+/// (`src|kind|tgt`), so an entity-only eviction would leave a revoked
+/// squatter traversable through the graph at a key the authority substrate
+/// took over. `deindex_entity` → `delete_related_edges` already sweeps both
+/// directions; this pins that guarantee against a future narrowing of the
+/// eviction, and is the LMDB twin of the reverse-remat edge sweep.
+#[cfg(feature = "sync")]
+#[test]
+fn authority_log_put_evicts_cross_type_squatter_incident_edges() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let genesis = authority_genesis_fixture(101);
+    let derived = crate::authority::authority_log_entity_id(&genesis)?;
+    let neighbor = EntityId::from_bytes([0xC1; 16])?;
+
+    for (id, body) in [(&derived, b"squatter"), (&neighbor, b"neighbor")] {
+        vault.put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_EVENT,
+            test_time_range(1, 1),
+            1,
+            body.as_slice(),
+        )?;
+    }
+    // Both directions: the squatter as edge SOURCE and as edge TARGET.
+    vault
+        .batch()
+        .edge(&derived, EdgeKind::Mentions, &neighbor, 1.0)
+        .edge(&neighbor, EdgeKind::Mentions, &derived, 1.0)
+        .commit()?;
+    assert_eq!(vault.edges_out(&derived)?.len(), 1);
+    assert_eq!(vault.edges_in(&derived)?.len(), 1);
+
+    let id = vault.put_authority_log_entry(&genesis, test_time_range(2, 2), 2)?;
+    assert_eq!(id, derived);
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(genesis));
+
+    assert!(
+        vault.edges_out(&derived)?.is_empty(),
+        "the squatter's outbound edge rows must not survive the eviction"
+    );
+    assert!(
+        vault.edges_in(&derived)?.is_empty(),
+        "the squatter's inbound edge rows must not survive the eviction"
+    );
+    // The mirrored rows on the NEIGHBOUR's side are the ones a one-sided
+    // sweep would strand — they still name the evicted id.
+    assert!(
+        vault.edges_out(&neighbor)?.is_empty() && vault.edges_in(&neighbor)?.is_empty(),
+        "the neighbour's mirrored edge rows must not keep the evicted id reachable"
+    );
+    Ok(())
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn authority_log_write_does_not_mark_legacy_backfill_complete() -> Result<()> {

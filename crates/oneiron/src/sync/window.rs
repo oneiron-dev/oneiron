@@ -2081,13 +2081,47 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         // local vault already refused that occupant, so leaving it as the
         // CRDT carrier would re-export the very row the authority substrate
         // rejected — and starve peers that have not yet seen the entry.
-        if !reverse_remat_skip_redaction_receipt_mirror(&raw)
-            && (!map_contains_binary(&entities_map, &hex_id)
-                || authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw))
-        {
-            map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
-            wrote_any = true;
-            count += 1;
+        if !reverse_remat_skip_redaction_receipt_mirror(&raw) {
+            // Evaluated before the insert branch rather than inside it: the
+            // verdict also drives the edge sweep below, and it is `false` by
+            // construction when the key carries nothing (`map_get_bytes` →
+            // `None`), so hoisting it past the short circuit is semantics-
+            // preserving.
+            let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw);
+            if !map_contains_binary(&entities_map, &hex_id) || dominates {
+                map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
+                wrote_any = true;
+                count += 1;
+            }
+            // ONE-1604-D1 (fix-leg 4): overwriting the dominated carrier's
+            // ENTITY row is only half an eviction. Edge entries are keyed
+            // independently of the entity (`src:kind:tgt`), so the squatter's
+            // incident edges survive the entity overwrite and keep it
+            // traversable on every peer that imports this window — graph
+            // residue for a row the authority substrate refused. The local
+            // write door already drops both edge directions along with the
+            // entity (`deindex_entity` → `delete_related_edges`); this is
+            // the outbound mirror of that completeness.
+            //
+            // Scoped to the DOMINANCE verdict, so it cannot touch a key
+            // whose carrier every peer would admit: presence-only rows keep
+            // their edges untouched.
+            //
+            // The swept edges have no local backing to lose. Reaching this
+            // branch means the local vault holds a VALIDATED type-122 row at
+            // `id`, which it could only have admitted by evicting whatever
+            // squatted the key — and that eviction already deleted both
+            // directions of every incident edge. Anything still naming `id`
+            // in the CRDT is therefore the dominated carrier's residue. The
+            // sweep still runs BEFORE the `edges_out` backfill below, so any
+            // edge the local row does own is re-inserted in this same pass.
+            //
+            // Self-limiting: once the carrier is replaced by the validated
+            // local row it becomes admissible, so the next pass takes the
+            // presence-only branch and never re-runs this sweep.
+            if dominates && delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
+                wrote_any = true;
+            }
         }
 
         let edges_out = vault.edges_out(id)?;

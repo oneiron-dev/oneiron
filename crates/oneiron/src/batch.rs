@@ -3315,6 +3315,14 @@ fn check_authority_log_store_key(
 /// the eviction is confined to the single write chokepoint so the replicated
 /// validator stays side-effect-free.
 ///
+/// The edge half is [`deindex_entity`] → `delete_related_edges`, which drops
+/// BOTH directions (`edges_out` and `edges_in`) of every incident edge. That
+/// is load-bearing, not incidental: a surviving edge row keeps a revoked
+/// squatter traversable through the graph after its entity row is gone, so
+/// any future narrowing of the eviction must keep the edge sweep. Pinned by
+/// `authority_log_put_evicts_cross_type_squatter_incident_edges`; the CRDT
+/// mirror of this rule lives on the reverse-remat door in `sync/window.rs`.
+///
 /// Call ONLY from `apply_put`'s pre-write site, never from
 /// `check_authority_log_store_key`: the check runs while remotely-rejectable
 /// preflight is still outstanding, and a remote rejection COMMITS

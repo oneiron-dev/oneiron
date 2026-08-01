@@ -2780,6 +2780,117 @@ fn reverse_rematerialization_replaces_cross_type_authority_key_squatter() -> Res
     Ok(())
 }
 
+/// ONE-1604-D1 (fix-leg 4, outbound half): replacing the dominated carrier's
+/// ENTITY row left its INCIDENT EDGES behind. Edge entries are keyed
+/// independently of the entity (`src:kind:tgt`), so the squatter's graph
+/// residue survived the overwrite and kept traversing on every peer that
+/// imported the window — the exact residue the LMDB door already sweeps with
+/// `delete_related_edges`. Both directions are asserted: the squatter as edge
+/// SOURCE and as edge TARGET.
+#[cfg(feature = "sync")]
+#[test]
+fn reverse_rematerialization_evicts_dominated_squatter_incident_edges() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let genesis = authority_genesis_fixture_for_window(0x6A);
+    let id = crate::authority::authority_log_entity_id(&genesis)?;
+    let neighbor = EntityId::from_bytes([0xC2; 16])?;
+    vault.put_authority_log_entry(
+        &genesis,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+    )?;
+    let local = vault.get_raw(&id)?.expect("authority row stored");
+
+    let doc = create_window_doc("squatted-window", &window_key);
+    let squatter = make_entity_blob(crate::registry::ENTITY_TYPE_EVENT, learned_at, b"squatter");
+    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &squatter)?;
+    let out_key = format_edge_key(&id, EdgeKind::Mentions, &neighbor);
+    let in_key = format_edge_key(&neighbor, EdgeKind::Mentions, &id);
+    let edge_value = encode_edge_value_for_crdt(EdgeKind::Mentions, 0.7, 1, None, None)?;
+    for key in [&out_key, &in_key] {
+        map_insert_bytes(&doc.get_map("edges"), key, &edge_value)?;
+    }
+    doc.commit();
+
+    reverse_rematerialize(&vault, &doc, &window_key)?;
+
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
+        Some(local),
+        "the validated authority row must still replace the carrier"
+    );
+    let edges = doc.get_map("edges");
+    assert!(
+        map_get_bytes(&edges, &out_key).is_none(),
+        "the squatter's outbound edge carrier must go with the dominated entity"
+    );
+    assert!(
+        map_get_bytes(&edges, &in_key).is_none(),
+        "the squatter's inbound edge carrier must go with the dominated entity"
+    );
+    Ok(())
+}
+
+/// ONE-1604-D1 (fix-leg 4, negative half): the edge sweep is scoped to the
+/// DOMINANCE verdict, never to mere presence at an authority key. A carrier
+/// every peer's replay door would admit keeps presence-only semantics, and
+/// its edges must survive untouched — otherwise the sweep would silently
+/// erase replicated graph state on ordinary convergence.
+#[cfg(feature = "sync")]
+#[test]
+fn reverse_rematerialization_preserves_edges_of_an_admissible_authority_carrier() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let genesis = authority_genesis_fixture_for_window(0x6B);
+    let id = crate::authority::authority_log_entity_id(&genesis)?;
+    let neighbor = EntityId::from_bytes([0xC3; 16])?;
+    vault.put_authority_log_entry(
+        &genesis,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+    )?;
+    let local = vault.get_raw(&id)?.expect("authority row stored");
+
+    // Byte-different but fully admissible: same signed body, a different
+    // (valid, non-inverted) occurred range.
+    let admissible = make_entity_blob_with_range(
+        ENTITY_TYPE_AUTHORITY_LOG,
+        learned_at - 30,
+        learned_at,
+        learned_at,
+        &local[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    );
+    let doc = create_window_doc("admissible-window", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &admissible)?;
+    let in_key = format_edge_key(&neighbor, EdgeKind::Mentions, &id);
+    let edge_value = encode_edge_value_for_crdt(EdgeKind::Mentions, 0.7, 1, None, None)?;
+    map_insert_bytes(&doc.get_map("edges"), &in_key, &edge_value)?;
+    doc.commit();
+
+    reverse_rematerialize(&vault, &doc, &window_key)?;
+
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
+        Some(admissible),
+        "an admissible carrier must still be preserved"
+    );
+    assert_eq!(
+        map_get_bytes(&doc.get_map("edges"), &in_key),
+        Some(edge_value),
+        "edges at a non-dominated authority key must survive untouched"
+    );
+    Ok(())
+}
+
 /// ONE-1604-D1 (fix-leg 3, P2 — the external probe's exact assertion pair):
 /// the dominance check was TYPE-BYTE-blind. It preserved any carrier whose
 /// envelope header read type-122, resting on "two authority rows at one key
