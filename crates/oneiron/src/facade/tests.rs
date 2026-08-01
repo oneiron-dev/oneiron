@@ -4679,6 +4679,211 @@ fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing(
     assert_no_local_delete_artifacts(&vault, &subject, "headerless");
 }
 
+/// fix-leg 9 P1: on the NON-PUBLISHING path the soft erase and the `pt:`
+/// propagation intent are ONE transaction.
+///
+/// fix-8 put the conditional re-fold in the gdpr/policy soft-erase txn, and that
+/// txn commits — but the replayable `pt:` marker was only written later, in the
+/// purge txn. Between those two commits the erasure had a shape no compliance
+/// path may have: the body was scrubbed locally and irreversibly, every peer
+/// still held the full data, and NO durable record of the intent to propagate
+/// the delete existed. A crash there — or any error on the purge path, which is
+/// the ordinary failure this reaches through — silently downgraded a GDPR /
+/// policy erasure to a local-only scrub. Nothing would ever heal it: a retry
+/// captures the bodiless 25 B shell, and the sync-enabled boot that would have
+/// replayed the deletion finds no marker to replay.
+///
+/// Driven by failing the marker write itself, which is the strongest available
+/// statement of atomicity: whatever the transaction had done up to that point
+/// must vanish with it. Both reasons that take the soft-erase phase, because
+/// they are one arm and a future edit could split them.
+///
+/// MUTATION PROBE: move the `pt:` write back to the purge txn (drop it from the
+/// scrub txn) and this test fails — the injection never fires, the delete
+/// SUCCEEDS, and `expect_err` panics.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn a_failed_first_txn_pending_tombstone_rolls_back_the_soft_erase() {
+    for reason in [SafeDeleteReason::GdprDelete, SafeDeleteReason::PolicyDelete] {
+        let case = format!("{reason:?}");
+
+        // Control, on its OWN vault: unarmed, the same delete completes and
+        // leaves the marker. It runs separately so the armed leg's
+        // "no artifacts at all" assertion stays absolute — a control delete in
+        // the same vault would leave a legitimate receipt and pt: row.
+        let (control_dir, control_vault) = open_nonpublishing_delete_vault();
+        let control_owner = put_person(&control_vault, 0x50);
+        let control_subject = put_person(&control_vault, 0x51);
+        root_vault_binding(&control_vault, 0x52, control_owner, "human");
+        facade_for(&control_vault, control_owner)
+            .safe_delete(&control_subject.to_hex(), reason)
+            .unwrap_or_else(|err| panic!("{case} control: {}: {}", err.code, err.message));
+        assert!(
+            first_txn_pending_tombstone_exists(&control_vault, &control_subject),
+            "{case} control: a completed sync-OFF erasure keeps its replayable \
+             pt: propagation intent, written in the scrub txn"
+        );
+        drop(control_dir);
+
+        let (_dir, vault) = open_nonpublishing_delete_vault();
+        let owner = put_person(&vault, 0x53);
+        let subject = put_person(&vault, 0x54);
+        // The soft erase deletes the vector row too, so a surviving vector is
+        // independent evidence that the scrub itself rolled back — not merely
+        // that the entity body was left alone.
+        vault
+            .put_vector(&subject, &[0.5, 0.6, 0.7, 0.8])
+            .expect("put subject vector");
+        root_vault_binding(&vault, 0x55, owner, "human");
+
+        crate::deletion::arm_fail_first_txn_pending_tombstone();
+        let err = facade_for(&vault, owner)
+            .safe_delete(&subject.to_hex(), reason)
+            .expect_err(
+                "the pt: marker is written INSIDE the re-verified soft-erase \
+                 txn, so failing it must fail the whole delete",
+            );
+        assert_eq!(err.code, FACADE_CODE_INTERNAL, "{case}");
+
+        // The scrub rolled back with the marker: body whole, vector whole.
+        assert_eq!(
+            vault
+                .get_raw(&subject)
+                .expect("get raw")
+                .expect("subject row survives")
+                .len(),
+            crate::batch::ENTITY_METADATA_HEADER_LEN + b"facade person".len(),
+            "{case}: a 25 B shell would mean the scrub committed without the \
+             marker — the exact split fix-leg 9 closes"
+        );
+        assert_eq!(
+            vault.get_vector(&subject).expect("get vector"),
+            Some(vec![0.5, 0.6, 0.7, 0.8]),
+            "{case}: the soft erase deletes the vector row, so it must return"
+        );
+        assert_no_local_delete_artifacts(&vault, &subject, &case);
+    }
+}
+
+/// fix-leg 9, the `existed` half of the guard: a soft erase that found NOTHING
+/// still writes no `pt:`.
+///
+/// Moving the marker into the scrub txn put a `pt:` write on a path that had
+/// none, so it inherits ONE-1149's rule and must be pinned there: a delete whose
+/// scope raced away between the header read and the scrub txn erased nothing,
+/// and a `pt:` marker is a claim that this delete has data to propagate away.
+/// Emitting one would replay a deletion for an id this call never touched.
+/// `assert_no_erasure_audit_artifacts` pins the same law for the purge txn's
+/// marker; nothing covered the new site, because the pre-existing headerful
+/// raced test uses `user_hard_delete`, which has no soft-erase phase at all.
+///
+/// MUTATION PROBE: drop `existed &&` from the scrub txn's marker guard and this
+/// test fails — the raced delete reports `missing()` while leaving a replayable
+/// `pt:` behind.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn a_soft_erase_that_erased_nothing_writes_no_pending_tombstone() {
+    for reason in [DeleteReason::GdprDelete, DeleteReason::PolicyDelete] {
+        let case = format!("{reason:?}");
+        let learned_at = 1_772_000_000;
+
+        for attempt in 0..3 {
+            let (_dir, vault) = open_nonpublishing_delete_vault();
+            let id = EntityId::from_bytes([0x56; 16]).expect("victim id");
+            vault
+                .batch()
+                .put(
+                    &id,
+                    ENTITY_TYPE_PERSON,
+                    TimeRange {
+                        start: learned_at,
+                        end: learned_at,
+                    },
+                    learned_at,
+                    b"raced-away-before-the-scrub",
+                )
+                .commit()
+                .expect("put victim");
+
+            // The eraser stages the full-scope erase in a HELD write txn, so the
+            // deleter's lock-free header read still sees the entity; the commit
+            // lands while the deleter blocks on the write lock, and its scrub txn
+            // then finds nothing. Identical construction to the ONE-1149
+            // raced-to-nothing legs.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+            crate::deletion::install_after_header_read_signal(tx);
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let outcome = std::thread::scope(|scope| {
+                let mut wtxn = vault.store.env.write_txn().expect("write txn");
+                crate::batch::deindex_entity(&vault.store, &mut wtxn, &id).expect("stage erase");
+                let deleter_barrier = std::sync::Arc::clone(&barrier);
+                let vault_ref = &vault;
+                let deleter = scope.spawn(move || {
+                    deleter_barrier.wait();
+                    vault_ref.delete_entity_with_reason(&id, reason)
+                });
+                barrier.wait();
+                rx.recv()
+                    .expect("deleter must signal after the header read");
+                wtxn.commit().expect("commit the racing erase");
+                deleter.join().expect("deleter thread must not panic")
+            })
+            .expect("a raced delete is not an error");
+
+            if vault.get_raw(&id).expect("get raw").is_some() {
+                // Scheduling miss: the deleter never reached the raced branch.
+                assert!(attempt < 2, "{case}: raced branch never constructed");
+                continue;
+            }
+            assert!(
+                !outcome.existed,
+                "{case}: a delete that erased nothing must not claim it did"
+            );
+            assert!(
+                !first_txn_pending_tombstone_exists(&vault, &id),
+                "{case}: the scrub txn erased nothing, so it must stage no \
+                 replayable pt: propagation intent for it"
+            );
+            break;
+        }
+    }
+}
+
+/// A vault with vectors enabled, for the non-publishing delete regressions that
+/// need vector residue as rollback evidence.
+#[cfg(not(feature = "sync"))]
+fn open_nonpublishing_delete_vault() -> (tempfile::TempDir, crate::Vault) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(
+        dir.path(),
+        VaultConfig {
+            embedding_model: Some("test-model-v1".to_owned()),
+            dimensions: 4,
+            ..VaultConfig::default()
+        },
+    )
+    .expect("open vault");
+    (dir, vault)
+}
+
+/// Whether ANY `pt:` marker exists for `id`, in any window.
+///
+/// Prefix-scanned rather than keyed: the headerful arms address the entity's own
+/// `learned_at` window, and a helper that guessed one label would silently pass
+/// its "no marker" assertion for a marker written under a different one — the
+/// failure mode that hides exactly the leak these regressions hunt.
+#[cfg(not(feature = "sync"))]
+fn first_txn_pending_tombstone_exists(vault: &crate::Vault, id: &EntityId) -> bool {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let suffix = format!(":{}", id.to_hex());
+    vault
+        .store
+        .sync_state
+        .prefix_iter(&rtxn, crate::deletion::PENDING_TOMBSTONE_PREFIX)
+        .expect("iter pt: markers")
+        .any(|row| row.expect("pt: row").0.ends_with(&suffix))
+}
+
 /// P2-b: `fold.vault_id == None` is TWO states, and only one of them may pass.
 ///
 /// A log carrying two independent genesis roots folds to `vault_id: None` with

@@ -1534,7 +1534,12 @@ fn maybe_fail_live_tombstone_persist() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(all(test, feature = "sync")))]
+// Both call sites live inside the `sync`-only `write_crdt_tombstone`, so the
+// shim is only ever named on a `sync` build; the sibling
+// `maybe_fail_after_tombstone_before_purge` has cfg-independent call sites and
+// keeps the wider `not(all(test, sync))` cfg. Compiling this one on sync-off
+// builds too made it plain dead code that failed `clippy -D warnings`.
+#[cfg(all(not(test), feature = "sync"))]
 #[inline(always)]
 fn maybe_fail_live_tombstone_persist() {}
 
@@ -1552,6 +1557,38 @@ fn maybe_fail_after_tombstone_before_purge() -> Result<()> {
 #[cfg(not(all(test, feature = "sync")))]
 #[inline(always)]
 fn maybe_fail_after_tombstone_before_purge() {}
+
+#[cfg(all(test, not(feature = "sync")))]
+thread_local! {
+    static FAIL_FIRST_TXN_PENDING_TOMBSTONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Arms a one-shot crash surrogate INSIDE the non-publishing soft-erase txn,
+/// after its `pt:` pending-tombstone marker is staged and before the commit.
+///
+/// It exists to prove ATOMICITY, which is the whole of fix-leg 9: the scrub and
+/// the replayable propagation intent are one transaction, so a failure at the
+/// marker write must take the scrub down with it. Armed only on a build without
+/// `sync`, because that is the build whose `write_crdt_tombstone` publishes
+/// nothing and therefore reaches this site.
+#[cfg(all(test, not(feature = "sync")))]
+pub(crate) fn arm_fail_first_txn_pending_tombstone() {
+    FAIL_FIRST_TXN_PENDING_TOMBSTONE.with(|armed| armed.set(true));
+}
+
+#[cfg(all(test, not(feature = "sync")))]
+fn maybe_fail_first_txn_pending_tombstone() -> Result<()> {
+    if FAIL_FIRST_TXN_PENDING_TOMBSTONE.replace(false) {
+        return Err(Error::InvariantViolation(
+            "test failure writing the first-transaction pending-tombstone marker",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(all(test, not(feature = "sync"))))]
+#[inline(always)]
+fn maybe_fail_first_txn_pending_tombstone() {}
 
 /// The points on the delete path at which a test harness may park the deleter
 /// and commit a `RevokeActor`, so the authority race is driven deterministically
@@ -1943,6 +1980,7 @@ impl Vault {
             // OWN view — the refusal is actionable (nothing is on the wire) and
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+            let scrub_is_the_linearization_point = !authority_settled;
             authority_settled = true;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
@@ -1953,6 +1991,29 @@ impl Vault {
                     &mut wtxn,
                     id,
                     &captured.subject,
+                )?;
+            }
+            // fix-leg 9 P1: on the NON-PUBLISHING path this txn's re-fold made
+            // it the linearization point, so the deletion's propagation intent
+            // must commit WITH it. Leaving `pt:` to the purge txn below split
+            // one decision across two commits: the scrub is irreversible and
+            // local-only, and a crash (or any purge-path error) in between left
+            // the body scrubbed here while every peer kept the full data and NO
+            // marker existed to propagate the delete — a GDPR/policy erasure
+            // silently downgraded to a local-only scrub. Same transaction ⇒
+            // re-check + scrub + replayable intent are one atomic act, and the
+            // idempotent re-put in the purge txn keeps that path unchanged.
+            //
+            // PUBLISHING path untouched: there the tombstone is already on the
+            // wire, so peers converge from the CRDT record and `pt:` is only the
+            // crash marker the purge txn writes and the post-commit
+            // `clear_pending_tombstone` retires.
+            if existed && scrub_is_the_linearization_point {
+                self.put_linearizing_pending_tombstone_in_txn(
+                    &mut wtxn,
+                    &window_label,
+                    id,
+                    &tombstone,
                 )?;
             }
             wtxn.commit()?;
@@ -2040,6 +2101,13 @@ impl Vault {
 
         // OWNER-DECISION (cfg-off durability): the pending-tombstone marker
         // rides the SAME txn as the active-store purge — on every build.
+        //
+        // On the non-publishing gdpr/policy arm the scrub txn above already
+        // committed this exact key and value (fix-leg 9), so this is an
+        // idempotent re-put, not a second intent: `pt:` is keyed by window +
+        // entity and the value is this delete's own 25 B tombstone. Every other
+        // shape (publishing arms, `user_hard_delete`, a scrub that found
+        // nothing) reaches here with no marker on disk and writes the first one.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(
             &mut wtxn,
@@ -3235,6 +3303,30 @@ impl Vault {
     ) -> Result<()> {
         let key = pending_tombstone_key(window_label, id);
         self.store.sync_state.put(wtxn, &key, &value.encode())?;
+        Ok(())
+    }
+
+    /// Writes the `pt:` marker in a transaction that is ITSELF this delete's
+    /// linearization point (fix-leg 9), carrying the crash surrogate that proves
+    /// the write is atomic with everything else that transaction did.
+    ///
+    /// Separate from [`Self::put_pending_tombstone_in_txn`] only so the failure
+    /// injection has an exact anchor: the regression arms it, this call fails,
+    /// and the caller's `?` drops the whole `RwTxn` un-committed — body and
+    /// vector intact, no `pt:`. A future edit that moves the marker back out of
+    /// the scrub transaction loses that anchor and the regression goes red.
+    fn put_linearizing_pending_tombstone_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        window_label: &str,
+        id: &EntityId,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
+        self.put_pending_tombstone_in_txn(wtxn, window_label, id, value)?;
+        #[cfg(all(test, not(feature = "sync")))]
+        maybe_fail_first_txn_pending_tombstone()?;
+        #[cfg(not(all(test, not(feature = "sync"))))]
+        maybe_fail_first_txn_pending_tombstone();
         Ok(())
     }
 
