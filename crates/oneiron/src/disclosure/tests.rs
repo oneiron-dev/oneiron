@@ -3342,3 +3342,268 @@ fn ledger_rejects_a_body_that_disagrees_with_its_row_key() -> Result<()> {
     );
     Ok(())
 }
+
+// ─── ONE-1646 fix leg 7: the headerless door's publish gate + key length ────
+
+/// P1 REGRESSION — THE HEADERLESS DOOR REFUSES BEFORE IT PUBLISHES.
+///
+/// `delete_entity_with_reason` splits on the header read: an id with an entity
+/// row takes the headerful leg (whose pre-TXN1 publish gate fix-3 installed),
+/// and an id WITHOUT one takes `delete_entity_without_header`. That second leg
+/// reached the facet-state gate only through `deindex_entity`'s backstop inside
+/// its purge txn — which runs AFTER `write_crdt_tombstone`. So a stamped or
+/// clearance-blocked headerless id returned the right refusal and kept every
+/// local row, while the CRDT tombstone claiming the id was hard-deleted stood
+/// published on every other device, unretractable from here.
+///
+/// The lane's rule since fix-3 is that a refusal publishes NOTHING. This pins it
+/// for the door that was missed: the typed refusal, then zero CRDT tombstone,
+/// zero `dt:`, zero `pt:`, zero receipt, and untouched local state.
+#[test]
+fn refused_headerless_delete_publishes_no_tombstone_and_changes_no_state() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x39);
+    put_facet(&vault, &facet);
+    let contact = test_id(0x3A);
+    seed_contact(&vault, contact, "a@example.com");
+    let claim = test_id(0x3B);
+    put_public_claim(&vault, &claim, test_id(0x3C));
+    stamp_facet_of(&vault, &claim, &facet);
+    grant_clearance(&vault, &contact, vec![facet]);
+    // A non-`FacetOf` edge onto the same id, so the delete SCOPE outlives both
+    // blockers: with it the accepted delete at the end still has residue to
+    // erase, and its survival through each refusal is another byte of proof
+    // that nothing was torn.
+    let mentioner = test_id(0x3F);
+    put_turn(&vault, &mentioner);
+    vault
+        .batch()
+        .edge(&mentioner, EdgeKind::Mentions, &facet, 1.0)
+        .commit()?;
+
+    // Strip the ENTITY ROW only — every edge and clearance stays live, so the
+    // delete routes through the headerless leg with real facet state incident
+    // on the id. This is the shape a lost purge race leaves behind.
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.delete(wtxn, facet.as_bytes())?;
+        Ok(())
+    })?;
+    assert!(
+        vault.get_entity_type(&facet)?.is_none(),
+        "fixture must take the headerless leg"
+    );
+
+    let receipts_before = vault.count_entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)?;
+
+    // Every hard reason refuses on the STAMP first — and this leg has no
+    // soft-erase arm, so the soft reason purges too and must gate identically.
+    for reason in [
+        crate::DeleteReason::UserDelete,
+        crate::DeleteReason::UserHardDelete,
+        crate::DeleteReason::GdprDelete,
+        crate::DeleteReason::PolicyDelete,
+    ] {
+        let refusal = vault
+            .delete_entity_with_reason(&facet, reason)
+            .expect_err("a stamped headerless id must refuse on every reason");
+        assert_eq!(refusal.kind(), ErrorKind::FacetUnstampWithoutConsent);
+
+        // THE DEFECT ITSELF: under fix-6's ordering the tombstone was already
+        // durable by the time the purge txn's backstop spoke. `requested_at` is
+        // "now" on this leg (there is no `learned_at` to address a window
+        // with), so the window under test is the one `now` names.
+        #[cfg(feature = "sync")]
+        assert!(
+            !crdt_tombstone_exists(&vault, &facet, crate::unix_seconds_now())?,
+            "a refused headerless delete must not publish hard-delete truth"
+        );
+        assert!(
+            !hard_delete_marker_exists(&vault, &facet)?,
+            "nor record local hard-delete truth"
+        );
+        assert!(
+            !pending_tombstone_exists(&vault, &facet)?,
+            "nor leave a pending-tombstone marker"
+        );
+        assert_eq!(
+            vault.count_entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)?,
+            receipts_before,
+            "nor mint a redaction receipt"
+        );
+
+        // And local state is EXACTLY as found.
+        assert!(
+            vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+            "the stamp survives"
+        );
+        assert_eq!(
+            vault
+                .contact_facet_clearance(&contact)?
+                .expect("clearance")
+                .facets,
+            vec![facet],
+            "the clearance survives"
+        );
+        assert!(
+            vault.edge_exists(&mentioner, EdgeKind::Mentions, &facet)?,
+            "and so does the unrelated edge the purge would have torn"
+        );
+    }
+
+    // The CLEARANCE arm refuses just as early: unstamp through the consent
+    // door, and only the live clearance is left standing in the way.
+    assert!(vault.unstamp_facet_of(&claim, &facet, 800)?);
+    let refusal = vault
+        .delete_entity_with_reason(&facet, crate::DeleteReason::UserHardDelete)
+        .expect_err("a live clearance must refuse before the tombstone too");
+    assert_eq!(refusal.kind(), ErrorKind::FacetDeleteWithLiveClearance);
+    #[cfg(feature = "sync")]
+    assert!(!crdt_tombstone_exists(
+        &vault,
+        &facet,
+        crate::unix_seconds_now()
+    )?);
+    assert!(!hard_delete_marker_exists(&vault, &facet)?);
+
+    // Clear the last blocker and the SAME call goes through, so the gate is a
+    // decision and not a wall: the headerless residue erases and publishes.
+    vault.set_contact_facet_clearance(&contact, &FacetClearance::granted(Vec::new(), 900)?)?;
+    let outcome = vault.delete_entity_with_reason(&facet, crate::DeleteReason::UserHardDelete)?;
+    // `existed` reports the ENTITY ROW, which is what "headerless" means is
+    // absent — the erasure is visible in the residue instead.
+    assert!(
+        !vault.edge_exists(&mentioner, EdgeKind::Mentions, &facet)?,
+        "the accepted delete tore the residue the refusals preserved"
+    );
+    assert!(
+        outcome.receipt_id.is_some(),
+        "and minted its receipt, so the gate is a decision and not a wall"
+    );
+    assert!(
+        hard_delete_marker_exists(&vault, &facet)?,
+        "an ACCEPTED headerless delete does record hard-delete truth"
+    );
+    Ok(())
+}
+
+/// The other half: an id with NO facet state whose entity row is gone still
+/// deletes as the strict no-op it always was. The publish gate sits AFTER the
+/// scope probe, so an id with no delete scope at all never reaches it.
+#[test]
+fn headerless_delete_without_facet_state_is_unaffected() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let stray = test_id(0x3D);
+    put_turn(&vault, &stray);
+    // An incident edge keeps the id in delete SCOPE after the row is stripped,
+    // so this exercises a real headerless erasure rather than the missing-id
+    // short circuit below.
+    let mentioner = test_id(0x49);
+    put_turn(&vault, &mentioner);
+    vault
+        .batch()
+        .edge(&mentioner, EdgeKind::Mentions, &stray, 1.0)
+        .commit()?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.delete(wtxn, stray.as_bytes())?;
+        Ok(())
+    })?;
+
+    let outcome = vault.delete_entity_with_reason(&stray, crate::DeleteReason::UserHardDelete)?;
+    assert!(
+        outcome.receipt_id.is_some(),
+        "a headerless delete naming no facet state proceeds untouched"
+    );
+    assert!(
+        !vault.edge_exists(&mentioner, EdgeKind::Mentions, &stray)?,
+        "and tears the residue it found"
+    );
+    assert!(hard_delete_marker_exists(&vault, &stray)?);
+
+    // A FULLY missing id stays the strict no-op it was: no tombstone, no
+    // marker, no receipt — the probe short-circuits before the gate.
+    let absent = test_id(0x3E);
+    let outcome = vault.delete_entity_with_reason(&absent, crate::DeleteReason::UserHardDelete)?;
+    assert_eq!(outcome, crate::DeleteEntityOutcome::missing());
+    assert!(!hard_delete_marker_exists(&vault, &absent)?);
+    assert!(!pending_tombstone_exists(&vault, &absent)?);
+    Ok(())
+}
+
+/// P2 REGRESSION — AN OVERLONG RECLASSIFICATION KEY IS CORRUPTION, NOT AN EVENT.
+///
+/// `sequence_of_reclassification_key` read its 8-byte suffix at a fixed offset
+/// and ignored everything after it, so `canonical_key || extra` parsed as the
+/// canonical key's own `(record, facet, sequence)`. Carrying a body honest about
+/// that canonical triple then satisfied fix-6's body-to-key binding (it compares
+/// against these same extractors), and the ledger returned the overlong row as a
+/// real consent event — a second, duplicate event for a pair, minted by writing
+/// a key nothing in this module can produce.
+///
+/// The length is now exact, so the row reads as the corruption it is.
+#[test]
+fn ledger_rejects_an_overlong_row_key() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x45);
+    put_facet(&vault, &facet);
+    let claim = test_id(0x46);
+    put_public_claim(&vault, &claim, test_id(0x48));
+    stamp_facet_of(&vault, &claim, &facet);
+    assert!(vault.unstamp_facet_of(&claim, &facet, 900)?);
+
+    // An HONEST body — the same bytes the canonical row carries — under a key
+    // one byte too long. Nothing about the body is forged; the key is.
+    let mut overlong = facet_reclassification_meta_key(&claim, &facet, 0);
+    overlong.push(0x00);
+    let honest = encode_facet_reclassification_body(
+        &FacetReclassificationConsent {
+            record: claim,
+            facet,
+            consented_at: 900,
+        },
+        0,
+    )?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &overlong, &honest)?;
+        Ok(())
+    })?;
+
+    assert_eq!(
+        vault
+            .facet_reclassification_ledger(&claim, &facet)
+            .expect_err("an overlong key is a corrupt row, not a duplicate event")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
+    // Removing the forged row restores the honest single-event history, so the
+    // rejection is about the KEY and not about the pair.
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.delete(wtxn, &overlong)?;
+        Ok(())
+    })?;
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?,
+        vec![FacetReclassificationConsent {
+            record: claim,
+            facet,
+            consented_at: 900,
+        }]
+    );
+
+    // A key one byte SHORT was already rejected and stays rejected — the exact
+    // length is the rule, not a lower bound with a new upper one.
+    let mut truncated = facet_reclassification_meta_key(&claim, &facet, 0);
+    truncated.pop();
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &truncated, &honest)?;
+        Ok(())
+    })?;
+    assert_eq!(
+        vault
+            .facet_reclassification_ledger(&claim, &facet)
+            .expect_err("a short key is corrupt too")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    Ok(())
+}

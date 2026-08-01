@@ -2080,8 +2080,31 @@ fn facet_of_reclassification_key(key: &[u8]) -> Result<EntityId> {
     reclassification_key_id(key, FACET_RECLASSIFICATION_KEY_PREFIX.len() + ENTITY_ID_LEN)
 }
 
+/// The sequence suffix, read from a key that must be EXACTLY canonical.
+///
+/// EXACT LENGTH, not a lower bound (fix-7 item 2). The sequence is the LAST
+/// field, so a `key.get(offset..offset + 8)` that ignores what follows accepts
+/// `canonical_key || anything` as the canonical key's own row. Every reader in
+/// this module then treats the overlong row as that `(record, facet, sequence)`
+/// event: [`Vault::facet_reclassification_ledger`] returns it as a real consent
+/// event once its body matches (fix-6's body-to-key binding compares against
+/// these same extractors, so a body honest about the CANONICAL triple satisfies
+/// all three), and
+/// [`next_facet_reclassification_sequence_in_txn`] counts it when picking the
+/// next free slot. A corrupt key is thereby laundered into ledger truth — the
+/// exact substitution fix-6 item 5 closed on the body side, reached from the key
+/// side instead.
+///
+/// Nothing legitimate writes a longer key: [`facet_reclassification_meta_key`]
+/// emits prefix + record + facet + 8 and nothing else, so anything longer is
+/// corruption or a forgery, and this module's stance on both is LOUD.
+/// Length-checking HERE covers every reader, because all three field extractors
+/// are called together on any key that is read as an event.
 fn sequence_of_reclassification_key(key: &[u8]) -> Result<u64> {
     let offset = FACET_RECLASSIFICATION_KEY_PREFIX.len() + ENTITY_ID_LEN * 2;
+    if key.len() != offset + RECLASSIFICATION_SEQUENCE_LEN {
+        return Err(Error::CorruptedIndex("facet reclassification row key"));
+    }
     key.get(offset..offset + RECLASSIFICATION_SEQUENCE_LEN)
         .and_then(|bytes| <[u8; RECLASSIFICATION_SEQUENCE_LEN]>::try_from(bytes).ok())
         .map(u64::from_be_bytes)

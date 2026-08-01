@@ -1911,6 +1911,40 @@ impl Vault {
             if !self.active_delete_scope_exists_in_txn(&rtxn, id)? {
                 return Ok(DeleteEntityOutcome::missing());
             }
+            // ONE-1646 fix-7: the PUBLISH gate, mirroring the headerful door's
+            // pre-TXN1 call. This leg reaches the same fail-closed facet-state
+            // predicate only through `deindex_entity`'s backstop inside the
+            // purge txn below — which runs AFTER `write_crdt_tombstone` has
+            // already published durable hard-delete truth to every other
+            // device. A stamped or clearance-blocked headerless id therefore
+            // returned the correct refusal and kept its local rows whole while
+            // the tombstone stood published, and the refusing device cannot
+            // take one back: the same erasure-completeness divergence fix-3
+            // closed on the headerful door, left open on this one. The lane's
+            // rule is that a refusal publishes NOTHING.
+            //
+            // Placed AFTER the scope probe on purpose: an id with no delete
+            // scope at all is already a no-op above, so the gate never refuses
+            // a delete that would not have torn anything (a clearance naming a
+            // long-gone facet id must not become a wall in front of nothing).
+            //
+            // `None` for the type, unconditionally on reason. Both are forced
+            // by what this leg does: there is no header to dispatch on (that is
+            // what "headerless" means, and fix-6 pinned unknown ⇒
+            // possibly-FACET), and unlike the headerful door this leg has no
+            // soft-erase arm — it purges for EVERY reason, so every reason can
+            // tear an inbound stamp and every reason must decide first.
+            //
+            // Like the headerful preflight this is a publish gate, not the
+            // authority on tearing: it runs in a read txn that is dropped
+            // before the purge txn opens, so `deindex_entity`'s in-txn backstop
+            // remains the atomic decision.
+            crate::disclosure::gate_hard_delete_facet_state_for_stored_type(
+                &self.store,
+                &rtxn,
+                id,
+                None,
+            )?;
         }
         // ONE-1149: the deletion request UUID is minted only AFTER the probe
         // above says there is something to erase.
