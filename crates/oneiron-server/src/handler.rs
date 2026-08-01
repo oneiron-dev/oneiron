@@ -86,19 +86,6 @@ const WS_WRITE_BUFFER_SIZE: usize = usize::MAX - 1;
 /// otherwise panic at socket construction.
 const WS_MAX_WRITE_BUFFER_SIZE: usize = usize::MAX;
 
-/// Out-buffer bytes held back for the codec's own control frames.
-///
-/// The write-through test the codec actually runs is `existing_out_buffer +
-/// encoded_frame > write_buffer_size`, and `existing_out_buffer` is not
-/// observable from outside the codec: a pong or close reply owed to a peer
-/// that has not let it through is still sitting in there. This bounds that
-/// unobservable term so the refusal below can be stated purely in terms of the
-/// frame being handed over. RFC 6455 caps a control frame payload at 125
-/// bytes, so the codec can only be holding a few of them at 127 bytes each;
-/// erring high is the safe direction anyway, since the reserve can only refuse
-/// a frame that would have fit, never admit one that would not.
-const WS_OUT_BUFFER_RESERVE: usize = 512;
-
 /// The threshold relationships, pinned where a release build cannot drop them.
 ///
 /// A `debug_assert` stated this before and was elided in exactly the builds
@@ -108,11 +95,6 @@ const _: () = assert!(
     WS_MAX_WRITE_BUFFER_SIZE > WS_WRITE_BUFFER_SIZE,
     "tungstenite panics at socket construction unless the hard ceiling is strictly above \
      the write-through threshold"
-);
-const _: () = assert!(
-    WS_WRITE_BUFFER_SIZE > WS_OUT_BUFFER_RESERVE,
-    "the write-through threshold must leave room for the codec's own control frames, or no \
-     application frame is admissible at all"
 );
 const _: () = assert!(
     WS_WRITE_BUFFER_SIZE == usize::MAX - 1,
@@ -505,12 +487,20 @@ where
 
     /// Whether this payload can be queued without risking a write-through.
     ///
-    /// tungstenite's `buffer_frame` appends the encoded frame to its
-    /// out-buffer and writes the whole thing through when `out_buffer.len() >
-    /// write_buffer_size`. So the quantity that matters is the ENCODED size —
-    /// header included — plus whatever the codec is already holding, not the
-    /// payload length; [`WS_OUT_BUFFER_RESERVE`] bounds the term this side
-    /// cannot see.
+    /// tungstenite's `buffer_frame` appends the encoded frame to its out-buffer
+    /// and writes the whole thing through when `out_buffer.len() >
+    /// write_buffer_size`. The test is therefore
+    /// `existing_out_buffer + encoded_frame > write_buffer_size`, over the
+    /// ENCODED size — header included — not the payload length.
+    ///
+    /// `existing_out_buffer` is not observable from outside the codec, and it
+    /// is NOT bounded by anything the RFC says: each blocked read appends one
+    /// more 127-byte pong to that buffer, so it grows with the number of Pings
+    /// a peer sends, not with the control-frame size limit. A fixed reserve was
+    /// therefore a guess, and a peer choosing how many Pings to send chose
+    /// whether the guess held. [`Self::send_binary`] instead drains the buffer
+    /// to EMPTY before calling this, so `existing_out_buffer` is 0 and the
+    /// comparison below is exact rather than approximate.
     ///
     /// This is the invariant [`WS_WRITE_BUFFER_SIZE`] used to assert about
     /// itself. Lowering that constant now refuses frames rather than writing
@@ -519,8 +509,7 @@ where
     const fn fits_below_write_through(&self, payload_len: usize) -> bool {
         // Saturating: an encoded length that overflows is far above the
         // threshold, and saturating at `usize::MAX` refuses just the same.
-        encoded_frame_len(payload_len).saturating_add(WS_OUT_BUFFER_RESERVE)
-            <= self.write_through_threshold
+        encoded_frame_len(payload_len) <= self.write_through_threshold
     }
 
     /// Sends one binary frame, refusing if the credential is no longer live.
@@ -567,8 +556,11 @@ where
     ///   cross it is never handed over.
     /// - Queued automatic pong: a pong owed for a peer Ping makes `_write`
     ///   report "should flush", and `start_send` flushes the application frame
-    ///   out with it. The pre-drain above empties control frames while nothing
-    ///   application-level is pending, removing the trigger.
+    ///   out with it. It also leaves bytes in the out-buffer that count toward
+    ///   the threshold above. The pre-drain below empties control frames to
+    ///   COMPLETION while nothing application-level is pending, which removes
+    ///   the trigger and makes the residue zero — so the threshold test is over
+    ///   the encoded frame alone, with no unobservable term to guess at.
     ///
     /// The residual gap after this is precisely one sliver: bytes the OS has
     /// already accepted into its TCP send buffer. Those are gone from this
@@ -621,34 +613,55 @@ where
             self.close().await;
             return false;
         }
-        let Some(socket) = self.socket.as_mut() else {
-            return false;
-        };
-        // Drain queued CONTROL frames before handing over application bytes.
+        // Drain owed CONTROL frames to COMPLETION before handing over
+        // application bytes, so the codec's out-buffer is empty when
+        // `start_send` runs.
         //
         // A pong the codec owes for a peer Ping makes the next `start_send`
         // flush eagerly — tungstenite's `_write` emits the automatic frame and
         // reports "should flush", and `Sink::start_send` obeys — carrying the
         // application frame out with it, inside `start_send`, before any
-        // consult. Draining first removes the trigger. Nothing application-
-        // level is queued yet, so this can only emit control frames: no vault
-        // state crosses here and no consult is owed.
+        // consult. An owed pong also SITS in the out-buffer, and the codec's
+        // write-through test adds that residue to the frame being queued.
         //
-        // Exactly ONE poll, never a park. This must not become a second
-        // unbounded wait: a peer that stopped reading would stall here with no
-        // re-consult and no tick, which is the hole `guarded_flush` exists to
-        // close. Parking is also harmless to skip — a sink that cannot take the
-        // pong cannot take an application frame either, so `start_send` has
-        // nothing to flush it out with, and the guarded flush below owns the
-        // wait as before.
-        match std::future::poll_fn(|cx| Poll::Ready(socket.poll_flush_unpin(cx))).await {
-            Poll::Ready(Err(_)) => {
-                tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
-                return false;
-            }
-            // Drained, or the peer is not reading — both are safe to proceed on.
-            Poll::Ready(Ok(())) | Poll::Pending => {}
+        // Draining to empty answers both, and it is why no reserve term is
+        // needed: `existing_out_buffer` is 0 by construction rather than
+        // bounded by a guess. A single non-parking poll could not make that
+        // claim — while writes are blocked, each read appends another 127-byte
+        // pong, so the residue grows with the number of Pings the PEER chooses
+        // to send and passes any fixed reserve.
+        //
+        // Nothing application-level is queued yet, so this can only emit
+        // control frames: no vault state crosses here. It carries the same
+        // guard as [`Self::guarded_flush`] anyway — re-consulting at every park
+        // and on the tick — because it is now an unbounded wait, and a peer
+        // that stops reading must not be able to park a send past a revocation.
+        // A silent peer parks here exactly as it would park the flush below:
+        // the wait moved earlier, it did not become a refusal.
+        if !self.guarded_drain("draining owed control frames").await {
+            return false;
         }
+        // A FRESH consult: the drain above is an unbounded wait, so the consult
+        // that preceded it may be arbitrarily stale by now.
+        if self.credential_revoked() {
+            tracing::warn!(
+                conn_id = self.conn_id,
+                "credential revoked while control frames drained — closing live session \
+                 instead of sending"
+            );
+            // The drain left the out-buffer empty, so the graceful close
+            // flushes no application bytes.
+            self.close().await;
+            return false;
+        }
+        let Some(socket) = self.socket.as_mut() else {
+            return false;
+        };
+        // No `await` stands between the drain completing and this `start_send`,
+        // so nothing can have refilled the out-buffer: only a read queues a
+        // pong, and a read needs the same `&mut self` this frame is holding.
+        // The out-buffer is therefore PROVABLY empty here, which is what makes
+        // the threshold comparison above exact.
         if socket
             .start_send_unpin(WsMessage::Binary(data.into()))
             .is_err()
@@ -663,6 +676,16 @@ where
         self.guarded_flush().await
     }
 
+    /// Drains the codec's out-buffer BEFORE an application frame is queued.
+    ///
+    /// Same posture as [`Self::guarded_flush`] and the same loop, but it runs
+    /// while only control frames are pending. That distinction is in the log
+    /// line and nowhere else: both are unbounded waits on the same sink, and
+    /// both must abort rather than park past a revocation.
+    async fn guarded_drain(&mut self, what: &'static str) -> bool {
+        self.guarded_flush_loop(what).await
+    }
+
     /// Drains the queued frame, re-consulting the registry at every park.
     ///
     /// The loop exists because the alternative — awaiting `poll_flush` to
@@ -672,6 +695,15 @@ where
     /// so it cannot arrive as an in-process wakeup: observing it means
     /// re-reading the registry, which means getting control back.
     async fn guarded_flush(&mut self) -> bool {
+        self.guarded_flush_loop("a frame awaited flush").await
+    }
+
+    /// The guarded wait both drains share.
+    ///
+    /// One loop rather than two: the pre-handover drain and the post-handover
+    /// flush park on the same sink under the same rules, and two copies of a
+    /// security wait drift.
+    async fn guarded_flush_loop(&mut self, what: &'static str) -> bool {
         loop {
             // BEFORE the poll, not only after it. `start_send` is a synchronous
             // queue-and-return, so a revocation landing between the pre-handover
@@ -684,7 +716,8 @@ where
             if self.credential_revoked() {
                 tracing::warn!(
                     conn_id = self.conn_id,
-                    "credential revoked while a frame awaited flush — aborting transport"
+                    stage = what,
+                    "credential revoked mid-wait — aborting transport"
                 );
                 self.abort();
                 return false;

@@ -1382,6 +1382,12 @@ struct BlockableTransport {
     /// an application frame is exactly what a revocation must withhold. While
     /// this is non-empty `start_send` flushes eagerly, which is mechanism 2.
     owed_control: Arc<std::sync::Mutex<Vec<WsMessage>>>,
+    /// Turns `flush_blocked` on the moment `start_send` accepts a frame.
+    ///
+    /// Models the peer that was reading when the send began — so the pre-drain
+    /// completed — and stopped before the flush. See
+    /// [`Self::flush_blocked_after_handover`].
+    block_flush_at_handover: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl BlockableTransport {
@@ -1390,11 +1396,20 @@ impl BlockableTransport {
         Self::new(true, false)
     }
 
-    /// Blocks the flush wait — the frame is QUEUED, then stalls before the
-    /// wire. This is the shape of a real sink against a peer that stopped
-    /// reading.
-    fn flush_blocked() -> Self {
-        Self::new(false, true)
+    /// Blocks the flush wait, but only ONCE THE FRAME HAS BEEN HANDED OVER.
+    ///
+    /// The peer is still reading when the send begins, so the pre-drain
+    /// completes and `start_send` queues; the peer then stops reading and the
+    /// flush parks. That ordering is what the flush-wait rows are about, and it
+    /// has to be stated explicitly now that `send_binary` drains to completion
+    /// BEFORE handing over: a sink blocked from the very start parks in the
+    /// drain instead, with nothing queued and nothing to withhold. Both are
+    /// real; this is the one where a frame is at risk.
+    fn flush_blocked_after_handover() -> Self {
+        let this = Self::new(false, false);
+        this.block_flush_at_handover
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        this
     }
 
     fn open() -> Self {
@@ -1414,6 +1429,7 @@ impl BlockableTransport {
             on_start_send: Arc::default(),
             write_through_over: Arc::default(),
             owed_control: Arc::default(),
+            block_flush_at_handover: Arc::default(),
         }
     }
 
@@ -1545,6 +1561,13 @@ impl futures_util::Sink<WsMessage> for BlockableTransport {
             _ => 0,
         };
         self.queued.lock().unwrap().push(item);
+        if self
+            .block_flush_at_handover
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.flush_blocked
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         // The revocation window this leg closes: the pre-handover consult has
         // passed, the frame is now IN the sink, and no flush poll has run yet.
         if let Some(hook) = self.on_start_send.lock().unwrap().take() {
@@ -1828,7 +1851,7 @@ async fn send_racing_a_revocation_at_flush(
 /// the credential is revoked mid-flush.
 #[tokio::test]
 async fn queued_frame_is_refused_when_revocation_lands_during_the_flush_wait() {
-    let sink = BlockableTransport::flush_blocked();
+    let sink = BlockableTransport::flush_blocked_after_handover();
     let registry = Arc::new(MutableRevocations::default());
 
     let keep_going =
@@ -1847,7 +1870,7 @@ async fn queued_frame_is_refused_when_revocation_lands_during_the_flush_wait() {
 
 #[tokio::test]
 async fn queued_frame_is_refused_when_the_registry_becomes_unreadable_during_the_flush_wait() {
-    let sink = BlockableTransport::flush_blocked();
+    let sink = BlockableTransport::flush_blocked_after_handover();
     let registry = Arc::new(MutableRevocations::default());
 
     let keep_going =
@@ -1872,7 +1895,7 @@ async fn queued_frame_is_refused_when_the_registry_becomes_unreadable_during_the
 /// queued frame still has to reach the wire once the peer resumes reading.
 #[tokio::test]
 async fn queued_frame_reaches_the_wire_when_the_flush_unblocks_and_the_token_is_live() {
-    let sink = BlockableTransport::flush_blocked();
+    let sink = BlockableTransport::flush_blocked_after_handover();
     let registry = Arc::new(MutableRevocations::default());
 
     let keep_going = send_racing_a_revocation_at_flush(&sink, &registry, |_| {}).await;
@@ -1895,7 +1918,7 @@ async fn queued_frame_reaches_the_wire_when_the_flush_unblocks_and_the_token_is_
 /// which the timeout below turns into a failure.
 #[tokio::test]
 async fn a_silent_peer_still_gets_re_consulted_on_the_tick() {
-    let sink = BlockableTransport::flush_blocked();
+    let sink = BlockableTransport::flush_blocked_after_handover();
     let registry = Arc::new(MutableRevocations::default());
     let mut guarded = guarded(&sink, &registry);
     let mut send = Box::pin(guarded.send_binary(vec![1, 2, 3]));
@@ -2176,7 +2199,7 @@ async fn an_immediately_ready_flush_still_delivers_while_the_credential_is_live(
 /// bytes once its credential is refused.
 #[tokio::test]
 async fn a_ping_cannot_drain_a_pending_frame_through_the_read_half() {
-    let sink = BlockableTransport::flush_blocked();
+    let sink = BlockableTransport::flush_blocked_after_handover();
     let registry = Arc::new(MutableRevocations::default());
     let mut guarded = guarded(&sink, &registry);
 
@@ -2332,11 +2355,13 @@ fn protocol_hello_validation_literals() {
 // - it is OUR code, so a tungstenite upgrade that changes when `start_send`
 //   writes moves the real behaviour and leaves every row green.
 //
-// The rows below therefore run the same properties against real
-// `tokio-tungstenite` 0.26.2 over a socket that captures raw bytes, with the
-// write-through threshold lowered to a value a test frame can actually cross.
-// The double stays for the phase-model rows it is good at; the byte properties
-// are pinned here.
+// The rows below therefore run the same properties against the real
+// `tokio-tungstenite` codec PRODUCTION resolves — reached through the
+// `production-ws-codec` dev-dependency alias, whose version must track axum's
+// (0.28), not the older copy the `oneiron` crate pulls in — over a socket that
+// captures raw bytes, with the write-through threshold lowered to a value a
+// test frame can actually cross. The double stays for the phase-model rows it
+// is good at; the byte properties are pinned here.
 
 /// `write_buffer_size` for the real-codec rows, low enough that a test frame
 /// crosses it.
@@ -2390,6 +2415,17 @@ struct CapturingSocket {
     /// revocation has no gate.
     #[expect(clippy::type_complexity)]
     after_first_write: Arc<std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>>,
+    /// Fires once, the first time a write PARKS on a blocked socket.
+    ///
+    /// This is the instant the drain-to-empty finding turns on. A one-shot
+    /// pre-drain that sees `Pending` here proceeds to `start_send` anyway — and
+    /// if the socket has become writable in the meantime (which a peer reading,
+    /// or the kernel draining its send buffer, does without any cooperation
+    /// from this task), `start_send` writes the out-buffer through, application
+    /// frame included, before any consult. A hook here models exactly that
+    /// external event, with no `await` needed on this side.
+    #[expect(clippy::type_complexity)]
+    on_write_park: Arc<std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>>,
 }
 
 impl CapturingSocket {
@@ -2400,6 +2436,10 @@ impl CapturingSocket {
 
     fn after_first_write(&self, f: impl FnOnce() + Send + 'static) {
         *self.after_first_write.lock().unwrap() = Some(Box::new(f));
+    }
+
+    fn on_write_park(&self, f: impl FnOnce() + Send + 'static) {
+        *self.on_write_park.lock().unwrap() = Some(Box::new(f));
     }
 
     fn block_writes(&self) {
@@ -2433,6 +2473,13 @@ impl tokio::io::AsyncWrite for CapturingSocket {
     ) -> Poll<std::io::Result<usize>> {
         if self.write_blocked.load(std::sync::atomic::Ordering::SeqCst) {
             *self.waker.lock().unwrap() = Some(cx.waker().clone());
+            // The park is reported to the caller FIRST, then the socket turns
+            // writable — the ordering a kernel produces on its own. A one-shot
+            // drain has already decided to proceed by the time this lands.
+            let hook = self.on_write_park.lock().unwrap().take();
+            if let Some(hook) = hook {
+                hook();
+            }
             return Poll::Pending;
         }
         self.written.lock().unwrap().extend_from_slice(buf);
@@ -2491,12 +2538,12 @@ impl tokio::io::AsyncRead for CapturingSocket {
 /// only the enum — so wrapping here reproduces the production stack rather
 /// than substituting for it. The conversion is a move: both sides carry
 /// `bytes::Bytes`.
-struct TungsteniteBridge(tokio_tungstenite::WebSocketStream<CapturingSocket>);
+struct TungsteniteBridge(production_ws_codec::WebSocketStream<CapturingSocket>);
 
 impl TungsteniteBridge {
-    fn to_tungstenite(msg: WsMessage) -> tokio_tungstenite::tungstenite::Message {
-        use tokio_tungstenite::tungstenite::Message as TsMessage;
-        use tokio_tungstenite::tungstenite::protocol::CloseFrame as TsCloseFrame;
+    fn to_tungstenite(msg: WsMessage) -> production_ws_codec::tungstenite::Message {
+        use production_ws_codec::tungstenite::Message as TsMessage;
+        use production_ws_codec::tungstenite::protocol::CloseFrame as TsCloseFrame;
         match msg {
             WsMessage::Text(text) => TsMessage::Text(text.as_str().into()),
             WsMessage::Binary(data) => TsMessage::Binary(data),
@@ -2509,8 +2556,8 @@ impl TungsteniteBridge {
         }
     }
 
-    fn from_tungstenite(msg: tokio_tungstenite::tungstenite::Message) -> Option<WsMessage> {
-        use tokio_tungstenite::tungstenite::Message as TsMessage;
+    fn from_tungstenite(msg: production_ws_codec::tungstenite::Message) -> Option<WsMessage> {
+        use production_ws_codec::tungstenite::Message as TsMessage;
         match msg {
             TsMessage::Text(text) => Some(WsMessage::Text(Utf8Bytes::from(text.as_str()))),
             TsMessage::Binary(data) => Some(WsMessage::Binary(data)),
@@ -2527,7 +2574,7 @@ impl TungsteniteBridge {
 }
 
 impl futures_util::Sink<WsMessage> for TungsteniteBridge {
-    type Error = tokio_tungstenite::tungstenite::Error;
+    type Error = production_ws_codec::tungstenite::Error;
 
     fn poll_ready(
         mut self: std::pin::Pin<&mut Self>,
@@ -2556,7 +2603,7 @@ impl futures_util::Sink<WsMessage> for TungsteniteBridge {
 }
 
 impl futures_util::Stream for TungsteniteBridge {
-    type Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>;
+    type Item = Result<WsMessage, production_ws_codec::tungstenite::Error>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
@@ -2586,11 +2633,11 @@ async fn real_codec_guarded(
     registry: &Arc<MutableRevocations>,
     write_buffer_size: usize,
 ) -> GuardedTransport<TungsteniteBridge> {
-    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+    let config = production_ws_codec::tungstenite::protocol::WebSocketConfig::default()
         .write_buffer_size(write_buffer_size);
-    let stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
+    let stream = production_ws_codec::WebSocketStream::from_raw_socket(
         socket.clone(),
-        tokio_tungstenite::tungstenite::protocol::Role::Server,
+        production_ws_codec::tungstenite::protocol::Role::Server,
         Some(config),
     )
     .await;
@@ -2603,18 +2650,38 @@ async fn real_codec_guarded(
     )
 }
 
-/// Asserts the wire holds the automatic Pong and nothing else.
+/// A server Close frame with no payload: opcode 0x8, FIN, zero length.
+///
+/// A refusal that is caught while nothing is queued closes GRACEFULLY, and a
+/// graceful close is two bytes of control frame — never application data.
+const SERVER_CLOSE_BYTES: [u8; 2] = [0x88, 0x00];
+
+/// Asserts the wire holds the automatic Pong, optionally a Close, and no
+/// application byte.
 ///
 /// Byte-level and order-bearing on purpose: message-level `written()` cannot
 /// see a PARTIAL application frame, and a partial frame is precisely what a
-/// write that parked mid-way would leave. The pong is 2 bytes; anything past
-/// them is a payload byte that escaped.
+/// write that parked mid-way would leave.
+///
+/// The Close is admitted because the drain-to-empty ordering moves WHERE a
+/// revocation is caught. Draining to completion means the fresh consult that
+/// follows it runs while nothing application-level is queued, so a revocation
+/// landing during the drain takes the graceful-close path rather than the
+/// abort path. That is the better outcome — the peer learns the session ended
+/// instead of seeing a severed socket — and it is still a refusal: a close
+/// frame carries no vault state, and `poll_close` can only flush an out-buffer
+/// the drain already emptied. What must never appear is a payload byte.
 fn assert_wire_is_pong_only(socket: &CapturingSocket) {
     let wire = socket.wire();
-    assert_eq!(
-        wire, SERVER_PONG_BYTES,
-        "the wire must hold the automatic Pong and NOTHING else — extra bytes are \
-         application-frame bytes (whole or partial) that escaped before the consult"
+    let acceptable: &[&[u8]] = &[
+        &SERVER_PONG_BYTES,
+        &[SERVER_PONG_BYTES.as_slice(), SERVER_CLOSE_BYTES.as_slice()].concat(),
+    ];
+    assert!(
+        acceptable.iter().any(|expected| wire == *expected),
+        "the wire must hold the automatic Pong (and at most a Close) and NOTHING else — \
+         extra bytes are application-frame bytes (whole or partial) that escaped before \
+         the consult: {wire:?}"
     );
 }
 
@@ -2675,6 +2742,34 @@ async fn real_codec_send_racing_a_revocation(
     (keep_going, guarded)
 }
 
+/// Asserts a refused transport can never deliver application bytes again.
+///
+/// Stated as behaviour rather than as `socket.is_none()`, because the refusal
+/// has TWO shapes and both are final. A revocation seen while a frame is
+/// queued must ABORT (dropping the socket is the only way to withhold bytes
+/// already handed over), but one seen while nothing is queued — which the
+/// drain-to-empty ordering makes the common case — closes gracefully, leaving
+/// the socket `Some` and the codec in a state that refuses further writes.
+/// Asserting on the field would pin the mechanism and miss the property.
+async fn assert_refusal_is_final(
+    socket: &CapturingSocket,
+    guarded: &mut GuardedTransport<TungsteniteBridge>,
+) {
+    let before = socket.wire().len();
+    assert!(
+        !guarded
+            .send_binary(vec![9u8; UNDER_THRESHOLD_PAYLOAD])
+            .await,
+        "a refused transport must not accept a later send"
+    );
+    let after = socket.wire();
+    assert!(
+        !after[before..].contains(&9u8),
+        "a refused transport delivered application bytes on a later send: {:?}",
+        &after[before..]
+    );
+}
+
 /// REAL CODEC: a revocation between the two consults must leave the wire
 /// holding only the Pong.
 ///
@@ -2687,7 +2782,7 @@ async fn real_codec_withholds_every_application_byte_when_the_credential_is_revo
     let socket = CapturingSocket::default();
     let registry = Arc::new(MutableRevocations::default());
 
-    let (keep_going, guarded) =
+    let (keep_going, mut guarded) =
         real_codec_send_racing_a_revocation(&socket, &registry, UNDER_THRESHOLD_PAYLOAD, |r| {
             r.revoke(TEST_JTI);
         })
@@ -2695,10 +2790,7 @@ async fn real_codec_withholds_every_application_byte_when_the_credential_is_revo
 
     assert!(!keep_going, "a revoked session must not continue");
     assert_wire_is_pong_only(&socket);
-    assert!(
-        guarded.socket.is_none(),
-        "the refusal must drop the whole real transport"
-    );
+    assert_refusal_is_final(&socket, &mut guarded).await;
 }
 
 /// REAL CODEC: an unreadable registry is refused on the same terms.
@@ -2707,7 +2799,7 @@ async fn real_codec_withholds_every_application_byte_when_the_registry_is_unread
     let socket = CapturingSocket::default();
     let registry = Arc::new(MutableRevocations::default());
 
-    let (keep_going, guarded) = real_codec_send_racing_a_revocation(
+    let (keep_going, mut guarded) = real_codec_send_racing_a_revocation(
         &socket,
         &registry,
         UNDER_THRESHOLD_PAYLOAD,
@@ -2720,7 +2812,7 @@ async fn real_codec_withholds_every_application_byte_when_the_registry_is_unread
         "an unreadable registry is not evidence the token is live"
     );
     assert_wire_is_pong_only(&socket);
-    assert!(guarded.socket.is_none());
+    assert_refusal_is_final(&socket, &mut guarded).await;
 }
 
 /// REAL CODEC: the guard must not be a blanket refusal — a live credential's
@@ -2824,9 +2916,11 @@ async fn real_codec_delivers_a_frame_that_stays_below_the_write_through_threshol
     let registry = Arc::new(MutableRevocations::default());
     let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
 
-    // The largest payload the guard admits at this threshold: encoded size
-    // plus the control reserve exactly equals it. One more byte is refused.
-    let admissible = REAL_CODEC_WRITE_BUFFER - WS_OUT_BUFFER_RESERVE - 4;
+    // The largest payload the guard admits at this threshold: the ENCODED
+    // frame exactly equals it, with no reserve subtracted. The drain leaves the
+    // out-buffer empty, so this boundary is the codec's own arithmetic rather
+    // than a guess with slack in it — one more byte is refused.
+    let admissible = REAL_CODEC_WRITE_BUFFER - 4;
     assert!(guarded.send_binary(vec![7u8; admissible]).await);
 
     let wire = socket.wire();
@@ -2937,5 +3031,257 @@ async fn real_codec_withholds_a_parked_frame_when_the_peer_resumes_after_revocat
     assert!(
         guarded.socket.is_none(),
         "the refusal must drop the whole real transport"
+    );
+}
+
+/// The `dependencies` list of one `[[package]]` block, by name.
+fn deps_of<'a>(lock: &'a str, package: &str) -> Vec<&'a str> {
+    lock.split("[[package]]")
+        .find(|block| block.contains(&format!("name = \"{package}\"\n")))
+        .unwrap_or_else(|| panic!("{package} must be present in the lockfile"))
+        .lines()
+        .skip_while(|line| !line.starts_with("dependencies = ["))
+        .skip(1)
+        .take_while(|line| !line.starts_with(']'))
+        .map(|line| line.trim().trim_matches([' ', '"', ',']))
+        .collect()
+}
+
+/// The version of the `tokio-tungstenite` a package depends on.
+///
+/// With two versions in the graph, cargo disambiguates the lockfile entry
+/// as `"tokio-tungstenite <version>"` — so the entry itself names the
+/// resolution, and a single-version graph (no suffix) is unambiguous too.
+fn ws_codec_version(lock: &str, package: &str) -> String {
+    let entry = deps_of(lock, package)
+        .into_iter()
+        .find(|dep| dep.starts_with("tokio-tungstenite"))
+        .unwrap_or_else(|| panic!("{package} must depend on tokio-tungstenite"));
+    entry
+        .strip_prefix("tokio-tungstenite")
+        .expect("checked above")
+        .trim()
+        .to_owned()
+}
+/// The real-codec rows must run the SAME codec version production runs.
+///
+/// The byte properties above — when `start_send` writes through, what an owed
+/// pong leaves in the out-buffer — are statements about a specific codec. The
+/// leg that introduced them pinned the dev-dependency to 0.26 while `axum`
+/// resolved 0.28, so every row was green about a codec this server never
+/// builds. Nothing in the type system catches that: both versions export the
+/// same names, so the bridge compiles either way.
+///
+/// This reads the lockfile rather than trusting the manifest, because the
+/// manifest states a RANGE and the lockfile states what was actually built. A
+/// caret bump on either side that separates them fails here.
+#[test]
+fn the_real_codec_rows_run_the_same_codec_version_axum_resolves() {
+    let lock = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("Cargo.lock"),
+    )
+    .expect("the workspace lockfile must be readable");
+
+    let axum_resolves = ws_codec_version(&lock, "axum");
+
+    // `oneiron-server` lists BOTH: the older one via the `oneiron` crate and
+    // the aliased dev-dependency the real-codec rows use. The alias keeps its
+    // real package name in the lockfile, so the assertion is that axum's
+    // resolution is among them — i.e. the dev-dependency resolved to it rather
+    // than collapsing onto the older copy.
+    let server_deps = deps_of(&lock, "oneiron-server");
+    let ours: Vec<&str> = server_deps
+        .iter()
+        .filter(|dep| dep.starts_with("tokio-tungstenite"))
+        .copied()
+        .collect();
+    assert!(
+        ours.iter()
+            .any(|dep| *dep == format!("tokio-tungstenite {axum_resolves}").trim()),
+        "the real-codec rows must exercise the codec axum resolves ({axum_resolves}), but \
+         oneiron-server resolved {ours:?} — a byte-property row pinned to a different \
+         version proves nothing about production while staying green"
+    );
+}
+
+/// A masked client Ping carrying the RFC's MAXIMUM control payload, 125 bytes.
+///
+/// Each one makes the server owe a 127-byte Pong (2-byte header + 125). While
+/// writes are blocked those pongs accumulate in the codec's out-buffer, so a
+/// peer that sends five of them puts 635 bytes there — past the 512-byte
+/// reserve the previous leg used as its bound. The peer chooses how many to
+/// send, which is why a fixed reserve was never a bound at all.
+fn max_payload_client_ping() -> Vec<u8> {
+    let mut frame = vec![0x89, 0xFD, 0x01, 0x02, 0x03, 0x04];
+    frame.extend(std::iter::repeat_n(0u8, 125));
+    frame
+}
+
+/// Bytes one owed Pong occupies in the out-buffer for the ping above.
+const MAX_PAYLOAD_PONG_BYTES: usize = 127;
+
+/// Enough Pings that the accumulated pongs exceed any 512-byte reserve.
+const PONGS_PAST_THE_OLD_RESERVE: usize = 8;
+
+/// Feeds `count` max-payload Pings while writes are blocked, leaving that many
+/// Pongs' worth of bytes in the codec's out-buffer and none on the wire.
+async fn accumulate_owed_pongs(
+    socket: &CapturingSocket,
+    guarded: &mut GuardedTransport<TungsteniteBridge>,
+    count: usize,
+) {
+    for i in 0..count {
+        socket.push_inbound(&max_payload_client_ping());
+        assert!(
+            matches!(guarded.read_next().await, Some(Ok(WsMessage::Ping(_)))),
+            "the real codec must decode masked client Ping {i}"
+        );
+    }
+    assert_wire_is_empty(socket);
+}
+
+/// REAL CODEC, the P1 regression: pongs accumulated past ANY fixed reserve must
+/// not let `start_send` write an application frame through pre-consult.
+///
+/// This is the row the 512-byte reserve could not pass. The sequence:
+///
+/// 1. writes are blocked and the peer sends 8 max-payload Pings, so the codec
+///    holds 8 x 127 = 1016 bytes of owed Pongs — well past 512;
+/// 2. a `send_binary` starts. The old one-shot pre-drain returns `Pending`
+///    (writes are blocked) and proceeds anyway, leaving that residue in place;
+/// 3. the socket becomes writable — which a peer or the kernel can do at any
+///    instant, and needs no cooperation from this task;
+/// 4. under the old code `start_send` then buffers the application frame on top
+///    of the residue, crosses `write_buffer_size`, and writes the whole
+///    out-buffer to the socket SYNCHRONOUSLY, before the flush-time consult.
+///
+/// The payload is sized to be admissible under the OLD arithmetic
+/// (`encoded + 512 <= threshold`) and to cross the threshold once the residue
+/// is added — so the frame is one the guard accepted and could not withhold.
+///
+/// With the drain-to-empty fix the send parks in the drain instead, the
+/// revocation is seen there, and the transport aborts with no application byte
+/// written. The assertion is on BYTES, because a partial write is the failure
+/// mode a message-level check cannot see.
+#[tokio::test]
+async fn real_codec_withholds_bytes_when_owed_pongs_accumulate_past_any_fixed_reserve() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+
+    socket.block_writes();
+    accumulate_owed_pongs(&socket, &mut guarded, PONGS_PAST_THE_OLD_RESERVE).await;
+
+    let residue = PONGS_PAST_THE_OLD_RESERVE * MAX_PAYLOAD_PONG_BYTES;
+    assert!(
+        residue > 512,
+        "the accumulated pongs must exceed the reserve this regression retires, or the row \
+         is not reproducing the finding: {residue} bytes"
+    );
+    // Admissible under the retired arithmetic, over the threshold once the
+    // residue is counted: exactly the frame the reserve mis-classified.
+    let payload = REAL_CODEC_WRITE_BUFFER - 512 - 4;
+    assert!(
+        encoded_frame_len(payload) + residue > REAL_CODEC_WRITE_BUFFER,
+        "the frame must cross the real write-through point once the residue is added"
+    );
+
+    // The revocation lands, and the socket becomes writable, at the instant the
+    // drain parks — before `start_send` would run. This is the interleaving the
+    // finding describes, and it needs no `await` on this side because a socket
+    // turning writable is an external event.
+    //
+    // A one-shot drain reaches `start_send` with the residue still buffered and
+    // a now-writable socket, and the codec writes the whole out-buffer —
+    // application frame included — synchronously, before the flush-time
+    // consult. Draining to completion cannot: the drain re-consults on this
+    // same wakeup, sees the revocation, and aborts with nothing handed over.
+    let socket_for_hook = socket.clone();
+    let registry_for_hook = Arc::clone(&registry);
+    socket.on_write_park(move || {
+        registry_for_hook.revoke(TEST_JTI);
+        socket_for_hook.unblock_writes();
+    });
+
+    let keep_going = tokio::time::timeout(
+        FLUSH_RECONSULT_INTERVAL * 20,
+        guarded.send_binary(vec![7u8; payload]),
+    )
+    .await
+    .expect("the guard must re-consult on its own tick, not wait on the peer");
+
+    assert!(!keep_going, "a revoked session must not continue");
+    let wire = socket.wire();
+    assert!(
+        !wire.contains(&7u8),
+        "application payload bytes reached the wire before the consult could refuse them: \
+         {} of {payload} bytes escaped",
+        wire.iter().filter(|b| **b == 7u8).count()
+    );
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must drop the whole real transport"
+    );
+}
+
+/// REAL CODEC control: the drain is a WAIT, not a refusal — a pong-owing send
+/// on a LIVE credential still delivers once the peer reads again.
+///
+/// Without this row the P1 fix could be "abort whenever anything is owed" and
+/// the withholding row above would still pass. The order is also pinned: the
+/// accumulated pongs go out first (the drain completes), then the application
+/// frame, byte-exact.
+#[tokio::test]
+async fn real_codec_delivers_a_pong_owing_send_after_the_drain_on_a_live_credential() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+
+    socket.block_writes();
+    accumulate_owed_pongs(&socket, &mut guarded, PONGS_PAST_THE_OLD_RESERVE).await;
+
+    let mut send = Box::pin(guarded.send_binary(vec![7u8; UNDER_THRESHOLD_PAYLOAD]));
+    assert!(
+        futures_util::poll!(send.as_mut()).is_pending(),
+        "the blocked socket must park the drain"
+    );
+
+    // The peer resumes reading with the credential still live.
+    socket.unblock_writes();
+    let keep_going = tokio::time::timeout(FLUSH_RECONSULT_INTERVAL * 20, send)
+        .await
+        .expect("the drain must complete once the peer reads");
+
+    assert!(
+        keep_going,
+        "a live credential's pong-owing send must be delivered, not refused — a drain that \
+         aborts on a slow peer is an outage wearing a security fix's clothes"
+    );
+
+    // The codec coalesces owed pongs: `set_additional` REPLACES a pending pong
+    // rather than queueing another, so the peer's 8 Pings leave one Pong owed
+    // per read that actually reached the buffer. What this row pins is the
+    // ORDER and the tail — every pong byte precedes the application frame, and
+    // the frame arrives whole.
+    let wire = socket.wire();
+    let mut frame = vec![0x82, UNDER_THRESHOLD_PAYLOAD as u8];
+    frame.extend(std::iter::repeat_n(7u8, UNDER_THRESHOLD_PAYLOAD));
+    assert!(
+        wire.ends_with(&frame),
+        "the application frame must arrive whole, after the drained control frames"
+    );
+    let head = &wire[..wire.len() - frame.len()];
+    assert!(
+        !head.is_empty() && head.len() % MAX_PAYLOAD_PONG_BYTES == 0,
+        "the bytes preceding the frame must be whole owed Pongs, drained to completion: \
+         {} bytes",
+        head.len()
+    );
+    assert!(
+        head.chunks(MAX_PAYLOAD_PONG_BYTES)
+            .all(|pong| pong[0] == 0x8a && pong[1] == 125),
+        "every drained control frame must be an unmasked 125-byte Pong"
     );
 }

@@ -47,6 +47,22 @@ utoipa = "5.5.0"
 [dev-dependencies]
 tempfile = "3"
 tower = "0.5"
+# The WebSocket codec PRODUCTION runs, under a name that says so.
+#
+# The real-codec revocation rows in `src/handler/tests.rs` assert byte
+# properties of `start_send` — when the codec writes through, what an owed pong
+# leaves in the out-buffer — so they are only evidence about this server if
+# they drive the codec this server actually builds. `axum` (above, feature
+# `ws`) is what builds it, and axum 0.8 resolves tokio-tungstenite 0.28; the
+# unaliased `tokio-tungstenite` in `[dependencies]` is a DIFFERENT, older
+# version reached through the `oneiron` crate, and a test bound to that one
+# would prove nothing about production while staying green.
+#
+# Aliased rather than plain because both versions are in this graph and
+# `tokio_tungstenite` would otherwise be ambiguous at the use site. Keep the
+# version in step with axum's resolution — `the_real_codec_rows_run_the_same
+# _codec_version_axum_resolves` reads Cargo.lock and fails if it drifts.
+production-ws-codec = { package = "tokio-tungstenite", version = "0.28" }
 # Lease-registrar tests sign proof-of-possession transcripts themselves
 # (contract-grounded, ONE-1140). `test-hooks` compiles in the lease
 # mirror-failure injection seam used by the root-snapshot/`ls:`-mirror
