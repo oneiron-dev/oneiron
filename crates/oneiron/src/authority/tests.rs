@@ -862,6 +862,8 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_grant_bindings: BTreeMap::new(),
+        actor_bindings: BTreeMap::new(),
+        actor_binding_revocations: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     let entry = cosign_ed(
@@ -933,6 +935,8 @@ fn single_owner_state(seed: u8) -> (SigningKey, AuthorityKey, AuthorityEntryHash
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_grant_bindings: BTreeMap::new(),
+        actor_bindings: BTreeMap::new(),
+        actor_binding_revocations: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     (owner, owner_key, parent, state)
@@ -7545,6 +7549,8 @@ fn fold_state_with_pact(fixture: &PactFixture, status: Option<FederationPactStat
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_grant_bindings: BTreeMap::new(),
+        actor_bindings: BTreeMap::new(),
+        actor_binding_revocations: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key, 0)]),
     };
     if let Some(status) = status {
@@ -8590,4 +8596,907 @@ fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
         authority_key_from_ed(&fixture.peer).min(authority_key_from_ed(&other_peer))
     );
     assert_eq!(pact.pact_scope, fixture.scope);
+}
+
+// ── S-AUTH3: actor-binding ops (ONE-1633 / ONE-1604-D2) ──────────────────
+
+/// A rooted two-key vault: `owner` carries OWNER|ADMIN, `agent` is an enrolled
+/// ROLE_AGENT software key. Two active roster keys means every non-genesis op
+/// needs a peer cosign, which is exactly the shape the bind ops ship into.
+struct BindFixture {
+    owner: SigningKey,
+    agent: SigningKey,
+    owner_key: AuthorityKey,
+    agent_key: AuthorityKey,
+    vault_id: AuthorityVaultId,
+    genesis: AuthorityLogEntry,
+    enroll: AuthorityLogEntry,
+    actor: EntityId,
+}
+
+fn bind_fixture(seed: u8) -> BindFixture {
+    let genesis = genesis_entry(seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 100);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let owner = ed_key(seed);
+    let agent = ed_key(seed.wrapping_add(1));
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: seed.wrapping_add(1),
+            roles: ROLE_AGENT,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 101,
+        },
+    );
+    BindFixture {
+        owner_key: authority_key_from_ed(&owner),
+        agent_key: authority_key_from_ed(&agent),
+        owner,
+        agent,
+        vault_id,
+        genesis,
+        enroll,
+        actor: scope_entity(seed),
+    }
+}
+
+/// Signs an owner op onto `parents` with the agent as peer cosigner — the
+/// two-key roster makes a cosign mandatory for every non-genesis op.
+fn cosigned_entry(
+    fixture: &BindFixture,
+    parents: Vec<AuthorityEntryHash>,
+    seq: u64,
+    op: AuthorityOp,
+    ts: u64,
+) -> AuthorityLogEntry {
+    let entry = unsigned_entry(
+        Some(fixture.vault_id),
+        seq,
+        parents,
+        op,
+        fixture.owner_key.clone(),
+        ts,
+    );
+    cosign_ed(entry, &fixture.owner, &fixture.agent)
+}
+
+fn bind_op(key: &AuthorityKey, actor: EntityId, class: &str, epoch: u64) -> AuthorityOp {
+    AuthorityOp::BindActor {
+        authority_key: key.clone(),
+        actor_ref: actor,
+        actor_class: class.to_owned(),
+        epoch,
+    }
+}
+
+fn rebind_op(key: &AuthorityKey, actor: EntityId, class: &str, epoch: u64) -> AuthorityOp {
+    AuthorityOp::RebindActor {
+        authority_key: key.clone(),
+        actor_ref: actor,
+        actor_class: class.to_owned(),
+        epoch,
+    }
+}
+
+fn revoke_actor_op(key: &AuthorityKey, epoch: u64) -> AuthorityOp {
+    AuthorityOp::RevokeActor {
+        authority_key: key.clone(),
+        epoch,
+    }
+}
+
+/// The rejection reason recorded for `entry`, if the fold refused it.
+fn binding_rejection(
+    fold: &AuthorityFold,
+    entry: &AuthorityLogEntry,
+) -> Option<ActorBindingRejection> {
+    let hash = authority_entry_hash(entry).unwrap();
+    fold.issues.iter().find_map(|issue| match issue {
+        AuthorityFoldIssue::ActorBindingRejected {
+            entry: rejected,
+            reason,
+        } if *rejected == hash => Some(*reason),
+        _ => None,
+    })
+}
+
+#[test]
+fn bind_rebind_revoke_ops_roundtrip_and_golden_vectors() {
+    let fixture = bind_fixture(200);
+    let key = fixture.owner_key.clone();
+    let actor = fixture.actor;
+    for op in [
+        bind_op(&key, actor, "human", 1),
+        rebind_op(&key, actor, "agent", 2),
+        revoke_actor_op(&key, 3),
+    ] {
+        let decoded = decode_op(&op_value_with_genesis_delay(&op, true)).unwrap();
+        assert_eq!(
+            decoded, op,
+            "op must survive a canonical encode/decode cycle"
+        );
+    }
+
+    // Byte-pin: field order (kind, authority_key, actor_ref, actor_class,
+    // epoch) is a wire contract, so a reordering refactor must fail here.
+    let bind_value = op_value_with_genesis_delay(&bind_op(&key, actor, "human", 1), true);
+    let Value::Map(fields) = &bind_value else {
+        panic!("bind op must encode as a map");
+    };
+    let keys: Vec<_> = fields
+        .iter()
+        .map(|(name, _)| name.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["kind", "authority_key", "actor_ref", "actor_class", "epoch"]
+    );
+    assert_eq!(fields[0].1.as_str(), Some("bind_actor"));
+    assert_eq!(fields[2].1.as_str(), Some(actor.to_hex().as_str()));
+    assert_eq!(
+        op_value_with_genesis_delay(&rebind_op(&key, actor, "human", 1), true)
+            .as_map()
+            .unwrap()[0]
+            .1
+            .as_str(),
+        Some("rebind_actor")
+    );
+    let Value::Map(revoke_fields) = op_value_with_genesis_delay(&revoke_actor_op(&key, 3), true)
+    else {
+        panic!("revoke op must encode as a map");
+    };
+    assert_eq!(
+        revoke_fields
+            .iter()
+            .map(|(name, _)| name.as_str().unwrap().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["kind", "authority_key", "epoch"]
+    );
+    assert_eq!(revoke_fields[0].1.as_str(), Some("revoke_actor"));
+
+    // Unknown discriminants still fail closed: a pre-1633 binary rejecting a
+    // bind body is the correct pre-release behavior, and the reverse (this
+    // binary meeting a future kind) must stay a hard error, never a silent
+    // default.
+    let mut unknown = op_value_with_genesis_delay(&bind_op(&key, actor, "human", 1), true)
+        .as_map()
+        .unwrap()
+        .clone();
+    unknown[0].1 = Value::from("bind_actor_v2");
+    assert_eq!(
+        decode_op(&Value::Map(unknown)).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidAuthorityLogBody
+    );
+
+    // Signed-entry hash stability: the bind entry round-trips through the
+    // canonical body encoder with an unchanged content hash.
+    let entry = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&fixture.enroll).unwrap()],
+        2,
+        bind_op(&key, actor, "human", 1),
+        102,
+    );
+    let bytes = encode_authority_log_entry_body(&entry).unwrap();
+    let round_tripped = decode_authority_log_entry_body(&bytes).unwrap();
+    assert_eq!(round_tripped, entry);
+    assert_eq!(
+        authority_entry_hash(&round_tripped).unwrap(),
+        authority_entry_hash(&entry).unwrap()
+    );
+}
+
+#[test]
+fn bind_op_validate_rows() {
+    let fixture = bind_fixture(201);
+    let key = fixture.owner_key.clone();
+    let actor = fixture.actor;
+
+    // EXACT class vocabulary. "Human" and "owner" are the plausible
+    // near-misses; admitting either would reintroduce ESB-C through a
+    // spelling.
+    for class in ["human", "agent", "system"] {
+        validate_op(&bind_op(&key, actor, class, 1)).expect("vocabulary class must validate");
+        validate_op(&rebind_op(&key, actor, class, 1)).expect("vocabulary class must validate");
+    }
+    for class in ["Human", "owner", "", "human ", "HUMAN", "person"] {
+        assert_eq!(
+            validate_op(&bind_op(&key, actor, class, 1))
+                .unwrap_err()
+                .kind(),
+            crate::error::ErrorKind::InvalidAuthorityLogBody,
+            "non-vocabulary class {class:?} must fail closed"
+        );
+        assert_eq!(
+            validate_op(&rebind_op(&key, actor, class, 1))
+                .unwrap_err()
+                .kind(),
+            crate::error::ErrorKind::InvalidAuthorityLogBody
+        );
+    }
+
+    // Epoch 0 is the revocation watermark's zero value: a binding at epoch 0
+    // could never out-rank a watermark, so it is refused at the door.
+    for op in [
+        bind_op(&key, actor, "human", 0),
+        rebind_op(&key, actor, "human", 0),
+        revoke_actor_op(&key, 0),
+    ] {
+        assert_eq!(
+            validate_op(&op).unwrap_err().kind(),
+            crate::error::ErrorKind::InvalidAuthorityLogBody
+        );
+    }
+
+    // Key validation still runs on every arm.
+    let bad_key = AuthorityKey::P256(vec![9; 33]);
+    for op in [
+        bind_op(&bad_key, actor, "human", 1),
+        rebind_op(&bad_key, actor, "human", 1),
+        revoke_actor_op(&bad_key, 1),
+    ] {
+        assert!(
+            validate_op(&op).is_err(),
+            "invalid key must fail validate_op"
+        );
+    }
+
+    // Reserved-sentinel actor_ref fails DECODE (from_hex routes from_bytes).
+    let mut fields = op_value_with_genesis_delay(&bind_op(&key, actor, "human", 1), true)
+        .as_map()
+        .unwrap()
+        .clone();
+    fields[2].1 = Value::from(hex(&[0; 16]));
+    assert_eq!(
+        decode_op(&Value::Map(fields.clone())).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidAuthorityLogBody,
+        "reserved sentinel actor_ref must fail closed at decode"
+    );
+    // Non-canonical hex is refused by the round-trip check.
+    fields[2].1 = Value::from(actor.to_hex().to_uppercase());
+    assert_eq!(
+        decode_op(&Value::Map(fields)).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidAuthorityLogBody
+    );
+}
+
+/// Folded status for `key`, or `None` when no binding folded at all.
+fn folded_status(fold: &AuthorityFold, key: &AuthorityKey) -> Option<ActorBindingStatus> {
+    fold.actor_bindings.get(key).map(|binding| binding.status)
+}
+
+#[test]
+fn actor_binding_fold_transition_table() {
+    let fixture = bind_fixture(202);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+    let other_actor = scope_entity(0x5a);
+
+    // bind -> Active
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let base = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        bind.clone(),
+    ];
+    let fold = fold_authority_log_without_seen_time_delay(&base);
+    assert!(
+        fold.issues.is_empty(),
+        "clean bind must fold without issues"
+    );
+    assert_eq!(folded_status(&fold, &key), Some(ActorBindingStatus::Active));
+    assert!(actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // rebind bumps the epoch and retargets the actor
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    let rebind = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        rebind_op(&key, other_actor, "human", 2),
+        103,
+    );
+    let mut with_rebind = base.clone();
+    with_rebind.push(rebind);
+    let fold = fold_authority_log_without_seen_time_delay(&with_rebind);
+    assert!(fold.issues.is_empty());
+    let binding = &fold.actor_bindings[&key];
+    assert_eq!(binding.actor_ref, other_actor);
+    assert_eq!(binding.epoch, 2);
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+    assert!(actor_binding_is_active(&fold, &other_actor, "human"));
+
+    // revoke watermark kills every binding at epoch <= watermark
+    let revoke = cosigned_entry(&fixture, vec![bind_hash], 3, revoke_actor_op(&key, 1), 104);
+    let mut with_revoke = base;
+    with_revoke.push(revoke.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&with_revoke);
+    assert!(fold.issues.is_empty());
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // A revoke that folds on a branch which never saw the bind is VALID and
+    // still suppresses the bind once the branches merge. This is the reason
+    // watermarks live in their own map: order must not matter.
+    let orphan_revoke = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        revoke_actor_op(&key, 1),
+        105,
+    );
+    let merged = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        orphan_revoke.clone(),
+        bind,
+    ];
+    let fold = fold_authority_log_without_seen_time_delay(&merged);
+    assert!(binding_rejection(&fold, &orphan_revoke).is_none());
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // Re-binding ABOVE the watermark re-activates.
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let rebind_above = cosigned_entry(
+        &fixture,
+        vec![revoke_hash],
+        4,
+        bind_op(&key, fixture.actor, "human", 2),
+        106,
+    );
+    let mut revived = with_revoke.clone();
+    revived.push(rebind_above);
+    let fold = fold_authority_log_without_seen_time_delay(&revived);
+    assert!(fold.issues.is_empty());
+    assert_eq!(folded_status(&fold, &key), Some(ActorBindingStatus::Active));
+    assert!(actor_binding_is_active(&fold, &fixture.actor, "human"));
+}
+
+#[test]
+fn actor_binding_rejection_rows_leave_state_untouched() {
+    let fixture = bind_fixture(203);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+    let other_actor = scope_entity(0x5b);
+
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    let base = vec![fixture.genesis.clone(), fixture.enroll.clone(), bind];
+
+    // BindingExists: a second bind on a live binding must not silently
+    // overwrite it — a stolen key must not be able to re-point an existing
+    // identity without going through rebind's epoch discipline.
+    let double_bind = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        bind_op(&key, other_actor, "human", 5),
+        103,
+    );
+    let mut entries = base.clone();
+    entries.push(double_bind.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &double_bind),
+        Some(ActorBindingRejection::BindingExists)
+    );
+    assert_eq!(
+        fold.actor_bindings[&key].actor_ref, fixture.actor,
+        "rejected bind must leave the live binding untouched"
+    );
+    assert_eq!(fold.actor_bindings[&key].epoch, 1);
+
+    // BindingMissing: rebind with nothing live.
+    let orphan_rebind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        rebind_op(&key, fixture.actor, "human", 1),
+        104,
+    );
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        orphan_rebind.clone(),
+    ]);
+    assert_eq!(
+        binding_rejection(&fold, &orphan_rebind),
+        Some(ActorBindingRejection::BindingMissing)
+    );
+    assert!(fold.actor_bindings.is_empty());
+
+    // EpochNotAdvanced: rebind at or below the live epoch is a replay.
+    let stale_rebind = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        rebind_op(&key, other_actor, "human", 1),
+        105,
+    );
+    let mut entries = base.clone();
+    entries.push(stale_rebind.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &stale_rebind),
+        Some(ActorBindingRejection::EpochNotAdvanced)
+    );
+    assert_eq!(fold.actor_bindings[&key].actor_ref, fixture.actor);
+
+    // EpochNotAdvanced on a REVOKED key: replaying the original bind after a
+    // revocation must not resurrect it.
+    let revoke = cosigned_entry(&fixture, vec![bind_hash], 3, revoke_actor_op(&key, 4), 106);
+    let replay = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&revoke).unwrap()],
+        4,
+        bind_op(&key, fixture.actor, "human", 1),
+        107,
+    );
+    let mut entries = base;
+    entries.push(revoke);
+    entries.push(replay.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &replay),
+        Some(ActorBindingRejection::EpochNotAdvanced)
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+}
+
+#[test]
+fn human_class_bind_requires_owner_capable_key() {
+    let fixture = bind_fixture(204);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let base = [fixture.genesis.clone(), fixture.enroll.clone()];
+
+    // The hole this closes: binding a ROLE_AGENT key at "human" class would
+    // let an agent key exercise owner verbs. Human class demands a key that
+    // could itself give owner consent.
+    let agent_as_human = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&fixture.agent_key, fixture.actor, "human", 1),
+        102,
+    );
+    let mut entries = base.to_vec();
+    entries.push(agent_as_human.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &agent_as_human),
+        Some(ActorBindingRejection::OwnerCapabilityRequired)
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // The SAME key at "agent" class is legitimate — this is the 1634 machine
+    // identity seam, and refusing it would be gold-plating.
+    let agent_as_agent = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&fixture.agent_key, fixture.actor, "agent", 1),
+        103,
+    );
+    let mut entries = base.to_vec();
+    entries.push(agent_as_agent);
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert!(fold.issues.is_empty());
+    assert_eq!(
+        folded_status(&fold, &fixture.agent_key),
+        Some(ActorBindingStatus::Active)
+    );
+    assert!(actor_binding_is_active(&fold, &fixture.actor, "agent"));
+    // EXACT class: an agent-class binding never satisfies a human-class ask.
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // KeyNotInRoster: a binding may only attach to an enrolled key.
+    let stranger = authority_key_from_ed(&ed_key(240));
+    let unenrolled = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&stranger, fixture.actor, "agent", 1),
+        104,
+    );
+    let mut entries = base.to_vec();
+    entries.push(unenrolled.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &unenrolled),
+        Some(ActorBindingRejection::KeyNotInRoster)
+    );
+    assert!(fold.actor_bindings.is_empty());
+}
+
+#[test]
+fn binding_dies_with_roster_key() {
+    let fixture = bind_fixture(205);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let base = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        bind.clone(),
+    ];
+    assert!(actor_binding_is_active(
+        &fold_authority_log_without_seen_time_delay(&base),
+        &fixture.actor,
+        "human"
+    ));
+
+    // No cascade is written into binding state: Active simply requires a live
+    // roster key, so every roster-killing op takes dependent bindings with it
+    // automatically and order-independently.
+    let recovery = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&bind).unwrap()],
+        3,
+        AuthorityOp::RecoveryReboot {
+            new_genesis_nonce: [231; 32],
+            new_device: device(
+                authority_key_from_ed(&ed_key(231)),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+            tier_floor: AuthorityTier::Software,
+        },
+        108,
+    );
+    let mut entries = base.clone();
+    entries.push(recovery);
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(
+        !actor_binding_is_active(&fold, &fixture.actor, "human"),
+        "recovery reboot must kill bindings on the retired key"
+    );
+
+    // A rotation does NOT migrate the binding: the new key is a NEW identity
+    // claim and needs its own BindActor. Explicitness over magic.
+    let rotate = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&bind).unwrap()],
+        3,
+        AuthorityOp::RotateKey {
+            old_key: key.clone(),
+            new_device: device(
+                authority_key_from_ed(&ed_key(232)),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+        109,
+    );
+    let mut entries = base.clone();
+    entries.push(rotate.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+    let rotated_key = authority_key_from_ed(&ed_key(232));
+    assert!(
+        !fold.actor_bindings.contains_key(&rotated_key),
+        "rotation must not silently carry the binding to the new key"
+    );
+
+    // A fresh bind on the rotated key restores the identity.
+    let rebound = {
+        let entry = unsigned_entry(
+            Some(fixture.vault_id),
+            4,
+            vec![authority_entry_hash(&rotate).unwrap()],
+            bind_op(&rotated_key, fixture.actor, "human", 1),
+            rotated_key.clone(),
+            109,
+        );
+        cosign_ed(entry, &ed_key(232), &fixture.agent)
+    };
+    let mut entries = base;
+    entries.push(rotate);
+    entries.push(rebound);
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded_status(&fold, &rotated_key),
+        Some(ActorBindingStatus::Active)
+    );
+    assert!(actor_binding_is_active(&fold, &fixture.actor, "human"));
+}
+
+/// Divergent branches over one key's identity: both siblings parent on the
+/// enroll, bind the SAME key at the SAME epoch to DIFFERENT actors, and a
+/// third branch revokes an unrelated epoch. Fold order must not decide who
+/// the key speaks for.
+struct BindingDag {
+    entries: Vec<AuthorityLogEntry>,
+    key: AuthorityKey,
+    actor_a: EntityId,
+    actor_b: EntityId,
+    late_actor: EntityId,
+}
+
+fn binding_dag() -> BindingDag {
+    let fixture = bind_fixture(206);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+    let actor_a = scope_entity(0x12);
+    let actor_b = scope_entity(0x23);
+    let late_actor = scope_entity(0x34);
+
+    // Equal-epoch divergent content on two branches. Distinct seqs keep this
+    // a genuine DAG divergence rather than signer equivocation.
+    let branch_a = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, actor_a, "human", 1),
+        110,
+    );
+    let branch_b = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        3,
+        bind_op(&key, actor_b, "human", 1),
+        111,
+    );
+    // A merge entry above both branches, plus a later rebind that must beat
+    // the conflicted epoch-1 state on epoch alone.
+    let merge = cosigned_entry(
+        &fixture,
+        vec![
+            authority_entry_hash(&branch_a).unwrap(),
+            authority_entry_hash(&branch_b).unwrap(),
+        ],
+        4,
+        revoke_actor_op(&key, 1),
+        112,
+    );
+    let late = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&merge).unwrap()],
+        5,
+        bind_op(&key, late_actor, "human", 2),
+        113,
+    );
+    BindingDag {
+        entries: vec![
+            fixture.genesis,
+            fixture.enroll,
+            branch_a,
+            branch_b,
+            merge,
+            late,
+        ],
+        key,
+        actor_a,
+        actor_b,
+        late_actor,
+    }
+}
+
+#[test]
+fn equal_epoch_divergent_bindings_fail_closed() {
+    let dag = binding_dag();
+    // Only the two branches: nothing resolves the divergence, so the merged
+    // binding must be deterministic AND dead. A fork over identity is exactly
+    // where picking a silent winner would be the bug.
+    let fold = fold_authority_log_without_seen_time_delay(&dag.entries[..4]);
+    let binding = &dag.key;
+    assert_eq!(
+        folded_status(&fold, binding),
+        Some(ActorBindingStatus::Revoked),
+        "conflicted binding must never authorize"
+    );
+    assert_eq!(
+        fold.actor_bindings[binding].actor_ref,
+        dag.actor_a.min(dag.actor_b),
+        "conflict winner must be the byte-wise smaller tuple"
+    );
+    assert!(!actor_binding_is_active(&fold, &dag.actor_a, "human"));
+    assert!(!actor_binding_is_active(&fold, &dag.actor_b, "human"));
+}
+
+proptest! {
+    #[test]
+    fn binding_fold_is_permutation_invariant(
+        perm in prop::collection::vec(0_usize..6, 6),
+    ) {
+        let dag = binding_dag();
+        let baseline = fold_authority_log_without_seen_time_delay(&dag.entries);
+
+        let mut permuted = Vec::new();
+        for index in perm {
+            if let Some(entry) = dag.entries.get(index % dag.entries.len()) {
+                permuted.push(entry.clone());
+            }
+        }
+        for entry in &dag.entries {
+            if !permuted.iter().any(|candidate| candidate == entry) {
+                permuted.push(entry.clone());
+            }
+        }
+        let folded = fold_authority_log_without_seen_time_delay(&permuted);
+
+        // Absolute checks, not just baseline equality: a consistently
+        // order-biased merge would agree with itself under every permutation.
+        prop_assert_eq!(
+            folded.actor_bindings[&dag.key].actor_ref,
+            dag.late_actor
+        );
+        prop_assert_eq!(
+            folded.actor_bindings[&dag.key].status,
+            ActorBindingStatus::Active
+        );
+        prop_assert!(actor_binding_is_active(&folded, &dag.late_actor, "human"));
+        prop_assert!(!actor_binding_is_active(&folded, &dag.actor_a, "human"));
+        prop_assert!(!actor_binding_is_active(&folded, &dag.actor_b, "human"));
+        prop_assert_eq!(folded, baseline);
+    }
+}
+
+#[test]
+fn atomic_genesis_owner_binding_door() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+
+    // The genesis owner-binding ceremony: a single-key roster needs no cosign,
+    // so [genesis, bind] is one atomic host call.
+    let genesis = genesis_entry(207, DEFAULT_PENDING_WIDEN_DELAY_SECS, 200);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let owner = ed_key(207);
+    let owner_key = authority_key_from_ed(&owner);
+    let actor = scope_entity(0x5c);
+    let bind = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key.clone(),
+            201,
+        ),
+        &owner,
+    );
+
+    let ids = vault
+        .put_authority_log_entries(&[
+            (genesis.clone(), TimeRange { start: 1, end: 1 }, 1),
+            (bind.clone(), TimeRange { start: 2, end: 2 }, 2),
+        ])
+        .unwrap();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0], authority_log_entity_id(&genesis).unwrap());
+    assert_eq!(ids[1], authority_log_entity_id(&bind).unwrap());
+    assert_eq!(
+        vault.get_authority_log_entry(&ids[1]).unwrap(),
+        Some(bind.clone())
+    );
+    let fold = vault.authority_fold().unwrap();
+    assert_eq!(fold.vault_id, Some(vault_id));
+    assert!(
+        actor_binding_is_active(&fold, &actor, "human"),
+        "the atomic ceremony must leave a live owner binding"
+    );
+
+    // All-or-nothing: a pair whose SECOND entry is invalid stores NEITHER.
+    // Without this the host could end up rooted-but-unbound, which fail-closes
+    // its own owner verbs.
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = crate::Vault::open(other_dir.path(), crate::VaultConfig::device()).unwrap();
+    let mut broken = bind;
+    broken.signer.signature = vec![0; 64];
+    other
+        .put_authority_log_entries(&[
+            (genesis.clone(), TimeRange { start: 1, end: 1 }, 1),
+            (broken, TimeRange { start: 2, end: 2 }, 2),
+        ])
+        .expect_err("an invalid entry must abort the whole batch");
+    assert_eq!(
+        other
+            .get_authority_log_entry(&authority_log_entity_id(&genesis).unwrap())
+            .unwrap(),
+        None,
+        "nothing may be stored when any entry in the batch is invalid"
+    );
+
+    // A lone genesis is accepted: enforcement lives at the facade, not here.
+    other
+        .put_authority_log_entries(&[(genesis, TimeRange { start: 1, end: 1 }, 1)])
+        .unwrap();
+    assert_eq!(other.authority_fold().unwrap().vault_id, Some(vault_id));
+}
+
+#[test]
+fn readonly_fold_matches_full_fold_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    // A settled store: single-key roster, so no enroll widen is in flight and
+    // the binding is live. (A pending widen would make dependent entries
+    // Waiting in BOTH fold variants identically — the divergence D5 bounds.)
+    let genesis = genesis_entry(208, DEFAULT_PENDING_WIDEN_DELAY_SECS, 200);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let owner = ed_key(208);
+    let owner_key = authority_key_from_ed(&owner);
+    let actor = scope_entity(0x5d);
+    let bind = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key,
+            201,
+        ),
+        &owner,
+    );
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (bind, TimeRange { start: 2, end: 2 }, 2),
+        ])
+        .unwrap();
+
+    // Settle first: the full fold backfills sidecars and advances the
+    // first-seen clock, so compare against a settled baseline.
+    let full = vault.authority_fold().unwrap();
+    assert!(actor_binding_is_active(&full, &actor, "human"));
+
+    let sync_state_before = sync_state_snapshot(&vault);
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert_eq!(
+        readonly, full,
+        "the in-txn fold must agree with the full fold on a settled store"
+    );
+    assert_eq!(
+        sync_state_snapshot(&vault),
+        sync_state_before,
+        "the readonly fold must not write a single sync_state byte"
+    );
+}
+
+fn sync_state_snapshot(vault: &crate::Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let rows = vault
+        .store
+        .sync_state
+        .iter(&rtxn)
+        .unwrap()
+        .map(|row| {
+            let (key, value) = row.unwrap();
+            (key.as_bytes().to_vec(), value.to_vec())
+        })
+        .collect();
+    drop(rtxn);
+    rows
 }

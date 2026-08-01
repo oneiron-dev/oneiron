@@ -1023,6 +1023,45 @@ fn verify_actor_binding_in_txn(
     verify_actor_entity_type(actor, actor_class, entity_type)
 }
 
+/// Owner-verb teeth (ONE-1604-D2 / ESB-C).
+///
+/// [`verify_actor_binding`] proves the asserted actor EXISTS and that its
+/// entity type admits the class. That is store truth, not authority: any
+/// facade holder could name a pre-existing PERSON as `human` and exercise
+/// owner verbs. This check demands the authority log agree — a folded ACTIVE
+/// binding `{signing key in the live owner-capable roster, actor_ref == actor,
+/// actor_class == "human" EXACTLY, live epoch}`.
+///
+/// Enforcement scales with declared authority: a vault with no folded genesis
+/// has not declared an authority root, so it keeps the store-truth check only.
+/// The moment a host establishes a root, owner verbs require the binding —
+/// which is exactly the pressure that makes the atomic `[genesis, bind]`
+/// ceremony the natural path. No dual-mode shim, no flag.
+fn verify_owner_actor_binding_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> FacadeResult<()> {
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    if fold.vault_id.is_none() {
+        return Ok(());
+    }
+    if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
+        return Ok(());
+    }
+    Err(FacadeError::new(
+        FACADE_CODE_FORBIDDEN,
+        format!(
+            "actor {} holds no active owner binding in the authority log",
+            actor.to_hex()
+        ),
+        &[
+            "Establish an owner binding with a BindActor entry signed by an owner device.",
+            "Actor keys assert identity; the authority log decides whether it holds.",
+        ],
+    ))
+}
+
 fn verify_actor_entity_type(
     actor: EntityId,
     actor_class: EdgeActorClass,
@@ -1285,6 +1324,7 @@ impl MemoryFacade<'_> {
                 ],
             ));
         }
+        verify_owner_actor_binding_in_txn(self.vault, &rtxn, self.actor)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
         Ok(DeletionGateContext::new(
             self.actor,
@@ -1472,21 +1512,25 @@ impl MemoryFacade<'_> {
                 .vault
                 .get_claim_in_txn(wtxn, &id)?
                 .ok_or(Error::EntityNotFound)?;
-            if self.actor_class != EdgeActorClass::Human
-                && claim_envelope_actor(&body) != Some(self.actor)
-            {
-                return Err(FacadeError::new(
-                    FACADE_CODE_FORBIDDEN,
-                    format!(
-                        "actor {} ({}) may not retract a claim it did not write",
-                        self.actor.to_hex(),
-                        self.actor_class.gate_actor_class(),
-                    ),
-                    &[
-                        "Only the writing actor or a human-class owner actor may retract.",
-                        "Bind the owner actor key for cross-actor retraction.",
-                    ],
-                ));
+            // Retracting your OWN claim is not an owner power and needs no
+            // owner binding; retracting SOMEONE ELSE'S is, so it gets the
+            // authority-log teeth.
+            if claim_envelope_actor(&body) != Some(self.actor) {
+                if self.actor_class != EdgeActorClass::Human {
+                    return Err(FacadeError::new(
+                        FACADE_CODE_FORBIDDEN,
+                        format!(
+                            "actor {} ({}) may not retract a claim it did not write",
+                            self.actor.to_hex(),
+                            self.actor_class.gate_actor_class(),
+                        ),
+                        &[
+                            "Only the writing actor or a human-class owner actor may retract.",
+                            "Bind the owner actor key for cross-actor retraction.",
+                        ],
+                    ));
+                }
+                verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
             }
             let consent_receipt = self.vault.retract_claim_in_txn(wtxn, &id, now)?;
             let approval = self.vault.get_claim_in_txn(wtxn, &id)?.map_or_else(
@@ -1647,6 +1691,12 @@ impl MemoryFacade<'_> {
         // concurrent hard delete either commits first (refused here) or
         // after this txn (its purge then erases what we wrote).
         let refused = self.with_verified_actor_write_txn(|wtxn| {
+            // Minting a PERSON mints a future actor identity, so it is an
+            // owner verb. The pre-txn class check above gives the fast typed
+            // error; the authority-log teeth run in-txn (TOCTOU-free).
+            if type_byte == ENTITY_TYPE_PERSON {
+                verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
+            }
             if self
                 .vault
                 .local_hard_delete_marker_exists_in_txn(wtxn, &id)?

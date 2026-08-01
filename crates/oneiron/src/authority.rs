@@ -101,6 +101,16 @@ const OP_KIND_RECOVERY_REBOOT: &str = "recovery_reboot";
 const OP_KIND_FEDERATION_CONFIRM: &str = "federation_confirm";
 const OP_KIND_VETO_PENDING_WIDEN: &str = "veto_pending_widen";
 const OP_KIND_FEDERATION_LIFECYCLE: &str = "federation_lifecycle";
+const OP_KIND_BIND_ACTOR: &str = "bind_actor";
+const OP_KIND_REBIND_ACTOR: &str = "rebind_actor";
+const OP_KIND_REVOKE_ACTOR: &str = "revoke_actor";
+
+/// The EXACT actor-class vocabulary a binding tuple may name (ONE-1604-D2).
+///
+/// Deliberately narrower than `SetCeiling`'s free-form class string: an
+/// approximate class is the ESB-C defect, so anything outside this list fails
+/// closed at `validate_op`. Mirrors `EdgeActorClass::gate_actor_class`.
+const ACTOR_BINDING_CLASSES: [&str; 3] = ["human", "agent", "system"];
 
 const CONFIRM_KIND_ACCEPT: &str = "accept";
 const CONFIRM_KIND_RESCOPE: &str = "rescope";
@@ -583,6 +593,42 @@ pub enum AuthorityOp {
     },
     /// Federation relationship lifecycle op (OF-156, option B).
     FederationLifecycle(FederationLifecycleAction),
+    /// Binds a roster authority key to a store actor entity at an EXACT actor
+    /// class (ONE-1604-D2 tuple). Establishes `epoch` for this key's binding;
+    /// rejected in the fold if a live binding already exists (use
+    /// `RebindActor`) or the epoch does not advance past the revocation
+    /// watermark.
+    BindActor {
+        /// Roster key the binding attaches to.
+        authority_key: AuthorityKey,
+        /// Store actor entity the key speaks for.
+        actor_ref: EntityId,
+        /// EXACT class: `"human"`, `"agent"`, or `"system"`.
+        actor_class: String,
+        /// Binding epoch; must advance past the revocation watermark.
+        epoch: u64,
+    },
+    /// Replaces the live binding of `authority_key` with a new
+    /// actor_ref/class/epoch. Rejected in the fold when no live binding exists.
+    RebindActor {
+        /// Roster key whose live binding is replaced.
+        authority_key: AuthorityKey,
+        /// New store actor entity.
+        actor_ref: EntityId,
+        /// New EXACT class.
+        actor_class: String,
+        /// New epoch; must be strictly greater than the live binding's.
+        epoch: u64,
+    },
+    /// Revokes the binding of `authority_key` through `epoch` (inclusive
+    /// watermark). Applies unconditionally — revocation is always
+    /// most-restrictive-safe, in any arrival order.
+    RevokeActor {
+        /// Roster key whose binding is revoked.
+        authority_key: AuthorityKey,
+        /// Inclusive revocation watermark.
+        epoch: u64,
+    },
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -728,6 +774,28 @@ pub enum AuthorityFoldIssue {
         /// Deterministic rejection reason.
         reason: FederationLifecycleRejection,
     },
+    /// A Bind/Rebind/RevokeActor op failed the binding transition table.
+    ActorBindingRejected {
+        /// Rejected entry hash.
+        entry: AuthorityEntryHash,
+        /// Deterministic rejection reason.
+        reason: ActorBindingRejection,
+    },
+}
+
+/// Why the fold refused an actor-binding op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorBindingRejection {
+    /// `BindActor` on a key that already holds a live binding (use rebind).
+    BindingExists,
+    /// `RebindActor` on a key with no live binding.
+    BindingMissing,
+    /// Epoch did not advance past the watermark or the prior binding.
+    EpochNotAdvanced,
+    /// Bound key is absent from, or revoked in, the ancestry roster.
+    KeyNotInRoster,
+    /// A `"human"`-class bind whose key lacks owner/admin consent capability.
+    OwnerCapabilityRequired,
 }
 
 /// Fold-visible AUTH-5 state for one detected signer fork.
@@ -806,8 +874,55 @@ pub struct AuthorityFold {
     /// binding pact-bound: a grant that appears here never falls back to
     /// `Unpacted` legacy-allow.
     pub federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
+    /// Folded actor-binding tuples keyed by authority key (ONE-1604-D2).
+    pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
+}
+
+/// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldedActorBinding {
+    /// Store actor entity the key speaks for.
+    pub actor_ref: EntityId,
+    /// EXACT bound class: `"human"`, `"agent"`, or `"system"`.
+    pub actor_class: String,
+    /// Binding epoch.
+    pub epoch: u64,
+    /// Whether this binding currently authorizes.
+    pub status: ActorBindingStatus,
+}
+
+/// Liveness of a folded actor binding.
+///
+/// `Revoked` deliberately covers watermark-dead, merge-conflicted, AND
+/// roster-dead bindings: one dead state, no taxonomy inflation. Callers only
+/// ever need "does this bind authorize".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorBindingStatus {
+    /// Binding authorizes: live epoch, unconflicted, live roster key.
+    Active,
+    /// Binding does not authorize, for any reason.
+    Revoked,
+}
+
+/// True iff `actor_ref` holds an ACTIVE binding at EXACTLY `actor_class`.
+///
+/// This is the owner-verb predicate. Multiple keys may bind one actor, so any
+/// Active hit passes. For class `"human"` the bound key must itself carry
+/// owner capability (enforced at fold time — see the bind transition table),
+/// so `Active` here is sufficient and callers need no second roster lookup.
+#[must_use]
+pub fn actor_binding_is_active(
+    fold: &AuthorityFold,
+    actor_ref: &EntityId,
+    actor_class: &str,
+) -> bool {
+    fold.actor_bindings.values().any(|binding| {
+        binding.status == ActorBindingStatus::Active
+            && binding.actor_ref == *actor_ref
+            && binding.actor_class == actor_class
+    })
 }
 
 impl AuthorityFold {
@@ -896,7 +1011,42 @@ struct FoldState {
     authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
     federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
+    /// Live binding content per authority key (`RevokeActor` never edits this).
+    ///
+    /// Kept SEPARATE from the revocation watermarks so a `RevokeActor` folding
+    /// on a branch that never saw the bind needs no placeholder content.
+    actor_bindings: BTreeMap<AuthorityKey, ActorBindingState>,
+    /// Inclusive revocation watermark per authority key, merged by max.
+    actor_binding_revocations: BTreeMap<AuthorityKey, u64>,
     seqs: BTreeMap<AuthorityKey, u64>,
+}
+
+/// Fold-internal binding content for one authority key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActorBindingState {
+    /// Store actor entity the key speaks for.
+    pub actor_ref: EntityId,
+    /// EXACT bound class.
+    pub actor_class: String,
+    /// Binding epoch.
+    pub epoch: u64,
+    /// Set when divergent same-epoch bindings merged — fail-closed dead.
+    pub conflicted: bool,
+}
+
+impl FoldState {
+    /// A binding is live iff it out-epochs the revocation watermark and no
+    /// divergent same-epoch merge poisoned it. Liveness is DERIVED, never
+    /// stored, so revoke and bind can arrive in any order.
+    fn live_actor_binding(&self, key: &AuthorityKey) -> Option<&ActorBindingState> {
+        let binding = self.actor_bindings.get(key)?;
+        let watermark = self
+            .actor_binding_revocations
+            .get(key)
+            .copied()
+            .unwrap_or(0);
+        (binding.epoch > watermark && !binding.conflicted).then_some(binding)
+    }
 }
 
 /// Encodes an authority entry to canonical MessagePack bytes.
@@ -1517,6 +1667,7 @@ fn fold_authority_log_once(
                 fork_alarms,
                 federation_pacts: BTreeMap::new(),
                 federation_grant_bindings: BTreeMap::new(),
+                actor_bindings: BTreeMap::new(),
                 issues,
             },
             authority_fork_vault_ids,
@@ -1566,10 +1717,44 @@ fn fold_authority_log_once(
             federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
                 state.federation_grant_bindings.clone()
             }),
+            actor_bindings: merged
+                .as_ref()
+                .map_or_else(BTreeMap::new, folded_actor_bindings),
             issues,
         },
         authority_fork_vault_ids,
     )
+}
+
+/// Projects fold-internal binding state onto the public tuple.
+///
+/// Status is computed HERE rather than stored, so roster death propagates for
+/// free: `RevokeDevice`/`RotateKey`/`RecoveryReboot` kill dependent bindings
+/// automatically and order-independently, with no cascade written into binding
+/// state. A rotation deliberately does NOT migrate a binding — the old binding
+/// dies with the old key and the new key needs a fresh `BindActor`.
+fn folded_actor_bindings(state: &FoldState) -> BTreeMap<AuthorityKey, FoldedActorBinding> {
+    state
+        .actor_bindings
+        .iter()
+        .map(|(key, binding)| {
+            let live_key = state.roster.get(key).is_some_and(|device| !device.revoked);
+            let status = if live_key && state.live_actor_binding(key).is_some() {
+                ActorBindingStatus::Active
+            } else {
+                ActorBindingStatus::Revoked
+            };
+            (
+                key.clone(),
+                FoldedActorBinding {
+                    actor_ref: binding.actor_ref,
+                    actor_class: binding.actor_class.clone(),
+                    epoch: binding.epoch,
+                    status,
+                },
+            )
+        })
+        .collect()
 }
 
 fn reconcile_reported_authority_forks(
@@ -1909,7 +2094,10 @@ fn fork_winner_post_quarantine_issue(
         | AuthorityOp::RecoveryReboot { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_) => {}
+        | AuthorityOp::FederationLifecycle(_)
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::RevokeActor { .. } => {}
     }
     None
 }
@@ -2465,6 +2653,8 @@ fn fold_entry_state(
             authority_forks: BTreeMap::new(),
             federation_pacts: BTreeMap::new(),
             federation_grant_bindings: BTreeMap::new(),
+            actor_bindings: BTreeMap::new(),
+            actor_binding_revocations: BTreeMap::new(),
             seqs: BTreeMap::new(),
         };
         upsert_device(&mut state, device);
@@ -2570,6 +2760,21 @@ fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
+    if matches!(
+        entry.op,
+        AuthorityOp::BindActor { .. }
+            | AuthorityOp::RebindActor { .. }
+            | AuthorityOp::RevokeActor { .. }
+    ) {
+        if let Err(reason) = apply_actor_binding(&mut state, &entry.op) {
+            return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
+                entry: hash,
+                reason,
+            });
+        }
+        state.seqs.insert(signer, entry.seq);
+        return EntryFold::Ready(state);
+    }
     if context.vetoed_widens.contains(&hash)
         && op_is_delayable_widen(&state, &entry.op, &participants)
     {
@@ -2606,7 +2811,10 @@ fn fold_entry_state(
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_) => {}
+        | AuthorityOp::FederationLifecycle(_)
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::RevokeActor { .. } => {}
     }
     if !state_has_authority_consent_for_entry(&state, entry, context, hash) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
@@ -2819,7 +3027,14 @@ fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SetCeiling { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_) => false,
+        | AuthorityOp::FederationLifecycle(_)
+        // Bind ops are instant, never delayed-vetoable widens: the widen
+        // ceremony already ran when the KEY was enrolled, and a human-class
+        // bind additionally demands an owner-capable signer AND an
+        // owner-capable bound key, so no authority widens at bind time.
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::RevokeActor { .. } => false,
     }
 }
 
@@ -2838,7 +3053,10 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_) => false,
+        | AuthorityOp::FederationLifecycle(_)
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::RevokeActor { .. } => false,
     }
 }
 
@@ -2967,6 +3185,21 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             }
         }
     }
+    for (key, epoch) in &right.actor_binding_revocations {
+        merged
+            .actor_binding_revocations
+            .entry(key.clone())
+            .and_modify(|current| *current = (*current).max(*epoch))
+            .or_insert(*epoch);
+    }
+    for (key, binding) in &right.actor_bindings {
+        match merged.actor_bindings.get_mut(key) {
+            Some(existing) => *existing = merge_actor_bindings(existing, binding),
+            None => {
+                merged.actor_bindings.insert(key.clone(), binding.clone());
+            }
+        }
+    }
     for (key, seq) in &right.seqs {
         merged
             .seqs
@@ -2975,6 +3208,40 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merged
+}
+
+/// Higher epoch wins; conflict poison is per-epoch, carried by the winner.
+///
+/// Equal epoch with divergent content is the dangerous case: two branches each
+/// believe a different actor holds this key. Keeping the byte-wise smaller
+/// tuple makes the merge deterministic in every arrival order, and
+/// `conflicted` makes it never Active — a fork over identity fails closed
+/// rather than silently picking a winner.
+///
+/// Poison deliberately does NOT leak across epochs: a strictly higher epoch
+/// supersedes the conflicted state outright. It has to, or one historical
+/// divergence would brick the key forever with no way to rebind. The
+/// fail-closed property survives because two branches that each advance past
+/// a conflict must themselves land on the same epoch to be concurrent, and
+/// that tie re-poisons at the new epoch.
+fn merge_actor_bindings(left: &ActorBindingState, right: &ActorBindingState) -> ActorBindingState {
+    match left.epoch.cmp(&right.epoch) {
+        Ordering::Greater => left.clone(),
+        Ordering::Less => right.clone(),
+        Ordering::Equal => {
+            let divergent = (left.actor_ref, left.actor_class.as_str())
+                != (right.actor_ref, right.actor_class.as_str());
+            let mut winner = if (left.actor_ref, left.actor_class.as_str())
+                <= (right.actor_ref, right.actor_class.as_str())
+            {
+                left.clone()
+            } else {
+                right.clone()
+            };
+            winner.conflicted |= divergent || right.conflicted || left.conflicted;
+            winner
+        }
+    }
 }
 
 fn apply_op(
@@ -3050,7 +3317,101 @@ fn apply_op(
         // emit rejections; all lifecycle validation and state transitions
         // live in `fold_entry_state`'s lifecycle arm.
         AuthorityOp::FederationLifecycle(_) => {}
+        // Same precedent: the binding arm in `fold_entry_state` returns before
+        // reaching here, so these are unreachable for Ready entries.
+        AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::RevokeActor { .. } => {}
     }
+}
+
+/// The actor-binding transition table (ONE-1604-D2).
+///
+/// Evaluated against the MERGED ancestry state — the fold is the ordering, so
+/// these rows never consult wall-clock or arrival sequence. Bind/Rebind are
+/// ancestry-validated; Revoke is deliberately asymmetric and never rejected
+/// for absence, because a revocation that fails to apply is the only
+/// unrecoverable outcome here.
+fn apply_actor_binding(
+    state: &mut FoldState,
+    op: &AuthorityOp,
+) -> std::result::Result<(), ActorBindingRejection> {
+    let (authority_key, actor_ref, actor_class, epoch, is_rebind) = match op {
+        AuthorityOp::RevokeActor {
+            authority_key,
+            epoch,
+        } => {
+            let watermark = state
+                .actor_binding_revocations
+                .entry(authority_key.clone())
+                .or_insert(0);
+            *watermark = (*watermark).max(*epoch);
+            return Ok(());
+        }
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        } => (authority_key, actor_ref, actor_class, *epoch, false),
+        AuthorityOp::RebindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        } => (authority_key, actor_ref, actor_class, *epoch, true),
+        _ => return Ok(()),
+    };
+
+    // The linkage teeth: a binding may only attach to a key the roster still
+    // vouches for. Without this, any signed entry could mint identity for a
+    // key that was never enrolled.
+    let Some(device) = state.roster.get(authority_key).filter(|d| !d.revoked) else {
+        return Err(ActorBindingRejection::KeyNotInRoster);
+    };
+    // Closes the bind-an-agent-key-as-human hole: human class is the owner
+    // class, so the bound key must itself be able to give owner consent.
+    // Agent/system bindings may target ROLE_AGENT keys (the 1634 seam).
+    if actor_class == "human" && !folded_device_can_authority_consent(device) {
+        return Err(ActorBindingRejection::OwnerCapabilityRequired);
+    }
+
+    let live = state.live_actor_binding(authority_key);
+    match (is_rebind, live) {
+        (false, Some(_)) => return Err(ActorBindingRejection::BindingExists),
+        (true, None) => return Err(ActorBindingRejection::BindingMissing),
+        (true, Some(existing)) if epoch <= existing.epoch => {
+            return Err(ActorBindingRejection::EpochNotAdvanced);
+        }
+        _ => {}
+    }
+    // A fresh bind must clear BOTH the revocation watermark and any dead
+    // binding still parked on this key, so a revoked epoch can never be
+    // resurrected by replaying the original bind.
+    let floor = state
+        .actor_binding_revocations
+        .get(authority_key)
+        .copied()
+        .unwrap_or(0)
+        .max(
+            state
+                .actor_bindings
+                .get(authority_key)
+                .map_or(0, |binding| binding.epoch),
+        );
+    if epoch <= floor {
+        return Err(ActorBindingRejection::EpochNotAdvanced);
+    }
+    state.actor_bindings.insert(
+        authority_key.clone(),
+        ActorBindingState {
+            actor_ref: *actor_ref,
+            actor_class: actor_class.clone(),
+            epoch,
+            conflicted: false,
+        },
+    );
+    Ok(())
 }
 
 /// Local-outbound half of a pact scope pair.
@@ -3538,6 +3899,35 @@ fn validate_op(op: &AuthorityOp) -> Result<()> {
             Ok(())
         }
         AuthorityOp::FederationLifecycle(action) => validate_federation_lifecycle_action(action),
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_class,
+            epoch,
+            ..
+        }
+        | AuthorityOp::RebindActor {
+            authority_key,
+            actor_class,
+            epoch,
+            ..
+        } => {
+            // EXACT class vocabulary, not SetCeiling's free-form string: an
+            // unrecognized class must never fold into a binding that some
+            // future reader treats as equivalent to "human".
+            if !ACTOR_BINDING_CLASSES.contains(&actor_class.as_str()) || *epoch == 0 {
+                return Err(invalid_authority());
+            }
+            authority_key.validate()
+        }
+        AuthorityOp::RevokeActor {
+            authority_key,
+            epoch,
+        } => {
+            if *epoch == 0 {
+                return Err(invalid_authority());
+            }
+            authority_key.validate()
+        }
     }
 }
 
@@ -3796,7 +4186,58 @@ fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool) ->
             }
             Value::Map(fields)
         }
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        } => actor_binding_op_value(
+            OP_KIND_BIND_ACTOR,
+            authority_key,
+            actor_ref,
+            actor_class,
+            *epoch,
+        ),
+        AuthorityOp::RebindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        } => actor_binding_op_value(
+            OP_KIND_REBIND_ACTOR,
+            authority_key,
+            actor_ref,
+            actor_class,
+            *epoch,
+        ),
+        AuthorityOp::RevokeActor {
+            authority_key,
+            epoch,
+        } => Value::Map(vec![
+            (Value::from(OP_KEY_KIND), Value::from(OP_KIND_REVOKE_ACTOR)),
+            (Value::from("authority_key"), key_value(authority_key)),
+            (Value::from("epoch"), Value::from(*epoch)),
+        ]),
     }
+}
+
+/// Canonical field order for bind/rebind:
+/// `(kind, authority_key, actor_ref, actor_class, epoch)` — byte-pinned by the
+/// golden vectors. `actor_ref` rides as 32-hex like the `grant_ref` precedent.
+fn actor_binding_op_value(
+    kind: &str,
+    authority_key: &AuthorityKey,
+    actor_ref: &EntityId,
+    actor_class: &str,
+    epoch: u64,
+) -> Value {
+    Value::Map(vec![
+        (Value::from(OP_KEY_KIND), Value::from(kind)),
+        (Value::from("authority_key"), key_value(authority_key)),
+        (Value::from("actor_ref"), Value::from(actor_ref.to_hex())),
+        (Value::from("actor_class"), Value::from(actor_class)),
+        (Value::from("epoch"), Value::from(epoch)),
+    ])
 }
 
 fn gesture_value(gesture: &FederationPactGesture) -> Value {
@@ -4069,8 +4510,70 @@ fn decode_op(value: &Value) -> Result<AuthorityOp> {
             })
         }
         OP_KIND_FEDERATION_LIFECYCLE => decode_federation_lifecycle_op(entries),
+        OP_KIND_BIND_ACTOR | OP_KIND_REBIND_ACTOR => {
+            let (authority_key, actor_ref, actor_class, epoch) = decode_actor_binding_op(entries)?;
+            if kind == OP_KIND_BIND_ACTOR {
+                Ok(AuthorityOp::BindActor {
+                    authority_key,
+                    actor_ref,
+                    actor_class,
+                    epoch,
+                })
+            } else {
+                Ok(AuthorityOp::RebindActor {
+                    authority_key,
+                    actor_ref,
+                    actor_class,
+                    epoch,
+                })
+            }
+        }
+        OP_KIND_REVOKE_ACTOR => {
+            validate_keys(entries, &[OP_KEY_KIND, "authority_key", "epoch"])?;
+            Ok(AuthorityOp::RevokeActor {
+                authority_key: decode_key(required(entries, "authority_key")?)?,
+                epoch: required(entries, "epoch")?
+                    .as_u64()
+                    .ok_or_else(invalid_authority)?,
+            })
+        }
         _ => Err(invalid_authority()),
     }
+}
+
+fn decode_actor_binding_op(
+    entries: &[(Value, Value)],
+) -> Result<(AuthorityKey, EntityId, String, u64)> {
+    validate_keys(
+        entries,
+        &[
+            OP_KEY_KIND,
+            "authority_key",
+            "actor_ref",
+            "actor_class",
+            "epoch",
+        ],
+    )?;
+    let actor_ref_hex = required(entries, "actor_ref")?
+        .as_str()
+        .ok_or_else(invalid_authority)?;
+    // `from_hex` routes `from_bytes`, so reserved sentinel ids fail closed; the
+    // round-trip check rejects non-canonical hex (the `grant_ref` precedent).
+    let actor_ref = EntityId::from_hex(actor_ref_hex).map_err(|_| invalid_authority())?;
+    if actor_ref.to_hex() != actor_ref_hex {
+        return Err(invalid_authority());
+    }
+    Ok((
+        decode_key(required(entries, "authority_key")?)?,
+        actor_ref,
+        required(entries, "actor_class")?
+            .as_str()
+            .ok_or_else(invalid_authority)?
+            .to_owned(),
+        required(entries, "epoch")?
+            .as_u64()
+            .ok_or_else(invalid_authority)?,
+    ))
 }
 
 fn decode_federation_lifecycle_op(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
@@ -4334,10 +4837,61 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        let data = encode_authority_log_entry_body(entry)?;
-        let id = authority_log_entity_id(entry)?;
-        self.apply_authority_log_entry_body(&id, occurred, learned_at, data)?;
-        Ok(id)
+        let ids = self.put_authority_log_entries(&[(entry.clone(), occurred, learned_at)])?;
+        ids.into_iter().next().ok_or(Error::EntityNotFound)
+    }
+
+    /// Appends N AUTHORITY_LOG entries in ONE transaction, all-or-nothing.
+    ///
+    /// Every id is derived from entry content (ONE-1604-D1), exactly as the
+    /// single-entry door does. Encoding, validation, and derivation all happen
+    /// BEFORE the write transaction opens, so a bad entry anywhere in the
+    /// batch stores nothing at all.
+    ///
+    /// This is what makes a genesis owner-binding a single ceremony: a host
+    /// composes `[genesis, bind]` and either both land or neither does. The
+    /// door does NOT require a binding to accompany a genesis — enforcement
+    /// lives at the facade, where a rooted vault without an owner binding
+    /// fail-closes owner verbs.
+    pub fn put_authority_log_entries(
+        &self,
+        entries: &[(AuthorityLogEntry, TimeRange, u64)],
+    ) -> Result<Vec<EntityId>> {
+        let mut ids = Vec::with_capacity(entries.len());
+        let mut ops = Vec::with_capacity(entries.len());
+        for (entry, occurred, learned_at) in entries {
+            let data = encode_authority_log_entry_body(entry)?;
+            crate::authority::validate_authority_log_entry_body_bytes(&data)?;
+            let id = authority_log_entity_id(entry)?;
+            ids.push(id);
+            ops.push(BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+                occurred: *occurred,
+                learned_at: *learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            });
+        }
+        if ops.is_empty() {
+            return Ok(ids);
+        }
+        let mut wtxn = self.store.env.write_txn()?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        wtxn.commit()?;
+        Ok(ids)
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
@@ -4514,37 +5068,58 @@ impl Vault {
         ))
     }
 
-    fn apply_authority_log_entry_body(
+    /// Folds the stored AUTHORITY_LOG inside a CALLER-OWNED read transaction.
+    ///
+    /// [`Vault::authority_fold`] opens its own transactions — including a WRITE
+    /// txn for the first-seen clock — so it cannot be called from inside an
+    /// open transaction under LMDB's single-writer rule. This variant reads
+    /// stored first-seen sidecars as they are: no backfill, no clock advance,
+    /// no transaction of its own.
+    ///
+    /// The divergence from the full fold is bounded to pending-WIDEN
+    /// eligibility (a missing sidecar can only delay a widen, never admit
+    /// one), and actor-binding ops are never widens — so the binding predicate
+    /// this exists for is exact.
+    pub(crate) fn authority_fold_readonly_in_txn(
         &self,
-        id: &EntityId,
-        occurred: TimeRange,
-        learned_at: u64,
-        data: Vec<u8>,
-    ) -> Result<()> {
-        crate::authority::validate_authority_log_entry_body_bytes(&data)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            vec![BatchOp::Put {
-                id: *id,
-                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
-                occurred,
-                learned_at,
-                data,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
-        wtxn.commit()?;
-        Ok(())
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<AuthorityFold> {
+        let mut entries = Vec::new();
+        let mut first_seen_at_secs = BTreeMap::new();
+        for row in self
+            .store
+            .type_index
+            .prefix_iter(txn, &[ENTITY_TYPE_AUTHORITY_LOG])?
+        {
+            let (key, _) = row?;
+            let id = entity_id_from_type_index_key(&key)?;
+            let raw = self
+                .store
+                .entities
+                .get(txn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+                return Err(Error::CorruptedIndex("type index row kind mismatch"));
+            }
+            let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let hash = authority_entry_hash(&entry)?;
+            if let Some(first_seen) = self
+                .store
+                .sync_state
+                .get(txn, authority_first_seen_sync_key(&hash).as_str())?
+                .and_then(|raw| decode_authority_first_seen_secs(&raw))
+            {
+                first_seen_at_secs.insert(hash, first_seen);
+            }
+            entries.push(entry);
+        }
+        Ok(fold_authority_log_with_seen_times(
+            &entries,
+            &first_seen_at_secs,
+            unix_seconds_now(),
+        ))
     }
 }
 
