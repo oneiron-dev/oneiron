@@ -26,7 +26,7 @@ use oneiron::sync::{
 };
 use tokio::time::{Duration, Instant};
 
-use crate::auth::require_owner_auth;
+use crate::auth::{is_revoked_or_unreadable, require_owner_auth};
 use crate::broadcast::BroadcastSubscriber;
 use crate::protocol::{self, ProtocolError, SyncMessage, close_codes, window_sub_tags};
 use crate::server::SyncServer;
@@ -198,25 +198,52 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// root snapshot and window exports. When no secret is configured, upgrades
 /// are rejected unless the explicit insecure dev escape hatch is enabled,
 /// matching `auth::require_owner_auth` on the HTTP side.
+///
+/// The credential's revocable identity is carried into the connection rather
+/// than discarded with the rest of the `CoreAuth`: the handshake proves the
+/// token was live at upgrade time, and the socket outlives that instant.
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_owner_auth(&headers, &server.config, server.vault().as_ref())
+    let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let session_jti = auth.jti().map(str::to_owned);
 
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new WebSocket connection");
 
     Ok(ws
         .max_frame_size(server.config.max_frame_size)
-        .on_upgrade(move |socket| handle_connection(socket, server, conn_id)))
+        .on_upgrade(move |socket| handle_connection(socket, server, conn_id, session_jti)))
+}
+
+/// Whether this socket's credential has since been revoked.
+///
+/// The upgrade handshake proves the credential was live THEN; the socket
+/// lives arbitrarily long after it. Revocation is an explicit operator act
+/// against one named token, so it must reach sessions that were ALREADY open
+/// — otherwise `token revoke` only closes the front door while the peer
+/// already inside keeps full vault service. Fail-closed on an unreadable
+/// registry, matching the handshake: "we could not check" is not "still live".
+///
+/// `None` means the credential carries no revocable identity — the bare trust
+/// root or the dev fallthrough — so there is nothing to consult and the
+/// lookup is skipped entirely. Those are retired by rotating `auth_secret`,
+/// which invalidates them without any registry read.
+fn session_credential_revoked(server: &SyncServer, session_jti: Option<&str>) -> bool {
+    session_jti.is_some_and(|jti| is_revoked_or_unreadable(jti, server.vault().as_ref()))
 }
 
 /// Main connection lifecycle.
 #[expect(clippy::cognitive_complexity)]
-async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: u32) {
+async fn handle_connection(
+    socket: WebSocket,
+    server: Arc<SyncServer>,
+    conn_id: u32,
+    session_jti: Option<String>,
+) {
     let (mut ws_sink, mut ws_stream) = socket.split();
 
     // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
@@ -281,6 +308,13 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
 
     // Spawn outbound task: forwards broadcast + direct messages to WebSocket sink
     let outbound_handle = {
+        // Fan-out is sync service the peer never has to ask for, so the
+        // outbound task owns its own revocation consult: a revoked peer that
+        // simply stops sending must not keep receiving other clients' window
+        // updates. Direct sends are answers to inbound messages the loop
+        // below already gated, so only the unsolicited broadcast arm consults.
+        let outbound_server = Arc::clone(&server);
+        let outbound_jti = session_jti.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -289,6 +323,14 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
                             Ok(Some(data)) => {
                                 if !should_forward_broadcast(protocol_version, &data) {
                                     continue;
+                                }
+                                if session_credential_revoked(&outbound_server, outbound_jti.as_deref()) {
+                                    tracing::warn!(
+                                        conn_id,
+                                        "credential revoked — closing live session before fan-out"
+                                    );
+                                    let _ = ws_sink.close().await;
+                                    break;
                                 }
                                 if ws_sink.send(WsMessage::Binary(data.into())).await.is_err() {
                                     tracing::debug!(conn_id, "outbound sink closed");
@@ -381,6 +423,21 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
         // Parse and dispatch the message
         match protocol::parse_message(&data) {
             Ok(msg) => {
+                // Live revocation consult, ahead of every privileged sync
+                // message. The handshake established liveness at upgrade
+                // time only; a `jti` revoked since must get no further
+                // service on this socket. Frames that carry no vault state
+                // in either direction are exempt so an idle keepalive-shaped
+                // connection does not hit the registry per frame.
+                if privileged_sync_message(&msg)
+                    && session_credential_revoked(&server, session_jti.as_deref())
+                {
+                    tracing::warn!(
+                        conn_id,
+                        "credential revoked — refusing sync message and closing"
+                    );
+                    break;
+                }
                 let handle_result =
                     handle_sync_message(&server, conn_id, msg, &direct_tx, &mut conn_state).await;
                 if let Err(e) = handle_result {
@@ -487,6 +544,33 @@ fn validate_protocol_hello(frame: &[u8]) -> Result<u8, u16> {
             Ok(version)
         }
         _ => Err(close_codes::VERSION_MISMATCH),
+    }
+}
+
+/// Whether this message class moves vault state, and therefore requires a
+/// live credential.
+///
+/// Everything that reads the vault out (root VV deltas, window VV exchange,
+/// selector fetches), writes into it (window updates), or registers device
+/// identity (lease) is privileged. Two classes are not, and are exempt so the
+/// registry is not read per frame on a chatty-but-harmless connection:
+///
+/// - `RootUpdate` — the root doc is server-authoritative; the handler
+///   discards client updates without touching any state, so a revoked peer
+///   sending one already achieves nothing.
+/// - `Ephemeral` — presence/cursor LWW state that expires on its own timeout.
+///   It carries no vault content, and the outbound guard already stops the
+///   revoked peer from RECEIVING the resulting fan-out.
+///
+/// The exemptions are the reason this is an explicit allow-list rather than a
+/// blanket check: a new privileged message variant must be classified here,
+/// and the compiler forces that decision by exhaustive match.
+fn privileged_sync_message(msg: &SyncMessage) -> bool {
+    match msg {
+        SyncMessage::RootUpdate(_) | SyncMessage::Ephemeral(_) => false,
+        SyncMessage::RootVersionVector(_)
+        | SyncMessage::LeaseRequest { .. }
+        | SyncMessage::WindowSync { .. } => true,
     }
 }
 

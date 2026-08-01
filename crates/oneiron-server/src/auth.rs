@@ -160,6 +160,9 @@ pub(crate) struct CoreAuth {
     principal_ref: Option<String>,
     scopes: BTreeSet<CoreScope>,
     implicit_all_scopes: bool,
+    /// Revocable identity of the credential this auth came from, when it has
+    /// one. Retained so a long-lived session can re-consult the registry.
+    jti: Option<String>,
 }
 
 impl CoreAuth {
@@ -182,6 +185,7 @@ impl CoreAuth {
             principal_ref: None,
             scopes: CoreScope::all(),
             implicit_all_scopes: true,
+            jti: None,
         })
     }
 
@@ -203,6 +207,14 @@ impl CoreAuth {
 
     pub(crate) fn principal_ref(&self) -> Option<&str> {
         self.principal_ref.as_deref()
+    }
+
+    /// The credential's revocable identity, when it carries one.
+    ///
+    /// A bare trust-root secret and the dev fallthrough have none: neither is
+    /// individually revocable, and rotation is the lever that retires them.
+    pub(crate) fn jti(&self) -> Option<&str> {
+        self.jti.as_deref()
     }
 
     /// Returns whether this auth is an un-narrowed owner-grade credential.
@@ -390,6 +402,7 @@ fn bearer_auth(
             principal_ref: None,
             scopes: CoreScope::all(),
             implicit_all_scopes: true,
+            jti: None,
         });
     }
 
@@ -421,10 +434,7 @@ fn core_auth_for_live_claims(
     revoked: &dyn RevokedTokenJtis,
 ) -> Result<CoreAuth, ApiError> {
     if let Some(jti) = claims.jti.as_deref()
-        && revoked.is_revoked(jti).map_err(|()| {
-            tracing::error!("revoked-token registry unreadable; refusing the credential");
-            ApiError::unauthorized()
-        })?
+        && is_revoked_or_unreadable(jti, revoked)
     {
         return Err(ApiError::unauthorized());
     }
@@ -434,7 +444,24 @@ fn core_auth_for_live_claims(
         principal_ref: claims.principal_ref,
         scopes: claims.scopes.unwrap_or_else(CoreScope::all),
         implicit_all_scopes,
+        jti: claims.jti,
     })
+}
+
+/// Whether `jti` must be refused: revoked, or a registry that cannot be read.
+///
+/// The unreadable case collapses into "refuse" deliberately — an authentic
+/// MAC proves the token was minted, not that it is still live, and "we could
+/// not check" must not resolve to "still live". Shared by the handshake and
+/// the live-session re-consult so both fail closed identically.
+pub(crate) fn is_revoked_or_unreadable(jti: &str, revoked: &dyn RevokedTokenJtis) -> bool {
+    match revoked.is_revoked(jti) {
+        Ok(revoked) => revoked,
+        Err(()) => {
+            tracing::error!("revoked-token registry unreadable; refusing the credential");
+            true
+        }
+    }
 }
 
 #[derive(Default)]
