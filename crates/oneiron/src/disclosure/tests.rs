@@ -1644,3 +1644,304 @@ fn facet_state_codecs_and_predicate_family() -> Result<()> {
     assert_eq!(FacetExposure::parse("PUBLIC"), None);
     Ok(())
 }
+
+// ─── ONE-1646 exposure-consent gate on FacetOf unstamping ───────────────────
+
+/// P1 REGRESSION — privacy must not launder through DELETION.
+///
+/// `facet_conjunct_admits` admits a claim with NO `FacetOf` stamp as the
+/// `{invariant}` (unfaceted) term, so tearing off a claim's last stamp MOVES IT
+/// BETWEEN CLAMP CLASSES with no body edit and no consent transition. This pins
+/// the full sequence on the real admission door: private-stamped claim is
+/// clamped → the delete is REFUSED with nothing written and the clamp intact →
+/// after the ledgered exposure transition the delete succeeds AND the claim is
+/// admitted, because the facet is public by then and was never laundered.
+#[test]
+fn facet_of_delete_cannot_launder_a_private_claim_unfaceted() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x81);
+    put_facet(&vault, &facet);
+    let contact = test_id(0x82);
+    seed_contact(&vault, contact, "a@example.com");
+    let claim = test_id(0x83);
+    put_public_claim(&vault, &claim, test_id(0x84));
+    stamp_facet_of(&vault, &claim, &facet);
+
+    let room = |vault: &Vault| {
+        DisclosureContext::resolve(
+            vault,
+            InterlocutorSet::with_session_owner(vec![known(contact, "a@example.com")]),
+        )
+    };
+
+    // Baseline: the stamp is doing real work — the claim is clamped out.
+    {
+        let ctx = room(&vault)?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            !ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?,
+            "a claim stamped into a private facet must be clamped"
+        );
+    }
+
+    // THE ATTACK: delete the stamp with no exposure/consent transition. Both
+    // edge-delete doors refuse, and neither leaves a torn row behind.
+    let refusal = vault
+        .delete_edge(&claim, EdgeKind::FacetOf, &facet)
+        .expect_err("delete_edge must refuse the unstamp");
+    assert_eq!(refusal.kind(), ErrorKind::FacetUnstampWithoutConsent);
+    let batch_refusal = vault
+        .batch()
+        .delete_edge(&claim, EdgeKind::FacetOf, &facet)
+        .commit()
+        .expect_err("BatchOp::DeleteEdge must refuse the unstamp");
+    assert_eq!(batch_refusal.kind(), ErrorKind::FacetUnstampWithoutConsent);
+    assert!(
+        vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "a refused unstamp writes nothing"
+    );
+    {
+        let ctx = room(&vault)?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            !ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?,
+            "the clamp still holds after the refused delete"
+        );
+    }
+
+    // WITH the transition on record, the same delete goes through.
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 200)?;
+    assert!(vault.delete_edge(&claim, EdgeKind::FacetOf, &facet)?);
+    assert!(!vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?);
+    {
+        let ctx = room(&vault)?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            ctx.admits(&vault.store, &rtxn, &claim, ENTITY_TYPE_CLAIM, None)?,
+            "post-transition the claim is admitted through the ledgered door, not laundered"
+        );
+    }
+    Ok(())
+}
+
+/// The FACET-entity hard delete is the same laundering path at its widest: the
+/// deindex cascade tears EVERY inbound stamp at once. Gated on the facet's own
+/// exposure, and an unstamped facet stays freely deletable (nothing moves
+/// between clamp classes, so there is nothing to launder).
+#[test]
+fn facet_entity_hard_delete_is_gated_on_exposure() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let stamped = test_id(0x86);
+    let bare = test_id(0x87);
+    put_facet(&vault, &stamped);
+    put_facet(&vault, &bare);
+    let claim = test_id(0x88);
+    put_public_claim(&vault, &claim, test_id(0x89));
+    stamp_facet_of(&vault, &claim, &stamped);
+
+    let refusal = vault
+        .batch()
+        .delete(&stamped)
+        .commit()
+        .expect_err("hard-deleting a private stamped facet must refuse");
+    assert_eq!(refusal.kind(), ErrorKind::FacetUnstampWithoutConsent);
+    assert!(
+        vault.edge_exists(&claim, EdgeKind::FacetOf, &stamped)?,
+        "the refusal is atomic — no stamp was torn"
+    );
+    assert!(
+        vault.get_entity_type(&stamped)?.is_some(),
+        "facet still exists"
+    );
+
+    // A private facet NOTHING is stamped into carries no laundering risk.
+    vault.batch().delete(&bare).commit()?;
+    assert!(vault.get_entity_type(&bare)?.is_none());
+
+    // With the exposure transition on record, the stamped facet goes too.
+    vault.set_facet_exposure(&stamped, FacetExposure::Public, 300)?;
+    vault.batch().delete(&stamped).commit()?;
+    assert!(vault.get_entity_type(&stamped)?.is_none());
+    assert!(!vault.edge_exists(&claim, EdgeKind::FacetOf, &stamped)?);
+    Ok(())
+}
+
+/// The gate is NARROW: it fires on `FacetOf` unstamps of PRIVATE facets and
+/// nothing else. Other edge kinds between the same endpoints, and unstamps of
+/// rows that do not exist, both pass — a gate that converted an idempotent
+/// no-op into an error would be a wall, not a dial.
+#[test]
+fn unstamp_gate_ignores_other_kinds_and_absent_rows() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x8A);
+    put_facet(&vault, &facet);
+    let claim = test_id(0x8B);
+    put_public_claim(&vault, &claim, test_id(0x8C));
+
+    // No FacetOf row exists: deleting one removes nothing, so it widens
+    // nothing. Both doors stay quiet.
+    assert!(!vault.delete_edge(&claim, EdgeKind::FacetOf, &facet)?);
+    vault
+        .batch()
+        .delete_edge(&claim, EdgeKind::FacetOf, &facet)
+        .commit()?;
+
+    // A DIFFERENT kind between the same endpoints is not a facet stamp and is
+    // not read by the facet conjunct — deleting it is untouched by the gate.
+    vault
+        .batch()
+        .edge(&claim, EdgeKind::HasFacet, &facet, 1.0)
+        .commit()?;
+    assert!(vault.delete_edge(&claim, EdgeKind::HasFacet, &facet)?);
+    Ok(())
+}
+
+// ─── ONE-1646 fix leg 1: one snapshot per resolve, facet state erased ───────
+
+/// P2-a REGRESSION — the resolver reads EVERY conjunct from the caller's
+/// snapshot, never from transactions it opens itself.
+///
+/// The two halves of the disclosable set used to read from DIFFERENT
+/// transactions: each clearance lookup opened its own, and the exposure scan
+/// another. A write committing between them yielded a set that was never the
+/// vault's state at any instant — the pre-write clearance mixed with the
+/// post-write exposure (TOCTOU).
+///
+/// The pin makes that interleaving deterministic instead of racy. A snapshot is
+/// taken, then BOTH families are rewritten and committed, then the resolver is
+/// evaluated ON THE OLD SNAPSHOT. The two halves are wired to disagree under
+/// the defect: `public_facet` is disclosable ONLY via exposure and
+/// `cleared_facet` ONLY via clearance, and each is revoked by the commit. A
+/// resolver honoring the snapshot returns BOTH; one that re-read either family
+/// through a fresh transaction would drop that family's facet and return a mix
+/// that never existed.
+#[test]
+fn resolve_reads_every_conjunct_from_one_snapshot() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let public_facet = test_id(0x91);
+    let cleared_facet = test_id(0x93);
+    put_facet(&vault, &public_facet);
+    put_facet(&vault, &cleared_facet);
+    let contact = test_id(0x92);
+    seed_contact(&vault, contact, "a@example.com");
+    // Disjoint sources: exposure carries one facet, clearance the other.
+    vault.set_facet_exposure(&public_facet, FacetExposure::Public, 100)?;
+    grant_clearance(&vault, &contact, vec![cleared_facet]);
+
+    let set = InterlocutorSet::with_session_owner(vec![known(contact, "a@example.com")]);
+    let expected = {
+        let mut both = vec![public_facet, cleared_facet];
+        both.sort_unstable();
+        both
+    };
+    match resolve_disclosable_set(&vault.store, &vault.store.env.read_txn()?, &set)? {
+        DisclosableSet::Facets(facets) => assert_eq!(facets, expected),
+        DisclosableSet::All => panic!("expected a resolved facet set"),
+    }
+
+    // The snapshot the resolve will run against, taken BEFORE the writes.
+    let snapshot = vault.store.env.read_txn()?;
+
+    // Both families change and COMMIT while that snapshot is held.
+    vault.set_facet_exposure(&public_facet, FacetExposure::Private, 200)?;
+    vault.set_contact_facet_clearance(
+        &contact,
+        &FacetClearance {
+            facets: vec![cleared_facet],
+            status: DisclosureScopeStatus::Revoked,
+            created_at: 100,
+            updated_at: 400,
+        },
+    )?;
+
+    // Evaluated on the OLD snapshot, both halves report the OLD state. Losing
+    // either one would mean that family had been re-read outside the snapshot.
+    match resolve_disclosable_set(&vault.store, &snapshot, &set)? {
+        DisclosableSet::Facets(facets) => assert_eq!(
+            facets, expected,
+            "every conjunct must come from the caller's snapshot, whole"
+        ),
+        DisclosableSet::All => panic!("expected a resolved facet set"),
+    }
+    drop(snapshot);
+
+    // A resolve started AFTER the commits sees the new state, equally whole.
+    assert!(
+        disclosable_facets(&DisclosureContext::resolve(&vault, set)?).is_empty(),
+        "a later resolve reports the post-commit state in full"
+    );
+    Ok(())
+}
+
+/// P2-b REGRESSION — facet-state rows are ERASED WITH THEIR ENTITY.
+///
+/// Hard-deleting a contact used to leave `contact.clearance.v1:<contact>` and
+/// its `disclosure.clearance` mirror standing: a record naming a person who no
+/// longer exists, still holding the facet ids they were cleared for. Symmetric
+/// for a deleted facet's exposure row. Both families now go with the entity —
+/// row AND mirror — and the resolver stops counting them.
+#[test]
+fn hard_delete_erases_contact_clearance_and_facet_exposure() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xB1);
+    put_facet(&vault, &facet);
+    let contact = test_id(0xB2);
+    seed_contact(&vault, contact, "a@example.com");
+    grant_clearance(&vault, &contact, vec![facet]);
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+    let clearance_mirror = facet_clearance_claim_id(&contact)?;
+    let exposure_mirror = facet_exposure_claim_id(&facet)?;
+    assert!(vault.get_claim(&clearance_mirror)?.is_some());
+    assert!(vault.get_claim(&exposure_mirror)?.is_some());
+
+    // ── contact erased: clearance row AND mirror go with it ──
+    vault.batch().delete(&contact).commit()?;
+    assert_eq!(
+        vault.contact_facet_clearance(&contact)?,
+        None,
+        "the clearance row must not outlive the contact"
+    );
+    assert!(
+        vault.get_claim(&clearance_mirror)?.is_none(),
+        "the disclosure.clearance mirror must not outlive the contact"
+    );
+
+    // ── facet erased: exposure row AND mirror go with it ──
+    vault.batch().delete(&facet).commit()?;
+    assert_eq!(vault.facet_exposure(&facet)?, None);
+    assert!(vault.get_claim(&exposure_mirror)?.is_none());
+
+    // And the resolver no longer counts the dead facet as public: a room with
+    // an unknown party present sees an empty disclosable set.
+    let ctx = DisclosureContext::resolve(
+        &vault,
+        InterlocutorSet::with_session_owner(vec![Interlocutor::unknown("guest", false)]),
+    )?;
+    assert!(
+        disclosable_facets(&ctx).is_empty(),
+        "an erased facet stops voting public in every future resolve"
+    );
+    Ok(())
+}
+
+/// Deleting the STAMPED RECORD is not laundering and is not gated: a claim
+/// that no longer exists cannot be admitted to any room, so tearing its own
+/// stamps on the way out moves nothing between clamp classes. Only unstamping
+/// a SURVIVING record widens.
+#[test]
+fn hard_deleting_a_stamped_claim_is_not_gated() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xB4);
+    put_facet(&vault, &facet);
+    let claim = test_id(0xB5);
+    put_public_claim(&vault, &claim, test_id(0xB6));
+    stamp_facet_of(&vault, &claim, &facet);
+
+    // The facet stays PRIVATE throughout — the gate would fire if it keyed on
+    // the stamp rather than on who survives it.
+    vault.batch().delete(&claim).commit()?;
+    assert!(vault.get_claim(&claim)?.is_none());
+    assert!(!vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?);
+    assert_eq!(vault.facet_exposure(&facet)?, None, "facet still private");
+    Ok(())
+}

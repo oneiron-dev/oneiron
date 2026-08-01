@@ -2126,6 +2126,11 @@ pub(crate) fn apply_ops_with_gate_mode(
                 had_vector_mutation |= had_vector;
             }
             BatchOp::DeleteEdge { src, kind, tgt } => {
+                // ONE-1646: the staged-op half of the exposure-consent gate on
+                // FacetOf unstamping. Aborts the batch atomically before the
+                // row comes off, matching `validate_facet_of_edge`'s stance on
+                // the write side of the same seam.
+                crate::disclosure::gate_facet_of_unstamp(store, wtxn, &src, kind, &tgt)?;
                 if apply_delete_edge(store, wtxn, src, kind, tgt)? {
                     ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
                     had_graph_mutation = true;
@@ -2453,6 +2458,18 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     let mut had_graph_mutation = false;
     let mut neighbors = Vec::new();
 
+    // ONE-1646 exposure-consent gate, BEFORE the first row comes off: hard
+    // deleting a FACET cascades away every inbound `FacetOf` stamp through
+    // `delete_related_edges` below, unfaceting every claim that carried one —
+    // the disclosure-laundering path at its widest. This is the shared
+    // chokepoint for BOTH hard-delete doors (the `BatchOp::Delete` arm and
+    // `deletion`'s purge), so neither can route around the gate. The soft-erase
+    // path deliberately needs no gate: it truncates the body and leaves the
+    // edges standing, so no stamp is torn and no clamp class moves.
+    if stored_entity_type(store, &*wtxn, id)? == Some(crate::registry::ENTITY_TYPE_FACET) {
+        crate::disclosure::gate_facet_entity_delete(store, &*wtxn, id)?;
+    }
+
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
@@ -2504,6 +2521,16 @@ fn deindex_entity_without_lexical_query_hint_cascade(
             Err(error) => return Err(error),
         }
     }
+    // ONE-1646: the disclosure facet-state families are registered with entity
+    // deletion here, keyed by the type just parsed — a deleted contact's
+    // clearance row and a deleted facet's exposure row (and each one's claim
+    // mirror) go with the entity rather than outliving it as orphans.
+    let facet_state =
+        crate::disclosure::delete_facet_state_for_entity_in_txn(store, wtxn, id, entity_type)?;
+    had_vector |= facet_state.had_vector;
+    had_graph_mutation |= facet_state.had_graph_mutation;
+    neighbors.extend(facet_state.neighbors);
+
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,

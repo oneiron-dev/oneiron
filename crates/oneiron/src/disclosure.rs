@@ -963,6 +963,40 @@ pub(crate) fn disclosure_tier_a_marked_in(
         .is_some())
 }
 
+/// Snapshot-scoped read of a contact's clearance row. The owner-facing
+/// `Vault::contact_facet_clearance` is this over a freshly-opened txn; the
+/// resolver calls it on the ONE transaction the whole clamp resolves against.
+fn contact_facet_clearance_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<Option<FacetClearance>> {
+    let Some(bytes) = store
+        .vault_meta
+        .get(rtxn, &facet_clearance_meta_key(contact_id))?
+    else {
+        return Ok(None);
+    };
+    decode_facet_clearance_body(&bytes).map(Some)
+}
+
+/// Snapshot-scoped read of a contact's disclosure scope row. Same split as
+/// [`contact_facet_clearance_in_txn`]: the presence-scope fold is a conjunct of
+/// the same resolve and must see the same instant.
+fn counterparty_disclosure_scope_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<Option<DisclosureScope>> {
+    let Some(bytes) = store
+        .vault_meta
+        .get(rtxn, &disclosure_scope_meta_key(contact_id))?
+    else {
+        return Ok(None);
+    };
+    decode_disclosure_scope_body(&bytes).map(Some)
+}
+
 /// Deterministic claim-mirror id for a subject's disclosure claim: the CID-7
 /// overwrite pattern — re-sets rewrite the SAME claim entity, so exactly one
 /// owner-visible claim per (family, subject) exists and a rewrite supersedes
@@ -1058,14 +1092,7 @@ impl Vault {
         contact_id: &EntityId,
     ) -> Result<Option<DisclosureScope>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(bytes) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &disclosure_scope_meta_key(contact_id))?
-        else {
-            return Ok(None);
-        };
-        decode_disclosure_scope_body(&bytes).map(Some)
+        counterparty_disclosure_scope_in_txn(&self.store, &rtxn, contact_id)
     }
 
     /// Sets a facet's exposure class: dual-writes the `vault_meta`
@@ -1171,14 +1198,7 @@ impl Vault {
     /// which the resolver reads as the EMPTY clearance. LOUD on corruption.
     pub fn contact_facet_clearance(&self, contact_id: &EntityId) -> Result<Option<FacetClearance>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(bytes) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &facet_clearance_meta_key(contact_id))?
-        else {
-            return Ok(None);
-        };
-        decode_facet_clearance_body(&bytes).map(Some)
+        contact_facet_clearance_in_txn(&self.store, &rtxn, contact_id)
     }
 
     /// Owner-marks an entity Tier A (design §7 rule 5): meta row plus the
@@ -1319,8 +1339,201 @@ impl Vault {
     }
 }
 
+/// What removing one entity's disclosure facet-state cost the graph, in the
+/// shape [`crate::batch::deindex_entity`] already folds (the
+/// `BlobArtifactLifecycleCleanup` precedent).
+#[derive(Debug, Default)]
+pub(crate) struct FacetStateCleanup {
+    pub(crate) had_vector: bool,
+    pub(crate) had_graph_mutation: bool,
+    pub(crate) neighbors: Vec<EntityId>,
+}
+
+/// Registers the two facet-state families with ENTITY DELETION: a hard-deleted
+/// entity's facet-state rows and their owner-visible claim mirrors go with it.
+///
+/// Without this, hard-deleting a contact left `contact.clearance.v1:<contact>`
+/// and its `disclosure.clearance` mirror standing — rows naming a person who
+/// no longer exists, holding the facet ids they were once cleared for. That is
+/// an erasure-completeness hole (the record survives the erasure), and it is
+/// also a resurrection hazard: entity ids are caller-chosen, so a later entity
+/// minted at the same id would silently inherit the dead contact's clearance.
+/// The facet half is symmetric — a deleted FACET's `facet.exposure.v1` row
+/// would otherwise keep voting "public" in every future resolve for an id that
+/// resolves to nothing.
+///
+/// The mirror is a CLAIM entity, so it is removed through the ordinary deindex
+/// door rather than a raw row delete — it carries edges, indexes, and possibly
+/// a vector, exactly like any other claim. Recursion terminates in one step:
+/// a mirror is a CLAIM and matches neither branch below.
+///
+/// Only the families THIS lane minted are registered here. The older
+/// `disclosure.scope.v1` / `disclosure.tier_a.v1` rows have the identical
+/// orphan shape and are NOT swept — that is pre-existing and belongs to the
+/// erasure chain that owns those families, not to a facet-state fix.
+pub(crate) fn delete_facet_state_for_entity_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<FacetStateCleanup> {
+    let (meta_key, claim_id) = match entity_type {
+        ENTITY_TYPE_COUNTERPARTY_CONTACT => {
+            (facet_clearance_meta_key(id), facet_clearance_claim_id(id)?)
+        }
+        ENTITY_TYPE_FACET => (facet_exposure_meta_key(id), facet_exposure_claim_id(id)?),
+        _ => return Ok(FacetStateCleanup::default()),
+    };
+    store.vault_meta.delete(wtxn, &meta_key)?;
+
+    // Only OUR mirror is removed. The derived id is a public sha256, so a
+    // foreign claim could be squatting it through the ordinary gated
+    // `put_claim` door — the same custody check `clear_disclosure_tier_a`
+    // makes before it rewrites a derived id.
+    let Some(raw) = store.entities.get(wtxn, claim_id.as_bytes())? else {
+        return Ok(FacetStateCleanup::default());
+    };
+    let is_our_mirror = EntityMetadataHeader::parse(&raw)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+        && raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .and_then(|payload| decode_claim_body(payload, true).ok())
+            .is_some_and(|body| is_disclosure_claim_predicate(&body.predicate));
+    if !is_our_mirror {
+        return Ok(FacetStateCleanup::default());
+    }
+    let (_existed, had_vector, had_graph_mutation, neighbors) =
+        crate::batch::deindex_entity(store, wtxn, &claim_id)?;
+    crate::ppr::invalidate_ppr_for_delete(store, wtxn, &claim_id, &neighbors)?;
+    Ok(FacetStateCleanup {
+        had_vector,
+        had_graph_mutation,
+        neighbors,
+    })
+}
+
+/// Reads a facet's exposure ON THE ENFORCEMENT PATH: missing row, undecodable
+/// row, or a row that says so all read PRIVATE. Born-private, fail-closed —
+/// the same quiet-narrow stance [`resolve_disclosable_set`] takes, so a
+/// corrupted row can never be the reason a gate opens.
+pub(crate) fn facet_exposure_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    facet_id: &EntityId,
+) -> Result<FacetExposure> {
+    let Some(bytes) = store
+        .vault_meta
+        .get(txn, &facet_exposure_meta_key(facet_id))?
+    else {
+        return Ok(FacetExposure::Private);
+    };
+    Ok(decode_facet_exposure_body(&bytes).map_or(FacetExposure::Private, |state| state.exposure))
+}
+
+/// The ONE-1646 exposure-consent gate on `FacetOf` UNSTAMPING — the seam
+/// `batch::validate_facet_of_edge` reserved ("gating `FacetOf` deletes on
+/// exposure state lands at THIS call site once facet exposure state exists").
+///
+/// THE LAUNDERING PATH IT CLOSES: [`DisclosureContext::facet_conjunct_admits`]
+/// reads a claim's outgoing `FacetOf` stamps and admits a claim with NO stamp
+/// as the `{invariant}` (unfaceted/core) term of P7. Deletion therefore MOVES
+/// A RECORD BETWEEN CLAMP CLASSES with no body edit and no consent transition:
+/// stamp a claim into a private facet, delete the stamp, and the claim is
+/// admitted to rooms that were never cleared for it. Set-side removal is the
+/// same widening as a private→public restamp, and it takes the same door.
+///
+/// THE RULE: a `FacetOf` unstamp whose TARGET IS PRIVATE requires the facet to
+/// have been transitioned Public through the ledgered owner door
+/// (`Vault::set_facet_exposure`, which writes the `disclosure.facet_exposure`
+/// claim mirror as the consent record) BEFORE the stamp comes off. A stamp to
+/// a PUBLIC facet is inert in the conjunct — a public facet is a member of
+/// every resolved disclosable set, so its presence never narrows and its
+/// removal never widens — and is admitted unconditionally.
+///
+/// WHY EXPOSURE AND NOT CLEARANCE keys the gate: clearance is per-contact and
+/// per-room, so no fixed clearance row is "the" consent for a delete that
+/// affects every future room; exposure is the facet-global state the resolver
+/// unions in for ALL rooms, so `Public` is exactly the predicate under which
+/// no room's disclosable set can shrink by this deletion. The spec is silent
+/// on the delete shape (it specs the write side); this is the seam contract's
+/// "same transition as a private→public restamp" read literally, and it is
+/// recorded here as the lane's choice.
+///
+/// The gate is TOTAL over the three removal paths, because all three converge
+/// on removing a row that the conjunct reads:
+///
+/// * [`Vault::delete_edge`] — the direct convenience door;
+/// * `BatchOp::DeleteEdge` — the staged-op arm;
+/// * FACET-entity hard delete — the cascade in `batch::delete_related_edges`
+///   tears every inbound stamp at once, so it is gated on the facet itself
+///   (`source: None`) rather than per-edge.
+///
+/// Non-`FacetOf` kinds pass untouched, and a NON-EXISTENT stamp passes: a
+/// delete that removes nothing widens nothing, so the gate never converts an
+/// idempotent no-op into an error.
+pub(crate) fn gate_facet_of_unstamp(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+) -> Result<()> {
+    if kind != EdgeKind::FacetOf {
+        return Ok(());
+    }
+    let key = Store::encode_edge_key(src, kind, tgt);
+    if store.edges_out.get(txn, &key)?.is_none() {
+        return Ok(());
+    }
+    if facet_exposure_in_txn(store, txn, tgt)? == FacetExposure::Public {
+        return Ok(());
+    }
+    Err(Error::FacetUnstampWithoutConsent {
+        facet: *tgt,
+        stamped_by: Some(*src),
+    })
+}
+
+/// The FACET-entity half of [`gate_facet_of_unstamp`]: hard-deleting a facet
+/// cascades away every inbound `FacetOf` stamp at once, which unfacets every
+/// stamped claim in one step — the laundering path at its widest. Gated on the
+/// facet's own exposure, checked BEFORE any row is torn, so the refusal is
+/// atomic with respect to the delete.
+///
+/// A facet carrying NO inbound stamps is deletable whatever its exposure:
+/// nothing moves between clamp classes, so there is nothing to launder.
+pub(crate) fn gate_facet_entity_delete(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    facet_id: &EntityId,
+) -> Result<()> {
+    if facet_exposure_in_txn(store, txn, facet_id)? == FacetExposure::Public {
+        return Ok(());
+    }
+    let has_inbound_stamp = store
+        .edges_in
+        .prefix_iter(txn, facet_id.as_bytes())?
+        .filter_map(std::result::Result::ok)
+        .any(|(key, _)| key.get(ENTITY_ID_LEN) == Some(&(EdgeKind::FacetOf as u8)));
+    if has_inbound_stamp {
+        return Err(Error::FacetUnstampWithoutConsent {
+            facet: *facet_id,
+            stamped_by: None,
+        });
+    }
+    Ok(())
+}
+
 /// F2(d) room rule — THE single resolver (P1). Computes
 /// `public ∪ (∩ clearances of all non-owner present)`.
+///
+/// SNAPSHOT: reads run on the CALLER'S transaction, never one opened here.
+/// The clearance fold and the exposure scan are two halves of one set
+/// expression, and `DisclosureContext::resolve` folds presence scopes from the
+/// same rows — evaluating them against different snapshots would let a
+/// concurrent exposure or clearance write land BETWEEN conjuncts and produce a
+/// clamp that never existed at any instant (TOCTOU). One `RoTxn` for the whole
+/// resolve makes the resolved state a point-in-time fact.
 ///
 /// CORRUPTION STANCE mirrors [`DisclosureContext::resolve`]: on the
 /// enforcement path an undecodable clearance or exposure row contributes the
@@ -1328,7 +1541,11 @@ impl Vault {
 /// assembly; storage I/O errors stay loud. The owner-facing Vault reads
 /// (`facet_exposure` / `contact_facet_clearance`) error loudly instead, so
 /// corruption stays visible on the consent surface.
-fn resolve_disclosable_set(vault: &Vault, set: &InterlocutorSet) -> Result<DisclosableSet> {
+fn resolve_disclosable_set(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    set: &InterlocutorSet,
+) -> Result<DisclosableSet> {
     // P1 identity element, BEFORE any fold: the intersection over the empty
     // family of non-owner interlocutors is ALL facets. The owner alone is
     // never locked out of their own private facets, at zero reads.
@@ -1346,7 +1563,7 @@ fn resolve_disclosable_set(vault: &Vault, set: &InterlocutorSet) -> Result<Discl
         let entry_facets = match entry.contact_ref() {
             Some(hex) => {
                 let contact_id = EntityId::from_hex(hex)?;
-                match vault.contact_facet_clearance(&contact_id) {
+                match contact_facet_clearance_in_txn(store, rtxn, &contact_id) {
                     Ok(Some(clearance)) => clearance.granted_facets().to_vec(),
                     Ok(None) => Vec::new(),
                     Err(error) if error.kind() == ErrorKind::InvalidFacetClearance => Vec::new(),
@@ -1368,11 +1585,9 @@ fn resolve_disclosable_set(vault: &Vault, set: &InterlocutorSet) -> Result<Discl
     // number of facets carrying explicit exposure state — small by
     // construction. An undecodable row is skipped (= not public).
     let mut facets = cleared.unwrap_or_default();
-    let rtxn = vault.store.env.read_txn()?;
-    for row in vault
-        .store
+    for row in store
         .vault_meta
-        .prefix_iter(&rtxn, FACET_EXPOSURE_KEY_PREFIX)?
+        .prefix_iter(rtxn, FACET_EXPOSURE_KEY_PREFIX)?
     {
         let (key, value) = row?;
         let Some(id_bytes) = key.get(FACET_EXPOSURE_KEY_PREFIX.len()..) else {
@@ -1420,7 +1635,21 @@ impl DisclosureContext {
     /// storage I/O failures stay loud. The owner-facing read
     /// (`Vault::counterparty_disclosure_scope`) keeps erroring loudly so
     /// corruption stays visible on the consent surface.
+    ///
+    /// ONE SNAPSHOT FOR THE WHOLE RESOLVE. Every conjunct this builds — the
+    /// per-contact presence scopes, the clearance fold, the facet-exposure
+    /// scan — reads from the single `RoTxn` opened here. Opening a txn per
+    /// lookup would let a concurrent exposure flip or clearance revoke land
+    /// BETWEEN two conjuncts, yielding a mixed clamp that was never the vault's
+    /// state at any instant: a facet could be counted public by the exposure
+    /// scan while the clearance fold already reflected its revocation, or the
+    /// reverse. The resolved `DisclosureContext` is the value the builder,
+    /// board, and response all quote (design §11 rule 6), so it must name ONE
+    /// point in time. LMDB readers are snapshot-isolated, so a writer racing
+    /// this resolve is simply not visible to it — the assembly is clamped
+    /// against the state that held when it began.
     pub fn resolve(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
+        let rtxn = vault.store.env.read_txn()?;
         let mode = DisclosureMode::from_set(&set);
         let scope = if mode == DisclosureMode::AbsenceClamp && set.has_non_owner() {
             let now = crate::unix_seconds_now();
@@ -1429,7 +1658,8 @@ impl DisclosureContext {
                 let entry_scope = match entry.contact_ref() {
                     Some(hex) => {
                         let contact_id = EntityId::from_hex(hex)?;
-                        match vault.counterparty_disclosure_scope(&contact_id) {
+                        match counterparty_disclosure_scope_in_txn(&vault.store, &rtxn, &contact_id)
+                        {
                             Ok(Some(scope)) if scope.status == DisclosureScopeStatus::Active => {
                                 scope
                             }
@@ -1451,7 +1681,8 @@ impl DisclosureContext {
         } else {
             None
         };
-        let disclosable = resolve_disclosable_set(vault, &set)?;
+        let disclosable = resolve_disclosable_set(&vault.store, &rtxn, &set)?;
+        drop(rtxn);
         Ok(Self {
             mode,
             interlocutors: set,

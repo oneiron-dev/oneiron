@@ -184,6 +184,7 @@ pub enum ErrorKind {
     InvalidDisclosureScope,
     InvalidFacetExposure,
     InvalidFacetClearance,
+    FacetUnstampWithoutConsent,
     DisclosureClampViolation,
     InvalidTaskBody,
     CorruptedIndex,
@@ -952,6 +953,28 @@ pub enum Error {
     /// EMPTY clearance instead.
     #[error("invalid facet clearance: {0}")]
     InvalidFacetClearance(&'static str),
+    /// A `FacetOf` unstamp would have WIDENED disclosure without the recorded
+    /// exposure transition that widening requires (ONE-1646 seam, the
+    /// mirror-image of the private→public restamp gate).
+    ///
+    /// Removing a stamp to a PRIVATE facet strictly relaxes the disclosure
+    /// clamp's facet conjunct — at the limit a claim whose last stamp is torn
+    /// off becomes "unfaceted" and is admitted as invariant — so deletion
+    /// would otherwise launder privacy with no exposure/consent transition on
+    /// record. A stamp to a PUBLIC facet is inert in that conjunct (a public
+    /// facet is a member of every resolved disclosable set), so removing it
+    /// cannot widen and is admitted. The owner widens through the ledgered
+    /// door (`Vault::set_facet_exposure`) first. `stamped_by` is the stamping
+    /// record where one delete is at fault, `None` when the whole facet is
+    /// being torn out from under its stamps. Nothing was written.
+    #[error(
+        "FacetOf unstamp of private facet {} (stamped by {stamped_by:?}) requires a recorded exposure transition",
+        facet.to_hex()
+    )]
+    FacetUnstampWithoutConsent {
+        facet: EntityId,
+        stamped_by: Option<EntityId>,
+    },
     /// A non-admitted entity survived into an assembled context pack. The
     /// pack build FAILS rather than leaks (OF-365 fail-closed sweep).
     #[error("disclosure clamp violation: {0}")]
@@ -1610,6 +1633,7 @@ impl Error {
             Self::InvalidDisclosureScope(_) => ErrorKind::InvalidDisclosureScope,
             Self::InvalidFacetExposure(_) => ErrorKind::InvalidFacetExposure,
             Self::InvalidFacetClearance(_) => ErrorKind::InvalidFacetClearance,
+            Self::FacetUnstampWithoutConsent { .. } => ErrorKind::FacetUnstampWithoutConsent,
             Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
