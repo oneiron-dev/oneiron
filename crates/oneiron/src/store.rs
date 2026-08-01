@@ -1833,19 +1833,21 @@ impl Store {
     /// maintenance run. A populated ledger leaves the flag unset, which costs
     /// discovery speed (scan fallback) and never correctness.
     fn ensure_gate_claim_index_flag_on_open(&self) -> Result<()> {
+        // One predicate, checked twice: the write txn re-confirms under lock
+        // what the optimistic read txn saw.
+        let needs_flag = |txn: &RoTxn<'_>| -> Result<bool> {
+            Ok(!self.gate_decision_claim_index_backfill_complete_in_txn(txn)?
+                && self.gate_decision_ledger_is_empty_in_txn(txn)?)
+        };
         {
             let rtxn = self.env.read_txn()?;
-            if self.gate_decision_claim_index_backfill_complete_in_txn(&rtxn)?
-                || !self.gate_decision_ledger_is_empty_in_txn(&rtxn)?
-            {
+            if !needs_flag(&rtxn)? {
                 return Ok(());
             }
         }
 
         let mut wtxn = self.env.write_txn()?;
-        if self.gate_decision_claim_index_backfill_complete_in_txn(&wtxn)?
-            || !self.gate_decision_ledger_is_empty_in_txn(&wtxn)?
-        {
+        if !needs_flag(&wtxn)? {
             return Ok(());
         }
         self.vault_meta.put(

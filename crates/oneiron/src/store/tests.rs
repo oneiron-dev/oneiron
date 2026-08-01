@@ -1490,21 +1490,44 @@ fn claim_index_row_count(vault: &Vault) -> Result<usize> {
         .count())
 }
 
-/// Rewinds a vault to its pre-ERASE-A shape: primaries intact, zero claim-index
-/// rows, no backfill flag.
-fn strip_claim_index_and_flag(vault: &Vault) -> Result<()> {
-    let mut wtxn = vault.store.env.write_txn()?;
+/// Deletes every claim-index row inside an already-open write txn. Collects
+/// first: LMDB forbids mutating a DB while one of its iterators is live.
+fn delete_claim_index_rows_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>) -> Result<()> {
     let mut keys = Vec::new();
     for row in vault
         .store
         .vault_meta
-        .prefix_iter(&wtxn, GATE_DECISION_CLAIM_INDEX_PREFIX)?
+        .prefix_iter(wtxn, GATE_DECISION_CLAIM_INDEX_PREFIX)?
     {
         keys.push(row?.0.to_vec());
     }
     for key in &keys {
-        vault.store.vault_meta.delete(&mut wtxn, key)?;
+        vault.store.vault_meta.delete(wtxn, key)?;
     }
+    Ok(())
+}
+
+/// The v1 retention skeleton the ONE-1638 erase coupling leaves in place of a
+/// redacted primary: accountability fields kept, claim-bearing fields scrubbed.
+fn redacted_skeleton(record: &GateDecisionRecord, at: u64) -> GateDecisionRecord {
+    GateDecisionRecord {
+        version: GATE_DECISION_LEDGER_VERSION_REDACTED,
+        reason_codes: Vec::new(),
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_ref: None,
+        grant_ref: None,
+        diff_handle: Vec::new(),
+        redacted_at: Some(at),
+        ..record.clone()
+    }
+}
+
+/// Rewinds a vault to its pre-ERASE-A shape: primaries intact, zero claim-index
+/// rows, no backfill flag.
+fn strip_claim_index_and_flag(vault: &Vault) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    delete_claim_index_rows_in_txn(vault, &mut wtxn)?;
     vault
         .store
         .vault_meta
@@ -1743,17 +1766,7 @@ fn erasure_verify_scans_keyspace_and_never_trusts_the_index() -> Result<()> {
     // A LYING index: rows removed, flag set. Index-accelerated discovery would
     // report the claim as already empty.
     let mut wtxn = vault.store.env.write_txn()?;
-    let mut keys = Vec::new();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(&wtxn, GATE_DECISION_CLAIM_INDEX_PREFIX)?
-    {
-        keys.push(row?.0.to_vec());
-    }
-    for key in &keys {
-        vault.store.vault_meta.delete(&mut wtxn, key)?;
-    }
+    delete_claim_index_rows_in_txn(&vault, &mut wtxn)?;
     vault.store.vault_meta.put(
         &mut wtxn,
         GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
@@ -1794,17 +1807,7 @@ fn erasure_verify_excludes_redacted_rows_and_other_claims() -> Result<()> {
 
     // Stand in for the ONE-1638 in-place redaction: primary rewritten to a v1
     // skeleton, claim-index row deliberately retained.
-    let skeleton = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION_REDACTED,
-        reason_codes: Vec::new(),
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_ref: None,
-        grant_ref: None,
-        diff_handle: Vec::new(),
-        redacted_at: Some(42),
-        ..to_redact.clone()
-    };
+    let skeleton = redacted_skeleton(&to_redact, 42);
     let mut wtxn = vault.store.env.write_txn()?;
     vault.store.vault_meta.put(
         &mut wtxn,
@@ -1854,17 +1857,7 @@ BCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCB
     assert_eq!(decode_gate_decision(&golden)?, live);
     assert!(live.redacted_at.is_none(), "pre-field bytes decode as None");
 
-    let skeleton = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION_REDACTED,
-        reason_codes: Vec::new(),
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_ref: None,
-        grant_ref: None,
-        diff_handle: Vec::new(),
-        redacted_at: Some(7),
-        ..live.clone()
-    };
+    let skeleton = redacted_skeleton(&live, 7);
     assert_eq!(
         decode_gate_decision(&encode_gate_decision(&skeleton)?)?,
         skeleton
