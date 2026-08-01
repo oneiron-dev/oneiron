@@ -476,10 +476,13 @@ pub(crate) struct DeletionGateContext {
 /// the sibling owner verbs already do (`claim_retract` and the structural arm
 /// fold inside their own write txns).
 ///
-/// LINEARIZATION (fix-leg 7): the re-check is NOT re-run forever. The tombstone
-/// publish commit is the delete's linearization point, and after it the answer
-/// is settled — see
-/// [`reverify_deletion_authority_before_publication`].
+/// LINEARIZATION (fix-leg 7, refined by fix-leg 8): the re-check is NOT re-run
+/// forever — but only because a publish commit exists to settle it. That commit
+/// is the delete's linearization point, and after it the answer is settled; when
+/// this delete publishes NOTHING there is no such point, and every destructive
+/// transaction is still pre-publication. See
+/// [`reverify_deletion_authority_before_publication`] and
+/// [`reverify_deletion_authority_when_unpublished`].
 pub(crate) struct GatedDeletion<'a> {
     context: DeletionGateContext,
     reverify: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
@@ -518,6 +521,40 @@ fn reverify_deletion_authority_before_publication(
         Some(gate) => (gate.reverify)(txn),
         None => Ok(()),
     }
+}
+
+/// Re-runs the authority check IF AND ONLY IF this delete published nothing —
+/// the fix-leg 8 refinement of the linearization ruling.
+///
+/// `crdt_persisted` is the whole condition, and it is deliberately NOT the
+/// `sync` cargo flag. The rule above settles authority at the publish COMMIT,
+/// and a delete with no publish commit has no such point: nothing became
+/// remote-visible, no peer can be tearing, and the local purge is still the
+/// FIRST irreversible act rather than a committed operation finishing. Refusing
+/// there is therefore actionable and true — the exact opposite of the
+/// post-publication refusal fix-7 removed.
+///
+/// Two distinct build/runtime shapes reach this with `crdt_persisted == false`:
+/// the sync-DISABLED build, where [`Vault::write_crdt_tombstone`] is a no-op by
+/// construction, and any future sync-enabled path that declines to publish. Both
+/// must obey the same rule, which is why the flag is the wrong key — a `#[cfg]`
+/// here would silently re-open the hole for the second shape.
+///
+/// The caller runs this INSIDE its destructive transaction, so the check and the
+/// tear (and the `pt:` marker that carries the deletion's propagation intent to
+/// a later sync-enabled boot) are atomic under LMDB's single writer. A
+/// `RevokeActor` is thus ordered strictly before the check — seen, nothing torn,
+/// no replayable marker — or strictly after the commit, where it follows a
+/// deletion that WAS authorized when it committed.
+fn reverify_deletion_authority_when_unpublished(
+    gate: Option<&GatedDeletion<'_>>,
+    crdt_persisted: bool,
+    txn: &heed::RoTxn<'_>,
+) -> Result<()> {
+    if crdt_persisted {
+        return Ok(());
+    }
+    reverify_deletion_authority_before_publication(gate, txn)
 }
 
 impl DeletionGateContext {
@@ -1525,6 +1562,13 @@ fn maybe_fail_after_tombstone_before_purge() {}
 /// nothing published) and two strictly AFTER it (completion expected, because a
 /// revocation ordered after the publish commit does not reach back — fix-leg 7's
 /// ruling). Constructed on every build; only the parking machinery is test-only.
+///
+/// "After the publish" is a misnomer on a build with no CRDT: there
+/// `write_crdt_tombstone` publishes nothing, so [`Self::AfterTombstonePublish`]
+/// marks the window between the facade's entry fold and the FIRST destructive
+/// transaction — exactly where fix-leg 8's conditional re-fold has to bite. The
+/// parking machinery is therefore compiled on every test build, not just `sync`
+/// ones; the two remaining fire points are already cfg-independent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DeleteRendezvous {
     /// After the gate recovery sidecar is durably staged, BEFORE the publish txn
@@ -1568,7 +1612,7 @@ pub(crate) enum DeleteRendezvous {
 ///
 /// Compiles out of every non-test build via the no-op shim, exactly like
 /// [`signal_after_header_read`].
-#[cfg(all(test, feature = "sync"))]
+#[cfg(test)]
 type DeleteRendezvousChannels = (
     DeleteRendezvous,
     EntityId,
@@ -1576,14 +1620,14 @@ type DeleteRendezvousChannels = (
     std::sync::mpsc::Receiver<()>,
 );
 
-#[cfg(all(test, feature = "sync"))]
+#[cfg(test)]
 static DELETE_RENDEZVOUS: std::sync::Mutex<Option<DeleteRendezvousChannels>> =
     std::sync::Mutex::new(None);
 
 /// Installs the one-shot rendezvous consumed by [`signal_delete_rendezvous`]
 /// when a delete of `target` reaches `step`. Any other step, or any other
 /// entity, passes straight through.
-#[cfg(all(test, feature = "sync"))]
+#[cfg(test)]
 pub(crate) fn install_delete_rendezvous(
     step: DeleteRendezvous,
     target: EntityId,
@@ -1599,7 +1643,7 @@ pub(crate) fn install_delete_rendezvous(
 /// entity, then clears it so later deletes never block on a stale rendezvous.
 /// The mutex guard is released before the blocking `recv` — holding it across
 /// the park would deadlock every other delete that reaches a seam.
-#[cfg(all(test, feature = "sync"))]
+#[cfg(test)]
 fn signal_delete_rendezvous(
     step: DeleteRendezvous,
     id: &EntityId,
@@ -1620,7 +1664,7 @@ fn signal_delete_rendezvous(
     let _ = resume.recv();
 }
 
-#[cfg(not(all(test, feature = "sync")))]
+#[cfg(not(test))]
 #[inline(always)]
 fn signal_delete_rendezvous(
     _step: DeleteRendezvous,
@@ -1865,6 +1909,15 @@ impl Vault {
         );
         let tombstone_complete_at = unix_seconds_now();
 
+        // Is there a linearization point BEHIND us? `crdt_persisted` says a
+        // publish commit happened; when it did not (the sync-disabled build's
+        // no-op writer, or any sync build path that declines to publish) this
+        // delete has settled nothing yet, and the FIRST destructive commit below
+        // becomes the point instead — so that one transaction re-proves the
+        // owner binding. Set from the publish result, then latched by whichever
+        // destructive txn runs first.
+        let mut authority_settled = crdt_persisted;
+
         let soft_complete_at = if matches!(
             reason,
             DeleteReason::GdprDelete | DeleteReason::PolicyDelete
@@ -1878,13 +1931,19 @@ impl Vault {
             // bodiless shell ⇒ `None`). The purge txn below re-runs the
             // refresh as an idempotent second pass.
             let mut wtxn = self.store.env.write_txn()?;
-            // NO authority re-fold (fix-leg 7 linearization ruling): the
-            // tombstone publish above already committed, and that commit is
-            // this delete's linearization point. A `RevokeActor` ordered after
-            // it did not race the delete — it follows an operation that was
-            // authorized when it published. Refusing here would return
-            // FORBIDDEN for a deletion peers have already obeyed, and the
-            // replayed tombstone tears this replica anyway.
+            // Conditional re-fold (fix-leg 7's ruling, refined by fix-leg 8).
+            // WHEN THE PUBLISH COMMITTED: no re-fold. That commit is this
+            // delete's linearization point; a `RevokeActor` ordered after it did
+            // not race the delete — it follows an operation that was authorized
+            // when it published. Refusing here would return FORBIDDEN for a
+            // deletion peers have already obeyed, and the replayed tombstone
+            // tears this replica anyway.
+            // WHEN NOTHING PUBLISHED: there is no such commit, so this scrub is
+            // the first irreversible act and it re-proves authority against its
+            // OWN view — the refusal is actionable (nothing is on the wire) and
+            // true (nothing replays back).
+            reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+            authority_settled = true;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
@@ -1912,13 +1971,20 @@ impl Vault {
         let receipt_id = EntityId::now();
         let scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
-        // The purge txn: the one that actually tears — and it does NOT re-check
-        // authority (fix-leg 7 linearization ruling). The publish commit that
-        // preceded it decided this delete; from there the local purge is the
-        // committed operation finishing, not a fresh act needing fresh consent.
-        // fix-5 put a re-fold here, which made a revocation racing the interval
-        // publish→purge produce the rejected-call-publishes shape: FORBIDDEN to
-        // the caller with the tombstone already on the wire and peers tearing.
+        // The purge txn: the one that actually tears. It re-checks authority
+        // ONLY if nothing has settled this delete yet — i.e. no publish commit
+        // AND no earlier destructive commit of this call (fix-leg 8). On
+        // `user_hard_delete` with no publish, THIS is the first destructive
+        // transaction, so the check lands here and is atomic with the tear, the
+        // `dt:` marker, the `pt:` propagation intent, the gate record and the
+        // receipt — a revoked owner leaves none of them.
+        //
+        // Once something HAS settled it, no re-check: fix-5 put an
+        // unconditional re-fold here, which made a revocation racing the
+        // interval publish→purge produce the rejected-call-publishes shape —
+        // FORBIDDEN to the caller with the tombstone already on the wire and
+        // peers tearing.
+        reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
@@ -2064,10 +2130,15 @@ impl Vault {
         );
 
         let mut wtxn = self.store.env.write_txn()?;
-        // Same linearization law on the headerless leg: the publish txn above
-        // decided authority, so this purge does not re-decide it. The headerless
-        // door's pre-publication guards are the scope probe's own read txn and
-        // the publish txn's re-fold.
+        // Same conditional law on the headerless leg (fix-leg 8). When the
+        // publish txn above committed it decided authority and this purge does
+        // not re-decide it — the door's pre-publication guards were the scope
+        // probe's read txn and that publish txn's re-fold. When NOTHING
+        // published, this purge is the headerless door's only durable act and
+        // therefore its linearization point: it re-proves the binding against
+        // its own view, atomically with the residue tear, the `dt:` marker, the
+        // `pt:` propagation intent, the gate record and the receipt.
+        reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
         // the erasing txn (race-free under LMDB's single writer). The read
@@ -3137,12 +3208,16 @@ impl Vault {
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
     ) -> Result<bool> {
-        // No CRDT in this build — the `pt:` marker written in the purge /
-        // scrub txn is the deletion's durable propagation intent, and nothing
-        // here publishes, so there is no linearization point to gate: the
-        // authority proven in that same purge / scrub txn is the whole decision.
-        // A sync-enabled boot that later replays the marker replays a deletion
-        // that WAS authorized when its transaction committed.
+        // No CRDT in this build — nothing is published, so there is no publish
+        // commit and therefore NO linearization point here. `false` is the
+        // signal the callers key on: it makes their first destructive
+        // transaction re-prove the owner binding
+        // ([`reverify_deletion_authority_when_unpublished`]), which is what
+        // makes that transaction the linearization point instead. The `pt:`
+        // marker it writes is the deletion's durable propagation intent, so a
+        // sync-enabled boot that later replays it replays a deletion that WAS
+        // authorized when its transaction committed — the value of `false` must
+        // never be faked to `true` to "simplify" the callers.
         Ok(false)
     }
 

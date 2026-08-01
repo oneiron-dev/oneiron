@@ -4163,10 +4163,8 @@ impl PublishBoundaryHarness {
 /// test that installs a rendezvous holds this lock for the whole install→join
 /// window. Poison is ignored deliberately: a panicking test has already failed
 /// and must not cascade into unrelated ones.
-#[cfg(feature = "sync")]
 static DELETE_RENDEZVOUS_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-#[cfg(feature = "sync")]
 fn lock_delete_rendezvous() -> std::sync::MutexGuard<'static, ()> {
     DELETE_RENDEZVOUS_TESTS
         .lock()
@@ -4179,7 +4177,6 @@ fn lock_delete_rendezvous() -> std::sync::MutexGuard<'static, ()> {
 /// pre-staged in a held txn — the deleter must announce while holding nothing.
 ///
 /// Caller must hold [`lock_delete_rendezvous`].
-#[cfg(feature = "sync")]
 fn safe_delete_with_revocation_at(
     vault: &std::sync::Arc<crate::Vault>,
     owner: EntityId,
@@ -4449,6 +4446,237 @@ fn revocation_after_the_publish_commit_lets_a_headerless_delete_complete() {
             "{leg}: the headerless purge txn must write the dt: marker"
         );
     }
+}
+
+/// fix-leg 8 P1: WITHOUT a publish commit there is no linearization point, so
+/// the first destructive transaction must still re-prove authority.
+///
+/// `write_crdt_tombstone` is a NO-OP in a build without `sync` — it publishes
+/// nothing and returns `crdt_persisted: false`. fix-7 read "after the publish
+/// commit, do not re-check" as unconditional and removed the soft-erase and
+/// purge re-folds, which on this build removed the ONLY in-transaction authority
+/// checks the hard arms had: nothing had published, so the check fix-7 relied on
+/// never ran. A `RevokeActor` landing after `safe_delete`'s entry fold then let
+/// `user_hard_delete` / `gdpr_delete` / `policy_delete` tear the entity locally,
+/// append an `allow` gate record, and commit the `pt:` marker whose verbatim
+/// tombstone bytes a later sync-enabled boot replays through
+/// `replay_pending_tombstones` — an unauthorized deletion, published on a delay.
+///
+/// The refined rule keys on `crdt_persisted`, not on the cargo feature: a
+/// `sync` build path that declines to publish must obey the same law, and a
+/// `#[cfg]` here would silently exempt it. The rendezvous parks the deleter in
+/// the window after the entry fold and before the first destructive commit —
+/// which on this build is where `AfterTombstonePublish` fires, since the
+/// "publish" it names did nothing.
+///
+/// MUTATION PROBE: drop the conditional reverify from the hard arms' first
+/// destructive txn and this test fails — the delete succeeds, the victim is
+/// purged, and the replayable `pt:` marker survives.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn revocation_after_a_nonpublishing_delete_refuses_and_tears_nothing() {
+    let _serial = lock_delete_rendezvous();
+    for reason in [
+        SafeDeleteReason::UserHardDelete,
+        SafeDeleteReason::GdprDelete,
+        SafeDeleteReason::PolicyDelete,
+    ] {
+        let case = format!("{reason:?}");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = std::sync::Arc::new(
+            crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"),
+        );
+        let owner = put_person(&vault, 0x40);
+        let subject = put_person(&vault, 0x41);
+        let revoke = root_binding_with_pending_revocation(&vault, 0x42, owner);
+
+        let err = safe_delete_with_revocation_at(
+            &vault,
+            owner,
+            subject,
+            reason,
+            crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+            revoke,
+        )
+        .expect_err(&format!(
+            "{case}: nothing published, so the first destructive txn is this \
+             delete's linearization point and MUST refuse"
+        ));
+
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{case}");
+        assert!(
+            err.message.contains("no active owner binding"),
+            "{case}: the parked pre-gate error must survive, not degrade to a \
+             generic concurrency code: {}",
+            err.message
+        );
+        // Intact, not merely un-purged: the shell scrub must not have run either.
+        assert_eq!(
+            vault.get_entity_type(&subject).expect("get subject"),
+            Some(ENTITY_TYPE_PERSON),
+            "{case}: a refused delete must leave the entity whole"
+        );
+        assert_eq!(
+            vault
+                .get_raw(&subject)
+                .expect("get raw")
+                .expect("subject row survives")
+                .len(),
+            crate::batch::ENTITY_METADATA_HEADER_LEN + b"facade person".len(),
+            "{case}: the body must be un-scrubbed — a 25 B shell would mean the \
+             soft-erase committed before the refusal"
+        );
+        assert_no_local_delete_artifacts(&vault, &subject, &case);
+    }
+}
+
+/// Every durable artifact a REFUSED sync-disabled delete must not leave behind,
+/// in one call. Distinct from `PublishBoundaryHarness::assert_nothing_published`,
+/// which pins the CRDT carriers a `sync` build could leak; without the feature
+/// there are no such carriers, and the whole surface is local:
+///
+/// - `pt:{window}:{id}` — the pending-tombstone marker. THE one that matters:
+///   it holds the verbatim 25 B tombstone wire value, and
+///   `sync::window::replay_pending_tombstones` turns it into a published
+///   tombstone on the next sync-enabled boot. A revoked owner leaving one behind
+///   has published an unauthorized deletion, just deferred.
+/// - `dt:{id}` — the permanent local hard-delete marker. It is
+///   presence-consulted by the materialization gates, so a stray one bricks the
+///   id against every future write.
+/// - `h:` sweep rows + REDACTION_AUDIT receipts — a refused delete audits no
+///   erasure, because none happened.
+/// - gate decisions — the authority ledger must not record an `allow` for a
+///   deletion the authority refused.
+///
+/// Both window labels are probed for `pt:`: the headerful arms address
+/// `learned_at`'s window and the headerless leg addresses NOW's, and at a month
+/// boundary those differ.
+#[cfg(not(feature = "sync"))]
+fn assert_no_local_delete_artifacts(vault: &crate::Vault, id: &EntityId, context: &str) {
+    use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    for window_label in [
+        crate::deletion::window_label_from_timestamp(1),
+        crate::deletion::window_label_from_timestamp(crate::unix_seconds_now()),
+    ] {
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(
+                    &rtxn,
+                    &crate::deletion::pending_tombstone_key(&window_label, id)
+                )
+                .expect("read pt: marker")
+                .is_none(),
+            "{context}: a refused delete must leave no replayable pt: marker \
+             (a sync-enabled boot would replay it into the very publication the \
+             refusal denied)"
+        );
+    }
+    assert!(
+        !vault
+            .local_hard_delete_marker_exists_in_txn(&rtxn, id)
+            .expect("read dt: marker"),
+        "{context}: a refused delete must write no dt: local hard-delete marker"
+    );
+    assert!(
+        vault
+            .store
+            .sync_queue
+            .prefix_iter(&rtxn, crate::deletion::HARD_ERASE_SWEEP_PREFIX)
+            .expect("iter sweep rows")
+            .next()
+            .is_none(),
+        "{context}: a refused delete must queue no h: hard-erase sweep row"
+    );
+    drop(rtxn);
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+            .expect("list receipts")
+            .is_empty(),
+        "{context}: a refused delete must mint no REDACTION_AUDIT receipt"
+    );
+    assert!(
+        vault
+            .gate_decisions(50)
+            .expect("gate decisions")
+            .iter()
+            .all(|decision| decision.content_kind != "deletion"),
+        "{context}: a refused delete must append no allow-gate deletion decision"
+    );
+}
+
+/// fix-leg 8 P1, headerless leg: same law where there is no header.
+///
+/// `delete_entity_without_header` erases orphan residue (a vector with no
+/// entities row). Its pre-publication guards were the scope probe's read txn and
+/// the publish txn's re-fold — and on a build with no `sync` the second does not
+/// exist, so fix-7's removal of the purge re-fold left this door with NO
+/// in-transaction authority check at all. The residue is the part that makes it
+/// bite differently from the headerful arms: it is the actual user data (a
+/// vector, a BM25 posting), and a refused delete must leave it whole.
+///
+/// MUTATION PROBE: drop the conditional reverify from the headerless purge txn
+/// and this test fails — the residue is erased and the receipt is minted.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing() {
+    let _serial = lock_delete_rendezvous();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = std::sync::Arc::new(
+        crate::Vault::open(
+            dir.path(),
+            VaultConfig {
+                embedding_model: Some("test-model-v1".to_owned()),
+                dimensions: 4,
+                ..VaultConfig::default()
+            },
+        )
+        .expect("open vault"),
+    );
+    let owner = put_person(&vault, 0x43);
+    let revoke = root_binding_with_pending_revocation(&vault, 0x44, owner);
+
+    // Headerless residue: a vector with no entities row, so the delete takes
+    // `delete_entity_without_header`.
+    let subject = EntityId::from_bytes([0x45; 16]).expect("residue id");
+    vault
+        .put_vector(&subject, &[0.1, 0.2, 0.3, 0.4])
+        .expect("put orphan vector");
+    assert!(
+        vault.get_raw(&subject).expect("get raw").is_none(),
+        "headerless precondition — no entities row"
+    );
+
+    let err = safe_delete_with_revocation_at(
+        &vault,
+        owner,
+        subject,
+        SafeDeleteReason::GdprDelete,
+        crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+        revoke,
+    )
+    .expect_err(
+        "the headerless purge is this delete's ONLY durable act when nothing \
+         published, so it MUST re-decide authority",
+    );
+
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        err.message.contains("no active owner binding"),
+        "{}",
+        err.message
+    );
+    // The residue itself survives — the point of the headerless door.
+    assert_eq!(
+        vault.get_vector(&subject).expect("get vector"),
+        Some(vec![0.1, 0.2, 0.3, 0.4]),
+        "a refused headerless delete must leave the orphan vector intact"
+    );
+    assert_no_local_delete_artifacts(&vault, &subject, "headerless");
 }
 
 /// P2-b: `fold.vault_id == None` is TWO states, and only one of them may pass.
