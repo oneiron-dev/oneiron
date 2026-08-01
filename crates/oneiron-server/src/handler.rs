@@ -17,8 +17,7 @@ use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes, WebSocket, 
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use futures_util::stream::SplitStream;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, Stream, StreamExt};
 use loro::{ExportMode, VersionVector};
 use oneiron::sync::{
     AllowBlock, EphemeralStore, EphemeralWireState, FederationConnectionQuota,
@@ -288,7 +287,7 @@ where
     .await
 }
 
-/// The one place this server writes a frame to a client socket.
+/// The one place this server reads from or writes to a client socket.
 ///
 /// Every outbound frame on a connection goes through [`Self::send_binary`] —
 /// the Phase-1 root snapshot, the late-join ephemeral snapshot, direct
@@ -305,35 +304,56 @@ where
 /// drift from itself, and a future send arm inherits the consult by
 /// construction instead of having to remember to classify itself.
 ///
+/// # Why this owns the READ half too
+///
+/// A chokepoint on the write half alone is not a chokepoint on the socket.
+/// Splitting the WebSocket hands the two halves to two tasks that share one
+/// transport, and the read half writes: on receiving a Ping (or a Close),
+/// tungstenite QUEUES the automatic response and its `read` flushes the
+/// out-buffer before returning — `write_out_buffer` drains everything sitting
+/// there, application frames included. So a peer that pings and keeps reading
+/// pulls a guarded frame out through the read half, having never touched the
+/// write half at all. No consult can catch this: the flush happens *inside*
+/// the read poll, after any flag the poller could have checked.
+///
+/// The fix is structural rather than another gate. One task owns the UNSPLIT
+/// socket, so `&mut self` is the whole transport: [`Self::send_binary`] holds
+/// that unique borrow for the entire time an application frame is pending, and
+/// the compiler will not let a read be polled inside that window. There is no
+/// ordering to get wrong and no flag to check — the read future does not exist
+/// while bytes are pending. Refusal then drops the whole socket, not one half
+/// of it, so nothing on either side can still drain it.
+///
 /// The registry — not the whole server — is held here because the registry is
 /// the only thing this type consults, which also lets the fail-closed
 /// unreadable path be driven directly in tests.
-struct GuardedSink<S> {
+struct GuardedTransport<S> {
     /// `None` once the transport has been aborted.
     ///
     /// A revocation seen while a frame is already queued cannot be answered
     /// with a graceful close: `poll_close` flushes the queue on its way out,
     /// which IS the delivery being refused. Dropping the socket is the only
-    /// refusal that withholds bytes the sink is already holding, so the
-    /// abort path takes the sink here and never touches it again.
-    sink: Option<S>,
+    /// refusal that withholds bytes it is already holding, so the abort path
+    /// takes the socket here and never touches it again — and because this is
+    /// the unsplit socket, that one `take` ends the read side as well.
+    socket: Option<S>,
     revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
     session_jti: Option<String>,
     conn_id: u32,
 }
 
-impl<S> GuardedSink<S>
+impl<S, E> GuardedTransport<S>
 where
-    S: SinkExt<WsMessage> + Unpin,
+    S: SinkExt<WsMessage> + Stream<Item = Result<WsMessage, E>> + Unpin,
 {
     fn new(
-        sink: S,
+        socket: S,
         revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
         session_jti: Option<String>,
         conn_id: u32,
     ) -> Self {
         Self {
-            sink: Some(sink),
+            socket: Some(socket),
             revoked,
             session_jti,
             conn_id,
@@ -342,6 +362,17 @@ where
 
     fn credential_revoked(&self) -> bool {
         session_credential_revoked(self.revoked.as_ref(), self.session_jti.as_deref())
+    }
+
+    /// Reads the next inbound frame.
+    ///
+    /// Taking `&mut self` is the enforcement, not a convention: an application
+    /// frame is pending only inside [`Self::send_binary`], which holds the same
+    /// unique borrow, so this cannot run then. That is what keeps tungstenite's
+    /// automatic pong/close flush from draining guarded bytes — see the type
+    /// docs. `None` once the transport has been aborted.
+    async fn read_next(&mut self) -> Option<Result<WsMessage, E>> {
+        self.socket.as_mut()?.next().await
     }
 
     /// Sends one binary frame, refusing if the credential is no longer live.
@@ -364,10 +395,14 @@ where
     ///    there and returns immediately; the peer's backpressure surfaces
     ///    here, so this is where the long park actually happens.
     ///
-    /// So the consult runs after the capacity wait AND again every time the
-    /// flush parks (or a [`FLUSH_RECONSULT_INTERVAL`] tick elapses, since a
-    /// peer that simply stops reading never wakes the sink at all). Cadence
-    /// is bounded by those two events, never by bytes written.
+    /// So the consult runs after the capacity wait, again BEFORE the first
+    /// flush poll, and again before every subsequent one — at each park, or
+    /// when a [`FLUSH_RECONSULT_INTERVAL`] tick elapses, since a peer that
+    /// simply stops reading never wakes the sink at all. The pre-first-poll
+    /// consult is not redundant with the capacity-wait one: `start_send` sits
+    /// between them, and a flush that is immediately ready would otherwise put
+    /// the frame on the wire with no flush-time check at all. Cadence is
+    /// bounded by those events, never by bytes written.
     ///
     /// The residual gap after this is precisely one sliver: bytes the flush
     /// already handed to the OS TCP send buffer. Those are gone from this
@@ -376,10 +411,10 @@ where
     /// in the sink's own queue included, is revocable.
     #[must_use]
     async fn send_binary(&mut self, data: Vec<u8>) -> bool {
-        let Some(sink) = self.sink.as_mut() else {
+        let Some(socket) = self.socket.as_mut() else {
             return false;
         };
-        if std::future::poll_fn(|cx| sink.poll_ready_unpin(cx))
+        if std::future::poll_fn(|cx| socket.poll_ready_unpin(cx))
             .await
             .is_err()
         {
@@ -396,16 +431,20 @@ where
             self.close().await;
             return false;
         }
-        let Some(sink) = self.sink.as_mut() else {
+        let Some(socket) = self.socket.as_mut() else {
             return false;
         };
-        if sink
+        if socket
             .start_send_unpin(WsMessage::Binary(data.into()))
             .is_err()
         {
             tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
             return false;
         }
+        // From the `start_send` above to the return below, an application frame
+        // is pending and this unique borrow is held: no read can be polled in
+        // that window, so tungstenite's automatic pong/close flush cannot drain
+        // it. That is the whole of the read-half defence.
         self.guarded_flush().await
     }
 
@@ -419,12 +458,28 @@ where
     /// re-reading the registry, which means getting control back.
     async fn guarded_flush(&mut self) -> bool {
         loop {
-            let Some(sink) = self.sink.as_mut() else {
+            // BEFORE the poll, not only after it. `start_send` is a synchronous
+            // queue-and-return, so a revocation landing between the pre-handover
+            // consult and this point has had no gate at all — and if the first
+            // `poll_flush` is immediately ready (a peer that IS reading, the
+            // common case), the frame is on the wire before any flush-time
+            // consult ever runs. Checking only at a park makes the guard depend
+            // on the peer being slow, which is exactly backwards: the fast peer
+            // is the one that gets the frame.
+            if self.credential_revoked() {
+                tracing::warn!(
+                    conn_id = self.conn_id,
+                    "credential revoked while a frame awaited flush — aborting transport"
+                );
+                self.abort();
+                return false;
+            }
+            let Some(socket) = self.socket.as_mut() else {
                 return false;
             };
             let step = tokio::select! {
                 biased;
-                step = flush_step(sink) => step,
+                step = flush_step(socket) => step,
                 // A peer that stops reading never wakes the sink, so the park
                 // alone cannot be the only re-consult trigger.
                 () = tokio::time::sleep(FLUSH_RECONSULT_INTERVAL) => FlushStep::Parked,
@@ -435,34 +490,31 @@ where
                     tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
                     return false;
                 }
-                FlushStep::Parked => {
-                    if self.credential_revoked() {
-                        tracing::warn!(
-                            conn_id = self.conn_id,
-                            "credential revoked while a frame awaited flush — aborting transport"
-                        );
-                        self.abort();
-                        return false;
-                    }
-                }
+                // Back to the loop head, which re-consults before re-polling.
+                FlushStep::Parked => {}
             }
         }
     }
 
-    /// Ends the transport WITHOUT flushing what the sink still holds.
+    /// Ends the transport WITHOUT flushing what it still holds.
     ///
     /// A graceful `close` is wrong here: `poll_close` drains the queue on its
     /// way out, which would deliver the very frame the revocation refuses.
-    /// Dropping the sink is the only refusal that withholds bytes already
+    /// Dropping the socket is the only refusal that withholds bytes already
     /// handed to it, at the cost of an unclean WebSocket teardown — the right
     /// trade when the alternative is serving a dead credential.
+    ///
+    /// Because this is the UNSPLIT socket, the drop takes the read half down
+    /// with it. A split transport could only drop the sink, leaving a stream
+    /// half alive over the same connection with the pending bytes still in the
+    /// shared out-buffer for its next automatic flush to deliver.
     fn abort(&mut self) {
-        drop(self.sink.take());
+        drop(self.socket.take());
     }
 
     async fn close(&mut self) {
-        if let Some(sink) = self.sink.as_mut() {
-            let _ = sink.close().await;
+        if let Some(socket) = self.socket.as_mut() {
+            let _ = socket.close().await;
         }
     }
 
@@ -472,13 +524,32 @@ where
     /// close frame carries no vault state and IS the refusal, so gating it on
     /// the credential's liveness could only turn one refusal into another.
     async fn send_unguarded_close_frame(&mut self, close: WsMessage) {
-        if let Some(sink) = self.sink.as_mut() {
-            let _ = sink.send(close).await;
+        if let Some(socket) = self.socket.as_mut() {
+            let _ = socket.send(close).await;
         }
     }
 }
 
+/// What woke the connection loop.
+///
+/// The select produces this and nothing borrowed, so every future it raced —
+/// including the read — is dropped before the handler touches the transport
+/// again. That is what lets one task own both halves.
+enum ConnEvent {
+    Inbound(Option<Result<WsMessage, axum::Error>>),
+    Broadcast(Result<Option<Vec<u8>>, crate::broadcast::BroadcastError>),
+    Direct(Option<Vec<u8>>),
+}
+
 /// Main connection lifecycle.
+///
+/// The socket is deliberately NOT split. A split hands the two halves to two
+/// tasks over one transport, and tungstenite's read path flushes the shared
+/// out-buffer whenever it queues an automatic pong or close — which drains
+/// application frames the write half is still holding under a revocation
+/// consult. Keeping the socket whole means the borrow checker enforces what no
+/// runtime check could: while a guarded frame is pending, no read exists to
+/// flush it. See [`GuardedTransport`].
 #[expect(clippy::cognitive_complexity)]
 async fn handle_connection(
     socket: WebSocket,
@@ -486,13 +557,12 @@ async fn handle_connection(
     conn_id: u32,
     session_jti: Option<String>,
 ) {
-    let (ws_sink, mut ws_stream) = socket.split();
     // Every frame this connection ever writes goes through here, and each one
     // re-consults the revocation registry first. The hello close below is the
     // single deliberate exception: it carries no vault state and is the
     // refusal itself.
-    let mut ws_sink = GuardedSink::new(
-        ws_sink,
+    let mut transport = GuardedTransport::new(
+        socket,
         Arc::clone(server.vault()) as Arc<dyn RevokedTokenJtis + Send + Sync>,
         session_jti.clone(),
         conn_id,
@@ -507,7 +577,7 @@ async fn handle_connection(
     // timeout, so a revocation can land between the handshake and the first
     // frame. The sends below therefore cannot rely on the handshake's proof
     // of liveness, and do not: they consult at the chokepoint.
-    let protocol_version = match await_protocol_hello(&mut ws_stream).await {
+    let protocol_version = match await_protocol_hello(&mut transport).await {
         HelloOutcome::Valid(version) => version,
         HelloOutcome::Reject(reason) => {
             tracing::warn!(conn_id, reason, "protocol hello rejected — closing");
@@ -515,7 +585,7 @@ async fn handle_connection(
                 code: close_codes::VERSION_MISMATCH,
                 reason: Utf8Bytes::from_static(reason),
             }));
-            ws_sink.send_unguarded_close_frame(close).await;
+            transport.send_unguarded_close_frame(close).await;
             return;
         }
         HelloOutcome::Disconnected => {
@@ -532,7 +602,7 @@ async fn handle_connection(
     match server.export_root_snapshot() {
         Ok(snapshot) => {
             let msg = protocol::encode_root_update(&snapshot);
-            if !ws_sink.send_binary(msg).await {
+            if !transport.send_binary(msg).await {
                 tracing::warn!(conn_id, "failed to send root snapshot");
                 return;
             }
@@ -545,7 +615,7 @@ async fn handle_connection(
 
     // Late-join/reconnect snapshot for the Loro-native ephemeral lane.
     if let Some(msg) = encode_late_join_ephemeral_snapshot(&server, conn_id)
-        && !ws_sink.send_binary(msg).await
+        && !transport.send_binary(msg).await
     {
         tracing::warn!(conn_id, "failed to send ephemeral snapshot");
         return;
@@ -563,65 +633,57 @@ async fn handle_connection(
         federation_quota,
     );
 
-    // Spawn outbound task: forwards broadcast + direct messages to WebSocket
-    // sink. BOTH arms write through the guarded chokepoint, so neither
+    // One loop, one owner. The outbound arms used to run in a spawned task over
+    // the split sink; they are folded in here because two tasks cannot share
+    // this transport safely — see [`GuardedTransport`]. Reads and writes now
+    // interleave only at this select, never during a guarded send.
+    //
+    // BOTH outbound arms still write through the guarded chokepoint, so neither
     // unsolicited fan-out nor a direct answer can outlive the credential:
     // fan-out is service the peer never asked for, and a direct response can
     // sit queued in this channel — or blocked mid-`send` — across the very
     // revocation that should have stopped it.
-    let mut outbound_handle = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                broadcast_result = subscriber.recv() => {
-                    match broadcast_result {
-                        Ok(Some(data)) => {
-                            if !should_forward_broadcast(protocol_version, &data) {
-                                continue;
-                            }
-                            if !ws_sink.send_binary(data).await {
-                                break;
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(crate::broadcast::BroadcastError::Lagged(n)) => {
-                            tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
-                        }
-                        Err(crate::broadcast::BroadcastError::TooManyLags) => {
-                            tracing::warn!(conn_id, "too many lags — disconnecting");
-                            ws_sink.close().await;
+    loop {
+        let event = tokio::select! {
+            msg = transport.read_next() => ConnEvent::Inbound(msg),
+            broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
+            direct_msg = direct_rx.recv() => ConnEvent::Direct(direct_msg),
+        };
+
+        let next_message = match event {
+            ConnEvent::Inbound(msg) => msg,
+            ConnEvent::Broadcast(broadcast_result) => {
+                match broadcast_result {
+                    Ok(Some(data)) => {
+                        if should_forward_broadcast(protocol_version, &data)
+                            && !transport.send_binary(data).await
+                        {
                             break;
                         }
                     }
-                }
-                direct_msg = direct_rx.recv() => {
-                    match direct_msg {
-                        Some(data) => {
-                            if !ws_sink.send_binary(data).await {
-                                break;
-                            }
-                        }
-                        None => break,
+                    Ok(None) => break,
+                    Err(crate::broadcast::BroadcastError::Lagged(n)) => {
+                        tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
+                    }
+                    Err(crate::broadcast::BroadcastError::TooManyLags) => {
+                        tracing::warn!(conn_id, "too many lags — disconnecting");
+                        transport.close().await;
+                        break;
                     }
                 }
+                continue;
             }
-        }
-    });
-
-    // Inbound loop: process messages from client.
-    //
-    // The outbound task is raced rather than merely joined at the end: when it
-    // stops — including because the chokepoint aborted the transport on a
-    // revocation — this half must stop too. Otherwise the stream half stays
-    // held here and the TCP connection outlives the refusal it was supposed
-    // to enact.
-    loop {
-        let next_message = tokio::select! {
-            msg = ws_stream.next() => msg,
-            _ = &mut outbound_handle => {
-                tracing::debug!(conn_id, "outbound half ended — closing connection");
-                break;
+            ConnEvent::Direct(direct_msg) => {
+                let Some(data) = direct_msg else {
+                    break;
+                };
+                if !transport.send_binary(data).await {
+                    break;
+                }
+                continue;
             }
         };
+
         let Some(msg_result) = next_message else {
             break;
         };
@@ -743,7 +805,6 @@ async fn handle_connection(
         }
     }
 
-    outbound_handle.abort();
     tracing::info!(conn_id, "connection closed");
 }
 
@@ -761,11 +822,14 @@ enum HelloOutcome {
 /// Waits for the client's protocol-version hello as the FIRST frame.
 ///
 /// Skips ping/pong keepalives; any other frame must be the hello.
-async fn await_protocol_hello(ws_stream: &mut SplitStream<WebSocket>) -> HelloOutcome {
+async fn await_protocol_hello<S, E>(transport: &mut GuardedTransport<S>) -> HelloOutcome
+where
+    S: SinkExt<WsMessage> + Stream<Item = Result<WsMessage, E>> + Unpin,
+{
     let deadline = tokio::time::Duration::from_secs(HELLO_TIMEOUT_SECS);
     let outcome = tokio::time::timeout(deadline, async {
         loop {
-            match ws_stream.next().await {
+            match transport.read_next().await {
                 Some(Ok(WsMessage::Binary(data))) => {
                     return match validate_protocol_hello(&data) {
                         Ok(version) => HelloOutcome::Valid(version),
