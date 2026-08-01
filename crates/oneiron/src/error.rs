@@ -185,6 +185,7 @@ pub enum ErrorKind {
     InvalidFacetExposure,
     InvalidFacetClearance,
     FacetUnstampWithoutConsent,
+    FacetDeleteWithLiveClearance,
     DisclosureClampViolation,
     InvalidTaskBody,
     CorruptedIndex,
@@ -953,28 +954,44 @@ pub enum Error {
     /// EMPTY clearance instead.
     #[error("invalid facet clearance: {0}")]
     InvalidFacetClearance(&'static str),
-    /// A `FacetOf` unstamp would have WIDENED disclosure without the recorded
-    /// exposure transition that widening requires (ONE-1646 seam, the
-    /// mirror-image of the private→public restamp gate).
+    /// A `FacetOf` unstamp would have RECLASSIFIED a surviving record out of a
+    /// facet with no immutable consent record authorizing it (ONE-1646 seam).
     ///
-    /// Removing a stamp to a PRIVATE facet strictly relaxes the disclosure
-    /// clamp's facet conjunct — at the limit a claim whose last stamp is torn
-    /// off becomes "unfaceted" and is admitted as invariant — so deletion
-    /// would otherwise launder privacy with no exposure/consent transition on
-    /// record. A stamp to a PUBLIC facet is inert in that conjunct (a public
-    /// facet is a member of every resolved disclosable set), so removing it
-    /// cannot widen and is admitted. The owner widens through the ledgered
-    /// door (`Vault::set_facet_exposure`) first. `stamped_by` is the stamping
-    /// record where one delete is at fault, `None` when the whole facet is
-    /// being torn out from under its stamps. Nothing was written.
+    /// Tearing a stamp moves the stamped record between disclosure clamp
+    /// classes — at the limit a record whose last stamp comes off becomes
+    /// "unfaceted" and is admitted as the invariant term — so an unstamp is a
+    /// reclassification and takes a reclassification's consent. The
+    /// authorization is the per-`(record, facet)` reclassification-consent
+    /// record `Vault::unstamp_facet_of` writes ATOMICALLY with the removal; no
+    /// REVERSIBLE state (facet exposure above all) authorizes it, because a
+    /// state that can be flipped back after the irreversible act launders it.
+    /// `stamped_by` is the stamping record where one delete is at fault,
+    /// `None` when the whole facet is being torn out from under its stamps.
+    /// Nothing was written.
     #[error(
-        "FacetOf unstamp of private facet {} (stamped by {stamped_by:?}) requires a recorded exposure transition",
+        "FacetOf unstamp of facet {} (stamped by {stamped_by:?}) requires a recorded reclassification consent",
         facet.to_hex()
     )]
     FacetUnstampWithoutConsent {
         facet: EntityId,
         stamped_by: Option<EntityId>,
     },
+    /// A FACET hard delete was refused because a contact clearance still names
+    /// the facet id (ONE-1646).
+    ///
+    /// Entity ids are caller-chosen, so a facet id is REUSABLE: deleting a
+    /// facet while `contact.clearance.v1` rows still carry its id lets the
+    /// owner mint a brand-new facet at the same id and have every stale grant
+    /// silently apply to it. The grants are narrowed first, through the same
+    /// ledgered door that created them
+    /// (`Vault::set_contact_facet_clearance`), so no clearance can outlive the
+    /// facet it names. Nothing was written.
+    #[error(
+        "FACET {} cannot be deleted while contact {} is cleared for it",
+        facet.to_hex(),
+        contact.to_hex()
+    )]
+    FacetDeleteWithLiveClearance { facet: EntityId, contact: EntityId },
     /// A non-admitted entity survived into an assembled context pack. The
     /// pack build FAILS rather than leaks (OF-365 fail-closed sweep).
     #[error("disclosure clamp violation: {0}")]
@@ -1634,6 +1651,7 @@ impl Error {
             Self::InvalidFacetExposure(_) => ErrorKind::InvalidFacetExposure,
             Self::InvalidFacetClearance(_) => ErrorKind::InvalidFacetClearance,
             Self::FacetUnstampWithoutConsent { .. } => ErrorKind::FacetUnstampWithoutConsent,
+            Self::FacetDeleteWithLiveClearance { .. } => ErrorKind::FacetDeleteWithLiveClearance,
             Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,

@@ -77,6 +77,14 @@ pub const FACET_CLEARANCE_BODY_KEYS: [&str; 5] = [
 
 const KEY_FACETS: &str = FACET_CLEARANCE_BODY_KEYS[1];
 
+/// Pinned on-disk MessagePack key set for reclassification-consent bodies.
+pub const FACET_RECLASSIFICATION_BODY_KEYS: [&str; 4] =
+    ["schema_version", "record", "facet", "consented_at"];
+
+const KEY_RECORD: &str = FACET_RECLASSIFICATION_BODY_KEYS[1];
+const KEY_FACET: &str = FACET_RECLASSIFICATION_BODY_KEYS[2];
+const KEY_CONSENTED_AT: &str = FACET_RECLASSIFICATION_BODY_KEYS[3];
+
 /// Maximum facet ids one contact clearance may carry (mirrors the scope cap).
 pub const MAX_FACET_CLEARANCE_ENTRIES: usize = 256;
 
@@ -97,14 +105,18 @@ const DISCLOSURE_TIER_A_KEY_PREFIX: &[u8] = b"disclosure.tier_a.v1:";
 const FACET_EXPOSURE_KEY_PREFIX: &[u8] = b"facet.exposure.v1:";
 /// `vault_meta` row key prefix for per-contact facet-clearance rows.
 const FACET_CLEARANCE_KEY_PREFIX: &[u8] = b"contact.clearance.v1:";
+/// `vault_meta` row key prefix for per-`(record, facet)` reclassification
+/// consent rows — the IMMUTABLE authorization for one `FacetOf` unstamp.
+const FACET_RECLASSIFICATION_KEY_PREFIX: &[u8] = b"facet.reclassification.v1:";
 
 /// Pinned `disclosure.*` claim predicates.
-pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 5] = [
+pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 6] = [
     "disclosure.scope",
     "disclosure.tier",
     "disclosure.topic",
     "disclosure.facet_exposure",
     "disclosure.clearance",
+    "disclosure.facet_reclassification",
 ];
 
 pub const PREDICATE_DISCLOSURE_SCOPE: &str = "disclosure.scope";
@@ -112,6 +124,7 @@ pub const PREDICATE_DISCLOSURE_TIER: &str = "disclosure.tier";
 pub const PREDICATE_DISCLOSURE_TOPIC: &str = "disclosure.topic";
 pub const PREDICATE_DISCLOSURE_FACET_EXPOSURE: &str = "disclosure.facet_exposure";
 pub const PREDICATE_DISCLOSURE_CLEARANCE: &str = "disclosure.clearance";
+pub const PREDICATE_DISCLOSURE_FACET_RECLASSIFICATION: &str = "disclosure.facet_reclassification";
 
 const DISCLOSURE_TIER_VALUE_TIER_A: &str = "tier_a";
 
@@ -523,6 +536,38 @@ pub struct FacetClearance {
     pub updated_at: u64,
 }
 
+/// The IMMUTABLE, claim-specific record that ONE `FacetOf` unstamp happened
+/// with the owner's consent — the sole authorization for a disclosure-effective
+/// unstamp.
+///
+/// WHY A RECORD AND NOT A STATE. Exposure is reversible; an unstamp is not.
+/// Keying the unstamp gate on "the facet is currently Public" lets a caller
+/// widen, tear the stamp, and narrow again: `set_facet_exposure(Public)` →
+/// delete the claim's last `FacetOf` edge → `set_facet_exposure(Private)`. The
+/// claim is now unfaceted and admitted as the P7 invariant term under the FINAL
+/// private policy, and no surviving state records that a reclassification ever
+/// occurred. The reversible window laundered the irreversible act.
+///
+/// This record cannot be laundered because it is (a) written ATOMICALLY with
+/// the removal by [`Vault::unstamp_facet_of`] — never separately, so no window
+/// exists between authorization and act — (b) keyed to the exact
+/// `(record, facet)` pair, so it authorizes nothing else, and (c) APPEND-ONLY:
+/// re-consenting the same pair keeps the FIRST `consented_at`, and nothing but
+/// erasing one of the two named entities removes it.
+///
+/// It is stored as its own `vault_meta` row plus a Tier-A
+/// `disclosure.facet_reclassification` claim mirror — the owner-visible ledger
+/// entry, the same dual-write every other family in this module uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FacetReclassificationConsent {
+    /// The record whose stamp was removed (the claim, turn, or event).
+    pub record: EntityId,
+    /// The facet the stamp pointed at.
+    pub facet: EntityId,
+    /// When the owner consented — the FIRST consent for this pair.
+    pub consented_at: u64,
+}
+
 fn disclosure_scope_body_value(scope: &DisclosureScope) -> Value {
     Value::Map(vec![
         (
@@ -685,6 +730,13 @@ fn invalid_exposure() -> Error {
 
 fn invalid_clearance() -> Error {
     Error::InvalidFacetClearance("body failed validation")
+}
+
+/// The consent record shares the clearance error family: both are the same
+/// per-contact/per-facet grant grammar, and a third variant carrying no
+/// distinct caller response would be an unused error.
+fn invalid_reclassification() -> Error {
+    Error::InvalidFacetClearance("reclassification consent body failed validation")
 }
 
 /// Decodes the shared sorted-deduped hex entity-id array both the scope and
@@ -868,6 +920,71 @@ fn decode_facet_clearance_value(value: &Value) -> Result<FacetClearance> {
     Ok(clearance)
 }
 
+fn facet_reclassification_body_value(consent: &FacetReclassificationConsent) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(DISCLOSURE_SCOPE_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_RECORD),
+            Value::from(consent.record.to_hex()),
+        ),
+        (Value::from(KEY_FACET), Value::from(consent.facet.to_hex())),
+        (
+            Value::from(KEY_CONSENTED_AT),
+            Value::from(consent.consented_at),
+        ),
+    ])
+}
+
+/// Encodes a reclassification-consent body in canonical MessagePack key order.
+pub fn encode_facet_reclassification_body(
+    consent: &FacetReclassificationConsent,
+) -> Result<Vec<u8>> {
+    encode_body_value(
+        &facet_reclassification_body_value(consent),
+        "facet reclassification body MessagePack encode failed",
+    )
+}
+
+/// Decodes and validates a reclassification-consent body (strict key set, no
+/// duplicates, no trailing bytes).
+pub fn decode_facet_reclassification_body(bytes: &[u8]) -> Result<FacetReclassificationConsent> {
+    decode_facet_reclassification_value(&decode_body_value(bytes, invalid_reclassification)?)
+}
+
+fn decode_facet_reclassification_value(value: &Value) -> Result<FacetReclassificationConsent> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_reclassification());
+    };
+    validate_keys(
+        entries,
+        &FACET_RECLASSIFICATION_BODY_KEYS,
+        invalid_reclassification,
+    )?;
+    check_schema_version(entries, invalid_reclassification)?;
+    let record = required_entity_id(entries, KEY_RECORD, invalid_reclassification)?;
+    let facet = required_entity_id(entries, KEY_FACET, invalid_reclassification)?;
+    let consented_at = required_u64(entries, KEY_CONSENTED_AT, invalid_reclassification)?;
+    Ok(FacetReclassificationConsent {
+        record,
+        facet,
+        consented_at,
+    })
+}
+
+fn required_entity_id(
+    entries: &[(Value, Value)],
+    key: &str,
+    invalid: fn() -> Error,
+) -> Result<EntityId> {
+    required_value(entries, key, invalid)?
+        .as_str()
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+        .ok_or_else(invalid)
+}
+
 /// Returns whether `predicate` belongs to the disclosure claim family.
 #[must_use]
 pub fn is_disclosure_claim_predicate(predicate: &str) -> bool {
@@ -922,6 +1039,20 @@ pub(crate) fn validate_disclosure_claim_structure(body: &ClaimBody) -> Result<()
         PREDICATE_DISCLOSURE_CLEARANCE => decode_facet_clearance_value(&body.value)
             .map(|_| ())
             .map_err(|_| Error::InvalidClaimBody("disclosure.clearance value invalid")),
+        PREDICATE_DISCLOSURE_FACET_RECLASSIFICATION => {
+            let consent = decode_facet_reclassification_value(&body.value).map_err(|_| {
+                Error::InvalidClaimBody("disclosure.facet_reclassification value invalid")
+            })?;
+            // The mirror's SUBJECT is the reclassified record, so a body naming
+            // a different record would make the ledger entry describe something
+            // other than what it is filed under.
+            if body.subject != ClaimSubject::Entity(consent.record) {
+                return Err(Error::InvalidClaimBody(
+                    "disclosure.facet_reclassification subject must be the reclassified record",
+                ));
+            }
+            Ok(())
+        }
         _ => Err(Error::InvalidClaimBody(
             "unknown disclosure claim predicate",
         )),
@@ -946,6 +1077,18 @@ fn facet_exposure_meta_key(facet_id: &EntityId) -> Vec<u8> {
 
 fn facet_clearance_meta_key(contact_id: &EntityId) -> Vec<u8> {
     meta_key(FACET_CLEARANCE_KEY_PREFIX, contact_id)
+}
+
+/// `facet.reclassification.v1:<record><facet>` — keyed by the PAIR, so a
+/// consent authorizes exactly one record leaving exactly one facet. Record
+/// first so the whole of one record's consents is a prefix scan (the shape
+/// erasure needs when the record itself is deleted).
+fn facet_reclassification_meta_key(record: &EntityId, facet: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(FACET_RECLASSIFICATION_KEY_PREFIX.len() + ENTITY_ID_LEN * 2);
+    key.extend_from_slice(FACET_RECLASSIFICATION_KEY_PREFIX);
+    key.extend_from_slice(record.as_bytes());
+    key.extend_from_slice(facet.as_bytes());
+    key
 }
 
 fn disclosure_tier_a_meta_key(id: &EntityId) -> Vec<u8> {
@@ -1025,6 +1168,23 @@ fn facet_exposure_claim_id(facet_id: &EntityId) -> Result<EntityId> {
 
 fn facet_clearance_claim_id(contact_id: &EntityId) -> Result<EntityId> {
     derive_disclosure_claim_id(b"disclosure.clearance.claim.v1:", contact_id)
+}
+
+/// PAIR-keyed mirror id: one ledger entry per `(record, facet)`
+/// reclassification, so consenting to leave facet A never overwrites the record
+/// of leaving facet B. Both ids are fixed-width, so the concatenation is
+/// unambiguous without a separator.
+fn facet_reclassification_claim_id(record: &EntityId, facet: &EntityId) -> Result<EntityId> {
+    let mut subject = [0_u8; ENTITY_ID_LEN * 2];
+    subject[..ENTITY_ID_LEN].copy_from_slice(record.as_bytes());
+    subject[ENTITY_ID_LEN..].copy_from_slice(facet.as_bytes());
+    let mut hasher = Sha256::new();
+    hasher.update(b"disclosure.facet_reclassification.claim.v1:");
+    hasher.update(subject);
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    EntityId::from_bytes(bytes)
 }
 
 /// Reads the stored entity type for `id`, or `EntityNotFound` when no row
@@ -1201,6 +1361,75 @@ impl Vault {
         contact_facet_clearance_in_txn(&self.store, &rtxn, contact_id)
     }
 
+    /// THE door for a disclosure-effective `FacetOf` unstamp: removes the stamp
+    /// and records the owner's consent to that reclassification IN ONE wtxn.
+    ///
+    /// This is the operation [`gate_facet_of_unstamp`] refers every generic
+    /// edge-delete door to. Removing a stamp reclassifies a SURVIVING record —
+    /// at the limit into the unfaceted class the P7 conjunct admits as
+    /// invariant — so it is a consent-bearing act, not a graph edit, and it
+    /// needs a door whose authorization cannot be replayed or wound back.
+    ///
+    /// ATOMICITY IS THE WHOLE POINT. The consent row, its Tier-A ledger mirror,
+    /// and the edge removal commit together or not at all. Any shape that let a
+    /// caller obtain authorization in one transaction and spend it in another
+    /// would reintroduce exactly the reversible-window laundering this replaces:
+    /// with a state-shaped gate a caller could widen the facet, unstamp, and
+    /// narrow it back, leaving the record reclassified and NOTHING on disk
+    /// saying so. An immutable per-pair record cannot be wound back, because
+    /// re-consenting keeps the original `consented_at` and only erasing one of
+    /// the two named entities removes it.
+    ///
+    /// Returns `false` when no such stamp existed. Nothing is written in that
+    /// case — including no consent record, because there was no
+    /// reclassification to consent to, and a record minted for a no-op would be
+    /// a reusable authorization for a LATER real unstamp.
+    pub fn unstamp_facet_of(
+        &self,
+        record: &EntityId,
+        facet_id: &EntityId,
+        consented_at: u64,
+    ) -> Result<bool> {
+        let key_out = Store::encode_edge_key(record, EdgeKind::FacetOf, facet_id);
+        let key_in = Store::encode_edge_key(facet_id, EdgeKind::FacetOf, record);
+        self.with_write_txn(|wtxn| {
+            if self.store.edges_out.get(&*wtxn, &key_out)?.is_none() {
+                return Ok(false);
+            }
+            record_facet_reclassification_consent_in_txn(
+                self,
+                wtxn,
+                record,
+                facet_id,
+                consented_at,
+            )?;
+            self.store.edges_out.delete(wtxn, &key_out)?;
+            self.store.edges_in.delete(wtxn, &key_in)?;
+            crate::ppr::invalidate_ppr_for_edge(&self.store, wtxn, record, facet_id)?;
+            crate::ppr::increment_graph_version(&self.store, wtxn)?;
+            Ok(true)
+        })
+    }
+
+    /// Reads the immutable consent record for one `(record, facet)` pair.
+    /// Missing row -> `Ok(None)` (no reclassification consented). LOUD on
+    /// corruption, like every other owner-facing read in this module.
+    pub fn facet_reclassification_consent(
+        &self,
+        record: &EntityId,
+        facet_id: &EntityId,
+    ) -> Result<Option<FacetReclassificationConsent>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(bytes) = self
+            .store
+            .vault_meta
+            .get(&rtxn, &facet_reclassification_meta_key(record, facet_id))?
+        else {
+            return Ok(None);
+        };
+        decode_facet_reclassification_body(&bytes).map(Some)
+    }
+
     /// Owner-marks an entity Tier A (design §7 rule 5): meta row plus the
     /// owner-visible `disclosure.tier` claim, one wtxn.
     pub fn set_disclosure_tier_a(&self, id: &EntityId, marked_at: u64) -> Result<()> {
@@ -1339,6 +1568,67 @@ impl Vault {
     }
 }
 
+/// Writes the immutable `(record, facet)` reclassification consent plus its
+/// Tier-A ledger mirror on the CALLER'S transaction, so it commits with the
+/// unstamp it authorizes.
+///
+/// APPEND-ONLY. An existing consent for the pair is left EXACTLY as it stands —
+/// the first `consented_at` is the truth of when the owner reclassified this
+/// record, and letting a later call rewrite it would make the record's own
+/// timestamp caller-controlled after the fact. Re-consenting is therefore a
+/// no-op rather than an error: the pair is already authorized, and the second
+/// call has nothing left to do.
+fn record_facet_reclassification_consent_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &EntityId,
+    facet_id: &EntityId,
+    consented_at: u64,
+) -> Result<()> {
+    let key = facet_reclassification_meta_key(record, facet_id);
+    if vault.store.vault_meta.get(&*wtxn, &key)?.is_some() {
+        return Ok(());
+    }
+    let consent = FacetReclassificationConsent {
+        record: *record,
+        facet: *facet_id,
+        consented_at,
+    };
+    let data = encode_facet_reclassification_body(&consent)?;
+    vault.store.vault_meta.put(wtxn, &key, &data)?;
+    let claim_id = facet_reclassification_claim_id(record, facet_id)?;
+    let claim = ClaimBody::new(
+        PREDICATE_DISCLOSURE_FACET_RECLASSIFICATION,
+        ClaimSubject::Entity(*record),
+        facet_reclassification_body_value(&consent),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_disclosure_claim_in_txn(wtxn, &claim_id, &claim, consented_at)
+}
+
+/// Snapshot-scoped existence check for a `(record, facet)` consent — the
+/// predicate every generic unstamp door consults.
+///
+/// A row that fails to DECODE is treated as ABSENT, not as consent. This is the
+/// module's quiet-narrow stance pointed the only direction it can point on a
+/// gate: corruption must never be the reason an unstamp is authorized.
+fn facet_reclassification_consented_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+    facet_id: &EntityId,
+) -> Result<bool> {
+    let Some(bytes) = store
+        .vault_meta
+        .get(txn, &facet_reclassification_meta_key(record, facet_id))?
+    else {
+        return Ok(false);
+    };
+    Ok(decode_facet_reclassification_body(&bytes).is_ok())
+}
+
 /// What removing one entity's disclosure facet-state cost the graph, in the
 /// shape [`crate::batch::deindex_entity`] already folds (the
 /// `BlobArtifactLifecycleCleanup` precedent).
@@ -1377,21 +1667,45 @@ pub(crate) fn delete_facet_state_for_entity_in_txn(
     id: &EntityId,
     entity_type: u8,
 ) -> Result<FacetStateCleanup> {
+    let mut cleanup = delete_facet_reclassification_consents_in_txn(store, wtxn, id, entity_type)?;
     let (meta_key, claim_id) = match entity_type {
         ENTITY_TYPE_COUNTERPARTY_CONTACT => {
             (facet_clearance_meta_key(id), facet_clearance_claim_id(id)?)
         }
         ENTITY_TYPE_FACET => (facet_exposure_meta_key(id), facet_exposure_claim_id(id)?),
-        _ => return Ok(FacetStateCleanup::default()),
+        _ => return Ok(cleanup),
     };
     store.vault_meta.delete(wtxn, &meta_key)?;
+    delete_disclosure_mirror_in_txn(store, wtxn, &claim_id, &mut cleanup)?;
+    Ok(cleanup)
+}
 
-    // Only OUR mirror is removed. The derived id is a public sha256, so a
-    // foreign claim could be squatting it through the ordinary gated
-    // `put_claim` door — the same custody check `clear_disclosure_tier_a`
-    // makes before it rewrites a derived id.
+/// Removes ONE derived claim mirror, folding its cost into `cleanup`.
+///
+/// Only OUR mirror is removed. The derived id is a public sha256, so a foreign
+/// claim could be squatting it through the ordinary gated `put_claim` door —
+/// the same custody check `clear_disclosure_tier_a` makes before it rewrites a
+/// derived id.
+///
+/// The mirror is a CLAIM entity, so it goes through the ordinary deindex door
+/// rather than a raw row delete — it carries edges, indexes, and possibly a
+/// vector, exactly like any other claim.
+///
+/// RECURSION TERMINATES IN ONE STEP. Deindexing a mirror re-enters
+/// [`delete_facet_state_for_entity_in_txn`] with the mirror's own id: the
+/// exposure/clearance dispatch matches no branch (a mirror is a CLAIM), and the
+/// consent sweep's record-side prefix scan is keyed by the mirror id, which is
+/// never the `record` half of any consent — nothing is stamped into a facet on
+/// a mirror's behalf, and the ids are sha256-derived. Both find nothing, so the
+/// second level does no work and there is no third.
+fn delete_disclosure_mirror_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: &EntityId,
+    cleanup: &mut FacetStateCleanup,
+) -> Result<()> {
     let Some(raw) = store.entities.get(wtxn, claim_id.as_bytes())? else {
-        return Ok(FacetStateCleanup::default());
+        return Ok(());
     };
     let is_our_mirror = EntityMetadataHeader::parse(&raw)
         .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
@@ -1400,64 +1714,120 @@ pub(crate) fn delete_facet_state_for_entity_in_txn(
             .and_then(|payload| decode_claim_body(payload, true).ok())
             .is_some_and(|body| is_disclosure_claim_predicate(&body.predicate));
     if !is_our_mirror {
-        return Ok(FacetStateCleanup::default());
+        return Ok(());
     }
     let (_existed, had_vector, had_graph_mutation, neighbors) =
-        crate::batch::deindex_entity(store, wtxn, &claim_id)?;
-    crate::ppr::invalidate_ppr_for_delete(store, wtxn, &claim_id, &neighbors)?;
-    Ok(FacetStateCleanup {
-        had_vector,
-        had_graph_mutation,
-        neighbors,
-    })
+        crate::batch::deindex_entity(store, wtxn, claim_id)?;
+    crate::ppr::invalidate_ppr_for_delete(store, wtxn, claim_id, &neighbors)?;
+    cleanup.had_vector |= had_vector;
+    cleanup.had_graph_mutation |= had_graph_mutation;
+    cleanup.neighbors.extend(neighbors);
+    Ok(())
 }
 
-/// Reads a facet's exposure ON THE ENFORCEMENT PATH: missing row, undecodable
-/// row, or a row that says so all read PRIVATE. Born-private, fail-closed —
-/// the same quiet-narrow stance [`resolve_disclosable_set`] takes, so a
-/// corrupted row can never be the reason a gate opens.
-pub(crate) fn facet_exposure_in_txn(
+/// Registers the RECLASSIFICATION-CONSENT family with entity deletion, on BOTH
+/// of the pair's sides.
+///
+/// A consent row authorizes one `(record, facet)` unstamp, and entity ids are
+/// caller-chosen on both sides — so a row outliving either named entity is a
+/// spendable authorization waiting for an id to be reused. Delete facet F,
+/// recreate a new facet at F, stamp record R into it, and a stale `(R, F)` row
+/// would let that stamp come off with no fresh consent; the record side is
+/// symmetric. Both directions are therefore swept, which is also the erasure
+/// answer: a consent record NAMES the record it reclassified, so it must not
+/// survive that record's erasure.
+///
+/// Scan shapes follow the key layout (`prefix ‖ record ‖ facet`): the record
+/// side is an exact prefix scan, so it costs O(that record's consents) for any
+/// deleted entity. The facet side has no such prefix and needs a filtered scan
+/// over the family, so it runs ONLY for FACET-typed deletes.
+fn delete_facet_reclassification_consents_in_txn(
     store: &Store,
-    txn: &RoTxn<'_>,
-    facet_id: &EntityId,
-) -> Result<FacetExposure> {
-    let Some(bytes) = store
-        .vault_meta
-        .get(txn, &facet_exposure_meta_key(facet_id))?
-    else {
-        return Ok(FacetExposure::Private);
-    };
-    Ok(decode_facet_exposure_body(&bytes).map_or(FacetExposure::Private, |state| state.exposure))
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<FacetStateCleanup> {
+    let mut doomed: Vec<(Vec<u8>, EntityId, EntityId)> = Vec::new();
+    {
+        let mut record_prefix = FACET_RECLASSIFICATION_KEY_PREFIX.to_vec();
+        record_prefix.extend_from_slice(id.as_bytes());
+        for row in store.vault_meta.prefix_iter(&*wtxn, &record_prefix)? {
+            let (key, _value) = row?;
+            let facet = facet_of_reclassification_key(&key)?;
+            doomed.push((key.to_vec(), *id, facet));
+        }
+    }
+    if entity_type == ENTITY_TYPE_FACET {
+        for row in store
+            .vault_meta
+            .prefix_iter(&*wtxn, FACET_RECLASSIFICATION_KEY_PREFIX)?
+        {
+            let (key, _value) = row?;
+            if facet_of_reclassification_key(&key)? != *id {
+                continue;
+            }
+            let record = record_of_reclassification_key(&key)?;
+            // A self-referential row (record == facet) is impossible to write
+            // through `unstamp_facet_of` (a FacetOf edge to itself is off the
+            // ONE-1645 endpoint table), but deduping keeps the double delete
+            // out of the fold regardless.
+            if record == *id {
+                continue;
+            }
+            doomed.push((key.to_vec(), record, *id));
+        }
+    }
+
+    let mut cleanup = FacetStateCleanup::default();
+    for (key, record, facet) in doomed {
+        store.vault_meta.delete(wtxn, &key)?;
+        let claim_id = facet_reclassification_claim_id(&record, &facet)?;
+        delete_disclosure_mirror_in_txn(store, wtxn, &claim_id, &mut cleanup)?;
+    }
+    Ok(cleanup)
 }
 
-/// The ONE-1646 exposure-consent gate on `FacetOf` UNSTAMPING — the seam
+fn record_of_reclassification_key(key: &[u8]) -> Result<EntityId> {
+    reclassification_key_id(key, FACET_RECLASSIFICATION_KEY_PREFIX.len())
+}
+
+fn facet_of_reclassification_key(key: &[u8]) -> Result<EntityId> {
+    reclassification_key_id(key, FACET_RECLASSIFICATION_KEY_PREFIX.len() + ENTITY_ID_LEN)
+}
+
+fn reclassification_key_id(key: &[u8], offset: usize) -> Result<EntityId> {
+    key.get(offset..offset + ENTITY_ID_LEN)
+        .and_then(|bytes| <[u8; ENTITY_ID_LEN]>::try_from(bytes).ok())
+        .and_then(|bytes| EntityId::from_bytes(bytes).ok())
+        .ok_or(Error::CorruptedIndex("facet reclassification row key"))
+}
+
+/// The ONE-1646 consent gate on `FacetOf` UNSTAMPING — the seam
 /// `batch::validate_facet_of_edge` reserved ("gating `FacetOf` deletes on
 /// exposure state lands at THIS call site once facet exposure state exists").
 ///
 /// THE LAUNDERING PATH IT CLOSES: [`DisclosureContext::facet_conjunct_admits`]
 /// reads a claim's outgoing `FacetOf` stamps and admits a claim with NO stamp
 /// as the `{invariant}` (unfaceted/core) term of P7. Deletion therefore MOVES
-/// A RECORD BETWEEN CLAMP CLASSES with no body edit and no consent transition:
-/// stamp a claim into a private facet, delete the stamp, and the claim is
-/// admitted to rooms that were never cleared for it. Set-side removal is the
-/// same widening as a private→public restamp, and it takes the same door.
+/// A SURVIVING RECORD BETWEEN CLAMP CLASSES with no body edit: stamp a claim
+/// into a private facet, delete the stamp, and the claim is admitted to rooms
+/// that were never cleared for it.
 ///
-/// THE RULE: a `FacetOf` unstamp whose TARGET IS PRIVATE requires the facet to
-/// have been transitioned Public through the ledgered owner door
-/// (`Vault::set_facet_exposure`, which writes the `disclosure.facet_exposure`
-/// claim mirror as the consent record) BEFORE the stamp comes off. A stamp to
-/// a PUBLIC facet is inert in the conjunct — a public facet is a member of
-/// every resolved disclosable set, so its presence never narrows and its
-/// removal never widens — and is admitted unconditionally.
+/// THE RULE: a `FacetOf` unstamp requires the IMMUTABLE per-`(record, facet)`
+/// consent record that [`Vault::unstamp_facet_of`] writes ATOMICALLY with the
+/// removal. The generic doors below refuse without it. There is no way to
+/// obtain the record except by performing the unstamp through that door, so
+/// "authorized" and "done" are the same commit.
 ///
-/// WHY EXPOSURE AND NOT CLEARANCE keys the gate: clearance is per-contact and
-/// per-room, so no fixed clearance row is "the" consent for a delete that
-/// affects every future room; exposure is the facet-global state the resolver
-/// unions in for ALL rooms, so `Public` is exactly the predicate under which
-/// no room's disclosable set can shrink by this deletion. The spec is silent
-/// on the delete shape (it specs the write side); this is the seam contract's
-/// "same transition as a private→public restamp" read literally, and it is
-/// recorded here as the lane's choice.
+/// WHY NOT FACET EXPOSURE, the obvious candidate and this gate's first shape:
+/// exposure is REVERSIBLE state, and an unstamp is IRREVERSIBLE. Keying on
+/// "the facet is Public right now" is defeated by a three-step window —
+/// `set_facet_exposure(Public)`, unstamp, `set_facet_exposure(Private)` — after
+/// which the claim is unfaceted, admitted as invariant under the FINAL private
+/// policy, and no surviving state says a reclassification ever happened. NO
+/// REVERSIBLE STATE MAY AUTHORIZE AN IRREVERSIBLE ACT; only a record that
+/// cannot be wound back can. The record is also strictly better ergonomics:
+/// unstamping no longer requires publishing the facet to the world first.
 ///
 /// The gate is TOTAL over the three removal paths, because all three converge
 /// on removing a row that the conjunct reads:
@@ -1466,7 +1836,7 @@ pub(crate) fn facet_exposure_in_txn(
 /// * `BatchOp::DeleteEdge` — the staged-op arm;
 /// * FACET-entity hard delete — the cascade in `batch::delete_related_edges`
 ///   tears every inbound stamp at once, so it is gated on the facet itself
-///   (`source: None`) rather than per-edge.
+///   (`stamped_by: None`) rather than per-edge.
 ///
 /// Non-`FacetOf` kinds pass untouched, and a NON-EXISTENT stamp passes: a
 /// delete that removes nothing widens nothing, so the gate never converts an
@@ -1485,7 +1855,7 @@ pub(crate) fn gate_facet_of_unstamp(
     if store.edges_out.get(txn, &key)?.is_none() {
         return Ok(());
     }
-    if facet_exposure_in_txn(store, txn, tgt)? == FacetExposure::Public {
+    if facet_reclassification_consented_in_txn(store, txn, src, tgt)? {
         return Ok(());
     }
     Err(Error::FacetUnstampWithoutConsent {
@@ -1495,30 +1865,91 @@ pub(crate) fn gate_facet_of_unstamp(
 }
 
 /// The FACET-entity half of [`gate_facet_of_unstamp`]: hard-deleting a facet
-/// cascades away every inbound `FacetOf` stamp at once, which unfacets every
-/// stamped claim in one step — the laundering path at its widest. Gated on the
-/// facet's own exposure, checked BEFORE any row is torn, so the refusal is
-/// atomic with respect to the delete.
+/// cascades away every inbound `FacetOf` stamp at once, which reclassifies
+/// every stamped record in one step — the laundering path at its widest. Every
+/// such stamp needs its OWN consent record, checked BEFORE any row is torn, so
+/// the refusal is atomic with respect to the delete.
 ///
-/// A facet carrying NO inbound stamps is deletable whatever its exposure:
-/// nothing moves between clamp classes, so there is nothing to launder.
+/// A facet carrying NO inbound stamps is freely deletable: nothing moves
+/// between clamp classes, so there is nothing to consent to.
 pub(crate) fn gate_facet_entity_delete(
     store: &Store,
     txn: &RoTxn<'_>,
     facet_id: &EntityId,
 ) -> Result<()> {
-    if facet_exposure_in_txn(store, txn, facet_id)? == FacetExposure::Public {
-        return Ok(());
+    for row in store.edges_in.prefix_iter(txn, facet_id.as_bytes())? {
+        let (key, _value) = row?;
+        if key.get(ENTITY_ID_LEN) != Some(&(EdgeKind::FacetOf as u8)) {
+            continue;
+        }
+        let stamped_by = EntityId::from_bytes(
+            <[u8; ENTITY_ID_LEN]>::try_from(
+                key.get(ENTITY_ID_LEN + 1..)
+                    .ok_or(Error::CorruptedIndex("edge record"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        if !facet_reclassification_consented_in_txn(store, txn, &stamped_by, facet_id)? {
+            return Err(Error::FacetUnstampWithoutConsent {
+                facet: *facet_id,
+                stamped_by: Some(stamped_by),
+            });
+        }
     }
-    let has_inbound_stamp = store
-        .edges_in
-        .prefix_iter(txn, facet_id.as_bytes())?
-        .filter_map(std::result::Result::ok)
-        .any(|(key, _)| key.get(ENTITY_ID_LEN) == Some(&(EdgeKind::FacetOf as u8)));
-    if has_inbound_stamp {
-        return Err(Error::FacetUnstampWithoutConsent {
+    gate_facet_delete_against_live_clearances(store, txn, facet_id)
+}
+
+/// P2 — the FACET-ID REUSE gate: a facet may not be hard-deleted while any
+/// contact clearance still names it.
+///
+/// Entity ids are CALLER-CHOSEN, so a facet id is reusable. Deleting a facet
+/// removes only its own `facet.exposure.v1` row and mirror; every
+/// `contact.clearance.v1` row CONTAINING that id survives, because clearances
+/// are keyed by CONTACT. The attack is then trivial: delete facet F, mint a
+/// brand-new, unrelated FACET at the same id F, stamp a claim into it — and
+/// every contact who was ever cleared for the OLD F silently inherits the new
+/// one. The grant outlives the thing it was a grant FOR.
+///
+/// BLOCK, NOT STRIP, and the reason is custody. Silently editing live consent
+/// records as a side effect of an unrelated delete is precisely the shape this
+/// module refuses everywhere else: clearance rows are OF-153 grant-grammar
+/// records with a `disclosure.clearance` ledger mirror, and every narrowing of
+/// one is supposed to be an owner act through
+/// [`Vault::set_contact_facet_clearance`] with its own mirror rewrite. A strip
+/// would have to forge that owner act, from inside a delete the owner did not
+/// frame as a consent change, for an unbounded number of contacts at once. The
+/// block keeps ONE door for clearance narrowing and costs the owner one
+/// explicit call per affected contact — which is also the call that makes the
+/// revocation visible on the consent surface. It fails CLOSED and names the
+/// contact standing in the way, so the remedy is mechanical.
+fn gate_facet_delete_against_live_clearances(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    facet_id: &EntityId,
+) -> Result<()> {
+    for row in store
+        .vault_meta
+        .prefix_iter(txn, FACET_CLEARANCE_KEY_PREFIX)?
+    {
+        let (key, value) = row?;
+        // A row whose body will not decode cannot be proven to EXCLUDE the
+        // facet, and it is exactly as resurrectable as a valid one: the
+        // resolver's quiet-narrow makes it contribute nothing TODAY, but the
+        // bytes still name the id for whatever repairs it later. Fail closed.
+        let names_facet = decode_facet_clearance_body(&value)
+            .map_or(true, |clearance| clearance.facets.contains(facet_id));
+        if !names_facet {
+            continue;
+        }
+        let contact = key
+            .get(FACET_CLEARANCE_KEY_PREFIX.len()..)
+            .and_then(|bytes| <[u8; ENTITY_ID_LEN]>::try_from(bytes).ok())
+            .and_then(|bytes| EntityId::from_bytes(bytes).ok())
+            .ok_or(Error::CorruptedIndex("facet clearance row key"))?;
+        return Err(Error::FacetDeleteWithLiveClearance {
             facet: *facet_id,
-            stamped_by: None,
+            contact,
         });
     }
     Ok(())
