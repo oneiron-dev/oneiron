@@ -65,18 +65,82 @@ const FLUSH_RECONSULT_INTERVAL: Duration = Duration::from_millis(250);
 /// pre-handover consult would find the bytes already gone: the guard would be
 /// checking a frame that had left the process.
 ///
-/// Set beyond any frame this server will ever hand over — `max_frame_size`
-/// bounds admissible frames and is asserted to sit below this — so the
-/// threshold is unreachable by construction and [`GuardedTransport::send_binary`]'s
-/// explicit flush is the only path to the wire. It does not raise memory use:
-/// a send queues exactly one frame and flushes it before returning, so the
-/// out-buffer never accumulates, and the hard ceiling below is unchanged from
-/// the library default.
+/// Set beyond any frame this server will ever hand over, so the threshold is
+/// out of reach and [`GuardedTransport::send_binary`]'s explicit flush is the
+/// only path to the wire. It does not raise memory use: a send queues exactly
+/// one frame and flushes it before returning, so the out-buffer never
+/// accumulates, and the hard ceiling below is unchanged from the library
+/// default.
+///
+/// The value alone is NOT the invariant, and nothing in the socket config
+/// enforces it. `max_frame_size` bounds INBOUND reads only — tungstenite
+/// applies it in `read_message_frame` and nowhere else — so outbound root,
+/// window and direct frames are uncapped by it, and lowering this constant
+/// would silently re-open the write-through window while every assertion
+/// phrased against `max_frame_size` stayed green. What actually holds the line
+/// is [`GuardedTransport::fits_below_write_through`]: a per-frame refusal that
+/// runs in release builds and measures the frame the way the codec does.
 const WS_WRITE_BUFFER_SIZE: usize = usize::MAX - 1;
 /// Hard ceiling on the out-buffer — the library default, restated because
 /// tungstenite asserts it is strictly above [`WS_WRITE_BUFFER_SIZE`] and would
 /// otherwise panic at socket construction.
 const WS_MAX_WRITE_BUFFER_SIZE: usize = usize::MAX;
+
+/// Out-buffer bytes held back for the codec's own control frames.
+///
+/// The write-through test the codec actually runs is `existing_out_buffer +
+/// encoded_frame > write_buffer_size`, and `existing_out_buffer` is not
+/// observable from outside the codec: a pong or close reply owed to a peer
+/// that has not let it through is still sitting in there. This bounds that
+/// unobservable term so the refusal below can be stated purely in terms of the
+/// frame being handed over. RFC 6455 caps a control frame payload at 125
+/// bytes, so the codec can only be holding a few of them at 127 bytes each;
+/// erring high is the safe direction anyway, since the reserve can only refuse
+/// a frame that would have fit, never admit one that would not.
+const WS_OUT_BUFFER_RESERVE: usize = 512;
+
+/// The threshold relationships, pinned where a release build cannot drop them.
+///
+/// A `debug_assert` stated this before and was elided in exactly the builds
+/// that matter — and stated it against `max_frame_size`, which governs the
+/// inbound direction. These are compile-time and cannot be elided.
+const _: () = assert!(
+    WS_MAX_WRITE_BUFFER_SIZE > WS_WRITE_BUFFER_SIZE,
+    "tungstenite panics at socket construction unless the hard ceiling is strictly above \
+     the write-through threshold"
+);
+const _: () = assert!(
+    WS_WRITE_BUFFER_SIZE > WS_OUT_BUFFER_RESERVE,
+    "the write-through threshold must leave room for the codec's own control frames, or no \
+     application frame is admissible at all"
+);
+const _: () = assert!(
+    WS_WRITE_BUFFER_SIZE == usize::MAX - 1,
+    "the threshold must stay UNREACHABLE, not merely large. Outbound frame size is not \
+     bounded by config — `max_frame_size` governs inbound reads, and a root snapshot or \
+     window export is as big as the vault makes it — so any finite ceiling here is a size \
+     at which live sessions start being refused. The per-frame refusal is a fail-closed \
+     backstop for a socket built with a lower threshold, NOT a service limit to tune: \
+     lowering this constant trades a security hole for an outage, and neither is on offer"
+);
+
+/// Bytes an outbound binary frame occupies in the codec's out-buffer.
+///
+/// Mirrors tungstenite's `FrameHeader::len` plus payload: two status bytes,
+/// the extended length field that the payload size selects, and no mask, since
+/// a server never masks what it sends. Saturating rather than wrapping — an
+/// overflowing length can only push the result further above the threshold,
+/// which refuses.
+const fn encoded_frame_len(payload_len: usize) -> usize {
+    let header_len = if payload_len < 126 {
+        2
+    } else if payload_len <= u16::MAX as usize {
+        4
+    } else {
+        10
+    };
+    payload_len.saturating_add(header_len)
+}
 
 /// Per-connection mutable state. This is intentionally local to one socket:
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
@@ -250,13 +314,10 @@ async fn ws_upgrade_handler(
 
     // `write_buffer_size` is a security setting here, not a tuning knob: it is
     // what keeps `start_send` from writing to the socket on its own. See
-    // [`WS_WRITE_BUFFER_SIZE`]. The debug assertion pins the invariant the
-    // threshold relies on — an admissible frame can never reach it.
-    debug_assert!(
-        server.config.max_frame_size < WS_WRITE_BUFFER_SIZE,
-        "max_frame_size must stay below the write-through threshold, or start_send \
-         can put application bytes on the wire before the revocation consult"
-    );
+    // [`WS_WRITE_BUFFER_SIZE`]. Note that `max_frame_size` below does NOT pin
+    // that — it bounds inbound reads only — so the outbound side is held by
+    // [`GuardedTransport::fits_below_write_through`], which refuses per frame
+    // in release builds.
     Ok(ws
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
@@ -376,6 +437,14 @@ struct GuardedTransport<S> {
     revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
     session_jti: Option<String>,
     conn_id: u32,
+    /// The socket's own `write_buffer_size`, mirrored so the refusal below can
+    /// be stated against it.
+    ///
+    /// Carried rather than read from [`WS_WRITE_BUFFER_SIZE`] at the use site
+    /// so a test can lower BOTH this and the codec's configured threshold to
+    /// one value and drive the real write-through — a refusal that can only be
+    /// exercised at `usize::MAX` is a refusal no test can prove.
+    write_through_threshold: usize,
 }
 
 impl<S, E> GuardedTransport<S>
@@ -388,11 +457,34 @@ where
         session_jti: Option<String>,
         conn_id: u32,
     ) -> Self {
+        Self::with_write_through_threshold(
+            socket,
+            revoked,
+            session_jti,
+            conn_id,
+            WS_WRITE_BUFFER_SIZE,
+        )
+    }
+
+    /// The constructor that names the threshold, for a socket built with a
+    /// `write_buffer_size` other than [`WS_WRITE_BUFFER_SIZE`].
+    ///
+    /// The two must be the SAME number: this is the guard's model of the
+    /// codec's write-through point, and a guard modelling a different socket
+    /// than the one it holds guarantees nothing.
+    fn with_write_through_threshold(
+        socket: S,
+        revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
+        session_jti: Option<String>,
+        conn_id: u32,
+        write_through_threshold: usize,
+    ) -> Self {
         Self {
             socket: Some(socket),
             revoked,
             session_jti,
             conn_id,
+            write_through_threshold,
         }
     }
 
@@ -409,6 +501,26 @@ where
     /// docs. `None` once the transport has been aborted.
     async fn read_next(&mut self) -> Option<Result<WsMessage, E>> {
         self.socket.as_mut()?.next().await
+    }
+
+    /// Whether this payload can be queued without risking a write-through.
+    ///
+    /// tungstenite's `buffer_frame` appends the encoded frame to its
+    /// out-buffer and writes the whole thing through when `out_buffer.len() >
+    /// write_buffer_size`. So the quantity that matters is the ENCODED size —
+    /// header included — plus whatever the codec is already holding, not the
+    /// payload length; [`WS_OUT_BUFFER_RESERVE`] bounds the term this side
+    /// cannot see.
+    ///
+    /// This is the invariant [`WS_WRITE_BUFFER_SIZE`] used to assert about
+    /// itself. Lowering that constant now refuses frames rather than writing
+    /// them pre-consult, which is what "fail-closed" means here: the threshold
+    /// is a bound on what may be QUEUED, and it holds in release builds.
+    const fn fits_below_write_through(&self, payload_len: usize) -> bool {
+        // Saturating: an encoded length that overflows is far above the
+        // threshold, and saturating at `usize::MAX` refuses just the same.
+        encoded_frame_len(payload_len).saturating_add(WS_OUT_BUFFER_RESERVE)
+            <= self.write_through_threshold
     }
 
     /// Sends one binary frame, refusing if the credential is no longer live.
@@ -449,8 +561,10 @@ where
     ///
     /// - Buffer exceeded: `buffer_frame` writes the out-buffer through once it
     ///   passes `write_buffer_size`, whose 128-KiB default a window export
-    ///   clears easily. [`WS_WRITE_BUFFER_SIZE`] raises the threshold past any
-    ///   admissible frame, so it is never crossed.
+    ///   clears easily. [`WS_WRITE_BUFFER_SIZE`] raises the threshold, and
+    ///   [`Self::fits_below_write_through`] REFUSES any frame that would still
+    ///   reach it — the threshold is never crossed because a frame that could
+    ///   cross it is never handed over.
     /// - Queued automatic pong: a pong owed for a peer Ping makes `_write`
     ///   report "should flush", and `start_send` flushes the application frame
     ///   out with it. The pre-drain above empties control frames while nothing
@@ -469,6 +583,24 @@ where
     /// process, the sink's own queue included, is revocable.
     #[must_use]
     async fn send_binary(&mut self, data: Vec<u8>) -> bool {
+        // Before anything is handed to the codec: a frame that could reach the
+        // write-through threshold is refused outright, because queuing it would
+        // put its bytes on the wire from inside `start_send` — between the
+        // consult below and the guarded flush, where no gate can reach them.
+        // Aborting rather than skipping the send: a connection that cannot
+        // deliver its next frame under the guard has nothing left to offer, and
+        // silently dropping one export would be a correctness bug wearing a
+        // security fix's clothes.
+        if !self.fits_below_write_through(data.len()) {
+            tracing::error!(
+                conn_id = self.conn_id,
+                frame_bytes = data.len(),
+                "outbound frame would reach the write-through threshold — aborting transport \
+                 rather than queuing bytes the revocation guard could not withhold"
+            );
+            self.abort();
+            return false;
+        }
         let Some(socket) = self.socket.as_mut() else {
             return false;
         };

@@ -2317,3 +2317,625 @@ fn protocol_hello_validation_literals() {
         );
     }
 }
+
+// ─── the REAL codec ──────────────────────────────────────────────────────────
+//
+// Every row above is scored by `BlockableTransport`, which is a MODEL of
+// tungstenite and drifts from it in ways that matter here:
+//
+// - its write-through test is `payload >= threshold`, while the codec's is
+//   `encoded_frame + whatever is already in the out-buffer > write_buffer_size`
+//   — a header and an owed pong the double never counts;
+// - its `written()` is message-level, so "no application bytes reached the
+//   wire" is asserted about enum values rather than bytes. A partial write of
+//   a binary frame would be invisible to it;
+// - it is OUR code, so a tungstenite upgrade that changes when `start_send`
+//   writes moves the real behaviour and leaves every row green.
+//
+// The rows below therefore run the same properties against real
+// `tokio-tungstenite` 0.26.2 over a socket that captures raw bytes, with the
+// write-through threshold lowered to a value a test frame can actually cross.
+// The double stays for the phase-model rows it is good at; the byte properties
+// are pinned here.
+
+/// `write_buffer_size` for the real-codec rows, low enough that a test frame
+/// crosses it.
+///
+/// Production sets [`WS_WRITE_BUFFER_SIZE`] out of reach, which is exactly why
+/// it cannot be exercised: no admissible frame gets near `usize::MAX`. Lowering
+/// it here is the mutation the P1 finding described — and the guard must hold
+/// anyway, by refusing rather than by the threshold being unreachable.
+const REAL_CODEC_WRITE_BUFFER: usize = 4096;
+
+/// A payload the guard must REFUSE at this threshold: encoded plus the
+/// control-frame reserve is over it, and the codec would write it through from
+/// inside `start_send`.
+const OVER_THRESHOLD_PAYLOAD: usize = REAL_CODEC_WRITE_BUFFER;
+
+/// A payload that fits with room to spare, so the refusal is not blanket.
+const UNDER_THRESHOLD_PAYLOAD: usize = 8;
+
+/// A raw masked Ping from a client, on the wire exactly as RFC 6455 has it:
+/// FIN + opcode 0x9, the mask bit set with a zero-length payload, then the
+/// 4-byte masking key. A server codec rejects an UNMASKED client frame, so
+/// this has to be the real thing for the pong to ever be owed — a fixture the
+/// double never needed, and a dependency contract it therefore never checked.
+const CLIENT_PING_FRAME: [u8; 6] = [0x89, 0x80, 0x01, 0x02, 0x03, 0x04];
+
+/// The server's automatic Pong, unmasked (servers never mask): opcode 0xA,
+/// FIN, zero-length payload.
+const SERVER_PONG_BYTES: [u8; 2] = [0x8a, 0x00];
+
+/// A socket under the real codec that records every byte written to it.
+///
+/// `written` is the wire. Nothing else in these rows is: the codec's own
+/// out-buffer, the sink's queue and the message enums are all in-process state
+/// this leg exists to keep revocable. Only bytes that arrive HERE have escaped.
+///
+/// `write_blocked` models the peer that stopped reading — a `Pending` write,
+/// which is what makes the one-shot pre-drain return `Pending` and leaves the
+/// pong owed.
+#[derive(Clone, Default)]
+struct CapturingSocket {
+    written: Arc<std::sync::Mutex<Vec<u8>>>,
+    inbound: Arc<std::sync::Mutex<std::collections::VecDeque<u8>>>,
+    write_blocked: Arc<std::sync::atomic::AtomicBool>,
+    /// Woken when a block is lifted, so a parked poll retries.
+    waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
+    /// Fires once, right after the codec's FIRST write reaches the wire.
+    ///
+    /// That write is the pre-drain emitting the owed pong, so a hook here
+    /// lands in the stretch between the pre-drain and the pre-first-flush
+    /// consult — where `start_send` sits, and where the finding says a
+    /// revocation has no gate.
+    #[expect(clippy::type_complexity)]
+    after_first_write: Arc<std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>>,
+}
+
+impl CapturingSocket {
+    fn push_inbound(&self, bytes: &[u8]) {
+        self.inbound.lock().unwrap().extend(bytes.iter().copied());
+        self.wake();
+    }
+
+    fn after_first_write(&self, f: impl FnOnce() + Send + 'static) {
+        *self.after_first_write.lock().unwrap() = Some(Box::new(f));
+    }
+
+    fn block_writes(&self) {
+        self.write_blocked
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn unblock_writes(&self) {
+        self.write_blocked
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.wake();
+    }
+
+    fn wake(&self) {
+        if let Some(waker) = self.waker.lock().unwrap().take() {
+            waker.wake();
+        }
+    }
+
+    /// Every byte the server has put on the wire, in order.
+    fn wire(&self) -> Vec<u8> {
+        self.written.lock().unwrap().clone()
+    }
+}
+
+impl tokio::io::AsyncWrite for CapturingSocket {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.write_blocked.load(std::sync::atomic::Ordering::SeqCst) {
+            *self.waker.lock().unwrap() = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
+        self.written.lock().unwrap().extend_from_slice(buf);
+        if let Some(hook) = self.after_first_write.lock().unwrap().take() {
+            hook();
+        }
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.write_blocked.load(std::sync::atomic::Ordering::SeqCst) {
+            *self.waker.lock().unwrap() = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl tokio::io::AsyncRead for CapturingSocket {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut inbound = self.inbound.lock().unwrap();
+        if inbound.is_empty() {
+            // Never EOF: an EOF would end the stream and let the codec take
+            // paths a live peer never triggers.
+            *self.waker.lock().unwrap() = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
+        let n = buf.remaining().min(inbound.len());
+        for byte in inbound.drain(..n) {
+            buf.put_slice(&[byte]);
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// Bridges axum's `Message` to tungstenite's over a real `WebSocketStream`.
+///
+/// [`GuardedTransport`] speaks axum's message type because that is what the
+/// production socket is; the real codec speaks tungstenite's. axum's own
+/// `WebSocket` is this same 1:1 passthrough — `poll_ready`, `start_send`,
+/// `poll_flush` and `poll_close` each delegate straight through, converting
+/// only the enum — so wrapping here reproduces the production stack rather
+/// than substituting for it. The conversion is a move: both sides carry
+/// `bytes::Bytes`.
+struct TungsteniteBridge(tokio_tungstenite::WebSocketStream<CapturingSocket>);
+
+impl TungsteniteBridge {
+    fn to_tungstenite(msg: WsMessage) -> tokio_tungstenite::tungstenite::Message {
+        use tokio_tungstenite::tungstenite::Message as TsMessage;
+        use tokio_tungstenite::tungstenite::protocol::CloseFrame as TsCloseFrame;
+        match msg {
+            WsMessage::Text(text) => TsMessage::Text(text.as_str().into()),
+            WsMessage::Binary(data) => TsMessage::Binary(data),
+            WsMessage::Ping(data) => TsMessage::Ping(data),
+            WsMessage::Pong(data) => TsMessage::Pong(data),
+            WsMessage::Close(frame) => TsMessage::Close(frame.map(|frame| TsCloseFrame {
+                code: frame.code.into(),
+                reason: frame.reason.as_str().into(),
+            })),
+        }
+    }
+
+    fn from_tungstenite(msg: tokio_tungstenite::tungstenite::Message) -> Option<WsMessage> {
+        use tokio_tungstenite::tungstenite::Message as TsMessage;
+        match msg {
+            TsMessage::Text(text) => Some(WsMessage::Text(Utf8Bytes::from(text.as_str()))),
+            TsMessage::Binary(data) => Some(WsMessage::Binary(data)),
+            TsMessage::Ping(data) => Some(WsMessage::Ping(data)),
+            TsMessage::Pong(data) => Some(WsMessage::Pong(data)),
+            TsMessage::Close(frame) => Some(WsMessage::Close(frame.map(|frame| CloseFrame {
+                code: frame.code.into(),
+                reason: Utf8Bytes::from(frame.reason.as_str()),
+            }))),
+            // Raw frames never surface from a decoded read.
+            TsMessage::Frame(_) => None,
+        }
+    }
+}
+
+impl futures_util::Sink<WsMessage> for TungsteniteBridge {
+    type Error = tokio_tungstenite::tungstenite::Error;
+
+    fn poll_ready(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        std::pin::Pin::new(&mut self.0).poll_ready(cx)
+    }
+
+    fn start_send(mut self: std::pin::Pin<&mut Self>, item: WsMessage) -> Result<(), Self::Error> {
+        std::pin::Pin::new(&mut self.0).start_send(Self::to_tungstenite(item))
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        std::pin::Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_close(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        std::pin::Pin::new(&mut self.0).poll_close(cx)
+    }
+}
+
+impl futures_util::Stream for TungsteniteBridge {
+    type Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        loop {
+            return match std::task::ready!(self.0.poll_next_unpin(cx)) {
+                Some(Ok(msg)) => match Self::from_tungstenite(msg) {
+                    Some(msg) => Poll::Ready(Some(Ok(msg))),
+                    None => continue,
+                },
+                Some(Err(err)) => Poll::Ready(Some(Err(err))),
+                None => Poll::Ready(None),
+            };
+        }
+    }
+}
+
+/// A real `tokio-tungstenite` server socket over a byte-capturing transport,
+/// wrapped in the production guard.
+///
+/// `write_buffer_size` and the guard's threshold are set from the SAME value:
+/// that pairing is the invariant P1 is about, and a test that let them drift
+/// would be proving something about a socket this server never builds.
+async fn real_codec_guarded(
+    socket: &CapturingSocket,
+    registry: &Arc<MutableRevocations>,
+    write_buffer_size: usize,
+) -> GuardedTransport<TungsteniteBridge> {
+    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .write_buffer_size(write_buffer_size);
+    let stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
+        socket.clone(),
+        tokio_tungstenite::tungstenite::protocol::Role::Server,
+        Some(config),
+    )
+    .await;
+    GuardedTransport::with_write_through_threshold(
+        TungsteniteBridge(stream),
+        Arc::clone(registry) as Arc<dyn crate::auth::RevokedTokenJtis + Send + Sync>,
+        Some(TEST_JTI.to_owned()),
+        7,
+        write_buffer_size,
+    )
+}
+
+/// Asserts the wire holds the automatic Pong and nothing else.
+///
+/// Byte-level and order-bearing on purpose: message-level `written()` cannot
+/// see a PARTIAL application frame, and a partial frame is precisely what a
+/// write that parked mid-way would leave. The pong is 2 bytes; anything past
+/// them is a payload byte that escaped.
+fn assert_wire_is_pong_only(socket: &CapturingSocket) {
+    let wire = socket.wire();
+    assert_eq!(
+        wire, SERVER_PONG_BYTES,
+        "the wire must hold the automatic Pong and NOTHING else — extra bytes are \
+         application-frame bytes (whole or partial) that escaped before the consult"
+    );
+}
+
+/// Asserts not one byte reached the wire.
+fn assert_wire_is_empty(socket: &CapturingSocket) {
+    assert!(
+        socket.wire().is_empty(),
+        "bytes reached the wire before any consult could refuse them: {:?}",
+        socket.wire()
+    );
+}
+
+/// Feeds a real masked client Ping and decodes it, leaving a Pong OWED.
+///
+/// The codec's `read` returns as soon as it has a message, having only
+/// `set_additional(pong)` — so `additional_send` is non-empty and no byte has
+/// been written. That is the state the P2 finding is about: the double could
+/// not reach it, because its `poll_next` moves queued frames straight to the
+/// wire.
+async fn owe_a_pong(socket: &CapturingSocket, guarded: &mut GuardedTransport<TungsteniteBridge>) {
+    socket.push_inbound(&CLIENT_PING_FRAME);
+    assert!(
+        matches!(guarded.read_next().await, Some(Ok(WsMessage::Ping(_)))),
+        "the real codec must decode the masked client Ping — otherwise no pong is owed \
+         and this row is not testing the pong path at all"
+    );
+    assert_wire_is_empty(socket);
+}
+
+/// Drives the real codec into the exact state the P2 finding names: a pong
+/// owed, the application frame handed over, and the registry flipped between
+/// the pre-drain and the pre-first-flush consult.
+///
+/// The sequencing matters and is not incidental:
+///
+/// 1. the peer's masked Ping is read, so `additional_send` holds a Pong;
+/// 2. `send_binary` runs. Its capacity-wait consult sees a live credential;
+/// 3. the pre-drain flushes the owed Pong — the FIRST write to reach the wire,
+///    which is where the hook fires and the registry flips;
+/// 4. `start_send` then buffers the application frame, and the consult before
+///    the first flush poll is the only thing between the peer and its bytes.
+///
+/// Step 3 is what the double models as a message-level `written` entry; here it
+/// is real bytes in real order, so a partial application write would be visible.
+async fn real_codec_send_racing_a_revocation(
+    socket: &CapturingSocket,
+    registry: &Arc<MutableRevocations>,
+    payload_len: usize,
+    revoke: impl FnOnce(&MutableRevocations) + Send + 'static,
+) -> (bool, GuardedTransport<TungsteniteBridge>) {
+    let mut guarded = real_codec_guarded(socket, registry, REAL_CODEC_WRITE_BUFFER).await;
+    owe_a_pong(socket, &mut guarded).await;
+
+    let registry_for_hook = Arc::clone(registry);
+    socket.after_first_write(move || revoke(&registry_for_hook));
+
+    let keep_going = guarded.send_binary(vec![7u8; payload_len]).await;
+    (keep_going, guarded)
+}
+
+/// REAL CODEC: a revocation between the two consults must leave the wire
+/// holding only the Pong.
+///
+/// This is the byte-level statement the double cannot make. `written()` there
+/// is a list of message enums; here it is the actual octets, so a partially
+/// written binary frame — which is what a write that parked mid-payload
+/// leaves — would show up as trailing bytes past the 2-byte Pong.
+#[tokio::test]
+async fn real_codec_withholds_every_application_byte_when_the_credential_is_revoked() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+
+    let (keep_going, guarded) =
+        real_codec_send_racing_a_revocation(&socket, &registry, UNDER_THRESHOLD_PAYLOAD, |r| {
+            r.revoke(TEST_JTI);
+        })
+        .await;
+
+    assert!(!keep_going, "a revoked session must not continue");
+    assert_wire_is_pong_only(&socket);
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must drop the whole real transport"
+    );
+}
+
+/// REAL CODEC: an unreadable registry is refused on the same terms.
+#[tokio::test]
+async fn real_codec_withholds_every_application_byte_when_the_registry_is_unreadable() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+
+    let (keep_going, guarded) = real_codec_send_racing_a_revocation(
+        &socket,
+        &registry,
+        UNDER_THRESHOLD_PAYLOAD,
+        MutableRevocations::make_unreadable,
+    )
+    .await;
+
+    assert!(
+        !keep_going,
+        "an unreadable registry is not evidence the token is live"
+    );
+    assert_wire_is_pong_only(&socket);
+    assert!(guarded.socket.is_none());
+}
+
+/// REAL CODEC: the guard must not be a blanket refusal — a live credential's
+/// frame reaches the wire, after the pong, in that order.
+#[tokio::test]
+async fn real_codec_delivers_after_the_pong_while_the_credential_is_live() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+
+    let (keep_going, _guarded) =
+        real_codec_send_racing_a_revocation(&socket, &registry, UNDER_THRESHOLD_PAYLOAD, |_| {})
+            .await;
+
+    assert!(keep_going);
+    let wire = socket.wire();
+    let mut expected = SERVER_PONG_BYTES.to_vec();
+    // Binary, FIN, unmasked, 8-byte payload — the server's own encoding.
+    expected.push(0x82);
+    expected.push(UNDER_THRESHOLD_PAYLOAD as u8);
+    expected.extend(std::iter::repeat_n(7u8, UNDER_THRESHOLD_PAYLOAD));
+    assert_eq!(
+        wire, expected,
+        "a live credential's frame must be delivered, and the owed Pong must precede it"
+    );
+}
+
+/// REAL CODEC, the P1 property: a frame that would cross the write-through
+/// threshold is REFUSED, not written.
+///
+/// The threshold is lowered to a value a test frame can cross — the exact
+/// mutation the finding describes. Under the old `debug_assert` this frame
+/// would be handed to `buffer_frame`, push the out-buffer past
+/// `write_buffer_size`, and be written to the socket synchronously inside
+/// `start_send`, before any consult. The wire assertion is the proof: not one
+/// byte, not even a partial frame.
+///
+/// The credential is LIVE throughout. That is the sharp form of the property:
+/// the refusal is not a revocation firing early, it is the transport declining
+/// to hold bytes it could not withhold.
+#[tokio::test]
+async fn real_codec_refuses_a_frame_that_would_reach_the_write_through_threshold() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+
+    let keep_going = guarded.send_binary(vec![7u8; OVER_THRESHOLD_PAYLOAD]).await;
+
+    assert!(
+        !keep_going,
+        "a frame that cannot be held below the write-through threshold must end the \
+         connection, not be queued"
+    );
+    assert_wire_is_empty(&socket);
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal is fail-closed: the transport is aborted, so no later poll can \
+         drain anything"
+    );
+}
+
+/// REAL CODEC: the same oversized frame, with a revoked credential and an
+/// unreadable registry — still zero application bytes.
+///
+/// The finding's regression asks for the revoked and unreadable rows over a
+/// lowered threshold specifically, because the pre-leg failure mode was a
+/// consult that ran AFTER the bytes were already gone. A revocation that lands
+/// while the frame is over the threshold must not be able to observe a wire
+/// that already has it.
+#[tokio::test]
+async fn real_codec_refuses_an_over_threshold_frame_on_a_revoked_credential() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    registry.revoke(TEST_JTI);
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+
+    assert!(!guarded.send_binary(vec![7u8; OVER_THRESHOLD_PAYLOAD]).await);
+    assert_wire_is_empty(&socket);
+    assert!(guarded.socket.is_none());
+}
+
+#[tokio::test]
+async fn real_codec_refuses_an_over_threshold_frame_on_an_unreadable_registry() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    registry.make_unreadable();
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+
+    assert!(!guarded.send_binary(vec![7u8; OVER_THRESHOLD_PAYLOAD]).await);
+    assert_wire_is_empty(&socket);
+    assert!(guarded.socket.is_none());
+}
+
+/// REAL CODEC: the refusal must be a THRESHOLD, not a size phobia — a frame
+/// that fits below it is delivered whole and byte-exact.
+///
+/// Without this row the P1 fix could be "refuse everything" and every
+/// withholding assertion above would still pass.
+#[tokio::test]
+async fn real_codec_delivers_a_frame_that_stays_below_the_write_through_threshold() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+
+    // The largest payload the guard admits at this threshold: encoded size
+    // plus the control reserve exactly equals it. One more byte is refused.
+    let admissible = REAL_CODEC_WRITE_BUFFER - WS_OUT_BUFFER_RESERVE - 4;
+    assert!(guarded.send_binary(vec![7u8; admissible]).await);
+
+    let wire = socket.wire();
+    // Binary, FIN, unmasked, 16-bit extended length.
+    let mut expected = vec![0x82, 126];
+    expected.extend_from_slice(&(admissible as u16).to_be_bytes());
+    expected.extend(std::iter::repeat_n(7u8, admissible));
+    assert_eq!(
+        wire, expected,
+        "a frame below the threshold must be delivered whole, header and payload"
+    );
+
+    assert!(
+        !guarded.send_binary(vec![7u8; admissible + 1]).await,
+        "one byte past the admissible size must be refused — the boundary is exact"
+    );
+    assert_eq!(
+        socket.wire(),
+        expected,
+        "the refused frame added bytes to the wire"
+    );
+}
+
+/// The codec's write-through arithmetic, restated and pinned.
+///
+/// [`encoded_frame_len`] is the guard's model of `Frame::len` for a server's
+/// unmasked binary frame. If tungstenite changes its header encoding, the
+/// guard's threshold arithmetic silently under-counts and frames slip through
+/// — so the model is checked against boundaries the RFC fixes rather than
+/// against the library's private types.
+#[test]
+fn encoded_frame_len_matches_the_rfc_header_boundaries() {
+    // 7-bit length: 2-byte header, no extension.
+    assert_eq!(encoded_frame_len(0), 2);
+    assert_eq!(encoded_frame_len(125), 127);
+    // 16-bit extension kicks in at 126.
+    assert_eq!(encoded_frame_len(126), 126 + 4);
+    assert_eq!(encoded_frame_len(65_535), 65_535 + 4);
+    // 64-bit extension at 65_536.
+    assert_eq!(encoded_frame_len(65_536), 65_536 + 10);
+    // Saturating rather than wrapping: an absurd length stays absurd, so the
+    // comparison refuses instead of wrapping to something admissible.
+    assert_eq!(encoded_frame_len(usize::MAX), usize::MAX);
+}
+
+/// The production threshold admits every frame the server can actually build.
+///
+/// This is the relationship the deleted `debug_assert` was reaching for, said
+/// correctly and in a test that runs in every profile: the point is not that
+/// `max_frame_size` (an INBOUND bound) sits below the threshold, it is that a
+/// realistic outbound export is admissible — so the fail-closed refusal above
+/// cannot degrade into refusing normal service.
+#[tokio::test]
+async fn the_production_threshold_admits_a_realistic_outbound_export() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, WS_WRITE_BUFFER_SIZE).await;
+
+    // Larger than the library's default write buffer and larger than the
+    // default `max_frame_size` for inbound frames: a window export is not
+    // bounded by either on the way out.
+    let export = 2 * BlockableTransport::DEFAULT_WRITE_BUFFER;
+    assert!(
+        guarded.send_binary(vec![7u8; export]).await,
+        "the production threshold must admit an ordinary export — a guard that refuses \
+         real traffic is not a guard, it is an outage"
+    );
+    assert_eq!(
+        socket.wire().len(),
+        encoded_frame_len(export),
+        "the delivered frame must be exactly one encoded binary frame"
+    );
+}
+
+/// REAL CODEC, the flush-park shape: a peer that stops reading mid-flush and
+/// resumes after the revocation gets no application byte.
+///
+/// The double covers this phase-wise; here it is the real sink parking on a
+/// `Pending` write, so the partial-write question is answered in bytes. The
+/// codec has ALREADY buffered the application frame when the park happens —
+/// that is precisely the state where a message-level `written()` proves
+/// nothing and a byte capture proves everything.
+#[tokio::test]
+async fn real_codec_withholds_a_parked_frame_when_the_peer_resumes_after_revocation() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+
+    socket.block_writes();
+    let mut send = Box::pin(guarded.send_binary(vec![7u8; UNDER_THRESHOLD_PAYLOAD]));
+    assert!(
+        futures_util::poll!(send.as_mut()).is_pending(),
+        "the blocked socket must park the flush, or this row is not testing the flush wait"
+    );
+    assert_wire_is_empty(&socket);
+
+    // The operator revokes while the frame sits in the codec's out-buffer, and
+    // only then does the peer start reading again.
+    registry.revoke(TEST_JTI);
+    socket.unblock_writes();
+
+    let keep_going = tokio::time::timeout(FLUSH_RECONSULT_INTERVAL * 20, send)
+        .await
+        .expect("the guard must re-consult on its own tick, not wait on the peer");
+
+    assert!(!keep_going, "a revoked session must not continue");
+    assert_wire_is_empty(&socket);
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must drop the whole real transport"
+    );
+}
