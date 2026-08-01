@@ -926,6 +926,25 @@ pub fn actor_binding_is_active(
 }
 
 impl AuthorityFold {
+    /// True when [`Self::vault_id`] is `None` because the log carries MORE THAN
+    /// ONE independently rooted vault, not because it carries no root at all.
+    ///
+    /// The two `None`s mean opposite things to a caller: an unrooted log has
+    /// declared no authority yet, while a multi-root log declared authority and
+    /// then collapsed — the fold clears the roster, bindings, and pacts and
+    /// keeps only the [`AuthorityFoldIssue::ConflictingVaultRoot`] rows. Every
+    /// authority gate MUST fail closed on the second, so the distinction is
+    /// exposed here rather than re-derived (and inevitably mis-derived) at each
+    /// call site.
+    #[must_use]
+    pub fn vault_root_is_conflicted(&self) -> bool {
+        self.vault_id.is_none()
+            && self
+                .issues
+                .iter()
+                .any(|issue| matches!(issue, AuthorityFoldIssue::ConflictingVaultRoot { .. }))
+    }
+
     /// Pact state governing `grant_ref`, if any lifecycle entries name it.
     ///
     /// Concurrent Connects on divergent branches can bind one grant_ref under
@@ -1694,6 +1713,9 @@ fn fold_authority_log_once(
     }
     let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
     let fork_alarms = build_fork_alarms(&authority_forks);
+    let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
+        folded_actor_bindings(state, &authority_forks)
+    });
 
     (
         AuthorityFold {
@@ -1717,9 +1739,7 @@ fn fold_authority_log_once(
             federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
                 state.federation_grant_bindings.clone()
             }),
-            actor_bindings: merged
-                .as_ref()
-                .map_or_else(BTreeMap::new, folded_actor_bindings),
+            actor_bindings,
             issues,
         },
         authority_fork_vault_ids,
@@ -1733,13 +1753,31 @@ fn fold_authority_log_once(
 /// automatically and order-independently, with no cascade written into binding
 /// state. A rotation deliberately does NOT migrate a binding — the old binding
 /// dies with the old key and the new key needs a fresh `BindActor`.
-fn folded_actor_bindings(state: &FoldState) -> BTreeMap<AuthorityKey, FoldedActorBinding> {
+///
+/// Roster presence alone is NOT enough. The projection re-runs the bind
+/// transition table's key predicate against the MERGED roster, because two
+/// things can invalidate a key AFTER a valid bind folded:
+///
+/// * The merge's most-restrictive `roles &=` can strip the OWNER|ADMIN bits (or
+///   demote the tier) that admitted a `"human"` bind on a divergent branch. A
+///   binding whose key can no longer give owner consent must not keep backing
+///   the owner class.
+/// * AUTH-5 equivocation quarantines the key itself. A key that signed
+///   divergent content at one sequence is exactly the key an attacker holds;
+///   letting it keep speaking for a human owner is the fail-open the quarantine
+///   exists to prevent. Quarantine is a live-fork property, so it is read from
+///   the reported forks rather than from roster state.
+fn folded_actor_bindings(
+    state: &FoldState,
+    authority_forks: &[AuthorityFork],
+) -> BTreeMap<AuthorityKey, FoldedActorBinding> {
     state
         .actor_bindings
         .iter()
         .map(|(key, binding)| {
-            let live_key = state.roster.get(key).is_some_and(|device| !device.revoked);
-            let status = if live_key && state.live_actor_binding(key).is_some() {
+            let status = if folded_binding_key_still_qualifies(state, authority_forks, key, binding)
+                && state.live_actor_binding(key).is_some()
+            {
                 ActorBindingStatus::Active
             } else {
                 ActorBindingStatus::Revoked
@@ -1755,6 +1793,30 @@ fn folded_actor_bindings(state: &FoldState) -> BTreeMap<AuthorityKey, FoldedActo
             )
         })
         .collect()
+}
+
+/// The bind transition table's key predicate, re-evaluated post-merge.
+///
+/// Mirrors `apply_actor_binding` exactly — live roster row for every class,
+/// plus owner-consent capability for `"human"` — so a role/tier restriction
+/// that would have REJECTED the bind also kills it retroactively. Any key with
+/// a still-quarantined fork fails outright, whatever its roles.
+fn folded_binding_key_still_qualifies(
+    state: &FoldState,
+    authority_forks: &[AuthorityFork],
+    key: &AuthorityKey,
+    binding: &ActorBindingState,
+) -> bool {
+    if authority_forks
+        .iter()
+        .any(|fork| fork.signer == *key && fork.status == AuthorityForkStatus::Quarantined)
+    {
+        return false;
+    }
+    let Some(device) = state.roster.get(key).filter(|device| !device.revoked) else {
+        return false;
+    };
+    binding.actor_class != "human" || folded_device_can_authority_consent(device)
 }
 
 fn reconcile_reported_authority_forks(

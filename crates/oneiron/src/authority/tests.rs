@@ -11,6 +11,15 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Inverse of [`hex`], for decoding pinned golden vectors back to bytes.
+fn hex_bytes(text: &str) -> Vec<u8> {
+    assert!(text.len().is_multiple_of(2), "hex literal must be even");
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+        .collect()
+}
+
 fn ed_key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }
@@ -8720,42 +8729,87 @@ fn bind_rebind_revoke_ops_roundtrip_and_golden_vectors() {
         );
     }
 
-    // Byte-pin: field order (kind, authority_key, actor_ref, actor_class,
-    // epoch) is a wire contract, so a reordering refactor must fail here.
-    let bind_value = op_value_with_genesis_delay(&bind_op(&key, actor, "human", 1), true);
-    let Value::Map(fields) = &bind_value else {
-        panic!("bind op must encode as a map");
-    };
-    let keys: Vec<_> = fields
-        .iter()
-        .map(|(name, _)| name.as_str().unwrap().to_owned())
-        .collect();
+    // GOLDEN BYTE VECTORS — literal MessagePack captured from the reviewed
+    // encoder, NOT re-derived from it. Comparing structure against the current
+    // encoder passes vacuously under any encoding change; these bytes do not.
+    //
+    // Pinned wire contract, decodable straight out of the hex below:
+    //   bind/rebind: fixmap(5) {kind, authority_key, actor_ref, actor_class, epoch}
+    //   revoke:      fixmap(3) {kind, authority_key, epoch}
+    //   kind:          "bind_actor" | "rebind_actor" | "revoke_actor"
+    //   authority_key: fixmap(2) {suite: "ed25519", public_key: bin8(32)}
+    //   actor_ref:     str8, 32 lowercase hex chars (the grant_ref precedent)
+    //   actor_class:   str, EXACT ("human"/"agent"/"system" — never normalized)
+    //   epoch:         positive fixint
+    // Changing ANY of field order, key spelling, map arity, or a value's
+    // MessagePack type breaks these vectors, which is the entire point.
+    //
+    // Fixture inputs the vectors were captured against; pinned so a fixture
+    // drift reports itself here instead of as an opaque byte mismatch.
     assert_eq!(
-        keys,
-        vec!["kind", "authority_key", "actor_ref", "actor_class", "epoch"]
+        key,
+        AuthorityKey::Ed25519(
+            <[u8; 32]>::try_from(
+                hex_bytes("97ffc883c80bee7237ef95d9b9b703d4ad63e60a21e605867682b75b8b3f4303")
+                    .as_slice()
+            )
+            .unwrap()
+        )
     );
-    assert_eq!(fields[0].1.as_str(), Some("bind_actor"));
-    assert_eq!(fields[2].1.as_str(), Some(actor.to_hex().as_str()));
-    assert_eq!(
-        op_value_with_genesis_delay(&rebind_op(&key, actor, "human", 1), true)
-            .as_map()
-            .unwrap()[0]
-            .1
-            .as_str(),
-        Some("rebind_actor")
-    );
-    let Value::Map(revoke_fields) = op_value_with_genesis_delay(&revoke_actor_op(&key, 3), true)
-    else {
-        panic!("revoke op must encode as a map");
-    };
-    assert_eq!(
-        revoke_fields
-            .iter()
-            .map(|(name, _)| name.as_str().unwrap().to_owned())
-            .collect::<Vec<_>>(),
-        vec!["kind", "authority_key", "epoch"]
-    );
-    assert_eq!(revoke_fields[0].1.as_str(), Some("revoke_actor"));
+    assert_eq!(actor.to_hex(), "c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8");
+    for (label, op, golden) in [
+        (
+            "bind_actor",
+            bind_op(&key, actor, "human", 1),
+            concat!(
+                "85a46b696e64aa62696e645f6163746f72ad617574686f726974795f6b657982",
+                "a57375697465a765643235353139aa7075626c69635f6b6579c42097ffc883c8",
+                "0bee7237ef95d9b9b703d4ad63e60a21e605867682b75b8b3f4303a96163746f",
+                "725f726566d92063386338633863386338633863386338633863386338633863",
+                "38633863386338ab6163746f725f636c617373a568756d616ea565706f636801",
+            ),
+        ),
+        (
+            "rebind_actor",
+            rebind_op(&key, actor, "agent", 2),
+            concat!(
+                "85a46b696e64ac726562696e645f6163746f72ad617574686f726974795f6b65",
+                "7982a57375697465a765643235353139aa7075626c69635f6b6579c42097ffc8",
+                "83c80bee7237ef95d9b9b703d4ad63e60a21e605867682b75b8b3f4303a96163",
+                "746f725f726566d9206338633863386338633863386338633863386338633863",
+                "386338633863386338ab6163746f725f636c617373a56167656e74a565706f63",
+                "6802",
+            ),
+        ),
+        (
+            "revoke_actor",
+            revoke_actor_op(&key, 3),
+            concat!(
+                "83a46b696e64ac7265766f6b655f6163746f72ad617574686f726974795f6b65",
+                "7982a57375697465a765643235353139aa7075626c69635f6b6579c42097ffc8",
+                "83c80bee7237ef95d9b9b703d4ad63e60a21e605867682b75b8b3f4303a56570",
+                "6f636803",
+            ),
+        ),
+    ] {
+        let encoded = encode_value(&op_value_with_genesis_delay(&op, true)).unwrap();
+        assert_eq!(
+            hex(&encoded),
+            golden,
+            "{label} encoding drifted from its golden vector"
+        );
+        // The vector is also a DECODE fixture: these exact bytes must still
+        // parse back to the op, so a decoder that only understands the new
+        // encoding cannot pass by changing both sides together.
+        assert_eq!(
+            decode_op(
+                &rmpv::decode::read_value(&mut Cursor::new(hex_bytes(golden).as_slice())).unwrap()
+            )
+            .unwrap(),
+            op,
+            "{label} golden bytes must decode back to the op"
+        );
+    }
 
     // Unknown discriminants still fail closed: a pre-1633 binary rejecting a
     // bind body is the correct pre-release behavior, and the reverse (this
@@ -9230,6 +9284,202 @@ fn binding_dies_with_roster_key() {
         Some(ActorBindingStatus::Active)
     );
     assert!(actor_binding_is_active(&fold, &fixture.actor, "human"));
+}
+
+/// P2-a: a key that FAILS the bind transition table's own key predicate after
+/// the merge must not keep an Active binding. Roster presence alone was the
+/// fail-open: the row survives quarantine and survives role stripping.
+#[test]
+fn binding_dies_when_key_loses_its_bind_qualification() {
+    // ── quarantined key ──────────────────────────────────────────────────
+    // AUTH-5: the owner key signs two DIFFERENT entries at the same seq. That
+    // key is precisely the one an attacker is holding, so its roster row
+    // outliving the equivocation must not keep it speaking for a human owner.
+    let fixture = bind_fixture(214);
+    let key = fixture.owner_key.clone();
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let mut clean = vec![fixture.genesis.clone(), fixture.enroll.clone(), bind];
+    let fold = fold_authority_log_without_seen_time_delay(&clean);
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Active),
+        "control: a clean owner key backs its binding"
+    );
+
+    // Same signer, same seq, divergent content (ts differs) -> equivocation.
+    let equivocation = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        103,
+    );
+    clean.push(equivocation);
+    let quarantined = clean;
+    let fold = fold_authority_log_without_seen_time_delay(&quarantined);
+    assert!(
+        fold.authority_forks
+            .iter()
+            .any(|fork| fork.signer == key && fork.status == AuthorityForkStatus::Quarantined),
+        "fixture must actually quarantine the bound key"
+    );
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked),
+        "an equivocation-quarantined key must not back a binding"
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // ── role-stripped key ────────────────────────────────────────────────
+    // Two concurrent branches enroll the SAME third key with different roles.
+    // The merge's most-restrictive `roles &=` leaves AGENT only, so the key can
+    // no longer give owner consent — exactly the state that would have REJECTED
+    // the human bind with `OwnerCapabilityRequired` had it arrived first.
+    let fixture = bind_fixture(216);
+    let third = ed_key(216_u8.wrapping_add(2));
+    let third_key = authority_key_from_ed(&third);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let wide_enroll = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                third_key.clone(),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+        102,
+    );
+    let bind = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&wide_enroll).unwrap()],
+        3,
+        bind_op(&third_key, fixture.actor, "human", 1),
+        103,
+    );
+    let owner_capable = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        wide_enroll,
+        bind,
+    ];
+    let fold = fold_authority_log_without_seen_time_delay(&owner_capable);
+    assert_eq!(
+        fold.roster[&third_key].roles & (ROLE_OWNER | ROLE_ADMIN),
+        ROLE_OWNER | ROLE_ADMIN,
+        "control fixture must leave the key owner-capable"
+    );
+    assert_eq!(
+        folded_status(&fold, &third_key),
+        Some(ActorBindingStatus::Active),
+        "control: an owner-capable key backs a human binding"
+    );
+
+    // The concurrent narrow enroll is what strips the bits on merge.
+    let narrow_enroll = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        4,
+        AuthorityOp::EnrollDevice {
+            device: device(third_key.clone(), ROLE_AGENT, AuthorityTier::Software),
+        },
+        104,
+    );
+    let mut stripped = owner_capable;
+    stripped.push(narrow_enroll);
+    let fold = fold_authority_log_without_seen_time_delay(&stripped);
+    assert_eq!(
+        fold.roster[&third_key].roles & (ROLE_OWNER | ROLE_ADMIN),
+        0,
+        "fixture must actually strip the owner-capable bits"
+    );
+    assert!(
+        !fold.roster[&third_key].revoked,
+        "the stripped key must stay UNREVOKED — roster presence is the fail-open"
+    );
+    assert_eq!(
+        folded_status(&fold, &third_key),
+        Some(ActorBindingStatus::Revoked),
+        "a role-stripped key must not back a human binding"
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // ── revoked key, NON-human class ─────────────────────────────────────
+    // Owner-capability is a human-class rule, so the roster-liveness leg is
+    // the ONLY thing killing an agent-class binding on a revoked key. Pinned
+    // separately or the human-class rows would mask its removal.
+    // A third agent key is what gets revoked, so the owner+agent pair still
+    // forms the surviving quorum a RevokeDevice needs.
+    let fixture = bind_fixture(217);
+    let spare = ed_key(217_u8.wrapping_add(2));
+    let spare_key = authority_key_from_ed(&spare);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let enroll_spare = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        AuthorityOp::EnrollDevice {
+            device: device(spare_key.clone(), ROLE_AGENT, AuthorityTier::Software),
+        },
+        102,
+    );
+    let bind = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&enroll_spare).unwrap()],
+        3,
+        bind_op(&spare_key, fixture.actor, "agent", 1),
+        103,
+    );
+    let live = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        enroll_spare,
+        bind.clone(),
+    ];
+    assert_eq!(
+        folded_status(
+            &fold_authority_log_without_seen_time_delay(&live),
+            &spare_key
+        ),
+        Some(ActorBindingStatus::Active),
+        "control: a live agent key backs an agent-class binding"
+    );
+    let revoke_device = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&bind).unwrap()],
+        4,
+        AuthorityOp::RevokeDevice {
+            revoked_key: spare_key.clone(),
+        },
+        104,
+    );
+    let mut revoked = live;
+    revoked.push(revoke_device);
+    let fold = fold_authority_log_without_seen_time_delay(&revoked);
+    assert!(
+        fold.issues.is_empty(),
+        "revoke fixture must fold cleanly: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.roster[&spare_key].revoked,
+        "fixture must actually revoke the roster key"
+    );
+    assert_eq!(
+        folded_status(&fold, &spare_key),
+        Some(ActorBindingStatus::Revoked),
+        "a revoked roster key must not back an agent-class binding either"
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "agent"));
 }
 
 /// Divergent branches over one key's identity: both siblings parent on the

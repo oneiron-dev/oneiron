@@ -3638,3 +3638,82 @@ fn revoked_binding_forbids_owner_verbs() {
         err.message
     );
 }
+
+/// P2-b: `fold.vault_id == None` is TWO states, and only one of them may pass.
+///
+/// A log carrying two independent genesis roots folds to `vault_id: None` with
+/// `ConflictingVaultRoot` issues and an EMPTY `actor_bindings` map — the same
+/// shape as a vault that never declared authority. Reading that as "unrooted,
+/// keep store truth" hands every owner verb to any caller precisely when the
+/// authority root is contested, which is the fail-open this pins shut.
+#[test]
+fn conflicting_vault_roots_fail_owner_verbs_closed() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x6B);
+    let subject = put_person(&vault, 0x6C);
+    let facade = facade_for(&vault, owner);
+
+    // Two independently rooted genesis entries in one log. Each is internally
+    // valid; together they are a collapse.
+    let (genesis_a, _) = authority_root(0x74);
+    let (genesis_b, _) = authority_root(0x75);
+    vault
+        .put_authority_log_entries(&[(genesis_a, test_time(1), 1), (genesis_b, test_time(2), 2)])
+        .expect("two independent roots are individually valid rows");
+
+    let fold = vault.authority_fold().expect("fold");
+    assert!(
+        fold.vault_root_is_conflicted(),
+        "fixture must produce the conflicting-roots collapse"
+    );
+    assert!(
+        fold.vault_id.is_none() && fold.actor_bindings.is_empty(),
+        "the collapse must be indistinguishable from unrooted on shape alone \
+         — that indistinguishability IS the bug being pinned"
+    );
+
+    // INVALID_STATE, not FORBIDDEN: nothing is wrong with the caller, the
+    // vault's authority is. The taxonomy is what tells a host to repair the
+    // log rather than to go mint a binding.
+    let err = facade
+        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+        .expect_err("owner verbs must fail closed under conflicting roots");
+    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert!(
+        err.message.contains("conflicting vault roots"),
+        "{}",
+        err.message
+    );
+
+    // The other two owner verbs take the same door.
+    for err in [
+        facade
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: "PERSON".to_owned(),
+                body: serde_json::json!({"name": "forged"}),
+                text_fields: None,
+                edges: None,
+                occurred_at: 703,
+                learned_at: None,
+            })
+            .expect_err("conflicted-root PERSON mint"),
+        {
+            let agent = put_person(&vault, 0x6D);
+            let claim = vault
+                .memory_facade(agent, EdgeActorClass::Agent)
+                .claim_upsert(&claim_input(
+                    "profile.mood",
+                    &subject,
+                    "observed",
+                    serde_json::json!("calm"),
+                ))
+                .expect("agent claim");
+            facade
+                .claim_retract(&claim.claim_short_id)
+                .expect_err("conflicted-root cross-actor retract")
+        },
+    ] {
+        assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    }
+}

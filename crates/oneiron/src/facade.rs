@@ -1037,12 +1037,29 @@ fn verify_actor_binding_in_txn(
 /// The moment a host establishes a root, owner verbs require the binding —
 /// which is exactly the pressure that makes the atomic `[genesis, bind]`
 /// ceremony the natural path. No dual-mode shim, no flag.
+///
+/// A missing `vault_id` is NOT one state. The fold also returns `None` when the
+/// log carries several independently rooted vaults, and that collapse clears
+/// `actor_bindings` wholesale — so treating every `None` as "unrooted" would
+/// hand full owner rights to exactly the vault whose authority root is under
+/// attack. Multi-root therefore fails CLOSED and unrooted keeps the spec'd
+/// pass-through.
 fn verify_owner_actor_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> FacadeResult<()> {
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    if fold.vault_root_is_conflicted() {
+        return Err(FacadeError::new(
+            FACADE_CODE_INVALID_STATE,
+            "authority log folds to conflicting vault roots; owner verbs are suspended".to_owned(),
+            &[
+                "Resolve the authority fork: keep the entries of the legitimate root and drop the foreign ones.",
+                "A vault cannot have two authority roots; no binding authorizes until one wins.",
+            ],
+        ));
+    }
     if fold.vault_id.is_none() {
         return Ok(());
     }
