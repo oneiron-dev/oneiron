@@ -34,15 +34,18 @@ jobs:
       - name: Install system tooling (pdfsig, linker, curl)
         run: apt-get update && apt-get install -y --no-install-recommends curl gcc poppler-utils
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.96"
       # pyHanko is a CI oracle only (A6): installed from the committed
       # uv.lock pin (pyhanko == 0.35.2), never shipped or referenced at
-      # runtime.
+      # runtime. uv itself is version-pinned; `uv sync --locked` enforces
+      # the content pins below it.
       - name: Install pinned pyHanko oracle
         run: |
-          pip install uv
+          pip install "uv==0.12.1"
           uv sync --locked --project crates/oneiron-seal/oracle
           echo "$(pwd)/crates/oneiron-seal/oracle/.venv/bin" >> "$GITHUB_PATH"
       # Oracle matrix rows 2 (native seal -> pyHanko validate) and 4

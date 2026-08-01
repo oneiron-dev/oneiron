@@ -27,6 +27,9 @@ pub(crate) struct RevisionState {
     pub acroform: Option<ObjectId>,
     pub acroform_fields: Vec<Object>,
     pub first_page: ObjectId,
+    pub first_page_dict: Dictionary,
+    /// Resolved `/Annots` entries of the first page (empty when absent).
+    pub first_page_annots: Vec<Object>,
     pub root_dict: Dictionary,
     pub acroform_dict: Option<Dictionary>,
 }
@@ -53,10 +56,18 @@ fn name_is(obj: &Object, expected: &[u8]) -> bool {
     matches!(obj, Object::Name(n) if n == expected)
 }
 
+/// Resolve an object to its dictionary, seeing through both plain
+/// dictionaries and STREAM dictionaries: a security-slot name hidden in a
+/// stream object's dict must not bypass the prepared-input scan.
 fn deref_dict<'d>(doc: &'d Document, obj: &'d Object) -> Option<&'d Dictionary> {
     match obj {
         Object::Dictionary(d) => Some(d),
-        Object::Reference(r) => doc.get_object(*r).ok().and_then(|o| o.as_dict().ok()),
+        Object::Stream(s) => Some(&s.dict),
+        Object::Reference(r) => match doc.get_object(*r) {
+            Ok(Object::Dictionary(d)) => Some(d),
+            Ok(Object::Stream(s)) => Some(&s.dict),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -136,12 +147,12 @@ fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), SealError> {
         return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
     }
     if let Ok(names) = root.get(b"Names")
-        && let Some(nd) = deref_dict(doc, names)
+        && let Some(names_dict) = deref_dict(doc, names)
     {
-        if nd.has(b"JavaScript") {
+        if names_dict.has(b"JavaScript") {
             return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
         }
-        if nd.has(b"EmbeddedFiles") {
+        if names_dict.has(b"EmbeddedFiles") {
             return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
         }
     }
@@ -187,11 +198,10 @@ fn last_startxref(bytes: &[u8]) -> Result<u64, SealError> {
 
 /// Classic-table vs xref-stream detection at the last startxref target.
 fn detect_xref_style(bytes: &[u8], startxref: u64) -> XrefStyle {
-    let at = usize::try_from(startxref).unwrap_or(0);
-    if bytes.len() >= at + 4 && &bytes[at..at + 4] == b"xref" {
-        XrefStyle::Table
-    } else {
-        XrefStyle::Stream
+    let at = usize::try_from(startxref).unwrap_or(usize::MAX);
+    match at.checked_add(4).and_then(|end| bytes.get(at..end)) {
+        Some(w) if w == b"xref" => XrefStyle::Table,
+        _ => XrefStyle::Stream,
     }
 }
 
@@ -236,7 +246,34 @@ fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionState, SealErr
         .and_then(|d| d.get(b"Fields").ok())
         .and_then(|f| f.as_array().ok().cloned())
         .unwrap_or_default();
-    let max_obj = doc.objects.keys().map(|(num, _)| *num).max().unwrap_or(0);
+    let first_page_dict = doc
+        .get_object(first_page)
+        .ok()
+        .and_then(|o| o.as_dict().ok())
+        .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?
+        .clone();
+    let first_page_annots = first_page_dict
+        .get(b"Annots")
+        .ok()
+        .and_then(|a| {
+            doc.dereference(a)
+                .ok()
+                .and_then(|(_, o)| o.as_array().ok().cloned())
+        })
+        .unwrap_or_default();
+    // Allocation starts past BOTH the highest referenced object number and
+    // the trailer /Size: free or unreferenced numbers below /Size stay out
+    // of reach of the new revision's object numbers.
+    let max_existing = doc.objects.keys().map(|(num, _)| *num).max().unwrap_or(0);
+    let size_max = trailer
+        .get(b"Size")
+        .ok()
+        .and_then(|s| s.as_i64().ok())
+        .and_then(|s| u64::try_from(s).ok())
+        .and_then(|s| s.checked_sub(1))
+        .and_then(|s| u32::try_from(s).ok())
+        .unwrap_or(0);
+    let max_obj = max_existing.max(size_max);
     Ok(RevisionState {
         max_obj,
         root,
@@ -247,6 +284,8 @@ fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionState, SealErr
         acroform,
         acroform_fields,
         first_page,
+        first_page_dict,
+        first_page_annots,
         root_dict: root_dict.clone(),
         acroform_dict,
     })
@@ -263,8 +302,8 @@ fn xref_offsets_consistent(doc: &Document, bytes: &[u8]) -> bool {
             lopdf::xref::XrefEntry::Normal { offset, generation } => {
                 let off = usize::try_from(*offset).unwrap_or(usize::MAX);
                 let header = format!("{id} {generation} obj");
-                bytes
-                    .get(off..off + header.len())
+                off.checked_add(header.len())
+                    .and_then(|end| bytes.get(off..end))
                     .is_some_and(|w| w == header.as_bytes())
             }
             _ => true,
@@ -537,6 +576,16 @@ fn build_objects(
             objs.push((field_num, 0, field));
             objs.push((widget_num, 0, widget.into_bytes()));
             sig_info = Some((sig_num, br_rel, lt_rel));
+            // The widget must hang off the page's /Annots, not only carry a
+            // /P back-reference: viewers and validators discover annotations
+            // through the page.
+            let mut page = state.first_page_dict.clone();
+            let mut annots = state.first_page_annots.clone();
+            annots.push(Object::Reference((widget_num, 0)));
+            page.set(b"Annots", Object::Array(annots));
+            let mut page_body = Vec::new();
+            write_object(&Object::Dictionary(page), &mut page_body)?;
+            objs.push((state.first_page.0, state.first_page.1, page_body));
             match (state.acroform, state.acroform_dict.clone()) {
                 (Some(af_id), Some(af_dict)) => {
                     let mut af = af_dict;
@@ -917,6 +966,86 @@ mod tests {
     fn field_name_is_deterministic_and_op_scoped() {
         assert_eq!(field_name_for("op-a"), field_name_for("op-a"));
         assert_ne!(field_name_for("op-a"), field_name_for("op-b"));
+    }
+
+    #[test]
+    fn stream_dictionary_sig_marker_is_rejected() {
+        // A /Type /Sig hidden in a STREAM object's dictionary is the same
+        // existing-signature violation as a plain dictionary.
+        let mut doc = Document::with_version("1.4");
+        let mut dict = Dictionary::new();
+        dict.set("Type", Object::Name(b"Sig".to_vec()));
+        dict.set("ByteRange", Object::Array(vec![Object::Integer(0)]));
+        dict.set("Contents", Object::string_literal(b"x".to_vec()));
+        doc.add_object(Object::Stream(lopdf::Stream::new(dict, Vec::new())));
+        let err = scan_objects(&doc).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: InputInvalidCode::ExistingSignature
+            }
+        ));
+    }
+
+    #[test]
+    fn signature_revision_appends_widget_to_page_annots() {
+        let p = prepared(&classic_pdf());
+        let draft = sign_revision(&p, 1024);
+        let doc = Document::load_mem(&draft.bytes).expect("reparse");
+        let pages = doc.get_pages();
+        let page_id = *pages.values().next().expect("page");
+        let page = doc
+            .get_object(page_id)
+            .and_then(Object::as_dict)
+            .expect("page dict");
+        let annots = page
+            .get(b"Annots")
+            .and_then(Object::as_array)
+            .expect("Annots array");
+        let widget_present = annots.iter().any(|a| {
+            let Object::Reference(r) = a else {
+                return false;
+            };
+            doc.get_object(*r)
+                .and_then(Object::as_dict)
+                .is_ok_and(|d| d.get(b"Subtype").is_ok_and(|s| name_is(s, b"Widget")))
+        });
+        assert!(
+            widget_present,
+            "widget annotation must be on the page /Annots"
+        );
+    }
+
+    #[test]
+    fn max_obj_respects_trailer_size_beyond_referenced_objects() {
+        let bytes = classic_pdf();
+        let mut doc = Document::load_mem(&bytes).expect("load");
+        let referenced_max = doc.objects.keys().map(|(n, _)| *n).max().unwrap_or(0);
+        let size = i64::from(referenced_max) + 11;
+        doc.trailer.set("Size", Object::Integer(size));
+        let state = revision_state(&doc, &bytes).expect("state");
+        assert_eq!(
+            state.max_obj,
+            u32::try_from(size - 1).unwrap(),
+            "allocation must start past trailer /Size, not collide with free numbers"
+        );
+    }
+
+    #[test]
+    fn xref_helpers_never_overflow_on_extreme_offsets() {
+        assert!(matches!(
+            detect_xref_style(b"%PDF-1.4 garbage", u64::MAX),
+            XrefStyle::Stream
+        ));
+        let mut doc = Document::with_version("1.4");
+        doc.reference_table.entries.insert(
+            1,
+            lopdf::xref::XrefEntry::Normal {
+                offset: u32::MAX,
+                generation: 0,
+            },
+        );
+        assert!(!xref_offsets_consistent(&doc, b"tiny"));
     }
 
     #[test]

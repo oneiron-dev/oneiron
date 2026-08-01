@@ -358,6 +358,14 @@ async fn fetch_valid_crl(
     Some(resp.body)
 }
 
+/// Issuer candidate for `chain[i]`: the next certificate in the SAME chain,
+/// or the certificate itself at the chain tip (self-issued root). Chains are
+/// walked separately so the signer‖TSA concatenation never lends an issuer
+/// across the seam (a TSA-chain head is not the signer-chain tip's issuer).
+fn chain_issuer(chain: &[Vec<u8>], i: usize) -> &Vec<u8> {
+    chain.get(i + 1).unwrap_or(&chain[i])
+}
+
 /// Gather complete validation material for B-LT (§7.5): signer + TSA chains
 /// and a valid CRL for every non-anchor certificate that advertises one.
 /// OCSP is preferred when reachable; v1 gathers CRLs through the guarded
@@ -380,22 +388,25 @@ async fn gather_validation_material(
         .chain(identity.certificate_chain_der.iter().cloned())
         .collect();
     verify::validate_chain(&signer_chain_ders, &anchors, ctx.clock_ms / 1000).ok()?;
+    let empty_chain: &[Vec<u8>] = &[];
+    let tsa_chain = token.map_or(empty_chain, |t| t.tsa_chain_ders.as_slice());
     let mut crls_der = Vec::new();
     let mut covered = 0usize;
     let mut need = 0usize;
-    for (i, cert) in certs_der.iter().enumerate() {
-        let urls = crl_urls_for(cert);
-        if urls.is_empty() {
-            continue;
-        }
-        need += 1;
-        // The CRL issuer is the next cert in the chain when present.
-        let issuer = certs_der.get(i + 1).unwrap_or(cert);
-        for u in urls {
-            if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await {
-                crls_der.push(crl);
-                covered += 1;
-                break;
+    for chain in [signer_chain_ders.as_slice(), tsa_chain] {
+        for (i, cert) in chain.iter().enumerate() {
+            let urls = crl_urls_for(cert);
+            if urls.is_empty() {
+                continue;
+            }
+            need += 1;
+            let issuer = chain_issuer(chain, i);
+            for u in urls {
+                if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await {
+                    crls_der.push(crl);
+                    covered += 1;
+                    break;
+                }
             }
         }
     }
@@ -626,6 +637,16 @@ mod tests {
             }
         ));
         assert!(!rejected.is_retryable());
+    }
+
+    #[test]
+    fn chain_issuer_never_crosses_the_signer_tsa_seam() {
+        let signer_chain = vec![vec![1u8], vec![2u8]];
+        let tsa_chain = vec![vec![9u8]];
+        assert_eq!(chain_issuer(&signer_chain, 0), &vec![2u8]);
+        // The signer-chain tip's issuer is itself, never the TSA-chain head.
+        assert_eq!(chain_issuer(&signer_chain, 1), &vec![2u8]);
+        assert_eq!(chain_issuer(&tsa_chain, 0), &vec![9u8]);
     }
 
     #[test]

@@ -333,8 +333,7 @@ fn verify_signer(
     let alg = cms::cert_signature_algorithm(cert_der);
     let sig_ok = match alg {
         Ok(a) => {
-            cms::sig_alg_oid_matches(a, &signer.signature_alg_oid)
-                && !cms::is_denied_alg_oid(&signer.signature_alg_oid)
+            cms::sig_alg_permitted(a, &signer.signature_alg_oid)
                 && cms::verify_signature_value(
                     a,
                     cert_der,
@@ -433,7 +432,10 @@ fn verify_ts_token(
 
 /// Verify one DocTimeStamp dictionary (§7.6/§7.7): ByteRange coverage and
 /// the RFC 3161 token over the covered bytes. A validated token's TSA chain
-/// is recorded in `covered` for the DSS binding.
+/// is recorded in `covered` for the DSS binding. Returns the token's
+/// genTime (unix seconds) when every check passes: that archival time is the
+/// applicable time for DSS evidence freshness, because the DocTimeStamp
+/// covers the DSS revision and attests the material as of that moment.
 fn verify_doc_ts(
     bytes: &[u8],
     e: &SigEntry,
@@ -441,7 +443,7 @@ fn verify_doc_ts(
     checks: &mut Checks,
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
-) {
+) -> Option<u64> {
     let br_ok = check_byte_range(bytes, e);
     let covers_end = !is_last
         || e.byte_range
@@ -455,24 +457,29 @@ fn verify_doc_ts(
                 }
                 tail.is_empty()
             });
-    let token_ok = unpadded_cms(&e.contents)
-        .and_then(|der| {
-            let imprint = pdf::hash_byte_range(bytes, e.byte_range).ok()?;
-            tsp::validate_token_for_verify(der, &imprint, anchors).ok()
-        })
-        .is_some_and(|(_, tsa_chain_ders)| {
-            covered.extend(
-                tsa_chain_ders
-                    .iter()
-                    .filter_map(|d| EmbeddedCert::from_der(d)),
-            );
-            true
-        });
+    let token = unpadded_cms(&e.contents).and_then(|der| {
+        let imprint = pdf::hash_byte_range(bytes, e.byte_range).ok()?;
+        tsp::validate_token_for_verify(der, &imprint, anchors).ok()
+    });
+    let token_ok = token.as_ref().is_some_and(|(_, tsa_chain_ders)| {
+        covered.extend(
+            tsa_chain_ders
+                .iter()
+                .filter_map(|d| EmbeddedCert::from_der(d)),
+        );
+        true
+    });
+    let ok = br_ok && covers_end && token_ok;
     checks.record(
         VerifyCheckKind::DocumentTimestamp,
-        br_ok && covers_end && token_ok,
+        ok,
         VerifyFindingCode::DocumentTimestampInvalid,
     );
+    if ok {
+        token.map(|(gen_time, _)| gen_time)
+    } else {
+        None
+    }
 }
 
 /// Validate the DSS revision when the catalog carries `/DSS` (§7.5/§7.7):
@@ -751,7 +758,7 @@ fn issued_by(cert: &EmbeddedCert, issuer: &EmbeddedCert) -> bool {
         return false;
     };
     let oid = cert.cert.signature_algorithm.oid.as_bytes();
-    if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
+    if !cms::sig_alg_permitted(alg, oid) {
         return false;
     }
     let Ok(tbs) = cert.cert.tbs_certificate.to_der() else {
@@ -790,8 +797,7 @@ fn crl_entry_valid<'a>(
         let Ok(alg) = cms::cert_signature_algorithm(&cand.der) else {
             return false;
         };
-        cms::sig_alg_oid_matches(alg, oid)
-            && !cms::is_denied_alg_oid(oid)
+        cms::sig_alg_permitted(alg, oid)
             && cms::verify_signature_value(alg, &cand.der, &tbs, crl.signature.raw_bytes()).is_ok()
     })?;
     if !evidence_fresh(
@@ -844,7 +850,10 @@ fn cert_id_hash(oid_bytes: &[u8], data: &[u8]) -> Option<Vec<u8>> {
 /// The cert a SingleResponse binds to: serial match against an embedded or
 /// anchored cert, and the CertID issuer hashes recompute against that
 /// cert's ACTUAL issuer — the name-matched candidate whose key signed the
-/// target certificate (§7.5 step 3 certificate identity/serial). A
+/// target certificate (§7.5 step 3 certificate identity/serial). Serial and
+/// issuer are bound TOGETHER: when several validation-set certs share a
+/// serial (different issuers), each candidate is tried until one complete
+/// binding (serial + actual issuer + both CertID hashes) holds. A
 /// same-subject/different-key shadow fails `issued_by`, so its name+key
 /// hashes can never authenticate the binding.
 fn ocsp_cert_binding<'a>(
@@ -852,27 +861,29 @@ fn ocsp_cert_binding<'a>(
     embedded: &'a [EmbeddedCert],
     anchors: &'a [EmbeddedCert],
 ) -> Option<(&'a EmbeddedCert, &'a EmbeddedCert)> {
-    let target = embedded
+    let oid = cert_id.hash_algorithm.oid.as_bytes();
+    embedded
         .iter()
         .chain(anchors.iter())
-        .find(|c| c.cert.tbs_certificate.serial_number == cert_id.serial_number)?;
-    let issuer = issuer_candidates(&target.cert.tbs_certificate.issuer, embedded, anchors)
-        .find(|cand| issued_by(target, cand))?;
-    let oid = cert_id.hash_algorithm.oid.as_bytes();
-    let subject_der = der::Encode::to_der(&issuer.cert.tbs_certificate.subject).ok()?;
-    let key_bytes = issuer
-        .cert
-        .tbs_certificate
-        .subject_public_key_info
-        .subject_public_key
-        .raw_bytes();
-    if cert_id_hash(oid, &subject_der)? != cert_id.issuer_name_hash.as_bytes() {
-        return None;
-    }
-    if cert_id_hash(oid, key_bytes)? != cert_id.issuer_key_hash.as_bytes() {
-        return None;
-    }
-    Some((target, issuer))
+        .filter(|c| c.cert.tbs_certificate.serial_number == cert_id.serial_number)
+        .find_map(|target| {
+            let issuer = issuer_candidates(&target.cert.tbs_certificate.issuer, embedded, anchors)
+                .find(|cand| issued_by(target, cand))?;
+            let subject_der = der::Encode::to_der(&issuer.cert.tbs_certificate.subject).ok()?;
+            let key_bytes = issuer
+                .cert
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .raw_bytes();
+            if cert_id_hash(oid, &subject_der)? != cert_id.issuer_name_hash.as_bytes() {
+                return None;
+            }
+            if cert_id_hash(oid, key_bytes)? != cert_id.issuer_key_hash.as_bytes() {
+                return None;
+            }
+            Some((target, issuer))
+        })
 }
 
 /// RFC 6960 §2.6: the responder is the issuer itself, or a delegate
@@ -995,7 +1006,7 @@ fn ocsp_entry_valid(
         return None;
     };
     let oid = basic.signature_algorithm.oid.as_bytes();
-    if !cms::sig_alg_oid_matches(alg, oid) || cms::is_denied_alg_oid(oid) {
+    if !cms::sig_alg_permitted(alg, oid) {
         return None;
     }
     let Ok(tbs) = basic.tbs_response_data.to_der() else {
@@ -1060,9 +1071,17 @@ pub(crate) fn verify_document(
     // Certificates of the CMS signer/TSA chains this report covers; the DSS
     // binding requires the validation material to speak about them.
     let mut covered: Vec<EmbeddedCert> = Vec::new();
+    // genTime of the most recent VALIDATED DocTimeStamp: the archival
+    // applicable time for DSS evidence freshness (§7.6 step 3 — the
+    // DocTimeStamp covers the DSS revision).
+    let mut archival_time: Option<u64> = None;
     for (i, e) in sigs.iter().enumerate() {
         if e.is_doc_ts {
-            verify_doc_ts(bytes, e, &anchors, &mut checks, i == last_idx, &mut covered);
+            if let Some(gen_time) =
+                verify_doc_ts(bytes, e, &anchors, &mut checks, i == last_idx, &mut covered)
+            {
+                archival_time = Some(gen_time);
+            }
         } else {
             saw_cades = true;
             verify_cades_sig(bytes, e, ctx, &anchors, &mut checks, &mut covered);
@@ -1075,7 +1094,7 @@ pub(crate) fn verify_document(
         &doc,
         &anchor_certs,
         &covered,
-        ctx.clock_ms / 1000,
+        archival_time.unwrap_or(ctx.clock_ms / 1000),
         &mut checks,
     );
     let valid = saw_cades
@@ -1167,6 +1186,20 @@ mod tests {
             .distinguished_name
             .push(rcgen::DnType::CommonName, cn.to_string());
         params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+        let issuer = rcgen::Issuer::from_params(&ca.rcgen_params, &ca.rcgen_key);
+        params.signed_by(&key_pair, &issuer).unwrap().der().to_vec()
+    }
+
+    /// A leaf under `ca` with a caller-chosen serial number.
+    fn leaf_with_serial(ca: &TestCa, cn: &str, serial: u64) -> Vec<u8> {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+        params.serial_number = Some(rcgen::SerialNumber::from(serial));
         let issuer = rcgen::Issuer::from_params(&ca.rcgen_params, &ca.rcgen_key);
         params.signed_by(&key_pair, &issuer).unwrap().der().to_vec()
     }
@@ -1782,6 +1815,54 @@ mod tests {
             &mut checks,
         );
         assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+    }
+
+    #[test]
+    fn dss_ocsp_target_binds_serial_and_issuer_together() {
+        // Two covered-set leaves share a serial under DIFFERENT issuers. The
+        // OCSP response (issued by ca2) must bind to leaf2 even though leaf1
+        // sorts first in the embedded set: serial alone is not identity.
+        let ca1 = test_ca("ca-one");
+        let ca2 = test_ca("ca-two");
+        let leaf1_der = leaf_with_serial(&ca1, "leaf-one", 0x5EED);
+        let leaf2_der = leaf_with_serial(&ca2, "leaf-two", 0x5EED);
+        let leaf2 = x509_cert::Certificate::from_der(&leaf2_der).unwrap();
+        let ocsp = build_ocsp(
+            &ca2,
+            leaf2.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+        );
+        let doc = dss_doc(
+            &[leaf1_der.clone(), leaf2_der.clone(), ca2.cert_der.clone()],
+            &[],
+            &[ocsp],
+        );
+        let covered = covered_of(&[&leaf2_der]);
+        let checks = dss_check(&doc, &covered);
+        assert!(
+            checks.passed(VerifyCheckKind::ValidationMaterial),
+            "binding must walk past the serial-matching wrong-issuer leaf"
+        );
+    }
+
+    #[test]
+    fn dss_freshness_uses_archival_applicable_time() {
+        // A CRL fresh at the archival (DocTimeStamp) time but expired by the
+        // verification clock is valid evidence for an archived document: the
+        // DocTimeStamp covers the DSS revision and attests it as of genTime.
+        let ca = test_ca("dss-ca");
+        let archival = AT_UNIX - 86_400;
+        let crl = build_crl(&ca, archival - 3600, Some(archival + 3600), None, vec![]);
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let mut checks = Checks::new();
+        verify_dss(&doc, &[], &covered, archival, &mut checks);
+        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
+        // The same material judged at the verification clock is stale.
+        let checks_now = dss_check(&doc, &covered);
+        assert_material_fails(&checks_now);
     }
 
     #[test]

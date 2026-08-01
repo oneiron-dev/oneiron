@@ -98,10 +98,28 @@ pub trait SealBackend: Send + Sync {
     ) -> Result<BackendSignature, BackendError>;
 }
 
+/// Bound for `operation_id` (§4): opaque, non-empty, at most this many UTF-8
+/// bytes, stable for one logical seal. Validated before any signing work.
+pub const MAX_OPERATION_ID_BYTES: usize = 256;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealRequest {
     pub operation_id: String,
     pub target_profile: PadesProfile,
+}
+
+impl SealRequest {
+    /// Enforce the `operation_id` contract. Engines must run this before the
+    /// request reaches any signing or fetch path.
+    pub fn validate_operation_id(&self) -> Result<(), SealError> {
+        if self.operation_id.is_empty() || self.operation_id.len() > MAX_OPERATION_ID_BYTES {
+            return Err(SealError::Fatal {
+                stage: crate::error::SealStage::InputValidation,
+                code: crate::error::FatalCode::InvalidConfiguration,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

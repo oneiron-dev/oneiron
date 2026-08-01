@@ -53,12 +53,8 @@ impl PdfSealEngine for NativeSealEngine {
         input_bytes: &[u8],
         seal_request: &SealRequest,
     ) -> Result<SealedPdf, SealError> {
-        if seal_request.operation_id.is_empty() || seal_request.operation_id.len() > 256 {
-            return Err(SealError::Fatal {
-                stage: SealStage::InputValidation,
-                code: FatalCode::InvalidConfiguration,
-            });
-        }
+        // operation_id is validated before any signing or fetch work (§4).
+        seal_request.validate_operation_id()?;
         let prepared = pdf::validate_prepared(input_bytes, &self.config.resource_limits)?;
         let ctx = profile::SealContext {
             config: &self.config,
@@ -95,5 +91,33 @@ impl PdfSealEngine for NativeSealEngine {
             clock_ms: self.clock.unix_time_ms(),
         };
         verify::verify_document(sealed_bytes, &ctx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::api::PadesProfile;
+
+    #[test]
+    fn operation_id_contract_rejects_empty_and_oversized() {
+        let req = |id: String| SealRequest {
+            operation_id: id,
+            target_profile: PadesProfile::BaselineB,
+        };
+        assert!(req("op-1".to_string()).validate_operation_id().is_ok());
+        let boundary = req("x".repeat(crate::api::MAX_OPERATION_ID_BYTES));
+        assert!(boundary.validate_operation_id().is_ok());
+        for bad in [req(String::new()), req("x".repeat(257))] {
+            let err = bad.validate_operation_id().unwrap_err();
+            assert!(matches!(
+                err,
+                SealError::Fatal {
+                    stage: SealStage::InputValidation,
+                    code: FatalCode::InvalidConfiguration,
+                }
+            ));
+        }
     }
 }

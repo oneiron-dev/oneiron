@@ -160,7 +160,7 @@ pub(crate) fn validate_response(
     let tsa_idx = find_bound_cert(&parsed.certificates, signer)?;
     let tsa_cert_der = &parsed.certificates[tsa_idx];
     let tsa_alg = cms::cert_signature_algorithm(tsa_cert_der)?;
-    if !cms::sig_alg_oid_matches(tsa_alg, &signer.signature_alg_oid) {
+    if !cms::sig_alg_permitted(tsa_alg, &signer.signature_alg_oid) {
         return Err(ts_err());
     }
     let signing_input = cms::signed_attrs_signature_input(signer);
@@ -282,7 +282,7 @@ pub(crate) fn validate_token_for_verify(
     let idx = find_bound_cert(&parsed.certificates, signer)?;
     let cert_der = &parsed.certificates[idx];
     let alg = cms::cert_signature_algorithm(cert_der)?;
-    if !cms::sig_alg_oid_matches(alg, &signer.signature_alg_oid) {
+    if !cms::sig_alg_permitted(alg, &signer.signature_alg_oid) {
         return Err(ts_err());
     }
     let input = cms::signed_attrs_signature_input(signer);

@@ -3655,6 +3655,7 @@ name = "oneiron-seal"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "cms",
  "const-oid 0.9.6",
  "der",

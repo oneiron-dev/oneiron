@@ -31,6 +31,7 @@ native = [
 ]
 network-fetch = [
   "native",
+  "dep:bytes",
   "dep:futures-util",
   "dep:reqwest",
   "dep:tokio",
@@ -68,6 +69,7 @@ x509-ocsp = { version = "=0.2.1", features = ["std", "builder"], optional = true
 x509-tsp = { version = "=0.1.0", optional = true }
 
 # Production guarded fetcher; disabled in B-B/offline builds.
+bytes = { version = "1", optional = true }
 futures-util = { version = "0.3", optional = true }
 ipnet = { version = "2", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "stream"], optional = true }

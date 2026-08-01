@@ -63,11 +63,21 @@ fn is_globally_routable(ip: IpAddr) -> bool {
                 || (v4.octets()[0] == 198 && (v4.octets()[1] == 18 || v4.octets()[1] == 19)))
         }
         IpAddr::V6(v6) => {
+            let seg = v6.segments();
             !(v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
-                || (v6.segments()[0] & 0xFE00) == 0xFC00 // unique local
-                || (v6.segments()[0] & 0xFFC0) == 0xFE80) // link local
+                || (seg[0] & 0xFE00) == 0xFC00 // unique local fc00::/7
+                || (seg[0] & 0xFFC0) == 0xFE80 // link local fe80::/10
+                || (seg[0] & 0xFFC0) == 0xFEC0 // site local fec0::/10 (deprecated)
+                || seg[..6] == [0, 0, 0, 0, 0, 0] // IPv4-compatible ::/96 (deprecated)
+                || (seg[0] == 0x0064 && seg[1] == 0xFF9B && seg[2] == 1) // NAT64 local 64:ff9b:1::/48
+                || (seg[0] == 0x0100 && seg[1] == 0 && seg[2] == 0 && seg[3] == 0) // discard 100::/64
+                || (seg[0] == 0x2001 && seg[1] == 0x0000) // Teredo 2001::/32
+                || (seg[0] == 0x2001 && seg[1] == 0x0002) // benchmarking 2001:2::/48
+                || (seg[0] == 0x2001 && (seg[1] & 0xFFF0) == 0x0020) // ORCHIDv2 2001:20::/28
+                || (seg[0] == 0x2001 && seg[1] == 0x0DB8) // documentation 2001:db8::/32
+                || seg[0] == 0x2002) // 6to4 2002::/16
         }
     }
 }
@@ -130,24 +140,42 @@ mod http {
             }
         }
 
+        /// Cache identity: URL, method, purpose, and request-body digest. A
+        /// body cached under a larger purpose cap can never be replayed for a
+        /// smaller-cap purpose, and a GET hit never serves a POST.
         fn cache_key(request: &FetchRequest) -> String {
             let body_digest = super::super::cms::sha256(&request.request_body);
-            let mut key = request.url.as_str().to_string();
+            let method = match request.method {
+                FetchMethod::Get => "GET",
+                FetchMethod::Post => "POST",
+            };
+            let purpose = match request.purpose {
+                crate::api::FetchPurpose::AuthorityInformationAccess => "aia",
+                crate::api::FetchPurpose::Ocsp => "ocsp",
+                crate::api::FetchPurpose::Crl => "crl",
+                crate::api::FetchPurpose::Timestamp => "tsa",
+            };
+            let mut key = format!("{purpose}\n{method}\n{}\n", request.url.as_str());
             for b in body_digest {
                 key.push_str(&format!("{b:02x}"));
             }
             key
         }
 
-        fn cache_get(&self, key: &str) -> Option<FetchResponse> {
+        fn cache_get(&self, key: &str, cap: usize) -> Option<FetchResponse> {
             let mut cache = self.cache.lock().ok()?;
             let entry = cache.get(key)?;
             if entry.inserted.elapsed() > CACHE_TTL {
                 cache.remove(key);
                 return None;
             }
+            // Cap is enforced before any cached byte is served: a stored body
+            // larger than this request's purpose cap is a miss, never a hit.
+            if entry.body.len() > cap {
+                return None;
+            }
             // Integrity self-check: the cached body must still match the
-            // digest recorded under the canonical-URL key.
+            // digest recorded under the canonical key.
             if super::super::cms::sha256(&entry.body) != entry.response_digest {
                 cache.remove(key);
                 return None;
@@ -217,6 +245,7 @@ mod http {
             &self,
             url: &url::Url,
             request: &FetchRequest,
+            deadline: tokio::time::Instant,
         ) -> Result<reqwest::Response, FetchError> {
             if !origin_allowed(&self.policy, url) {
                 return Err(FetchError::Denied);
@@ -235,26 +264,32 @@ mod http {
                     .body(request.request_body.clone())
                 }
             };
-            let send = builder.send();
-            let resp = tokio::time::timeout(Duration::from_millis(self.policy.timeout_ms), send)
+            let resp = tokio::time::timeout_at(deadline, builder.send())
                 .await
                 .map_err(|_| FetchError::Timeout)?
                 .map_err(|_| FetchError::Unavailable)?;
             Ok(resp)
         }
 
-        async fn stream_body(
-            resp: reqwest::Response,
+        /// Stream the body under the per-purpose cap AND the request's total
+        /// deadline: the header-phase timeout does not cover the body phase,
+        /// so every chunk read races the same deadline (a stalled body is a
+        /// Timeout, not an unbounded wait).
+        async fn stream_body<S>(
+            stream: &mut S,
+            content_type: Option<String>,
             cap: usize,
-        ) -> Result<FetchResponse, FetchError> {
-            let content_type = resp
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string);
+            deadline: tokio::time::Instant,
+        ) -> Result<FetchResponse, FetchError>
+        where
+            S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
+        {
             let mut body = Vec::new();
-            let mut stream = resp.bytes_stream();
-            while let Some(chunk) = stream.next().await {
+            loop {
+                let chunk = tokio::time::timeout_at(deadline, stream.next())
+                    .await
+                    .map_err(|_| FetchError::Timeout)?;
+                let Some(chunk) = chunk else { break };
                 let chunk = chunk.map_err(|_| FetchError::Unavailable)?;
                 if body.len() + chunk.len() > cap {
                     return Err(FetchError::ResponseTooLarge);
@@ -268,15 +303,19 @@ mod http {
     #[async_trait]
     impl SealFetcher for SsrfGuardedHttpFetcher {
         async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
+            // Purpose cap first: it gates both the cache hit and the network
+            // path, so no byte is served before the cap is known.
+            let cap = purpose_cap(&self.policy, request.purpose);
             let key = Self::cache_key(&request);
-            if let Some(hit) = self.cache_get(&key) {
+            if let Some(hit) = self.cache_get(&key, cap) {
                 return Ok(hit);
             }
+            let deadline =
+                tokio::time::Instant::now() + Duration::from_millis(self.policy.timeout_ms);
             let mut url = request.url.clone();
             let mut hops = 0u8;
-            let cap = purpose_cap(&self.policy, request.purpose);
             let response = loop {
-                let resp = self.one_hop(&url, &request).await?;
+                let resp = self.one_hop(&url, &request, deadline).await?;
                 if resp.status().is_redirection() {
                     if hops >= self.policy.max_redirects {
                         return Err(FetchError::Denied);
@@ -296,9 +335,88 @@ mod http {
                 }
                 break resp;
             };
-            let out = Self::stream_body(response, cap).await?;
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            let mut stream = response.bytes_stream();
+            let out = Self::stream_body(&mut stream, content_type, cap, deadline).await?;
             self.cache_put(key, &out);
             Ok(out)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #![allow(clippy::unwrap_used)]
+        use super::*;
+
+        fn request(method: FetchMethod, purpose: crate::api::FetchPurpose) -> FetchRequest {
+            FetchRequest {
+                purpose,
+                url: url::Url::parse("https://ca.example.test/x").unwrap(),
+                method,
+                request_body: vec![1, 2, 3],
+                content_type: None,
+            }
+        }
+
+        #[test]
+        fn cache_key_binds_method_and_purpose() {
+            let get_crl = SsrfGuardedHttpFetcher::cache_key(&request(
+                FetchMethod::Get,
+                crate::api::FetchPurpose::Crl,
+            ));
+            let post_crl = SsrfGuardedHttpFetcher::cache_key(&request(
+                FetchMethod::Post,
+                crate::api::FetchPurpose::Crl,
+            ));
+            let get_ocsp = SsrfGuardedHttpFetcher::cache_key(&request(
+                FetchMethod::Get,
+                crate::api::FetchPurpose::Ocsp,
+            ));
+            assert_ne!(get_crl, post_crl, "method participates in the key");
+            assert_ne!(get_crl, get_ocsp, "purpose participates in the key");
+        }
+
+        #[test]
+        fn cache_hit_beyond_purpose_cap_is_a_miss() {
+            let fetcher = SsrfGuardedHttpFetcher::new(FetchPolicy::default());
+            let req = request(FetchMethod::Get, crate::api::FetchPurpose::Crl);
+            let key = SsrfGuardedHttpFetcher::cache_key(&req);
+            let big = FetchResponse {
+                body: vec![7u8; 1024],
+                content_type: None,
+            };
+            fetcher.cache_put(key.clone(), &big);
+            assert!(fetcher.cache_get(&key, 2048).is_some(), "within cap hits");
+            assert!(
+                fetcher.cache_get(&key, 512).is_none(),
+                "cached body larger than this request's purpose cap must not be served"
+            );
+        }
+
+        #[tokio::test]
+        async fn body_stream_races_the_total_deadline() {
+            // One immediate chunk, then a stream that never yields: the
+            // header-phase timeout does not cover this, the deadline must.
+            let mut stream =
+                futures_util::stream::iter(vec![Ok(bytes::Bytes::from_static(b"chunk"))])
+                    .chain(futures_util::stream::pending());
+            let past = tokio::time::Instant::now() - Duration::from_secs(1);
+            let err = SsrfGuardedHttpFetcher::stream_body(&mut stream, None, 1024, past)
+                .await
+                .unwrap_err();
+            assert!(matches!(err, FetchError::Timeout));
+            // A finite stream inside the deadline streams fine.
+            let mut ok_stream =
+                futures_util::stream::iter(vec![Ok(bytes::Bytes::from_static(b"ab"))]);
+            let later = tokio::time::Instant::now() + Duration::from_secs(60);
+            let out = SsrfGuardedHttpFetcher::stream_body(&mut ok_stream, None, 1024, later)
+                .await
+                .unwrap();
+            assert_eq!(out.body, b"ab");
         }
     }
 }
@@ -373,12 +491,30 @@ mod tests {
             "fe80::1".parse::<Ipv6Addr>().unwrap(),
             "fc00::1".parse::<Ipv6Addr>().unwrap(),
             "ff02::1".parse::<Ipv6Addr>().unwrap(),
+            "fec0::1".parse::<Ipv6Addr>().unwrap(), // site local
+            "2001:db8::1".parse::<Ipv6Addr>().unwrap(), // documentation
+            "2002::1".parse::<Ipv6Addr>().unwrap(), // 6to4
+            "2001::1".parse::<Ipv6Addr>().unwrap(), // Teredo
+            "2001:2::1".parse::<Ipv6Addr>().unwrap(), // benchmarking
+            "2001:20::1".parse::<Ipv6Addr>().unwrap(), // ORCHIDv2
+            "64:ff9b:1::1".parse::<Ipv6Addr>().unwrap(), // NAT64 local-use
+            "100::1".parse::<Ipv6Addr>().unwrap(),  // discard-only
+            "::8.8.8.8".parse::<Ipv6Addr>().unwrap(), // v4-compatible ::/96
         ];
         for ip in denied_v6 {
             assert!(!addr_allowed(IpAddr::V6(ip), &cidrs), "{ip} must be denied");
         }
         assert!(addr_allowed(
             IpAddr::V6("2606:4700:4700::1111".parse().unwrap()),
+            &cidrs
+        ));
+        // Well-known NAT64 64:ff9b::/96 and global 2001: space stay allowed.
+        assert!(addr_allowed(
+            IpAddr::V6("64:ff9b::808:808".parse().unwrap()),
+            &cidrs
+        ));
+        assert!(addr_allowed(
+            IpAddr::V6("2001:4860:4860::8888".parse().unwrap()),
             &cidrs
         ));
         // Explicit CIDR admission overrides the class denial.

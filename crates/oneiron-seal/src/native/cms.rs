@@ -267,8 +267,14 @@ pub(crate) fn build_signed_data(
     let mut sd_body = tlv(0x02, &[1]); // version 1
     sd_body.extend_from_slice(&tlv(0x31, &alg_id(&OID_SHA256, true))); // digestAlgorithms
     sd_body.extend_from_slice(&tlv(0x30, &oid_tlv(&OID_DATA))); // encapContentInfo
-    let mut certs = material.signer_cert_der.to_vec();
-    for c in material.chain_ders {
+    // certificates [0] IMPLICIT is a SET OF: DER requires the members in
+    // ascending lexicographic order of their full encodings.
+    let mut certs_members: Vec<&[u8]> = vec![material.signer_cert_der];
+    certs_members.extend(material.chain_ders.iter().map(Vec::as_slice));
+    certs_members.sort_unstable();
+    certs_members.dedup();
+    let mut certs = Vec::new();
+    for c in certs_members {
         certs.extend_from_slice(c);
     }
     sd_body.extend_from_slice(&tlv(0xA0, &certs)); // certificates [0] IMPLICIT
@@ -418,17 +424,25 @@ pub(crate) fn parse_cms(der: &[u8]) -> Result<ParsedCms, SealError> {
         Some(os.content.to_vec())
     };
     let mut certificates = Vec::new();
+    let mut seen_certificates = false;
     let mut signer_info_der = None;
     while !s.is_done() {
         let t = s.read()?;
         match t.tag {
             0xA0 => {
+                if seen_certificates {
+                    return Err(cms_err()); // repeated certificates field
+                }
+                seen_certificates = true;
                 let mut cr = DerReader::new(t.content);
                 while !cr.is_done() {
                     certificates.push(cr.expect(0x30)?.full.to_vec());
                 }
             }
             0x31 => {
+                if signer_info_der.is_some() {
+                    return Err(cms_err()); // a second signerInfos SET must not overwrite
+                }
                 let mut sr = DerReader::new(t.content);
                 let first = sr.expect(0x30)?;
                 if !sr.is_done() {
@@ -632,6 +646,13 @@ pub(crate) fn sig_alg_oid_matches(alg: SignatureAlgorithm, oid_bytes: &[u8]) -> 
     oid_bytes == expected.as_bytes()
 }
 
+/// The single signature-algorithm gate for every verify path (signature,
+/// timestamp token, CRL, OCSP): the OID must match the frozen suite AND not
+/// be on the denylist.
+pub(crate) fn sig_alg_permitted(alg: SignatureAlgorithm, oid_bytes: &[u8]) -> bool {
+    sig_alg_oid_matches(alg, oid_bytes) && !is_denied_alg_oid(oid_bytes)
+}
+
 pub(crate) fn is_denied_alg_oid(oid_bytes: &[u8]) -> bool {
     oid_bytes == OID_RSA_PSS.as_bytes()
 }
@@ -766,5 +787,105 @@ mod tests {
         };
         let der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
         assert!(parse_cms(&der).is_err(), "unsorted SET must fail");
+    }
+
+    #[test]
+    fn repeated_signed_data_fields_are_rejected_on_parse() {
+        let cert = cert_der();
+        let (issuer, serial) = issuer_and_serial(&cert).expect("i/s");
+        let attrs = vec![
+            attr_content_type_data(),
+            attr_message_digest(&[7u8; 32]),
+            attr_signing_cert_v2(&cert, &issuer, &serial),
+        ];
+        let (wire, _) = assemble_signed_attrs(attrs);
+        let certs_a0 = tlv(0xA0, &cert);
+        let real_set = {
+            let mut si_body = tlv(0x02, &[1]);
+            let mut sid_body = issuer.clone();
+            sid_body.extend_from_slice(&serial);
+            si_body.extend_from_slice(&tlv(0x30, &sid_body));
+            si_body.extend_from_slice(&alg_id(&OID_SHA256, true));
+            si_body.extend_from_slice(&wire);
+            si_body.extend_from_slice(&alg_id(&OID_ECDSA_SHA256, false));
+            si_body.extend_from_slice(&tlv(0x04, &[9u8; 64]));
+            tlv(0x31, &tlv(0x30, &si_body))
+        };
+        // Hand-built ContentInfo with two signerInfos SETs: the second must
+        // not silently overwrite the first.
+        let mut sd_body = tlv(0x02, &[1]);
+        sd_body.extend_from_slice(&tlv(0x31, &alg_id(&OID_SHA256, true)));
+        sd_body.extend_from_slice(&tlv(0x30, &oid_tlv(&OID_DATA)));
+        sd_body.extend_from_slice(&certs_a0);
+        sd_body.extend_from_slice(&real_set);
+        sd_body.extend_from_slice(&real_set); // repeated field
+        let signed_data = tlv(0x30, &sd_body);
+        let mut ci_body = oid_tlv(&OID_SIGNED_DATA);
+        ci_body.extend_from_slice(&tlv(0xA0, &signed_data));
+        let der = tlv(0x30, &ci_body);
+        assert!(
+            parse_cms(&der).is_err(),
+            "a second signerInfos SET must be rejected, not overwrite"
+        );
+        // Same for a repeated certificates [0] field.
+        let mut sd_body2 = tlv(0x02, &[1]);
+        sd_body2.extend_from_slice(&tlv(0x31, &alg_id(&OID_SHA256, true)));
+        sd_body2.extend_from_slice(&tlv(0x30, &oid_tlv(&OID_DATA)));
+        sd_body2.extend_from_slice(&certs_a0);
+        sd_body2.extend_from_slice(&certs_a0);
+        sd_body2.extend_from_slice(&real_set);
+        let signed_data2 = tlv(0x30, &sd_body2);
+        let mut ci_body2 = oid_tlv(&OID_SIGNED_DATA);
+        ci_body2.extend_from_slice(&tlv(0xA0, &signed_data2));
+        let der2 = tlv(0x30, &ci_body2);
+        assert!(
+            parse_cms(&der2).is_err(),
+            "a second certificates field must be rejected"
+        );
+    }
+
+    #[test]
+    fn certificates_set_of_is_der_sorted_on_assembly() {
+        // Fake cert members (opaque TLVs to the certs field) chosen so the
+        // signing cert sorts AFTER the chain cert.
+        let high = tlv(0x30, &[0x02, 0x01, 0x7F]);
+        let low = tlv(0x30, &[0x02, 0x01, 0x01]);
+        let chain = vec![low.clone()];
+        let material = SignerMaterial {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_cert_der: &high,
+            issuer_name_der: &tlv(0x30, &[]),
+            serial_der: &tlv(0x02, &[1]),
+            chain_ders: &chain,
+        };
+        let der = build_signed_data(&material, &tlv(0xA0, &[]), &[1u8; 64], &[]);
+        let low_pos = der
+            .windows(low.len())
+            .position(|w| w == low.as_slice())
+            .expect("chain cert present");
+        let high_pos = der
+            .windows(high.len())
+            .position(|w| w == high.as_slice())
+            .expect("signer cert present");
+        assert!(
+            low_pos < high_pos,
+            "certificates SET OF members must be in ascending DER order"
+        );
+    }
+
+    #[test]
+    fn sig_alg_permitted_denies_rsa_pss_everywhere() {
+        assert!(sig_alg_permitted(
+            SignatureAlgorithm::RsaPkcs1v15Sha256,
+            OID_SHA256_WITH_RSA.as_bytes()
+        ));
+        assert!(!sig_alg_permitted(
+            SignatureAlgorithm::RsaPkcs1v15Sha256,
+            OID_RSA_PSS.as_bytes()
+        ));
+        assert!(!sig_alg_permitted(
+            SignatureAlgorithm::EcdsaP256Sha256,
+            OID_RSA_PSS.as_bytes()
+        ));
     }
 }
