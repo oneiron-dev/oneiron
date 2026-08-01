@@ -358,12 +358,28 @@ async fn fetch_valid_crl(
     Some(resp.body)
 }
 
-/// Issuer candidate for `chain[i]`: the next certificate in the SAME chain,
-/// or the certificate itself at the chain tip (self-issued root). Chains are
-/// walked separately so the signer‖TSA concatenation never lends an issuer
-/// across the seam (a TSA-chain head is not the signer-chain tip's issuer).
-fn chain_issuer(chain: &[Vec<u8>], i: usize) -> &Vec<u8> {
-    chain.get(i + 1).unwrap_or(&chain[i])
+/// Issuer of `cert_der` bound by key (the r4 lesson, seal side): the chain
+/// or trust-anchor certificate whose KEY verifies `cert_der`'s signature —
+/// never the next positional slot. CMS certificate `SET OF` members are
+/// unordered and DER-sorted on assembly, so `chain[i+1]` can be a sibling,
+/// the certificate itself, or an unrelated cert. A self-signed tip resolves
+/// to itself; an anchor-omitted tip resolves to the anchor. `None` when no
+/// candidate's key signed the certificate: its CRL cannot be authenticated,
+/// so the gather skips it and the material degrades.
+fn key_bound_issuer<'a>(
+    cert_der: &[u8],
+    chain: &'a [Vec<u8>],
+    anchors: &'a [Vec<u8>],
+) -> Option<&'a [u8]> {
+    let cert = verify::EmbeddedCert::from_der(cert_der)?;
+    chain
+        .iter()
+        .chain(anchors.iter())
+        .find(|cand_der| {
+            verify::EmbeddedCert::from_der(cand_der)
+                .is_some_and(|cand| verify::issued_by(&cert, &cand))
+        })
+        .map(Vec::as_slice)
 }
 
 /// Gather complete validation material for B-LT (§7.5): signer + TSA chains
@@ -394,18 +410,22 @@ async fn gather_validation_material(
     let mut covered = 0usize;
     let mut need = 0usize;
     for chain in [signer_chain_ders.as_slice(), tsa_chain] {
-        for (i, cert) in chain.iter().enumerate() {
+        for cert in chain {
             let urls = crl_urls_for(cert);
             if urls.is_empty() {
                 continue;
             }
             need += 1;
-            let issuer = chain_issuer(chain, i);
-            for u in urls {
-                if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await {
-                    crls_der.push(crl);
-                    covered += 1;
-                    break;
+            // Issuer identity is bound by key, never by position: the CMS
+            // SET OF order is arbitrary, so a positional pick can verify the
+            // CRL against the wrong cert and falsely degrade.
+            if let Some(issuer) = key_bound_issuer(cert, chain, &ctx.config.trust_anchors_der) {
+                for u in urls {
+                    if let Some(crl) = fetch_valid_crl(ctx, issuer, u).await {
+                        crls_der.push(crl);
+                        covered += 1;
+                        break;
+                    }
                 }
             }
         }
@@ -640,13 +660,38 @@ mod tests {
     }
 
     #[test]
-    fn chain_issuer_never_crosses_the_signer_tsa_seam() {
-        let signer_chain = vec![vec![1u8], vec![2u8]];
-        let tsa_chain = vec![vec![9u8]];
-        assert_eq!(chain_issuer(&signer_chain, 0), &vec![2u8]);
-        // The signer-chain tip's issuer is itself, never the TSA-chain head.
-        assert_eq!(chain_issuer(&signer_chain, 1), &vec![2u8]);
-        assert_eq!(chain_issuer(&tsa_chain, 0), &vec![9u8]);
+    fn key_bound_issuer_ignores_position_and_binds_by_key() {
+        let root = crl_ca();
+        let inter = child_crl_ca(&root, "inter", None);
+        let leaf = leaf_with_crl_dp(&inter, "leaf", "https://crl.example.test/i.crl");
+        // A deliberately shuffled set: the issuer is found by key, never by
+        // the next slot.
+        let shuffled = vec![inter.cert_der.clone(), leaf.clone()];
+        assert_eq!(
+            key_bound_issuer(&leaf, &shuffled, &[]),
+            Some(inter.cert_der.as_slice())
+        );
+        // Anchor-omitted tip: resolves to the anchor, not to itself or a
+        // positional neighbor.
+        assert_eq!(
+            key_bound_issuer(
+                &inter.cert_der,
+                &shuffled,
+                std::slice::from_ref(&root.cert_der)
+            ),
+            Some(root.cert_der.as_slice())
+        );
+        // A self-signed tip still resolves to itself.
+        assert_eq!(
+            key_bound_issuer(&root.cert_der, std::slice::from_ref(&root.cert_der), &[]),
+            Some(root.cert_der.as_slice())
+        );
+        // Issuer unknown (not in the chain, not an anchor): None — never a
+        // positional guess.
+        assert_eq!(
+            key_bound_issuer(&leaf, std::slice::from_ref(&leaf), &[]),
+            None
+        );
     }
 
     #[test]
@@ -716,29 +761,79 @@ mod tests {
         cert_der: Vec<u8>,
         key: p256::ecdsa::SigningKey,
         subject: x509_cert::name::Name,
+        rcgen_params: rcgen::CertificateParams,
+        rcgen_key: rcgen::KeyPair,
+    }
+
+    fn crl_ca_params(cn: &str) -> rcgen::CertificateParams {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params
+    }
+
+    fn crl_ca_from(
+        params: rcgen::CertificateParams,
+        key_pair: rcgen::KeyPair,
+        der: Vec<u8>,
+    ) -> CrlCa {
+        use p256::pkcs8::DecodePrivateKey;
+        let parsed = x509_cert::Certificate::from_der(&der).unwrap();
+        CrlCa {
+            cert_der: der,
+            key: p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap(),
+            subject: parsed.tbs_certificate.subject,
+            rcgen_params: params,
+            rcgen_key: key_pair,
+        }
     }
 
     fn crl_ca() -> CrlCa {
-        use der::Decode;
-        use p256::pkcs8::DecodePrivateKey;
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let params = crl_ca_params("crl-ca");
+        let cert_der = params.self_signed(&key_pair).unwrap().der().to_vec();
+        crl_ca_from(params, key_pair, cert_der)
+    }
+
+    /// A child CA issued by `parent` (fresh key pair), optionally carrying
+    /// one CRL DP URL.
+    fn child_crl_ca(parent: &CrlCa, cn: &str, dp: Option<&str>) -> CrlCa {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = crl_ca_params(cn);
+        if let Some(url) = dp {
+            params.crl_distribution_points = vec![rcgen::CrlDistributionPoint {
+                uris: vec![url.to_string()],
+            }];
+        }
+        let issuer = rcgen::Issuer::from_params(&parent.rcgen_params, &parent.rcgen_key);
+        let cert_der = params.signed_by(&key_pair, &issuer).unwrap().der().to_vec();
+        crl_ca_from(params, key_pair, cert_der)
+    }
+
+    /// A non-CA leaf issued by `issuer_ca` carrying one CRL DP URL.
+    fn leaf_with_crl_dp(issuer_ca: &CrlCa, cn: &str, url: &str) -> Vec<u8> {
         let key_pair = rcgen::KeyPair::generate().unwrap();
         let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
         params.distinguished_name = rcgen::DistinguishedName::new();
         params
             .distinguished_name
-            .push(rcgen::DnType::CommonName, "crl-ca".to_string());
-        params.key_usages = vec![
-            rcgen::KeyUsagePurpose::DigitalSignature,
-            rcgen::KeyUsagePurpose::CrlSign,
-        ];
-        let cert = params.self_signed(&key_pair).unwrap();
-        let cert_der = cert.der().to_vec();
-        let parsed = x509_cert::Certificate::from_der(&cert_der).unwrap();
-        CrlCa {
-            cert_der,
-            key: p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap(),
-            subject: parsed.tbs_certificate.subject,
-        }
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+        // rcgen 0.14 skips the extension block unless a CA flag demands it;
+        // ExplicitNoCa writes basicConstraints CA:FALSE plus the CRL DP.
+        params.is_ca = rcgen::IsCa::ExplicitNoCa;
+        params.crl_distribution_points = vec![rcgen::CrlDistributionPoint {
+            uris: vec![url.to_string()],
+        }];
+        let issuer = rcgen::Issuer::from_params(&issuer_ca.rcgen_params, &issuer_ca.rcgen_key);
+        params.signed_by(&key_pair, &issuer).unwrap().der().to_vec()
     }
 
     fn x509_time(secs: u64) -> x509_cert::time::Time {
@@ -823,5 +918,100 @@ mod tests {
         let ctx = crl_ctx(&config, &backend, &fetcher);
         let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
         assert!(fetch_valid_crl(&ctx, &ca.cert_der, url).await.is_none());
+    }
+
+    // --- gather_validation_material issuer key-binding rows ----------------
+
+    struct MapFetcher(std::collections::HashMap<String, Vec<u8>>);
+
+    #[async_trait::async_trait]
+    impl SealFetcher for MapFetcher {
+        async fn fetch(
+            &self,
+            request: FetchRequest,
+        ) -> Result<crate::api::FetchResponse, crate::api::FetchError> {
+            self.0
+                .get(request.url.as_str())
+                .cloned()
+                .map(|body| crate::api::FetchResponse {
+                    body,
+                    content_type: None,
+                })
+                .ok_or(crate::api::FetchError::Unavailable)
+        }
+    }
+
+    fn gather_config(anchors: Vec<Vec<u8>>) -> SealConfig {
+        SealConfig {
+            trust_anchors_der: anchors,
+            timestamp_authorities: Vec::new(),
+            fetch_policy: FetchPolicy::default(),
+            resource_limits: crate::api::SealResourceLimits::default(),
+        }
+    }
+
+    fn p256_identity_for(cert_der: Vec<u8>, chain_der: Vec<Vec<u8>>) -> SigningIdentity {
+        SigningIdentity {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_certificate_der: cert_der,
+            certificate_chain_der: chain_der,
+        }
+    }
+
+    #[tokio::test]
+    async fn gather_shuffled_tsa_chain_still_binds_issuers_by_key() {
+        // CMS SET OF order is arbitrary: the TSA chain arrives as
+        // [intermediate, tsa-leaf]. Positional issuer picks would verify
+        // each CRL against the wrong cert and falsely degrade to B-T.
+        let signer = crl_ca();
+        let root = crl_ca();
+        let inter = child_crl_ca(
+            &root,
+            "tsa-inter",
+            Some("https://crl.example.test/root.crl"),
+        );
+        let tsa_leaf = leaf_with_crl_dp(&inter, "tsa-leaf", "https://crl.example.test/inter.crl");
+        let root_crl = signed_crl(&root, CRL_NOW_SECS - 3600, Some(CRL_NOW_SECS + 3600));
+        let inter_crl = signed_crl(&inter, CRL_NOW_SECS - 3600, Some(CRL_NOW_SECS + 3600));
+        let mut map = std::collections::HashMap::new();
+        map.insert("https://crl.example.test/root.crl".to_string(), root_crl);
+        map.insert("https://crl.example.test/inter.crl".to_string(), inter_crl);
+        let config = gather_config(vec![signer.cert_der.clone(), root.cert_der.clone()]);
+        let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+        let fetcher: Arc<dyn SealFetcher> = Arc::new(MapFetcher(map));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        let identity = p256_identity_for(signer.cert_der.clone(), Vec::new());
+        let token = tsp::ValidatedToken {
+            content_info_der: Vec::new(),
+            tsa_chain_ders: vec![inter.cert_der.clone(), tsa_leaf],
+        };
+        let material = gather_validation_material(&ctx, &identity, Some(&token)).await;
+        assert_eq!(
+            material.map(|m| m.crls_der.len()),
+            Some(2),
+            "both TSA-chain CRLs must gather despite the shuffled set"
+        );
+    }
+
+    #[tokio::test]
+    async fn gather_anchor_omitted_tip_resolves_issuer_to_anchor() {
+        // The signer leaf's issuer is the trust anchor and is NOT embedded
+        // in the chain; the CRL must be fetched against the anchor's key.
+        let root = crl_ca();
+        let leaf = leaf_with_crl_dp(&root, "signer-leaf", "https://crl.example.test/root.crl");
+        let root_crl = signed_crl(&root, CRL_NOW_SECS - 3600, Some(CRL_NOW_SECS + 3600));
+        let mut map = std::collections::HashMap::new();
+        map.insert("https://crl.example.test/root.crl".to_string(), root_crl);
+        let config = gather_config(vec![root.cert_der.clone()]);
+        let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+        let fetcher: Arc<dyn SealFetcher> = Arc::new(MapFetcher(map));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        let identity = p256_identity_for(leaf, Vec::new());
+        let material = gather_validation_material(&ctx, &identity, None).await;
+        assert_eq!(
+            material.map(|m| m.crls_der.len()),
+            Some(1),
+            "anchor-omitted tip must gather its CRL against the anchor"
+        );
     }
 }

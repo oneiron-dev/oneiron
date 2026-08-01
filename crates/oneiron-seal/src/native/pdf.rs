@@ -166,7 +166,7 @@ fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), SealError> {
 }
 
 /// Offset recorded by the last `startxref` marker in the byte buffer.
-fn last_startxref(bytes: &[u8]) -> Result<u64, SealError> {
+pub(crate) fn last_startxref(bytes: &[u8]) -> Result<u64, SealError> {
     const MARKER: &[u8] = b"startxref";
     let i = bytes
         .windows(MARKER.len())

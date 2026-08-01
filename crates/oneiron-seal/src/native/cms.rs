@@ -802,7 +802,7 @@ mod tests {
         let certs_a0 = tlv(0xA0, &cert);
         let real_set = {
             let mut si_body = tlv(0x02, &[1]);
-            let mut sid_body = issuer.clone();
+            let mut sid_body = issuer;
             sid_body.extend_from_slice(&serial);
             si_body.extend_from_slice(&tlv(0x30, &sid_body));
             si_body.extend_from_slice(&alg_id(&OID_SHA256, true));

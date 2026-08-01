@@ -433,9 +433,9 @@ fn verify_ts_token(
 /// Verify one DocTimeStamp dictionary (§7.6/§7.7): ByteRange coverage and
 /// the RFC 3161 token over the covered bytes. A validated token's TSA chain
 /// is recorded in `covered` for the DSS binding. Returns the token's
-/// genTime (unix seconds) when every check passes: that archival time is the
-/// applicable time for DSS evidence freshness, because the DocTimeStamp
-/// covers the DSS revision and attests the material as of that moment.
+/// genTime (unix seconds) when every check passes; the caller feeds it to
+/// DSS evidence freshness only when the ByteRange provably covers the final
+/// /DSS revision (`dss_revision_end`).
 fn verify_doc_ts(
     bytes: &[u8],
     e: &SigEntry,
@@ -660,13 +660,13 @@ fn dss_material_valid(
 
 /// A parsed certificate with its source DER (signature verification takes
 /// the DER form).
-struct EmbeddedCert {
+pub(crate) struct EmbeddedCert {
     der: Vec<u8>,
     cert: x509_cert::Certificate,
 }
 
 impl EmbeddedCert {
-    fn from_der(der_bytes: &[u8]) -> Option<Self> {
+    pub(crate) fn from_der(der_bytes: &[u8]) -> Option<Self> {
         use der::Decode;
         Some(Self {
             der: der_bytes.to_vec(),
@@ -749,7 +749,7 @@ where
 /// own signature verifies under `issuer`'s key with a consistent, allowed
 /// algorithm. This binds issuer identity by key, defeating same-subject
 /// fake-issuer shadowing.
-fn issued_by(cert: &EmbeddedCert, issuer: &EmbeddedCert) -> bool {
+pub(crate) fn issued_by(cert: &EmbeddedCert, issuer: &EmbeddedCert) -> bool {
     use der::Encode;
     if cert.cert.tbs_certificate.issuer != issuer.cert.tbs_certificate.subject {
         return false;
@@ -1017,6 +1017,78 @@ fn ocsp_entry_valid(
         .then_some(targets)
 }
 
+/// Byte offset the effective `/DSS` revision provably ends before: the
+/// smallest xref-table offset beyond the newest DSS-related object (the
+/// final catalog, the `/DSS` dictionary, and its `/Certs` `/OCSPs` `/CRLs`
+/// array and stream objects), or the final `startxref` when no later object
+/// exists. Objects of one revision precede that revision's xref, so a
+/// DocTimeStamp whose ByteRange end reaches this offset covers every byte
+/// of the revision the `/DSS` lives in; an earlier end validates evidence
+/// no timestamp attests. `None` when coverage is unprovable (no `/DSS`,
+/// compressed or missing xref entries, unparsable catalog): the
+/// archival-time selection must then fall back to the verification clock so
+/// stale evidence fails instead of laundering through an unrelated old
+/// timestamp.
+fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
+    let catalog = doc.catalog().ok()?;
+    let dss_obj = catalog.get(b"DSS").ok()?;
+    let mut ids: Vec<lopdf::ObjectId> = Vec::new();
+    if let Ok(root) = doc.trailer.get(b"Root").and_then(Object::as_reference) {
+        ids.push(root);
+    }
+    if let Object::Reference(id) = dss_obj {
+        ids.push(*id);
+    }
+    let dss = doc
+        .dereference(dss_obj)
+        .ok()
+        .and_then(|(_, o)| o.as_dict().ok())?;
+    for key in [b"Certs".as_slice(), b"OCSPs".as_slice(), b"CRLs".as_slice()] {
+        let Ok(arr_obj) = dss.get(key) else {
+            continue;
+        };
+        if let Object::Reference(id) = arr_obj {
+            ids.push(*id);
+        }
+        let Some(arr) = doc
+            .dereference(arr_obj)
+            .ok()
+            .and_then(|(_, o)| o.as_array().ok())
+        else {
+            continue;
+        };
+        for item in arr {
+            if let Object::Reference(id) = item {
+                ids.push(*id);
+            }
+        }
+    }
+    let mut newest = None;
+    for (num, generation) in ids {
+        match doc.reference_table.get(num) {
+            Some(lopdf::xref::XrefEntry::Normal {
+                offset,
+                generation: g,
+            }) if *g == generation => {
+                let offset = u64::from(*offset);
+                newest = Some(newest.map_or(offset, |n: u64| n.max(offset)));
+            }
+            _ => return None, // compressed or missing: coverage unprovable
+        }
+    }
+    let newest = newest?;
+    doc.reference_table
+        .entries
+        .values()
+        .filter_map(|e| match e {
+            lopdf::xref::XrefEntry::Normal { offset, .. } => Some(u64::from(*offset)),
+            _ => None,
+        })
+        .filter(|o| *o > newest)
+        .min()
+        .or_else(|| pdf::last_startxref(bytes).ok())
+}
+
 /// Full document verification and profile classification (§7.7).
 pub(crate) fn verify_document(
     bytes: &[u8],
@@ -1071,16 +1143,24 @@ pub(crate) fn verify_document(
     // Certificates of the CMS signer/TSA chains this report covers; the DSS
     // binding requires the validation material to speak about them.
     let mut covered: Vec<EmbeddedCert> = Vec::new();
-    // genTime of the most recent VALIDATED DocTimeStamp: the archival
-    // applicable time for DSS evidence freshness (§7.6 step 3 — the
-    // DocTimeStamp covers the DSS revision).
+    // genTime of the most recent VALIDATED DocTimeStamp whose ByteRange
+    // provably covers the final /DSS revision: the archival applicable time
+    // for DSS evidence freshness (§7.6 step 3 — the DocTimeStamp covers the
+    // DSS revision and attests the material as of that moment). A validated
+    // DocTimeStamp that does NOT cover the /DSS attests nothing about the
+    // evidence, so its genTime must not feed freshness; with no covering
+    // DocTimeStamp the verify clock applies and stale evidence fails.
+    let dss_end = dss_revision_end(&doc, bytes);
     let mut archival_time: Option<u64> = None;
     for (i, e) in sigs.iter().enumerate() {
         if e.is_doc_ts {
             if let Some(gen_time) =
                 verify_doc_ts(bytes, e, &anchors, &mut checks, i == last_idx, &mut covered)
             {
-                archival_time = Some(gen_time);
+                let br_end = e.byte_range[2].saturating_add(e.byte_range[3]);
+                if dss_end.is_some_and(|end| br_end >= end) {
+                    archival_time = Some(gen_time);
+                }
             }
         } else {
             saw_cades = true;
@@ -1829,16 +1909,12 @@ mod tests {
         let leaf2 = x509_cert::Certificate::from_der(&leaf2_der).unwrap();
         let ocsp = build_ocsp(
             &ca2,
-            leaf2.tbs_certificate.serial_number.clone(),
+            leaf2.tbs_certificate.serial_number,
             AT_UNIX - 60,
             Some(AT_UNIX + 3600),
             x509_ocsp::CertStatus::good(),
         );
-        let doc = dss_doc(
-            &[leaf1_der.clone(), leaf2_der.clone(), ca2.cert_der.clone()],
-            &[],
-            &[ocsp],
-        );
+        let doc = dss_doc(&[leaf1_der, leaf2_der.clone(), ca2.cert_der], &[], &[ocsp]);
         let covered = covered_of(&[&leaf2_der]);
         let checks = dss_check(&doc, &covered);
         assert!(
@@ -1890,6 +1966,336 @@ mod tests {
         assert_eq!(
             dss_finding(&checks),
             (VerifyCheckStatus::AbsentAllowed, None)
+        );
+    }
+
+    // --- archival-time /DSS coverage binding: end-to-end through ----------
+    // --- verify_sealed_pdf (the gap that let the bypass through) ----------
+
+    use std::sync::Arc;
+
+    use super::super::{engine, profile};
+    use crate::api::{
+        BackendError, BackendSignature, FetchError, FetchPolicy, FetchRequest, FetchResponse,
+        PdfSealEngine, SealBackend, SealClock, SealFetcher, SealResourceLimits, SignDigestRequest,
+        SignatureAlgorithm, SigningIdentity,
+    };
+
+    /// Verify clock for the regression: two hours after the seal/archival
+    /// time so evidence fresh at AT_UNIX is stale by then.
+    const VERIFY_SECS: u64 = AT_UNIX + 7200;
+
+    /// A TSA identity: end entity with exactly one critical
+    /// id-kp-timeStamping EKU (RFC 3161 §2.3).
+    fn tsa_ca() -> TestCa {
+        use p256::pkcs8::DecodePrivateKey;
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "test-tsa".to_string());
+        params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+        let eku = cms::tlv(
+            0x30,
+            &cms::oid_tlv(&der::asn1::ObjectIdentifier::new_unwrap(
+                "1.3.6.1.5.5.7.3.8",
+            )),
+        );
+        let mut ext = rcgen::CustomExtension::from_oid_content(&[2, 5, 29, 37], eku);
+        ext.set_criticality(true);
+        params.custom_extensions.push(ext);
+        let cert = params.self_signed(&key_pair).unwrap();
+        let cert_der = cert.der().to_vec();
+        let key = p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap();
+        let cert = x509_cert::Certificate::from_der(&cert_der).unwrap();
+        TestCa {
+            cert_der,
+            cert,
+            key,
+            rcgen_params: params,
+            rcgen_key: key_pair,
+        }
+    }
+
+    fn alg_id(oid: der::asn1::ObjectIdentifier, with_null: bool) -> Vec<u8> {
+        let mut body = cms::oid_tlv(&oid);
+        if with_null {
+            body.extend_from_slice(&[0x05, 0x00]);
+        }
+        cms::tlv(0x30, &body)
+    }
+
+    /// Mint a TimeStampToken ContentInfo over `imprint` (RFC 3161, detached
+    /// signature shape with eContent TSTInfo), signed by `tsa`.
+    fn mint_token(tsa: &TestCa, imprint: &Sha256Digest, gen_time: u64) -> Vec<u8> {
+        let tst = x509_tsp::TstInfo {
+            version: x509_tsp::TspVersion::V1,
+            policy: der::asn1::ObjectIdentifier::new_unwrap("1.2.3.4.5"),
+            message_imprint: x509_tsp::MessageImprint {
+                hash_algorithm: spki::AlgorithmIdentifierOwned {
+                    oid: cms::OID_SHA256,
+                    parameters: Some(der::asn1::Null.into()),
+                },
+                hashed_message: der::asn1::OctetString::new(imprint.to_vec()).unwrap(),
+            },
+            serial_number: der::asn1::Int::new(&[0x2a]).unwrap(),
+            gen_time: gt(gen_time),
+            accuracy: None,
+            ordering: false,
+            nonce: None,
+            tsa: None,
+            extensions: None,
+        };
+        let tst_der = tst.to_der().unwrap();
+        let (issuer, serial) = cms::issuer_and_serial(&tsa.cert_der).unwrap();
+        let ct_oid = der::asn1::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4");
+        let mut ct_body = cms::oid_tlv(&cms::OID_ATTR_CONTENT_TYPE);
+        ct_body.extend_from_slice(&cms::tlv(0x31, &cms::oid_tlv(&ct_oid)));
+        let attrs = vec![
+            cms::tlv(0x30, &ct_body),
+            cms::attr_message_digest(&cms::sha256(&tst_der)),
+            cms::attr_signing_cert_v2(&tsa.cert_der, &issuer, &serial),
+        ];
+        let (wire, signing) = cms::assemble_signed_attrs(attrs);
+        let sig = sign_p256(&tsa.key, &signing);
+        let mut si = cms::tlv(0x02, &[1]);
+        let mut sid = issuer;
+        sid.extend_from_slice(&serial);
+        si.extend_from_slice(&cms::tlv(0x30, &sid));
+        si.extend_from_slice(&alg_id(cms::OID_SHA256, true));
+        si.extend_from_slice(&wire);
+        si.extend_from_slice(&alg_id(cms::OID_ECDSA_SHA256, false));
+        si.extend_from_slice(&cms::tlv(0x04, &sig));
+        let signer_info = cms::tlv(0x30, &si);
+        let mut sd = cms::tlv(0x02, &[3]);
+        sd.extend_from_slice(&cms::tlv(0x31, &alg_id(cms::OID_SHA256, true)));
+        let mut eci = cms::oid_tlv(&ct_oid);
+        eci.extend_from_slice(&cms::tlv(0xA0, &cms::tlv(0x04, &tst_der)));
+        sd.extend_from_slice(&cms::tlv(0x30, &eci));
+        sd.extend_from_slice(&cms::tlv(0xA0, &tsa.cert_der));
+        sd.extend_from_slice(&cms::tlv(0x31, &signer_info));
+        let sd = cms::tlv(0x30, &sd);
+        let mut ci = cms::oid_tlv(&cms::OID_SIGNED_DATA);
+        ci.extend_from_slice(&cms::tlv(0xA0, &sd));
+        cms::tlv(0x30, &ci)
+    }
+
+    /// Append one CAdES signature revision signed by `ca`; with `tsa`, embed
+    /// a signature timestamp minted at `gen_time` (B-T).
+    fn append_sig_revision(
+        bytes: &[u8],
+        ca: &TestCa,
+        op: &str,
+        tsa: Option<&TestCa>,
+        gen_time: u64,
+    ) -> Vec<u8> {
+        let state = pdf::reparse_revision(bytes, &SealResourceLimits::default()).unwrap();
+        let kind = pdf::RevisionKind::Signature {
+            field_name: pdf::field_name_for(op),
+            date_str: pdf::pdf_date(AT_UNIX * 1000),
+        };
+        let mut draft = pdf::append_revision(bytes, &state, &kind, 64 * 1024).unwrap();
+        let br = draft.byte_range.unwrap();
+        let digest = pdf::hash_byte_range(&draft.bytes, br).unwrap();
+        let (issuer, serial) = cms::issuer_and_serial(&ca.cert_der).unwrap();
+        let attrs = vec![
+            cms::attr_content_type_data(),
+            cms::attr_message_digest(&digest),
+            cms::attr_signing_cert_v2(&ca.cert_der, &issuer, &serial),
+        ];
+        let (wire, signing) = cms::assemble_signed_attrs(attrs);
+        let sig = sign_p256(&ca.key, &signing);
+        let unsigned: Vec<Vec<u8>> = tsa
+            .map(|t| mint_token(t, &cms::sha256(&sig), gen_time))
+            .into_iter()
+            .map(|t| cms::attr_ts_token(&t))
+            .collect();
+        let material = cms::SignerMaterial {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_cert_der: &ca.cert_der,
+            issuer_name_der: &issuer,
+            serial_der: &serial,
+            chain_ders: &[],
+        };
+        let cms_der = cms::build_signed_data(&material, &wire, &sig, &unsigned);
+        pdf::patch_contents(&mut draft, &cms_der).unwrap();
+        draft.bytes
+    }
+
+    /// Append an UNSIGNED /DSS revision (catalog update + global arrays).
+    fn append_dss_revision(bytes: &[u8], certs: Vec<Vec<u8>>, crls: Vec<Vec<u8>>) -> Vec<u8> {
+        let state = pdf::reparse_revision(bytes, &SealResourceLimits::default()).unwrap();
+        let material = profile::DssMaterial {
+            certs_der: certs,
+            ocsps_der: Vec::new(),
+            crls_der: crls,
+        };
+        let (objs, dss_num) = profile::build_dss_objects(&material, state.max_obj + 1);
+        let draft = pdf::append_revision(
+            bytes,
+            &state,
+            &pdf::RevisionKind::Dss {
+                material_objects: objs,
+                dss_obj: dss_num,
+            },
+            0,
+        )
+        .unwrap();
+        draft.bytes
+    }
+
+    /// Append a DocTimeStamp revision minted at `gen_time` (B-LTA shape).
+    fn append_doc_ts_revision(bytes: &[u8], tsa: &TestCa, gen_time: u64) -> Vec<u8> {
+        let state = pdf::reparse_revision(bytes, &SealResourceLimits::default()).unwrap();
+        let mut draft = pdf::append_revision(
+            bytes,
+            &state,
+            &pdf::RevisionKind::DocumentTimestamp,
+            64 * 1024,
+        )
+        .unwrap();
+        let br = draft.byte_range.unwrap();
+        let imprint = pdf::hash_byte_range(&draft.bytes, br).unwrap();
+        let token = mint_token(tsa, &imprint, gen_time);
+        pdf::patch_contents(&mut draft, &token).unwrap();
+        draft.bytes
+    }
+
+    struct NoopBackend;
+
+    #[async_trait::async_trait]
+    impl SealBackend for NoopBackend {
+        fn signing_identity(&self) -> Result<SigningIdentity, BackendError> {
+            Err(BackendError::Unavailable {
+                retry_after_ms: None,
+            })
+        }
+
+        async fn sign_digest(
+            &self,
+            _request: SignDigestRequest,
+        ) -> Result<BackendSignature, BackendError> {
+            Err(BackendError::Unavailable {
+                retry_after_ms: None,
+            })
+        }
+    }
+
+    struct NoopFetcher;
+
+    #[async_trait::async_trait]
+    impl SealFetcher for NoopFetcher {
+        async fn fetch(&self, _request: FetchRequest) -> Result<FetchResponse, FetchError> {
+            Err(FetchError::Unavailable)
+        }
+    }
+
+    struct ClockMs(u64);
+
+    impl SealClock for ClockMs {
+        fn unix_time_ms(&self) -> u64 {
+            self.0
+        }
+    }
+
+    fn verify_engine(anchors: Vec<Vec<u8>>, clock_secs: u64) -> engine::NativeSealEngine {
+        engine::NativeSealEngine::new(
+            SealConfig {
+                trust_anchors_der: anchors,
+                timestamp_authorities: Vec::new(),
+                fetch_policy: FetchPolicy::default(),
+                resource_limits: SealResourceLimits::default(),
+            },
+            Arc::new(NoopBackend),
+            Arc::new(NoopFetcher),
+            Arc::new(ClockMs(clock_secs * 1000)),
+        )
+        .unwrap()
+    }
+
+    /// A valid multi-signature archived document: CAdES sig A with a
+    /// signature timestamp, a covered /DSS revision carrying a CRL fresh at
+    /// AT_UNIX (stale at VERIFY_SECS), a DocTimeStamp covering that /DSS,
+    /// and a second valid CAdES signature appended AFTER the DocTimeStamp.
+    struct LtaFixture {
+        bytes: Vec<u8>,
+        anchors: Vec<Vec<u8>>,
+        signer_cert: Vec<u8>,
+        stale_later_crl: Vec<u8>,
+    }
+
+    fn lta_multisig() -> LtaFixture {
+        let signer = test_ca("lta-signer");
+        let signer2 = test_ca("lta-signer-two");
+        let tsa = tsa_ca();
+        let input = std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let b1 = append_sig_revision(&input, &signer, "lta-a", Some(&tsa), AT_UNIX);
+        let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
+        let b2 = append_dss_revision(
+            &b1,
+            vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+            vec![crl.clone()],
+        );
+        let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
+        let b4 = append_sig_revision(&b3, &signer2, "lta-b", None, 0);
+        LtaFixture {
+            bytes: b4,
+            anchors: vec![signer.cert_der.clone(), signer2.cert_der, tsa.cert_der],
+            signer_cert: signer.cert_der,
+            stale_later_crl: crl,
+        }
+    }
+
+    #[test]
+    fn covering_doc_timestamp_keeps_lta_at_later_verify_clock() {
+        // The final /DSS IS covered by the DocTimeStamp: its genTime is the
+        // archival applicable time, so evidence stale at the verify clock
+        // but fresh then still validates and the profile is kept.
+        let fx = lta_multisig();
+        let engine = verify_engine(fx.anchors, VERIFY_SECS);
+        let report = engine.verify_sealed_pdf(&fx.bytes).unwrap();
+        assert!(
+            report.valid,
+            "covering DocTimeStamp must keep the archived profile: {report:?}"
+        );
+        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+    }
+
+    #[test]
+    fn uncovered_dss_evidence_cannot_launder_through_old_timestamp() {
+        // Attack: an UNSIGNED /DSS incremental revision appended after every
+        // signature, carrying evidence fresh at the old DocTimeStamp genTime
+        // but stale at the verify clock. No DocTimeStamp covers this
+        // revision, so its genTime must not feed freshness: the stale
+        // evidence fails ValidationMaterial and the profile drops below
+        // B-LT/LTA.
+        let fx = lta_multisig();
+        let attacked = append_dss_revision(
+            &fx.bytes,
+            vec![fx.signer_cert.clone()],
+            vec![fx.stale_later_crl.clone()],
+        );
+        let engine = verify_engine(fx.anchors, VERIFY_SECS);
+        let report = engine.verify_sealed_pdf(&attacked).unwrap();
+        assert_ne!(report.achieved_profile, Some(PadesProfile::BaselineLt));
+        assert_ne!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+        let vm = report
+            .checks
+            .iter()
+            .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+            .unwrap();
+        assert_eq!(
+            (vm.status, vm.finding),
+            (
+                VerifyCheckStatus::Fail,
+                Some(VerifyFindingCode::ValidationMaterialInvalid)
+            ),
+            "stale uncovered evidence must fail ValidationMaterial"
         );
     }
 }
