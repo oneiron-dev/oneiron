@@ -556,23 +556,16 @@ fn disclosure_scope_body_value(scope: &DisclosureScope) -> Value {
 /// Encodes a DisclosureScope body in canonical MessagePack key order.
 pub fn encode_disclosure_scope_body(scope: &DisclosureScope) -> Result<Vec<u8>> {
     scope.validate()?;
-    let value = disclosure_scope_body_value(scope);
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value).map_err(|_| {
-        Error::InvariantViolation("disclosure scope body MessagePack encode failed")
-    })?;
-    Ok(out)
+    encode_body_value(
+        &disclosure_scope_body_value(scope),
+        "disclosure scope body MessagePack encode failed",
+    )
 }
 
 /// Decodes and validates a DisclosureScope body (strict key set, no
 /// duplicates, no trailing bytes).
 pub fn decode_disclosure_scope_body(bytes: &[u8]) -> Result<DisclosureScope> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_scope())?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_scope());
-    }
-    decode_disclosure_scope_value(&value)
+    decode_disclosure_scope_value(&decode_body_value(bytes, invalid_scope)?)
 }
 
 fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureScope> {
@@ -580,12 +573,8 @@ fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureScope> {
         return Err(invalid_scope());
     };
     validate_keys(entries, &DISCLOSURE_SCOPE_BODY_KEYS, invalid_scope)?;
+    check_schema_version(entries, invalid_scope)?;
 
-    if required_value(entries, KEY_SCHEMA_VERSION, invalid_scope)?.as_u64()
-        != Some(DISCLOSURE_SCOPE_SCHEMA_VERSION)
-    {
-        return Err(invalid_scope());
-    }
     let entities = decode_entity_id_array(
         required_value(entries, KEY_ENTITIES, invalid_scope)?,
         invalid_scope,
@@ -605,12 +594,8 @@ fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureScope> {
         .as_str()
         .and_then(DisclosureScopeStatus::parse)
         .ok_or_else(invalid_scope)?;
-    let created_at = required_value(entries, KEY_CREATED_AT, invalid_scope)?
-        .as_u64()
-        .ok_or_else(invalid_scope)?;
-    let updated_at = required_value(entries, KEY_UPDATED_AT, invalid_scope)?
-        .as_u64()
-        .ok_or_else(invalid_scope)?;
+    let created_at = required_u64(entries, KEY_CREATED_AT, invalid_scope)?;
+    let updated_at = required_u64(entries, KEY_UPDATED_AT, invalid_scope)?;
 
     let scope = DisclosureScope {
         entities,
@@ -655,6 +640,39 @@ fn required_value<'a>(
         .iter()
         .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
         .ok_or_else(invalid)
+}
+
+fn required_u64(entries: &[(Value, Value)], key: &str, invalid: fn() -> Error) -> Result<u64> {
+    required_value(entries, key, invalid)?
+        .as_u64()
+        .ok_or_else(invalid)
+}
+
+/// Pinned schema-version check shared by every body decoder in this module.
+fn check_schema_version(entries: &[(Value, Value)], invalid: fn() -> Error) -> Result<()> {
+    if required_u64(entries, KEY_SCHEMA_VERSION, invalid)? != DISCLOSURE_SCOPE_SCHEMA_VERSION {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// MessagePack-encodes a body `Value`; `context` pins the family-specific
+/// invariant-violation message.
+fn encode_body_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(context))?;
+    Ok(out)
+}
+
+/// Reads one MessagePack body value, rejecting undecodable bytes and
+/// trailing garbage with the family's `invalid` error.
+fn decode_body_value(bytes: &[u8], invalid: fn() -> Error) -> Result<Value> {
+    let mut cursor = Cursor::new(bytes);
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid())?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(invalid());
+    }
+    Ok(value)
 }
 
 fn invalid_scope() -> Error {
@@ -755,21 +773,16 @@ fn facet_exposure_body_value(state: &FacetExposureState) -> Value {
 
 /// Encodes a facet-exposure body in canonical MessagePack key order.
 pub fn encode_facet_exposure_body(state: &FacetExposureState) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &facet_exposure_body_value(state))
-        .map_err(|_| Error::InvariantViolation("facet exposure body MessagePack encode failed"))?;
-    Ok(out)
+    encode_body_value(
+        &facet_exposure_body_value(state),
+        "facet exposure body MessagePack encode failed",
+    )
 }
 
 /// Decodes and validates a facet-exposure body (strict key set, no
 /// duplicates, no trailing bytes).
 pub fn decode_facet_exposure_body(bytes: &[u8]) -> Result<FacetExposureState> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_exposure())?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_exposure());
-    }
-    decode_facet_exposure_value(&value)
+    decode_facet_exposure_value(&decode_body_value(bytes, invalid_exposure)?)
 }
 
 fn decode_facet_exposure_value(value: &Value) -> Result<FacetExposureState> {
@@ -777,18 +790,12 @@ fn decode_facet_exposure_value(value: &Value) -> Result<FacetExposureState> {
         return Err(invalid_exposure());
     };
     validate_keys(entries, &FACET_EXPOSURE_BODY_KEYS, invalid_exposure)?;
-    if required_value(entries, KEY_SCHEMA_VERSION, invalid_exposure)?.as_u64()
-        != Some(DISCLOSURE_SCOPE_SCHEMA_VERSION)
-    {
-        return Err(invalid_exposure());
-    }
+    check_schema_version(entries, invalid_exposure)?;
     let exposure = required_value(entries, KEY_EXPOSURE, invalid_exposure)?
         .as_str()
         .and_then(FacetExposure::parse)
         .ok_or_else(invalid_exposure)?;
-    let updated_at = required_value(entries, KEY_UPDATED_AT, invalid_exposure)?
-        .as_u64()
-        .ok_or_else(invalid_exposure)?;
+    let updated_at = required_u64(entries, KEY_UPDATED_AT, invalid_exposure)?;
     Ok(FacetExposureState {
         exposure,
         updated_at,
@@ -823,21 +830,16 @@ fn facet_clearance_body_value(clearance: &FacetClearance) -> Value {
 /// Encodes a facet-clearance body in canonical MessagePack key order.
 pub fn encode_facet_clearance_body(clearance: &FacetClearance) -> Result<Vec<u8>> {
     clearance.validate()?;
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &facet_clearance_body_value(clearance))
-        .map_err(|_| Error::InvariantViolation("facet clearance body MessagePack encode failed"))?;
-    Ok(out)
+    encode_body_value(
+        &facet_clearance_body_value(clearance),
+        "facet clearance body MessagePack encode failed",
+    )
 }
 
 /// Decodes and validates a facet-clearance body (strict key set, no
 /// duplicates, no trailing bytes).
 pub fn decode_facet_clearance_body(bytes: &[u8]) -> Result<FacetClearance> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_clearance())?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_clearance());
-    }
-    decode_facet_clearance_value(&value)
+    decode_facet_clearance_value(&decode_body_value(bytes, invalid_clearance)?)
 }
 
 fn decode_facet_clearance_value(value: &Value) -> Result<FacetClearance> {
@@ -845,11 +847,7 @@ fn decode_facet_clearance_value(value: &Value) -> Result<FacetClearance> {
         return Err(invalid_clearance());
     };
     validate_keys(entries, &FACET_CLEARANCE_BODY_KEYS, invalid_clearance)?;
-    if required_value(entries, KEY_SCHEMA_VERSION, invalid_clearance)?.as_u64()
-        != Some(DISCLOSURE_SCOPE_SCHEMA_VERSION)
-    {
-        return Err(invalid_clearance());
-    }
+    check_schema_version(entries, invalid_clearance)?;
     let facets = decode_entity_id_array(
         required_value(entries, KEY_FACETS, invalid_clearance)?,
         invalid_clearance,
@@ -858,12 +856,8 @@ fn decode_facet_clearance_value(value: &Value) -> Result<FacetClearance> {
         .as_str()
         .and_then(DisclosureScopeStatus::parse)
         .ok_or_else(invalid_clearance)?;
-    let created_at = required_value(entries, KEY_CREATED_AT, invalid_clearance)?
-        .as_u64()
-        .ok_or_else(invalid_clearance)?;
-    let updated_at = required_value(entries, KEY_UPDATED_AT, invalid_clearance)?
-        .as_u64()
-        .ok_or_else(invalid_clearance)?;
+    let created_at = required_u64(entries, KEY_CREATED_AT, invalid_clearance)?;
+    let updated_at = required_u64(entries, KEY_UPDATED_AT, invalid_clearance)?;
     let clearance = FacetClearance {
         facets,
         status,
@@ -934,34 +928,28 @@ pub(crate) fn validate_disclosure_claim_structure(body: &ClaimBody) -> Result<()
     }
 }
 
-fn disclosure_scope_meta_key(contact_id: &EntityId) -> Vec<u8> {
-    let mut key =
-        Vec::with_capacity(DISCLOSURE_SCOPE_KEY_PREFIX.len() + contact_id.as_bytes().len());
-    key.extend_from_slice(DISCLOSURE_SCOPE_KEY_PREFIX);
-    key.extend_from_slice(contact_id.as_bytes());
+/// Builds a `vault_meta` row key: `<prefix><entity-id bytes>`.
+fn meta_key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(prefix.len() + id.as_bytes().len());
+    key.extend_from_slice(prefix);
+    key.extend_from_slice(id.as_bytes());
     key
+}
+
+fn disclosure_scope_meta_key(contact_id: &EntityId) -> Vec<u8> {
+    meta_key(DISCLOSURE_SCOPE_KEY_PREFIX, contact_id)
 }
 
 fn facet_exposure_meta_key(facet_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(FACET_EXPOSURE_KEY_PREFIX.len() + facet_id.as_bytes().len());
-    key.extend_from_slice(FACET_EXPOSURE_KEY_PREFIX);
-    key.extend_from_slice(facet_id.as_bytes());
-    key
+    meta_key(FACET_EXPOSURE_KEY_PREFIX, facet_id)
 }
 
 fn facet_clearance_meta_key(contact_id: &EntityId) -> Vec<u8> {
-    let mut key =
-        Vec::with_capacity(FACET_CLEARANCE_KEY_PREFIX.len() + contact_id.as_bytes().len());
-    key.extend_from_slice(FACET_CLEARANCE_KEY_PREFIX);
-    key.extend_from_slice(contact_id.as_bytes());
-    key
+    meta_key(FACET_CLEARANCE_KEY_PREFIX, contact_id)
 }
 
 fn disclosure_tier_a_meta_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DISCLOSURE_TIER_A_KEY_PREFIX.len() + id.as_bytes().len());
-    key.extend_from_slice(DISCLOSURE_TIER_A_KEY_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
+    meta_key(DISCLOSURE_TIER_A_KEY_PREFIX, id)
 }
 
 pub(crate) fn disclosure_tier_a_marked_in(
@@ -1393,10 +1381,10 @@ fn resolve_disclosable_set(vault: &Vault, set: &InterlocutorSet) -> Result<Discl
         let Ok(id_bytes) = <[u8; ENTITY_ID_LEN]>::try_from(id_bytes) else {
             continue;
         };
-        let (Ok(facet_id), Ok(state)) = (
-            EntityId::from_bytes(id_bytes),
-            decode_facet_exposure_body(&value),
-        ) else {
+        let Ok(facet_id) = EntityId::from_bytes(id_bytes) else {
+            continue;
+        };
+        let Ok(state) = decode_facet_exposure_body(&value) else {
             continue;
         };
         if state.exposure == FacetExposure::Public {
