@@ -112,17 +112,26 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 }
 
 /// Collect signature/timestamp dictionaries in revision order (earlier
-/// revisions cover fewer bytes).
+/// revisions cover fewer bytes). Discovery is by `/Type /Sig|DocTimeStamp`
+/// AND by the typeless interop shape (`/ByteRange` + `/Contents` present
+/// together) — real-world signers omit the optional `/Type`. A partial
+/// shape (only one of the two keys) is malformed input, never a silent
+/// skip.
 fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
     let mut out = Vec::new();
     for obj in doc.objects.values() {
         let Object::Dictionary(d) = obj else { continue };
-        let Ok(t) = d.get(b"Type") else { continue };
-        let is_sig = name_eq(t, b"Sig");
-        let is_ts = name_eq(t, b"DocTimeStamp");
-        if !is_sig && !is_ts {
-            continue;
-        }
+        let is_doc_ts = match d.get(b"Type") {
+            Ok(t) if name_eq(t, b"Sig") => false,
+            Ok(t) if name_eq(t, b"DocTimeStamp") => true,
+            _ => {
+                match (d.has(b"ByteRange"), d.has(b"Contents")) {
+                    (true, true) => false, // typeless signature shape
+                    (false, false) => continue,
+                    _ => return Err(malformed_input()),
+                }
+            }
+        };
         let br_obj = d.get(b"ByteRange").map_err(|_| malformed_input())?;
         let Object::Array(items) = br_obj else {
             return Err(malformed_input());
@@ -141,7 +150,7 @@ fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
             return Err(malformed_input());
         };
         out.push(SigEntry {
-            is_doc_ts: is_ts,
+            is_doc_ts,
             byte_range: br,
             contents: contents.clone(),
         });
@@ -186,6 +195,11 @@ impl Checks {
     }
 }
 
+/// PDF white-space (ISO 32000-1 Table 1): legal inside hex strings.
+fn is_pdf_whitespace(b: u8) -> bool {
+    matches!(b, 0x00 | 0x09 | 0x0A | 0x0C | 0x0D | 0x20)
+}
+
 /// ByteRange shape, bounds, non-overlap, and exact `/Contents` exclusion.
 fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
     let [s1, l1, s2, l2] = e.byte_range;
@@ -214,7 +228,12 @@ fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
     if bytes[l1] != b'<' || bytes[s2 - 1] != b'>' {
         return false;
     }
-    let hex_chars = s2 - l1 - 2;
+    // Whitespace inside the hex string is spec-legal: strip it before the
+    // length check so padded real-world /Contents values verify.
+    let hex_chars = bytes[l1 + 1..s2 - 1]
+        .iter()
+        .filter(|b| !is_pdf_whitespace(**b))
+        .count();
     hex_chars == e.contents.len() * 2
 }
 
@@ -529,6 +548,7 @@ fn verify_dss(
     anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
+    max_stream_bytes: usize,
     checks: &mut Checks,
 ) {
     let catalog = match doc.catalog() {
@@ -570,7 +590,7 @@ fn verify_dss(
         );
         return;
     }
-    let ok = dss_material_valid(doc, dss, anchors, covered, at_unix);
+    let ok = dss_material_valid(doc, dss, anchors, covered, at_unix, max_stream_bytes);
     checks.record(
         VerifyCheckKind::ValidationMaterial,
         ok,
@@ -584,10 +604,11 @@ fn dss_material_valid(
     anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
+    max_stream_bytes: usize,
 ) -> bool {
-    let certs = dss_array(doc, dss, b"Certs");
-    let crls = dss_array(doc, dss, b"CRLs");
-    let ocsps = dss_array(doc, dss, b"OCSPs");
+    let certs = dss_array(doc, dss, b"Certs", max_stream_bytes);
+    let crls = dss_array(doc, dss, b"CRLs", max_stream_bytes);
+    let ocsps = dss_array(doc, dss, b"OCSPs", max_stream_bytes);
     // A present DSS with all arrays absent is evidence-free: it must not
     // inflate a B-T document into B-LT.
     if matches!(certs, DssArray::Absent)
@@ -728,8 +749,16 @@ enum DssArray {
     Malformed,
 }
 
-/// Extract the decoded stream contents of one DSS array.
-fn dss_array(doc: &Document, dss: &lopdf::Dictionary, key: &[u8]) -> DssArray {
+/// Extract the decoded stream contents of one DSS array. Filtered streams
+/// (e.g. a FlateDecode-wrapped CRL) are decoded through the bounded
+/// decompression path; a malformed filter, a failed decode, or an over-limit
+/// expansion is Malformed, never a silent skip.
+fn dss_array(
+    doc: &Document,
+    dss: &lopdf::Dictionary,
+    key: &[u8],
+    max_stream_bytes: usize,
+) -> DssArray {
     let Ok(arr_obj) = dss.get(key) else {
         return DssArray::Absent;
     };
@@ -742,11 +771,14 @@ fn dss_array(doc: &Document, dss: &lopdf::Dictionary, key: &[u8]) -> DssArray {
     };
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        let Some(data) = doc
+        let Some(stream) = doc
             .dereference(item)
             .ok()
-            .and_then(|(_, o)| o.as_stream().ok().map(|s| s.content.clone()))
+            .and_then(|(_, o)| o.as_stream().ok())
         else {
+            return DssArray::Malformed;
+        };
+        let Ok(data) = stream.decompressed_content_with_limit(max_stream_bytes) else {
             return DssArray::Malformed;
         };
         out.push(data);
@@ -1223,6 +1255,13 @@ pub(crate) fn verify_document(
         ..LoadOptions::default()
     };
     let doc = Document::load_mem_with_options(bytes, options).map_err(|_| malformed_input())?;
+    // Byte/decompress limits ride the loader; the object-count cap does
+    // not — enforce it here exactly as the seal side does.
+    if doc.objects.len() > limits.max_pdf_objects {
+        return Err(SealError::InputInvalid {
+            code: InputInvalidCode::ObjectLimitExceeded,
+        });
+    }
     let mut checks = Checks::new();
     // Legal revision chain and final EOF: the strict parse plus an EOF tail
     // (an optional single trailing EOL is tolerated for interoperability).
@@ -1288,6 +1327,7 @@ pub(crate) fn verify_document(
         &anchor_certs,
         &covered,
         archival_time.unwrap_or(ctx.clock_ms / 1000),
+        limits.max_input_bytes,
         &mut checks,
     );
     let valid = saw_cades
@@ -1686,7 +1726,7 @@ mod tests {
 
     fn dss_check(doc: &Document, covered: &[EmbeddedCert]) -> Checks {
         let mut checks = Checks::new();
-        verify_dss(doc, &[], covered, AT_UNIX, &mut checks);
+        verify_dss(doc, &[], covered, AT_UNIX, usize::MAX, &mut checks);
         checks
     }
 
@@ -1769,6 +1809,7 @@ mod tests {
             std::slice::from_ref(&anchor),
             &covered,
             AT_UNIX,
+            usize::MAX,
             &mut checks,
         );
         assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
@@ -2044,6 +2085,7 @@ mod tests {
             std::slice::from_ref(&anchor_cert),
             &covered,
             AT_UNIX,
+            usize::MAX,
             &mut checks,
         );
         assert_material_fails(&checks);
@@ -2075,6 +2117,7 @@ mod tests {
             std::slice::from_ref(&anchor_cert),
             &covered,
             AT_UNIX,
+            usize::MAX,
             &mut checks,
         );
         assert_material_fails(&checks);
@@ -2108,6 +2151,7 @@ mod tests {
             std::slice::from_ref(&anchor),
             &covered,
             AT_UNIX,
+            usize::MAX,
             &mut checks,
         );
         assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
@@ -2150,7 +2194,7 @@ mod tests {
         let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[]);
         let covered = covered_of(&[&ca.cert_der]);
         let mut checks = Checks::new();
-        verify_dss(&doc, &[], &covered, archival, &mut checks);
+        verify_dss(&doc, &[], &covered, archival, usize::MAX, &mut checks);
         assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
         // The same material judged at the verification clock is stale.
         let checks_now = dss_check(&doc, &covered);
@@ -3211,5 +3255,271 @@ mod tests {
                 Some(VerifyFindingCode::ValidationMaterialInvalid)
             )
         );
+    }
+
+    // --- bot-fix leg 3b pins: DSS stream decode, object cap, typeless ----
+    // --- signature discovery, hex whitespace in /Contents -----------------
+
+    /// zlib wrapper around one final DEFLATE stored block (no compressor
+    /// dependency needed for the fixture).
+    fn zlib_store(data: &[u8]) -> Vec<u8> {
+        assert!(u16::try_from(data.len()).is_ok());
+        let len = data.len() as u16;
+        let mut out = vec![0x78u8, 0x01, 0x01];
+        out.extend_from_slice(&len.to_le_bytes());
+        out.extend_from_slice(&(!len).to_le_bytes());
+        out.extend_from_slice(data);
+        let (mut a, mut b) = (1u32, 0u32);
+        for &x in data {
+            a = (a + u32::from(x)) % 65521;
+            b = (b + a) % 65521;
+        }
+        out.extend_from_slice(&((b << 16) | a).to_be_bytes());
+        out
+    }
+
+    /// Mirror of `dss_doc` whose CRL entry rides a /FlateDecode stream.
+    fn dss_doc_flate_crl(certs: &[Vec<u8>], crl_stream_bytes: Vec<u8>) -> Document {
+        let mut doc = Document::with_version("1.4");
+        let mut dss = lopdf::Dictionary::new();
+        dss.set("Type", Object::Name(b"DSS".to_vec()));
+        if !certs.is_empty() {
+            let refs: Vec<Object> = certs
+                .iter()
+                .map(|d| {
+                    let s = Stream::new(lopdf::Dictionary::new(), d.clone());
+                    Object::Reference(doc.add_object(Object::Stream(s)))
+                })
+                .collect();
+            dss.set("Certs", Object::Array(refs));
+        }
+        let mut crl_dict = lopdf::Dictionary::new();
+        crl_dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+        let crl_ref = Object::Reference(
+            doc.add_object(Object::Stream(Stream::new(crl_dict, crl_stream_bytes))),
+        );
+        dss.set("CRLs", Object::Array(vec![crl_ref]));
+        let dss_id = doc.add_object(Object::Dictionary(dss));
+        let mut catalog = lopdf::Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("DSS", Object::Reference(dss_id));
+        let cat_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+        doc
+    }
+
+    #[test]
+    fn dss_flate_wrapped_crl_validates() {
+        // Filtered DSS evidence must be decoded before parsing: a
+        // FlateDecode-wrapped CRL covering the chain validates exactly like
+        // its raw form.
+        let ca = test_ca("flate-dss-ca");
+        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
+        let doc = dss_doc_flate_crl(std::slice::from_ref(&ca.cert_der), zlib_store(&crl));
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert!(
+            checks.passed(VerifyCheckKind::ValidationMaterial),
+            "FlateDecode-wrapped CRL evidence must validate"
+        );
+    }
+
+    #[test]
+    fn dss_broken_filter_stream_is_malformed_never_skipped() {
+        // A stream whose declared filter cannot decode is Malformed, which
+        // fails ValidationMaterial — never a silent skip to AbsentAllowed.
+        let ca = test_ca("flate-broken-ca");
+        let doc = dss_doc_flate_crl(std::slice::from_ref(&ca.cert_der), b"not zlib".to_vec());
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn verify_enforces_max_pdf_objects() {
+        // The seal side rejects over-cap object counts; the verify side
+        // must enforce the same configured cap.
+        let signer = test_ca("objcap-signer");
+        let bytes = append_sig_revision(&base_input(), &signer, "objcap", None, 0);
+        let limits = SealResourceLimits {
+            max_pdf_objects: 2,
+            ..SealResourceLimits::default()
+        };
+        let engine = engine::NativeSealEngine::new(
+            SealConfig {
+                trust_anchors_der: vec![signer.cert_der],
+                timestamp_authorities: Vec::new(),
+                fetch_policy: FetchPolicy::default(),
+                resource_limits: limits,
+            },
+            Arc::new(NoopBackend),
+            Arc::new(NoopFetcher),
+            Arc::new(ClockMs(VERIFY_SECS * 1000)),
+        )
+        .unwrap();
+        let err = engine.verify_sealed_pdf(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: InputInvalidCode::ObjectLimitExceeded
+            }
+        ));
+    }
+
+    /// Signature dictionary body with patchable /ByteRange and /Contents,
+    /// /Type optional (the typeless interop shape). Mirrors pdf's
+    /// sig_dict_body. Returns (body, byterange_patch_rel, contents_lt_rel).
+    fn sig_body_shaped(capacity: usize, typed: bool) -> (Vec<u8>, usize, usize) {
+        let mut body = Vec::with_capacity(capacity * 2 + 256);
+        body.extend_from_slice(b"<< ");
+        if typed {
+            body.extend_from_slice(b"/Type /Sig ");
+        }
+        body.extend_from_slice(
+            b"/Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached /ByteRange [0 ",
+        );
+        let br_rel = body.len();
+        for i in 0..3 {
+            body.extend_from_slice(b"00000000000000000000");
+            if i < 2 {
+                body.push(b' ');
+            }
+        }
+        body.extend_from_slice(b"] /Contents <");
+        let lt_rel = body.len() - 1;
+        body.extend(std::iter::repeat_n(b'0', capacity * 2));
+        body.extend_from_slice(b"> >>");
+        (body, br_rel, lt_rel)
+    }
+
+    /// Write the CMS DER hex into the gap with spec-legal whitespace (two
+    /// spaces every 16 bytes — an even count, so the digit total stays
+    /// even); the rest of the gap stays zero padding.
+    fn fill_contents_spaced(out: &mut [u8], lt: usize, gt: usize, der: &[u8]) {
+        let mut hex = String::new();
+        for (i, b) in der.iter().enumerate() {
+            if i > 0 && i % 16 == 0 {
+                hex.push_str("  ");
+            }
+            hex.push_str(&format!("{b:02x}"));
+        }
+        assert!(hex.len() < gt - lt, "token exceeds contents capacity");
+        out[lt + 1..lt + 1 + hex.len()].copy_from_slice(hex.as_bytes());
+    }
+
+    /// Hand-emit a one-object signature revision (no field/widget — the
+    /// native verifier discovers signatures by object scan) with a real CMS
+    /// over the ByteRange digest.
+    fn crafted_sig_revision(name: &str, typed: bool, spaced_hex: bool) -> (Vec<u8>, TestCa) {
+        let signer = test_ca(name);
+        let input = base_input();
+        let state = pdf::reparse_revision(&input, &SealResourceLimits::default()).unwrap();
+        let capacity = 64 * 1024;
+        let (body, br_rel, lt_rel) = sig_body_shaped(capacity, typed);
+        let sig_num = state.max_obj + 1;
+        let (mut bytes, written) = emit_revision(&input, &state, &[(sig_num, body)], None);
+        let (_, _, body_start) = written.iter().find(|w| w.0 == sig_num).copied().unwrap();
+        let lt = (body_start as usize) + lt_rel;
+        let gt = lt + 1 + capacity * 2;
+        let total = bytes.len() as u64;
+        let br = [0, lt as u64, gt as u64 + 1, total - (gt as u64 + 1)];
+        patch_br(&mut bytes, (body_start as usize) + br_rel, br);
+        let digest = pdf::hash_byte_range(&bytes, br).unwrap();
+        let (issuer, serial) = cms::issuer_and_serial(&signer.cert_der).unwrap();
+        let attrs = vec![
+            cms::attr_content_type_data(),
+            cms::attr_message_digest(&digest),
+            cms::attr_signing_cert_v2(&signer.cert_der, &issuer, &serial),
+        ];
+        let (wire, signing) = cms::assemble_signed_attrs(attrs);
+        let sig = sign_p256(&signer.key, &signing);
+        let material = cms::SignerMaterial {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_cert_der: &signer.cert_der,
+            issuer_name_der: &issuer,
+            serial_der: &serial,
+            chain_ders: &[],
+        };
+        let cms_der = cms::build_signed_data(&material, &wire, &sig, &[]);
+        if spaced_hex {
+            fill_contents_spaced(&mut bytes, lt, gt, &cms_der);
+        } else {
+            fill_contents(&mut bytes, lt, gt, &cms_der);
+        }
+        (bytes, signer)
+    }
+
+    #[test]
+    fn typeless_signature_dictionary_verifies() {
+        // Interop: real-world signers omit the optional /Type on the
+        // signature dictionary. The /ByteRange + /Contents shape must be
+        // discovered and verified, not silently skipped into "no cades".
+        let (bytes, signer) = crafted_sig_revision("typeless-sig", false, false);
+        let engine = verify_engine(vec![signer.cert_der], VERIFY_SECS);
+        let report = engine.verify_sealed_pdf(&bytes).unwrap();
+        assert!(
+            report.valid,
+            "typeless signature doc must verify: {report:?}"
+        );
+        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineB));
+    }
+
+    #[test]
+    fn partial_signature_shape_is_malformed_never_skipped() {
+        // /ByteRange WITHOUT /Contents (or vice versa) is malformed input,
+        // never a silent skip.
+        let mut doc = Document::with_version("1.4");
+        let mut d = lopdf::Dictionary::new();
+        d.set(
+            "ByteRange",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(1),
+                Object::Integer(2),
+                Object::Integer(3),
+            ]),
+        );
+        doc.add_object(Object::Dictionary(d));
+        assert!(collect_signatures(&doc).is_err());
+    }
+
+    #[test]
+    fn whitespace_padded_contents_verifies() {
+        // PDF permits whitespace inside hex strings: a /Contents value
+        // padded with spaces must verify, with the length check counting
+        // only hex digits.
+        let (bytes, signer) = crafted_sig_revision("ws-sig", true, true);
+        let engine = verify_engine(vec![signer.cert_der], VERIFY_SECS);
+        let report = engine.verify_sealed_pdf(&bytes).unwrap();
+        assert!(
+            report.valid,
+            "whitespace-padded /Contents must verify: {report:?}"
+        );
+    }
+
+    #[test]
+    fn byte_range_hex_length_counts_digits_not_whitespace() {
+        // Direct mutation probe on the gate: "<AB CD>" decodes to two
+        // bytes; a one-byte /Contents claim must still FAIL (whitespace is
+        // stripped, not counted as content).
+        let bytes = b"xx<AB CD>yy";
+        let ok = SigEntry {
+            is_doc_ts: false,
+            byte_range: [0, 2, 9, 2],
+            contents: vec![0xAB, 0xCD],
+        };
+        assert!(check_byte_range(bytes, &ok));
+        let short = SigEntry {
+            is_doc_ts: false,
+            byte_range: [0, 2, 9, 2],
+            contents: vec![0xAB],
+        };
+        assert!(!check_byte_range(bytes, &short));
+        let long = SigEntry {
+            is_doc_ts: false,
+            byte_range: [0, 2, 9, 2],
+            contents: vec![0xAB, 0xCD, 0xEF],
+        };
+        assert!(!check_byte_range(bytes, &long));
     }
 }

@@ -37,12 +37,21 @@ pub(crate) struct AssemblyOutcome {
     pub warnings: Vec<SealWarning>,
 }
 
+/// Derived per-attempt operation id: caller id plus a fixed-shape suffix.
+/// The caller id is bounded at entry (see
+/// [`crate::api::SealRequest::validate_operation_id`]) so this derived id
+/// always fits the backend's [`crate::api::MAX_OPERATION_ID_BYTES`] bound.
 pub(crate) fn sub_operation_id(
     operation_id: &str,
     input_sha256: &Sha256Digest,
     phase: &str,
     capacity: usize,
 ) -> String {
+    debug_assert!(
+        operation_id.len() + crate::api::OPERATION_ID_SUFFIX_RESERVE
+            <= crate::api::MAX_OPERATION_ID_BYTES,
+        "caller operation id exceeds the reserved suffix budget"
+    );
     let mut hex = String::with_capacity(16);
     for b in &input_sha256[..8] {
         hex.push_str(&format!("{b:02x}"));
@@ -469,7 +478,11 @@ fn append_dss(
     material: &DssMaterial,
 ) -> Result<Vec<u8>, SealError> {
     let state = pdf::reparse_revision(bytes, &ctx.config.resource_limits)?;
-    let (objs, dss_num) = build_dss_objects(material, state.max_obj + 1);
+    let first_num = state.max_obj.checked_add(1).ok_or(SealError::Fatal {
+        stage: SealStage::Dss,
+        code: FatalCode::PdfInvariantFailed,
+    })?;
+    let (objs, dss_num) = build_dss_objects(material, first_num);
     let kind = pdf::RevisionKind::Dss {
         material_objects: objs,
         dss_obj: dss_num,
@@ -631,6 +644,24 @@ mod tests {
         assert_ne!(a, sub_operation_id("op", &sha, "doc-ts", 65536));
         assert_ne!(a, sub_operation_id("op", &[2u8; 32], "sign", 65536));
         assert!(a.starts_with("op:"));
+    }
+
+    #[test]
+    fn sub_operation_id_at_max_caller_id_still_fits_backend_bound() {
+        // The reserve budget is honest: a caller id at the validation
+        // boundary plus the largest real suffix stays inside 256 bytes.
+        let sha = [7u8; 32];
+        let max_caller =
+            crate::api::MAX_OPERATION_ID_BYTES - crate::api::OPERATION_ID_SUFFIX_RESERVE;
+        let id = "x".repeat(max_caller);
+        for capacity in CAPACITY_LADDER {
+            let derived = sub_operation_id(&id, &sha, "sign", capacity);
+            assert!(
+                derived.len() <= crate::api::MAX_OPERATION_ID_BYTES,
+                "derived id overflows the backend bound: {}",
+                derived.len()
+            );
+        }
     }
 
     #[test]

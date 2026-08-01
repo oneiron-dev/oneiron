@@ -102,6 +102,11 @@ pub trait SealBackend: Send + Sync {
 /// bytes, stable for one logical seal. Validated before any signing work.
 pub const MAX_OPERATION_ID_BYTES: usize = 256;
 
+/// Reserved headroom for the engine's derived sub-operation-id suffix
+/// (`:{16 hex}:{phase}:{capacity}`). Caller-supplied ids must leave this
+/// budget so every derived id still fits the backend's 256-byte bound.
+pub const OPERATION_ID_SUFFIX_RESERVE: usize = 32;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealRequest {
     pub operation_id: String,
@@ -110,9 +115,12 @@ pub struct SealRequest {
 
 impl SealRequest {
     /// Enforce the `operation_id` contract. Engines must run this before the
-    /// request reaches any signing or fetch path.
+    /// request reaches any signing or fetch path. Caller ids are bounded to
+    /// [`MAX_OPERATION_ID_BYTES`] minus [`OPERATION_ID_SUFFIX_RESERVE`] so the
+    /// suffixed sub-operation ids the engine derives stay inside the bound.
     pub fn validate_operation_id(&self) -> Result<(), SealError> {
-        if self.operation_id.is_empty() || self.operation_id.len() > MAX_OPERATION_ID_BYTES {
+        let max_caller = MAX_OPERATION_ID_BYTES - OPERATION_ID_SUFFIX_RESERVE;
+        if self.operation_id.is_empty() || self.operation_id.len() > max_caller {
             return Err(SealError::Fatal {
                 stage: crate::error::SealStage::InputValidation,
                 code: crate::error::FatalCode::InvalidConfiguration,

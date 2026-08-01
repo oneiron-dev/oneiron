@@ -2,10 +2,11 @@ name: Seal Oracle
 
 # ONE-1837 §9 as rewritten by amendment A6 (card crypto:ops, ratified
 # 2026-07-29): the differential oracle is event-based only. It fires on
-# merges to main that touch the seal crate, on v* release tags (the EU-DSS
-# row rides the tags), and on manual dispatch while the lane is built. It
-# NEVER runs on pull_request and NEVER on a schedule: if nothing changed,
-# nothing fires.
+# merges to main that touch the seal crate, on v* release tags, and on
+# manual dispatch while the lane is built. It NEVER runs on pull_request
+# and NEVER on a schedule: if nothing changed, nothing fires. This leg
+# runs ONLY the pyHanko/pdfsig differential oracle; no EU-DSS validation
+# is claimed or performed here.
 on:
   push:
     branches: [main]
@@ -50,6 +51,5 @@ jobs:
           echo "$(pwd)/crates/oneiron-seal/oracle/.venv/bin" >> "$GITHUB_PATH"
       # Oracle matrix rows 2 (native seal -> pyHanko validate) and 4
       # (native seal -> pdfsig validate) plus rows 1/3 coverage of the
-      # native paths. The tag trigger is the designated carrier for the
-      # EU-DSS row (A6).
+      # native paths. Nothing else runs on this leg.
       - run: cargo test -p oneiron-seal --features seal-oracle --test oracle

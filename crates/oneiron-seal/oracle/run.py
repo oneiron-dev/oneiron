@@ -15,7 +15,7 @@ import sys
 def validate(path: str) -> dict:
     from pyhanko import __version__
     from pyhanko.pdf_utils.reader import PdfFileReader
-    from pyhanko.sign.validation import validate_pdf_signature
+    from pyhanko.sign.validation import ValidationContext, validate_pdf_signature
     from pyhanko.sign.validation.settings import KeyUsageConstraints
 
     with open(path, "rb") as fh:
@@ -28,7 +28,18 @@ def validate(path: str) -> dict:
             return {"valid": False, "validator": "pyhanko", "version": __version__}
         # EKU None = unrestricted; an empty set rejects every EKU.
         ku = KeyUsageConstraints(key_usage=set(), extd_key_usage=None)
-        status = validate_pdf_signature(sigs[0], key_usage_settings=ku)
+        # Trust root = the certificate chain EMITTED in the document's own
+        # CMS (the fixture sample anchors on its self-signed signer cert).
+        # Without an explicit ValidationContext the witness is blind: every
+        # verdict would report untrusted regardless of cryptographic health.
+        # No key material is embedded here or read from anywhere else.
+        sig = sigs[0]
+        cms_certs = list(sig.signed_data["certificates"])
+        trust_roots = [
+            ci.chosen for ci in cms_certs if ci.name == "certificate"
+        ] or [sig.signer_cert]
+        vc = ValidationContext(trust_roots=trust_roots, allow_fetching=False)
+        status = validate_pdf_signature(sig, validation_context=vc, key_usage_settings=ku)
         return {
             "valid": bool(status.bottom_line),
             "validator": "pyhanko",

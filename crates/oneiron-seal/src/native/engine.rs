@@ -218,9 +218,18 @@ mod tests {
             target_profile: PadesProfile::BaselineB,
         };
         assert!(req("op-1".to_string()).validate_operation_id().is_ok());
-        let boundary = req("x".repeat(crate::api::MAX_OPERATION_ID_BYTES));
+        // Caller ids reserve the sub-operation-id suffix budget: the
+        // boundary is MAX - RESERVE, and a full-256 id is REJECTED (never
+        // truncated) so derived ids cannot overflow the backend bound.
+        let max_caller =
+            crate::api::MAX_OPERATION_ID_BYTES - crate::api::OPERATION_ID_SUFFIX_RESERVE;
+        let boundary = req("x".repeat(max_caller));
         assert!(boundary.validate_operation_id().is_ok());
-        for bad in [req(String::new()), req("x".repeat(257))] {
+        for bad in [
+            req(String::new()),
+            req("x".repeat(max_caller + 1)),
+            req("x".repeat(crate::api::MAX_OPERATION_ID_BYTES)),
+        ] {
             let err = bad.validate_operation_id().unwrap_err();
             assert!(matches!(
                 err,

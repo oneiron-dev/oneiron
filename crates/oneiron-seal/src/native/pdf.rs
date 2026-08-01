@@ -122,6 +122,11 @@ fn scan_objects(doc: &Document) -> Result<(), SealError> {
         if dict.has(b"ByteRange") && dict.has(b"Contents") {
             return Err(input_invalid(InputInvalidCode::ExistingSignature));
         }
+        // A filespec-shaped dictionary is rejected even without the
+        // /Type /Filespec marker: an /EF (embedded files) key is the tell.
+        if dict.has(b"EF") {
+            return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
+        }
         if dict.has(b"AA") {
             return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
         }
@@ -141,7 +146,8 @@ fn scan_objects(doc: &Document) -> Result<(), SealError> {
 }
 
 /// Catalog-level checks: OpenAction, /Names JavaScript + EmbeddedFiles,
-/// DocMDP/FieldMDP in /Perms.
+/// DocMDP/FieldMDP in /Perms, associated files at catalog and page dicts,
+/// and XFA active form content.
 fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), SealError> {
     if root.has(b"OpenAction") {
         return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
@@ -161,6 +167,27 @@ fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), SealError> {
         && (pd.has(b"DocMDP") || pd.has(b"FieldMDP") || pd.has(b"UR3"))
     {
         return Err(input_invalid(InputInvalidCode::ExistingSignature));
+    }
+    // /AF (associated files) at the catalog or any page dict is embedded-file
+    // content outside the /Names tree; it rides the same rejection class.
+    if root.has(b"AF") {
+        return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
+    }
+    for page_id in doc.get_pages().values() {
+        if let Ok(page) = doc.get_object(*page_id)
+            && let Ok(page_dict) = page.as_dict()
+            && page_dict.has(b"AF")
+        {
+            return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
+        }
+    }
+    // An /AcroForm carrying /XFA is active form content (XML Forms
+    // Architecture), never a static AcroForm: reject, never sign over it.
+    if let Ok(af) = root.get(b"AcroForm")
+        && let Some(af_dict) = deref_dict(doc, af)
+        && af_dict.has(b"XFA")
+    {
+        return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
     }
     Ok(())
 }
@@ -236,11 +263,21 @@ fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionState, SealErr
         .ok()
         .and_then(|o| o.as_dict().ok())
         .ok_or_else(|| fatal_pdf(FatalCode::PdfInvariantFailed))?;
-    let acroform = root_dict.get(b"AcroForm").ok().and_then(ref_of);
-    let acroform_dict = acroform
-        .and_then(|a| doc.get_object(a).ok())
-        .and_then(|o| o.as_dict().ok())
-        .cloned();
+    // /AcroForm may be an indirect reference OR a direct dictionary; both
+    // shapes must survive signing with their fields intact (a direct dict
+    // treated as absent would be clobbered by a fresh AcroForm).
+    let (acroform, acroform_dict) = match root_dict.get(b"AcroForm") {
+        Ok(Object::Reference(r)) => {
+            let dict = doc
+                .get_object(*r)
+                .ok()
+                .and_then(|o| o.as_dict().ok())
+                .cloned();
+            (Some(*r), dict)
+        }
+        Ok(Object::Dictionary(d)) => (None, Some(d.clone())),
+        _ => (None, None),
+    };
     let acroform_fields = acroform_dict
         .as_ref()
         .and_then(|d| d.get(b"Fields").ok())
@@ -263,16 +300,20 @@ fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionState, SealErr
         .unwrap_or_default();
     // Allocation starts past BOTH the highest referenced object number and
     // the trailer /Size: free or unreferenced numbers below /Size stay out
-    // of reach of the new revision's object numbers.
+    // of reach of the new revision's object numbers. A /Size that does not
+    // fit the object-number space cannot be honored — reject it instead of
+    // silently allocating inside its claimed range.
     let max_existing = doc.objects.keys().map(|(num, _)| *num).max().unwrap_or(0);
-    let size_max = trailer
-        .get(b"Size")
-        .ok()
-        .and_then(|s| s.as_i64().ok())
-        .and_then(|s| u64::try_from(s).ok())
-        .and_then(|s| s.checked_sub(1))
-        .and_then(|s| u32::try_from(s).ok())
-        .unwrap_or(0);
+    let size_max = match trailer.get(b"Size") {
+        Ok(s) => s
+            .as_i64()
+            .ok()
+            .and_then(|v| u64::try_from(v).ok())
+            .and_then(|v| v.checked_sub(1))
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| input_invalid(InputInvalidCode::ObjectLimitExceeded))?,
+        Err(_) => 0,
+    };
     let max_obj = max_existing.max(size_max);
     Ok(RevisionState {
         max_obj,
@@ -541,12 +582,72 @@ fn sig_dict_body(
 #[allow(clippy::too_many_lines)]
 type NewObjects = (Vec<(u32, u16, Vec<u8>)>, Option<(u32, usize, usize)>);
 
+/// Object numbers are allocated strictly past `state.max_obj` with checked
+/// arithmetic: a crafted trailer `/Size` near `u32::MAX` must yield an
+/// input-invalid rejection, never a wrap or panic.
+fn next_obj(next: &mut u32) -> Result<u32, SealError> {
+    let n = *next;
+    *next = n
+        .checked_add(1)
+        .ok_or_else(|| input_invalid(InputInvalidCode::ObjectLimitExceeded))?;
+    Ok(n)
+}
+
+/// Create-or-update `/AcroForm` so it lists `field_num`, preserving every
+/// pre-existing entry and field. An absent AcroForm is created; a DIRECT
+/// AcroForm dictionary is hoisted into its own indirect object so its
+/// fields survive (the catalog is re-emitted pointing at it).
+fn register_field(
+    state: &RevisionState,
+    objs: &mut Vec<(u32, u16, Vec<u8>)>,
+    next: &mut u32,
+    field_num: u32,
+) -> Result<(), SealError> {
+    match (state.acroform, state.acroform_dict.clone()) {
+        (Some(af_id), Some(af_dict)) => {
+            let mut af = af_dict;
+            let mut fields = state.acroform_fields.clone();
+            fields.push(Object::Reference((field_num, 0)));
+            af.set(b"Fields", Object::Array(fields));
+            af.set(b"SigFlags", Object::Integer(3));
+            let mut body = Vec::new();
+            write_object(&Object::Dictionary(af), &mut body)?;
+            objs.push((af_id.0, af_id.1, body));
+        }
+        (referenced, seed) => {
+            let af_num = next_obj(next)?;
+            let mut af = seed.unwrap_or_default();
+            // A dangling /AcroForm reference keeps no fields to preserve.
+            let mut fields = if referenced.is_some() {
+                Vec::new()
+            } else {
+                state.acroform_fields.clone()
+            };
+            fields.push(Object::Reference((field_num, 0)));
+            af.set(b"Fields", Object::Array(fields));
+            af.set(b"SigFlags", Object::Integer(3));
+            let mut af_body = Vec::new();
+            write_object(&Object::Dictionary(af), &mut af_body)?;
+            objs.push((af_num, 0, af_body));
+            let mut catalog = state.root_dict.clone();
+            catalog.set(b"AcroForm", Object::Reference((af_num, 0)));
+            let mut body = Vec::new();
+            write_object(&Object::Dictionary(catalog), &mut body)?;
+            objs.push((state.root.0, state.root.1, body));
+        }
+    }
+    Ok(())
+}
+
 fn build_objects(
     state: &RevisionState,
     kind: &RevisionKind,
     capacity: usize,
 ) -> Result<NewObjects, SealError> {
-    let mut next = state.max_obj + 1;
+    let mut next = state
+        .max_obj
+        .checked_add(1)
+        .ok_or_else(|| input_invalid(InputInvalidCode::ObjectLimitExceeded))?;
     let mut objs: Vec<(u32, u16, Vec<u8>)> = Vec::new();
     let mut sig_info = None;
     match kind {
@@ -555,12 +656,9 @@ fn build_objects(
             date_str,
         } => {
             let (sig_body, br_rel, lt_rel) = sig_dict_body(false, Some(date_str), capacity);
-            let sig_num = next;
-            next += 1;
-            let field_num = next;
-            next += 1;
-            let widget_num = next;
-            next += 1;
+            let sig_num = next_obj(&mut next)?;
+            let field_num = next_obj(&mut next)?;
+            let widget_num = next_obj(&mut next)?;
             let mut field = Vec::new();
             field.extend_from_slice(b"<< /FT /Sig /T ");
             write_literal_string(field_name, &mut field);
@@ -586,35 +684,21 @@ fn build_objects(
             let mut page_body = Vec::new();
             write_object(&Object::Dictionary(page), &mut page_body)?;
             objs.push((state.first_page.0, state.first_page.1, page_body));
-            match (state.acroform, state.acroform_dict.clone()) {
-                (Some(af_id), Some(af_dict)) => {
-                    let mut af = af_dict;
-                    let mut fields = state.acroform_fields.clone();
-                    fields.push(Object::Reference((field_num, 0)));
-                    af.set(b"Fields", Object::Array(fields));
-                    af.set(b"SigFlags", Object::Integer(3));
-                    let mut body = Vec::new();
-                    write_object(&Object::Dictionary(af), &mut body)?;
-                    objs.push((af_id.0, af_id.1, body));
-                }
-                _ => {
-                    // No AcroForm: new AcroForm object + catalog update.
-                    let af_num = next;
-                    let af = format!("<< /Fields [{field_num} 0 R] /SigFlags 3 >>");
-                    objs.push((af_num, 0, af.into_bytes()));
-                    let mut catalog = state.root_dict.clone();
-                    catalog.set(b"AcroForm", Object::Reference((af_num, 0)));
-                    let mut body = Vec::new();
-                    write_object(&Object::Dictionary(catalog), &mut body)?;
-                    objs.push((state.root.0, state.root.1, body));
-                }
-            }
+            register_field(state, &mut objs, &mut next, field_num)?;
         }
         RevisionKind::DocumentTimestamp => {
             let (sig_body, br_rel, lt_rel) = sig_dict_body(true, None, capacity);
-            let sig_num = next;
+            let sig_num = next_obj(&mut next)?;
+            let field_num = next_obj(&mut next)?;
+            // External validators discover document timestamps through
+            // signature FIELDS, not by scanning for /Type: register the DTS
+            // dictionary as the value of an /FT /Sig field in /AcroForm
+            // /Fields (no widget — an archival timestamp has no appearance).
+            let field = format!("<< /FT /Sig /V {sig_num} 0 R >>");
             objs.push((sig_num, 0, sig_body));
+            objs.push((field_num, 0, field.into_bytes()));
             sig_info = Some((sig_num, br_rel, lt_rel));
+            register_field(state, &mut objs, &mut next, field_num)?;
         }
         RevisionKind::Dss {
             material_objects,
@@ -633,7 +717,7 @@ fn build_objects(
     Ok((objs, sig_info))
 }
 
-fn write_trailer_entries(state: &RevisionState, size: u32, out: &mut Vec<u8>) {
+fn write_trailer_entries(state: &RevisionState, size: u64, out: &mut Vec<u8>) {
     out.extend_from_slice(format!("/Size {size} /Prev {} ", state.prev_startxref).as_bytes());
     out.extend_from_slice(format!("/Root {} {} R ", state.root.0, state.root.1).as_bytes());
     if let Some(info) = state.info {
@@ -651,7 +735,7 @@ fn write_trailer_entries(state: &RevisionState, size: u32, out: &mut Vec<u8>) {
     }
 }
 
-fn emit_xref_table(state: &RevisionState, objs: &[ObjOut], size: u32, out: &mut Vec<u8>) {
+fn emit_xref_table(state: &RevisionState, objs: &[ObjOut], size: u64, out: &mut Vec<u8>) {
     out.extend_from_slice(b"xref\n");
     let mut sorted: Vec<&ObjOut> = objs.iter().collect();
     sorted.sort_by_key(|o| o.num);
@@ -681,7 +765,7 @@ fn emit_xref_stream(
     objs: &[ObjOut],
     xref_num: u32,
     xref_offset: u64,
-    size: u32,
+    size: u64,
     out: &mut Vec<u8>,
 ) {
     let mut all: Vec<ObjOut> = objs.to_vec();
@@ -729,6 +813,14 @@ pub(crate) fn append_revision(
 ) -> Result<DraftRevision, SealError> {
     let (objs, sig_info) = build_objects(state, kind, capacity)?;
     let mut out = input.to_vec();
+    // EOF glue: the first appended object header must start on its own
+    // line even when the input's final %%EOF carries no trailing EOL
+    // (a bare `%%EOF4 0 obj` line would corrupt both the marker and the
+    // object). Emit exactly one EOL boundary: a missing newline is added;
+    // a trailing '\r' is completed into CRLF.
+    if !out.ends_with(b"\n") {
+        out.push(b'\n');
+    }
     let mut written: Vec<ObjOut> = Vec::with_capacity(objs.len());
     let mut contents_gap = None;
     let mut br_patch = None;
@@ -752,9 +844,18 @@ pub(crate) fn append_revision(
     }
     let max_used = written.iter().map(|o| o.num).max().unwrap_or(state.max_obj);
     let xref_offset = out.len() as u64;
+    // /Size in u64: max_used sits at most at u32::MAX - 1 (next_obj bounds
+    // allocation), so +2 can exceed the u32 space but never u64.
     let (xref_num, size) = match state.xref_style {
-        XrefStyle::Table => (None, max_used + 1),
-        XrefStyle::Stream => (Some(max_used + 1), max_used + 2),
+        XrefStyle::Table => (None, u64::from(max_used) + 1),
+        XrefStyle::Stream => (
+            Some(
+                max_used
+                    .checked_add(1)
+                    .ok_or_else(|| input_invalid(InputInvalidCode::ObjectLimitExceeded))?,
+            ),
+            u64::from(max_used) + 2,
+        ),
     };
     match xref_num {
         None => emit_xref_table(state, &written, size, &mut out),
@@ -1051,5 +1152,278 @@ mod tests {
     #[test]
     fn pdf_date_format() {
         assert_eq!(pdf_date(1_785_398_400_000), "D:20260730080000Z");
+    }
+
+    #[test]
+    fn bare_eof_input_gets_exactly_one_eol_boundary() {
+        // The classic fixture ends in a bare %%EOF with no trailing EOL:
+        // the first appended object header must start on its OWN line,
+        // exactly one '\n' boundary — never `%%EOF4 0 obj`.
+        let input = classic_pdf();
+        assert!(input.ends_with(b"%%EOF"), "fixture must end in bare %%EOF");
+        let p = prepared(&input);
+        let draft = sign_revision(&p, 1024);
+        assert_eq!(draft.bytes[input.len()], b'\n', "missing EOL must be added");
+        assert_ne!(
+            draft.bytes[input.len() + 1],
+            b'\n',
+            "exactly one EOL boundary"
+        );
+        let first_obj = p.state.max_obj + 1;
+        let header = format!("{first_obj} 0 obj\n");
+        assert_eq!(
+            &draft.bytes[input.len() + 1..input.len() + 1 + header.len()],
+            header.as_bytes(),
+            "object header on its own line"
+        );
+        // The emitted revision round-trips through our own loader.
+        let state = reparse_revision(&draft.bytes, &SealResourceLimits::default())
+            .expect("revision must reparse");
+        assert_eq!(state.max_obj, first_obj + 3, "all four objects visible");
+        // An input already carrying its trailing EOL gets no extra byte.
+        let mut eol = classic_pdf();
+        eol.push(b'\n');
+        let p2 = prepared(&eol);
+        let d2 = sign_revision(&p2, 1024);
+        assert_eq!(
+            d2.bytes[eol.len()],
+            b'4',
+            "no double boundary after a present EOL"
+        );
+    }
+
+    /// Minimal in-memory catalog + one-page tree; `page_extra` keys are
+    /// set on the page dict, `catalog_extra` on the catalog.
+    fn doc_with_page(
+        page_extra: &[(&[u8], Object)],
+        catalog_extra: &[(&[u8], Object)],
+    ) -> (Document, Dictionary) {
+        let mut doc = Document::with_version("1.4");
+        let mut page = Dictionary::new();
+        page.set("Type", Object::Name(b"Page".to_vec()));
+        for (k, v) in page_extra {
+            page.set(*k, v.clone());
+        }
+        let page_id = doc.add_object(Object::Dictionary(page));
+        let mut pages = Dictionary::new();
+        pages.set("Type", Object::Name(b"Pages".to_vec()));
+        pages.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+        let Ok(Object::Dictionary(p)) = doc.get_object_mut(page_id) else {
+            panic!("page object");
+        };
+        p.set("Parent", Object::Reference(pages_id));
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        for (k, v) in catalog_extra {
+            catalog.set(*k, v.clone());
+        }
+        let catalog_id = doc.add_object(Object::Dictionary(catalog.clone()));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        (doc, catalog)
+    }
+
+    #[test]
+    fn catalog_and_page_af_are_rejected_as_embedded_files() {
+        let af = || Object::Array(vec![Object::Reference((9, 0))]);
+        let (doc, catalog) = doc_with_page(&[], &[(b"AF", af())]);
+        let err = scan_catalog(&doc, &catalog).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: InputInvalidCode::EmbeddedFilePresent
+            }
+        ));
+        let (doc, catalog) = doc_with_page(&[(b"AF", af())], &[]);
+        let err = scan_catalog(&doc, &catalog).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: InputInvalidCode::EmbeddedFilePresent
+            }
+        ));
+    }
+
+    #[test]
+    fn acroform_xfa_is_rejected_as_active_content() {
+        let mut af = Dictionary::new();
+        af.set("XFA", Object::Array(vec![]));
+        let (doc, catalog) = doc_with_page(&[], &[(b"AcroForm", Object::Dictionary(af))]);
+        let err = scan_catalog(&doc, &catalog).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: InputInvalidCode::ActiveContentPresent
+            }
+        ));
+    }
+
+    #[test]
+    fn dts_revision_registers_a_signature_field_in_acroform() {
+        // External validators discover timestamps through FIELDS: the DTS
+        // revision must add an /FT /Sig field whose /V is the DTS dict.
+        let p = prepared(&classic_pdf());
+        let signed = sign_revision(&p, 1024);
+        let state = reparse_revision(&signed.bytes, &SealResourceLimits::default())
+            .expect("reparse signed");
+        let dts = append_revision(
+            &signed.bytes,
+            &state,
+            &RevisionKind::DocumentTimestamp,
+            1024,
+        )
+        .expect("dts revision");
+        let doc = Document::load_mem(&dts.bytes).expect("load dts output");
+        let catalog = doc.catalog().expect("catalog");
+        let af = doc
+            .dereference(catalog.get(b"AcroForm").expect("acroform"))
+            .ok()
+            .and_then(|(_, o)| o.as_dict().ok().cloned())
+            .expect("acroform dict");
+        let fields = af
+            .get(b"Fields")
+            .and_then(Object::as_array)
+            .expect("fields");
+        let dts_registered = fields.iter().any(|f| {
+            let Ok(field) = doc.dereference(f).map(|(_, o)| o) else {
+                return false;
+            };
+            let Ok(field) = field.as_dict() else {
+                return false;
+            };
+            let ft_ok = field.get(b"FT").is_ok_and(|ft| name_is(ft, b"Sig"));
+            let v_is_dts = field.get(b"V").is_ok_and(|v| {
+                doc.dereference(v)
+                    .ok()
+                    .and_then(|(_, o)| o.as_dict().ok())
+                    .is_some_and(|d| d.get(b"Type").is_ok_and(|t| name_is(t, b"DocTimeStamp")))
+            });
+            ft_ok && v_is_dts
+        });
+        assert!(
+            dts_registered,
+            "AcroForm /Fields must contain an /FT /Sig field whose /V is the DTS dict"
+        );
+    }
+
+    #[test]
+    fn direct_acroform_dict_fields_survive_signing() {
+        // A DIRECT /AcroForm dictionary (no indirection) must keep its
+        // fields across signing: the writer hoists it instead of replacing
+        // it with a fresh one-field AcroForm.
+        let mut doc = Document::with_version("1.4");
+        let mut text_field = Dictionary::new();
+        text_field.set("FT", Object::Name(b"Tx".to_vec()));
+        text_field.set("T", Object::string_literal(b"existing".to_vec()));
+        let text_id = doc.add_object(Object::Dictionary(text_field));
+        let mut page = Dictionary::new();
+        page.set("Type", Object::Name(b"Page".to_vec()));
+        page.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(200),
+                Object::Integer(200),
+            ]),
+        );
+        let page_id = doc.add_object(Object::Dictionary(page));
+        let mut pages = Dictionary::new();
+        pages.set("Type", Object::Name(b"Pages".to_vec()));
+        pages.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages.set("Count", Object::Integer(1));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+        let Ok(Object::Dictionary(p)) = doc.get_object_mut(page_id) else {
+            panic!("page");
+        };
+        p.set("Parent", Object::Reference(pages_id));
+        let mut af = Dictionary::new();
+        af.set("Fields", Object::Array(vec![Object::Reference(text_id)]));
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        catalog.set("AcroForm", Object::Dictionary(af)); // DIRECT dict
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save");
+        let prepared = prepared(&bytes);
+        assert!(
+            prepared.state.acroform.is_none() && prepared.state.acroform_dict.is_some(),
+            "direct AcroForm must be captured as a dict without a reference"
+        );
+        let draft = sign_revision(&prepared, 1024);
+        let out = Document::load_mem(&draft.bytes).expect("reload");
+        let catalog = out.catalog().expect("catalog");
+        let af = out
+            .dereference(catalog.get(b"AcroForm").expect("acroform"))
+            .ok()
+            .and_then(|(_, o)| o.as_dict().ok().cloned())
+            .expect("acroform dict");
+        let fields = af
+            .get(b"Fields")
+            .and_then(Object::as_array)
+            .expect("fields");
+        assert!(
+            fields
+                .iter()
+                .any(|f| matches!(f, Object::Reference(r) if *r == text_id)),
+            "the pre-existing text field must survive signing: {fields:?}"
+        );
+        assert_eq!(fields.len(), 2, "text field plus the new signature field");
+    }
+
+    #[test]
+    fn crafted_huge_trailer_size_fails_closed_without_overflow() {
+        let bytes = classic_pdf();
+        // /Size beyond the u32 object-number space: rejected at state
+        // extraction, never silently clamped to 0.
+        let mut doc = Document::load_mem(&bytes).expect("load");
+        doc.trailer.set("Size", Object::Integer(1i64 << 40));
+        let err = revision_state(&doc, &bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: InputInvalidCode::ObjectLimitExceeded
+            }
+        ));
+        // /Size = u32::MAX + 1: state extracts, but allocation must fail
+        // with checked arithmetic — no wrap, no panic.
+        let mut doc = Document::load_mem(&bytes).expect("load");
+        doc.trailer
+            .set("Size", Object::Integer(i64::from(u32::MAX) + 1));
+        let state = revision_state(&doc, &bytes).expect("state");
+        assert_eq!(state.max_obj, u32::MAX);
+        let kind = RevisionKind::Signature {
+            field_name: field_name_for("unit-op"),
+            date_str: pdf_date(1_785_398_400_000),
+        };
+        let err = append_revision(&bytes, &state, &kind, 64).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: InputInvalidCode::ObjectLimitExceeded
+            }
+        ));
+    }
+    #[test]
+    fn ef_key_dict_is_rejected_without_filespec_type() {
+        // A filespec-shaped dictionary without /Type: the /EF key is the
+        // tell and must be rejected as embedded-file content.
+        let mut doc = Document::with_version("1.4");
+        let mut dict = Dictionary::new();
+        dict.set("F", Object::string_literal(b"evil.exe".to_vec()));
+        dict.set("UF", Object::string_literal(b"evil.exe".to_vec()));
+        dict.set("EF", Object::Dictionary(Dictionary::new()));
+        doc.add_object(Object::Dictionary(dict));
+        let err = scan_objects(&doc).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: InputInvalidCode::EmbeddedFilePresent
+            }
+        ));
     }
 }
