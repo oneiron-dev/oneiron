@@ -2648,3 +2648,162 @@ fn accepted_facet_hard_delete_removes_all_facet_state() -> Result<()> {
     );
     Ok(())
 }
+
+// ─── ONE-1646 fix leg 4: the preflight→purge window (TOCTOU) ────────────────
+
+/// Drives a hard delete of `facet` while a `FacetOf` stamp commits INSIDE the
+/// window between the pre-tombstone preflight and the destructive txn.
+///
+/// The ONE-1149 rendezvous seam fires after the deleter has proven its header
+/// and passed the preflight, but before it takes any write lock. Staging the
+/// stamp in an uncommitted write txn keeps it invisible to that preflight (LMDB
+/// MVCC), and committing it on the rendezvous drops the stamp into the window
+/// exactly. Deterministic — no sleeps, no thread-timing luck.
+fn delete_racing_a_stamp(
+    vault: &Vault,
+    facet: &EntityId,
+    claim: &EntityId,
+    reason: crate::DeleteReason,
+) -> Result<crate::DeleteEntityOutcome> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+    crate::deletion::install_after_header_read_signal(tx);
+    std::thread::scope(|scope| -> Result<crate::DeleteEntityOutcome> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .batch_in()
+            .edge(claim, EdgeKind::FacetOf, facet, 1.0)
+            .apply(&mut wtxn)?;
+        let deleter = scope.spawn(move || vault.delete_entity_with_reason(facet, reason));
+        rx.recv()
+            .expect("deleter must signal after the header read");
+        wtxn.commit()?;
+        deleter.join().expect("deleter thread must not panic")
+    })
+}
+
+/// P2 REGRESSION — A STAMP THAT LANDS IN THE PREFLIGHT→PURGE WINDOW STILL
+/// PROTECTS THE FACET.
+///
+/// Fix-3's preflight runs in a standalone read txn that is DROPPED before the
+/// destructive transactions. A `FacetOf` stamp committing after it passes is
+/// invisible to it, so the gate's protection has to be re-established INSIDE
+/// each destructive txn or the delete tears the very stamp the gate exists to
+/// defend. The two hard-reason shapes reach their destructive step differently
+/// and both are pinned here:
+///
+/// * `UserHardDelete` goes straight to the purge txn, where `deindex_entity`'s
+///   in-txn backstop refuses;
+/// * `GdprDelete` / `PolicyDelete` run a SoftErase txn FIRST, which scrubs the
+///   body before the purge is ever reached — so it carries its own in-txn
+///   re-evaluation. Without it the facet's body was destroyed (truncated to
+///   its 25 B shell) even though the delete was refused.
+///
+/// In every case the refusal must leave the facet's body and the racing stamp
+/// intact. The tombstone IS published (the preflight passed on a truthful
+/// snapshot, and the publish is upstream of the tearing) — that is the
+/// documented, recoverable half of the trade, and it is asserted rather than
+/// left implicit so a future change to it is a deliberate act.
+#[test]
+fn stamp_racing_into_the_purge_window_is_not_torn() -> Result<()> {
+    for (reason, label) in [
+        (crate::DeleteReason::UserHardDelete, "user_hard_delete"),
+        (crate::DeleteReason::GdprDelete, "gdpr_delete"),
+        (crate::DeleteReason::PolicyDelete, "policy_delete"),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let facet = test_id(0xC1);
+        put_facet(&vault, &facet);
+        let claim = test_id(0xC3);
+        put_public_claim(&vault, &claim, test_id(0xC4));
+        let body_before = vault.get(&facet)?.expect("facet body before");
+        assert!(!body_before.is_empty(), "{label}: fixture has a real body");
+
+        let refusal = delete_racing_a_stamp(&vault, &facet, &claim, reason)
+            .expect_err("{label}: a stamp in the window must refuse the delete");
+        assert_eq!(
+            refusal.kind(),
+            ErrorKind::FacetUnstampWithoutConsent,
+            "{label}: refused by the stamp gate"
+        );
+
+        // THE DEFECT: the racing stamp survives, and so does the facet it
+        // classifies. A torn stamp here would silently unfacet the claim —
+        // reclassifying it into rooms never cleared for this facet.
+        assert!(
+            vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+            "{label}: the racing stamp must survive the refused delete"
+        );
+        assert!(
+            vault.get_entity_type(&facet)?.is_some(),
+            "{label}: the facet entity must survive"
+        );
+        // The SoftErase arm's specific damage: body truncated to the shell
+        // while the delete was refused.
+        assert_eq!(
+            vault.get(&facet)?.as_deref(),
+            Some(body_before.as_slice()),
+            "{label}: the facet body must be byte-identical after a refusal"
+        );
+        // No local hard-delete truth was recorded for a delete that did not
+        // happen.
+        assert!(
+            !hard_delete_marker_exists(&vault, &facet)?,
+            "{label}: a refused delete records no local hard-delete truth"
+        );
+    }
+    Ok(())
+}
+
+/// The clearance arm of the same window: a clearance naming the facet that
+/// commits between the preflight and the destructive txn must protect it too.
+/// Distinct from the stamp arm because it refuses through
+/// `gate_facet_delete_against_live_clearances` — a different predicate on a
+/// different index — and only the SoftErase reasons can destroy state before
+/// the purge backstop speaks.
+#[test]
+fn clearance_racing_into_the_purge_window_is_honored() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xC6);
+    put_facet(&vault, &facet);
+    let contact = test_id(0xC7);
+    seed_contact(&vault, contact, "a@example.com");
+    let body_before = vault.get(&facet)?.expect("facet body before");
+
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+    crate::deletion::install_after_header_read_signal(tx);
+    let vault = &vault;
+    let refusal = std::thread::scope(|scope| -> Result<crate::Error> {
+        // The clearance is granted through its own owner door, which needs its
+        // own txn — so it is committed on the rendezvous rather than staged.
+        let deleter = scope.spawn(move || {
+            vault.delete_entity_with_reason(&facet, crate::DeleteReason::GdprDelete)
+        });
+        rx.recv()
+            .expect("deleter must signal after the header read");
+        grant_clearance(vault, &contact, vec![facet]);
+        Ok(deleter
+            .join()
+            .expect("deleter thread must not panic")
+            .expect_err("a clearance in the window must refuse the delete"))
+    })?;
+    assert_eq!(refusal.kind(), ErrorKind::FacetDeleteWithLiveClearance);
+
+    assert!(
+        vault.get_entity_type(&facet)?.is_some(),
+        "the facet entity survives a refusal"
+    );
+    assert_eq!(
+        vault.get(&facet)?.as_deref(),
+        Some(body_before.as_slice()),
+        "and its body is byte-identical — the SoftErase must have rolled back"
+    );
+    assert_eq!(
+        vault
+            .contact_facet_clearance(&contact)?
+            .expect("clearance")
+            .facets,
+        vec![facet],
+        "the racing clearance stands"
+    );
+    Ok(())
+}

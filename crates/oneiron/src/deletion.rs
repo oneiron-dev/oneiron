@@ -1562,6 +1562,21 @@ impl Vault {
         // first makes a refused delete a total no-op — no tombstone, no
         // `dt:`/`pt:` marker, no receipt, no local state change.
         //
+        // This check is a PUBLISH gate, not the authority on tearing. It runs
+        // in its own read txn that is dropped before TXN1, so a stamp or
+        // clearance committing after it cannot be seen here — and no read-txn
+        // check placed before an unavoidably-later write can ever close that
+        // window. It is therefore paired with a re-evaluation inside EVERY
+        // destructive txn below (the SoftErase arm explicitly, the purge via
+        // `deindex_entity`'s backstop), which is where LMDB's single writer
+        // makes the decision atomic with the tearing. Consequence of the split:
+        // a delete refused only by the LATE check has already published its
+        // tombstone, so the local state it protects survives while remote
+        // devices hold a tombstone for it. That is the deliberate trade — the
+        // alternative is tearing consented-away disclosure state — and the
+        // divergence is recoverable, since the surviving local rows are
+        // authoritative and a re-delete after the owner unstamps converges.
+        //
         // HARD REASONS ONLY, because only they tear rows. `user_delete`
         // truncates the body to its 25 B shell and leaves every edge, the
         // exposure row and every clearance standing — no stamp comes off and
@@ -1674,6 +1689,29 @@ impl Vault {
             // bodiless shell ⇒ `None`). The purge txn below re-runs the
             // refresh as an idempotent second pass.
             let mut wtxn = self.store.env.write_txn()?;
+            // ONE-1646 fix-4: RE-EVALUATE the gate here, inside the txn that
+            // does the scrubbing. The pre-tombstone check above ran in its own
+            // read txn which was dropped, so a `FacetOf` stamp or a clearance
+            // could commit in the window between the two and this SoftErase
+            // would then destroy the body of a facet the gate now protects.
+            // This call closes that window for the DESTRUCTIVE step: LMDB's
+            // single writer means a stamp that commits after this read cannot
+            // have committed before it, so refusing here rolls back the whole
+            // scrub and the facet keeps its body. The entity type is re-read
+            // from THIS txn rather than reused from the pre-txn header, since
+            // the header read is exactly the stale snapshot in question.
+            //
+            // The purge txn below needs no equivalent call: `deindex_entity`'s
+            // backstop already evaluates the same predicate at the row-tearing
+            // site inside that txn, so a late stamp aborts the purge there.
+            if let Some(entity_type) = crate::batch::stored_entity_type(&self.store, &wtxn, id)? {
+                crate::disclosure::gate_hard_delete_facet_state(
+                    &self.store,
+                    &wtxn,
+                    id,
+                    entity_type,
+                )?;
+            }
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
