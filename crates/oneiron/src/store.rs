@@ -1776,25 +1776,18 @@ impl Store {
             )?;
         }
 
-        let mut decisions = Vec::new();
-        let upper = gate_decision_upper_bound();
-        for row in self.vault_meta.range(
-            &wtxn,
-            &(
-                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            let decision_id = gate_decision_id_from_key(&key)?;
-            let record = decode_gate_decision(&value)?;
-            if record.decision_id != decision_id {
-                return Err(Error::CorruptedIndex("gate decision ledger"));
+        // Collect before writing (LMDB forbids mutating a DB while one of its
+        // iterators is live), but keep only what the grant-ref index row needs
+        // — not the whole decoded ledger.
+        let mut grant_refs = Vec::new();
+        self.for_each_gate_decision_in_txn(&wtxn, |record| {
+            if let Some(grant_ref) = record.grant_ref {
+                grant_refs.push((grant_ref, record.decision_id));
             }
-            decisions.push(record);
-        }
-        for decision in &decisions {
-            self.put_gate_decision_grant_ref_index_in_txn(&mut wtxn, decision)?;
+            Ok(())
+        })?;
+        for (grant_ref, decision_id) in &grant_refs {
+            self.put_gate_decision_grant_ref_index_row_in_txn(&mut wtxn, grant_ref, *decision_id)?;
         }
 
         let mut pending = Vec::new();
@@ -1836,8 +1829,10 @@ impl Store {
         // One predicate, checked twice: the write txn re-confirms under lock
         // what the optimistic read txn saw.
         let needs_flag = |txn: &RoTxn<'_>| -> Result<bool> {
-            Ok(!self.gate_decision_claim_index_backfill_complete_in_txn(txn)?
-                && self.gate_decision_ledger_is_empty_in_txn(txn)?)
+            Ok(
+                !self.gate_decision_claim_index_backfill_complete_in_txn(txn)?
+                    && self.gate_decision_ledger_is_empty_in_txn(txn)?,
+            )
         };
         {
             let rtxn = self.env.read_txn()?;
@@ -1890,13 +1885,17 @@ impl Store {
         }
 
         // Collect before writing: LMDB forbids mutating a DB while one of its
-        // iterators is live.
+        // iterators is live. Only the two ids each index row needs are
+        // retained — the decoded record is dropped inside the walk, so an
+        // unbounded ledger of claim-free (or string-heavy) rows never
+        // accumulates here.
         let mut claim_rows = Vec::new();
-        for record in self.scan_gate_decision_ledger_in_txn(&wtxn)? {
+        self.for_each_gate_decision_in_txn(&wtxn, |record| {
             if let Some(claim_id) = record.claim_id {
                 claim_rows.push((claim_id, record.decision_id));
             }
-        }
+            Ok(())
+        })?;
         for (claim_id, decision_id) in &claim_rows {
             self.vault_meta.put(
                 &mut wtxn,
@@ -2495,11 +2494,12 @@ impl Store {
         claim_id: &[u8; 16],
     ) -> Result<Vec<GateDecisionRecord>> {
         let mut records = Vec::new();
-        for record in self.scan_gate_decision_ledger_in_txn(txn)? {
+        self.for_each_gate_decision_in_txn(txn, |record| {
             if record.claim_id == Some(*claim_id) {
                 records.push(record);
             }
-        }
+            Ok(())
+        })?;
         Ok(records)
     }
 
@@ -2516,19 +2516,30 @@ impl Store {
         claim_id: &[u8; 16],
     ) -> Result<Vec<GateDecisionId>> {
         let mut remaining = Vec::new();
-        for record in self.scan_gate_decision_ledger_in_txn(txn)? {
+        self.for_each_gate_decision_in_txn(txn, |record| {
             if record.claim_id == Some(*claim_id) && record.redacted_at.is_none() {
                 remaining.push(record.decision_id);
             }
-        }
+            Ok(())
+        })?;
         Ok(remaining)
     }
 
-    /// Reads every primary ledger row in ascending decision_id order, checking
-    /// each row against its own key.
-    fn scan_gate_decision_ledger_in_txn(&self, txn: &RoTxn<'_>) -> Result<Vec<GateDecisionRecord>> {
+    /// Streams every primary ledger row in ascending decision_id order,
+    /// checking each row against its own key and handing ownership of the
+    /// decoded record to `visit`.
+    ///
+    /// MEMORY CONTRACT: the caller's filter runs INSIDE the cursor walk, so a
+    /// filtered read retains only its matches (or a projection of them) and the
+    /// ledger's size stops bounding peak memory on a long-lived vault. The
+    /// `Result<()>` return — not a `Vec` — is what enforces this; do not
+    /// reintroduce an intermediate collection of every record.
+    fn for_each_gate_decision_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        mut visit: impl FnMut(GateDecisionRecord) -> Result<()>,
+    ) -> Result<()> {
         let upper = gate_decision_upper_bound();
-        let mut records = Vec::new();
         for row in self.vault_meta.range(
             txn,
             &(
@@ -2542,9 +2553,9 @@ impl Store {
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
-            records.push(record);
+            visit(record)?;
         }
-        Ok(records)
+        Ok(())
     }
 
     /// Reads the durable backfill-complete flag. A present row with any byte
@@ -2849,9 +2860,20 @@ impl Store {
         let Some(grant_ref) = record.grant_ref.as_deref() else {
             return Ok(());
         };
+        self.put_gate_decision_grant_ref_index_row_in_txn(wtxn, grant_ref, record.decision_id)
+    }
+
+    /// Parts-based form, so a streaming backfill can write the row without
+    /// holding the decoded record it came from.
+    fn put_gate_decision_grant_ref_index_row_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        grant_ref: &str,
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
         self.vault_meta.put(
             wtxn,
-            &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
+            &gate_decision_grant_ref_index_key(grant_ref, decision_id),
             b"1",
         )?;
         Ok(())
@@ -4548,6 +4570,31 @@ fn decode_channel_identity_lifecycle_receipt(
 /// the retention skeleton left behind by an in-place redaction (ONE-1638), whose
 /// claim-bearing fields are required to be scrubbed. Only version 0 may be
 /// APPENDED — decode accepts both.
+///
+/// ASYMMETRY, DELIBERATE: `actor_class` is required non-empty on the version-1
+/// skeleton ONLY, though E-A's D1 table lists it non-empty for both columns.
+/// The v0 exemption is load-bearing, not an oversight:
+///
+/// * On v0 the field is caller-asserted, attacker-influenced input. The
+///   external-effect door records the class the caller SENT
+///   (`record_external_effect_policy`), and `evaluate_gate` answers an empty
+///   one with `DenyMissingActorClass` — a recorded, auditable denial. Vetting
+///   it here would turn that fail-closed deny into
+///   `CorruptedIndex("gate decision ledger")`, i.e. let any caller abort the
+///   write txn (and, once a denial row is on disk, poison every later ledger
+///   scan) with an empty string. Recording what was actually asserted is the
+///   point of a decision ledger; the deny is the enforcement.
+/// * On v1 the field is ours. A skeleton is minted only by the erase coupling,
+///   from an already-vetted row, and `actor_class` is one of the few
+///   accountability fields the retention design keeps. Empty there means the
+///   redactor scrubbed something it must have retained — a real invariant
+///   break, correctly fatal.
+///
+/// Pinned by `record_schema_v0_bytes_stable_and_v1_skeleton_vets` (empty-class
+/// v1 rejected, empty-class v0 accepted) and by
+/// `gate::tests::effect_actor_class_spoof_fails_closed` (the deny path stays a
+/// deny). Tightening v0 is an E-B vet amendment, and needs the effect door to
+/// stop recording caller-asserted classes verbatim first.
 fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
     let shared_ok = !record.outcome.is_empty()
         && !record.content_kind.is_empty()
@@ -4577,6 +4624,8 @@ fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
         }
         // The skeleton keeps only the accountability fields the retention
         // design retains; everything claim-bearing must already be gone.
+        // `actor_class` is required here and NOT on v0 — see the asymmetry
+        // note above.
         GATE_DECISION_LEDGER_VERSION_REDACTED => {
             record.redacted_at.is_some_and(|at| at > 0)
                 && !record.actor_class.is_empty()

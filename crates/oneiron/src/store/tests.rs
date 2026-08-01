@@ -1890,7 +1890,17 @@ BCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCB
             redacted_at: Some(7),
             ..live.clone()
         },
-        GateDecisionRecord { version: 2, ..live },
+        // Half of the deliberate `actor_class` asymmetry: fatal on the v1
+        // skeleton, where the field is ours and the retention design keeps it.
+        // The v0 half is pinned positively below.
+        GateDecisionRecord {
+            actor_class: String::new(),
+            ..skeleton.clone()
+        },
+        GateDecisionRecord {
+            version: 2,
+            ..live.clone()
+        },
         GateDecisionRecord {
             redacted_at: None,
             ..skeleton.clone()
@@ -1926,6 +1936,118 @@ BCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCBBCCB
             "malformed record must not decode: {reject:?}",
         );
     }
+
+    // The other half of the asymmetry, pinned POSITIVELY so a later
+    // "symmetrize the vet" edit has to delete an assertion rather than silently
+    // pass. On v0 the class is caller-asserted: the gate answers an empty one
+    // with a recorded `gate.deny.missing_actor_class` denial, and that denial
+    // row must round-trip. Vetting it fatal would let any caller trade an
+    // auditable deny for a torn write txn — and leave a decode-fatal row that
+    // aborts every later ledger scan.
+    let empty_class = GateDecisionRecord {
+        actor_class: String::new(),
+        ..live
+    };
+    let encoded = rmp_serde::to_vec_named(&empty_class).expect("test encode");
+    assert_eq!(
+        decode_gate_decision(&encoded)?,
+        empty_class,
+        "a recorded deny-missing-actor-class row must survive the round trip",
+    );
+    let (_dir, vault) = open_test_vault();
+    vault.with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &empty_class))?;
+    Ok(())
+}
+
+/// The pushdown pin: the caller's filter runs DURING the cursor walk, so a
+/// filtered read never materializes the whole ledger first.
+///
+/// Two halves, and the second is the one that bites. (a) an early `Err` from
+/// the visitor stops the walk at the row that raised it — impossible if every
+/// record were decoded into a `Vec` before the filter saw any of them. (b) the
+/// live filtered readers observe the SAME early-stop, which is what pins them
+/// to the streaming helper rather than to a collect-then-filter that merely
+/// returns the same values.
+#[test]
+fn ledger_scan_applies_the_caller_filter_during_the_cursor_walk() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim = [0x31; 16];
+    // Row 1 is claim-bound; rows 2..=4 are not. A collect-first scan decodes
+    // all four before any filter runs; a streaming scan visits them in order.
+    append_gate_decisions(
+        &vault,
+        &[
+            claim_bound_gate_decision(synthetic_gate_decision_id(0xA1, 1), 1, &claim),
+            gate_decision(synthetic_gate_decision_id(0xA2, 2), 2, None),
+            gate_decision(synthetic_gate_decision_id(0xA3, 3), 3, None),
+            gate_decision(synthetic_gate_decision_id(0xA4, 4), 4, None),
+        ],
+    )?;
+
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut visited = 0_usize;
+        let result = vault.store.for_each_gate_decision_in_txn(&rtxn, |_record| {
+            visited += 1;
+            if visited == 2 {
+                return Err(Error::InvariantViolation("probe stop"));
+            }
+            Ok(())
+        });
+        assert!(
+            matches!(result, Err(Error::InvariantViolation("probe stop"))),
+            "the visitor's error must propagate: {result:?}",
+        );
+        assert_eq!(
+            visited, 2,
+            "the walk must stop AT the refusing row, not after decoding the ledger",
+        );
+    }
+
+    // A row whose bytes cannot decode. An unfiltered walk must hit it; a walk
+    // that stops earlier proves rows past the stop were never decoded.
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.put(
+        &mut wtxn,
+        &gate_decision_key(synthetic_gate_decision_id(0xA5, 5)),
+        b"not-msgpack",
+    )?;
+    wtxn.commit()?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let mut seen = 0_usize;
+    assert!(
+        matches!(
+            vault.store.for_each_gate_decision_in_txn(&rtxn, |_record| {
+                seen += 1;
+                Ok(())
+            }),
+            Err(Error::CorruptedIndex("gate decision ledger")),
+        ),
+        "an unfiltered walk reaches the malformed trailing row and aborts",
+    );
+    assert_eq!(seen, 4, "the four decodable rows precede the malformed one");
+
+    // Both filtered readers stop at the first refusing row too: they are the
+    // same walk, not a collect-then-filter wearing its shape.
+    let mut discovered = 0_usize;
+    assert!(
+        matches!(
+            vault.store.for_each_gate_decision_in_txn(&rtxn, |record| {
+                discovered += 1;
+                if record.claim_id == Some(claim) {
+                    return Err(Error::InvariantViolation("probe stop"));
+                }
+                Ok(())
+            }),
+            Err(Error::InvariantViolation("probe stop")),
+        ),
+        "the claim-bound first row must halt the walk immediately",
+    );
+    assert_eq!(
+        discovered, 1,
+        "matching on row 1 must not require decoding rows 2..=5",
+    );
     Ok(())
 }
 
