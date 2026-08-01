@@ -9692,6 +9692,13 @@ fn readonly_fold_matches_full_fold_and_writes_nothing() {
     // A settled store: single-key roster, so no enroll widen is in flight and
     // the binding is live. (A pending widen would make dependent entries
     // Waiting in BOTH fold variants identically — the divergence D5 bounds.)
+    //
+    // Coverage boundary (fix-leg 2): being settled is exactly why this test is
+    // BLIND to which clock the readonly fold reads. With no widen in flight
+    // every observation time folds to the same roster, so wall-clock skew is
+    // invisible here. The two `readonly_fold_*_wall_clock_skew_*` tests below
+    // build logs with a widen actually pending — the only shape that can drive
+    // the two folds apart on the clock alone.
     let genesis = genesis_entry(208, DEFAULT_PENDING_WIDEN_DELAY_SECS, 200);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let owner = ed_key(208);
@@ -9732,6 +9739,237 @@ fn readonly_fold_matches_full_fold_and_writes_nothing() {
         sync_state_snapshot(&vault),
         sync_state_before,
         "the readonly fold must not write a single sync_state byte"
+    );
+}
+
+/// Forward wall-clock skew must not mature a pending widen in the readonly fold.
+///
+/// `readonly_fold_matches_full_fold_and_writes_nothing` above CANNOT see this:
+/// its log is settled — no widen in flight — so every clock value folds to the
+/// same roster and the two variants agree by construction. Only a log with a
+/// widen actually pending can drive the folds apart on the clock alone, which
+/// is what this fixture builds.
+///
+/// The skew modelled: the device's monotonic authority clock has barely moved
+/// (it sits at 1_000) while the wall clock reads real Unix time, far past the
+/// 24h delay. A readonly fold on the raw wall clock would mature the owner
+/// enrollment, fold the cosigned `BindActor` child, and hand the facade's
+/// owner gate an Active human binding INSIDE the veto window.
+#[test]
+fn readonly_fold_forward_wall_clock_skew_keeps_owner_enrollment_pending() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    // A freshly opened vault owns an untouched clock domain; seed it low so
+    // the monotonic reading stays far behind real Unix time for the whole test.
+    let domain = vault.store.authority_clock_domain;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, 0, 1_000),
+        1_000
+    );
+
+    let owner = ed_key(213);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(213, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let second = ed_key(214);
+    let second_key = authority_key_from_ed(&second);
+    // Owner-capable, so a "human" bind on it is admissible the moment the
+    // enrollment lands — the whole point of the delay.
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 214,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let actor = scope_entity(0x5e);
+    // Cosigned: once the enrollment applies the roster holds two active keys,
+    // so the bind needs a quorum. A lone-signed bind would be rejected for
+    // MissingQuorum on the skewed path and hide the divergence.
+    let bind = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![enroll_hash],
+            bind_op(&second_key, actor, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+        &second,
+    );
+
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (enroll, TimeRange { start: 2, end: 2 }, 2),
+            (bind, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        full.pending_widens.contains_key(&enroll_hash),
+        "the monotonic clock keeps the enrollment inside its delay"
+    );
+    assert!(!full.roster.contains_key(&second_key));
+    assert!(!actor_binding_is_active(&full, &actor, "human"));
+
+    let sync_state_before = sync_state_snapshot(&vault);
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !actor_binding_is_active(&readonly, &actor, "human"),
+        "wall-clock skew must not mature the enrollment and expose an owner binding inside the veto window"
+    );
+    assert_eq!(
+        readonly, full,
+        "both folds must read the same monotonic observation time"
+    );
+    assert_eq!(
+        sync_state_snapshot(&vault),
+        sync_state_before,
+        "deriving the observation time must not make the readonly fold write"
+    );
+}
+
+/// Backward wall-clock skew must not un-apply an elapsed widen.
+///
+/// Mirror of the forward case: here the device's authority clock has legitimately
+/// advanced past a rotation's delay (so the rotation APPLIED and killed the old
+/// key's owner binding), and the wall clock then reads far BELOW the persisted
+/// floor. A readonly fold on the raw wall clock would put the rotation back in
+/// `pending_widens`, leaving the retired key unrevoked and its owner binding
+/// Active again — a revoked device speaking for the owner.
+///
+/// Checked TWICE, because the monotonic clock has two layers and only the
+/// second pins the persisted floor:
+///
+/// 1. same process — the process-local clock alone already refuses the
+///    rollback;
+/// 2. after a reopen — the process-local clock is gone with the old vault, so
+///    the ONLY thing standing between the rolled-back wall clock and a
+///    resurrected owner binding is the floor this fold reads through `txn`.
+#[test]
+fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    // Park the authority clock well ahead of real Unix time. Every first-seen
+    // sidecar and the persisted floor are then written from that future
+    // reading, so `unix_seconds_now()` is the BACKWARD-skewed clock here.
+    let domain = vault.store.authority_clock_domain;
+    let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, 0, future),
+        future
+    );
+
+    let owner = ed_key(215);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(215, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let actor = scope_entity(0x5f);
+    let bind = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key.clone(),
+            2,
+        ),
+        &owner,
+    );
+    // A rotation retires `owner_key`; bindings deliberately do not migrate, so
+    // the human binding dies with the key the moment this widen applies.
+    let rotated = ed_key(216);
+    let rotate = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![authority_entry_hash(&bind).unwrap()],
+            AuthorityOp::RotateKey {
+                old_key: owner_key.clone(),
+                new_device: device(
+                    authority_key_from_ed(&rotated),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            owner_key,
+            3,
+        ),
+        &owner,
+    );
+    let rotate_hash = authority_entry_hash(&rotate).unwrap();
+
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (bind, TimeRange { start: 2, end: 2 }, 2),
+            (rotate, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+
+    let pending = vault.authority_fold().unwrap();
+    assert!(
+        pending.pending_widens.contains_key(&rotate_hash),
+        "the rotation starts inside its delay"
+    );
+    assert!(actor_binding_is_active(&pending, &actor, "human"));
+
+    // Let the MONOTONIC clock run past the delay (raising the floor is the only
+    // way time moves here; the wall clock stays where it is).
+    let elapsed_at = future + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, elapsed_at, 0),
+        elapsed_at
+    );
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        !full.pending_widens.contains_key(&rotate_hash),
+        "the rotation must mature once the local clock passes the delay"
+    );
+    assert!(
+        !actor_binding_is_active(&full, &actor, "human"),
+        "the applied rotation retires the bound key, so the binding must die with it"
+    );
+
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !actor_binding_is_active(&readonly, &actor, "human"),
+        "wall-clock rollback must not un-apply the rotation and resurrect the retired key's owner binding"
+    );
+    assert_eq!(
+        readonly, full,
+        "both folds must read the same monotonic observation time"
+    );
+
+    // Layer 2: reopen. Dropping the vault releases its clock domain, so the
+    // process-local floor is gone and the rolled-back wall clock is the only
+    // candidate reading left. The persisted floor read through the txn is what
+    // must hold the line now.
+    drop(vault);
+    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let rtxn = reopened.store.env.read_txn().unwrap();
+    let after_reopen = reopened.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !after_reopen.pending_widens.contains_key(&rotate_hash),
+        "the persisted clock floor must survive a reopen and keep the rotation applied"
+    );
+    assert!(
+        !actor_binding_is_active(&after_reopen, &actor, "human"),
+        "a reopen under a rolled-back wall clock must not resurrect the retired key's owner binding"
     );
 }
 

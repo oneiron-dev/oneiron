@@ -5133,19 +5133,37 @@ impl Vault {
     /// [`Vault::authority_fold`] opens its own transactions — including a WRITE
     /// txn for the first-seen clock — so it cannot be called from inside an
     /// open transaction under LMDB's single-writer rule. This variant reads
-    /// stored first-seen sidecars as they are: no backfill, no clock advance,
-    /// no transaction of its own.
+    /// stored first-seen sidecars as they are: no backfill, no persisted clock
+    /// write, no transaction of its own.
     ///
-    /// The divergence from the full fold is bounded to pending-WIDEN
-    /// eligibility (a missing sidecar can only delay a widen, never admit
-    /// one), and actor-binding ops are never widens — so the binding predicate
-    /// this exists for is exact.
+    /// The observation time is deliberately NOT the raw wall clock. Widen
+    /// maturity is an AUTHORIZATION decision here — the facade's owner-verb
+    /// gate consumes this fold — so it runs on the same monotonic clock
+    /// [`Vault::authority_fold`] uses: the persisted floor read through `txn`,
+    /// raised through [`authority_observation_secs_for_domain`]. On the raw
+    /// wall clock a forward jump would mature a pending owner enrollment early
+    /// and expose an Active human binding INSIDE the veto window, while a jump
+    /// backward below the persisted floor would un-apply an elapsed rotation
+    /// and resurrect the retired key's binding. The derived value is not
+    /// written back — the floor advances only on write paths, and a lagging
+    /// floor can delay a widen but never skip the delay.
+    ///
+    /// The remaining divergence from the full fold is a missing sidecar (no
+    /// backfill runs here), which can only delay a widen, never admit one, and
+    /// actor-binding ops are never widens — so the binding predicate this
+    /// exists for is exact.
     pub(crate) fn authority_fold_readonly_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<AuthorityFold> {
         let mut entries = Vec::new();
         let mut first_seen_at_secs = BTreeMap::new();
+        let persisted_floor = self
+            .store
+            .sync_state
+            .get(txn, authority_first_seen_clock_sync_key())?
+            .and_then(|raw| decode_authority_first_seen_secs(&raw))
+            .unwrap_or(0);
         for row in self
             .store
             .type_index
@@ -5175,10 +5193,15 @@ impl Vault {
             }
             entries.push(entry);
         }
+        let now_secs = authority_observation_secs_for_domain(
+            self.store.authority_clock_domain,
+            persisted_floor,
+            unix_seconds_now(),
+        );
         Ok(fold_authority_log_with_seen_times(
             &entries,
             &first_seen_at_secs,
-            unix_seconds_now(),
+            now_secs,
         ))
     }
 }
