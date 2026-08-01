@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
-use loro::{ExportMode, LoroDoc};
+use loro::{CommitOptions, ExportMode, LoroDoc};
 
 use super::*;
 use crate::affect::Vad;
@@ -33,7 +33,7 @@ use crate::registry::{
     ENTITY_TYPE_WORLD,
 };
 use crate::store::Store;
-use crate::sync::bridge::encode_edge_value_for_crdt;
+use crate::sync::bridge::{BRIDGE_ORIGIN, encode_edge_value_for_crdt};
 use crate::sync::client::{SyncClient, SyncClientConfig};
 use crate::sync::loro_support::map_get_bytes;
 use crate::sync::manager::WindowManager;
@@ -1985,29 +1985,34 @@ fn selector_source_type_resolves_stored_first_against_a_winning_retype_blob() {
     }
 }
 
-/// A CONFLICTING document blob carries NO scope — not the stored type's scope.
+/// A CONFLICTING document blob is NEVER CONSULTED — the stored type carries
+/// the scope, in the WITHHOLD direction as much as the seed direction.
 ///
-/// Stored-first ORDERING alone is not the whole rule, and the difference is
-/// only observable in the WITHHOLD direction. Consider a source stored as an
-/// admitted EVENT whose winning doc blob says PERSON. Ordering alone reads
-/// EVENT and honors the stamp; the rule here reads NO TYPE and makes the row
-/// inert. Both agree that the PERSON blob must not BUY scope — they disagree
-/// about whether it can still SPEND it.
+/// This pin previously asserted the opposite (conflict ⇒ no scope ⇒ the EVENT
+/// exports), and the r7 finder proved that expectation was pinning the bug:
+/// reading a source conflict as `None` makes the row inert, which ERASES a
+/// withhold a valid stored EVENT + stored FACET pair had already established.
+/// A peer that cannot otherwise touch this entity gets to publish it by
+/// forging one rejected blob — non-monotone disclosure, peer-controlled. The
+/// unified rule is that stored truth never loses to a rejected write in EITHER
+/// role, so a conflicting blob can neither buy scope nor erase a withhold.
 ///
-/// No-scope is right because the two values disagreeing at all means the doc
-/// blob is a write the immutability gate REJECTED. A rejected write is not
-/// evidence about anything, so the row it types is not a row the engine
-/// accepted, and the mirror only honors rows the engine would have accepted.
-/// Honoring the stored type instead would let a peer aim a REJECTED blob at an
-/// entity it does not control and withhold it from a legitimate grant — the
-/// same suppression primitive the inert-not-fail-closed rule exists to deny,
-/// arriving through the conflict door instead.
+/// The suppression worry the old expectation answered is answered better by
+/// the unified rule: the withholds that survive are exactly the ones the
+/// STORED types already justified. A forged stamp aimed at a source stored as
+/// a PERSON is off the table and stays inert — no new suppression primitive
+/// appears (`selector_forged_facet_blob_cannot_retype_a_stored_person_target`
+/// and the three-frame LWW pin hold that line).
 ///
 /// The fixture puts the stamp on an UNSELECTED facet so the two readings
-/// diverge: under ordering-only the EVENT is withheld, under the conflict rule
-/// it exports on the seed's closure like any unstamped entity.
+/// diverge: under a conflict-to-None source rule the EVENT rides the adjacent
+/// seed's closure and exports; under stored-wins it stays WITHHELD.
+///
+/// (Renamed from `selector_conflicting_document_blob_carries_no_scope_in_
+/// either_direction`, whose name stated the erasing rule the r7 ruling
+/// removed.)
 #[test]
-fn selector_conflicting_document_blob_carries_no_scope_in_either_direction() {
+fn selector_conflicting_document_blob_never_displaces_the_stored_type() {
     let member = entity_id(0x26);
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
     let window_key = WindowKey::new("2026-12");
@@ -2017,8 +2022,9 @@ fn selector_conflicting_document_blob_carries_no_scope_in_either_direction() {
     let claim_seed = entity_id(0x9F);
     let conflicted = entity_id(0xAF);
 
-    // Stored as an ADMITTED source type — the half a mirror could wrongly
-    // spend on a withhold.
+    // Stored as an ADMITTED source type against a stored FACET target: BOTH
+    // halves of this withhold are stored truth, which is exactly why a
+    // rejected blob may not dissolve it.
     for (id, entity_type) in [
         (facet_selected, ENTITY_TYPE_FACET),
         (facet_unselected, ENTITY_TYPE_FACET),
@@ -2059,11 +2065,12 @@ fn selector_conflicting_document_blob_carries_no_scope_in_either_direction() {
          below would hold vacuously"
     );
     assert!(
-        ids.contains(&conflicted),
-        "a stamp whose source blob CONFLICTS with the stored type is a \
-         NON-STATEMENT: the conflicting blob is a rejected write, so it may \
-         neither buy scope nor spend the stored type's scope on a withhold — \
-         spending it would hand a peer a suppression primitive"
+        !ids.contains(&conflicted),
+        "the stored EVENT's stamp to a stored UNSELECTED facet is a withhold \
+         BOTH endpoints' stored truth already justified, so it must survive a \
+         conflicting blob: reading the source conflict as no-type would make \
+         the row inert and let a peer PUBLISH this entity by forging one write \
+         the immutability gate rejected (r7 — non-monotone disclosure)"
     );
     assert!(
         !ids.contains(&facet_unselected),
@@ -2145,17 +2152,17 @@ fn selector_honors_scope_when_stored_and_document_source_types_agree() {
     );
 }
 
-/// A REJECTED RETYPE MUST NOT ERASE A VALID SCOPE — the target half's mirror
-/// image of the source rule, and the reason the conflict policy is ROLE-SPLIT.
+/// A REJECTED RETYPE MUST NOT ERASE A VALID SCOPE — the TARGET-side arm of
+/// the one conflict rule (stored truth never loses to a rejected write).
 ///
-/// The source rule reads a conflicting blob as NO type, which is right there:
-/// on the source, scope is something the row BUYS, and a rejected write may
-/// not buy it. On the TARGET the same reading inverts into an attack. The
-/// target half decides whether a stamp CONTAINS its source, so resolving a
+/// The target half decides whether a stamp CONTAINS its source, so resolving a
 /// conflicted target to `None` makes the row inert and DELETES containment a
 /// valid stored FACET had already established — a peer forges one PERSON blob
 /// for a facet it does not own and an entity that was withheld from a
-/// facet-limited peer starts exporting.
+/// facet-limited peer starts exporting. (The SOURCE arm of the same erasure is
+/// `selector_source_conflict_cannot_dissolve_a_multi_edge_withhold`; a
+/// conflicting blob is a rejected write, so it is not consulted on either end,
+/// and that single clause closes both.)
 ///
 /// The fixture is the production repro: an EVENT scoped to a stored FACET T,
 /// adjacent to a genuinely selected-facet CLAIM seed, so closure WOULD carry
@@ -2287,14 +2294,209 @@ fn selector_target_conflict_keeps_the_stored_facet_scope() {
     }
 }
 
+/// THE MULTI-EDGE COMPOSITION (r7) — the shape that proved a SOURCE-side
+/// conflict-to-None rule non-monotone, and the reason the conflict policy is
+/// ONE rule rather than a role split.
+///
+/// Neither endpoint rule is wrong in isolation; the bug lives in how a single
+/// source's SEVERAL stamps compose. `FacetScope` is an OR-fold per source: one
+/// unselected-facet stamp withholds E outright. So the attacker does not need
+/// to forge scope onto E — it only needs E's source half to go INERT, which
+/// drops every stamp E carries, INCLUDING the withhold, and hands E back to
+/// the adjacent honest seed's closure.
+///
+/// The fixture is that composition, production-reproduced:
+///
+/// * E is stored EVENT with TWO `FacetOf` stamps — one to a stored FACET the
+///   peer did NOT select (the legitimate withhold), one to a doc-only FACET it
+///   DID select (so E is not merely unreachable, and a source that stays
+///   on-table still has a live selected stamp to weigh);
+/// * an honest selected-facet CLAIM seed sits adjacent to E, so closure WOULD
+///   carry E the moment the withhold dissolves;
+/// * a higher-Lamport PERSON blob retypes E. The immutability gate quarantines
+///   it and LMDB keeps EVENT — the conflict is entirely peer-controlled.
+///
+/// Under source-conflict-to-None, E's source half reads no type, BOTH stamps
+/// go inert, the withhold vanishes and the seed exports E: a peer PUBLISHES an
+/// entity by shipping a write the engine refused. Under stored-wins the source
+/// still reads EVENT, the unselected stamp still withholds, and E stays in.
+///
+/// The middle assertions are load-bearing: they pin that the retype really won
+/// the CRDT map, that it really quarantined, and that LMDB really still holds
+/// EVENT — otherwise the withhold below would pass on a document that never
+/// flipped. Both roles through the production federated entry: a mirror that
+/// holds for members but not guests reads as protection while being none.
+#[test]
+fn selector_source_conflict_cannot_dissolve_a_multi_edge_withhold() {
+    for (role, seed) in [
+        (FederationAdmissionRole::Member, 0x30_u8),
+        (FederationAdmissionRole::Guest, 0x38_u8),
+    ] {
+        let window = "2026-07";
+        let member = entity_id(seed);
+        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
+        put_imported_source_trust(&vault);
+
+        let facet_unselected = entity_id(seed + 1);
+        let facet_selected = entity_id(seed + 2);
+        let event = entity_id(seed + 3);
+        let claim_seed = entity_id(seed + 4);
+
+        // Frame 1: the honest world, admitted through the real door so the
+        // EVENT and the UNSELECTED facet both materialize into LMDB. Those two
+        // stored rows are what justify the withhold.
+        let first = create_window_doc("federation-peer", &WindowKey::new(window));
+        insert_entity(&first, facet_unselected, ENTITY_TYPE_FACET, b"facet-u");
+        insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
+        insert_blob(&first, claim_seed, &public_claim_blob());
+        insert_edge(&first, event, EdgeKind::FacetOf, facet_unselected);
+        insert_edge(&first, claim_seed, EdgeKind::Supports, event);
+        first.commit();
+        import_federated(&mut client, window, &first, role);
+
+        assert_eq!(
+            vault.get_raw(&event).unwrap().map(|blob| blob[0]),
+            Some(ENTITY_TYPE_EVENT),
+            "{role:?}: precondition — the first-writer EVENT type must be in LMDB"
+        );
+        assert_eq!(
+            vault
+                .get_raw(&facet_unselected)
+                .unwrap()
+                .map(|blob| blob[0]),
+            Some(ENTITY_TYPE_FACET),
+            "{role:?}: precondition — the withheld-from facet must be STORED, so \
+             both halves of this withhold are stored truth"
+        );
+
+        // The SELECTED facet and its seed stamp are DOC-ONLY: written straight
+        // into the live doc under the bridge origin so Observer B leaves LMDB
+        // alone. That is the second endpoint-resolution branch (no stored row
+        // ⇒ the document blob), so this one fixture exercises the conflict
+        // branch and the doc-only branch in the same closure computation.
+        let live = client
+            .window(window)
+            .expect("federated import opens window");
+        insert_entity(&live.doc, facet_selected, ENTITY_TYPE_FACET, b"facet-s");
+        insert_edge(&live.doc, event, EdgeKind::FacetOf, facet_selected);
+        insert_edge(&live.doc, claim_seed, EdgeKind::FacetOf, facet_selected);
+        live.doc
+            .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+        assert!(
+            vault.get_raw(&facet_selected).unwrap().is_none(),
+            "{role:?}: precondition — the selected facet must stay DOC-ONLY, or \
+             the doc-blob resolution branch is not exercised"
+        );
+
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![facet_selected],
+            vec![],
+        );
+        let export_ids = |client: &mut SyncClient| {
+            let live = client.window(window).expect("window still loaded");
+            let update = filtered_window_doc(
+                &vault,
+                &live.doc,
+                &WindowKey::new(window),
+                test_selector_scope(),
+                &selector,
+            )
+            .unwrap()
+            .export(ExportMode::all_updates())
+            .unwrap();
+            import_ids(&update)
+        };
+
+        let ids = export_ids(&mut client);
+        assert!(
+            ids.contains(&claim_seed),
+            "{role:?}: precondition — the selected-facet CLAIM must seed closure, \
+             or E's absence below would hold vacuously"
+        );
+        assert!(
+            !ids.contains(&event),
+            "{role:?}: precondition — E's stamp to the UNSELECTED facet must \
+             withhold it EVEN THOUGH it also carries a selected stamp and an \
+             adjacent seed; the retype below erases nothing otherwise"
+        );
+
+        // Frame 2: the forged retype of E's OWN type. Pad rows sort ahead of E
+        // so admission re-authors them first and the retype lands at a Lamport
+        // strictly above frame 1's — a lone op would tie and fall to a peer-id
+        // tiebreak. The precondition asserts below keep this honest if Loro's
+        // ordering ever shifts.
+        let second = create_window_doc("federation-peer", &WindowKey::new(window));
+        for pad in [0x02_u8, 0x03, 0x04, 0x05, 0x06] {
+            insert_entity(&second, entity_id(pad), ENTITY_TYPE_PERSON, b"unrelated");
+        }
+        insert_entity(&second, event, ENTITY_TYPE_PERSON, b"forged-person");
+        second.commit();
+        import_federated(&mut client, window, &second, role);
+
+        let live = client.window(window).expect("window still loaded");
+        let doc_blob = map_get_bytes(&live.doc.get_map("entities"), &event.to_hex())
+            .expect("the retype blob is resident in the live doc");
+        assert_eq!(
+            EntityMetadataHeader::parse(&doc_blob).unwrap().entity_type,
+            ENTITY_TYPE_PERSON,
+            "{role:?}: precondition — the retype must WIN the CRDT map, or the \
+             conflict this test is about never exists"
+        );
+        assert_eq!(
+            vault.get_raw(&event).unwrap().map(|blob| blob[0]),
+            Some(ENTITY_TYPE_EVENT),
+            "{role:?}: precondition — the immutability gate must keep LMDB at \
+             the first-writer EVENT type"
+        );
+        assert!(
+            quarantined_records(&vault)
+                .unwrap()
+                .iter()
+                .any(|(_, record)| record.reason_code == "EntityTypeImmutable"
+                    && record.container == QuarantineContainer::Entities),
+            "{role:?}: precondition — the retype must be QUARANTINED, which is \
+             what makes the stored EVENT permanent truth the mirror relies on"
+        );
+
+        let ids = export_ids(&mut client);
+        assert!(
+            !ids.contains(&event),
+            "{role:?}: E must STILL be withheld. A conflicting SOURCE blob read \
+             as no-type drops EVERY stamp E carries — the unselected-facet \
+             withhold included — and the adjacent seed's closure then exports \
+             it: a peer publishes an entity it does not control by forging one \
+             write the immutability gate rejected (r7). Stored truth never \
+             loses to a rejected write"
+        );
+        assert!(
+            ids.contains(&claim_seed),
+            "{role:?}: control — the honest selected-facet seed must still \
+             export; stored-wins removes the erasure, not facet scoping"
+        );
+        assert!(
+            ids.contains(&facet_selected),
+            "{role:?}: control — the doc-only selected facet is visible to its \
+             own selector, so the doc-blob branch really did resolve"
+        );
+        assert!(
+            !ids.contains(&facet_unselected),
+            "{role:?}: unselected facet entity leaked"
+        );
+    }
+}
+
 /// THE INVERSE FORGERY: a fake retype must not CREATE a facet either.
 ///
-/// Target-stored is authoritative in BOTH directions, and this is the arm that
-/// proves it is authority rather than a one-way bias toward withholding. The
-/// target is stored PERSON — off the ONE-1645 table — while a forged FACET
-/// document blob wins the map, and the peer names that very id in its selector
-/// so a mirror reading the blob would turn the stamp into a SEED and haul the
-/// source plus its one-hop neighbor across the disclosure boundary.
+/// Stored-wins is AUTHORITY, not a one-way bias toward withholding, and this
+/// is the arm that proves it: the same clause that keeps a withhold standing
+/// also refuses to manufacture a seed. The target is stored PERSON — off the
+/// ONE-1645 table — while a forged FACET document blob wins the map, and the
+/// peer names that very id in its selector, so a mirror reading the blob would
+/// turn the stamp into a SEED and haul the source plus its one-hop neighbor
+/// across the disclosure boundary.
 ///
 /// The second source pins the other half of "inert": a stamp aimed at a
 /// non-facet target is a NON-STATEMENT, not a withhold, so an entity carrying
@@ -2379,8 +2581,8 @@ fn selector_forged_facet_blob_cannot_retype_a_stored_person_target() {
     );
 }
 
-/// DOC-ONLY TARGET: with no stored row there is no conflict to split on, so
-/// both roles fall back to the document blob and the ONE-1645 table decides.
+/// DOC-ONLY TARGET: with no stored row there is no conflict at all, so
+/// resolution falls back to the document blob and the ONE-1645 table decides.
 ///
 /// This is the branch fix-6's P1-1 pins reach through federated admission
 /// (which materializes a stored row along the way); here it is exercised
