@@ -169,10 +169,21 @@ fn crdt_tombstone_exists(vault: &Vault, id: &EntityId, learned_at: u64) -> Resul
 /// snapshots and `u:w:{key}:{seq}` pending updates, the two row families a
 /// window's state can live in — and asks each one. Independent of any
 /// timestamp, so it holds on any day of any month.
+///
+/// Enumerating both families is only half the job: a label discovered ONLY
+/// through `u:w:` rows has no snapshot to load, and `load_window_from_state`
+/// answers `WindowNotFound` for it. Treating that as "nothing here" would
+/// leave the scan blind to exactly the window family it went out of its way
+/// to enumerate. So the WindowNotFound arm mirrors the production fresh-doc
+/// fallback (`sync::manager::WindowManager::open_window`): create a bare
+/// window doc and replay the pending rows onto it through the SAME
+/// `apply_pending_window_updates` production uses, then ask that doc.
 #[cfg(feature = "sync")]
 fn crdt_tombstone_exists_in_any_window(vault: &Vault, id: &EntityId) -> Result<bool> {
     use crate::sync::loro_support::map_contains_binary;
+    use crate::sync::schema::create_window_doc;
     use crate::sync::types::WindowKey;
+    use crate::sync::window::apply_pending_window_updates;
     use std::collections::BTreeSet;
 
     let mut windows: BTreeSet<String> = BTreeSet::new();
@@ -203,7 +214,15 @@ fn crdt_tombstone_exists_in_any_window(vault: &Vault, id: &EntityId) -> Result<b
         };
         let doc = match crate::sync::window::load_window_from_state(vault, "local", &window_key) {
             Ok(doc) => doc,
-            Err(Error::WindowNotFound { .. }) => continue,
+            // No `d:w:` snapshot — the label came from the `u:w:` family
+            // alone. Production's fresh-doc fallback, verbatim: a bare doc
+            // with the pending rows replayed onto it. Skipping here would
+            // make the whole `u:w:` enumeration above decorative.
+            Err(Error::WindowNotFound { .. }) => {
+                let doc = create_window_doc("local", &window_key);
+                apply_pending_window_updates(vault, &doc, &window_key)?;
+                doc
+            }
             Err(error) => return Err(error),
         };
         if map_contains_binary(&doc.get_map("tombstones"), id.to_hex().as_str()) {
@@ -3836,6 +3855,83 @@ fn overlong_key_rejects_the_unstamp_before_any_side_effect() -> Result<()> {
     assert!(
         vault.get_claim(&mirror_1)?.is_some(),
         "the honest unstamp allocates the sequence the corrupt one could not"
+    );
+    Ok(())
+}
+
+// ─── ONE-1646 fix leg 9: the any-window scan covers the `u:w:`-only family ──
+
+/// REGRESSION — A TOMBSTONE THAT LIVES ONLY IN `u:w:` ROWS IS STILL FOUND.
+///
+/// `crdt_tombstone_exists_in_any_window` is the assertion three refusal tests
+/// above lean on to prove a refused delete published NOTHING. Its whole claim
+/// is exhaustiveness over the two row families a window's state can live in.
+/// It enumerated both — but then asked `load_window_from_state`, which
+/// REQUIRES a `d:w:{window}` snapshot and answers `WindowNotFound` without
+/// one, and that arm was `continue`d past. So a window discovered ONLY through
+/// `u:w:` rows — the exact family the second enumeration loop exists to reach —
+/// was scanned into the set and then silently dropped, and the helper returned
+/// `false` over a tombstone sitting in plain sight.
+///
+/// That is a false PASS in a fail-closed direction that matters: every caller
+/// asserts `!exists`, so the blind spot turns "the refusal published a hard
+/// delete to every other device" into a green test. And it is not a contrived
+/// state — a window carries pending updates with no snapshot whenever remote
+/// updates persist before the window is ever unloaded or compacted, which is
+/// why production's own `WindowManager::open_window` has a fresh-doc fallback
+/// for precisely this case.
+///
+/// This builds that state directly — a `u:w:` row carrying a tombstone commit,
+/// with NO `d:w:` row for its window — and requires the helper to say `true`.
+#[cfg(feature = "sync")]
+#[test]
+fn any_window_scan_finds_a_tombstone_in_a_snapshotless_window() -> Result<()> {
+    use crate::deletion::{TombstoneReason, TombstoneValueV2};
+    use crate::sync::loro_support::{export_updates_from, map_insert_bytes};
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::types::WindowKey;
+
+    let (_tmp, vault) = temp_vault();
+    let buried = test_id(0x4E);
+
+    // A window doc holding one tombstone, exported as an UPDATE delta from
+    // the empty version vector — the shape a `u:w:` row carries. The doc
+    // itself is thrown away; only the delta is persisted.
+    let window = WindowKey::new("2001-02");
+    let doc = create_window_doc("local", &window);
+    let base_vv = doc.oplog_vv();
+    let value = TombstoneValueV2 {
+        reason: TombstoneReason::UserHardDelete,
+        deleted_at: 1_000,
+        request_id: [0x11; 16],
+    };
+    map_insert_bytes(
+        &doc.get_map("tombstones"),
+        buried.to_hex().as_str(),
+        &value.encode(),
+    )?;
+    doc.commit();
+    let delta = export_updates_from(&doc, &base_vv)?;
+
+    // Persist ONLY the pending-update row. No `d:w:{window}` snapshot — this
+    // is the state `load_window_from_state` refuses with `WindowNotFound`.
+    vault.sync_state_put(&format!("u:w:{window}:00000000"), &delta)?;
+    assert!(
+        vault.sync_state_get(&format!("d:w:{window}"))?.is_none(),
+        "fixture must have NO snapshot row, or it proves nothing"
+    );
+
+    // THE DEFECT: with the WindowNotFound arm skipping, this reads `false`.
+    assert!(
+        crdt_tombstone_exists_in_any_window(&vault, &buried)?,
+        "a tombstone persisted only in `u:w:` rows must still be found"
+    );
+
+    // And the helper still says `false` for an id nobody buried, so the fix
+    // is a replay and not a blanket `true`.
+    assert!(
+        !crdt_tombstone_exists_in_any_window(&vault, &test_id(0x4F))?,
+        "an unrelated id is still absent"
     );
     Ok(())
 }
