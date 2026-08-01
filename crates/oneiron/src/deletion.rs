@@ -462,18 +462,24 @@ pub(crate) struct DeletionGateContext {
 }
 
 /// The facade's gated-deletion carrier: the evaluated decision record PLUS the
-/// authority re-check every destructive transaction on the path re-runs.
+/// authority re-check the transactions BEFORE the delete's linearization point
+/// re-run.
 ///
 /// The two halves are deliberately separate. [`DeletionGateContext`] is a
 /// RECORD — the evidence minted once, before TXN1, and written verbatim into
 /// the gate ledger. `reverify` is a DECISION, and a decision made against a
 /// dropped read snapshot is worthless the instant the snapshot is stale: a
 /// `RevokeActor` (or any binding change) committed between gate evaluation and
-/// the purge would never be observed, and the delete would tear on authority
-/// that no longer exists. Re-running the fold INSIDE the txn that tears makes
-/// the two atomic under LMDB's single writer, matching what the sibling owner
-/// verbs already do (`claim_retract` and the structural arm fold inside their
-/// own write txns).
+/// the first destructive commit would never be observed, and the delete would
+/// tear on authority that no longer exists. Re-running the fold INSIDE that
+/// transaction makes the two atomic under LMDB's single writer, matching what
+/// the sibling owner verbs already do (`claim_retract` and the structural arm
+/// fold inside their own write txns).
+///
+/// LINEARIZATION (fix-leg 7): the re-check is NOT re-run forever. The tombstone
+/// publish commit is the delete's linearization point, and after it the answer
+/// is settled — see
+/// [`reverify_deletion_authority_before_publication`].
 pub(crate) struct GatedDeletion<'a> {
     context: DeletionGateContext,
     reverify: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
@@ -491,7 +497,20 @@ impl<'a> GatedDeletion<'a> {
 /// Re-runs `gate`'s authority check against `txn`, or passes when the delete is
 /// ungated (the engine-internal `delete_entity_with_reason` door, which carries
 /// no owner claim to re-prove).
-fn reverify_deletion_authority(
+///
+/// CALL SITES ARE PRE-PUBLICATION ONLY (fix-leg 7 linearization ruling). Every
+/// caller must run STRICTLY BEFORE the transaction that publishes the tombstone
+/// commits — the entry folds and the publish txn itself. The publish commit is
+/// the delete's linearization point: a `RevokeActor` LMDB-ordered after it did
+/// not race the delete, it simply follows an operation that was authorized when
+/// it committed, and no linearizable history lets a later revocation
+/// retroactively un-authorize an earlier committed op. Re-checking authority at
+/// a post-publication step could only produce a FORBIDDEN for a deletion that
+/// already reached peers — a lie the caller cannot act on, and one sync replay
+/// undoes anyway (the published tombstone comes back and purges locally
+/// regardless). The name says PRE-publication so a future edit that reaches for
+/// this helper below the publish txn reads as the mistake it would be.
+fn reverify_deletion_authority_before_publication(
     gate: Option<&GatedDeletion<'_>>,
     txn: &heed::RoTxn<'_>,
 ) -> Result<()> {
@@ -1497,63 +1516,118 @@ fn maybe_fail_after_tombstone_before_purge() -> Result<()> {
 #[inline(always)]
 fn maybe_fail_after_tombstone_before_purge() {}
 
-/// fix-leg 6 rendezvous seam, fired after the deletion gate's recovery sidecar
-/// is durably staged and BEFORE the publish txn opens — precisely the interval
-/// fix-5 left unguarded, in which a `RevokeActor` used to land unseen while
-/// the tombstone still reached peers.
+/// The points on the delete path at which a test harness may park the deleter
+/// and commit a `RevokeActor`, so the authority race is driven deterministically
+/// instead of hoped for.
+///
+/// The three steps bracket the linearization point, which is what makes them
+/// worth naming: one strictly BEFORE the publish commit (refusal expected,
+/// nothing published) and two strictly AFTER it (completion expected, because a
+/// revocation ordered after the publish commit does not reach back — fix-leg 7's
+/// ruling). Constructed on every build; only the parking machinery is test-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeleteRendezvous {
+    /// After the gate recovery sidecar is durably staged, BEFORE the publish txn
+    /// opens — the interval fix-5 left unguarded, in which a `RevokeActor` used
+    /// to land unseen while the tombstone still reached peers.
+    ///
+    /// Fired only from the `sync` tombstone writer; a build without CRDTs has no
+    /// publication to bracket (its `write_crdt_tombstone` is a no-op).
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    BeforeTombstonePublish,
+    /// The publish txn has COMMITTED. Next comes the first post-publication
+    /// destructive step: the soft-erase for gdpr/policy, the purge otherwise.
+    AfterTombstonePublish,
+    /// After any post-publication soft-erase committed, BEFORE the purge txn
+    /// opens — the second post-publication window, reached only on the arms that
+    /// have a soft-erase phase.
+    BeforeHardPurge,
+}
+
+/// The channels + identity of one installed rendezvous.
 ///
 /// TWO phase, and it has to be: the harness cannot pre-stage the revocation in
-/// a held write txn the way the fix-5 rendezvous does, because
-/// `stage_deletion_gate_recovery` takes the write lock itself and the deleter
-/// would block before ever reaching this seam. So the deleter announces on
-/// `arrived` (holding NO lock, its staging txn committed), the harness commits
-/// the revocation, and only then does `resume` release the deleter into the
-/// publish txn. Both are `sync_channel(0)`.
+/// a held write txn the way the fix-5 rendezvous does, because the steps around
+/// these seams take the write lock themselves and the deleter would block before
+/// ever arriving. So the deleter announces on `arrived` holding NO write lock,
+/// the harness commits the revocation, and only then does `resume` release it.
+/// Both are `sync_channel(0)`.
+///
+/// Keyed by `(step, target)`, not by step alone. `cargo test` runs the suite as
+/// parallel threads of ONE process against a single static, and several
+/// unrelated tests delete entities concurrently — a step-only match let a
+/// stranger's delete fire the harness's `arrived` channel, so the harness
+/// committed its revocation while its OWN deleter was still short of the seam.
+/// Matching the target entity makes each rendezvous belong to exactly the delete
+/// that installed it.
+///
+/// The `arrived` half carries the staged [`GateDecisionId`] when the arm has
+/// one: a refused publish returns no request id to the caller, so the harness
+/// could not otherwise name the sidecar it must prove absent. `None` on the soft
+/// arm, which ledgers its decision in the shell-scrub txn and stages no sidecar.
 ///
 /// Compiles out of every non-test build via the no-op shim, exactly like
 /// [`signal_after_header_read`].
-/// The `arrived` half carries the staged [`GateDecisionId`]: a refused publish
-/// returns no request id to the caller, so the harness could not otherwise name
-/// the sidecar it must prove absent.
 #[cfg(all(test, feature = "sync"))]
-type TombstoneGateStagedRendezvous = (
-    std::sync::mpsc::SyncSender<GateDecisionId>,
+type DeleteRendezvousChannels = (
+    DeleteRendezvous,
+    EntityId,
+    std::sync::mpsc::SyncSender<Option<GateDecisionId>>,
     std::sync::mpsc::Receiver<()>,
 );
 
 #[cfg(all(test, feature = "sync"))]
-static AFTER_TOMBSTONE_GATE_STAGED: std::sync::Mutex<Option<TombstoneGateStagedRendezvous>> =
+static DELETE_RENDEZVOUS: std::sync::Mutex<Option<DeleteRendezvousChannels>> =
     std::sync::Mutex::new(None);
 
-/// Installs the one-shot rendezvous consumed by
-/// [`signal_after_tombstone_gate_staged`].
+/// Installs the one-shot rendezvous consumed by [`signal_delete_rendezvous`]
+/// when a delete of `target` reaches `step`. Any other step, or any other
+/// entity, passes straight through.
 #[cfg(all(test, feature = "sync"))]
-pub(crate) fn install_after_tombstone_gate_staged_signal(
-    arrived: std::sync::mpsc::SyncSender<GateDecisionId>,
+pub(crate) fn install_delete_rendezvous(
+    step: DeleteRendezvous,
+    target: EntityId,
+    arrived: std::sync::mpsc::SyncSender<Option<GateDecisionId>>,
     resume: std::sync::mpsc::Receiver<()>,
 ) {
-    *AFTER_TOMBSTONE_GATE_STAGED
+    *DELETE_RENDEZVOUS
         .lock()
-        .expect("AFTER_TOMBSTONE_GATE_STAGED poisoned") = Some((arrived, resume));
+        .expect("DELETE_RENDEZVOUS poisoned") = Some((step, target, arrived, resume));
 }
 
-/// Fires the rendezvous once if one is installed, then clears it so unrelated
-/// deletes in the same serial run never block on a stale rendezvous.
+/// Parks the deleter once if a rendezvous is installed for THIS step and THIS
+/// entity, then clears it so later deletes never block on a stale rendezvous.
+/// The mutex guard is released before the blocking `recv` — holding it across
+/// the park would deadlock every other delete that reaches a seam.
 #[cfg(all(test, feature = "sync"))]
-fn signal_after_tombstone_gate_staged(decision_id: GateDecisionId) {
-    let rendezvous = AFTER_TOMBSTONE_GATE_STAGED
+fn signal_delete_rendezvous(
+    step: DeleteRendezvous,
+    id: &EntityId,
+    decision_id: Option<GateDecisionId>,
+) {
+    let mut installed = DELETE_RENDEZVOUS
         .lock()
-        .expect("AFTER_TOMBSTONE_GATE_STAGED poisoned")
-        .take();
-    if let Some((arrived, resume)) = rendezvous {
-        let _ = arrived.send(decision_id);
-        let _ = resume.recv();
+        .expect("DELETE_RENDEZVOUS poisoned");
+    if installed
+        .as_ref()
+        .is_none_or(|(at_step, target, _, _)| *at_step != step || target != id)
+    {
+        return;
     }
+    let (_, _, arrived, resume) = installed.take().expect("checked installed above");
+    drop(installed);
+    let _ = arrived.send(decision_id);
+    let _ = resume.recv();
 }
 
 #[cfg(not(all(test, feature = "sync")))]
 #[inline(always)]
-fn signal_after_tombstone_gate_staged(_decision_id: GateDecisionId) {}
+fn signal_delete_rendezvous(
+    _step: DeleteRendezvous,
+    _id: &EntityId,
+    _decision_id: Option<GateDecisionId>,
+) {
+}
 
 fn memory_timeline_record_cmp(
     left: &MemoryTimelineRecord,
@@ -1695,8 +1769,10 @@ impl Vault {
             // TOCTOU close: `user_delete` scrubs the body in THIS txn, so the
             // owner authority is re-proven against THIS txn's view. A
             // RevokeActor committed since the gate ran is visible here and
-            // refuses before a single byte is scrubbed.
-            reverify_deletion_authority(gate.as_ref(), &wtxn)?;
+            // refuses before a single byte is scrubbed. PRE-publication: this
+            // arm publishes its tombstone after the scrub, so the re-fold below
+            // in the publish txn is the decision that binds.
+            reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
@@ -1721,12 +1797,36 @@ impl Vault {
             }
             wtxn.commit()?;
             if existed {
-                // `None` gate decision: this soft path already appended the
-                // decision record in the scrub txn above, and that txn re-proved
-                // the authority, so the tombstone publish carries no second
-                // authority claim to re-check.
-                let crdt_persisted =
-                    self.write_crdt_tombstone(id, header.learned_at, &tombstone, None, None)?;
+                // fix-leg 7 P1-1: the tombstone publish carries the GATE.
+                // The scrub txn's re-fold proved authority for a LOCAL act and
+                // then dropped its snapshot; publication is a separate,
+                // remote-binding act, and a `RevokeActor` landing in between
+                // used to reach peers unchallenged (the soft arm passed no gate
+                // at all, so nothing re-checked before `d:w:`/`u:w:`/`q:` were
+                // written and the delta routed).
+                //
+                // The DECISION record stays `None` here on purpose: the scrub
+                // txn above already appended it to the real gate ledger, which
+                // it must, because that append is the soft arm's only
+                // cfg-independent authority record (`write_crdt_tombstone` is a
+                // no-op in non-`sync` builds). Passing it again would stage a
+                // recovery sidecar for an already-ledgered decision that this
+                // path has no TXN3 to consume.
+                //
+                // A refusal must additionally WITHDRAW the `pt:` marker the
+                // scrub txn committed: it holds the verbatim tombstone wire
+                // value, so a sync-enabled boot would replay it into exactly
+                // the publication the refusal denied. Nothing replayable may
+                // survive a refusal — `begin_tombstone_publish_txn` withdraws
+                // it in the refusing txn itself.
+                let crdt_persisted = self.write_crdt_tombstone(
+                    id,
+                    header.learned_at,
+                    &tombstone,
+                    None,
+                    gate.as_ref(),
+                )?;
+                signal_delete_rendezvous(DeleteRendezvous::AfterTombstonePublish, id, None);
                 if crdt_persisted {
                     self.clear_pending_tombstone(&window_label, id)?;
                 }
@@ -1755,6 +1855,14 @@ impl Vault {
         maybe_fail_after_tombstone_before_purge()?;
         #[cfg(not(all(test, feature = "sync")))]
         maybe_fail_after_tombstone_before_purge();
+        // Past the linearization point: this delete is decided. The rendezvous
+        // lets the regression commit a revocation HERE and prove the delete
+        // still completes.
+        signal_delete_rendezvous(
+            DeleteRendezvous::AfterTombstonePublish,
+            id,
+            gate_decision.as_ref().map(|decision| decision.decision_id),
+        );
         let tombstone_complete_at = unix_seconds_now();
 
         let soft_complete_at = if matches!(
@@ -1770,9 +1878,13 @@ impl Vault {
             // bodiless shell ⇒ `None`). The purge txn below re-runs the
             // refresh as an idempotent second pass.
             let mut wtxn = self.store.env.write_txn()?;
-            // This scrub is destructive on its own, so it re-proves authority
-            // against its own view like every other tearing txn on the path.
-            reverify_deletion_authority(gate.as_ref(), &wtxn)?;
+            // NO authority re-fold (fix-leg 7 linearization ruling): the
+            // tombstone publish above already committed, and that commit is
+            // this delete's linearization point. A `RevokeActor` ordered after
+            // it did not race the delete — it follows an operation that was
+            // authorized when it published. Refusing here would return
+            // FORBIDDEN for a deletion peers have already obeyed, and the
+            // replayed tombstone tears this replica anyway.
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
@@ -1789,14 +1901,24 @@ impl Vault {
         } else {
             tombstone_complete_at
         };
+        // The second post-publication window: soft-erase committed, purge not
+        // yet open. Same law, separately pinned.
+        signal_delete_rendezvous(
+            DeleteRendezvous::BeforeHardPurge,
+            id,
+            gate_decision.as_ref().map(|decision| decision.decision_id),
+        );
 
         let receipt_id = EntityId::now();
         let scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
-        // The purge txn: the one that actually tears. Its authority check runs
-        // FIRST, ahead of the scope probe and the `dt:` marker, so a revoked
-        // owner leaves no local trace of the attempt at all.
-        reverify_deletion_authority(gate.as_ref(), &wtxn)?;
+        // The purge txn: the one that actually tears — and it does NOT re-check
+        // authority (fix-leg 7 linearization ruling). The publish commit that
+        // preceded it decided this delete; from there the local purge is the
+        // committed operation finishing, not a fresh act needing fresh consent.
+        // fix-5 put a re-fold here, which made a revocation racing the interval
+        // publish→purge produce the rejected-call-publishes shape: FORBIDDEN to
+        // the caller with the tombstone already on the wire and peers tearing.
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
@@ -1934,11 +2056,18 @@ impl Vault {
         maybe_fail_after_tombstone_before_purge()?;
         #[cfg(not(all(test, feature = "sync")))]
         maybe_fail_after_tombstone_before_purge();
+        // Past the linearization point on the headerless leg too.
+        signal_delete_rendezvous(
+            DeleteRendezvous::AfterTombstonePublish,
+            id,
+            gate_decision.as_ref().map(|decision| decision.decision_id),
+        );
 
         let mut wtxn = self.store.env.write_txn()?;
-        // Same law on the headerless leg: the purge txn re-proves the owner
-        // binding before it erases residue or writes the `dt:` marker.
-        reverify_deletion_authority(gate, &wtxn)?;
+        // Same linearization law on the headerless leg: the publish txn above
+        // decided authority, so this purge does not re-decide it. The headerless
+        // door's pre-publication guards are the scope probe's own read txn and
+        // the publish txn's re-fold.
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
         // the erasing txn (race-free under LMDB's single writer). The read
@@ -2658,7 +2787,13 @@ impl Vault {
                 let _guard = materializer.lock();
                 let history_free = self.resolve_window_snapshot_mode(&window_key, &window.doc)?;
                 self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
-                let mut wtxn = self.begin_tombstone_publish_txn(id, value, gate_decision, gate)?;
+                signal_delete_rendezvous(
+                    DeleteRendezvous::BeforeTombstonePublish,
+                    id,
+                    gate_decision.map(|decision| decision.decision_id),
+                );
+                let mut wtxn =
+                    self.begin_tombstone_publish_txn(id, &window_key, value, gate_decision, gate)?;
                 let vv_before = window.doc.oplog_vv();
                 let (delete_update, snapshot, vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
@@ -2712,10 +2847,16 @@ impl Vault {
         };
         let history_free = self.resolve_window_snapshot_mode(&window_key, &doc)?;
         self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
+        signal_delete_rendezvous(
+            DeleteRendezvous::BeforeTombstonePublish,
+            id,
+            gate_decision.map(|decision| decision.decision_id),
+        );
         // Same authority boundary as the live path: the transient doc is
         // mutated only after this txn's re-fold passes, and its bytes reach
         // `d:w:`/`u:w:`/`q:` in that same txn.
-        let mut wtxn = self.begin_tombstone_publish_txn(id, value, gate_decision, gate)?;
+        let mut wtxn =
+            self.begin_tombstone_publish_txn(id, &window_key, value, gate_decision, gate)?;
         let vv_before = doc.oplog_vv();
         apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
@@ -2741,34 +2882,83 @@ impl Vault {
     /// Opens the transaction that publishes a gated tombstone, re-proving the
     /// owner binding against ITS view before anything can be published.
     ///
-    /// This is the authority boundary of the sync leg. `stage_deletion_gate_recovery`
-    /// committed the authority-required marker in an EARLIER transaction (it has
-    /// to survive a failed publish, or a crash would leave an orphan live-doc
-    /// tombstone that recovery could not tell from a peer's). That earlier commit
-    /// drops its snapshot, so re-proving here is what makes the publish atomic
-    /// with the binding: LMDB's single writer orders a concurrent `RevokeActor`
-    /// strictly before this fold — seen, nothing published — or strictly after
-    /// the commit, by which time the deletion was authorized when it left.
+    /// THE LINEARIZATION POINT (fix-leg 7 ruling). This commit is where the
+    /// delete becomes real: remote-visible, and locally irreversible in the sense
+    /// that any replica that applies the tombstone tears the entity. Authority is
+    /// therefore decided HERE, once, and nowhere after. LMDB's single writer
+    /// orders a concurrent `RevokeActor` strictly before this fold — seen,
+    /// nothing published — or strictly after the commit, in which case the
+    /// deletion legitimately precedes the revocation in the serial order and the
+    /// steps that follow (soft-erase, purge, headerless purge, receipt) MUST NOT
+    /// re-decide it. They finish a committed operation; a FORBIDDEN from them
+    /// would be a rejected call that already published, and sync replay of the
+    /// published tombstone would purge this replica regardless, so the refusal
+    /// would also be false. Later refusals at those sites are FACET-STATE only —
+    /// consent conditions evaluated at tear time are a different class of
+    /// question from "may this actor delete", and S-DISC2 owns them.
     ///
-    /// A refusal is not a plain rollback. The staging from the earlier txn is
-    /// REMOVED here and that removal is COMMITTED, so a refused request leaves no
-    /// authority-required marker and no sidecar for a later replay to read as a
-    /// pending authorized deletion.
+    /// `stage_deletion_gate_recovery` committed the authority-required marker in
+    /// an EARLIER transaction (it has to survive a failed publish, or a crash
+    /// would leave an orphan live-doc tombstone that recovery could not tell from
+    /// a peer's). That earlier commit drops its snapshot, so re-proving here is
+    /// what makes the publish atomic with the binding.
+    ///
+    /// A refusal is not a plain rollback. Every durable artifact that could be
+    /// REDEEMED into this publication later is removed in the refusing txn and
+    /// that removal is COMMITTED: the staged authority-required marker and its
+    /// recovery sidecar, plus the `pt:` pending-tombstone marker (the soft arm
+    /// commits one in its shell-scrub txn, and it carries the verbatim tombstone
+    /// wire value a sync-enabled boot would replay into exactly the publication
+    /// this refusal denied). Nothing replayable survives a refusal.
     #[cfg(feature = "sync")]
     fn begin_tombstone_publish_txn(
         &self,
         id: &EntityId,
+        window_key: &crate::sync::WindowKey,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
-        if let Err(refusal) = reverify_deletion_authority(gate, &wtxn) {
+        if let Err(refusal) = reverify_deletion_authority_before_publication(gate, &wtxn) {
             self.discard_staged_deletion_gate_recovery_in_txn(&mut wtxn, id, value, gate_decision)?;
+            self.withdraw_own_pending_tombstone_in_txn(&mut wtxn, window_key.as_str(), id, value)?;
             wtxn.commit()?;
             return Err(refusal);
         }
         Ok(wtxn)
+    }
+
+    /// Deletes the `pt:{window}:{id}` marker IF AND ONLY IF it carries THIS
+    /// delete's bytes, called from a refusing publish transaction.
+    ///
+    /// The value match is the whole point. `pt:` is keyed by window and entity,
+    /// not by request, so a blanket delete here would let a refused delete
+    /// silently discard the propagation intent of a DIFFERENT, authorized
+    /// delete of the same id in the same window — turning a fail-closed refusal
+    /// into a fail-open under-delete. The 25 B value embeds the deletion
+    /// request UUID, so exact-value equality identifies the marker this call
+    /// staged and nothing else. A refusal on an arm that staged no marker
+    /// (every hard arm: they publish first and write `pt:` in the later purge
+    /// txn) finds no match and leaves the row alone.
+    #[cfg(feature = "sync")]
+    fn withdraw_own_pending_tombstone_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        window_label: &str,
+        id: &EntityId,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
+        let key = pending_tombstone_key(window_label, id);
+        let staged_by_this_delete = self
+            .store
+            .sync_state
+            .get(&*wtxn, &key)?
+            .is_some_and(|existing| *existing == value.encode());
+        if staged_by_this_delete {
+            self.store.sync_state.delete(wtxn, &key)?;
+        }
+        Ok(())
     }
 
     /// Decides history-free versus ordinary snapshot bytes for this window
@@ -2853,7 +3043,7 @@ impl Vault {
             // binding on every peer, so the owner binding is re-proven in the
             // SAME txn that stages it — a revocation landing since the gate ran
             // stops the deletion before it becomes remote truth.
-            reverify_deletion_authority(gate, wtxn)?;
+            reverify_deletion_authority_before_publication(gate, wtxn)?;
             self.store.put_pending_deletion_gate_decision_in_txn(
                 wtxn,
                 decision,
@@ -2863,9 +3053,8 @@ impl Vault {
         })?;
         // The staging txn has COMMITTED and dropped its snapshot here — the
         // authority it proved is already stale. The publish txn's re-fold is
-        // what closes that gap; the rendezvous lets the regression land a
-        // revocation exactly inside it.
-        signal_after_tombstone_gate_staged(decision.decision_id);
+        // what closes that gap; the `BeforeTombstonePublish` rendezvous the
+        // caller fires next lets the regression land a revocation inside it.
         Ok(())
     }
 
@@ -2949,7 +3138,11 @@ impl Vault {
         _gate: Option<&GatedDeletion<'_>>,
     ) -> Result<bool> {
         // No CRDT in this build — the `pt:` marker written in the purge /
-        // scrub txn is the deletion's durable propagation intent.
+        // scrub txn is the deletion's durable propagation intent, and nothing
+        // here publishes, so there is no linearization point to gate: the
+        // authority proven in that same purge / scrub txn is the whole decision.
+        // A sync-enabled boot that later replays the marker replays a deletion
+        // that WAS authorized when its transaction committed.
         Ok(false)
     }
 

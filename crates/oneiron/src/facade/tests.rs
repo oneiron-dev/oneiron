@@ -3794,6 +3794,7 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
 
     use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
 
+    let _serial = lock_delete_rendezvous();
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
@@ -3830,7 +3831,12 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
     // deadlock here — the revocation has to commit while the deleter parks.
     let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
     let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
-    crate::deletion::install_after_tombstone_gate_staged_signal(arrived_tx, resume_rx);
+    crate::deletion::install_delete_rendezvous(
+        crate::deletion::DeleteRendezvous::BeforeTombstonePublish,
+        subject,
+        arrived_tx,
+        resume_rx,
+    );
 
     let (err, staged_decision_id) = std::thread::scope(|scope| {
         let vault_ref = &vault;
@@ -3842,7 +3848,8 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
         // this is the only handle on the sidecar the refusal must withdraw.
         let staged_decision_id = arrived_rx
             .recv()
-            .expect("deleter must signal once its gate sidecar is staged");
+            .expect("deleter must signal once its gate sidecar is staged")
+            .expect("a hard arm stages a gate sidecar and names it here");
         // The pre-txn gate and the staging re-fold have BOTH already passed on
         // the live binding; the delete is parked believing it is authorized.
         vault
@@ -3952,6 +3959,496 @@ fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
             .all(|decision| decision.decision_id != staged_decision_id),
         "a refused publish must mint no gate decision"
     );
+}
+
+/// A vault wired for the fix-leg 7 publish-boundary regressions: an attached
+/// peer channel plus, on the LIVE leg, an open registry window — so both halves
+/// of "did this delete publish?" are observable, the shared live doc and the
+/// outbound route.
+///
+/// `window: None` is the TRANSIENT leg (window never opened), where the publish
+/// takes the import-merge path instead of the shared doc. It is a genuinely
+/// different code path through `write_crdt_tombstone`, so every regression here
+/// runs both.
+/// Vector width for the orphan-residue fixture. Small and arbitrary — the
+/// headerless delete door only cares that a `vectors` row exists.
+#[cfg(feature = "sync")]
+const RESIDUE_VECTOR_DIMS: usize = 4;
+
+#[cfg(feature = "sync")]
+struct PublishBoundaryHarness {
+    _dir: tempfile::TempDir,
+    vault: std::sync::Arc<crate::Vault>,
+    window: Option<std::sync::Arc<crate::sync::window::LoadedWindow>>,
+    window_key: crate::sync::WindowKey,
+    outbound: tokio::sync::mpsc::UnboundedReceiver<crate::sync::types::LocalUpdate>,
+    _manager: std::sync::Arc<crate::sync::WindowManager>,
+}
+
+#[cfg(feature = "sync")]
+impl PublishBoundaryHarness {
+    fn open(label: &str, live_window: bool) -> Self {
+        Self::open_with_config(label, live_window, VaultConfig::default())
+    }
+
+    /// [`Self::open`] with an embedding model declared, which
+    /// `ensure_model_id_for_vector_write` requires before any vector write —
+    /// the only way to build the orphan-vector residue the headerless delete
+    /// door needs.
+    fn open_for_vector_residue(label: &str, live_window: bool) -> Self {
+        Self::open_with_config(
+            label,
+            live_window,
+            VaultConfig {
+                embedding_model: Some("test-model-v1".to_owned()),
+                dimensions: RESIDUE_VECTOR_DIMS,
+                ..VaultConfig::default()
+            },
+        )
+    }
+
+    fn open_with_config(label: &str, live_window: bool, config: VaultConfig) -> Self {
+        use std::sync::Arc;
+
+        use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Arc::new(crate::Vault::open(dir.path(), config).expect("open vault"));
+        let manager = Arc::new(WindowManager::new(
+            Arc::clone(&vault),
+            Arc::new(Materializer::new()),
+            label,
+        ));
+        let (tx, outbound) = tokio::sync::mpsc::unbounded_channel();
+        manager.outbound().attach(tx);
+        // Every fixture entity is put at `learned_at = 1`, so this is the window
+        // the headerful deletes address.
+        let window_key = WindowKey::from_timestamp(1);
+        // `open_window` also attaches the manager to the vault, which is what
+        // routes deletes at all — the transient leg does that explicitly so its
+        // outbound assertions mean something.
+        let window = if live_window {
+            Some(
+                manager
+                    .open_window(&window_key)
+                    .expect("open live deletion window"),
+            )
+        } else {
+            manager.attach_to_vault();
+            None
+        };
+        Self {
+            _dir: dir,
+            vault,
+            window,
+            window_key,
+            outbound,
+            _manager: manager,
+        }
+    }
+
+    /// Whether the shared live doc carries a tombstone for `id`. Vacuously
+    /// false on the transient leg, which has no live doc to carry one.
+    fn live_doc_tombstoned(&self, id: &EntityId) -> bool {
+        self.window
+            .as_ref()
+            .is_some_and(|window| window.doc.get_map("tombstones").get(&id.to_hex()).is_some())
+    }
+
+    /// Whether the persisted `d:w:` snapshot carries a tombstone for `id`.
+    /// A window with no snapshot row yet trivially carries none.
+    fn snapshot_tombstoned(&self, id: &EntityId) -> bool {
+        let Some(snapshot) = self
+            .vault
+            .sync_state_get(&format!("d:w:{}", self.window_key))
+            .expect("read persisted window snapshot")
+        else {
+            return false;
+        };
+        crate::sync::loro_support::doc_from_snapshot(&snapshot)
+            .expect("persisted snapshot decodes")
+            .get_map("tombstones")
+            .get(&id.to_hex())
+            .is_some()
+    }
+
+    /// Whether any pending `u:w:` update row replays a tombstone for `id`.
+    fn update_rows_tombstoned(&self, id: &EntityId) -> bool {
+        self.vault
+            .sync_state_keys_with_prefix(&format!("u:w:{}:", self.window_key))
+            .expect("read pending update rows")
+            .into_iter()
+            .any(|update_key| {
+                let bytes = self
+                    .vault
+                    .sync_state_get(&update_key)
+                    .expect("read update row")
+                    .expect("update row exists");
+                let replayed = crate::sync::schema::create_window_doc("probe", &self.window_key);
+                crate::sync::loro_support::import_doc(&replayed, &bytes)
+                    .expect("update row imports");
+                replayed.get_map("tombstones").get(&id.to_hex()).is_some()
+            })
+    }
+
+    /// Whether any queued `q:` row replays a tombstone for `id`. DRAINS the
+    /// queue, so call it once per subject.
+    fn queue_rows_tombstoned(&self, id: &EntityId) -> bool {
+        let queue = crate::sync::SyncQueue::new(std::sync::Arc::clone(&self.vault))
+            .expect("open sync queue");
+        queue
+            .drain_updates()
+            .expect("drain queued updates")
+            .into_iter()
+            .any(|queued| {
+                let replayed = crate::sync::schema::create_window_doc("probe", &self.window_key);
+                crate::sync::loro_support::import_doc(&replayed, &queued.encoded)
+                    .expect("queued update imports");
+                replayed.get_map("tombstones").get(&id.to_hex()).is_some()
+            })
+    }
+
+    /// Whether a `pt:` pending-tombstone marker for `id` survives — the
+    /// replayable carrier a refusal must withdraw. Checks BOTH candidate window
+    /// labels: the soft arm addresses `learned_at`'s window and the headerless
+    /// leg addresses NOW's, and at a month boundary those differ.
+    fn replayable_pending_marker(&self, id: &EntityId) -> bool {
+        [
+            self.window_key.as_str().to_owned(),
+            crate::deletion::window_label_from_timestamp(crate::unix_seconds_now()),
+        ]
+        .iter()
+        .any(|window_label| {
+            self.vault
+                .sync_state_get(&crate::deletion::pending_tombstone_key(window_label, id))
+                .expect("read pt: marker")
+                .is_some()
+        })
+    }
+
+    /// Every no-publish assertion in one call, for a delete that must have been
+    /// refused BEFORE its linearization point.
+    fn assert_nothing_published(&mut self, id: &EntityId, context: &str) {
+        assert!(
+            !self.live_doc_tombstoned(id),
+            "{context}: a refused delete must not leave a tombstone in the shared live doc"
+        );
+        assert!(
+            self.outbound.try_recv().is_err(),
+            "{context}: a refused delete must not route an outbound update to the peer"
+        );
+        assert!(
+            !self.snapshot_tombstoned(id),
+            "{context}: the refused tombstone must not reach the d:w: snapshot"
+        );
+        assert!(
+            !self.update_rows_tombstoned(id),
+            "{context}: the refused tombstone must not reach a u:w: carrier"
+        );
+        assert!(
+            !self.queue_rows_tombstoned(id),
+            "{context}: the refused tombstone must not reach a delete-bearing q: row"
+        );
+        assert!(
+            !self.replayable_pending_marker(id),
+            "{context}: the refused tombstone must not survive as a replayable pt: marker"
+        );
+    }
+}
+
+/// The delete rendezvous is ONE process-global slot, and `cargo test` runs these
+/// in parallel threads of a single process. Two tests installing concurrently
+/// would clobber each other's channels — one delete parks on a receiver the
+/// other test owns, the other gets a `RecvError` from a dropped sender. Every
+/// test that installs a rendezvous holds this lock for the whole install→join
+/// window. Poison is ignored deliberately: a panicking test has already failed
+/// and must not cascade into unrelated ones.
+#[cfg(feature = "sync")]
+static DELETE_RENDEZVOUS_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(feature = "sync")]
+fn lock_delete_rendezvous() -> std::sync::MutexGuard<'static, ()> {
+    DELETE_RENDEZVOUS_TESTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Parks a gated delete at `step`, commits `revoke` while it waits, and returns
+/// the delete's result. The two-phase shape is forced: the steps around these
+/// seams take the LMDB write lock themselves, so the revocation cannot be
+/// pre-staged in a held txn — the deleter must announce while holding nothing.
+///
+/// Caller must hold [`lock_delete_rendezvous`].
+#[cfg(feature = "sync")]
+fn safe_delete_with_revocation_at(
+    vault: &std::sync::Arc<crate::Vault>,
+    owner: EntityId,
+    target: EntityId,
+    reason: SafeDeleteReason,
+    step: crate::deletion::DeleteRendezvous,
+    revoke: crate::authority::AuthorityLogEntry,
+) -> FacadeResult<DeleteReceipt> {
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
+    crate::deletion::install_delete_rendezvous(step, target, arrived_tx, resume_rx);
+
+    std::thread::scope(|scope| {
+        let vault_ref = vault.as_ref();
+        let deleter =
+            scope.spawn(move || facade_for(vault_ref, owner).safe_delete(&target.to_hex(), reason));
+        arrived_rx
+            .recv()
+            .expect("the deleter must reach the installed rendezvous");
+        vault
+            .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+            .expect("commit the revocation while the deleter is parked");
+        resume_tx.send(()).expect("release the deleter");
+        deleter.join().expect("deleter thread must not panic")
+    })
+}
+
+/// fix-leg 7 P1-1: the SOFT arm's publish must pass the gate too.
+///
+/// `user_delete` scrubs the body to a 25 B shell in one txn, then publishes the
+/// tombstone. fix-5 re-folded the owner in the scrub txn and fix-6 gated the
+/// hard arms' publish — but the soft arm called `write_crdt_tombstone(..., None,
+/// None)`, so its publication passed NO gate at all. A `RevokeActor` landing
+/// between the scrub commit and the publish was never observed: the tombstone
+/// reached the live doc and the peer, the `d:w:`/`u:w:`/`q:` carriers persisted,
+/// and the `pt:` marker the scrub txn had already committed stayed on disk as a
+/// replayable propagation intent — an unauthorized soft delete, published.
+///
+/// Both legs, because they are different code paths through the publish: LIVE
+/// (window open, registry-owned shared doc, `route_live` on the wire) and
+/// TRANSIENT (window closed, doc import-merged from persisted state). fix-6's
+/// concern list flagged the transient-leg symmetry as an open follow-up; it is
+/// folded in here.
+#[cfg(feature = "sync")]
+#[test]
+fn revocation_racing_the_soft_delete_publish_refuses_and_publishes_nothing() {
+    let _serial = lock_delete_rendezvous();
+    for live_window in [true, false] {
+        let leg = if live_window { "live" } else { "transient" };
+        let mut harness = PublishBoundaryHarness::open("facade-soft-publish-boundary", live_window);
+        let owner = put_person(&harness.vault, 0x20);
+        let subject = put_person(&harness.vault, 0x2A);
+        let revoke = root_binding_with_pending_revocation(&harness.vault, 0x2B, owner);
+
+        // Control: with the binding live, the soft arm publishes end to end —
+        // so the assertions below pin the refusal, not a broken fixture.
+        let warmup = put_person(&harness.vault, 0x2C);
+        facade_for(&harness.vault, owner)
+            .safe_delete(&warmup.to_hex(), SafeDeleteReason::UserDelete)
+            .expect("control: a bound owner soft-deletes");
+        assert!(
+            harness.snapshot_tombstoned(&warmup),
+            "{leg} control: the d:w: snapshot must carry the warmup tombstone — \
+             on both legs the publish txn persists it"
+        );
+        if live_window {
+            assert!(
+                harness.live_doc_tombstoned(&warmup),
+                "{leg} control: the live doc must carry the warmup tombstone"
+            );
+            // `route_live` is the LIVE leg's last act. The transient leg has no
+            // open window to route through — its delivery is the queued `q:`
+            // row, which the control below leaves in place deliberately.
+            assert!(
+                harness.outbound.try_recv().is_ok(),
+                "{leg} control: the peer receives the warmup tombstone"
+            );
+        }
+        // Drain the control's outbound traffic so the refusal assertion below
+        // reads an empty channel only if the REFUSED delete routed nothing.
+        while harness.outbound.try_recv().is_ok() {}
+
+        let err = safe_delete_with_revocation_at(
+            &harness.vault,
+            owner,
+            subject,
+            SafeDeleteReason::UserDelete,
+            crate::deletion::DeleteRendezvous::BeforeTombstonePublish,
+            revoke,
+        )
+        .expect_err("a revocation landing before the publish commit must refuse");
+
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{leg}");
+        assert!(
+            err.message.contains("no active owner binding"),
+            "{leg}: the parked pre-gate error must survive the publish boundary, \
+             not degrade to a generic concurrency code: {}",
+            err.message
+        );
+        // The shell scrub already committed — that is the pre-publication act
+        // this arm is allowed to have done, and fix-5's re-fold gated it. What
+        // must NOT exist is any published or replayable carrier.
+        harness.assert_nothing_published(&subject, leg);
+    }
+}
+
+/// fix-leg 7 P1-2 (a): a revocation committed AFTER the publish commit does NOT
+/// refuse — the delete COMPLETES.
+///
+/// The publish commit is the delete's linearization point. fix-5 re-folded the
+/// owner at the destructive steps that follow it (soft-erase, purge, headerless
+/// purge), which meant a `RevokeActor` landing in the interval publish→purge
+/// produced the rejected-call-publishes shape: the caller got FORBIDDEN while
+/// the tombstone was already on the wire and peers were already tearing the
+/// entity. That refusal is both unactionable and false — sync replay of the
+/// published tombstone purges this replica regardless, so the local state the
+/// refusal claims to have preserved does not survive anyway.
+///
+/// Under the ruling the answer is settled at publish: a revocation LMDB-ordered
+/// after that commit simply follows an operation that was authorized when it
+/// committed, which is ordinary linearizable ordering, not a race. Both
+/// post-publication rendezvous points are driven, across every hard reason and
+/// the headerless door.
+///
+/// MUTATION PROBE: re-adding an authority re-fold at any post-publish site
+/// fails this test (the delete returns FORBIDDEN and the victim survives) while
+/// the pre-publish regressions above still pass — the two directions are pinned
+/// independently.
+#[cfg(feature = "sync")]
+#[test]
+fn revocation_after_the_publish_commit_lets_the_delete_complete() {
+    let _serial = lock_delete_rendezvous();
+    let steps = [
+        // Entry to the first post-publication destructive step: the soft-erase
+        // for gdpr/policy, the purge for user_hard_delete.
+        crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+        // Entry to the purge on the arms that ran a soft-erase first.
+        crate::deletion::DeleteRendezvous::BeforeHardPurge,
+    ];
+    let reasons = [
+        SafeDeleteReason::UserHardDelete,
+        SafeDeleteReason::GdprDelete,
+        SafeDeleteReason::PolicyDelete,
+    ];
+    for live_window in [true, false] {
+        for step in steps {
+            for reason in reasons {
+                let leg = if live_window { "live" } else { "transient" };
+                let case = format!("{leg}/{step:?}/{reason:?}");
+                let harness =
+                    PublishBoundaryHarness::open("facade-post-publish-boundary", live_window);
+                let owner = put_person(&harness.vault, 0x2D);
+                let subject = put_person(&harness.vault, 0x2E);
+                let revoke = root_binding_with_pending_revocation(&harness.vault, 0x2F, owner);
+
+                let receipt = safe_delete_with_revocation_at(
+                    &harness.vault,
+                    owner,
+                    subject,
+                    reason,
+                    step,
+                    revoke,
+                )
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "{case}: a revocation ordered AFTER the publish commit must not \
+                         refuse a committed deletion, but got {}: {}",
+                        err.code, err.message
+                    )
+                });
+
+                assert!(receipt.existed, "{case}: the delete must claim the erasure");
+                assert!(
+                    receipt.receipt_ref.is_some(),
+                    "{case}: every hard reason writes a REDACTION_AUDIT receipt"
+                );
+                // Torn for real: the entity row is gone, not merely shelled.
+                assert_eq!(
+                    harness
+                        .vault
+                        .get_entity_type(&subject)
+                        .expect("get subject"),
+                    None,
+                    "{case}: the victim must be purged"
+                );
+                // ...and the `dt:` local hard-delete truth is durable.
+                let rtxn = harness.vault.store.env.read_txn().expect("read txn");
+                assert!(
+                    harness
+                        .vault
+                        .local_hard_delete_marker_exists_in_txn(&rtxn, &subject)
+                        .expect("read dt: marker"),
+                    "{case}: the purge txn must write the dt: marker"
+                );
+            }
+        }
+    }
+}
+
+/// fix-leg 7 P1-2 (a), headerless door: same law where there is no header.
+///
+/// `delete_entity_without_header` erases orphan residue (a vector with no
+/// entities row). It publishes a tombstone first and purges after, so it has the
+/// same post-publication interval — and fix-5 put a re-fold in its purge txn
+/// too. Driven separately because the residue fixture cannot be built through
+/// `put_person`.
+#[cfg(feature = "sync")]
+#[test]
+fn revocation_after_the_publish_commit_lets_a_headerless_delete_complete() {
+    let _serial = lock_delete_rendezvous();
+    for live_window in [true, false] {
+        let leg = if live_window { "live" } else { "transient" };
+        let harness = PublishBoundaryHarness::open_for_vector_residue(
+            "facade-headerless-boundary",
+            live_window,
+        );
+        let owner = put_person(&harness.vault, 0x34);
+        let revoke = root_binding_with_pending_revocation(&harness.vault, 0x35, owner);
+
+        // Headerless residue: a vector with no entities row, so the delete takes
+        // `delete_entity_without_header`.
+        let subject = EntityId::from_bytes([0x3B; 16]).expect("residue id");
+        harness
+            .vault
+            .put_vector(&subject, &[0.1, 0.2, 0.3, 0.4])
+            .expect("put orphan vector");
+        assert!(
+            harness.vault.get_raw(&subject).expect("get raw").is_none(),
+            "{leg}: headerless precondition — no entities row"
+        );
+
+        let receipt = safe_delete_with_revocation_at(
+            &harness.vault,
+            owner,
+            subject,
+            SafeDeleteReason::GdprDelete,
+            crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+            revoke,
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "{leg}: the headerless purge must not re-decide authority after \
+                 publication, but got {}: {}",
+                err.code, err.message
+            )
+        });
+
+        // `existed` tracks the ENTITIES row, which a headerless residue has none
+        // of by construction — so the erasure evidence here is the audit receipt
+        // and the purged vector, exactly as the pre-existing headerless fixtures
+        // assert.
+        assert!(
+            receipt.receipt_ref.is_some(),
+            "{leg}: the headerless purge must write its REDACTION_AUDIT receipt"
+        );
+        assert_eq!(
+            harness.vault.get_vector(&subject).expect("get vector"),
+            None,
+            "{leg}: the orphan vector must be purged"
+        );
+        let rtxn = harness.vault.store.env.read_txn().expect("read txn");
+        assert!(
+            harness
+                .vault
+                .local_hard_delete_marker_exists_in_txn(&rtxn, &subject)
+                .expect("read dt: marker"),
+            "{leg}: the headerless purge txn must write the dt: marker"
+        );
+    }
 }
 
 /// P2-b: `fold.vault_id == None` is TWO states, and only one of them may pass.
