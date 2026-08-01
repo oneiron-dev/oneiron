@@ -1375,6 +1375,25 @@ pub(crate) fn authority_first_seen_clock_sync_key() -> &'static str {
     "authlog:first_seen:clock_floor"
 }
 
+/// Verdict text carried by the [`Error::CorruptedIndex`] a readonly fold raises
+/// when the one-shot first-seen migration has ALREADY run and an AUTHORITY_LOG
+/// row still has no readable first-seen sidecar.
+///
+/// The migration is one-shot by its marker, so it will never regenerate that
+/// row: the delay clock for the affected entry is unrecoverable in place. A
+/// fold cannot then decide whether a delayable widen — a rotation, a recovery
+/// reboot — has elapsed, and BOTH guesses are unsafe (assume elapsed and a
+/// widen skips its veto window; assume pending and a rotation's RETIRED key
+/// stays live). The only sound answer is to refuse the fold and let the caller
+/// suspend whatever it was about to authorize.
+pub(crate) const AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT: &str =
+    "authority first-seen sidecar missing or unreadable after backfill";
+
+/// Whether `err` is the corrupt-sidecar verdict above.
+pub(crate) fn is_corrupt_first_seen_sidecar(err: &Error) -> bool {
+    matches!(err, Error::CorruptedIndex(msg) if *msg == AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT)
+}
+
 struct AuthorityLocalClock {
     last_instant: Instant,
     last_secs: u64,
@@ -5131,10 +5150,11 @@ impl Vault {
     /// Folds the stored AUTHORITY_LOG inside a CALLER-OWNED read transaction.
     ///
     /// [`Vault::authority_fold`] opens its own transactions — including a WRITE
-    /// txn for the first-seen clock — so it cannot be called from inside an
-    /// open transaction under LMDB's single-writer rule. This variant reads
-    /// stored first-seen sidecars as they are: no backfill, no persisted clock
-    /// write, no transaction of its own.
+    /// txn for the first-seen clock and the sidecar backfill — so it cannot be
+    /// called from inside an open transaction under LMDB's single-writer rule.
+    /// This variant writes nothing at all: no persisted clock write, no
+    /// backfill, no transaction of its own. It reproduces both write-side
+    /// effects in its snapshot instead.
     ///
     /// The observation time is deliberately NOT the raw wall clock. Widen
     /// maturity is an AUTHORIZATION decision here — the facade's owner-verb
@@ -5148,10 +5168,10 @@ impl Vault {
     /// written back — the floor advances only on write paths, and a lagging
     /// floor can delay a widen but never skip the delay.
     ///
-    /// The remaining divergence from the full fold is a missing sidecar (no
-    /// backfill runs here), which can only delay a widen, never admit one, and
-    /// actor-binding ops are never widens — so the binding predicate this
-    /// exists for is exact.
+    /// The other divergence the full fold hides is a MISSING sidecar, and
+    /// omitting it here is not the conservative default it looks like — see
+    /// [`Self::readonly_first_seen_for`] for why an omitted sidecar can leave a
+    /// retired owner key live, and what this fold does instead.
     pub(crate) fn authority_fold_readonly_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -5164,6 +5184,19 @@ impl Vault {
             .get(txn, authority_first_seen_clock_sync_key())?
             .and_then(|raw| decode_authority_first_seen_secs(&raw))
             .unwrap_or(0);
+        // Read ONCE, before the row scan: the synthesized-first-seen rule below
+        // must be the same for every entry in one fold, and this also decides
+        // whether an absent sidecar is a pre-migration gap or genuine corruption.
+        let backfilled = self
+            .store
+            .sync_state
+            .get(txn, authority_first_seen_backfill_sync_key())?
+            .is_some();
+        let now_secs = authority_observation_secs_for_domain(
+            self.store.authority_clock_domain,
+            persisted_floor,
+            unix_seconds_now(),
+        );
         for row in self
             .store
             .type_index
@@ -5183,26 +5216,75 @@ impl Vault {
             }
             let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             let hash = authority_entry_hash(&entry)?;
-            if let Some(first_seen) = self
-                .store
-                .sync_state
-                .get(txn, authority_first_seen_sync_key(&hash).as_str())?
-                .and_then(|raw| decode_authority_first_seen_secs(&raw))
-            {
-                first_seen_at_secs.insert(hash, first_seen);
-            }
+            first_seen_at_secs.insert(
+                hash,
+                self.readonly_first_seen_for(txn, &hash, &header, backfilled, now_secs)?,
+            );
             entries.push(entry);
         }
-        let now_secs = authority_observation_secs_for_domain(
-            self.store.authority_clock_domain,
-            persisted_floor,
-            unix_seconds_now(),
-        );
         Ok(fold_authority_log_with_seen_times(
             &entries,
             &first_seen_at_secs,
             now_secs,
         ))
+    }
+
+    /// First-seen seconds for ONE entry inside a readonly fold, reproducing the
+    /// one-shot migration's semantics without writing anything.
+    ///
+    /// Omitting an entry from `first_seen_at_secs` is NOT fail-closed, which is
+    /// what the naive version got wrong. A sidecar-less delayable widen folds to
+    /// `eligible_at_secs: None`, which pins it PENDING forever — and "pending"
+    /// is only conservative for widens that GRANT (EnrollDevice, SetTierFloor).
+    /// `RotateKey` and `RecoveryReboot` also REVOKE: an un-applied rotation
+    /// leaves the retired owner key in the roster with its actor binding Active.
+    /// On a legacy vault whose matured rotation K→K2 never got a sidecar, an
+    /// attacker still holding K could file a sibling `BindActor(K, …, "human")`
+    /// parented before the rotation, and this fold would hand them every owner
+    /// verb — while [`Vault::authority_fold`] (which backfills first) revokes K.
+    /// A fold used for AUTHORIZATION must not be weaker than the one used for
+    /// truth.
+    ///
+    /// Two states, two answers:
+    ///
+    /// - backfill marker ABSENT — the migration simply has not run in a write
+    ///   txn yet. Synthesize what it would write: `learned_at.min(now_secs)`,
+    ///   the same rule and the same observation clock
+    ///   [`Vault::backfill_authority_first_seen_sidecars`] uses. `min` is what
+    ///   keeps a forged-future `learned_at` from parking a widen past any
+    ///   reachable deadline; taking the local observation instead means a widen
+    ///   imported long ago still serves its full delay from first observation.
+    /// - marker PRESENT and the sidecar still missing, or the row present but
+    ///   undecodable under EITHER marker state — the one-shot pass can never
+    ///   regenerate it (it is gated by the marker, and it skips keys that
+    ///   already hold a row), so the entry's delay clock is unrecoverable in
+    ///   place. Refuse the fold with [`AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT`];
+    ///   the facade turns that into an invalid-state suspension of owner verbs
+    ///   rather than authorizing on a fold it cannot compute.
+    ///
+    /// Synthesizing never matures anything the migration would have held back:
+    /// the synthesized value and the maturity comparison share one `now_secs`,
+    /// so `min(learned_at, now) + delay > now` keeps a forged-future
+    /// `learned_at` pending, and a real past `learned_at` reproduces the
+    /// migration's value byte for byte.
+    fn readonly_first_seen_for(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        hash: &AuthorityEntryHash,
+        header: &EntityMetadataHeader,
+        backfilled: bool,
+        now_secs: u64,
+    ) -> Result<u64> {
+        let corrupt = || Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT);
+        match self
+            .store
+            .sync_state
+            .get(txn, authority_first_seen_sync_key(hash).as_str())?
+        {
+            Some(raw) => decode_authority_first_seen_secs(&raw).ok_or_else(corrupt),
+            None if backfilled => Err(corrupt()),
+            None => Ok(header.learned_at.min(now_secs)),
+        }
     }
 }
 

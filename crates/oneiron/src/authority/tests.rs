@@ -9973,6 +9973,302 @@ fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
     );
 }
 
+/// Rewinds a vault to the pre-migration shape a legacy rooted store has: every
+/// first-seen sidecar gone and the one-shot backfill marker unset.
+fn strip_first_seen_sidecars(vault: &crate::Vault, drop_backfill_marker: bool) {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let keys: Vec<String> = vault
+        .store
+        .sync_state
+        .iter(&rtxn)
+        .unwrap()
+        .map(|row| row.unwrap().0.into_owned())
+        .filter(|key| {
+            key.starts_with("authlog:first_seen:")
+                && key != authority_first_seen_clock_sync_key()
+                && (drop_backfill_marker || key != authority_first_seen_backfill_sync_key())
+        })
+        .collect();
+    drop(rtxn);
+    assert!(
+        !keys.is_empty(),
+        "fixture must have written sidecars to strip"
+    );
+    vault
+        .with_write_txn(|wtxn| {
+            for key in &keys {
+                assert!(vault.store.sync_state.delete(wtxn, key.as_str())?);
+            }
+            Ok(())
+        })
+        .unwrap();
+}
+
+/// A matured, SIDECAR-LESS rotation must not be left pending by the readonly
+/// fold — pending is fail-OPEN for the mixed ops.
+///
+/// The naive readonly fold simply omitted an entry with no sidecar from
+/// `first_seen_at_secs`, on the reasoning that a widen without a first-seen time
+/// stays pending and pending is conservative. It is not, for the two ops that
+/// revoke while they grant. Here a legacy rooted vault's `RotateKey` K→K2
+/// matured long ago; an attacker still holding the RETIRED K files a DAG
+/// SIBLING `BindActor(K, attacker, "human")` parented at genesis, so no
+/// topological rule kills it. Leave the rotation pending and K is still a live
+/// owner-capable roster key, so that binding folds Active and the attacker
+/// passes every owner verb — while [`Vault::authority_fold`], which backfills
+/// first, revokes K and denies them.
+///
+/// The fix reproduces the migration in the snapshot: `learned_at.min(now)`,
+/// exactly the value the backfill would persist, so the two folds agree.
+#[test]
+fn readonly_fold_synthesizes_missing_sidecars_and_applies_matured_rotation() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(219);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(219, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+
+    let rotated = ed_key(220);
+    let rotate = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![genesis_hash],
+            AuthorityOp::RotateKey {
+                old_key: owner_key.clone(),
+                new_device: device(
+                    authority_key_from_ed(&rotated),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            owner_key.clone(),
+            2,
+        ),
+        &owner,
+    );
+    let rotate_hash = authority_entry_hash(&rotate).unwrap();
+    let attacker = scope_entity(0x62);
+    // Sibling, not descendant: parented at GENESIS, so it does not sit behind
+    // the rotation in the DAG and only the rotation's own maturity can kill it.
+    let squat = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![genesis_hash],
+            bind_op(&owner_key, attacker, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+    );
+
+    // `learned_at` values sit far in the past, which is what a legacy vault's
+    // stored rows look like — the rotation's delay elapsed long ago.
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (rotate, TimeRange { start: 2, end: 2 }, 2),
+            (squat, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+    strip_first_seen_sidecars(&vault, true);
+
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !readonly.pending_widens.contains_key(&rotate_hash),
+        "a rotation whose synthesized first-seen time is `learned_at` (long past) must be MATURE"
+    );
+    assert!(
+        !actor_binding_is_active(&readonly, &attacker, "human"),
+        "leaving the sidecar-less rotation pending keeps the RETIRED key live and hands \
+         the attacker's sibling binding owner authority"
+    );
+
+    // The full fold is the reference: it backfills with the same rule, so the
+    // readonly snapshot must be byte-identical to it — and stay identical after
+    // the backfill has actually landed on disk.
+    let full = vault.authority_fold().unwrap();
+    assert_eq!(
+        readonly, full,
+        "the synthesized snapshot must equal what the migration would produce"
+    );
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let after_backfill = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert_eq!(
+        after_backfill, full,
+        "reading the persisted sidecars must not change the verdict"
+    );
+}
+
+/// Synthesis must not MATURE anything: a forged-future `learned_at` stays
+/// pending, because the synthesized value and the maturity test share one clock.
+///
+/// This is the other half of the rule. `min(learned_at, now)` is not cosmetic —
+/// without the `min`, a row claiming `learned_at` far in the future would be
+/// parked past every reachable deadline; with it, the worst an attacker can do
+/// is have the widen treated as first seen RIGHT NOW, which is the maximum
+/// delay, not the minimum.
+#[test]
+fn readonly_fold_synthesis_never_matures_a_future_dated_widen() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(221);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(221, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let enrolled = ed_key(222);
+    let enroll = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![genesis_hash],
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    authority_key_from_ed(&enrolled),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            owner_key,
+            2,
+        ),
+        &owner,
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let far_future = crate::unix_seconds_now() + 3650 * 24 * 60 * 60;
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (
+                enroll,
+                TimeRange {
+                    start: 2,
+                    end: far_future,
+                },
+                far_future,
+            ),
+        ])
+        .unwrap();
+    strip_first_seen_sidecars(&vault, true);
+
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    let pending = readonly
+        .pending_widens
+        .get(&enroll_hash)
+        .expect("a future-dated enrollment must still be inside its delay");
+    assert_eq!(
+        pending.first_seen_at_secs,
+        Some(readonly_observation_secs(&vault)),
+        "the synthesized time must clamp to the local observation, never the forged future"
+    );
+    assert_eq!(readonly, vault.authority_fold().unwrap());
+}
+
+/// The observation seconds a readonly fold would derive right now, without
+/// disturbing the persisted floor.
+fn readonly_observation_secs(vault: &crate::Vault) -> u64 {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let floor = vault
+        .store
+        .sync_state
+        .get(&rtxn, authority_first_seen_clock_sync_key())
+        .unwrap()
+        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        .unwrap_or(0);
+    drop(rtxn);
+    authority_observation_secs_for_domain(
+        vault.store.authority_clock_domain,
+        floor,
+        crate::unix_seconds_now(),
+    )
+}
+
+/// A sidecar missing AFTER the one-shot migration ran is unrecoverable, so the
+/// readonly fold must refuse rather than pick a side.
+///
+/// Synthesis is only sound while the backfill has not run: it reproduces what
+/// the migration WOULD write. Once the marker is set the migration will never
+/// visit that row again, so a re-synthesized `learned_at.min(now)` would silently
+/// disagree with every sidecar its peers kept — and both available guesses are
+/// unsafe (mature early = skipped veto window; stay pending = live retired key).
+/// An undecodable row is the same state and takes the same door.
+#[test]
+fn readonly_fold_rejects_sidecar_lost_after_backfill() {
+    for corrupt_in_place in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        let owner = ed_key(223);
+        let owner_key = authority_key_from_ed(&owner);
+        let genesis = genesis_entry(223, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+        let genesis_hash = authority_entry_hash(&genesis).unwrap();
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let actor = scope_entity(0x63);
+        let bind = sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                1,
+                vec![genesis_hash],
+                bind_op(&owner_key, actor, "human", 1),
+                owner_key,
+                2,
+            ),
+            &owner,
+        );
+        let bind_hash = authority_entry_hash(&bind).unwrap();
+        vault
+            .put_authority_log_entries(&[
+                (genesis, TimeRange { start: 1, end: 1 }, 1),
+                (bind, TimeRange { start: 2, end: 2 }, 2),
+            ])
+            .unwrap();
+        // Settle: this is what sets the one-shot marker.
+        vault.authority_fold().unwrap();
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, authority_first_seen_backfill_sync_key())
+                .unwrap()
+                .is_some(),
+            "the full fold must have set the one-shot marker"
+        );
+        drop(rtxn);
+
+        let sidecar = authority_first_seen_sync_key(&bind_hash);
+        vault
+            .with_write_txn(|wtxn| {
+                if corrupt_in_place {
+                    // Present but undecodable: not 8 bytes.
+                    vault.store.sync_state.put(wtxn, sidecar.as_str(), &[9])?;
+                } else {
+                    assert!(vault.store.sync_state.delete(wtxn, sidecar.as_str())?);
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        let err = vault
+            .authority_fold_readonly_in_txn(&rtxn)
+            .expect_err("a post-migration sidecar gap must refuse the fold");
+        drop(rtxn);
+        assert!(
+            is_corrupt_first_seen_sidecar(&err),
+            "corrupt_in_place={corrupt_in_place}: {err}"
+        );
+    }
+}
+
 fn sync_state_snapshot(vault: &crate::Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
     let rtxn = vault.store.env.read_txn().unwrap();
     let rows = vault

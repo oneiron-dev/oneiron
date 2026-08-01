@@ -1044,12 +1044,33 @@ fn verify_actor_binding_in_txn(
 /// hand full owner rights to exactly the vault whose authority root is under
 /// attack. Multi-root therefore fails CLOSED and unrooted keeps the spec'd
 /// pass-through.
+///
+/// An UNCOMPUTABLE fold is a third state, and it is the one this gate must not
+/// paper over. When an AUTHORITY_LOG row has lost its first-seen sidecar after
+/// the one-shot migration ran, the readonly fold cannot decide whether a
+/// delayable widen elapsed — and a `RotateKey` or `RecoveryReboot` left
+/// un-applied keeps the key it RETIRES live and owner-bound. So the fold
+/// refuses instead of guessing, and the refusal surfaces here as INVALID_STATE
+/// (the vault's authority is broken, not the caller's request), suspending
+/// every owner verb until the log is re-folded through the write path.
 fn verify_owner_actor_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> FacadeResult<()> {
-    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    let fold = vault.authority_fold_readonly_in_txn(txn).map_err(|err| {
+        if crate::authority::is_corrupt_first_seen_sidecar(&err) {
+            return FacadeError::new(
+                FACADE_CODE_INVALID_STATE,
+                format!("{err}; owner verbs are suspended"),
+                &[
+                    "Restore this vault's sync_state from backup, or re-import the authority log into a fresh vault so first-seen times are observed again.",
+                    "A widen whose local first-seen time is lost cannot be judged elapsed or pending; no binding authorizes until it can.",
+                ],
+            );
+        }
+        FacadeError::from(err)
+    })?;
     if fold.vault_root_is_conflicted() {
         return Err(FacadeError::new(
             FACADE_CODE_INVALID_STATE,

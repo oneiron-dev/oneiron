@@ -3717,3 +3717,218 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
         assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
     }
 }
+
+/// fix-3: a MATURE, sidecar-less rotation must revoke the retired key through
+/// the FACADE gate, not just through the full fold.
+///
+/// The owner gate reads `authority_fold_readonly_in_txn`, which used to omit
+/// entries with no first-seen sidecar — leaving a delayable widen pending
+/// forever. For `RotateKey` that is fail-OPEN: pending means the RETIRED key is
+/// still a live owner-capable roster key. On a legacy rooted vault whose
+/// matured rotation lost its sidecar, an attacker holding the retired key files
+/// a DAG SIBLING `BindActor(retired_key, attacker, "human")` parented at
+/// genesis, and the gate hands them every owner verb — while
+/// [`crate::Vault::authority_fold`] backfills, applies the rotation, and denies
+/// them. The gate must not be weaker than the fold it is derived from.
+#[test]
+fn matured_sidecarless_rotation_denies_owner_verbs_through_the_facade() {
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    let (_dir, vault) = open_vault();
+    let attacker = put_person(&vault, 0x76);
+    let subject = put_person(&vault, 0x77);
+    let facade = facade_for(&vault, attacker);
+
+    let (genesis, signing) = authority_root(0x78);
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
+    let retired = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let successor = ed25519_dalek::SigningKey::from_bytes(&[0x79; 32]);
+    let owner_entry = |seq: u64, op: AuthorityOp, ts: u64| {
+        sign_authority(
+            AuthorityLogEntry {
+                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(vault_id),
+                seq,
+                // Every child parents at GENESIS: the squatting bind is a
+                // sibling of the rotation, so no topological rule kills it and
+                // only the rotation's MATURITY can.
+                parent_hashes: vec![genesis_hash],
+                op,
+                signer: AuthoritySignature {
+                    suite: retired.suite(),
+                    public_key: retired.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts,
+            },
+            &signing,
+        )
+    };
+    let rotate = owner_entry(
+        1,
+        AuthorityOp::RotateKey {
+            old_key: retired.clone(),
+            new_device: crate::authority::DeviceAuthority {
+                key: AuthorityKey::Ed25519(successor.verifying_key().to_bytes()),
+                transport_key_binding: [7; 32],
+                attestation: crate::authority::AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: crate::authority::AuthorityTier::Software,
+                roles: crate::authority::ROLE_OWNER | crate::authority::ROLE_ADMIN,
+            },
+        },
+        101,
+    );
+    let squat = owner_entry(
+        2,
+        AuthorityOp::BindActor {
+            authority_key: retired.clone(),
+            actor_ref: attacker,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        102,
+    );
+    vault
+        .put_authority_log_entries(&[
+            (genesis, test_time(1), 1),
+            (rotate, test_time(2), 2),
+            (squat, test_time(3), 3),
+        ])
+        .expect("legacy log rows are individually valid");
+
+    // Rewind to the legacy shape: no sidecars, migration marker unset. Long-past
+    // `learned_at` values mean the rotation's delay elapsed ages ago.
+    strip_authority_first_seen_state(&vault);
+
+    for err in [
+        facade
+            .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+            .expect_err("retired key must not delete"),
+        facade
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: "PERSON".to_owned(),
+                body: serde_json::json!({"name": "forged"}),
+                text_fields: None,
+                edges: None,
+                occurred_at: 704,
+                learned_at: None,
+            })
+            .expect_err("retired key must not mint a PERSON"),
+        {
+            let agent = put_person(&vault, 0x7A);
+            let claim = vault
+                .memory_facade(agent, EdgeActorClass::Agent)
+                .claim_upsert(&claim_input(
+                    "profile.mood",
+                    &subject,
+                    "observed",
+                    serde_json::json!("calm"),
+                ))
+                .expect("agent claim");
+            facade
+                .claim_retract(&claim.claim_short_id)
+                .expect_err("retired key must not retract another actor's claim")
+        },
+    ] {
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{}", err.message);
+        assert!(
+            err.message.contains("no active owner binding"),
+            "{}",
+            err.message
+        );
+    }
+
+    // The full fold is the reference verdict, and the gate now matches it.
+    let full = vault.authority_fold().expect("fold");
+    assert!(
+        !crate::authority::actor_binding_is_active(&full, &attacker, "human"),
+        "the applied rotation must leave no ACTIVE binding on the retired key"
+    );
+    assert!(
+        full.pending_widens.is_empty(),
+        "the rotation's delay elapsed long before this fold ran"
+    );
+}
+
+/// fix-3: a sidecar lost AFTER the one-shot migration is unrecoverable, so the
+/// owner gate suspends rather than authorizing on a fold it cannot compute.
+///
+/// Distinct from the legacy case above: there the migration had not run and the
+/// value is reproducible. Once the marker is set the migration will never revisit
+/// that row, and both remaining guesses are unsafe — so this is INVALID_STATE
+/// (the vault's authority is broken), never a silent pass.
+#[test]
+fn owner_verbs_suspend_when_a_first_seen_sidecar_is_lost_after_migration() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x7B);
+    let subject = put_person(&vault, 0x7C);
+    let facade = facade_for(&vault, owner);
+    root_vault_binding(&vault, 0x7D, owner, "human");
+
+    // Settle: the full fold is what sets the one-shot marker.
+    vault.authority_fold().expect("fold");
+    facade
+        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the bound owner works before the sidecar is lost");
+
+    let sidecars = authority_first_seen_sidecar_keys(&vault);
+    assert!(!sidecars.is_empty(), "the migration must have written rows");
+    vault
+        .with_write_txn(|wtxn| {
+            for key in &sidecars {
+                assert!(vault.store.sync_state.delete(wtxn, key.as_str())?);
+            }
+            Ok(())
+        })
+        .expect("drop the sidecars");
+
+    let victim = put_person(&vault, 0x7E);
+    let err = facade
+        .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
+        .expect_err("an uncomputable fold must suspend owner verbs");
+    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert!(
+        err.message.contains("owner verbs are suspended"),
+        "{}",
+        err.message
+    );
+}
+
+/// Every per-entry first-seen sidecar key currently stored.
+fn authority_first_seen_sidecar_keys(vault: &crate::Vault) -> Vec<String> {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let keys = vault
+        .store
+        .sync_state
+        .iter(&rtxn)
+        .expect("iter sync_state")
+        .map(|row| row.expect("sync_state row").0.into_owned())
+        .filter(|key| {
+            key.starts_with("authlog:first_seen:")
+                && key != crate::authority::authority_first_seen_clock_sync_key()
+                && key != crate::authority::authority_first_seen_backfill_sync_key()
+        })
+        .collect();
+    drop(rtxn);
+    keys
+}
+
+/// Rewinds a vault to the pre-migration shape: sidecars gone, marker unset.
+fn strip_authority_first_seen_state(vault: &crate::Vault) {
+    let mut keys = authority_first_seen_sidecar_keys(vault);
+    assert!(!keys.is_empty(), "fixture must have written sidecars");
+    keys.push(crate::authority::authority_first_seen_backfill_sync_key().to_owned());
+    vault
+        .with_write_txn(|wtxn| {
+            for key in &keys {
+                vault.store.sync_state.delete(wtxn, key.as_str())?;
+            }
+            Ok(())
+        })
+        .expect("strip first-seen state");
+}
