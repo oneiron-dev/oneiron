@@ -1744,6 +1744,11 @@ pub(crate) fn apply_ops_with_gate_mode(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
+    // ONE-1604-D1 (fix-leg 4): shell-edge sources orphaned by a dominance
+    // eviction. Their inducing type-76 rows are gone, so the full
+    // reconciler's surviving-events derivation can no longer reach them —
+    // they are reconciled explicitly at the end of the batch.
+    let mut evicted_shell_sources = BTreeSet::new();
     let mut text_manifest_checked = false;
     let later_text_coverage_by_op = text_coverage_after_op(&ops);
     let write_policy = if contains_local_claim_put(&ops) && !claim_gate_prechecked {
@@ -1837,6 +1842,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     claim_gate_prechecked,
                     Some(&companion_retired_histories),
                 )?;
+                evicted_shell_sources.extend(applied.evicted_shell_sources);
                 #[cfg(feature = "sync")]
                 let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
                     crate::embed::EMBED_PRIORITY_SERVER
@@ -2127,6 +2133,21 @@ pub(crate) fn apply_ops_with_gate_mode(
         text_index_trusted,
         wtxn,
         &materialized_entity_ids,
+    )?;
+    // ONE-1604-D1 (fix-leg 4): the dominance eviction removed a type-76 event
+    // ROW, and the reconciler above only ever revisits sources named by
+    // SURVIVING events — so the shell edges the removed event installed on
+    // live participants are unreachable from there. Recompute those
+    // participants against the remaining fold, unwinding the evicted event's
+    // effects. Ordered after the materialization pass so both see the same
+    // final ledger, and it is a no-op on every batch without an eviction.
+    crate::identity_topology::reconcile_shell_edges_for_sources_in_txn(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &evicted_shell_sources,
     )?;
 
     #[cfg(feature = "sync")]
@@ -2686,6 +2707,9 @@ struct AppliedPut {
     cleared_pending_embedding: bool,
     had_vector_mutation: bool,
     is_lexical_query_hint_claim: bool,
+    /// Shell-edge sources an ONE-1604-D1 dominance eviction orphaned, for the
+    /// caller's explicit-source reconciliation. Empty on every other path.
+    evicted_shell_sources: BTreeSet<EntityId>,
 }
 
 #[expect(
@@ -2950,9 +2974,11 @@ fn apply_put(
     // between here and the write is LOCAL-class (storage/overflow), which
     // aborts the whole batch instead of committing — so it cannot strand this
     // mutation either.
-    if authority_dominates_key_squatter {
-        evict_authority_log_store_key_squatter(store, wtxn, &id)?;
-    }
+    let evicted_shell_sources = if authority_dominates_key_squatter {
+        evict_authority_log_store_key_squatter(store, wtxn, &id)?
+    } else {
+        BTreeSet::new()
+    };
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin
@@ -3235,6 +3261,7 @@ fn apply_put(
         cleared_pending_embedding,
         had_vector_mutation,
         is_lexical_query_hint_claim,
+        evicted_shell_sources,
     })
 }
 
@@ -3335,27 +3362,49 @@ fn check_authority_log_store_key(
 /// AUTHORITY_LOG, SKILL_CONTENT_ANCHOR, IDENTITY_TOPOLOGY_EVENT), because:
 /// (a) the key is a pure function of FULLY VALIDATED authority bytes, so any
 /// non-122 occupant sits at an address its own kind could never derive and is
-/// adversarial by construction; (b) a protected kind's protective invariants
-/// reference the row's OWN id — an ARCH-0055 type-76 event's shell edges name
-/// the real event id, not a foreign content-derived key — so eviction here
-/// orphans no legitimate structure, and for a COPIED type-76 row it is
-/// curative (the ledger fold would otherwise see one event twice); (c) an
+/// adversarial by construction; (b) the eviction UNWINDS the squatter's
+/// induced shell effects rather than orphaning them — a type-76 squatter that
+/// arrived by replicated ingest was enumerated by the ARCH-0055 reconciler
+/// like any ledger event, so it may have installed real `merged_into` /
+/// `split_into` edges on live participants, and those participants are
+/// reconciled against the SURVIVING fold below; for a copied row this is
+/// curative (the fold would otherwise see one event twice); (c) an
 /// exemption would hand attackers a protected band to squat from, letting a
 /// planted row suppress a pending `RevokeDevice` — exactly the ONE-1604-D1
 /// attack this dominance exists to close. Pinned by
 /// `authority_log_put_evicts_delete_protected_squatter`; narrowing the
 /// eviction to spare protected kinds is a design decision, not an edit.
 ///
+/// Returns the shell-edge sources the evicted row induced (empty unless the
+/// occupant was a type-76 event). The caller MUST reconcile them once the row
+/// is gone: `deindex_entity` drops only edges incident to the EVENT id, while
+/// the reconciler installed the redirect edges on the merge/split
+/// PARTICIPANTS, and the removed event stops being enumerable — so the full
+/// reconciler, whose touched set derives from surviving events, can never
+/// reach them. Left unreconciled they are shell edges with no ledger writer:
+/// the ARCH-0055 wedge (participant undo → [`Error::EntityNotFound`]) reached
+/// through authority dominance, which is the state type-76 delete protection
+/// exists to prevent. See
+/// [`identity_topology::reconcile_shell_edges_for_sources_in_txn`].
+///
 /// [`registry::is_delete_protected_engine_record`]: crate::registry::is_delete_protected_engine_record
+/// [`identity_topology::reconcile_shell_edges_for_sources_in_txn`]: crate::identity_topology::reconcile_shell_edges_for_sources_in_txn
 fn evict_authority_log_store_key_squatter(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-) -> Result<()> {
+) -> Result<BTreeSet<EntityId>> {
     tracing::warn!(
         entity = %id.to_hex(),
         "authority log admission displaced a non-authority row squatting its content-derived store key"
     );
+    // Captured BEFORE the deindex: afterwards the action bytes are gone and
+    // the induced sources are unrecoverable.
+    let induced_shell_sources =
+        crate::identity_topology::identity_topology_shell_sources_for_store_in_txn(
+            store, wtxn, id,
+        )?
+        .unwrap_or_default();
     let (_existed, had_vector, had_graph_mutation, neighbors) = deindex_entity(store, wtxn, id)?;
     ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
     if had_graph_mutation {
@@ -3364,7 +3413,7 @@ fn evict_authority_log_store_key_squatter(
     if had_vector {
         crate::hnsw::increment_vector_version(store, wtxn)?;
     }
-    Ok(())
+    Ok(induced_shell_sources)
 }
 
 pub(crate) fn validate_replicated_authority_log_for_local_vault(

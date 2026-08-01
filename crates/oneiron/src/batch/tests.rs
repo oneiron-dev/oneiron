@@ -2989,10 +2989,12 @@ fn put_identity_topology_event_for_test(
 /// that kind — but a type-76 row squatting a validated type-122 row's
 /// CONTENT-DERIVED store key is evicted anyway. It has to be: the key is a
 /// pure function of fully-validated authority bytes, so a type-76 body can
-/// never legitimately hash there; ARCH-0055 shell edges name the real
-/// event's OWN id, so nothing legitimate is orphaned; and exempting the
-/// protected band would hand an attacker a squat that suppresses a pending
-/// RevokeDevice — the D1 attack dominance exists to close.
+/// never legitimately hash there; the eviction UNWINDS the squatter's induced
+/// shell effects via explicit-source reconciliation (fix-leg 4, pinned by
+/// `authority_dominance_unwinds_evicted_type_76_participant_shell_edges`), so
+/// for a copied row it is curative; and exempting the protected band would
+/// hand a squatter a protected band to suppress a pending RevokeDevice from —
+/// the D1 attack dominance exists to close.
 ///
 /// If someone later narrows the eviction to spare delete-protected kinds,
 /// THIS TEST MUST FAIL. That is its job: the precedence is a ratified design
@@ -3079,6 +3081,136 @@ fn authority_log_put_evicts_delete_protected_squatter() -> Result<()> {
         .expect_err("type-76 rows must stay delete-protected at their own ids");
     assert_eq!(err.kind(), ErrorKind::MaintenanceKindNotWritable);
     assert!(vault.entity_exists(&protected)?);
+    Ok(())
+}
+
+/// ONE-1604-D1 (fix-leg 4): evicting a type-76 squatter must UNWIND the shell
+/// edges the reconciler installed FROM it.
+///
+/// The pin above argued eviction "orphans no legitimate structure" because a
+/// type-76 event's shell edges name its own id. That is false in the one case
+/// that matters. A squatter arriving through the replicated-ingest door is
+/// enumerated by `reconcile_identity_topology_edges_in_txn` like any ledger
+/// event, so by eviction time it has installed REAL `merged_into` edges on
+/// live PARTICIPANT entities — ids the squatter merely names. `deindex_entity`
+/// removes only edges incident to the EVENT id, and once the event row is
+/// gone it is no longer enumerable, so the full reconciler (touched set
+/// derived from SURVIVING events) can never repair those participant edges.
+///
+/// Left standing they are shell edges with no ledger writer: the ARCH-0055
+/// wedge — participant undo hits `EntityNotFound`, the loser stays
+/// permanently redirected — reached through authority dominance, i.e. exactly
+/// the state type-76 delete protection exists to prevent.
+///
+/// MUTATION PROBE: drop the explicit-source reconciliation at the end of
+/// `apply_ops` and this test fails on the surviving `loser -> survivor` edge.
+#[cfg(feature = "sync")]
+#[test]
+fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let genesis = authority_genesis_fixture(104);
+    let derived = crate::authority::authority_log_entity_id(&genesis)?;
+
+    // Structural participants must be MATERIALIZED, else the reconciler
+    // defers and no shell edge is ever installed (the bug needs a real one).
+    let survivor = EntityId::from_bytes([0xE1; 16])?;
+    let loser = EntityId::from_bytes([0xE2; 16])?;
+    for (id, body) in [(&survivor, b"survivor"), (&loser, b"loser___")] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(1, 1),
+            1,
+            body.as_slice(),
+        )?;
+    }
+
+    // Plant the squatter through the REPLICATED INGEST door, so the full
+    // shell reconciliation runs exactly as it does for an honest peer record.
+    let squatter_record = crate::identity_topology::StoredIdentityOpEvent {
+        seq: 50,
+        at: 1,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: crate::identity_topology::StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        },
+    };
+    let body = crate::identity_topology::encode_identity_topology_event_body(&squatter_record)?;
+    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+    blob.push(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT);
+    blob.extend_from_slice(&1u64.to_be_bytes());
+    blob.extend_from_slice(&1u64.to_be_bytes());
+    blob.extend_from_slice(&1u64.to_be_bytes());
+    blob.extend_from_slice(&body);
+    let header = EntityMetadataHeader::parse(&blob).expect("blob header");
+    vault.with_write_txn(|wtxn| {
+        crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn(
+            &vault, wtxn, &derived, &header, &blob, &body, 7,
+        )
+        .map(|_| ())
+    })?;
+
+    // PRECONDITION: the induced participant edge genuinely EXISTS. Without
+    // it the test proves nothing about unwinding.
+    assert!(
+        vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?,
+        "fixture precondition: the squatter must induce a real shell edge on the participants"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        crate::identity_topology::EntityLifecycleState::Merged
+    );
+
+    // Admit the authority row; dominance evicts the squatter.
+    let id = vault.put_authority_log_entry(&genesis, test_time_range(2, 2), 2)?;
+    assert_eq!(id, derived);
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(genesis));
+
+    // The event's own edges were never the problem — these are the
+    // PARTICIPANT edges the event induced on ids it merely named.
+    assert!(
+        !vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?,
+        "the evicted event's induced shell edge must be unwound, not left dangling"
+    );
+    assert!(
+        vault.edges_out(&loser)?.is_empty() && vault.edges_in(&survivor)?.is_empty(),
+        "no half of the shell pair may survive its ledger justification"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        crate::identity_topology::EntityLifecycleState::Active,
+        "with its event gone the loser must fold back to Active"
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&survivor)?,
+        crate::identity_topology::EntityLifecycleState::Active
+    );
+
+    // The ARCH-0055 wedge itself: with the edge gone, the participants are
+    // ordinary Active entities again — a fresh merge applies instead of
+    // rejecting `NotActive`, and its undo resolves instead of wedging.
+    let write = crate::identity_topology::IdentityOpWrite::auto(ClaimSource::UserStated);
+    let op =
+        crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
+            sources: vec![loser],
+            survivor,
+            evidence: crate::identity_topology::IdentityOpEvidence::default(),
+            survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+        });
+    let event = match vault.apply_identity_topology_op(&op, &write, 3)? {
+        crate::identity_topology::IdentityOpOutcome::Applied { event, .. } => event,
+        other => panic!("a post-eviction merge must apply, got {other:?}"),
+    };
+    assert!(vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
+    vault
+        .undo_identity_topology_event(&event, &write, 4)
+        .expect("undo must resolve, not hit EntityNotFound on an orphaned shell");
+    assert!(!vault.edge_exists(&loser, EdgeKind::MergedInto, &survivor)?);
     Ok(())
 }
 
