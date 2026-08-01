@@ -2032,6 +2032,24 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     // classified and restored before that different key grammar is touched.
     scrub_off_record_fenced_carriers(vault, window_key, doc)?;
 
+    // PHASE 1 — entity carriers only: mirror missing rows, replace dominated
+    // carriers, and sweep the CRDT edges incident to a carrier this pass
+    // evicts.
+    //
+    // The `edges_out` backfill is deliberately NOT interleaved here; it runs
+    // as phase 2 below. Both passes walk `entities_in_range` in `learned_at`
+    // order, and an eviction sweep removes EVERY CRDT edge incident to the
+    // evicted id — it cannot tell the dominated carrier's residue apart from
+    // a locally-backed inbound edge. Interleaved, a legitimate local source
+    // `S` ordered BEFORE an attacker-parked authority id `A` would backfill
+    // its valid `S→A` edge, then `A`'s dominance sweep would delete it and
+    // only `edges_out(A)` would be replayed — so the locally-backed inbound
+    // edge stayed deleted, and the committed CRDT update propagated that
+    // attacker-triggered deletion to every peer. Running every sweep before
+    // any backfill makes each locally-backed edge (re)written after the last
+    // sweep that could remove it; only residue with no local backing stays
+    // deleted.
+    let mut backfill_sources = Vec::with_capacity(entities_in_range.len());
     for id in &entities_in_range {
         let hex_id = id.to_hex();
 
@@ -2124,6 +2142,14 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             }
         }
 
+        backfill_sources.push(*id);
+    }
+
+    // PHASE 2 — edge backfill for every source that cleared phase 1's gates
+    // (fence, tombstone, unsyncable-companion, missing local row). Ordered
+    // after ALL dominance sweeps, so an edge with local backing is always
+    // re-inserted, whatever the `learned_at` order of its endpoints.
+    for id in &backfill_sources {
         let edges_out = vault.edges_out(id)?;
         let fenced_targets =
             off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;

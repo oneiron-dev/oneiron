@@ -2836,6 +2836,109 @@ fn reverse_rematerialization_evicts_dominated_squatter_incident_edges() -> Resul
     Ok(())
 }
 
+/// ONE-1604-D1 (fix-leg 5, P2 — phase ordering): the dominance sweep deletes
+/// EVERY CRDT edge incident to the evicted id, and cannot tell the dominated
+/// carrier's residue apart from a LOCALLY BACKED inbound edge. While the
+/// sweep and the `edges_out` backfill were interleaved in one `learned_at`
+/// walk, a legitimate local source ordered BEFORE the attacker-parked
+/// authority id had its valid `S→A` edge swept after its own backfill, and
+/// only `edges_out(A)` replayed afterwards — so the locally backed edge
+/// stayed deleted and the committed update propagated that
+/// attacker-triggered deletion to every peer.
+///
+/// The fixture pins exactly that order: `source` learns 60 s before the
+/// authority row, holds a real LMDB `source→authority` edge, and its CRDT
+/// carrier already exists (the shape a peer would lose). Unbacked squatter
+/// residue in both directions must still be swept.
+#[cfg(feature = "sync")]
+#[test]
+fn reverse_rematerialization_keeps_locally_backed_edges_into_a_dominated_key() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let source_learned_at = window_key.start_timestamp().unwrap() + 60;
+    let authority_learned_at = source_learned_at + 60;
+    let genesis = authority_genesis_fixture_for_window(0x6C);
+    let id = crate::authority::authority_log_entity_id(&genesis)?;
+    let source = EntityId::from_bytes([0xC4; 16])?;
+    let residue_peer = EntityId::from_bytes([0xC5; 16])?;
+
+    // The legitimate local source is learned FIRST, so `entities_in_range`
+    // hands it to the walk before the authority id.
+    vault.put_entity(
+        &source,
+        crate::registry::ENTITY_TYPE_EVENT,
+        TimeRange {
+            start: source_learned_at,
+            end: source_learned_at,
+        },
+        source_learned_at,
+        b"legitimate local source",
+    )?;
+    vault.put_authority_log_entry(
+        &genesis,
+        TimeRange {
+            start: authority_learned_at,
+            end: authority_learned_at,
+        },
+        authority_learned_at,
+    )?;
+    let local = vault.get_raw(&id)?.expect("authority row stored");
+    vault.put_edge(&source, EdgeKind::Mentions, &id, 0.5)?;
+    let backed = vault
+        .edges_out(&source)?
+        .into_iter()
+        .find(|edge| edge.target == id)
+        .expect("local source→authority edge stored");
+    let backed_value = encode_edge_value_for_crdt(
+        backed.kind,
+        backed.weight,
+        backed.created_at,
+        backed.vad,
+        backed.provenance,
+    )?;
+
+    let doc = create_window_doc("squatted-window", &window_key);
+    let squatter = make_entity_blob(
+        crate::registry::ENTITY_TYPE_EVENT,
+        authority_learned_at,
+        b"squatter",
+    );
+    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &squatter)?;
+    let backed_key = format_edge_key(&source, EdgeKind::Mentions, &id);
+    let residue_in = format_edge_key(&residue_peer, EdgeKind::Mentions, &id);
+    let residue_out = format_edge_key(&id, EdgeKind::Mentions, &residue_peer);
+    let residue_value = encode_edge_value_for_crdt(EdgeKind::Mentions, 0.7, 1, None, None)?;
+    map_insert_bytes(&doc.get_map("edges"), &backed_key, &backed_value)?;
+    for key in [&residue_in, &residue_out] {
+        map_insert_bytes(&doc.get_map("edges"), key, &residue_value)?;
+    }
+    doc.commit();
+
+    reverse_rematerialize(&vault, &doc, &window_key)?;
+
+    let edges = doc.get_map("edges");
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
+        Some(local),
+        "the validated authority row must still replace the dominated carrier"
+    );
+    assert_eq!(
+        map_get_bytes(&edges, &backed_key),
+        Some(backed_value),
+        "an LMDB-backed inbound edge must survive the dominance sweep — a \
+         squatter must never trigger deletion of replicated local graph state"
+    );
+    assert!(
+        map_get_bytes(&edges, &residue_in).is_none(),
+        "unbacked inbound squatter residue must still be swept"
+    );
+    assert!(
+        map_get_bytes(&edges, &residue_out).is_none(),
+        "unbacked outbound squatter residue must still be swept"
+    );
+    Ok(())
+}
+
 /// ONE-1604-D1 (fix-leg 4, negative half): the edge sweep is scoped to the
 /// DOMINANCE verdict, never to mere presence at an authority key. A carrier
 /// every peer's replay door would admit keeps presence-only semantics, and
