@@ -47,6 +47,12 @@ utoipa = "5.5.0"
 [dev-dependencies]
 tempfile = "3"
 tower = "0.5"
+# `start_paused` for the drain's tick row: that row must not poll the send
+# itself (a re-poll is a free re-consult a park-only drain would ride to a
+# pass), so it waits out the guard's own interval instead. Virtual time makes
+# that wait cost no wall clock and no flakiness. Test-only: dev-dependency
+# features are not unified into the normal build.
+tokio = { version = "1", features = ["full", "test-util"] }
 # The WebSocket codec PRODUCTION runs, under a name that says so.
 #
 # The real-codec revocation rows in `src/handler/tests.rs` assert byte

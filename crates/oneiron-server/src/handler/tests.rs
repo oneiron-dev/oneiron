@@ -3034,36 +3034,71 @@ async fn real_codec_withholds_a_parked_frame_when_the_peer_resumes_after_revocat
     );
 }
 
-/// The `dependencies` list of one `[[package]]` block, by name.
-fn deps_of<'a>(lock: &'a str, package: &str) -> Vec<&'a str> {
-    lock.split("[[package]]")
-        .find(|block| block.contains(&format!("name = \"{package}\"\n")))
-        .unwrap_or_else(|| panic!("{package} must be present in the lockfile"))
-        .lines()
-        .skip_while(|line| !line.starts_with("dependencies = ["))
-        .skip(1)
-        .take_while(|line| !line.starts_with(']'))
-        .map(|line| line.trim().trim_matches([' ', '"', ',']))
-        .collect()
-}
-
-/// The version of the `tokio-tungstenite` a package depends on.
+/// The package id a package's named dependency EDGE resolves to.
 ///
-/// With two versions in the graph, cargo disambiguates the lockfile entry
-/// as `"tokio-tungstenite <version>"` — so the entry itself names the
-/// resolution, and a single-version graph (no suffix) is unambiguous too.
-fn ws_codec_version(lock: &str, package: &str) -> String {
-    let entry = deps_of(lock, package)
-        .into_iter()
-        .find(|dep| dep.starts_with("tokio-tungstenite"))
-        .unwrap_or_else(|| panic!("{package} must depend on tokio-tungstenite"));
-    entry
-        .strip_prefix("tokio-tungstenite")
-        .expect("checked above")
-        .trim()
+/// `resolve.nodes[].deps[].name` is the extern-crate name the dependent's code
+/// writes, so a renamed dependency is found under `production_ws_codec` while
+/// `deps[].pkg` names the package cargo actually bound there. Following the
+/// edge is the whole point: a package NAME is ambiguous the moment two
+/// versions of it are in the graph, and an edge never is.
+fn resolved_dep(metadata: &serde_json::Value, package_id: &str, dep_name: &str) -> String {
+    let node = metadata["resolve"]["nodes"]
+        .as_array()
+        .expect("cargo metadata must carry a resolve graph")
+        .iter()
+        .find(|node| node["id"] == package_id)
+        .unwrap_or_else(|| panic!("{package_id} must have a resolve node"));
+    node["deps"]
+        .as_array()
+        .expect("a resolve node must list its deps")
+        .iter()
+        .find(|dep| dep["name"] == dep_name)
+        .unwrap_or_else(|| panic!("{package_id} must depend on {dep_name}"))["pkg"]
+        .as_str()
+        .expect("a resolved dep must name a package")
         .to_owned()
 }
-/// The real-codec rows must run the SAME codec version production runs.
+
+/// The two codec packages the alignment invariant compares, by resolved id.
+///
+/// `.0` is the codec PRODUCTION builds — reached by walking `oneiron-server`'s
+/// `axum` edge and then that axum's own `tokio_tungstenite` edge. `.1` is what
+/// the aliased dev-dependency the real-codec rows drive resolved to. Ids
+/// rather than versions because an id names one package unambiguously.
+fn codec_packages(metadata: &serde_json::Value) -> (String, String) {
+    let server = metadata["packages"]
+        .as_array()
+        .expect("cargo metadata must list packages")
+        .iter()
+        .find(|package| package["name"] == "oneiron-server")
+        .expect("oneiron-server must be in the graph")["id"]
+        .as_str()
+        .expect("a package must have an id")
+        .to_owned();
+    let axum = resolved_dep(metadata, &server, "axum");
+    (
+        resolved_dep(metadata, &axum, "tokio_tungstenite"),
+        resolved_dep(metadata, &server, "production_ws_codec"),
+    )
+}
+
+/// The workspace's own resolution, as cargo computed it.
+fn workspace_metadata() -> serde_json::Value {
+    let output = std::process::Command::new(env!("CARGO"))
+        .args(["metadata", "--locked", "--format-version", "1"])
+        .arg("--manifest-path")
+        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+        .output()
+        .expect("cargo metadata must be runnable");
+    assert!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("cargo metadata must emit JSON")
+}
+
+/// The real-codec rows must run the SAME codec package production runs.
 ///
 /// The byte properties above — when `start_send` writes through, what an owed
 /// pong leaves in the out-buffer — are statements about a specific codec. The
@@ -3072,37 +3107,66 @@ fn ws_codec_version(lock: &str, package: &str) -> String {
 /// builds. Nothing in the type system catches that: both versions export the
 /// same names, so the bridge compiles either way.
 ///
-/// This reads the lockfile rather than trusting the manifest, because the
-/// manifest states a RANGE and the lockfile states what was actually built. A
-/// caret bump on either side that separates them fails here.
+/// This follows dependency EDGES rather than matching package NAMES, and it
+/// asks cargo rather than parsing the lockfile. A name is ambiguous the moment
+/// two versions of a package are in the graph — a name-keyed lookup would take
+/// whichever `axum` came first and could compare the alias against a version
+/// production stopped building. `--locked` keeps the answer the one that was
+/// actually built rather than a fresh resolution.
 #[test]
-fn the_real_codec_rows_run_the_same_codec_version_axum_resolves() {
-    let lock = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("Cargo.lock"),
-    )
-    .expect("the workspace lockfile must be readable");
+fn the_real_codec_rows_run_the_same_codec_package_axum_resolves() {
+    let (production, ours) = codec_packages(&workspace_metadata());
+    assert_eq!(
+        ours, production,
+        "the real-codec rows must exercise the codec axum resolves — a byte-property row \
+         pinned to a different package proves nothing about production while staying green"
+    );
+}
 
-    let axum_resolves = ws_codec_version(&lock, "axum");
+/// A resolve graph with TWO `axum` versions, production on the newer codec and
+/// the alias left on the older one — the drift the row above must catch.
+///
+/// This is the shape a caret bump produces: `oneiron-server` moves to axum 0.9
+/// (tokio-tungstenite 0.29) while some other crate in the workspace still
+/// pulls axum 0.8 (0.28), and the dev-dependency alias stays at 0.28. Every
+/// byte property would then be proven about a codec production stopped
+/// building.
+///
+/// The stale axum is listed FIRST on purpose. A name-keyed lookup takes the
+/// first `axum` it finds, reports 0.28, matches the alias, and passes — which
+/// is exactly why the check follows `oneiron-server`'s own axum EDGE instead.
+fn two_axum_versions_with_a_stale_alias() -> serde_json::Value {
+    const SERVER: &str = "path+file:///w#oneiron-server@0.1.0";
+    const STALE_AXUM: &str = "registry+x#axum@0.8.8";
+    const LIVE_AXUM: &str = "registry+x#axum@0.9.0";
+    const OLD_CODEC: &str = "registry+x#tokio-tungstenite@0.28.0";
+    const NEW_CODEC: &str = "registry+x#tokio-tungstenite@0.29.0";
 
-    // `oneiron-server` lists BOTH: the older one via the `oneiron` crate and
-    // the aliased dev-dependency the real-codec rows use. The alias keeps its
-    // real package name in the lockfile, so the assertion is that axum's
-    // resolution is among them — i.e. the dev-dependency resolved to it rather
-    // than collapsing onto the older copy.
-    let server_deps = deps_of(&lock, "oneiron-server");
-    let ours: Vec<&str> = server_deps
-        .iter()
-        .filter(|dep| dep.starts_with("tokio-tungstenite"))
-        .copied()
-        .collect();
-    assert!(
-        ours.iter()
-            .any(|dep| *dep == format!("tokio-tungstenite {axum_resolves}").trim()),
-        "the real-codec rows must exercise the codec axum resolves ({axum_resolves}), but \
-         oneiron-server resolved {ours:?} — a byte-property row pinned to a different \
-         version proves nothing about production while staying green"
+    serde_json::json!({
+        "packages": [{ "name": "oneiron-server", "id": SERVER }],
+        "resolve": { "nodes": [
+            { "id": STALE_AXUM, "deps": [
+                { "name": "tokio_tungstenite", "pkg": OLD_CODEC }] },
+            { "id": LIVE_AXUM, "deps": [
+                { "name": "tokio_tungstenite", "pkg": NEW_CODEC }] },
+            { "id": SERVER, "deps": [
+                { "name": "axum", "pkg": LIVE_AXUM },
+                { "name": "production_ws_codec", "pkg": OLD_CODEC }] },
+        ]},
+    })
+}
+
+/// The alignment check must FAIL on that graph.
+///
+/// Without this row the check could resolve names instead of edges and stay
+/// green through the very drift it exists to catch.
+#[test]
+fn the_codec_alignment_check_catches_a_second_axum_version_the_alias_missed() {
+    let (production, ours) = codec_packages(&two_axum_versions_with_a_stale_alias());
+    assert_ne!(
+        ours, production,
+        "the alignment check followed a package NAME, not oneiron-server's own axum edge: \
+         it compared against the stale axum and would pass while production ran {production}"
     );
 }
 
@@ -3283,5 +3347,77 @@ async fn real_codec_delivers_a_pong_owing_send_after_the_drain_on_a_live_credent
         head.chunks(MAX_PAYLOAD_PONG_BYTES)
             .all(|pong| pong[0] == 0x8a && pong[1] == 125),
         "every drained control frame must be an unmasked 125-byte Pong"
+    );
+}
+
+/// REAL CODEC: the PRE-HANDOVER drain must re-consult on its OWN TICK, with a
+/// peer that never reads again and never wakes the sink.
+///
+/// The drain is an unbounded wait that a send now crosses BEFORE `start_send`,
+/// so a silent peer can park a send there indefinitely. Every other
+/// silent-peer row parks the POST-handover flush, which has its own tick — so
+/// removing the drain's re-consultation leaves all of them green.
+///
+/// What makes this row load-bearing is what it withholds. Nothing unblocks the
+/// socket, nothing fires its waker, and — crucially — nothing in this test ever
+/// polls the send again. That last one is not a detail: `poll!` followed by
+/// `tokio::time::timeout` would NOT work here, because both hand the drain a
+/// free re-poll (a `Timeout` polls its inner future first when it expires), and
+/// a drain that re-consults only at parks rides that free poll to a refusal and
+/// passes. Measured: the park-only mutation below survives a `timeout`-shaped
+/// row and dies here.
+///
+/// So the send runs in its OWN task and the verdict is `is_finished` after a
+/// wait in the test task, which wakes the send task not at all. The only thing
+/// that can complete it is [`FLUSH_RECONSULT_INTERVAL`] elapsing inside the
+/// guard. Both degradations therefore fail: a naive unbounded
+/// `poll_flush().await` and a park-only loop each leave the task unfinished.
+///
+/// `start_paused` makes the clock virtual, so the wait costs no wall time —
+/// the runtime auto-advances to the guard's own tick, and the absence of that
+/// tick is what the assertion sees.
+///
+/// The live-peer control for the same shape is
+/// `real_codec_delivers_a_pong_owing_send_after_the_drain_on_a_live_credential`
+/// above: there the peer resumes and the send completes, so this is a bounded
+/// wait rather than a refusal to serve slow peers.
+#[tokio::test(start_paused = true)]
+async fn a_silent_peer_gets_re_consulted_on_the_tick_during_the_pre_handover_drain() {
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+
+    // A pong is owed and writes are blocked, so the send parks in the drain —
+    // before any application byte has been handed to the codec.
+    socket.block_writes();
+    owe_a_pong(&socket, &mut guarded).await;
+
+    // The operator revokes at the instant the drain parks, from another
+    // process: no socket event accompanies it, the socket stays blocked, and
+    // the waker is never fired. The hook is installed only now, so it can only
+    // fire for the drain's own park.
+    let registry_for_hook = Arc::clone(&registry);
+    socket.on_write_park(move || registry_for_hook.revoke(TEST_JTI));
+
+    let send = tokio::spawn(async move {
+        let keep_going = guarded
+            .send_binary(vec![7u8; UNDER_THRESHOLD_PAYLOAD])
+            .await;
+        (keep_going, guarded)
+    });
+    tokio::time::sleep(FLUSH_RECONSULT_INTERVAL * 20).await;
+    assert!(
+        send.is_finished(),
+        "the drain parked past twenty re-consult intervals on a silent peer — it is \
+         waiting on the peer instead of re-consulting on its own tick"
+    );
+
+    let (keep_going, guarded) = send.await.expect("the send task must not panic");
+    assert!(!keep_going, "a revoked session must not continue");
+    assert_wire_is_empty(&socket);
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must end the transport: nothing may remain that could drain the \
+         application frame later"
     );
 }
