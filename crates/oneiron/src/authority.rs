@@ -1394,6 +1394,37 @@ pub(crate) fn is_corrupt_first_seen_sidecar(err: &Error) -> bool {
     matches!(err, Error::CorruptedIndex(msg) if *msg == AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT)
 }
 
+/// Verdict text carried when a readonly fold's delay decision would rest on a
+/// first-seen time this vault has never actually OBSERVED.
+///
+/// First-seen is a LOCAL observation, and the only local record of it is the
+/// sidecar. Before the one-shot migration runs there is no such record for a
+/// legacy row, so the readonly fold can only guess — and the peer-claimed
+/// `learned_at` in the entity header is not a permissible guess: it is written
+/// by whoever shipped the row. A legacy `EnrollDevice` carrying `learned_at =
+/// 0` would otherwise read as first seen in 1970, i.e. matured before it
+/// arrived, and a child `BindActor` on the newly owner-capable key would fold
+/// ACTIVE with no veto window at all.
+///
+/// So the fold assumes the safe end — first seen NOW, the maximum remaining
+/// delay — and that leaves every affected delayable widen pending. Pending is
+/// fail-closed for the ops that only GRANT, but `RotateKey` and
+/// `RecoveryReboot` also REVOKE: an un-applied rotation keeps the RETIRED key
+/// in the roster with its actor binding live. Whenever an indeterminate row
+/// actually lands in `pending_widens`, the fold therefore refuses instead of
+/// authorizing on a roster it cannot pin down.
+///
+/// Unlike [`AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT`] this state is recoverable
+/// and self-healing: one [`Vault::authority_fold`] runs the migration, records
+/// the local observation, and the delay runs out from there.
+pub(crate) const AUTHORITY_FIRST_SEEN_INDETERMINATE: &str =
+    "authority first-seen time is not locally observed yet (pre-migration authority log)";
+
+/// Whether `err` is the indeterminate-first-seen verdict above.
+pub(crate) fn is_indeterminate_first_seen(err: &Error) -> bool {
+    matches!(err, Error::CorruptedIndex(msg) if *msg == AUTHORITY_FIRST_SEEN_INDETERMINATE)
+}
+
 struct AuthorityLocalClock {
     last_instant: Instant,
     last_secs: u64,
@@ -5054,9 +5085,24 @@ impl Vault {
                     .get(wtxn, sidecar_key.as_str())?
                     .is_none()
                 {
+                    // fix-leg 4: the persisted value is THIS vault's local
+                    // observation time, never `header.learned_at`. The header
+                    // field is entity metadata written by whichever peer
+                    // shipped the row, so trusting it lets a legacy
+                    // sidecar-less `EnrollDevice(learned_at = 0)` claim it was
+                    // first seen in 1970 — instantly past its veto delay, with
+                    // a child `BindActor` on the freshly owner-capable key
+                    // folding ACTIVE on arrival. `observed_floor` clamps
+                    // FUTURE claims only; the whole past is unclamped, and the
+                    // past is the dangerous direction.
+                    //
+                    // Migrating at the observation time means an
+                    // already-imported widen serves its full delay from HERE
+                    // rather than from a claim, which delays a legitimate
+                    // legacy widen once and never skips one.
                     missing_sidecars.push((
                         sidecar_key,
-                        encode_authority_first_seen_secs(header.learned_at.min(observed_floor)),
+                        encode_authority_first_seen_secs(observed_floor),
                     ));
                 }
             }
@@ -5171,13 +5217,18 @@ impl Vault {
     /// The other divergence the full fold hides is a MISSING sidecar, and
     /// omitting it here is not the conservative default it looks like — see
     /// [`Self::readonly_first_seen_for`] for why an omitted sidecar can leave a
-    /// retired owner key live, and what this fold does instead.
+    /// retired owner key live, and what this fold does instead. Where that
+    /// leaves a delayable widen resting on an UNOBSERVED first-seen time, this
+    /// fold refuses with [`AUTHORITY_FIRST_SEEN_INDETERMINATE`] rather than pick
+    /// a roster; the refusal clears the moment one write-path fold records the
+    /// observation.
     pub(crate) fn authority_fold_readonly_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<AuthorityFold> {
         let mut entries = Vec::new();
         let mut first_seen_at_secs = BTreeMap::new();
+        let mut indeterminate = BTreeSet::new();
         let persisted_floor = self
             .store
             .sync_state
@@ -5216,21 +5267,41 @@ impl Vault {
             }
             let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             let hash = authority_entry_hash(&entry)?;
-            first_seen_at_secs.insert(
-                hash,
-                self.readonly_first_seen_for(txn, &hash, &header, backfilled, now_secs)?,
-            );
+            let (first_seen, observed_locally) =
+                self.readonly_first_seen_for(txn, &hash, backfilled, now_secs)?;
+            if !observed_locally {
+                indeterminate.insert(hash);
+            }
+            first_seen_at_secs.insert(hash, first_seen);
             entries.push(entry);
         }
-        Ok(fold_authority_log_with_seen_times(
-            &entries,
-            &first_seen_at_secs,
-            now_secs,
-        ))
+        let fold = fold_authority_log_with_seen_times(&entries, &first_seen_at_secs, now_secs);
+        // An indeterminate row is only a problem where its delay actually
+        // decides something. `now_secs` is the maximum-delay assumption, so any
+        // affected DELAYABLE widen lands in `pending_widens` — and pending is
+        // fail-OPEN for `RotateKey`/`RecoveryReboot`, which revoke as they
+        // grant. Refuse there rather than authorize against a roster still
+        // holding a key a matured rotation may already have retired. Rows whose
+        // first-seen time the fold never consults (every non-delayable op, and
+        // widens a veto already killed) are unaffected, so a legacy vault whose
+        // log carries no live delayable widen keeps working untouched.
+        if fold
+            .pending_widens
+            .keys()
+            .any(|hash| indeterminate.contains(hash))
+        {
+            return Err(Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_INDETERMINATE));
+        }
+        Ok(fold)
     }
 
     /// First-seen seconds for ONE entry inside a readonly fold, reproducing the
     /// one-shot migration's semantics without writing anything.
+    ///
+    /// Returns `(first_seen_secs, observed_locally)`. `observed_locally` is
+    /// false when the value is an ASSUMPTION rather than a record of local
+    /// observation; the caller escalates that to a refusal only where the value
+    /// actually decided a pending widen.
     ///
     /// Omitting an entry from `first_seen_at_secs` is NOT fail-closed, which is
     /// what the naive version got wrong. A sidecar-less delayable widen folds to
@@ -5247,13 +5318,14 @@ impl Vault {
     ///
     /// Two states, two answers:
     ///
-    /// - backfill marker ABSENT — the migration simply has not run in a write
-    ///   txn yet. Synthesize what it would write: `learned_at.min(now_secs)`,
-    ///   the same rule and the same observation clock
-    ///   [`Vault::backfill_authority_first_seen_sidecars`] uses. `min` is what
-    ///   keeps a forged-future `learned_at` from parking a widen past any
-    ///   reachable deadline; taking the local observation instead means a widen
-    ///   imported long ago still serves its full delay from first observation.
+    /// - backfill marker ABSENT — the migration has not run in a write txn yet,
+    ///   so this vault has NO local record of when it first saw the row. The
+    ///   header's `learned_at` is not a substitute: it is peer-written entity
+    ///   metadata, and a legacy `EnrollDevice` shipped with `learned_at = 0`
+    ///   would read as first seen in 1970, i.e. matured before it ever arrived.
+    ///   The answer is `now_secs` — the same value
+    ///   [`Vault::backfill_authority_first_seen_sidecars`] will persist when it
+    ///   next runs, and the maximum remaining delay — flagged indeterminate.
     /// - marker PRESENT and the sidecar still missing, or the row present but
     ///   undecodable under EITHER marker state — the one-shot pass can never
     ///   regenerate it (it is gated by the marker, and it skips keys that
@@ -5262,28 +5334,27 @@ impl Vault {
     ///   the facade turns that into an invalid-state suspension of owner verbs
     ///   rather than authorizing on a fold it cannot compute.
     ///
-    /// Synthesizing never matures anything the migration would have held back:
-    /// the synthesized value and the maturity comparison share one `now_secs`,
-    /// so `min(learned_at, now) + delay > now` keeps a forged-future
-    /// `learned_at` pending, and a real past `learned_at` reproduces the
-    /// migration's value byte for byte.
+    /// The assumed value never MATURES anything: it equals the `now_secs` the
+    /// maturity comparison uses, so `now + delay > now` holds for every positive
+    /// delay and the widen stays pending until a real observation is recorded.
     fn readonly_first_seen_for(
         &self,
         txn: &heed::RoTxn<'_>,
         hash: &AuthorityEntryHash,
-        header: &EntityMetadataHeader,
         backfilled: bool,
         now_secs: u64,
-    ) -> Result<u64> {
+    ) -> Result<(u64, bool)> {
         let corrupt = || Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT);
         match self
             .store
             .sync_state
             .get(txn, authority_first_seen_sync_key(hash).as_str())?
         {
-            Some(raw) => decode_authority_first_seen_secs(&raw).ok_or_else(corrupt),
+            Some(raw) => decode_authority_first_seen_secs(&raw)
+                .ok_or_else(corrupt)
+                .map(|secs| (secs, true)),
             None if backfilled => Err(corrupt()),
-            None => Ok(header.learned_at.min(now_secs)),
+            None => Ok((now_secs, false)),
         }
     }
 }

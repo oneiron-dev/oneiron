@@ -3718,20 +3718,25 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
     }
 }
 
-/// fix-3: a MATURE, sidecar-less rotation must revoke the retired key through
-/// the FACADE gate, not just through the full fold.
+/// A sidecar-less rotation must never hand the RETIRED key owner verbs through
+/// the facade gate.
 ///
 /// The owner gate reads `authority_fold_readonly_in_txn`, which used to omit
 /// entries with no first-seen sidecar — leaving a delayable widen pending
 /// forever. For `RotateKey` that is fail-OPEN: pending means the RETIRED key is
 /// still a live owner-capable roster key. On a legacy rooted vault whose
-/// matured rotation lost its sidecar, an attacker holding the retired key files
-/// a DAG SIBLING `BindActor(retired_key, attacker, "human")` parented at
-/// genesis, and the gate hands them every owner verb — while
-/// [`crate::Vault::authority_fold`] backfills, applies the rotation, and denies
-/// them. The gate must not be weaker than the fold it is derived from.
+/// rotation lost its sidecar, an attacker holding the retired key files a DAG
+/// SIBLING `BindActor(retired_key, attacker, "human")` parented at genesis, and
+/// the gate hands them every owner verb.
+///
+/// fix-3 closed that by synthesizing the migration's `learned_at.min(now)`.
+/// fix-leg 4 removes `learned_at` from the answer entirely — it is peer-written,
+/// so the long-past values in this fixture are the attacker's own claim — and
+/// the gate suspends instead: INVALID_STATE while the fold cannot date the
+/// rotation, cleared by one write-path fold, after which the rotation serves its
+/// delay from local observation. Either way the retired key never authorizes.
 #[test]
-fn matured_sidecarless_rotation_denies_owner_verbs_through_the_facade() {
+fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
     let (_dir, vault) = open_vault();
     let attacker = put_person(&vault, 0x76);
@@ -3800,10 +3805,24 @@ fn matured_sidecarless_rotation_denies_owner_verbs_through_the_facade() {
         ])
         .expect("legacy log rows are individually valid");
 
-    // Rewind to the legacy shape: no sidecars, migration marker unset. Long-past
-    // `learned_at` values mean the rotation's delay elapsed ages ago.
+    // Rewind to the legacy shape: no sidecars, migration marker unset. The
+    // long-past `learned_at` values are the attacker's claim that the rotation
+    // elapsed ages ago — which fix-leg 4 refuses to act on.
     strip_authority_first_seen_state(&vault);
 
+    // Pre-migration the fold cannot date the rotation, so every owner verb is
+    // SUSPENDED — the gate refuses rather than reading maturity out of the
+    // attacker's own `learned_at`.
+    let agent = put_person(&vault, 0x7A);
+    let claim = vault
+        .memory_facade(agent, EdgeActorClass::Agent)
+        .claim_upsert(&claim_input(
+            "profile.mood",
+            &subject,
+            "observed",
+            serde_json::json!("calm"),
+        ))
+        .expect("agent claim");
     for err in [
         facade
             .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
@@ -3819,40 +3838,37 @@ fn matured_sidecarless_rotation_denies_owner_verbs_through_the_facade() {
                 learned_at: None,
             })
             .expect_err("retired key must not mint a PERSON"),
-        {
-            let agent = put_person(&vault, 0x7A);
-            let claim = vault
-                .memory_facade(agent, EdgeActorClass::Agent)
-                .claim_upsert(&claim_input(
-                    "profile.mood",
-                    &subject,
-                    "observed",
-                    serde_json::json!("calm"),
-                ))
-                .expect("agent claim");
-            facade
-                .claim_retract(&claim.claim_short_id)
-                .expect_err("retired key must not retract another actor's claim")
-        },
+        facade
+            .claim_retract(&claim.claim_short_id)
+            .expect_err("retired key must not retract another actor's claim"),
     ] {
-        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{}", err.message);
+        assert_eq!(err.code, FACADE_CODE_INVALID_STATE, "{}", err.message);
         assert!(
-            err.message.contains("no active owner binding"),
+            err.message.contains("owner verbs are suspended"),
             "{}",
             err.message
         );
     }
 
-    // The full fold is the reference verdict, and the gate now matches it.
+    // The suspension is self-clearing, not a brick: one write-path fold records
+    // the local observation and the rotation becomes datable. It is freshly
+    // observed, so it now sits INSIDE its delay — the veto window a legacy
+    // import is supposed to serve — rather than being declared elapsed by the
+    // peer that shipped it.
     let full = vault.authority_fold().expect("fold");
     assert!(
-        !crate::authority::actor_binding_is_active(&full, &attacker, "human"),
-        "the applied rotation must leave no ACTIVE binding on the retired key"
+        !full.pending_widens.is_empty(),
+        "the rotation is dated at migration time, so its delay has not elapsed"
     );
-    assert!(
-        full.pending_widens.is_empty(),
-        "the rotation's delay elapsed long before this fold ran"
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert_eq!(
+        vault
+            .authority_fold_readonly_in_txn(&rtxn)
+            .expect("a locally dated log folds"),
+        full,
+        "once observed locally the gate's fold agrees with the write-path fold"
     );
+    drop(rtxn);
 }
 
 /// fix-3: a sidecar lost AFTER the one-shot migration is unrecoverable, so the

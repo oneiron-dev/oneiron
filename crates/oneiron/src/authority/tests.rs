@@ -10004,24 +10004,27 @@ fn strip_first_seen_sidecars(vault: &crate::Vault, drop_backfill_marker: bool) {
         .unwrap();
 }
 
-/// A matured, SIDECAR-LESS rotation must not be left pending by the readonly
-/// fold — pending is fail-OPEN for the mixed ops.
+/// A SIDECAR-LESS rotation must not leave the retired key authorizing — pending
+/// is fail-OPEN for the mixed ops, so the readonly fold refuses instead.
 ///
 /// The naive readonly fold simply omitted an entry with no sidecar from
 /// `first_seen_at_secs`, on the reasoning that a widen without a first-seen time
 /// stays pending and pending is conservative. It is not, for the two ops that
-/// revoke while they grant. Here a legacy rooted vault's `RotateKey` K→K2
-/// matured long ago; an attacker still holding the RETIRED K files a DAG
-/// SIBLING `BindActor(K, attacker, "human")` parented at genesis, so no
-/// topological rule kills it. Leave the rotation pending and K is still a live
-/// owner-capable roster key, so that binding folds Active and the attacker
-/// passes every owner verb — while [`Vault::authority_fold`], which backfills
-/// first, revokes K and denies them.
+/// revoke while they grant. Here a legacy rooted vault's `RotateKey` K→K2 is
+/// sidecar-less; an attacker still holding the RETIRED K files a DAG SIBLING
+/// `BindActor(K, attacker, "human")` parented at genesis, so no topological rule
+/// kills it. Leave the rotation pending and K is still a live owner-capable
+/// roster key, so that binding folds Active and the attacker passes every owner
+/// verb.
 ///
-/// The fix reproduces the migration in the snapshot: `learned_at.min(now)`,
-/// exactly the value the backfill would persist, so the two folds agree.
+/// fix-leg 4 rewrites the answer. `learned_at` is peer-written metadata, so the
+/// long-past values here prove nothing about when THIS vault saw the rows; the
+/// fold assumes first-seen-now, which leaves the rotation pending, and then
+/// refuses because a pending entry it cannot date is deciding the roster. The
+/// attacker is denied through the refusal rather than through a maturity verdict
+/// synthesized from their own claim.
 #[test]
-fn readonly_fold_synthesizes_missing_sidecars_and_applies_matured_rotation() {
+fn readonly_fold_refuses_when_a_sidecarless_rotation_decides_the_roster() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let owner = ed_key(219);
@@ -10077,45 +10080,51 @@ fn readonly_fold_synthesizes_missing_sidecars_and_applies_matured_rotation() {
     strip_first_seen_sidecars(&vault, true);
 
     let rtxn = vault.store.env.read_txn().unwrap();
-    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    let err = vault
+        .authority_fold_readonly_in_txn(&rtxn)
+        .expect_err("an undatable rotation must not silently decide the roster");
     drop(rtxn);
     assert!(
-        !readonly.pending_widens.contains_key(&rotate_hash),
-        "a rotation whose synthesized first-seen time is `learned_at` (long past) must be MATURE"
-    );
-    assert!(
-        !actor_binding_is_active(&readonly, &attacker, "human"),
-        "leaving the sidecar-less rotation pending keeps the RETIRED key live and hands \
-         the attacker's sibling binding owner authority"
+        is_indeterminate_first_seen(&err),
+        "a pre-migration gap is recoverable, not corruption: {err}"
     );
 
-    // The full fold is the reference: it backfills with the same rule, so the
-    // readonly snapshot must be byte-identical to it — and stay identical after
-    // the backfill has actually landed on disk.
+    // The refusal is not a permanent brick. One write-path fold records the
+    // local observation, and the rotation then serves its delay from THERE —
+    // still pending (it was observed moments ago, not at its long-past claimed
+    // `learned_at`), but now on a time this vault actually witnessed, so the
+    // readonly fold computes instead of refusing.
     let full = vault.authority_fold().unwrap();
-    assert_eq!(
-        readonly, full,
-        "the synthesized snapshot must equal what the migration would produce"
+    assert!(
+        full.pending_widens.contains_key(&rotate_hash),
+        "migration dates the rotation at local observation time, so its delay has NOT elapsed"
     );
     let rtxn = vault.store.env.read_txn().unwrap();
     let after_backfill = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
     drop(rtxn);
     assert_eq!(
         after_backfill, full,
-        "reading the persisted sidecars must not change the verdict"
+        "once observed locally, both folds must agree"
+    );
+    // The attacker's sibling bind rides a key the rotation has not yet retired,
+    // so it is live here — and that is correct: the rotation genuinely has not
+    // matured on any clock this vault can vouch for. What fix-leg 4 removes is
+    // the ability to reach a MATURE verdict from the attacker's own metadata.
+    assert!(
+        actor_binding_is_active(&after_backfill, &attacker, "human"),
+        "before the freshly dated rotation matures the retired key is still live"
     );
 }
 
-/// Synthesis must not MATURE anything: a forged-future `learned_at` stays
-/// pending, because the synthesized value and the maturity test share one clock.
+/// The assumed first-seen time is the LOCAL observation regardless of what
+/// `learned_at` claims — in either direction.
 ///
-/// This is the other half of the rule. `min(learned_at, now)` is not cosmetic —
-/// without the `min`, a row claiming `learned_at` far in the future would be
-/// parked past every reachable deadline; with it, the worst an attacker can do
-/// is have the widen treated as first seen RIGHT NOW, which is the maximum
-/// delay, not the minimum.
+/// Fix-leg 3 clamped with `min(learned_at, now)`, which handled a forged FUTURE
+/// claim (park past every reachable deadline) but swallowed a forged PAST one.
+/// Taking the observation outright covers both: this fixture ships the future
+/// claim, its twin below ships `learned_at = 0`, and neither moves the value.
 #[test]
-fn readonly_fold_synthesis_never_matures_a_future_dated_widen() {
+fn readonly_fold_ignores_future_learned_at_and_assumes_local_observation() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let owner = ed_key(221);
@@ -10159,18 +10168,208 @@ fn readonly_fold_synthesis_never_matures_a_future_dated_widen() {
     strip_first_seen_sidecars(&vault, true);
 
     let rtxn = vault.store.env.read_txn().unwrap();
-    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    let err = vault
+        .authority_fold_readonly_in_txn(&rtxn)
+        .expect_err("an undated pending enrollment must refuse, not authorize");
     drop(rtxn);
-    let pending = readonly
+    assert!(is_indeterminate_first_seen(&err), "{err}");
+
+    // The migration records the local observation, and the forged future date
+    // leaves no trace in it.
+    let full = vault.authority_fold().unwrap();
+    let pending = full
         .pending_widens
         .get(&enroll_hash)
-        .expect("a future-dated enrollment must still be inside its delay");
+        .expect("a freshly observed enrollment must still be inside its delay");
     assert_eq!(
         pending.first_seen_at_secs,
         Some(readonly_observation_secs(&vault)),
-        "the synthesized time must clamp to the local observation, never the forged future"
+        "first-seen must be the local observation, never the forged future"
     );
-    assert_eq!(readonly, vault.authority_fold().unwrap());
+    let rtxn = vault.store.env.read_txn().unwrap();
+    assert_eq!(vault.authority_fold_readonly_in_txn(&rtxn).unwrap(), full);
+    drop(rtxn);
+}
+
+/// The P2 this leg exists for: `learned_at = 0` must not read as "first seen in
+/// the distant past, delay long elapsed".
+///
+/// Mirror of the future-dated case, and the dangerous direction. A legacy,
+/// sidecar-less `EnrollDevice` of an OWNER-CAPABLE key is shipped claiming
+/// `learned_at = 0`; a child `BindActor(new_key, attacker, "human")` rides it.
+/// Under `learned_at.min(floor)` the enrollment dates to 1970, folds MATURE on
+/// arrival, puts the attacker's key in the owner-capable roster, and the child
+/// bind folds ACTIVE — every owner verb, no veto window, straight through both
+/// folds. `observed_floor` never caught this: it clamps FUTURE claims only.
+///
+/// Local observation is the whole fix. Neither fold can date the row, so the
+/// readonly fold refuses; the migration then dates it NOW, which keeps it
+/// pending for the full delay and the bind non-authorizing.
+#[test]
+fn zero_learned_at_enrollment_cannot_instantly_authorize_a_child_bind() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(225);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(225, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+
+    // Owner-capable, so a "human" bind on it is admissible the instant the
+    // enrollment applies — which is exactly what the delay exists to prevent.
+    let attacker_signing = ed_key(226);
+    let attacker_key = authority_key_from_ed(&attacker_signing);
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 226,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let attacker = scope_entity(0x64);
+    // Cosigned: once the enrollment applies the roster holds two active keys,
+    // so a lone-signed bind would die on MissingQuorum and hide the divergence.
+    let bind = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![enroll_hash],
+            bind_op(&attacker_key, attacker, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+        &attacker_signing,
+    );
+
+    // `learned_at = 0` on every row: the peer's claim that these were learned at
+    // the epoch. Only the ENROLL's claim matters — it is the delayable widen.
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 0),
+            (enroll, TimeRange { start: 1, end: 1 }, 0),
+            (bind, TimeRange { start: 1, end: 1 }, 0),
+        ])
+        .unwrap();
+    strip_first_seen_sidecars(&vault, true);
+
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let err = vault
+        .authority_fold_readonly_in_txn(&rtxn)
+        .expect_err("a `learned_at = 0` enrollment must not date itself into maturity");
+    drop(rtxn);
+    assert!(is_indeterminate_first_seen(&err), "{err}");
+
+    // The migration is the other half: it must date the row at local observation
+    // too, or the attack simply moves one fold over.
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        full.pending_widens.contains_key(&enroll_hash),
+        "an enrollment first observed just now is inside its delay, whatever it claims"
+    );
+    assert!(
+        !full.roster.contains_key(&attacker_key),
+        "a pending enrollment must not put the attacker's key in the roster"
+    );
+    assert!(
+        !actor_binding_is_active(&full, &attacker, "human"),
+        "the child bind must not authorize while its enrollment is inside the veto window"
+    );
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !actor_binding_is_active(&readonly, &attacker, "human"),
+        "both folds must deny; divergence here is the bug class this leg kills"
+    );
+    assert_eq!(readonly, full);
+}
+
+/// The denial above must not be a blanket "nothing ever matures": an enrollment
+/// this vault has genuinely held past its delay still matures and still
+/// authorizes its child bind, through BOTH folds.
+///
+/// Without this row the fix is indistinguishable from breaking the feature.
+#[test]
+fn locally_matured_enrollment_still_authorizes_its_child_bind() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(227);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(227, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let second = ed_key(228);
+    let second_key = authority_key_from_ed(&second);
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 228,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let actor = scope_entity(0x65);
+    let bind = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![enroll_hash],
+            bind_op(&second_key, actor, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+        &second,
+    );
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (enroll, TimeRange { start: 2, end: 2 }, 2),
+            (bind, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+
+    // Sidecars exist (the write path recorded them), so the fold is computable
+    // from the start and the enrollment begins inside its delay.
+    let before = vault.authority_fold().unwrap();
+    assert!(before.pending_widens.contains_key(&enroll_hash));
+    assert!(!actor_binding_is_active(&before, &actor, "human"));
+
+    // Advance the LOCAL monotonic clock past the delay — the only kind of time
+    // that counts here.
+    let matured_at = readonly_observation_secs(&vault) + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    assert_eq!(
+        authority_observation_secs_for_domain(vault.store.authority_clock_domain, matured_at, 0),
+        matured_at
+    );
+
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        !full.pending_widens.contains_key(&enroll_hash),
+        "a locally matured enrollment must apply"
+    );
+    assert!(full.roster.contains_key(&second_key));
+    assert!(
+        actor_binding_is_active(&full, &actor, "human"),
+        "the child bind must authorize once its enrollment has genuinely matured"
+    );
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert_eq!(
+        readonly, full,
+        "both folds must agree on the matured roster"
+    );
 }
 
 /// The observation seconds a readonly fold would derive right now, without
