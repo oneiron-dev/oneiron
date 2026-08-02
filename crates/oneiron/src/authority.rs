@@ -101,6 +101,16 @@ const OP_KIND_RECOVERY_REBOOT: &str = "recovery_reboot";
 const OP_KIND_FEDERATION_CONFIRM: &str = "federation_confirm";
 const OP_KIND_VETO_PENDING_WIDEN: &str = "veto_pending_widen";
 const OP_KIND_FEDERATION_LIFECYCLE: &str = "federation_lifecycle";
+const OP_KIND_BIND_ACTOR: &str = "bind_actor";
+const OP_KIND_REBIND_ACTOR: &str = "rebind_actor";
+const OP_KIND_REVOKE_ACTOR: &str = "revoke_actor";
+
+/// The EXACT actor-class vocabulary a binding tuple may name (ONE-1604-D2).
+///
+/// Deliberately narrower than `SetCeiling`'s free-form class string: an
+/// approximate class is the ESB-C defect, so anything outside this list fails
+/// closed at `validate_op`. Mirrors `EdgeActorClass::gate_actor_class`.
+const ACTOR_BINDING_CLASSES: [&str; 3] = ["human", "agent", "system"];
 
 const CONFIRM_KIND_ACCEPT: &str = "accept";
 const CONFIRM_KIND_RESCOPE: &str = "rescope";
@@ -583,6 +593,42 @@ pub enum AuthorityOp {
     },
     /// Federation relationship lifecycle op (OF-156, option B).
     FederationLifecycle(FederationLifecycleAction),
+    /// Binds a roster authority key to a store actor entity at an EXACT actor
+    /// class (ONE-1604-D2 tuple). Establishes `epoch` for this key's binding;
+    /// rejected in the fold if a live binding already exists (use
+    /// `RebindActor`) or the epoch does not advance past the revocation
+    /// watermark.
+    BindActor {
+        /// Roster key the binding attaches to.
+        authority_key: AuthorityKey,
+        /// Store actor entity the key speaks for.
+        actor_ref: EntityId,
+        /// EXACT class: `"human"`, `"agent"`, or `"system"`.
+        actor_class: String,
+        /// Binding epoch; must advance past the revocation watermark.
+        epoch: u64,
+    },
+    /// Replaces the live binding of `authority_key` with a new
+    /// actor_ref/class/epoch. Rejected in the fold when no live binding exists.
+    RebindActor {
+        /// Roster key whose live binding is replaced.
+        authority_key: AuthorityKey,
+        /// New store actor entity.
+        actor_ref: EntityId,
+        /// New EXACT class.
+        actor_class: String,
+        /// New epoch; must be strictly greater than the live binding's.
+        epoch: u64,
+    },
+    /// Revokes the binding of `authority_key` through `epoch` (inclusive
+    /// watermark). Applies unconditionally — revocation is always
+    /// most-restrictive-safe, in any arrival order.
+    RevokeActor {
+        /// Roster key whose binding is revoked.
+        authority_key: AuthorityKey,
+        /// Inclusive revocation watermark.
+        epoch: u64,
+    },
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -728,6 +774,28 @@ pub enum AuthorityFoldIssue {
         /// Deterministic rejection reason.
         reason: FederationLifecycleRejection,
     },
+    /// A Bind/Rebind/RevokeActor op failed the binding transition table.
+    ActorBindingRejected {
+        /// Rejected entry hash.
+        entry: AuthorityEntryHash,
+        /// Deterministic rejection reason.
+        reason: ActorBindingRejection,
+    },
+}
+
+/// Why the fold refused an actor-binding op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorBindingRejection {
+    /// `BindActor` on a key that already holds a live binding (use rebind).
+    BindingExists,
+    /// `RebindActor` on a key with no live binding.
+    BindingMissing,
+    /// Epoch did not advance past the watermark or the prior binding.
+    EpochNotAdvanced,
+    /// Bound key is absent from, or revoked in, the ancestry roster.
+    KeyNotInRoster,
+    /// A `"human"`-class bind whose key lacks owner/admin consent capability.
+    OwnerCapabilityRequired,
 }
 
 /// Fold-visible AUTH-5 state for one detected signer fork.
@@ -806,11 +874,77 @@ pub struct AuthorityFold {
     /// binding pact-bound: a grant that appears here never falls back to
     /// `Unpacted` legacy-allow.
     pub federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
+    /// Folded actor-binding tuples keyed by authority key (ONE-1604-D2).
+    pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
 
+/// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldedActorBinding {
+    /// Store actor entity the key speaks for.
+    pub actor_ref: EntityId,
+    /// EXACT bound class: `"human"`, `"agent"`, or `"system"`.
+    pub actor_class: String,
+    /// Binding epoch.
+    pub epoch: u64,
+    /// Whether this binding currently authorizes.
+    pub status: ActorBindingStatus,
+}
+
+/// Liveness of a folded actor binding.
+///
+/// `Revoked` deliberately covers watermark-dead, merge-conflicted, AND
+/// roster-dead bindings: one dead state, no taxonomy inflation. Callers only
+/// ever need "does this bind authorize".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorBindingStatus {
+    /// Binding authorizes: live epoch, unconflicted, live roster key.
+    Active,
+    /// Binding does not authorize, for any reason.
+    Revoked,
+}
+
+/// True iff `actor_ref` holds an ACTIVE binding at EXACTLY `actor_class`.
+///
+/// This is the owner-verb predicate. Multiple keys may bind one actor, so any
+/// Active hit passes. For class `"human"` the bound key must itself carry
+/// owner capability (enforced at fold time — see the bind transition table),
+/// so `Active` here is sufficient and callers need no second roster lookup.
+#[must_use]
+pub fn actor_binding_is_active(
+    fold: &AuthorityFold,
+    actor_ref: &EntityId,
+    actor_class: &str,
+) -> bool {
+    fold.actor_bindings.values().any(|binding| {
+        binding.status == ActorBindingStatus::Active
+            && binding.actor_ref == *actor_ref
+            && binding.actor_class == actor_class
+    })
+}
+
 impl AuthorityFold {
+    /// True when [`Self::vault_id`] is `None` because the log carries MORE THAN
+    /// ONE independently rooted vault, not because it carries no root at all.
+    ///
+    /// The two `None`s mean opposite things to a caller: an unrooted log has
+    /// declared no authority yet, while a multi-root log declared authority and
+    /// then collapsed — the fold clears the roster, bindings, and pacts and
+    /// keeps only the [`AuthorityFoldIssue::ConflictingVaultRoot`] rows. Every
+    /// authority gate MUST fail closed on the second, so the distinction is
+    /// exposed here rather than re-derived (and inevitably mis-derived) at each
+    /// call site.
+    #[must_use]
+    pub fn vault_root_is_conflicted(&self) -> bool {
+        self.vault_id.is_none()
+            && self
+                .issues
+                .iter()
+                .any(|issue| matches!(issue, AuthorityFoldIssue::ConflictingVaultRoot { .. }))
+    }
+
     /// Pact state governing `grant_ref`, if any lifecycle entries name it.
     ///
     /// Concurrent Connects on divergent branches can bind one grant_ref under
@@ -896,7 +1030,42 @@ struct FoldState {
     authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
     federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
+    /// Live binding content per authority key (`RevokeActor` never edits this).
+    ///
+    /// Kept SEPARATE from the revocation watermarks so a `RevokeActor` folding
+    /// on a branch that never saw the bind needs no placeholder content.
+    actor_bindings: BTreeMap<AuthorityKey, ActorBindingState>,
+    /// Inclusive revocation watermark per authority key, merged by max.
+    actor_binding_revocations: BTreeMap<AuthorityKey, u64>,
     seqs: BTreeMap<AuthorityKey, u64>,
+}
+
+/// Fold-internal binding content for one authority key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActorBindingState {
+    /// Store actor entity the key speaks for.
+    pub actor_ref: EntityId,
+    /// EXACT bound class.
+    pub actor_class: String,
+    /// Binding epoch.
+    pub epoch: u64,
+    /// Set when divergent same-epoch bindings merged — fail-closed dead.
+    pub conflicted: bool,
+}
+
+impl FoldState {
+    /// A binding is live iff it out-epochs the revocation watermark and no
+    /// divergent same-epoch merge poisoned it. Liveness is DERIVED, never
+    /// stored, so revoke and bind can arrive in any order.
+    fn live_actor_binding(&self, key: &AuthorityKey) -> Option<&ActorBindingState> {
+        let binding = self.actor_bindings.get(key)?;
+        let watermark = self
+            .actor_binding_revocations
+            .get(key)
+            .copied()
+            .unwrap_or(0);
+        (binding.epoch > watermark && !binding.conflicted).then_some(binding)
+    }
 }
 
 /// Encodes an authority entry to canonical MessagePack bytes.
@@ -1206,9 +1375,72 @@ pub(crate) fn authority_first_seen_clock_sync_key() -> &'static str {
     "authlog:first_seen:clock_floor"
 }
 
+/// Verdict text carried by the [`Error::CorruptedIndex`] a readonly fold raises
+/// when the one-shot first-seen migration has ALREADY run and an AUTHORITY_LOG
+/// row still has no readable first-seen sidecar.
+///
+/// The migration is one-shot by its marker, so it will never regenerate that
+/// row: the delay clock for the affected entry is unrecoverable in place. A
+/// fold cannot then decide whether a delayable widen — a rotation, a recovery
+/// reboot — has elapsed, and BOTH guesses are unsafe (assume elapsed and a
+/// widen skips its veto window; assume pending and a rotation's RETIRED key
+/// stays live). The only sound answer is to refuse the fold and let the caller
+/// suspend whatever it was about to authorize.
+pub(crate) const AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT: &str =
+    "authority first-seen sidecar missing or unreadable after backfill";
+
+/// Whether `err` is the corrupt-sidecar verdict above.
+pub(crate) fn is_corrupt_first_seen_sidecar(err: &Error) -> bool {
+    matches!(err, Error::CorruptedIndex(msg) if *msg == AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT)
+}
+
+/// Verdict text carried when a readonly fold's delay decision would rest on a
+/// first-seen time this vault has never actually OBSERVED.
+///
+/// First-seen is a LOCAL observation, and the only local record of it is the
+/// sidecar. Before the one-shot migration runs there is no such record for a
+/// legacy row, so the readonly fold can only guess — and the peer-claimed
+/// `learned_at` in the entity header is not a permissible guess: it is written
+/// by whoever shipped the row. A legacy `EnrollDevice` carrying `learned_at =
+/// 0` would otherwise read as first seen in 1970, i.e. matured before it
+/// arrived, and a child `BindActor` on the newly owner-capable key would fold
+/// ACTIVE with no veto window at all.
+///
+/// So the fold assumes the safe end — first seen NOW, the maximum remaining
+/// delay — and that leaves every affected delayable widen pending. Pending is
+/// fail-closed for the ops that only GRANT, but `RotateKey` and
+/// `RecoveryReboot` also REVOKE: an un-applied rotation keeps the RETIRED key
+/// in the roster with its actor binding live. Whenever an indeterminate row
+/// actually lands in `pending_widens`, the fold therefore refuses instead of
+/// authorizing on a roster it cannot pin down.
+///
+/// Unlike [`AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT`] this state is recoverable
+/// and self-healing: one [`Vault::authority_fold`] runs the migration, records
+/// the local observation, and the delay runs out from there.
+pub(crate) const AUTHORITY_FIRST_SEEN_INDETERMINATE: &str =
+    "authority first-seen time is not locally observed yet (pre-migration authority log)";
+
+/// Whether `err` is the indeterminate-first-seen verdict above.
+pub(crate) fn is_indeterminate_first_seen(err: &Error) -> bool {
+    matches!(err, Error::CorruptedIndex(msg) if *msg == AUTHORITY_FIRST_SEEN_INDETERMINATE)
+}
+
+/// One clock domain's monotonic ANCHOR: the observed second count
+/// `anchor_secs` and the [`Instant`] `anchor_instant` it was taken at.
+///
+/// The pair is an anchor, NOT a running total, and that is the whole point.
+/// `Duration::as_secs` truncates, so a fold at 09:00:00.4 and another at
+/// 09:00:00.9 each measure zero elapsed WHOLE seconds. Advancing the anchor on
+/// every call would bank those zeros and discard the 0.4 s and 0.5 s remainders
+/// forever — a caller folding faster than 1 Hz would freeze `now_secs` at its
+/// first observation, so no veto delay would ever mature and every owner verb
+/// resting on a delayable widen would wedge (fail-safe, but an availability
+/// hole). Keeping the anchor fixed makes each call measure real elapsed time
+/// from ONE origin, so the sub-second remainders accumulate and the second
+/// boundary is crossed exactly when it is crossed in wall time.
 struct AuthorityLocalClock {
-    last_instant: Instant,
-    last_secs: u64,
+    anchor_instant: Instant,
+    anchor_secs: u64,
 }
 
 fn authority_local_clocks() -> &'static Mutex<BTreeMap<usize, AuthorityLocalClock>> {
@@ -1227,19 +1459,30 @@ pub(crate) fn authority_observation_secs_for_domain(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     match clocks.get_mut(&clock_domain) {
         Some(clock) => {
-            let elapsed = now.saturating_duration_since(clock.last_instant).as_secs();
-            let observed = clock.last_secs.saturating_add(elapsed).max(previous_floor);
-            clock.last_secs = observed;
-            clock.last_instant = now;
-            observed
+            let elapsed = now
+                .saturating_duration_since(clock.anchor_instant)
+                .as_secs();
+            let anchored = clock.anchor_secs.saturating_add(elapsed);
+            // The persisted floor is the only thing that may REBASE the anchor:
+            // a floor above the anchor-derived value means another writer (or a
+            // reopen) advanced local observation past this domain's origin, so
+            // the floor becomes the new origin and `now` its instant. Rebasing
+            // here is safe precisely because it is monotone upward — it can
+            // delay a widen, never skip one.
+            if previous_floor > anchored {
+                clock.anchor_secs = previous_floor;
+                clock.anchor_instant = now;
+                return previous_floor;
+            }
+            anchored
         }
         None => {
             let observed = candidate_wall_secs.max(previous_floor);
             clocks.insert(
                 clock_domain,
                 AuthorityLocalClock {
-                    last_instant: now,
-                    last_secs: observed,
+                    anchor_instant: now,
+                    anchor_secs: observed,
                 },
             );
             observed
@@ -1479,6 +1722,43 @@ fn fold_authority_log_once(
                 EntryFold::Waiting => {}
             }
         }
+        if !progressed {
+            // The round made no progress, so every hash still pending is stuck
+            // for good under ordinary rules. ONLY here — never while entries may
+            // still be waiting their turn — may a revocation resolve against the
+            // ancestry ABOVE a parent that will never fold.
+            let stalled: Vec<_> = pending.iter().copied().collect();
+            for hash in stalled {
+                if equivocation_by_hash.contains_key(&hash) {
+                    continue;
+                }
+                let entry = &by_hash[&hash];
+                let fold_context = FoldContext {
+                    authority_forks: &authority_forks,
+                    authority_fork_vault_ids: &authority_fork_vault_ids,
+                    equivocation_groups: &equivocation_groups,
+                    unresolved_equivocation_groups: &unresolved_equivocation_groups,
+                    entry_ancestors: Some(&entry_ancestors),
+                    chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
+                    ..context
+                };
+                let Some(bypass_states) =
+                    revocation_bypass_states(entry, &by_hash, &states, &pending, fold_context)
+                else {
+                    continue;
+                };
+                // Ready only. A revocation the bypass cannot justify stays
+                // pending and is reported as `InvalidAncestry` below, exactly as
+                // before — the bypass may rescue a revocation, never admit one.
+                if let EntryFold::Ready(state) =
+                    fold_entry_state(entry, hash, &bypass_states, fold_context)
+                {
+                    states.insert(hash, state);
+                    pending.remove(&hash);
+                    progressed = true;
+                }
+            }
+        }
     }
     for hash in pending {
         issues.push(AuthorityFoldIssue::InvalidAncestry(hash));
@@ -1517,6 +1797,7 @@ fn fold_authority_log_once(
                 fork_alarms,
                 federation_pacts: BTreeMap::new(),
                 federation_grant_bindings: BTreeMap::new(),
+                actor_bindings: BTreeMap::new(),
                 issues,
             },
             authority_fork_vault_ids,
@@ -1543,6 +1824,9 @@ fn fold_authority_log_once(
     }
     let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
     let fork_alarms = build_fork_alarms(&authority_forks);
+    let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
+        folded_actor_bindings(state, &authority_forks)
+    });
 
     (
         AuthorityFold {
@@ -1566,10 +1850,84 @@ fn fold_authority_log_once(
             federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
                 state.federation_grant_bindings.clone()
             }),
+            actor_bindings,
             issues,
         },
         authority_fork_vault_ids,
     )
+}
+
+/// Projects fold-internal binding state onto the public tuple.
+///
+/// Status is computed HERE rather than stored, so roster death propagates for
+/// free: `RevokeDevice`/`RotateKey`/`RecoveryReboot` kill dependent bindings
+/// automatically and order-independently, with no cascade written into binding
+/// state. A rotation deliberately does NOT migrate a binding — the old binding
+/// dies with the old key and the new key needs a fresh `BindActor`.
+///
+/// Roster presence alone is NOT enough. The projection re-runs the bind
+/// transition table's key predicate against the MERGED roster, because two
+/// things can invalidate a key AFTER a valid bind folded:
+///
+/// * The merge's most-restrictive `roles &=` can strip the OWNER|ADMIN bits (or
+///   demote the tier) that admitted a `"human"` bind on a divergent branch. A
+///   binding whose key can no longer give owner consent must not keep backing
+///   the owner class.
+/// * AUTH-5 equivocation quarantines the key itself. A key that signed
+///   divergent content at one sequence is exactly the key an attacker holds;
+///   letting it keep speaking for a human owner is the fail-open the quarantine
+///   exists to prevent. Quarantine is a live-fork property, so it is read from
+///   the reported forks rather than from roster state.
+fn folded_actor_bindings(
+    state: &FoldState,
+    authority_forks: &[AuthorityFork],
+) -> BTreeMap<AuthorityKey, FoldedActorBinding> {
+    state
+        .actor_bindings
+        .iter()
+        .map(|(key, binding)| {
+            let status = if folded_binding_key_still_qualifies(state, authority_forks, key, binding)
+                && state.live_actor_binding(key).is_some()
+            {
+                ActorBindingStatus::Active
+            } else {
+                ActorBindingStatus::Revoked
+            };
+            (
+                key.clone(),
+                FoldedActorBinding {
+                    actor_ref: binding.actor_ref,
+                    actor_class: binding.actor_class.clone(),
+                    epoch: binding.epoch,
+                    status,
+                },
+            )
+        })
+        .collect()
+}
+
+/// The bind transition table's key predicate, re-evaluated post-merge.
+///
+/// Mirrors `apply_actor_binding` exactly — live roster row for every class,
+/// plus owner-consent capability for `"human"` — so a role/tier restriction
+/// that would have REJECTED the bind also kills it retroactively. Any key with
+/// a still-quarantined fork fails outright, whatever its roles.
+fn folded_binding_key_still_qualifies(
+    state: &FoldState,
+    authority_forks: &[AuthorityFork],
+    key: &AuthorityKey,
+    binding: &ActorBindingState,
+) -> bool {
+    if authority_forks
+        .iter()
+        .any(|fork| fork.signer == *key && fork.status == AuthorityForkStatus::Quarantined)
+    {
+        return false;
+    }
+    let Some(device) = state.roster.get(key).filter(|device| !device.revoked) else {
+        return false;
+    };
+    binding.actor_class != "human" || folded_device_can_authority_consent(device)
 }
 
 fn reconcile_reported_authority_forks(
@@ -1880,12 +2238,7 @@ fn fork_winner_post_quarantine_issue(
             let Some(parent_state) = folded_parent_state_for_entry(entry, states) else {
                 return Some(AuthorityFoldIssue::MissingQuorum(hash));
             };
-            let independent_participants: BTreeSet<_> = std::iter::once(&entry.signer)
-                .chain(entry.cosigns.iter())
-                .map(|signature| &signature.public_key)
-                .filter(|key| *key != forked_key)
-                .cloned()
-                .collect();
+            let independent_participants = participants_without_key(entry, forked_key);
             if independent_participants.len() < 2
                 || active_roster_count_after_fork_quarantine(
                     &parent_state,
@@ -1901,6 +2254,33 @@ fn fork_winner_post_quarantine_issue(
                 return Some(AuthorityFoldIssue::MissingAuthorityConsent(hash));
             }
         }
+        // Binding ops MINT or MOVE actor identity, and a fork winner's signer
+        // is by construction the forked key — precisely the signature an
+        // attacker holds. fix-1 already kills a binding whose BOUND key is
+        // quarantined; that leaves the sibling hole this arm closes, where the
+        // quarantined key spends its last pre-quarantine act binding owner
+        // class onto a DIFFERENT, clean, owner-capable roster key. Nothing
+        // downstream can see that: `folded_actor_bindings` judges the bound
+        // key, which is spotless.
+        //
+        // The re-derivation demands NOTHING new — it is the entry's own two
+        // admission rules (`has_authority_consent` over its participants, and
+        // the peer-cosign quorum rule) run again with the forked key deleted
+        // from both sides. A bind an untainted owner-capable cosigner
+        // independently backs still stands; a bind whose only owner authority
+        // WAS the forked key does not.
+        AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => {
+            let independent_participants = participants_without_key(entry, forked_key);
+            if !has_authority_consent(state, &independent_participants) {
+                return Some(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+            }
+            if independent_participants.len() < 2
+                && active_roster_count_after_fork_quarantine(state, entry, context, hash, forked_key)
+                    >= 2
+            {
+                return Some(AuthorityFoldIssue::MissingQuorum(hash));
+            }
+        }
         AuthorityOp::Genesis { .. }
         | AuthorityOp::EnrollDevice { .. }
         | AuthorityOp::SetCeiling { .. }
@@ -1909,7 +2289,11 @@ fn fork_winner_post_quarantine_issue(
         | AuthorityOp::RecoveryReboot { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_) => {}
+        | AuthorityOp::FederationLifecycle(_)
+        // RevokeActor only raises a revocation watermark: it strips authority
+        // and can never mint it, so re-scrutinizing it could only resurrect a
+        // binding the quarantined key wanted gone.
+        | AuthorityOp::RevokeActor { .. } => {}
     }
     None
 }
@@ -1918,6 +2302,20 @@ fn entry_participants_include_key(entry: &AuthorityLogEntry, key: &AuthorityKey)
     std::iter::once(&entry.signer)
         .chain(entry.cosigns.iter())
         .any(|signature| signature.public_key == *key)
+}
+
+/// The entry's signer + cosigners with `key` deleted — the participant set a
+/// post-quarantine re-check must judge the entry on.
+fn participants_without_key(
+    entry: &AuthorityLogEntry,
+    key: &AuthorityKey,
+) -> BTreeSet<AuthorityKey> {
+    std::iter::once(&entry.signer)
+        .chain(entry.cosigns.iter())
+        .map(|signature| &signature.public_key)
+        .filter(|participant| *participant != key)
+        .cloned()
+        .collect()
 }
 
 fn folded_parent_state_for_entry(
@@ -2238,6 +2636,172 @@ fn entry_waits_on_pending_parent_outside_group(
     })
 }
 
+/// Substitute parent states that let a stalled `RevokeActor` fold against its
+/// nearest READY ancestry, or `None` when the bypass does not apply.
+///
+/// THE HOLE THIS CLOSES. `op_applies_despite_pending_widen` exempts a
+/// revocation from the pending-widen freeze, but that exemption is tested
+/// AFTER `fold_entry_state` has resolved parents, and an unresolved parent
+/// returns `Waiting` first. So a compromised key stalls its own revocation by
+/// parenting it on a grant the key itself filed under an unrelated pending
+/// widen: the grant defers (correctly — grants must freeze), and the child
+/// revocation inherits the wait for the whole veto window. The withdrawal of
+/// consent is exactly the operation that must not be delayable by its target.
+///
+/// WHY IT IS SAFE. Substituting an ancestry state that predates the frozen
+/// parent cannot manufacture authority for the revocation:
+///
+/// * `RevokeActor` is authority-REMOVING only. Applying it raises
+///   `actor_binding_revocations[key]` to at least `epoch` and touches nothing
+///   else, so the worst a stale base state can do is withhold the revocation's
+///   effect — the pre-fix behavior — never widen anything.
+/// * The watermark merges by MAX, so once the frozen parent does fold the
+///   revocation stays in force: no ordering can lower a raised watermark.
+/// * The substituted states are real folded states of real ancestors, so every
+///   other gate the entry passes through (signature, vault, roster, consent,
+///   quorum, seq) still runs against genuinely folded authority.
+///
+/// WHY IT STAYS ONE OP WIDE, AND ONE CAUSE DEEP. Two independent narrowings,
+/// because the bypass is the only place a fold walks past an unfolded entry:
+///
+/// * Only `RevokeActor` may USE it. A grant folded against a pre-widen roster
+///   is precisely what the freeze exists to prevent, so `BindActor` and
+///   `RebindActor` keep waiting.
+/// * Only a parent FROZEN BY THE WIDEN may be stepped over — see
+///   [`entry_is_frozen_by_pending_widen`]. A parent that is waiting for any
+///   other reason, was ruled `Invalid`, or is simply absent from the log
+///   refuses the whole bypass, so a revocation can never be folded over
+///   ancestry this vault has not validated. The skipped parent is stepped over,
+///   never applied.
+///
+/// The walk is bounded by the ancestry it traverses and introduces no clock
+/// dependency: a revocation is not time-based, and this decides nothing about
+/// when any pending widen matures.
+///
+/// KNOWN DURABILITY RESIDUAL. A revocation rescued by this bypass survives the
+/// widen merely maturing
+/// (`revocation_folded_past_a_freeze_survives_the_widen_maturing`), but NOT the
+/// skipped grant later becoming retroactively invalid through the matured
+/// state — that durability is a GATE-2 packet item, not an in-lane fix. Closing
+/// it needs a representation in which an accepted revocation's effect outlives
+/// ancestry invalidation of the entries above it (a journal, or per-hash bypass
+/// state), which is a design surface rather than a change to this function.
+fn revocation_bypass_states(
+    entry: &AuthorityLogEntry,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    pending: &BTreeSet<AuthorityEntryHash>,
+    context: FoldContext<'_>,
+) -> Option<BTreeMap<AuthorityEntryHash, FoldState>> {
+    if !matches!(entry.op, AuthorityOp::RevokeActor { .. }) {
+        return None;
+    }
+    let mut substitutes = BTreeMap::new();
+    for parent in &entry.parent_hashes {
+        if states.contains_key(parent) {
+            continue;
+        }
+        let nearest = nearest_unfrozen_ancestor_state(*parent, by_hash, states, pending, context)?;
+        substitutes.insert(*parent, nearest);
+    }
+    // No unresolved parent means the entry stalled on something else entirely
+    // (equivocation, seq, consent); leave every other path exactly as it was.
+    if substitutes.is_empty() {
+        return None;
+    }
+    let mut merged = states.clone();
+    merged.extend(substitutes);
+    Some(merged)
+}
+
+/// Walks up from a frozen entry to the merge of the nearest folded states.
+///
+/// Every branch must terminate in a READY ancestor, crossing only entries the
+/// pending-widen freeze is holding. Anything else — an invalid ancestor, a
+/// missing one, a root that never folded, a parent waiting for some other
+/// reason — refuses the bypass outright.
+fn nearest_unfrozen_ancestor_state(
+    start: AuthorityEntryHash,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    pending: &BTreeSet<AuthorityEntryHash>,
+    context: FoldContext<'_>,
+) -> Option<FoldState> {
+    let mut resolved: Option<FoldState> = None;
+    let mut visited = BTreeSet::new();
+    let mut frontier = vec![start];
+    while let Some(hash) = frontier.pop() {
+        if !visited.insert(hash) {
+            continue;
+        }
+        if let Some(state) = states.get(&hash) {
+            resolved = Some(match resolved {
+                Some(current) if current.vault_id != state.vault_id => return None,
+                Some(current) => merge_states(&current, state),
+                None => state.clone(),
+            });
+            continue;
+        }
+        let entry = by_hash.get(&hash)?;
+        if !pending.contains(&hash)
+            || entry.parent_hashes.is_empty()
+            || !entry_is_frozen_by_pending_widen(entry, by_hash, states, pending, context)
+        {
+            return None;
+        }
+        frontier.extend(entry.parent_hashes.iter().copied());
+    }
+    resolved
+}
+
+/// Whether `entry` is stalled by the pending-widen freeze specifically.
+///
+/// This is the bypass's load-bearing narrowing, so it is decided POSITIVELY
+/// rather than by elimination: the entry's own ancestry must resolve, that
+/// ancestry must actually carry a pending widen, and the entry's op must be one
+/// the freeze defers. An entry that is waiting for any other reason fails this
+/// and stops the walk.
+///
+/// The classification is read off the MERGED ancestry, because that is the only
+/// picture the freeze itself ever sees. `fold_entry_state` merges every parent
+/// state before testing `!state.pending_widens.is_empty()`, so a single
+/// widen-bearing branch parks the entry no matter how many clean siblings it
+/// has. Asking instead whether EVERY branch carries a widen would answer a
+/// question the fold never poses, and the disagreement is attacker-selectable:
+/// hanging one ordinary already-folded parent off a stall grant would make the
+/// classifier call a frozen entry unfrozen and collapse the bypass
+/// (`revoke_actor_folds_past_a_grant_frozen_through_only_one_of_its_parents`).
+///
+/// Every parent must still RESOLVE. That is the narrowing this shares with
+/// [`nearest_unfrozen_ancestor_state`]: a branch that dead-ends in an invalid,
+/// missing, or otherwise-waiting ancestor refuses the classification outright,
+/// so "frozen" never widens to mean "stuck for some reason we did not identify."
+fn entry_is_frozen_by_pending_widen(
+    entry: &AuthorityLogEntry,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    pending: &BTreeSet<AuthorityEntryHash>,
+    context: FoldContext<'_>,
+) -> bool {
+    if !context.enforce_seen_time_delay || op_applies_despite_pending_widen(&entry.op) {
+        return false;
+    }
+    let mut merged: Option<FoldState> = None;
+    for parent in &entry.parent_hashes {
+        let Some(state) =
+            nearest_unfrozen_ancestor_state(*parent, by_hash, states, pending, context)
+        else {
+            return false;
+        };
+        merged = Some(match merged {
+            Some(current) if current.vault_id != state.vault_id => return false,
+            Some(current) => merge_states(&current, &state),
+            None => state,
+        });
+    }
+    merged.is_some_and(|state| !state.pending_widens.is_empty())
+}
+
 fn entry_ancestor_index(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>> {
@@ -2465,6 +3029,8 @@ fn fold_entry_state(
             authority_forks: BTreeMap::new(),
             federation_pacts: BTreeMap::new(),
             federation_grant_bindings: BTreeMap::new(),
+            actor_bindings: BTreeMap::new(),
+            actor_binding_revocations: BTreeMap::new(),
             seqs: BTreeMap::new(),
         };
         upsert_device(&mut state, device);
@@ -2526,7 +3092,10 @@ fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
-    if context.enforce_seen_time_delay && !state.pending_widens.is_empty() {
+    if context.enforce_seen_time_delay
+        && !state.pending_widens.is_empty()
+        && !op_applies_despite_pending_widen(&entry.op)
+    {
         return EntryFold::Waiting;
     }
     if state
@@ -2570,6 +3139,21 @@ fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
+    if matches!(
+        entry.op,
+        AuthorityOp::BindActor { .. }
+            | AuthorityOp::RebindActor { .. }
+            | AuthorityOp::RevokeActor { .. }
+    ) {
+        if let Err(reason) = apply_actor_binding(&mut state, &entry.op) {
+            return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
+                entry: hash,
+                reason,
+            });
+        }
+        state.seqs.insert(signer, entry.seq);
+        return EntryFold::Ready(state);
+    }
     if context.vetoed_widens.contains(&hash)
         && op_is_delayable_widen(&state, &entry.op, &participants)
     {
@@ -2606,7 +3190,10 @@ fn fold_entry_state(
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_) => {}
+        | AuthorityOp::FederationLifecycle(_)
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::RevokeActor { .. } => {}
     }
     if !state_has_authority_consent_for_entry(&state, entry, context, hash) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
@@ -2805,6 +3392,57 @@ fn op_is_delayable_widen(
     op_can_be_pending_widen(state, op) && !op_has_instant_widen_authority(state, op, participants)
 }
 
+/// Whether `op` still folds while an UNRELATED widen is pending.
+///
+/// A pending widen freezes the log: every later entry waits, because the widen
+/// may yet be vetoed and folding on a roster that might change would decide the
+/// entry against the wrong state. That is the right default for anything that
+/// GRANTS — the grant can afford to wait out the veto window, and waiting is the
+/// conservative direction.
+///
+/// It is the wrong default for `RevokeActor`. A revocation is the operator's
+/// emergency brake: it WITHDRAWS consent, and withdrawal of consent is
+/// unconditional — no roster the pending widen could produce makes a revoked
+/// actor's authority legitimate again. Deferring it hands the widen's clock (up
+/// to `MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS`) to the revocation, so an owner who
+/// files a revocation because a key is compromised watches that key keep every
+/// owner verb until an unrelated enrollment matures. Worse, the attacker chooses
+/// the delay: filing any delayable widen of their own extends their own
+/// authority.
+///
+/// The asymmetry is deliberate and narrow. `BindActor`/`RebindActor` GRANT
+/// identity, so they keep the deferral; only the withdrawal skips it. Skipping
+/// is safe because a revocation cannot widen anything: it only raises a
+/// per-key watermark that kills bindings at or below it, so folding it early
+/// can strictly REMOVE authority from the derived roster, never add it — and
+/// the pending widen still matures on its own clock, unaffected.
+///
+/// SEAM — this exemption has a SECOND half, [`revocation_bypass_states`]. The
+/// check here runs after parents are resolved, so on its own it does nothing
+/// for a revocation whose PARENT is the frozen entry: an unresolved parent
+/// returns `Waiting` before this line is reached, and a compromised key can
+/// manufacture exactly that parent. The ancestry bypass closes that path by
+/// letting a stalled revocation — and only a revocation — resolve against its
+/// nearest ready ancestor. Same ruling, same blast radius (removal-only,
+/// monotone watermark); read the two together before changing either.
+fn op_applies_despite_pending_widen(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::RevokeActor { .. } => true,
+        AuthorityOp::Genesis { .. }
+        | AuthorityOp::EnrollDevice { .. }
+        | AuthorityOp::RevokeDevice { .. }
+        | AuthorityOp::SetCeiling { .. }
+        | AuthorityOp::RotateKey { .. }
+        | AuthorityOp::SetTierFloor { .. }
+        | AuthorityOp::RecoveryReboot { .. }
+        | AuthorityOp::FederationConfirm(_)
+        | AuthorityOp::VetoPendingWiden { .. }
+        | AuthorityOp::FederationLifecycle(_)
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. } => false,
+    }
+}
+
 fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::EnrollDevice { device } => state
@@ -2819,7 +3457,14 @@ fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SetCeiling { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_) => false,
+        | AuthorityOp::FederationLifecycle(_)
+        // Bind ops are instant, never delayed-vetoable widens: the widen
+        // ceremony already ran when the KEY was enrolled, and a human-class
+        // bind additionally demands an owner-capable signer AND an
+        // owner-capable bound key, so no authority widens at bind time.
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::RevokeActor { .. } => false,
     }
 }
 
@@ -2838,7 +3483,10 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_) => false,
+        | AuthorityOp::FederationLifecycle(_)
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::RevokeActor { .. } => false,
     }
 }
 
@@ -2967,6 +3615,21 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             }
         }
     }
+    for (key, epoch) in &right.actor_binding_revocations {
+        merged
+            .actor_binding_revocations
+            .entry(key.clone())
+            .and_modify(|current| *current = (*current).max(*epoch))
+            .or_insert(*epoch);
+    }
+    for (key, binding) in &right.actor_bindings {
+        match merged.actor_bindings.get_mut(key) {
+            Some(existing) => *existing = merge_actor_bindings(existing, binding),
+            None => {
+                merged.actor_bindings.insert(key.clone(), binding.clone());
+            }
+        }
+    }
     for (key, seq) in &right.seqs {
         merged
             .seqs
@@ -2975,6 +3638,38 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merged
+}
+
+/// Higher epoch wins; conflict poison is per-epoch, carried by the winner.
+///
+/// Equal epoch with divergent content is the dangerous case: two branches each
+/// believe a different actor holds this key. Keeping the byte-wise smaller
+/// tuple makes the merge deterministic in every arrival order, and
+/// `conflicted` makes it never Active — a fork over identity fails closed
+/// rather than silently picking a winner.
+///
+/// Poison deliberately does NOT leak across epochs: a strictly higher epoch
+/// supersedes the conflicted state outright. It has to, or one historical
+/// divergence would brick the key forever with no way to rebind. The
+/// fail-closed property survives because two branches that each advance past
+/// a conflict must themselves land on the same epoch to be concurrent, and
+/// that tie re-poisons at the new epoch.
+fn merge_actor_bindings(left: &ActorBindingState, right: &ActorBindingState) -> ActorBindingState {
+    match left.epoch.cmp(&right.epoch) {
+        Ordering::Greater => left.clone(),
+        Ordering::Less => right.clone(),
+        Ordering::Equal => {
+            let left_tuple = (left.actor_ref, left.actor_class.as_str());
+            let right_tuple = (right.actor_ref, right.actor_class.as_str());
+            let mut winner = if left_tuple <= right_tuple {
+                left.clone()
+            } else {
+                right.clone()
+            };
+            winner.conflicted |= left_tuple != right_tuple || left.conflicted || right.conflicted;
+            winner
+        }
+    }
 }
 
 fn apply_op(
@@ -3050,7 +3745,101 @@ fn apply_op(
         // emit rejections; all lifecycle validation and state transitions
         // live in `fold_entry_state`'s lifecycle arm.
         AuthorityOp::FederationLifecycle(_) => {}
+        // Same precedent: the binding arm in `fold_entry_state` returns before
+        // reaching here, so these are unreachable for Ready entries.
+        AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::RevokeActor { .. } => {}
     }
+}
+
+/// The actor-binding transition table (ONE-1604-D2).
+///
+/// Evaluated against the MERGED ancestry state — the fold is the ordering, so
+/// these rows never consult wall-clock or arrival sequence. Bind/Rebind are
+/// ancestry-validated; Revoke is deliberately asymmetric and never rejected
+/// for absence, because a revocation that fails to apply is the only
+/// unrecoverable outcome here.
+fn apply_actor_binding(
+    state: &mut FoldState,
+    op: &AuthorityOp,
+) -> std::result::Result<(), ActorBindingRejection> {
+    let (authority_key, actor_ref, actor_class, epoch, is_rebind) = match op {
+        AuthorityOp::RevokeActor {
+            authority_key,
+            epoch,
+        } => {
+            let watermark = state
+                .actor_binding_revocations
+                .entry(authority_key.clone())
+                .or_insert(0);
+            *watermark = (*watermark).max(*epoch);
+            return Ok(());
+        }
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        } => (authority_key, actor_ref, actor_class, *epoch, false),
+        AuthorityOp::RebindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        } => (authority_key, actor_ref, actor_class, *epoch, true),
+        _ => return Ok(()),
+    };
+
+    // The linkage teeth: a binding may only attach to a key the roster still
+    // vouches for. Without this, any signed entry could mint identity for a
+    // key that was never enrolled.
+    let Some(device) = state.roster.get(authority_key).filter(|d| !d.revoked) else {
+        return Err(ActorBindingRejection::KeyNotInRoster);
+    };
+    // Closes the bind-an-agent-key-as-human hole: human class is the owner
+    // class, so the bound key must itself be able to give owner consent.
+    // Agent/system bindings may target ROLE_AGENT keys (the 1634 seam).
+    if actor_class == "human" && !folded_device_can_authority_consent(device) {
+        return Err(ActorBindingRejection::OwnerCapabilityRequired);
+    }
+
+    let live = state.live_actor_binding(authority_key);
+    match (is_rebind, live) {
+        (false, Some(_)) => return Err(ActorBindingRejection::BindingExists),
+        (true, None) => return Err(ActorBindingRejection::BindingMissing),
+        (true, Some(existing)) if epoch <= existing.epoch => {
+            return Err(ActorBindingRejection::EpochNotAdvanced);
+        }
+        _ => {}
+    }
+    // A fresh bind must clear BOTH the revocation watermark and any dead
+    // binding still parked on this key, so a revoked epoch can never be
+    // resurrected by replaying the original bind.
+    let floor = state
+        .actor_binding_revocations
+        .get(authority_key)
+        .copied()
+        .unwrap_or(0)
+        .max(
+            state
+                .actor_bindings
+                .get(authority_key)
+                .map_or(0, |binding| binding.epoch),
+        );
+    if epoch <= floor {
+        return Err(ActorBindingRejection::EpochNotAdvanced);
+    }
+    state.actor_bindings.insert(
+        authority_key.clone(),
+        ActorBindingState {
+            actor_ref: *actor_ref,
+            actor_class: actor_class.clone(),
+            epoch,
+            conflicted: false,
+        },
+    );
+    Ok(())
 }
 
 /// Local-outbound half of a pact scope pair.
@@ -3538,6 +4327,35 @@ fn validate_op(op: &AuthorityOp) -> Result<()> {
             Ok(())
         }
         AuthorityOp::FederationLifecycle(action) => validate_federation_lifecycle_action(action),
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_class,
+            epoch,
+            ..
+        }
+        | AuthorityOp::RebindActor {
+            authority_key,
+            actor_class,
+            epoch,
+            ..
+        } => {
+            // EXACT class vocabulary, not SetCeiling's free-form string: an
+            // unrecognized class must never fold into a binding that some
+            // future reader treats as equivalent to "human".
+            if !ACTOR_BINDING_CLASSES.contains(&actor_class.as_str()) || *epoch == 0 {
+                return Err(invalid_authority());
+            }
+            authority_key.validate()
+        }
+        AuthorityOp::RevokeActor {
+            authority_key,
+            epoch,
+        } => {
+            if *epoch == 0 {
+                return Err(invalid_authority());
+            }
+            authority_key.validate()
+        }
     }
 }
 
@@ -3796,7 +4614,58 @@ fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool) ->
             }
             Value::Map(fields)
         }
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        } => actor_binding_op_value(
+            OP_KIND_BIND_ACTOR,
+            authority_key,
+            actor_ref,
+            actor_class,
+            *epoch,
+        ),
+        AuthorityOp::RebindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        } => actor_binding_op_value(
+            OP_KIND_REBIND_ACTOR,
+            authority_key,
+            actor_ref,
+            actor_class,
+            *epoch,
+        ),
+        AuthorityOp::RevokeActor {
+            authority_key,
+            epoch,
+        } => Value::Map(vec![
+            (Value::from(OP_KEY_KIND), Value::from(OP_KIND_REVOKE_ACTOR)),
+            (Value::from("authority_key"), key_value(authority_key)),
+            (Value::from("epoch"), Value::from(*epoch)),
+        ]),
     }
+}
+
+/// Canonical field order for bind/rebind:
+/// `(kind, authority_key, actor_ref, actor_class, epoch)` — byte-pinned by the
+/// golden vectors. `actor_ref` rides as 32-hex like the `grant_ref` precedent.
+fn actor_binding_op_value(
+    kind: &str,
+    authority_key: &AuthorityKey,
+    actor_ref: &EntityId,
+    actor_class: &str,
+    epoch: u64,
+) -> Value {
+    Value::Map(vec![
+        (Value::from(OP_KEY_KIND), Value::from(kind)),
+        (Value::from("authority_key"), key_value(authority_key)),
+        (Value::from("actor_ref"), Value::from(actor_ref.to_hex())),
+        (Value::from("actor_class"), Value::from(actor_class)),
+        (Value::from("epoch"), Value::from(epoch)),
+    ])
 }
 
 fn gesture_value(gesture: &FederationPactGesture) -> Value {
@@ -4069,8 +4938,70 @@ fn decode_op(value: &Value) -> Result<AuthorityOp> {
             })
         }
         OP_KIND_FEDERATION_LIFECYCLE => decode_federation_lifecycle_op(entries),
+        OP_KIND_BIND_ACTOR | OP_KIND_REBIND_ACTOR => {
+            let (authority_key, actor_ref, actor_class, epoch) = decode_actor_binding_op(entries)?;
+            if kind == OP_KIND_BIND_ACTOR {
+                Ok(AuthorityOp::BindActor {
+                    authority_key,
+                    actor_ref,
+                    actor_class,
+                    epoch,
+                })
+            } else {
+                Ok(AuthorityOp::RebindActor {
+                    authority_key,
+                    actor_ref,
+                    actor_class,
+                    epoch,
+                })
+            }
+        }
+        OP_KIND_REVOKE_ACTOR => {
+            validate_keys(entries, &[OP_KEY_KIND, "authority_key", "epoch"])?;
+            Ok(AuthorityOp::RevokeActor {
+                authority_key: decode_key(required(entries, "authority_key")?)?,
+                epoch: required(entries, "epoch")?
+                    .as_u64()
+                    .ok_or_else(invalid_authority)?,
+            })
+        }
         _ => Err(invalid_authority()),
     }
+}
+
+fn decode_actor_binding_op(
+    entries: &[(Value, Value)],
+) -> Result<(AuthorityKey, EntityId, String, u64)> {
+    validate_keys(
+        entries,
+        &[
+            OP_KEY_KIND,
+            "authority_key",
+            "actor_ref",
+            "actor_class",
+            "epoch",
+        ],
+    )?;
+    let actor_ref_hex = required(entries, "actor_ref")?
+        .as_str()
+        .ok_or_else(invalid_authority)?;
+    // `from_hex` routes `from_bytes`, so reserved sentinel ids fail closed; the
+    // round-trip check rejects non-canonical hex (the `grant_ref` precedent).
+    let actor_ref = EntityId::from_hex(actor_ref_hex).map_err(|_| invalid_authority())?;
+    if actor_ref.to_hex() != actor_ref_hex {
+        return Err(invalid_authority());
+    }
+    Ok((
+        decode_key(required(entries, "authority_key")?)?,
+        actor_ref,
+        required(entries, "actor_class")?
+            .as_str()
+            .ok_or_else(invalid_authority)?
+            .to_owned(),
+        required(entries, "epoch")?
+            .as_u64()
+            .ok_or_else(invalid_authority)?,
+    ))
 }
 
 fn decode_federation_lifecycle_op(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
@@ -4334,10 +5265,74 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        let data = encode_authority_log_entry_body(entry)?;
-        let id = authority_log_entity_id(entry)?;
-        self.apply_authority_log_entry_body(&id, occurred, learned_at, data)?;
-        Ok(id)
+        let ids = self.put_authority_log_entries(&[(entry.clone(), occurred, learned_at)])?;
+        ids.into_iter().next().ok_or(Error::EntityNotFound)
+    }
+
+    /// Appends N AUTHORITY_LOG entries in ONE transaction, all-or-nothing.
+    ///
+    /// Every id is derived from entry content (ONE-1604-D1), exactly as the
+    /// single-entry door does. Encoding, validation, and derivation all happen
+    /// BEFORE the write transaction opens, so a bad entry anywhere in the
+    /// batch stores nothing at all.
+    ///
+    /// This is what makes a genesis owner-binding a single ceremony: a host
+    /// composes `[genesis, bind]` and either both land or neither does. The
+    /// door does NOT require a binding to accompany a genesis — enforcement
+    /// lives at the facade, where a rooted vault without an owner binding
+    /// fail-closes owner verbs.
+    pub fn put_authority_log_entries(
+        &self,
+        entries: &[(AuthorityLogEntry, TimeRange, u64)],
+    ) -> Result<Vec<EntityId>> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let ids = self.put_authority_log_entries_in_txn(&mut wtxn, entries)?;
+        wtxn.commit()?;
+        Ok(ids)
+    }
+
+    /// [`Self::put_authority_log_entries`] against a CALLER-OWNED write
+    /// transaction, for composing an authority append with other writes that
+    /// must land atomically with it — and for tests that need to commit an
+    /// authority change at a precise instant relative to another thread.
+    pub(crate) fn put_authority_log_entries_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entries: &[(AuthorityLogEntry, TimeRange, u64)],
+    ) -> Result<Vec<EntityId>> {
+        let mut ids = Vec::with_capacity(entries.len());
+        let mut ops = Vec::with_capacity(entries.len());
+        for (entry, occurred, learned_at) in entries {
+            let data = encode_authority_log_entry_body(entry)?;
+            crate::authority::validate_authority_log_entry_body_bytes(&data)?;
+            let id = authority_log_entity_id(entry)?;
+            ids.push(id);
+            ops.push(BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+                occurred: *occurred,
+                learned_at: *learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            });
+        }
+        if ops.is_empty() {
+            return Ok(ids);
+        }
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        Ok(ids)
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
@@ -4421,9 +5416,24 @@ impl Vault {
                     .get(wtxn, sidecar_key.as_str())?
                     .is_none()
                 {
+                    // fix-leg 4: the persisted value is THIS vault's local
+                    // observation time, never `header.learned_at`. The header
+                    // field is entity metadata written by whichever peer
+                    // shipped the row, so trusting it lets a legacy
+                    // sidecar-less `EnrollDevice(learned_at = 0)` claim it was
+                    // first seen in 1970 — instantly past its veto delay, with
+                    // a child `BindActor` on the freshly owner-capable key
+                    // folding ACTIVE on arrival. `observed_floor` clamps
+                    // FUTURE claims only; the whole past is unclamped, and the
+                    // past is the dangerous direction.
+                    //
+                    // Migrating at the observation time means an
+                    // already-imported widen serves its full delay from HERE
+                    // rather than from a claim, which delays a legitimate
+                    // legacy widen once and never skips one.
                     missing_sidecars.push((
                         sidecar_key,
-                        encode_authority_first_seen_secs(header.learned_at.min(observed_floor)),
+                        encode_authority_first_seen_secs(observed_floor),
                     ));
                 }
             }
@@ -4514,37 +5524,169 @@ impl Vault {
         ))
     }
 
-    fn apply_authority_log_entry_body(
+    /// Folds the stored AUTHORITY_LOG inside a CALLER-OWNED read transaction.
+    ///
+    /// [`Vault::authority_fold`] opens its own transactions — including a WRITE
+    /// txn for the first-seen clock and the sidecar backfill — so it cannot be
+    /// called from inside an open transaction under LMDB's single-writer rule.
+    /// This variant writes nothing at all: no persisted clock write, no
+    /// backfill, no transaction of its own. It reproduces both write-side
+    /// effects in its snapshot instead.
+    ///
+    /// The observation time is deliberately NOT the raw wall clock. Widen
+    /// maturity is an AUTHORIZATION decision here — the facade's owner-verb
+    /// gate consumes this fold — so it runs on the same monotonic clock
+    /// [`Vault::authority_fold`] uses: the persisted floor read through `txn`,
+    /// raised through [`authority_observation_secs_for_domain`]. On the raw
+    /// wall clock a forward jump would mature a pending owner enrollment early
+    /// and expose an Active human binding INSIDE the veto window, while a jump
+    /// backward below the persisted floor would un-apply an elapsed rotation
+    /// and resurrect the retired key's binding. The derived value is not
+    /// written back — the floor advances only on write paths, and a lagging
+    /// floor can delay a widen but never skip the delay.
+    ///
+    /// The other divergence the full fold hides is a MISSING sidecar, and
+    /// omitting it here is not the conservative default it looks like — see
+    /// [`Self::readonly_first_seen_for`] for why an omitted sidecar can leave a
+    /// retired owner key live, and what this fold does instead. Where that
+    /// leaves a delayable widen resting on an UNOBSERVED first-seen time, this
+    /// fold refuses with [`AUTHORITY_FIRST_SEEN_INDETERMINATE`] rather than pick
+    /// a roster; the refusal clears the moment one write-path fold records the
+    /// observation.
+    pub(crate) fn authority_fold_readonly_in_txn(
         &self,
-        id: &EntityId,
-        occurred: TimeRange,
-        learned_at: u64,
-        data: Vec<u8>,
-    ) -> Result<()> {
-        crate::authority::validate_authority_log_entry_body_bytes(&data)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            vec![BatchOp::Put {
-                id: *id,
-                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
-                occurred,
-                learned_at,
-                data,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
-        wtxn.commit()?;
-        Ok(())
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<AuthorityFold> {
+        let mut entries = Vec::new();
+        let mut first_seen_at_secs = BTreeMap::new();
+        let mut indeterminate = BTreeSet::new();
+        let persisted_floor = self
+            .store
+            .sync_state
+            .get(txn, authority_first_seen_clock_sync_key())?
+            .and_then(|raw| decode_authority_first_seen_secs(&raw))
+            .unwrap_or(0);
+        // Read ONCE, before the row scan: the synthesized-first-seen rule below
+        // must be the same for every entry in one fold, and this also decides
+        // whether an absent sidecar is a pre-migration gap or genuine corruption.
+        let backfilled = self
+            .store
+            .sync_state
+            .get(txn, authority_first_seen_backfill_sync_key())?
+            .is_some();
+        let now_secs = authority_observation_secs_for_domain(
+            self.store.authority_clock_domain,
+            persisted_floor,
+            unix_seconds_now(),
+        );
+        for row in self
+            .store
+            .type_index
+            .prefix_iter(txn, &[ENTITY_TYPE_AUTHORITY_LOG])?
+        {
+            let (key, _) = row?;
+            let id = entity_id_from_type_index_key(&key)?;
+            let raw = self
+                .store
+                .entities
+                .get(txn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+                return Err(Error::CorruptedIndex("type index row kind mismatch"));
+            }
+            let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let hash = authority_entry_hash(&entry)?;
+            let (first_seen, observed_locally) =
+                self.readonly_first_seen_for(txn, &hash, backfilled, now_secs)?;
+            if !observed_locally {
+                indeterminate.insert(hash);
+            }
+            first_seen_at_secs.insert(hash, first_seen);
+            entries.push(entry);
+        }
+        let fold = fold_authority_log_with_seen_times(&entries, &first_seen_at_secs, now_secs);
+        // An indeterminate row is only a problem where its delay actually
+        // decides something. `now_secs` is the maximum-delay assumption, so any
+        // affected DELAYABLE widen lands in `pending_widens` — and pending is
+        // fail-OPEN for `RotateKey`/`RecoveryReboot`, which revoke as they
+        // grant. Refuse there rather than authorize against a roster still
+        // holding a key a matured rotation may already have retired. Rows whose
+        // first-seen time the fold never consults (every non-delayable op, and
+        // widens a veto already killed) are unaffected, so a legacy vault whose
+        // log carries no live delayable widen keeps working untouched.
+        if fold
+            .pending_widens
+            .keys()
+            .any(|hash| indeterminate.contains(hash))
+        {
+            return Err(Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_INDETERMINATE));
+        }
+        Ok(fold)
+    }
+
+    /// First-seen seconds for ONE entry inside a readonly fold, reproducing the
+    /// one-shot migration's semantics without writing anything.
+    ///
+    /// Returns `(first_seen_secs, observed_locally)`. `observed_locally` is
+    /// false when the value is an ASSUMPTION rather than a record of local
+    /// observation; the caller escalates that to a refusal only where the value
+    /// actually decided a pending widen.
+    ///
+    /// Omitting an entry from `first_seen_at_secs` is NOT fail-closed, which is
+    /// what the naive version got wrong. A sidecar-less delayable widen folds to
+    /// `eligible_at_secs: None`, which pins it PENDING forever — and "pending"
+    /// is only conservative for widens that GRANT (EnrollDevice, SetTierFloor).
+    /// `RotateKey` and `RecoveryReboot` also REVOKE: an un-applied rotation
+    /// leaves the retired owner key in the roster with its actor binding Active.
+    /// On a legacy vault whose matured rotation K→K2 never got a sidecar, an
+    /// attacker still holding K could file a sibling `BindActor(K, …, "human")`
+    /// parented before the rotation, and this fold would hand them every owner
+    /// verb — while [`Vault::authority_fold`] (which backfills first) revokes K.
+    /// A fold used for AUTHORIZATION must not be weaker than the one used for
+    /// truth.
+    ///
+    /// Two states, two answers:
+    ///
+    /// - backfill marker ABSENT — the migration has not run in a write txn yet,
+    ///   so this vault has NO local record of when it first saw the row. The
+    ///   header's `learned_at` is not a substitute: it is peer-written entity
+    ///   metadata, and a legacy `EnrollDevice` shipped with `learned_at = 0`
+    ///   would read as first seen in 1970, i.e. matured before it ever arrived.
+    ///   The answer is `now_secs` — the same value
+    ///   [`Vault::backfill_authority_first_seen_sidecars`] will persist when it
+    ///   next runs, and the maximum remaining delay — flagged indeterminate.
+    /// - marker PRESENT and the sidecar still missing, or the row present but
+    ///   undecodable under EITHER marker state — the one-shot pass can never
+    ///   regenerate it (it is gated by the marker, and it skips keys that
+    ///   already hold a row), so the entry's delay clock is unrecoverable in
+    ///   place. Refuse the fold with [`AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT`];
+    ///   the facade turns that into an invalid-state suspension of owner verbs
+    ///   rather than authorizing on a fold it cannot compute.
+    ///
+    /// The assumed value never MATURES anything: it equals the `now_secs` the
+    /// maturity comparison uses, so `now + delay > now` holds for every positive
+    /// delay and the widen stays pending until a real observation is recorded.
+    fn readonly_first_seen_for(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        hash: &AuthorityEntryHash,
+        backfilled: bool,
+        now_secs: u64,
+    ) -> Result<(u64, bool)> {
+        let corrupt = || Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT);
+        match self
+            .store
+            .sync_state
+            .get(txn, authority_first_seen_sync_key(hash).as_str())?
+        {
+            Some(raw) => decode_authority_first_seen_secs(&raw)
+                .ok_or_else(corrupt)
+                .map(|secs| (secs, true)),
+            None if backfilled => Err(corrupt()),
+            None => Ok((now_secs, false)),
+        }
     }
 }
 

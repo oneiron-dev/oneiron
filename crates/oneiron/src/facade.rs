@@ -1023,6 +1023,141 @@ fn verify_actor_binding_in_txn(
     verify_actor_entity_type(actor, actor_class, entity_type)
 }
 
+/// Owner-verb teeth (ONE-1604-D2 / ESB-C).
+///
+/// [`verify_actor_binding`] proves the asserted actor EXISTS and that its
+/// entity type admits the class. That is store truth, not authority: any
+/// facade holder could name a pre-existing PERSON as `human` and exercise
+/// owner verbs. This check demands the authority log agree — a folded ACTIVE
+/// binding `{signing key in the live owner-capable roster, actor_ref == actor,
+/// actor_class == "human" EXACTLY, live epoch}`.
+///
+/// Enforcement scales with declared authority: a vault with no folded genesis
+/// has not declared an authority root, so it keeps the store-truth check only.
+/// The moment a host establishes a root, owner verbs require the binding —
+/// which is exactly the pressure that makes the atomic `[genesis, bind]`
+/// ceremony the natural path. No dual-mode shim, no flag.
+///
+/// A missing `vault_id` is NOT one state. The fold also returns `None` when the
+/// log carries several independently rooted vaults, and that collapse clears
+/// `actor_bindings` wholesale — so treating every `None` as "unrooted" would
+/// hand full owner rights to exactly the vault whose authority root is under
+/// attack. Multi-root therefore fails CLOSED and unrooted keeps the spec'd
+/// pass-through.
+///
+/// An UNCOMPUTABLE fold is a third state, and it is the one this gate must not
+/// paper over. When an AUTHORITY_LOG row has lost its first-seen sidecar after
+/// the one-shot migration ran, the readonly fold cannot decide whether a
+/// delayable widen elapsed — and a `RotateKey` or `RecoveryReboot` left
+/// un-applied keeps the key it RETIRES live and owner-bound. So the fold
+/// refuses instead of guessing, and the refusal surfaces here as INVALID_STATE
+/// (the vault's authority is broken, not the caller's request), suspending
+/// every owner verb until the log is re-folded through the write path.
+///
+/// A PRE-MIGRATION log takes the same door for the same reason. There the
+/// first-seen time is not lost but never recorded, and the only other candidate
+/// — the header's `learned_at` — is peer-written: trusting it lets a legacy
+/// `EnrollDevice(learned_at = 0)` present as long matured, so a child
+/// `BindActor` on the freshly owner-capable key would fold ACTIVE with no veto
+/// window. The fold assumes first-seen-now instead, which leaves the affected
+/// widens pending, and refuses while any of them is load-bearing. Unlike the
+/// lost-sidecar case this clears itself: one write-path fold records the
+/// observation and the delay runs from there.
+fn verify_owner_actor_binding_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> FacadeResult<()> {
+    let fold = vault.authority_fold_readonly_in_txn(txn).map_err(|err| {
+        if crate::authority::is_corrupt_first_seen_sidecar(&err) {
+            return FacadeError::new(
+                FACADE_CODE_INVALID_STATE,
+                format!("{err}; owner verbs are suspended"),
+                &[
+                    "Restore this vault's sync_state from backup, or re-import the authority log into a fresh vault so first-seen times are observed again.",
+                    "A widen whose local first-seen time is lost cannot be judged elapsed or pending; no binding authorizes until it can.",
+                ],
+            );
+        }
+        if crate::authority::is_indeterminate_first_seen(&err) {
+            return FacadeError::new(
+                FACADE_CODE_INVALID_STATE,
+                format!("{err}; owner verbs are suspended"),
+                &[
+                    "Run a write-path authority fold (any authority-log write, or `authority_fold`) so this vault records when it first observed the pending entries.",
+                    "The delay then runs from that local observation; a widen's first-seen time is never taken from the peer-claimed learned_at metadata.",
+                ],
+            );
+        }
+        FacadeError::from(err)
+    })?;
+    if fold.vault_root_is_conflicted() {
+        return Err(FacadeError::new(
+            FACADE_CODE_INVALID_STATE,
+            "authority log folds to conflicting vault roots; owner verbs are suspended".to_owned(),
+            &[
+                "Resolve the authority fork: keep the entries of the legitimate root and drop the foreign ones.",
+                "A vault cannot have two authority roots; no binding authorizes until one wins.",
+            ],
+        ));
+    }
+    if fold.vault_id.is_none() {
+        return Ok(());
+    }
+    if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
+        return Ok(());
+    }
+    Err(FacadeError::new(
+        FACADE_CODE_FORBIDDEN,
+        format!(
+            "actor {} holds no active owner binding in the authority log",
+            actor.to_hex()
+        ),
+        &[
+            "Establish an owner binding with a BindActor entry signed by an owner device.",
+            "Actor keys assert identity; the authority log decides whether it holds.",
+        ],
+    ))
+}
+
+/// The COMPLETE deletion-authority predicate, evaluatable inside any read or
+/// write transaction: actor binding + human class + folded owner binding.
+///
+/// It exists as one function because it is evaluated TWICE per gated delete and
+/// the two evaluations must be identical. `evaluate_deletion_gate` runs it in
+/// its own read txn to mint the decision record; `delete_entity_with_reason_impl`
+/// runs it AGAIN inside the destructive write txn. Anything checked only in the
+/// first pass is checked in a snapshot that is already stale by the time the
+/// purge commits — a revocation landing in that window would be invisible, which
+/// is exactly the TOCTOU the second pass closes. Split the two lists and they
+/// drift; keep them here and they cannot.
+///
+/// The sibling owner verbs already fold inside their write txns
+/// (`claim_retract`, `put_structural`), so this makes deletion the third
+/// consistent arm rather than introducing a new rule.
+pub(crate) fn verify_deletion_authority_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+) -> FacadeResult<()> {
+    verify_actor_binding_in_txn(vault, txn, actor, actor_class)?;
+    if actor_class != EdgeActorClass::Human {
+        return Err(FacadeError::new(
+            FACADE_CODE_FORBIDDEN,
+            format!(
+                "actor class {} may not delete entities; deletion is an owner verb",
+                actor_class.gate_actor_class(),
+            ),
+            &[
+                "Bind a human-class owner actor key to delete.",
+                "Agents withdraw their own claims via claim_retract.",
+            ],
+        ));
+    }
+    verify_owner_actor_binding_in_txn(vault, txn, actor)
+}
+
 fn verify_actor_entity_type(
     actor: EntityId,
     actor_class: EdgeActorClass,
@@ -1271,20 +1406,7 @@ impl MemoryFacade<'_> {
 
     fn evaluate_deletion_gate(&self) -> FacadeResult<DeletionGateContext> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        verify_actor_binding_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
-        if self.actor_class != EdgeActorClass::Human {
-            return Err(FacadeError::new(
-                FACADE_CODE_FORBIDDEN,
-                format!(
-                    "actor class {} may not delete entities; deletion is an owner verb",
-                    self.actor_class.gate_actor_class(),
-                ),
-                &[
-                    "Bind a human-class owner actor key to delete.",
-                    "Agents withdraw their own claims via claim_retract.",
-                ],
-            ));
-        }
+        verify_deletion_authority_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
         Ok(DeletionGateContext::new(
             self.actor,
@@ -1472,21 +1594,25 @@ impl MemoryFacade<'_> {
                 .vault
                 .get_claim_in_txn(wtxn, &id)?
                 .ok_or(Error::EntityNotFound)?;
-            if self.actor_class != EdgeActorClass::Human
-                && claim_envelope_actor(&body) != Some(self.actor)
-            {
-                return Err(FacadeError::new(
-                    FACADE_CODE_FORBIDDEN,
-                    format!(
-                        "actor {} ({}) may not retract a claim it did not write",
-                        self.actor.to_hex(),
-                        self.actor_class.gate_actor_class(),
-                    ),
-                    &[
-                        "Only the writing actor or a human-class owner actor may retract.",
-                        "Bind the owner actor key for cross-actor retraction.",
-                    ],
-                ));
+            // Retracting your OWN claim is not an owner power and needs no
+            // owner binding; retracting SOMEONE ELSE'S is, so it gets the
+            // authority-log teeth.
+            if claim_envelope_actor(&body) != Some(self.actor) {
+                if self.actor_class != EdgeActorClass::Human {
+                    return Err(FacadeError::new(
+                        FACADE_CODE_FORBIDDEN,
+                        format!(
+                            "actor {} ({}) may not retract a claim it did not write",
+                            self.actor.to_hex(),
+                            self.actor_class.gate_actor_class(),
+                        ),
+                        &[
+                            "Only the writing actor or a human-class owner actor may retract.",
+                            "Bind the owner actor key for cross-actor retraction.",
+                        ],
+                    ));
+                }
+                verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
             }
             let consent_receipt = self.vault.retract_claim_in_txn(wtxn, &id, now)?;
             let approval = self.vault.get_claim_in_txn(wtxn, &id)?.map_or_else(
@@ -1542,9 +1668,34 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<DeleteReceipt> {
         let gate = self.evaluate_deletion_gate()?;
         let id = self.resolve_ref(entity_ref)?;
-        let outcome =
-            self.vault
-                .delete_entity_with_reason_gated(&id, reason.delete_reason(), gate)?;
+        // The re-check the destructive transactions re-run against their OWN
+        // views (fix-leg 5 item 1). `FacadeError` is a binding-layer type the
+        // engine's `Result` cannot carry, so the refusal is PARKED here and the
+        // engine is handed the accurate typed stand-in: a concurrent write
+        // invalidated the snapshot the gate decided on. `safe_delete` then swaps
+        // the parked error back, so a caller sees the EXACT code and message the
+        // pre-transaction gate would have produced (FORBIDDEN for a revoked
+        // binding, INVALID_STATE for a broken authority log) rather than a
+        // second, weaker vocabulary for the same refusal.
+        let refusal: std::cell::RefCell<Option<FacadeError>> = std::cell::RefCell::new(None);
+        let reverify = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
+            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class).map_err(
+                |err| {
+                    *refusal.borrow_mut() = Some(err);
+                    Error::ConcurrentWrite(
+                        "deletion authority changed before the destructive commit",
+                    )
+                },
+            )
+        };
+        let outcome = self
+            .vault
+            .delete_entity_with_reason_gated(
+                &id,
+                reason.delete_reason(),
+                crate::deletion::GatedDeletion::new(gate, &reverify),
+            )
+            .map_err(|err| refusal.take().unwrap_or_else(|| FacadeError::from(err)))?;
         Ok(DeleteReceipt {
             existed: outcome.existed,
             reason: reason.as_str().to_owned(),
@@ -1647,6 +1798,12 @@ impl MemoryFacade<'_> {
         // concurrent hard delete either commits first (refused here) or
         // after this txn (its purge then erases what we wrote).
         let refused = self.with_verified_actor_write_txn(|wtxn| {
+            // Minting a PERSON mints a future actor identity, so it is an
+            // owner verb. The pre-txn class check above gives the fast typed
+            // error; the authority-log teeth run in-txn (TOCTOU-free).
+            if type_byte == ENTITY_TYPE_PERSON {
+                verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
+            }
             if self
                 .vault
                 .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
