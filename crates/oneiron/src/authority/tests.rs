@@ -11007,6 +11007,293 @@ fn bind_and_rebind_still_defer_behind_a_pending_widen() {
     }
 }
 
+/// fix-leg 12 P1: the freeze exemption must survive the ANCESTRY hurdle — a
+/// revoked key cannot stall its own revocation by parenting it on a grant the
+/// key itself froze.
+///
+/// fix-leg 11 exempted `RevokeActor` from the pending-widen freeze, but the
+/// exemption sits BELOW the parent-ancestry resolution: a parent with no folded
+/// state returns `Waiting` before any op-specific rule runs. The compromised key
+/// C turns that ordering into a stall lever. C files a grant of its own as a
+/// child of an unrelated pending widen; by fix-11's own (correct) ruling that
+/// grant defers. The operator's `RevokeActor` naming the deferred grant as its
+/// parent then inherits the wait, and C keeps every owner verb its binding
+/// carries until the widen matures — up to `MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS`
+/// on the compromised key's own forging. That is the exact live bug fix-11
+/// shipped against, re-entered one level up.
+///
+/// Note what C needs to build the lever: only the ability to author a
+/// `BindActor`, which asks for ordinary authority consent and never inspects the
+/// signer's own actor binding. A key already stripped down to veto-only can
+/// still do it, so "C cannot mature its own widen" does not close the hole —
+/// the stall is the veto WINDOW, not the widen.
+///
+/// MUTATION PROBE: drop the `RevokeActor` arm from
+/// `unstick_stalled_revocation` (or restore the unconditional
+/// `return EntryFold::Waiting` for an unresolved parent) and this test fails —
+/// the revocation lands in `issues` as `InvalidAncestry` and the binding stays
+/// Active.
+#[test]
+fn revoke_actor_folds_past_a_grant_frozen_in_its_own_ancestry() {
+    let freeze = pending_widen_freeze(248);
+    let key = freeze.fixture.owner_key.clone();
+
+    // C's stall lever: C's OWN grant, filed under the pending widen so the
+    // freeze parks it. `bind_and_rebind_still_defer_behind_a_pending_widen`
+    // pins that this entry cannot fold while the widen is pending.
+    let stall = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&freeze.fixture.agent_key, scope_entity(0x73), "agent", 1),
+        104,
+    );
+    let stall_hash = authority_entry_hash(&stall).unwrap();
+    // The operator's emergency brake, parented on that deferred grant.
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![stall_hash],
+        5,
+        revoke_actor_op(&key, 5),
+        105,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    let mut entries = freeze.entries.clone();
+    entries.push(stall);
+    entries.push(revoke);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(stall_hash, freeze.now_secs);
+    first_seen.insert(revoke_hash, freeze.now_secs);
+    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+
+    assert!(
+        fold.valid_entries.contains(&revoke_hash),
+        "the revocation must fold past a parent frozen behind an unrelated widen"
+    );
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked),
+        "withdrawal of consent must take effect NOW, not when the widen matures"
+    );
+    assert!(
+        !actor_binding_is_active(&fold, &freeze.fixture.actor, "human"),
+        "a revoked actor must not keep owner authority because it parented the \
+         revocation on a grant it froze itself"
+    );
+    // The exemption stays exactly one op wide: the GRANT keeps waiting, and the
+    // widen keeps its own clock.
+    assert!(
+        !fold.valid_entries.contains(&stall_hash),
+        "the deferred grant must NOT be dragged past the freeze with the revocation"
+    );
+    assert!(
+        fold.pending_widens.contains_key(&freeze.widen_hash),
+        "the pending widen must still mature on its own clock"
+    );
+}
+
+/// The second fix-12 narrowing: the bypass steps over a FROZEN parent, never an
+/// invalid one.
+///
+/// "Resolve against the nearest ready ancestor" is only sound while the skipped
+/// entries are ones the fold is deliberately holding. An entry the fold REJECTED
+/// is a different animal: nothing above it was ever validated, and walking past
+/// it would let a revocation fold over ancestry the vault refused. The
+/// revocation is removal-only, so this is not a privilege escalation — but it
+/// would silently admit an entry whose parent is not part of the log's valid
+/// history, which is a fold-integrity break the wider machinery (permutation
+/// invariance, `valid_entries` as the authority of record) relies on not
+/// happening.
+///
+/// Here the revocation's parent is a double-`BindActor`, rejected with
+/// `BindingExists`. No pending widen is involved at all, so the revocation must
+/// simply fail its ancestry as it always did.
+///
+/// MUTATION PROBE: relax `nearest_unfrozen_ancestor_state` to walk past any
+/// unfolded ancestor (drop the `pending` / `entry_is_frozen_by_pending_widen`
+/// terms) and this test fails — the revocation folds valid on top of a rejected
+/// parent.
+#[test]
+fn the_bypass_does_not_walk_past_a_rejected_parent() {
+    let fixture = bind_fixture(228);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    // Rejected: a live binding already exists on this key.
+    let double_bind = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        bind_op(&key, scope_entity(0x76), "human", 5),
+        103,
+    );
+    let double_bind_hash = authority_entry_hash(&double_bind).unwrap();
+    let revoke = cosigned_entry(
+        &fixture,
+        vec![double_bind_hash],
+        4,
+        revoke_actor_op(&key, 5),
+        104,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    let entries = vec![
+        fixture.genesis.clone(),
+        fixture.enroll,
+        bind,
+        double_bind.clone(),
+        revoke,
+    ];
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+
+    assert_eq!(
+        binding_rejection(&fold, &double_bind),
+        Some(ActorBindingRejection::BindingExists),
+        "fixture: the parent must be REJECTED, not merely deferred"
+    );
+    assert!(
+        !fold.valid_entries.contains(&revoke_hash),
+        "the bypass must not carry a revocation over a parent the fold rejected: \
+         only a parent frozen by a pending widen may be stepped over"
+    );
+}
+
+/// The `RevokeActor`-only gate on the fix-12 bypass, probed where it actually
+/// bites: `VetoPendingWiden`.
+///
+/// Most ops are held back a second time by the freeze check inside
+/// `fold_entry_state`, so opening the bypass to them changes nothing
+/// observable. A veto is the exception — `fold_entry_state` resolves it BEFORE
+/// the freeze, since a veto's whole job is to kill a pending widen. So a veto
+/// is the one op that would really travel through an ancestry bypass, and it is
+/// the one that must not: a veto folded against a state from before the frozen
+/// entry is a veto evaluated against a roster the vault has not settled, decided
+/// on `has_veto_authority_consent` from stale ancestry.
+///
+/// Here C parents a veto of the widen on its own frozen grant. The veto must
+/// stay stuck. It carries the same shape as the revocation that DOES get
+/// through in the test above, so what separates them is only the op gate.
+///
+/// MUTATION PROBE: drop the `matches!(entry.op, AuthorityOp::RevokeActor {..})`
+/// guard from `revocation_bypass_states` and this test fails — the veto folds
+/// valid and the pending widen dies without ever being weighed against a
+/// settled roster.
+#[test]
+fn a_veto_may_not_ride_the_revocation_ancestry_bypass() {
+    let freeze = pending_widen_freeze(236);
+    let stall = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&freeze.fixture.agent_key, scope_entity(0x75), "agent", 1),
+        104,
+    );
+    let stall_hash = authority_entry_hash(&stall).unwrap();
+    let veto = veto_entry(
+        freeze.fixture.vault_id,
+        &stall,
+        &freeze.fixture.owner,
+        freeze.widen_hash,
+        5,
+    );
+    let veto_hash = authority_entry_hash(&veto).unwrap();
+
+    let mut entries = freeze.entries.clone();
+    entries.push(stall);
+    entries.push(veto);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(stall_hash, freeze.now_secs);
+    first_seen.insert(veto_hash, freeze.now_secs);
+    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+
+    assert!(
+        !fold.valid_entries.contains(&veto_hash),
+        "a veto must NOT travel the revocation bypass: it is resolved before the \
+         freeze check, so an ancestry bypass would let it kill a widen from a \
+         roster the fold has not settled"
+    );
+    assert!(
+        !fold.vetoed_widens.contains(&freeze.widen_hash),
+        "the widen must not be vetoed by an entry that never folded"
+    );
+    assert!(
+        fold.pending_widens.contains_key(&freeze.widen_hash),
+        "the widen must still be pending on its own clock"
+    );
+}
+
+/// The other half of the fix-12 ruling: a revocation folded past the freeze must
+/// stay in force once the widen it bypassed matures.
+///
+/// The bypass resolves the revocation against an ancestry state that predates
+/// the frozen grant, so the obvious failure mode is a stranded watermark: the
+/// widen matures, the grant folds for real, the revocation re-folds on the
+/// now-available parent, and some ordering loses the raised
+/// `actor_binding_revocations` entry. Merge is monotone by max, so this should
+/// fall out — pinned so it stays true.
+#[test]
+fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
+    let freeze = pending_widen_freeze(252);
+    let key = freeze.fixture.owner_key.clone();
+    let stall = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&freeze.fixture.agent_key, scope_entity(0x74), "agent", 1),
+        104,
+    );
+    let stall_hash = authority_entry_hash(&stall).unwrap();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![stall_hash],
+        5,
+        revoke_actor_op(&key, 5),
+        105,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    let mut entries = freeze.entries.clone();
+    entries.push(stall);
+    entries.push(revoke);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(stall_hash, freeze.now_secs);
+    first_seen.insert(revoke_hash, freeze.now_secs);
+
+    // Same log, one clock apart: frozen, then matured.
+    let matured_at = freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    let after = fold_authority_log_with_seen_times(&entries, &first_seen, matured_at);
+    assert!(
+        !after.pending_widens.contains_key(&freeze.widen_hash),
+        "fixture: the widen must have matured at the later reading"
+    );
+    assert!(
+        after.valid_entries.contains(&stall_hash),
+        "fixture: the grant must fold once the freeze lifts"
+    );
+    assert!(
+        after.valid_entries.contains(&revoke_hash),
+        "the revocation must still fold once its parent is available for real"
+    );
+    assert_eq!(
+        folded_status(&after, &key),
+        Some(ActorBindingStatus::Revoked),
+        "the revocation's watermark must survive the widen maturing"
+    );
+    assert!(
+        !actor_binding_is_active(&after, &freeze.fixture.actor, "human"),
+        "a matured widen must not resurrect the revoked actor's authority"
+    );
+}
+
 /// fix-leg 11 P1-2: a matured ENROLLMENT must survive a restart under a
 /// rolled-back wall clock, which is what makes the write fold's floor
 /// persistence load-bearing in the GRANT direction.

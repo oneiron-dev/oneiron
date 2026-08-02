@@ -1722,6 +1722,43 @@ fn fold_authority_log_once(
                 EntryFold::Waiting => {}
             }
         }
+        if !progressed {
+            // The round made no progress, so every hash still pending is stuck
+            // for good under ordinary rules. ONLY here — never while entries may
+            // still be waiting their turn — may a revocation resolve against the
+            // ancestry ABOVE a parent that will never fold.
+            let stalled: Vec<_> = pending.iter().copied().collect();
+            for hash in stalled {
+                if equivocation_by_hash.contains_key(&hash) {
+                    continue;
+                }
+                let entry = &by_hash[&hash];
+                let fold_context = FoldContext {
+                    authority_forks: &authority_forks,
+                    authority_fork_vault_ids: &authority_fork_vault_ids,
+                    equivocation_groups: &equivocation_groups,
+                    unresolved_equivocation_groups: &unresolved_equivocation_groups,
+                    entry_ancestors: Some(&entry_ancestors),
+                    chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
+                    ..context
+                };
+                let Some(bypass_states) =
+                    revocation_bypass_states(entry, &by_hash, &states, &pending, fold_context)
+                else {
+                    continue;
+                };
+                // Ready only. A revocation the bypass cannot justify stays
+                // pending and is reported as `InvalidAncestry` below, exactly as
+                // before — the bypass may rescue a revocation, never admit one.
+                if let EntryFold::Ready(state) =
+                    fold_entry_state(entry, hash, &bypass_states, fold_context)
+                {
+                    states.insert(hash, state);
+                    pending.remove(&hash);
+                    progressed = true;
+                }
+            }
+        }
     }
     for hash in pending {
         issues.push(AuthorityFoldIssue::InvalidAncestry(hash));
@@ -2599,6 +2636,138 @@ fn entry_waits_on_pending_parent_outside_group(
     })
 }
 
+/// Substitute parent states that let a stalled `RevokeActor` fold against its
+/// nearest READY ancestry, or `None` when the bypass does not apply.
+///
+/// THE HOLE THIS CLOSES. `op_applies_despite_pending_widen` exempts a
+/// revocation from the pending-widen freeze, but that exemption is tested
+/// AFTER `fold_entry_state` has resolved parents, and an unresolved parent
+/// returns `Waiting` first. So a compromised key stalls its own revocation by
+/// parenting it on a grant the key itself filed under an unrelated pending
+/// widen: the grant defers (correctly — grants must freeze), and the child
+/// revocation inherits the wait for the whole veto window. The withdrawal of
+/// consent is exactly the operation that must not be delayable by its target.
+///
+/// WHY IT IS SAFE. Substituting an ancestry state that predates the frozen
+/// parent cannot manufacture authority for the revocation:
+///
+/// * `RevokeActor` is authority-REMOVING only. Applying it raises
+///   `actor_binding_revocations[key]` to at least `epoch` and touches nothing
+///   else, so the worst a stale base state can do is withhold the revocation's
+///   effect — the pre-fix behavior — never widen anything.
+/// * The watermark merges by MAX, so once the frozen parent does fold the
+///   revocation stays in force: no ordering can lower a raised watermark.
+/// * The substituted states are real folded states of real ancestors, so every
+///   other gate the entry passes through (signature, vault, roster, consent,
+///   quorum, seq) still runs against genuinely folded authority.
+///
+/// WHY IT STAYS ONE OP WIDE, AND ONE CAUSE DEEP. Two independent narrowings,
+/// because the bypass is the only place a fold walks past an unfolded entry:
+///
+/// * Only `RevokeActor` may USE it. A grant folded against a pre-widen roster
+///   is precisely what the freeze exists to prevent, so `BindActor` and
+///   `RebindActor` keep waiting.
+/// * Only a parent FROZEN BY THE WIDEN may be stepped over — see
+///   [`entry_is_frozen_by_pending_widen`]. A parent that is waiting for any
+///   other reason, was ruled `Invalid`, or is simply absent from the log
+///   refuses the whole bypass, so a revocation can never be folded over
+///   ancestry this vault has not validated. The skipped parent is stepped over,
+///   never applied.
+///
+/// The walk is bounded by the ancestry it traverses and introduces no clock
+/// dependency: a revocation is not time-based, and this decides nothing about
+/// when any pending widen matures.
+fn revocation_bypass_states(
+    entry: &AuthorityLogEntry,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    pending: &BTreeSet<AuthorityEntryHash>,
+    context: FoldContext<'_>,
+) -> Option<BTreeMap<AuthorityEntryHash, FoldState>> {
+    if !matches!(entry.op, AuthorityOp::RevokeActor { .. }) {
+        return None;
+    }
+    let mut substitutes = BTreeMap::new();
+    for parent in &entry.parent_hashes {
+        if states.contains_key(parent) {
+            continue;
+        }
+        let nearest = nearest_unfrozen_ancestor_state(*parent, by_hash, states, pending, context)?;
+        substitutes.insert(*parent, nearest);
+    }
+    // No unresolved parent means the entry stalled on something else entirely
+    // (equivocation, seq, consent); leave every other path exactly as it was.
+    if substitutes.is_empty() {
+        return None;
+    }
+    let mut merged = states.clone();
+    merged.extend(substitutes);
+    Some(merged)
+}
+
+/// Walks up from a frozen entry to the merge of the nearest folded states.
+///
+/// Every branch must terminate in a READY ancestor, crossing only entries the
+/// pending-widen freeze is holding. Anything else — an invalid ancestor, a
+/// missing one, a root that never folded, a parent waiting for some other
+/// reason — refuses the bypass outright.
+fn nearest_unfrozen_ancestor_state(
+    start: AuthorityEntryHash,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    pending: &BTreeSet<AuthorityEntryHash>,
+    context: FoldContext<'_>,
+) -> Option<FoldState> {
+    let mut resolved: Option<FoldState> = None;
+    let mut visited = BTreeSet::new();
+    let mut frontier = vec![start];
+    while let Some(hash) = frontier.pop() {
+        if !visited.insert(hash) {
+            continue;
+        }
+        if let Some(state) = states.get(&hash) {
+            resolved = Some(match resolved {
+                Some(current) if current.vault_id != state.vault_id => return None,
+                Some(current) => merge_states(&current, state),
+                None => state.clone(),
+            });
+            continue;
+        }
+        let entry = by_hash.get(&hash)?;
+        if !pending.contains(&hash)
+            || entry.parent_hashes.is_empty()
+            || !entry_is_frozen_by_pending_widen(entry, by_hash, states, pending, context)
+        {
+            return None;
+        }
+        frontier.extend(entry.parent_hashes.iter().copied());
+    }
+    resolved
+}
+
+/// Whether `entry` is stalled by the pending-widen freeze specifically.
+///
+/// This is the bypass's load-bearing narrowing, so it is decided POSITIVELY
+/// rather than by elimination: the entry's own ancestry must resolve, that
+/// ancestry must actually carry a pending widen, and the entry's op must be one
+/// the freeze defers. An entry that is waiting for any other reason fails this
+/// and stops the walk.
+fn entry_is_frozen_by_pending_widen(
+    entry: &AuthorityLogEntry,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    pending: &BTreeSet<AuthorityEntryHash>,
+    context: FoldContext<'_>,
+) -> bool {
+    if !context.enforce_seen_time_delay || op_applies_despite_pending_widen(&entry.op) {
+        return false;
+    }
+    entry.parent_hashes.iter().all(|parent| {
+        nearest_unfrozen_ancestor_state(*parent, by_hash, states, pending, context)
+            .is_some_and(|state| !state.pending_widens.is_empty())
+    })
+}
+
 fn entry_ancestor_index(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>> {
@@ -3213,6 +3382,15 @@ fn op_is_delayable_widen(
 /// per-key watermark that kills bindings at or below it, so folding it early
 /// can strictly REMOVE authority from the derived roster, never add it — and
 /// the pending widen still matures on its own clock, unaffected.
+///
+/// SEAM — this exemption has a SECOND half, [`revocation_bypass_states`]. The
+/// check here runs after parents are resolved, so on its own it does nothing
+/// for a revocation whose PARENT is the frozen entry: an unresolved parent
+/// returns `Waiting` before this line is reached, and a compromised key can
+/// manufacture exactly that parent. The ancestry bypass closes that path by
+/// letting a stalled revocation — and only a revocation — resolve against its
+/// nearest ready ancestor. Same ruling, same blast radius (removal-only,
+/// monotone watermark); read the two together before changing either.
 fn op_applies_despite_pending_widen(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::RevokeActor { .. } => true,
