@@ -1,0 +1,6 @@
+{
+  "instructions": "Pre-release engine, no deployed vaults: do not flag missing migrations or legacy decoders for persisted formats whose version counters have never shipped. Prioritize invariants enforced at every door (admission, replay, rematerialization, export, batch), validators that reject what writers merely promise, hostile-peer-reachable paths, and fail-open error handling. Full posture: REVIEW.md at repo root.",
+  "ignorePatterns": "crates/*/vendor/**",
+  "skipReview": "AUTOMATIC",
+  "fileChangeLimit": 300
+}

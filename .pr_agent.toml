@@ -1,0 +1,4 @@
+# Qodo repo-local config. Repo-local keys override portal settings — keep minimal.
+# Review guidance lives in REVIEW.md (portal toggle "REVIEW.md instructions" must be ON).
+[ignore]
+glob = ['crates/*/vendor/**']
