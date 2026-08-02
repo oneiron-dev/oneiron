@@ -4849,6 +4849,142 @@ fn a_soft_erase_that_erased_nothing_writes_no_pending_tombstone() {
     }
 }
 
+/// fix-leg 10 P1: an EMPTY commit settles nothing, so it must not latch
+/// `authority_settled`.
+///
+/// fix-8 latched the flag unconditionally the moment the soft-erase txn ran, on
+/// the theory that a committed destructive transaction is this delete's
+/// linearization point. It is — when it actually erased something. When the
+/// delete's scope raced away between the header read and the scrub txn
+/// (`existed == false`, ONE-1149's shape), that transaction commits nothing at
+/// all: no body scrubbed, no vector dropped, no `pt:` staged. Latching on it
+/// declared a linearization point that does not exist, and the purge txn then
+/// asked NO authority question.
+///
+/// What that bought an attacker: a `RevokeActor` AND a same-id re-put both
+/// landing in the window before the purge were ignored wholesale. The purge tore
+/// the REPLACEMENT state — data the revoked actor was never authorized to touch
+/// and that this delete never even read — wrote the `dt:` marker that bricks the
+/// id forever, committed the replayable `pt:` propagation intent, and appended
+/// the stale `allow` gate decision minted from a snapshot two commits stale.
+///
+/// Fully deterministic, using the rendezvous slot TWICE: the deleter parks
+/// before its scrub txn while the harness races the scope away, then parks again
+/// at `BeforeHardPurge` while the harness commits the revocation and the re-put.
+/// No `AFTER_HEADER_READ` contention with the other raced tests, and no retry
+/// loop — LMDB's single writer does the ordering.
+///
+/// MUTATION PROBE: latch unconditionally again (`authority_settled = true;`) and
+/// this test fails — the purge re-folds nothing, the delete SUCCEEDS, and
+/// `expect_err` panics with the replacement torn and `dt:`/`pt:`/receipt/gate
+/// artifacts on disk.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
+    const REPLACEMENT: &[u8] = b"state re-put after the empty scrub";
+    let _serial = lock_delete_rendezvous();
+
+    for reason in [SafeDeleteReason::GdprDelete, SafeDeleteReason::PolicyDelete] {
+        let case = format!("{reason:?}");
+        let (_dir, vault) = open_nonpublishing_delete_vault();
+        let owner = put_person(&vault, 0x57);
+        let revoke = root_binding_with_pending_revocation(&vault, 0x58, owner);
+        let subject = EntityId::from_bytes([0x59; 16]).expect("subject id");
+        vault
+            .put_entity(&subject, ENTITY_TYPE_PERSON, test_time(1), 1, b"original")
+            .expect("put the original scope");
+
+        // Park #1: after the entry gate and the no-op publish, BEFORE the scrub
+        // txn opens — the deleter holds no write lock here.
+        let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
+        crate::deletion::install_delete_rendezvous(
+            crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+            subject,
+            arrived_tx,
+            resume_rx,
+        );
+
+        let result = std::thread::scope(|scope| {
+            let vault_ref = &vault;
+            let deleter = scope
+                .spawn(move || facade_for(vault_ref, owner).safe_delete(&subject.to_hex(), reason));
+            arrived_rx
+                .recv()
+                .expect("the deleter must park before its scrub txn");
+
+            // Race the ORIGINAL scope to nothing. The scrub txn below will find
+            // `existed == false` and commit empty.
+            let mut wtxn = vault.store.env.write_txn().expect("write txn");
+            crate::batch::deindex_entity(&vault.store, &mut wtxn, &subject)
+                .expect("race the scope away");
+            wtxn.commit().expect("commit the racing erase");
+            assert!(
+                vault.get_raw(&subject).expect("get raw").is_none(),
+                "{case}: precondition — the scrub must find nothing"
+            );
+
+            // Park #2, installed while the deleter is still held at park #1: the
+            // slot was `take`n when it fired, so this is the next one it hits.
+            let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+            let (resume_purge_tx, resume_purge_rx) = std::sync::mpsc::sync_channel::<()>(0);
+            crate::deletion::install_delete_rendezvous(
+                crate::deletion::DeleteRendezvous::BeforeHardPurge,
+                subject,
+                arrived_tx,
+                resume_purge_rx,
+            );
+            resume_tx.send(()).expect("release into the empty scrub");
+            arrived_rx
+                .recv()
+                .expect("the deleter must park after the empty scrub commits");
+
+            // The two commits the empty scrub falsely claimed to have ordered
+            // behind it: authority is gone, and the id carries NEW state.
+            vault
+                .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+                .expect("commit the revocation");
+            vault
+                .put_entity(&subject, ENTITY_TYPE_PERSON, test_time(4), 4, REPLACEMENT)
+                .expect("re-put the same id");
+            vault
+                .put_vector(&subject, &[0.9, 0.8, 0.7, 0.6])
+                .expect("re-put a vector");
+            resume_purge_tx.send(()).expect("release into the purge");
+            deleter.join().expect("deleter thread must not panic")
+        });
+
+        let err = result.expect_err(&format!(
+            "{case}: the empty scrub linearized nothing, so the purge is this \
+             delete's first irreversible act and MUST re-prove authority"
+        ));
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{case}");
+        assert!(
+            err.message.contains("no active owner binding"),
+            "{case}: the parked pre-gate error must survive, not degrade to a \
+             generic concurrency code: {}",
+            err.message
+        );
+        // The replacement is whole — the purge must not tear state this delete
+        // never read, on an authority that no longer exists.
+        assert_eq!(
+            vault
+                .get_raw(&subject)
+                .expect("get raw")
+                .expect("the replacement row survives")
+                .len(),
+            crate::batch::ENTITY_METADATA_HEADER_LEN + REPLACEMENT.len(),
+            "{case}: the re-put body must be untouched"
+        );
+        assert_eq!(
+            vault.get_vector(&subject).expect("get vector"),
+            Some(vec![0.9, 0.8, 0.7, 0.6]),
+            "{case}: the re-put vector must be untouched"
+        );
+        assert_no_local_delete_artifacts(&vault, &subject, &case);
+    }
+}
+
 /// A vault with vectors enabled, for the non-publishing delete regressions that
 /// need vector residue as rollback evidence.
 #[cfg(not(feature = "sync"))]

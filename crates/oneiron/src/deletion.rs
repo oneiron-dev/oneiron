@@ -1951,8 +1951,9 @@ impl Vault {
         // no-op writer, or any sync build path that declines to publish) this
         // delete has settled nothing yet, and the FIRST destructive commit below
         // becomes the point instead — so that one transaction re-proves the
-        // owner binding. Set from the publish result, then latched by whichever
-        // destructive txn runs first.
+        // owner binding. Set from the publish result, then latched by the first
+        // destructive txn that actually LINEARIZES this delete (fix-leg 10: an
+        // empty commit settles nothing — see the latch below).
         let mut authority_settled = crdt_persisted;
 
         let soft_complete_at = if matches!(
@@ -1981,7 +1982,6 @@ impl Vault {
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
             let scrub_is_the_linearization_point = !authority_settled;
-            authority_settled = true;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
@@ -2015,6 +2015,28 @@ impl Vault {
                     id,
                     &tombstone,
                 )?;
+                // fix-leg 10 P1: the latch and the marker are ONE decision, so
+                // they share ONE branch — an empty commit settles nothing.
+                //
+                // fix-8 latched here unconditionally, on the theory that a
+                // committed destructive txn is this delete's linearization
+                // point. It is, when it erased something. `existed == false` is
+                // ONE-1149's raced-to-nothing shape: the scope vanished between
+                // the header read and this txn, so the commit below is EMPTY —
+                // no body scrubbed, no vector dropped, no marker staged. The
+                // unconditional latch declared a linearization point that did
+                // not exist and the purge txn below then asked NO authority
+                // question: a `RevokeActor` PLUS a same-id re-put landing before
+                // it were both ignored, and the purge tore the REPLACEMENT
+                // state, wrote `dt:`/`pt:`, and appended the stale `allow`
+                // decision. Leaving it unsettled makes the purge re-fold and
+                // refuse — actionable (nothing published, nothing torn) and
+                // true.
+                //
+                // The PUBLISHED path never reaches this branch:
+                // `scrub_is_the_linearization_point` is `!authority_settled`, so
+                // there the flag is already `true` and stays untouched.
+                authority_settled = true;
             }
             wtxn.commit()?;
             unix_seconds_now()
