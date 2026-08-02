@@ -1410,242 +1410,6 @@ fn forged_facet_seed_cannot_move_entities_across_the_disclosure_boundary() {
     );
 }
 
-/// The admission drop is TERMINAL, so it must schedule no retry work.
-///
-/// `rm:w:{window}:{entity_hex}` means "a forward rematerialization pass still
-/// owes work on this entity", and forward remat discharges it by REPLAYING the
-/// row out of the document. A row the admission door DROPPED is never in any
-/// document, so no replay can reach it and the marker can never clear. Two
-/// things break at once if the drop marks: the marker pends forever, and
-/// because a pending `rm:` row is the engine's GDPR purge-may-have-failed
-/// signal, the erasure SLA channel is permanently poisoned by a peer's forged
-/// edge — a remote-controlled false alarm on the one channel that must stay
-/// trustworthy.
-///
-/// The quarantine `x:` row is the WHOLE account of a terminal drop, and it is
-/// complete on its own: typed reason, hashed key, hashed payload.
-#[test]
-fn admission_drop_leaves_no_pending_remat_work() {
-    let member = entity_id(0x5B);
-    let (_dir, vault, _grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-04");
-
-    let facet = entity_id(0x5C);
-    let person = entity_id(0x5D);
-
-    // The forged stamp with BOTH endpoint types knowable from this frame:
-    // PERSON is off the source half of the table, so the door DROPS it.
-    let remote = create_window_doc("federation-peer", &window_key);
-    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
-    insert_entity(&remote, person, ENTITY_TYPE_PERSON, b"person");
-    insert_edge(&remote, person, EdgeKind::FacetOf, facet);
-    remote.commit();
-    let update = remote.export(ExportMode::all_updates()).unwrap();
-
-    let admitted = admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect("a forged stamp must not fail the admission closed");
-
-    let local = create_window_doc("local", &window_key);
-    local.import(&admitted).unwrap();
-    assert!(
-        map_get_bytes(
-            &local.get_map("edges"),
-            &edge_key(person, EdgeKind::FacetOf, facet)
-        )
-        .is_none(),
-        "precondition — the forged row must actually be DROPPED, or this test \
-         proves nothing about a drop's marker shape"
-    );
-
-    let records = quarantined_records(&vault).unwrap();
-    assert!(
-        records
-            .iter()
-            .any(|(_, record)| record.reason_code == "InvalidFacetOfEdge"
-                && record.container == QuarantineContainer::Edges),
-        "the drop must still leave typed durable evidence — silent drops are \
-         the failure this whole surface exists to prevent"
-    );
-
-    assert!(
-        crate::sync::quarantine::pending_remat_windows(&vault)
-            .unwrap()
-            .is_empty(),
-        "an admission-DROPPED row can never be replayed out of a document it \
-         never entered, so a needs-remat marker for it would pend forever and \
-         permanently signal a GDPR purge failure that never happened"
-    );
-
-    // Draining is the operator's discharge path; it must find nothing to do.
-    let report = crate::sync::quarantine::sync_doctor(&vault).unwrap();
-    assert!(
-        report.rm_pending_windows.is_empty(),
-        "the doctor's erasure-SLA channel must stay clean after a peer's \
-         forged edge is dropped"
-    );
-    assert_eq!(
-        report.quarantine_count, 1,
-        "exactly the one forged row is accounted"
-    );
-}
-
-/// N forged rows in one admission cost EXACTLY ONE extra transaction.
-///
-/// The peer chooses N. A `write_txn` + commit per rejected row therefore hands
-/// it an amplification primitive: one admission, unbounded fsync traffic. The
-/// rejections ride one batch that commits once for the whole pass.
-///
-/// The commit count is observed through LMDB's own committed-transaction id
-/// (`Env::info().last_txn_id`), which is the property that actually matters —
-/// asserting on a Rust-side counter would pass even if the batching were
-/// removed.
-///
-/// The pin is an exact DELTA against a baseline, not a loose upper bound. An
-/// admission also commits traffic that has nothing to do with rejections
-/// (policy-manifest resolution today, whatever the path grows tomorrow), so a
-/// bare `commits < N` would still pass with the batch sharded into sixteen
-/// write transactions — the amplification fix could regress by an order of
-/// magnitude without failing a green test. The BASELINE pass is the same
-/// fixture with an ON-TABLE source type: identical row count, identical key
-/// shape, identical vault construction, and nothing rejected, so its
-/// `TerminalRejectionBatch` takes no transaction at all. The forged pass must
-/// then cost the baseline PLUS EXACTLY ONE — the single batch commit.
-#[test]
-fn admission_drops_commit_in_one_bounded_batch() {
-    // Enough rows that a per-row commit is unmistakable against a one-txn pass.
-    const STAMPER_COUNT: usize = 0x20;
-
-    /// One admission over `STAMPER_COUNT` `FacetOf` rows whose sources carry
-    /// `source_type`. Returns the vault (temp dir held alive by the caller)
-    /// and the committed-transaction delta the admission itself cost.
-    fn admission_txn_delta(source_type: u8) -> (tempfile::TempDir, Vault, usize) {
-        let (dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x6B));
-        let window_key = WindowKey::new("2026-05");
-        let facet = entity_id(0x6C);
-
-        let remote = create_window_doc("federation-peer", &window_key);
-        insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
-        for id in (0x70_u8..0x90).map(entity_id) {
-            insert_entity(&remote, id, source_type, b"stamper");
-            insert_edge(&remote, id, EdgeKind::FacetOf, facet);
-        }
-        remote.commit();
-        let update = remote.export(ExportMode::all_updates()).unwrap();
-
-        let before = vault.store.env.info().last_txn_id;
-        admit_federated_window_update(
-            &vault,
-            &window_key,
-            &update,
-            FederationAdmissionRole::Member,
-        )
-        .expect("neither pass may fail the admission closed");
-        let delta = vault.store.env.info().last_txn_id - before;
-        (dir, vault, delta)
-    }
-
-    // EVENT is on the `FacetOf` source table, PERSON is not: the two passes
-    // differ in ONE type byte, so their txn delta isolates the rejections.
-    let (_baseline_dir, baseline_vault, baseline_commits) = admission_txn_delta(ENTITY_TYPE_EVENT);
-    let (_forged_dir, forged_vault, forged_commits) = admission_txn_delta(ENTITY_TYPE_PERSON);
-
-    assert!(
-        quarantined_records(&baseline_vault).unwrap().is_empty(),
-        "the baseline must reject NOTHING — a baseline that also paid for a \
-         rejection batch would make the delta below vacuously true"
-    );
-    assert_eq!(
-        quarantined_records(&forged_vault).unwrap().len(),
-        STAMPER_COUNT,
-        "every rejected row is still accounted with its own typed evidence \
-         row — bounding the COMMITS must not bound the ACCOUNTING"
-    );
-
-    assert_eq!(
-        forged_commits,
-        baseline_commits + 1,
-        "{STAMPER_COUNT} forged rows cost {forged_commits} transactions \
-         against a {baseline_commits}-transaction rejection-free baseline — \
-         the whole pass owes EXACTLY ONE batch commit, so any sharding of it \
-         is a peer-controlled multiplier on our fsync traffic"
-    );
-
-    assert!(
-        crate::sync::quarantine::pending_remat_windows(&forged_vault)
-            .unwrap()
-            .is_empty(),
-        "the batch keeps the terminal no-marker shape for every row"
-    );
-}
-
-/// Past the per-pass evidence bound, rejections are accounted by COUNT.
-///
-/// The `x:` ring is SHARED and capped at 4096 rows, so an unbounded per-pass
-/// mint would let one hostile frame flush every unrelated quarantine record the
-/// vault holds — evidence destruction dressed as evidence keeping. The bound
-/// caps what one pass mints; the remainder increments a doctor-visible counter,
-/// so nothing is silently dropped. The reason code is uniform within a pass, so
-/// the capped rows carry no information the kept rows do not.
-///
-/// H2 liveness is unaffected: the ADMISSION continues either way — this is only
-/// about how the rejection is accounted.
-#[test]
-fn admission_drops_past_the_evidence_bound_are_counted_not_dropped() {
-    use crate::sync::quarantine::MAX_QUARANTINE_ROWS_PER_PASS;
-
-    let member = entity_id(0x7B);
-    let (_dir, vault, _grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-06");
-
-    let facet = entity_id(0x7C);
-    let over_cap = 5_usize;
-    let total = MAX_QUARANTINE_ROWS_PER_PASS + over_cap;
-
-    let remote = create_window_doc("federation-peer", &window_key);
-    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
-    for index in 0..total {
-        // 16-byte ids from a counter: the fixture needs more distinct forged
-        // sources than the single-byte seed helper can mint without colliding
-        // with the pinned-id list.
-        let mut bytes = [0x11_u8; 16];
-        bytes[0..8].copy_from_slice(&(index as u64 + 1).to_le_bytes());
-        let id = EntityId::from_bytes(bytes).unwrap();
-        insert_entity(&remote, id, ENTITY_TYPE_PERSON, b"person");
-        insert_edge(&remote, id, EdgeKind::FacetOf, facet);
-    }
-    remote.commit();
-    let update = remote.export(ExportMode::all_updates()).unwrap();
-
-    admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect("an over-cap forged frame must not fail the admission closed");
-
-    let report = crate::sync::quarantine::sync_doctor(&vault).unwrap();
-    assert_eq!(
-        report.quarantine_count, MAX_QUARANTINE_ROWS_PER_PASS,
-        "one pass mints at most the per-pass bound, so a hostile frame cannot \
-         flush the shared 4096-row evidence ring"
-    );
-    assert_eq!(
-        report.batch_drop_count, over_cap as u64,
-        "the rows past the bound are accounted by COUNT — a bounded evidence \
-         budget must never become a silent drop"
-    );
-    assert!(
-        report.rm_pending_windows.is_empty(),
-        "over-cap rows keep the terminal no-marker shape too"
-    );
-}
-
 /// OUT-OF-ORDER RESIDUE — the leg the admission drop alone cannot close, and
 /// the reason the selector needs a read mirror of the write table.
 ///
@@ -2907,6 +2671,242 @@ fn selector_document_only_target_scopes_only_when_it_types_a_facet() {
     );
 }
 
+/// The admission drop is TERMINAL, so it must schedule no retry work.
+///
+/// `rm:w:{window}:{entity_hex}` means "a forward rematerialization pass still
+/// owes work on this entity", and forward remat discharges it by REPLAYING the
+/// row out of the document. A row the admission door DROPPED is never in any
+/// document, so no replay can reach it and the marker can never clear. Two
+/// things break at once if the drop marks: the marker pends forever, and
+/// because a pending `rm:` row is the engine's GDPR purge-may-have-failed
+/// signal, the erasure SLA channel is permanently poisoned by a peer's forged
+/// edge — a remote-controlled false alarm on the one channel that must stay
+/// trustworthy.
+///
+/// The quarantine `x:` row is the WHOLE account of a terminal drop, and it is
+/// complete on its own: typed reason, hashed key, hashed payload.
+#[test]
+fn admission_drop_leaves_no_pending_remat_work() {
+    let member = entity_id(0x5B);
+    let (_dir, vault, _grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-04");
+
+    let facet = entity_id(0x5C);
+    let person = entity_id(0x5D);
+
+    // The forged stamp with BOTH endpoint types knowable from this frame:
+    // PERSON is off the source half of the table, so the door DROPS it.
+    let remote = create_window_doc("federation-peer", &window_key);
+    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
+    insert_entity(&remote, person, ENTITY_TYPE_PERSON, b"person");
+    insert_edge(&remote, person, EdgeKind::FacetOf, facet);
+    remote.commit();
+    let update = remote.export(ExportMode::all_updates()).unwrap();
+
+    let admitted = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect("a forged stamp must not fail the admission closed");
+
+    let local = create_window_doc("local", &window_key);
+    local.import(&admitted).unwrap();
+    assert!(
+        map_get_bytes(
+            &local.get_map("edges"),
+            &edge_key(person, EdgeKind::FacetOf, facet)
+        )
+        .is_none(),
+        "precondition — the forged row must actually be DROPPED, or this test \
+         proves nothing about a drop's marker shape"
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert!(
+        records
+            .iter()
+            .any(|(_, record)| record.reason_code == "InvalidFacetOfEdge"
+                && record.container == QuarantineContainer::Edges),
+        "the drop must still leave typed durable evidence — silent drops are \
+         the failure this whole surface exists to prevent"
+    );
+
+    assert!(
+        crate::sync::quarantine::pending_remat_windows(&vault)
+            .unwrap()
+            .is_empty(),
+        "an admission-DROPPED row can never be replayed out of a document it \
+         never entered, so a needs-remat marker for it would pend forever and \
+         permanently signal a GDPR purge failure that never happened"
+    );
+
+    // Draining is the operator's discharge path; it must find nothing to do.
+    let report = crate::sync::quarantine::sync_doctor(&vault).unwrap();
+    assert!(
+        report.rm_pending_windows.is_empty(),
+        "the doctor's erasure-SLA channel must stay clean after a peer's \
+         forged edge is dropped"
+    );
+    assert_eq!(
+        report.quarantine_count, 1,
+        "exactly the one forged row is accounted"
+    );
+}
+
+/// N forged rows in one admission cost EXACTLY ONE extra transaction.
+///
+/// The peer chooses N. A `write_txn` + commit per rejected row therefore hands
+/// it an amplification primitive: one admission, unbounded fsync traffic. The
+/// rejections ride one batch that commits once for the whole pass.
+///
+/// The commit count is observed through LMDB's own committed-transaction id
+/// (`Env::info().last_txn_id`), which is the property that actually matters —
+/// asserting on a Rust-side counter would pass even if the batching were
+/// removed.
+///
+/// The pin is an exact DELTA against a baseline, not a loose upper bound. An
+/// admission also commits traffic that has nothing to do with rejections
+/// (policy-manifest resolution today, whatever the path grows tomorrow), so a
+/// bare `commits < N` would still pass with the batch sharded into sixteen
+/// write transactions — the amplification fix could regress by an order of
+/// magnitude without failing a green test. The BASELINE pass is the same
+/// fixture with an ON-TABLE source type: identical row count, identical key
+/// shape, identical vault construction, and nothing rejected, so its
+/// `TerminalRejectionBatch` takes no transaction at all. The forged pass must
+/// then cost the baseline PLUS EXACTLY ONE — the single batch commit.
+#[test]
+fn admission_drops_commit_in_one_bounded_batch() {
+    // Enough rows that a per-row commit is unmistakable against a one-txn pass.
+    const STAMPER_COUNT: usize = 0x20;
+
+    /// One admission over `STAMPER_COUNT` `FacetOf` rows whose sources carry
+    /// `source_type`. Returns the vault (temp dir held alive by the caller)
+    /// and the committed-transaction delta the admission itself cost.
+    fn admission_txn_delta(source_type: u8) -> (tempfile::TempDir, Vault, usize) {
+        let (dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x6B));
+        let window_key = WindowKey::new("2026-05");
+        let facet = entity_id(0x6C);
+
+        let remote = create_window_doc("federation-peer", &window_key);
+        insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
+        for id in (0x70_u8..0x90).map(entity_id) {
+            insert_entity(&remote, id, source_type, b"stamper");
+            insert_edge(&remote, id, EdgeKind::FacetOf, facet);
+        }
+        remote.commit();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+
+        let before = vault.store.env.info().last_txn_id;
+        admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Member,
+        )
+        .expect("neither pass may fail the admission closed");
+        let delta = vault.store.env.info().last_txn_id - before;
+        (dir, vault, delta)
+    }
+
+    // EVENT is on the `FacetOf` source table, PERSON is not: the two passes
+    // differ in ONE type byte, so their txn delta isolates the rejections.
+    let (_baseline_dir, baseline_vault, baseline_commits) = admission_txn_delta(ENTITY_TYPE_EVENT);
+    let (_forged_dir, forged_vault, forged_commits) = admission_txn_delta(ENTITY_TYPE_PERSON);
+
+    assert!(
+        quarantined_records(&baseline_vault).unwrap().is_empty(),
+        "the baseline must reject NOTHING — a baseline that also paid for a \
+         rejection batch would make the delta below vacuously true"
+    );
+    assert_eq!(
+        quarantined_records(&forged_vault).unwrap().len(),
+        STAMPER_COUNT,
+        "every rejected row is still accounted with its own typed evidence \
+         row — bounding the COMMITS must not bound the ACCOUNTING"
+    );
+
+    assert_eq!(
+        forged_commits,
+        baseline_commits + 1,
+        "{STAMPER_COUNT} forged rows cost {forged_commits} transactions \
+         against a {baseline_commits}-transaction rejection-free baseline — \
+         the whole pass owes EXACTLY ONE batch commit, so any sharding of it \
+         is a peer-controlled multiplier on our fsync traffic"
+    );
+
+    assert!(
+        crate::sync::quarantine::pending_remat_windows(&forged_vault)
+            .unwrap()
+            .is_empty(),
+        "the batch keeps the terminal no-marker shape for every row"
+    );
+}
+
+/// Past the per-pass evidence bound, rejections are accounted by COUNT.
+///
+/// The `x:` ring is SHARED and capped at 4096 rows, so an unbounded per-pass
+/// mint would let one hostile frame flush every unrelated quarantine record the
+/// vault holds — evidence destruction dressed as evidence keeping. The bound
+/// caps what one pass mints; the remainder increments a doctor-visible counter,
+/// so nothing is silently dropped. The reason code is uniform within a pass, so
+/// the capped rows carry no information the kept rows do not.
+///
+/// H2 liveness is unaffected: the ADMISSION continues either way — this is only
+/// about how the rejection is accounted.
+#[test]
+fn admission_drops_past_the_evidence_bound_are_counted_not_dropped() {
+    use crate::sync::quarantine::MAX_QUARANTINE_ROWS_PER_PASS;
+
+    let member = entity_id(0x7B);
+    let (_dir, vault, _grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-06");
+
+    let facet = entity_id(0x7C);
+    let over_cap = 5_usize;
+    let total = MAX_QUARANTINE_ROWS_PER_PASS + over_cap;
+
+    let remote = create_window_doc("federation-peer", &window_key);
+    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
+    for index in 0..total {
+        // 16-byte ids from a counter: the fixture needs more distinct forged
+        // sources than the single-byte seed helper can mint without colliding
+        // with the pinned-id list.
+        let mut bytes = [0x11_u8; 16];
+        bytes[0..8].copy_from_slice(&(index as u64 + 1).to_le_bytes());
+        let id = EntityId::from_bytes(bytes).unwrap();
+        insert_entity(&remote, id, ENTITY_TYPE_PERSON, b"person");
+        insert_edge(&remote, id, EdgeKind::FacetOf, facet);
+    }
+    remote.commit();
+    let update = remote.export(ExportMode::all_updates()).unwrap();
+
+    admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect("an over-cap forged frame must not fail the admission closed");
+
+    let report = crate::sync::quarantine::sync_doctor(&vault).unwrap();
+    assert_eq!(
+        report.quarantine_count, MAX_QUARANTINE_ROWS_PER_PASS,
+        "one pass mints at most the per-pass bound, so a hostile frame cannot \
+         flush the shared 4096-row evidence ring"
+    );
+    assert_eq!(
+        report.batch_drop_count, over_cap as u64,
+        "the rows past the bound are accounted by COUNT — a bounded evidence \
+         budget must never become a silent drop"
+    );
+    assert!(
+        report.rm_pending_windows.is_empty(),
+        "over-cap rows keep the terminal no-marker shape too"
+    );
+}
+
 #[test]
 fn selector_facet_closure_does_not_expand_from_facet_entities() {
     let member = entity_id(0x3A);
@@ -3456,4 +3456,86 @@ fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
 
     authorize_sync_selector(&vault, test_selector_scope(), &selector)
         .expect("authorization must be byte-for-byte unchanged after the rejected overwrite");
+}
+// ─── fix-12 item 4: the member/guest plane is removal-free ──────────────────
+
+/// THE INVARIANT THE REPLICATED-REMOVAL DOOR STANDS ON (fix-12 item 4).
+///
+/// `sync::bridge::materialize_edges_from_delta`'s `FacetOf` removal arm
+/// APPLIES the removal with no consent gate, and the argument for that is
+/// TOPOLOGICAL: every plane that can reach the arm is in-domain, because the
+/// member/guest plane cannot EXPRESS a removal at all. Two independent
+/// mechanisms make that true, and this test pins BOTH — if either ever gains
+/// a removal-capable path, the replicated door silently becomes a laundering
+/// door, so this test must fail LOUDLY rather than the failure surfacing as a
+/// disclosure bug three layers away.
+///
+/// 1. INSERT-ONLY CONSTRUCTION. `admit_federated_window_update` never mutates
+///    the remote doc; it authors a FRESH admission doc and COPIES admitted
+///    rows into it. An absent key in the peer's frame is simply a key that is
+///    never inserted — there is no shape in the output that says "remove the
+///    receiver's row". Asserted by admitting a frame that OMITS an edge the
+///    receiver holds and checking the admitted update carries no removal of
+///    it: importing it into a doc that HAS the edge leaves the edge standing.
+/// 2. TOMBSTONE REJECTION. `reject_federated_tombstones` refuses the WHOLE
+///    frame when the peer sends deletions at all, so the other CRDT shape
+///    that could express a removal is refused at the door.
+#[test]
+fn federated_admission_cannot_express_a_removal() {
+    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x64));
+    let window_key = WindowKey::new("2026-03");
+    let claim = entity_id(0x65);
+    let facet = entity_id(0x66);
+
+    // The RECEIVER already holds the stamp a hostile peer would want gone.
+    let receiver = create_window_doc("receiver", &window_key);
+    insert_entity(&receiver, facet, ENTITY_TYPE_FACET, b"facet");
+    insert_edge(&receiver, claim, EdgeKind::FacetOf, facet);
+    receiver.commit();
+
+    // 1. INSERT-ONLY: the peer's frame simply OMITS the stamp. Admission
+    //    copies what IS there; omission is not a removal.
+    let remote = create_window_doc("remote", &window_key);
+    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
+    remote.commit();
+    let admitted = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &remote.export(ExportMode::all_updates()).unwrap(),
+        FederationAdmissionRole::Member,
+    )
+    .expect("an omission is an ordinary frame");
+    receiver.import(&admitted).unwrap();
+    assert!(
+        map_get_bytes(
+            &receiver.get_map("edges"),
+            &edge_key(claim, EdgeKind::FacetOf, facet)
+        )
+        .is_some(),
+        "an admitted frame must never be able to remove the receiver's stamp"
+    );
+
+    // 2. TOMBSTONES: the only other removal-shaped input refuses the frame.
+    let with_tombstone = create_window_doc("remote-tombstone", &window_key);
+    insert_entity(&with_tombstone, facet, ENTITY_TYPE_FACET, b"facet");
+    insert_tombstone(&with_tombstone, claim);
+    with_tombstone.commit();
+    for role in [
+        FederationAdmissionRole::Member,
+        FederationAdmissionRole::Guest,
+    ] {
+        let err = admit_federated_window_update(
+            &vault,
+            &window_key,
+            &with_tombstone.export(ExportMode::all_updates()).unwrap(),
+            role,
+        )
+        .expect_err("a peer frame carrying deletions must be refused whole");
+        assert!(matches!(
+            err,
+            Error::SyncProtocolError {
+                context: SyncProtocolValidation::FederatedTombstoneAdmission
+            }
+        ));
+    }
 }

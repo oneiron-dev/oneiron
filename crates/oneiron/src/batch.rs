@@ -1634,6 +1634,7 @@ pub(crate) struct ApplyOpsGateMode {
     persist_pending_consent: bool,
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
+    replicated_edge_door: bool,
 }
 
 impl ApplyOpsGateMode {
@@ -1643,11 +1644,28 @@ impl ApplyOpsGateMode {
             persist_pending_consent,
             include_source_in_gate_input: false,
             claim_gate_prechecked: false,
+            replicated_edge_door: false,
         }
     }
 
     pub(crate) const fn with_source_in_gate_input(mut self) -> Self {
         self.include_source_in_gate_input = true;
+        self
+    }
+
+    /// Marks this batch as the sync bridge's REPLICATED edge door — the arm
+    /// that applies another of the owner's devices' already-consented
+    /// `FacetOf` removals (fix-12, plane-trust v1).
+    ///
+    /// It relaxes exactly one thing: `gate_facet_of_unstamp`, whose absolute
+    /// refusal is a LOCAL rule (see the plane-trust note in
+    /// [`crate::sync::bridge::materialize_edges_from_delta`]). Every other
+    /// check — child-of validation, secret scan, `apply_delete_edge` — runs
+    /// identically, and every LOCAL caller keeps the refusal because only the
+    /// bridge's own edge-apply seam sets this.
+    #[cfg(feature = "sync")]
+    pub(crate) const fn with_replicated_edge_door(mut self) -> Self {
+        self.replicated_edge_door = true;
         self
     }
 
@@ -1738,6 +1756,7 @@ pub(crate) fn apply_ops_with_gate_mode(
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
+    let replicated_edge_door = gate_mode.replicated_edge_door;
 
     secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
@@ -2133,6 +2152,17 @@ pub(crate) fn apply_ops_with_gate_mode(
                 had_vector_mutation |= had_vector;
             }
             BatchOp::DeleteEdge { src, kind, tgt } => {
+                // ONE-1646: the staged-op half of the exposure-consent gate on
+                // FacetOf unstamping. Aborts the batch atomically before the
+                // row comes off, matching `validate_facet_of_edge`'s stance on
+                // the write side of the same seam.
+                //
+                // Decided HERE rather than at the builder because the gate
+                // reads the stamp it is protecting: only an in-txn decision
+                // sees the same edge row the removal will tear (fix-4).
+                if !replicated_edge_door {
+                    crate::disclosure::gate_facet_of_unstamp(store, wtxn, &src, kind, &tgt)?;
+                }
                 if apply_delete_edge(store, wtxn, src, kind, tgt)? {
                     ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
                     had_graph_mutation = true;
@@ -2335,7 +2365,7 @@ impl ChildOfBatchOverlay {
                         .or_default()
                         .insert(*tgt);
                 }
-                BatchOp::DeleteEdge { src, kind, tgt } if *kind == EdgeKind::ChildOf => {
+                BatchOp::DeleteEdge { src, kind, tgt, .. } if *kind == EdgeKind::ChildOf => {
                     overlay.edge_ops.insert((*src, *tgt), (index, false));
                     overlay
                         .edge_candidates
@@ -2475,6 +2505,34 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     let mut had_graph_mutation = false;
     let mut neighbors = Vec::new();
 
+    // ONE-1646 facet-state gate, BEFORE the first row comes off: hard deleting
+    // a FACET cascades away every inbound `FacetOf` stamp through
+    // `delete_related_edges` below, unfaceting every claim that carried one —
+    // the disclosure-laundering path at its widest. This is the shared
+    // chokepoint for BOTH hard-delete doors (the `BatchOp::Delete` arm and
+    // `deletion`'s purge), so neither can route around the gate. The soft-erase
+    // path deliberately needs no gate: it truncates the body and leaves the
+    // edges standing, so no stamp is torn and no clamp class moves.
+    //
+    // `deletion`'s door ALSO evaluates the same predicate before it publishes
+    // the CRDT tombstone, because reaching this point already means the
+    // tombstone is durable (locked ARCH-0038 ordering) and a refusal here would
+    // diverge local state from published truth. This call stays as the
+    // structural backstop: the gate lives at the row-tearing site, so a future
+    // caller that skips the pre-flight still cannot tear a stamp.
+    //
+    // The stored type is passed as an OPTION, not unwrapped away: an id with no
+    // entity row still has whatever `edges_in` and clearance rows name it, and
+    // `delete_related_edges` below tears them all. Skipping the gate on an
+    // unknowable type would unstamp every stamped record via a delete nobody
+    // consented to — the gate fails closed instead (fix-6 item 1).
+    crate::disclosure::gate_hard_delete_facet_state_for_stored_type(
+        store,
+        &*wtxn,
+        id,
+        stored_entity_type(store, &*wtxn, id)?,
+    )?;
+
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
@@ -2500,6 +2558,19 @@ fn deindex_entity_without_lexical_query_hint_cascade(
         had_vector |= cleanup.had_vector;
         had_graph_mutation |= cleanup.had_graph_mutation;
         neighbors.extend(cleanup.neighbors);
+        // HEADERLESS residue still owns facet state (fix-10 item 3). Every
+        // facet-state key is derived from the ID alone, so a headerless
+        // delete that skipped this sweep left `facet.exposure.v1` /
+        // `contact.clearance.v1` rows and their claim mirrors standing under
+        // an id with no entity row — the exposure row keeps voting in every
+        // future resolve, and both are resurrection bait at a caller-chosen
+        // id. No type byte is needed or available; the cleanup sweeps both
+        // families, and each tear is custody-checked on the way out.
+        let facet_state =
+            crate::disclosure::delete_facet_state_for_entity_in_txn(store, wtxn, id, None)?;
+        had_vector |= facet_state.had_vector;
+        had_graph_mutation |= facet_state.had_graph_mutation;
+        neighbors.extend(facet_state.neighbors);
         neighbors.sort_unstable();
         neighbors.dedup();
         return Ok((false, had_vector, had_graph_mutation, neighbors));
@@ -2526,6 +2597,20 @@ fn deindex_entity_without_lexical_query_hint_cascade(
             Err(error) => return Err(error),
         }
     }
+    // ONE-1646: the disclosure facet-state families are registered with entity
+    // deletion here, keyed by the type just parsed — a deleted contact's
+    // clearance row and a deleted facet's exposure row (and each one's claim
+    // mirror) go with the entity rather than outliving it as orphans.
+    let facet_state = crate::disclosure::delete_facet_state_for_entity_in_txn(
+        store,
+        wtxn,
+        id,
+        Some(entity_type),
+    )?;
+    had_vector |= facet_state.had_vector;
+    had_graph_mutation |= facet_state.had_graph_mutation;
+    neighbors.extend(facet_state.neighbors);
+
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,

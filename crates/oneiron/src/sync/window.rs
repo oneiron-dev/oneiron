@@ -1003,6 +1003,21 @@ pub fn forward_rematerialize(
     window_key: &WindowKey,
 ) -> Result<u32> {
     let _guard = materializer.lock();
+    // ONE-1646 fix-14 defect 1, BEFORE the entity/edge passes below. A crash
+    // between `unstamp_facet_of`'s LMDB txn and its CRDT removal leaves a
+    // CONSENTED unstamp half-done: LMDB rows torn, doc stamp alive. This pass
+    // is exactly what would then write that surviving stamp back into LMDB —
+    // an unstamp REVERSING itself — and a retry cannot help because the LMDB
+    // row is already absent. Draining the pair-bound markers here finishes the
+    // removal first, so there is nothing left to restore.
+    let resumed_unstamps = crate::disclosure::drain_pending_facet_unstamps(vault, doc, window_key)?;
+    if resumed_unstamps > 0 {
+        tracing::info!(
+            window = %window_key,
+            resumed_unstamps,
+            "forward-remat: resumed interrupted FacetOf unstamps before rematerialization"
+        );
+    }
     let lease_vault_id = materializer.lease_vault_id();
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");

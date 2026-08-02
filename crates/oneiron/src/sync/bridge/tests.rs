@@ -821,7 +821,7 @@ fn test_metas_for_ops(ops: &[BatchOp]) -> Vec<EdgeOpMeta> {
             let (src, kind, tgt) = match op {
                 BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
                 | BatchOp::Edge { src, kind, tgt, .. }
-                | BatchOp::DeleteEdge { src, kind, tgt } => (src, *kind, tgt),
+                | BatchOp::DeleteEdge { src, kind, tgt, .. } => (src, *kind, tgt),
                 _ => unreachable!("edge ops only"),
             };
             EdgeOpMeta::for_key(&format_edge_key(src, kind, tgt), &[])

@@ -359,9 +359,15 @@ pub use crate::delivery_window::{
 };
 pub use crate::disclosure::{
     DISCLOSURE_CLAIM_PREDICATES, DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION,
-    DisclosureAssembly, DisclosureContext, DisclosureMode, DisclosureScope, DisclosureScopeStatus,
-    DisclosureTier, decode_disclosure_scope_body, encode_disclosure_scope_body,
-    is_disclosure_claim_predicate, presence_discretion_notice,
+    DisclosableSet, DisclosureAssembly, DisclosureContext, DisclosureMode, DisclosureScope,
+    DisclosureScopeStatus, DisclosureTier, FACET_CLEARANCE_BODY_KEYS, FACET_EXPOSURE_BODY_KEYS,
+    FACET_RECLASSIFICATION_BODY_KEYS, FacetClearance, FacetExposure, FacetExposureState,
+    FacetReclassificationConsent, MAX_FACET_CLEARANCE_ENTRIES, PREDICATE_DISCLOSURE_CLEARANCE,
+    PREDICATE_DISCLOSURE_FACET_EXPOSURE, PREDICATE_DISCLOSURE_FACET_RECLASSIFICATION,
+    decode_disclosure_scope_body, decode_facet_clearance_body, decode_facet_exposure_body,
+    decode_facet_reclassification_body, encode_disclosure_scope_body, encode_facet_clearance_body,
+    encode_facet_exposure_body, encode_facet_reclassification_body, is_disclosure_claim_predicate,
+    presence_discretion_notice,
 };
 pub use crate::dreamer_consolidation::{
     CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey,

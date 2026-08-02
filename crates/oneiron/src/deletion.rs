@@ -1808,6 +1808,48 @@ impl Vault {
         if crate::registry::is_delete_protected_engine_record(header.entity_type) {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
+        // ONE-1646: every stamp/clearance condition is evaluated HERE, before
+        // TXN1 publishes anything. `deindex_entity` re-evaluates the same
+        // predicate at the row-tearing site, but a refusal THERE comes too late
+        // for this path: the CRDT tombstone is written FIRST by the locked
+        // ARCH-0038 ordering below (it must precede the purge so sync cannot
+        // resurrect the body mid-erase), so a late refusal leaves the entity
+        // whole locally while every other device has been told it is
+        // hard-deleted. Publishing hard-delete truth for a delete that did not
+        // happen is an erasure-completeness failure in its own right, and the
+        // refusing device cannot take a published tombstone back. Deciding
+        // first makes a refused delete a total no-op — no tombstone, no
+        // `dt:`/`pt:` marker, no receipt, no local state change.
+        //
+        // This check is a PUBLISH gate, not the authority on tearing. It runs
+        // in its own read txn that is dropped before TXN1, so a stamp or
+        // clearance committing after it cannot be seen here — and no read-txn
+        // check placed before an unavoidably-later write can ever close that
+        // window. It is therefore paired with a re-evaluation inside EVERY
+        // destructive txn below (the SoftErase arm explicitly, the purge via
+        // `deindex_entity`'s backstop), which is where LMDB's single writer
+        // makes the decision atomic with the tearing. Consequence of the split:
+        // a delete refused only by the LATE check has already published its
+        // tombstone, so the local state it protects survives while remote
+        // devices hold a tombstone for it. That is the deliberate trade — the
+        // alternative is tearing consented-away disclosure state — and the
+        // divergence is recoverable, since the surviving local rows are
+        // authoritative and a re-delete after the owner unstamps converges.
+        //
+        // HARD REASONS ONLY, because only they tear rows. `user_delete`
+        // truncates the body to its 25 B shell and leaves every edge, the
+        // exposure row and every clearance standing — no stamp comes off and
+        // nothing moves between clamp classes, so gating it would be a wall in
+        // front of an act that discloses nothing.
+        if reason.active_store_hard_purge_v1() {
+            let rtxn = self.store.env.read_txn()?;
+            crate::disclosure::gate_hard_delete_facet_state(
+                &self.store,
+                &rtxn,
+                id,
+                header.entity_type,
+            )?;
+        }
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
         // lock-free `read_entity_header` read_txn has completed and committed
         // the headerful path) but no write lock is held yet. The deterministic
@@ -1956,6 +1998,12 @@ impl Vault {
         // empty commit settles nothing — see the latch below).
         let mut authority_settled = crdt_persisted;
 
+        // Splice note (ONE-1646 fix-5 woven onto fix-legs 8..10): theirs' ONE-
+        // txn-spans-both-phases shape does NOT cross the splice boundary — the
+        // landed half of the pair keeps soft-erase and purge as SEPARATE
+        // transactions, each with its own authority re-folding behavior. The
+        // facet-state gates that fix-5 introduced land on both destructive
+        // transactions below (soft-erase + purge) instead.
         let soft_complete_at = if matches!(
             reason,
             DeleteReason::GdprDelete | DeleteReason::PolicyDelete
@@ -1981,6 +2029,22 @@ impl Vault {
             // OWN view — the refusal is actionable (nothing is on the wire) and
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+            // The other half of the preflight's pairing promise: the facet-state
+            // gate, re-evaluated INSIDE the scrub txn. The preflight ran in a
+            // read txn that was dropped before this one opened, so a stamp or
+            // clearance committed since is visible only HERE — and refusing
+            // must precede the scrub, because a refusal that only the purge
+            // txn's `deindex_entity` backstop catches lands after this txn
+            // already truncated the body: a partial destructive delete behind
+            // a refusal. The type is re-read from THIS txn, and `None` (a row
+            // raced away) still runs both gate arms — fix-6's fail-closed
+            // ruling.
+            crate::disclosure::gate_hard_delete_facet_state_for_stored_type(
+                &self.store,
+                &wtxn,
+                id,
+                crate::batch::stored_entity_type(&self.store, &wtxn, id)?,
+            )?;
             let scrub_is_the_linearization_point = !authority_settled;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
@@ -2067,7 +2131,8 @@ impl Vault {
         // interval publish→purge produce the rejected-call-publishes shape —
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
-        reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+        reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?
+        ;
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
@@ -2186,6 +2251,40 @@ impl Vault {
             if !self.active_delete_scope_exists_in_txn(&rtxn, id)? {
                 return Ok(DeleteEntityOutcome::missing());
             }
+            // ONE-1646 fix-7: the PUBLISH gate, mirroring the headerful door's
+            // pre-TXN1 call. This leg reaches the same fail-closed facet-state
+            // predicate only through `deindex_entity`'s backstop inside the
+            // purge txn below — which runs AFTER `write_crdt_tombstone` has
+            // already published durable hard-delete truth to every other
+            // device. A stamped or clearance-blocked headerless id therefore
+            // returned the correct refusal and kept its local rows whole while
+            // the tombstone stood published, and the refusing device cannot
+            // take one back: the same erasure-completeness divergence fix-3
+            // closed on the headerful door, left open on this one. The lane's
+            // rule is that a refusal publishes NOTHING.
+            //
+            // Placed AFTER the scope probe on purpose: an id with no delete
+            // scope at all is already a no-op above, so the gate never refuses
+            // a delete that would not have torn anything (a clearance naming a
+            // long-gone facet id must not become a wall in front of nothing).
+            //
+            // `None` for the type, unconditionally on reason. Both are forced
+            // by what this leg does: there is no header to dispatch on (that is
+            // what "headerless" means, and fix-6 pinned unknown ⇒
+            // possibly-FACET), and unlike the headerful door this leg has no
+            // soft-erase arm — it purges for EVERY reason, so every reason can
+            // tear an inbound stamp and every reason must decide first.
+            //
+            // Like the headerful preflight this is a publish gate, not the
+            // authority on tearing: it runs in a read txn that is dropped
+            // before the purge txn opens, so `deindex_entity`'s in-txn backstop
+            // remains the atomic decision.
+            crate::disclosure::gate_hard_delete_facet_state_for_stored_type(
+                &self.store,
+                &rtxn,
+                id,
+                None,
+            )?;
         }
         // ONE-1149: the deletion request UUID is minted only AFTER the probe
         // above says there is something to erase.

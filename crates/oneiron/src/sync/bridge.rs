@@ -54,6 +54,20 @@ pub const BRIDGE_ORIGIN: &str = "bridge";
 /// skips it, preserving the tombstone-first → local-purge ordering.
 pub(crate) const DELETION_TOMBSTONE_ORIGIN: &str = "deletion_tombstone";
 
+/// Origin tag for the CRDT edge removal `Vault::unstamp_facet_of` authors as
+/// part of its atomic consent+act.
+///
+/// The consent event, its Tier-A ledger mirror, the LMDB tear AND the doc
+/// removal are ONE local act; propagation is then the ordinary echo. Observer
+/// B skips this origin — the LMDB rows are already gone in the same act, so
+/// re-materializing the removal would be a redundant second tear (and would
+/// re-enter the gate on a path that has already consented). Same precedent as
+/// [`DELETION_TOMBSTONE_ORIGIN`], which the deletion path uses for exactly the
+/// same reason. Observer A is deliberately NOT skipped: the removal must
+/// become a `u:w:` carrier row and an outbound update, or it never reaches the
+/// owner's other devices.
+pub(crate) const FACET_UNSTAMP_ORIGIN: &str = "facet_unstamp";
+
 thread_local! {
     /// `write_crdt_tombstone` commits a live-doc update before it can assemble
     /// the snapshot/delta inputs for its one LMDB TXN1. Suppress Observer A
@@ -423,7 +437,10 @@ fn subscribe_map_observer(
     subscription_doc.subscribe(
         &cid,
         Arc::new(move |event| {
-            if matches!(event.origin, BRIDGE_ORIGIN | DELETION_TOMBSTONE_ORIGIN) {
+            if matches!(
+                event.origin,
+                BRIDGE_ORIGIN | DELETION_TOMBSTONE_ORIGIN | FACET_UNSTAMP_ORIGIN
+            ) {
                 return;
             }
             let _guard = materializer.lock();
@@ -1027,6 +1044,39 @@ fn materialize_edges_from_delta(
                         )?;
                         continue;
                     }
+                    // ONE-1646 unstamp consent, REPLICATED side: this door
+                    // APPLIES a `FacetOf` removal, with no consent gate. THE
+                    // SHIPPED v1 POSTURE, in four lines:
+                    //
+                    // 1. The MEMBER/GUEST plane cannot EXPRESS a removal —
+                    //    `admit_federated_window_update` rebuilds every frame
+                    //    insert-only into a FRESH doc and
+                    //    `reject_federated_tombstones` refuses deletion-bearing
+                    //    frames outright (pinned by
+                    //    `federated_admission_cannot_express_a_removal`).
+                    // 2. The DEVICE plane is vault-credential-gated and is
+                    //    IN-DOMAIN in v1: what arrives is the owner's own
+                    //    device.
+                    // 3. Consent is enforced ONCE, at the ORIGIN device's local
+                    //    gate — `gate_facet_of_unstamp` refuses every generic
+                    //    local removal, so the only removal that can enter the
+                    //    CRDT is `Vault::unstamp_facet_of`, which consents and
+                    //    acts in one commit.
+                    // 4. Re-deciding the echo cannot add a second consent. It
+                    //    can only make a CONSENTED unstamp unpropagatable and
+                    //    let one row deny an honest peer's whole update (H2) —
+                    //    and it leaves the stamp alive locally while absent
+                    //    from the CRDT, which reverse remat then RESURRECTS
+                    //    and re-publishes to every peer.
+                    //
+                    // GATE-2 (deliberately NOT closed here): the device plane
+                    // has no per-device IDENTITY binding, so a scoped sync
+                    // session (S-TOKEN) or a locally-refused row propelled by
+                    // Observer A / the offline queue would reach this door
+                    // indistinguishable from an owner device's honest echo.
+                    // Both are the ONE-1149 propulsion-gating + device-identity
+                    // design seam, taken to the deviation board rather than
+                    // patched with an origin string that carries no authority.
                     ops.push(BatchOp::DeleteEdge { src, kind, tgt });
                     metas.push(EdgeOpMeta::for_key(key.as_ref(), &[]));
                 }
@@ -1245,6 +1295,33 @@ fn quarantine_edge_apply_failure(
     Ok(())
 }
 
+/// The ONE seam every replicated edge op applies through, so no arm of
+/// [`apply_materialized_edge_ops`] can drift from another on which gates run.
+///
+/// It marks the batch as the REPLICATED EDGE DOOR
+/// ([`batch::ApplyOpsGateMode::with_replicated_edge_door`]), which relaxes
+/// exactly `gate_facet_of_unstamp` — a LOCAL-plane rule, see the plane-trust
+/// note on [`materialize_edges_from_delta`]'s removal arm. Nothing else
+/// changes: this is the same `record_decisions=false`,
+/// `persist_pending_consent=false` mode the replicated path always used.
+fn apply_replicated_edge_ops(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ops: Vec<BatchOp>,
+) -> Result<()> {
+    batch::apply_ops_with_gate_mode(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        ops,
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        batch::ApplyOpsGateMode::new(false, false).with_replicated_edge_door(),
+    )
+}
+
 /// Applies materialized edge ops. A write-gate rejection quarantines the
 /// rejected op (every op of a rejected ChildOf component) and continues;
 /// a LOCAL failure propagates fail-closed.
@@ -1293,7 +1370,7 @@ fn apply_materialized_edge_ops(
                     op,
                 });
             }
-            BatchOp::DeleteEdge { src, kind, tgt } if *kind == EdgeKind::ChildOf => {
+            BatchOp::DeleteEdge { src, kind, tgt, .. } if *kind == EdgeKind::ChildOf => {
                 child_of_deletes.push(PendingChildOfOp {
                     index,
                     src: *src,
@@ -1302,18 +1379,7 @@ fn apply_materialized_edge_ops(
                 });
             }
             _ => {
-                let apply_result = batch::apply_ops(
-                    &vault.store,
-                    &vault.config,
-                    &vault.analyzer,
-                    wtxn,
-                    vec![op],
-                    vault
-                        .text_index_trusted
-                        .load(std::sync::atomic::Ordering::Acquire),
-                    false,
-                    false,
-                );
+                let apply_result = apply_replicated_edge_ops(vault, wtxn, vec![op]);
                 match apply_result {
                     Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
                     Err(e) => {
@@ -1328,18 +1394,7 @@ fn apply_materialized_edge_ops(
     child_of_deletes.sort_by(cmp_pending_child_of_ops);
     for pending in child_of_deletes {
         let index = pending.index;
-        let apply_result = batch::apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            vec![pending.op],
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            false,
-        );
+        let apply_result = apply_replicated_edge_ops(vault, wtxn, vec![pending.op]);
         match apply_result {
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
             Err(e) => {
@@ -1359,18 +1414,7 @@ fn apply_materialized_edge_ops(
         let mut component_ops = component;
         component_ops.sort_by(cmp_pending_child_of_ops);
         let ops: Vec<BatchOp> = component_ops.iter().map(|entry| entry.op.clone()).collect();
-        let apply_result = batch::apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            ops,
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            false,
-        );
+        let apply_result = apply_replicated_edge_ops(vault, wtxn, ops);
         match apply_result {
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
             Err(_) => {
@@ -1381,18 +1425,7 @@ fn apply_materialized_edge_ops(
                 // quarantined — never falsely recording siblings that are valid
                 // on their own.
                 for pending in component_ops {
-                    let apply_result = batch::apply_ops(
-                        &vault.store,
-                        &vault.config,
-                        &vault.analyzer,
-                        wtxn,
-                        vec![pending.op],
-                        vault
-                            .text_index_trusted
-                            .load(std::sync::atomic::Ordering::Acquire),
-                        false,
-                        false,
-                    );
+                    let apply_result = apply_replicated_edge_ops(vault, wtxn, vec![pending.op]);
                     match apply_result {
                         Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
                         Err(e) => {

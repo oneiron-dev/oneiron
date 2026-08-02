@@ -998,6 +998,11 @@ impl Vault {
         let key_in = Store::encode_edge_key(tgt, kind, src);
 
         self.with_write_txn(|wtxn| {
+            // ONE-1646 exposure-consent gate: tearing a stamp to a PRIVATE
+            // facet widens the disclosure clamp exactly as a private->public
+            // restamp does, so it takes the same ledgered door. Checked before
+            // any row is removed, so a refusal writes nothing.
+            crate::disclosure::gate_facet_of_unstamp(&self.store, wtxn, src, kind, tgt)?;
             let existed_out = self.store.edges_out.delete(wtxn, &key_out)?;
             let deleted_in = self.store.edges_in.delete(wtxn, &key_in)?;
 
