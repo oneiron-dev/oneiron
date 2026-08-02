@@ -490,6 +490,87 @@ fn legacy_genesis_without_pending_delay_decodes_with_default_and_old_hash() {
     assert_eq!(genesis_vault_id(&decoded).unwrap(), legacy_hash);
 }
 
+/// ONE-1604-D1 T5: the type-122 store key is pinned to the first 16 bytes of
+/// the entry's BLAKE3 hash, and survives an encode/decode round trip. The
+/// genesis corollary: a genesis row's entity id is the first 16 bytes of the
+/// vault id, since `genesis_vault_id == authority_entry_hash(genesis)`.
+#[test]
+fn authority_log_entity_id_is_first_sixteen_bytes_of_entry_hash() {
+    let signing = ed_key(96);
+    let key = authority_key_from_ed(&signing);
+    let op = AuthorityOp::Genesis {
+        device: device(
+            key.clone(),
+            ROLE_OWNER | ROLE_ADMIN,
+            AuthorityTier::Software,
+        ),
+        genesis_nonce: [96; 32],
+        tier_floor: AuthorityTier::Software,
+        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    };
+    let genesis = sign_ed(unsigned_entry(None, 0, Vec::new(), op, key, 1), &signing);
+    let hash = authority_entry_hash(&genesis).unwrap();
+
+    let id = authority_log_entity_id(&genesis).unwrap();
+    assert_eq!(id.as_bytes(), &hash[..16]);
+    assert_eq!(
+        id.as_bytes(),
+        &genesis_vault_id(&genesis).unwrap()[..16],
+        "a genesis row's store key is the first 16 bytes of the vault id"
+    );
+
+    let encoded = encode_authority_log_entry_body(&genesis).unwrap();
+    let decoded = decode_authority_log_entry_body(&encoded).unwrap();
+    assert_eq!(
+        authority_log_entity_id(&decoded).unwrap(),
+        id,
+        "the derived store key must survive an encode/decode round trip"
+    );
+    assert_eq!(authority_log_entity_id_from_hash(&hash).unwrap(), id);
+}
+
+/// ONE-1604-D1 T5b: the derived store key is stable for a legacy-signed
+/// genesis, whose hash is taken over the LEGACY signed bytes rather than the
+/// current canonical encoding. Only the legacy bytes carry a verifying
+/// signature, so only they decode — the current re-encoding of the same entry
+/// is refused at body validation and can never reach a door under this key.
+/// That is why the key==hash bind alone determines admissibility here, and
+/// the append-only guard behind it stays defense-in-depth.
+#[test]
+fn legacy_signed_genesis_derives_a_stable_store_key_from_its_legacy_bytes() {
+    let signing = ed_key(97);
+    let key = authority_key_from_ed(&signing);
+    let op = AuthorityOp::Genesis {
+        device: device(
+            key.clone(),
+            ROLE_OWNER | ROLE_ADMIN,
+            AuthorityTier::Software,
+        ),
+        genesis_nonce: [97; 32],
+        tier_floor: AuthorityTier::Software,
+        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    };
+    let legacy = sign_ed_legacy_genesis(unsigned_entry(None, 0, Vec::new(), op, key, 1), &signing);
+    let legacy_encoded =
+        encode_value(&entry_value_with_genesis_delay(&legacy, true, false)).unwrap();
+    let current_encoded = encode_authority_log_entry_body(&legacy).unwrap();
+
+    assert_ne!(
+        legacy_encoded, current_encoded,
+        "the two encodings must genuinely differ for this to be a divergence case"
+    );
+    let decoded = decode_authority_log_entry_body(&legacy_encoded).unwrap();
+    assert_eq!(
+        authority_log_entity_id(&decoded).unwrap(),
+        authority_log_entity_id(&legacy).unwrap(),
+        "the legacy bytes decode to an entry with the same derived store key"
+    );
+    assert!(
+        decode_authority_log_entry_body(&current_encoded).is_err(),
+        "the current re-encoding carries no verifying signature, so no door admits it"
+    );
+}
+
 #[test]
 fn genesis_rejects_pending_widen_delay_outside_ceremony_band() {
     let signing = ed_key(80);
@@ -7956,18 +8037,11 @@ fn lifecycle_entries_use_existing_type_122_doors() {
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
     let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
 
-    let genesis_id = scope_entity(0x51);
-    let connect_id = scope_entity(0x52);
     vault
-        .put_authority_log_entry(
-            &genesis_id,
-            &fixture.genesis,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .put_authority_log_entry(&fixture.genesis, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
-    vault
-        .put_authority_log_entry(&connect_id, &connect, TimeRange { start: 2, end: 2 }, 2)
+    let connect_id = vault
+        .put_authority_log_entry(&connect, TimeRange { start: 2, end: 2 }, 2)
         .unwrap();
     assert_eq!(
         vault.get_authority_log_entry(&connect_id).unwrap(),

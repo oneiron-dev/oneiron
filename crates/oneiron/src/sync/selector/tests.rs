@@ -580,19 +580,19 @@ fn federated_admission_rejects_foreign_authority_log() {
     let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xB2));
     let local = authority_genesis_entry(0x51);
     vault
-        .put_authority_log_entry(&entity_id(0x51), &local, TimeRange { start: 1, end: 1 }, 1)
+        .put_authority_log_entry(&local, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
 
     let foreign = authority_genesis_entry(0x52);
     let foreign_body = encode_authority_log_entry_body(&foreign).unwrap();
+    // The row carries its own CORRECT content-derived id, so the store-key
+    // bind passes and the FOREIGN-ROOT rejection is what is actually under
+    // test (the key bind precedes the vault-id fold check, mirroring the
+    // write door's ordering in `batch.rs`).
+    let foreign_id = authority_log_entity_id(&foreign).unwrap();
     let window_key = WindowKey::new("2026-03");
     let doc = create_window_doc("remote", &window_key);
-    insert_entity(
-        &doc,
-        entity_id(0x52),
-        ENTITY_TYPE_AUTHORITY_LOG,
-        &foreign_body,
-    );
+    insert_entity(&doc, foreign_id, ENTITY_TYPE_AUTHORITY_LOG, &foreign_body);
     doc.commit();
     let update = doc.export(ExportMode::all_updates()).unwrap();
 
@@ -604,6 +604,92 @@ fn federated_admission_rejects_foreign_authority_log() {
     )
     .expect_err("foreign authority roots must not enter admitted federation updates");
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
+}
+
+/// ONE-1604-D1 (fix-leg 4, admission door): admission validated the type-122
+/// BODY and the vault root but never bound the CRDT row's KEY to the id
+/// derived from that body. A wrong-key authority row therefore entered the
+/// ADMITTED doc — the bytes the ordinary replay path imports — and only
+/// failed later at materialize, after this door had already re-authored it
+/// under a federation-admission origin. The bind is the same content-address
+/// rule `check_authority_log_store_key` enforces at the write door.
+#[test]
+fn federated_admission_rejects_wrong_key_authority_row() {
+    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xB3));
+    let local = authority_genesis_entry(0x55);
+    vault
+        .put_authority_log_entry(&local, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+
+    // A row whose body is fully valid AND shares the local vault root, so
+    // every other admission check passes: only the key is wrong.
+    let body = encode_authority_log_entry_body(&local).unwrap();
+    let derived = authority_log_entity_id(&local).unwrap();
+    let wrong_key = entity_id(0xEE);
+    assert_ne!(wrong_key, derived, "the fixture key must genuinely differ");
+
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote", &window_key);
+    insert_entity(&doc, wrong_key, ENTITY_TYPE_AUTHORITY_LOG, &body);
+    doc.commit();
+    let update = doc.export(ExportMode::all_updates()).unwrap();
+
+    let err = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect_err("a wrong-key authority row must not reach the admitted doc");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
+    );
+    // H2: the typed reason is a REMOTE rejection, so the replay sites
+    // quarantine-and-continue instead of aborting the whole window.
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
+        "the bind must reject remotely, never as a local fail-closed error"
+    );
+}
+
+/// The healing half of the bind: a CORRECT-key authority row sharing the
+/// local vault root still admits and reaches the admitted doc byte-for-byte.
+/// Without this, a bind that rejected everything would look identical to a
+/// bind that works.
+#[test]
+fn federated_admission_admits_correct_key_authority_row() {
+    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xB4));
+    let local = authority_genesis_entry(0x56);
+    vault
+        .put_authority_log_entry(&local, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+
+    let body = encode_authority_log_entry_body(&local).unwrap();
+    let derived = authority_log_entity_id(&local).unwrap();
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote", &window_key);
+    insert_entity(&doc, derived, ENTITY_TYPE_AUTHORITY_LOG, &body);
+    doc.commit();
+    let update = doc.export(ExportMode::all_updates()).unwrap();
+
+    let admitted = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect("a correct-key authority row must heal normally");
+
+    let receiver = create_window_doc("receiver", &window_key);
+    receiver.import(&admitted).unwrap();
+    let blob = map_get_bytes(&receiver.get_map("entities"), &derived.to_hex())
+        .expect("admitted authority row");
+    assert_eq!(
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+        body.as_slice(),
+        "the admitted authority body must pass through unchanged"
+    );
 }
 
 #[test]
@@ -1387,20 +1473,10 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     );
     let connect_hash = authority_entry_hash(&connect).unwrap();
     vault
-        .put_authority_log_entry(
-            &entity_id(0x5E),
-            &genesis,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
     vault
-        .put_authority_log_entry(
-            &entity_id(0xE2),
-            &connect,
-            TimeRange { start: 2, end: 2 },
-            2,
-        )
+        .put_authority_log_entry(&connect, TimeRange { start: 2, end: 2 }, 2)
         .unwrap();
 
     let unilateral = |kind: FederationLifecycleKind, seq: u64| {
@@ -1505,10 +1581,9 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
         // Two concurrent equal-epoch repacts with divergent digests.
         PactSeedStatus::Suspended => vec![repact(2, 0x21, 0x66), repact(3, 0x22, 0x67)],
     };
-    for (index, entry) in extras.into_iter().enumerate() {
-        let row = entity_id(0xE3 + u8::try_from(index).unwrap());
+    for entry in extras {
         vault
-            .put_authority_log_entry(&row, &entry, TimeRange { start: 3, end: 3 }, 3)
+            .put_authority_log_entry(&entry, TimeRange { start: 3, end: 3 }, 3)
             .unwrap();
     }
 }
@@ -1555,4 +1630,47 @@ fn selector_authorization_gates_on_pact_activation() {
             "{name}: wrong denial: {err:?}"
         );
     }
+}
+
+/// ONE-1604-D1 T10 (the 1632 seam floor): the keystone changes no
+/// authorization outcome. A rejected divergent-overwrite attempt against an
+/// admitted type-122 row leaves `authorize_sync_selector` deciding exactly as
+/// it did before — 1631 hardens the store, it does not move the
+/// authorization edge that 1632 will later split.
+#[test]
+fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
+    let member = entity_id(0x34);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Active);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("precondition: the pact-bound grant authorizes");
+
+    // Attempt a body-divergent write at an admitted authority row's key.
+    let foreign = authority_genesis_entry(0x77);
+    let foreign_body = encode_authority_log_entry_body(&foreign).unwrap();
+    let occupied = vault
+        .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("an authority row must be seeded");
+    let err = vault
+        .batch()
+        .put_replicated(
+            &occupied,
+            ENTITY_TYPE_AUTHORITY_LOG,
+            TimeRange { start: 9, end: 9 },
+            9,
+            &foreign_body,
+        )
+        .commit()
+        .expect_err("a divergent body at an occupied type-122 key must be rejected");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
+    );
+
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("authorization must be byte-for-byte unchanged after the rejected overwrite");
 }

@@ -1795,6 +1795,7 @@ fn materialize_entity_blob_in_txn(
         let validation = crate::batch::validate_replicated_authority_log_for_local_vault(
             &vault.store,
             wtxn,
+            &id,
             data,
         )?;
         let peer_key = if validation.signer_known {

@@ -15,8 +15,9 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityOp, FederationGrantActivation, decode_authority_log_entry_body,
-    federation_grant_activation, genesis_vault_id, validate_authority_log_entry_body_bytes,
+    AuthorityOp, FederationGrantActivation, authority_log_entity_id,
+    decode_authority_log_entry_body, federation_grant_activation, genesis_vault_id,
+    validate_authority_log_entry_body_bytes,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
@@ -485,7 +486,7 @@ fn admit_federated_entity_blob(
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
     if header.entity_type != ENTITY_TYPE_CLAIM {
         if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
-            admit_federated_authority_log(vault, &blob[ENTITY_METADATA_HEADER_LEN..])?;
+            admit_federated_authority_log(vault, &id, &blob[ENTITY_METADATA_HEADER_LEN..])?;
             return Ok(blob.to_vec());
         }
         // Engine-authored kinds are CLASSIFICATION-routed, not band-routed:
@@ -515,10 +516,31 @@ fn admit_federated_entity_blob(
     Ok(admitted)
 }
 
+/// Federation admission door for a type-122 carrier.
+///
+/// ONE-1604-D1 (fix-leg 4): the CRDT row's KEY is bound to the id derived
+/// from the decoded body, exactly as `check_authority_log_store_key` binds it
+/// at the write door. Without the bind, admission validated the body and the
+/// vault root but never checked that the body belonged at `id` — so a
+/// wrong-key authority row entered the ADMITTED doc and only failed later at
+/// materialize. That is strictly worse than rejecting here: the admitted doc
+/// is what the ordinary replay path imports, so the mismatch surfaced after
+/// the row had already been copied into locally authored bytes, and anything
+/// this door scopes off the same key operated on a row that could never be
+/// admitted under it.
+///
+/// The bind is a REMOTE rejection, not a local failure:
+/// `AuthorityLogStoreKeyMismatch` is already classified in
+/// `quarantine::remote_rejection_reason`, so the replay sites quarantine the
+/// row and continue rather than aborting the window (H2). Deriving the id
+/// costs one hash over bytes this function has already decoded.
 #[cfg(feature = "sync")]
-fn admit_federated_authority_log(vault: &Vault, body: &[u8]) -> Result<()> {
+fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> Result<()> {
     validate_authority_log_entry_body_bytes(body)?;
     let entry = decode_authority_log_entry_body(body)?;
+    if authority_log_entity_id(&entry)? != *id {
+        return Err(Error::AuthorityLogStoreKeyMismatch { id: *id });
+    }
     let entry_vault_id = match &entry.op {
         AuthorityOp::Genesis { .. } => genesis_vault_id(&entry)?,
         _ => entry

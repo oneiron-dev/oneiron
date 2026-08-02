@@ -944,6 +944,24 @@ pub fn authority_entry_hash(entry: &AuthorityLogEntry) -> Result<AuthorityEntryH
     Ok(*blake3::hash(&current_canonical).as_bytes())
 }
 
+/// Content-addressed store key for an AUTHORITY_LOG row: the first 16 bytes
+/// of the BLAKE3 [`authority_entry_hash`] (ONE-1604-D1). The store key is a
+/// pure function of the canonical signed body, so replacement-at-key cannot
+/// edit fold history; `signer + seq` remains the fold GROUPING key (two keys,
+/// two jobs). Fails closed on the negligible reserved-sentinel collision.
+pub fn authority_log_entity_id_from_hash(hash: &AuthorityEntryHash) -> Result<EntityId> {
+    let mut bytes = [0u8; crate::entity_id::ENTITY_ID_LEN];
+    bytes.copy_from_slice(&hash[..crate::entity_id::ENTITY_ID_LEN]);
+    EntityId::from_bytes(bytes).map_err(|_| {
+        Error::InvalidAuthorityLogBody("authority entry hash collides with a reserved entity id")
+    })
+}
+
+/// Derives the content-addressed entity id for a signed authority entry.
+pub fn authority_log_entity_id(entry: &AuthorityLogEntry) -> Result<EntityId> {
+    authority_log_entity_id_from_hash(&authority_entry_hash(entry)?)
+}
+
 /// BLAKE3 vault id derived from a canonical signed genesis entry.
 pub fn genesis_vault_id(entry: &AuthorityLogEntry) -> Result<AuthorityVaultId> {
     if !matches!(entry.op, AuthorityOp::Genesis { .. }) || entry.vault_id.is_some() {
@@ -4305,18 +4323,21 @@ fn invalid_authority() -> Error {
 impl Vault {
     /// Engine-authored write door for signed AUTHORITY_LOG entries.
     ///
-    /// Generic public puts for `ENTITY_TYPE_AUTHORITY_LOG` stay rejected with
+    /// The entity id is DERIVED from the entry's content hash (ONE-1604-D1;
+    /// never caller-chosen) and returned. Generic public puts for
+    /// `ENTITY_TYPE_AUTHORITY_LOG` stay rejected with
     /// `MaintenanceKindNotWritable`; this method validates canonical bytes and
     /// the origin signature before using the internal maintenance path.
     pub fn put_authority_log_entry(
         &self,
-        id: &EntityId,
         entry: &AuthorityLogEntry,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<()> {
+    ) -> Result<EntityId> {
         let data = encode_authority_log_entry_body(entry)?;
-        self.apply_authority_log_entry_body(id, occurred, learned_at, data)
+        let id = authority_log_entity_id(entry)?;
+        self.apply_authority_log_entry_body(&id, occurred, learned_at, data)?;
+        Ok(id)
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.

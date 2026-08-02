@@ -1614,17 +1614,14 @@ fn identity_topology_shell_peers_for_store_in_txn(
     Ok(peers)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn reconcile_identity_topology_edges_for_store_in_txn(
+/// Every entity the SURVIVING type-76 apply family names as a shell-edge
+/// source. This is the reconciler's touched set: the ids whose
+/// `merged_into` / `split_into` rows the current ledger can still speak for.
+fn surviving_shell_edge_sources_for_store_in_txn(
     store: &Store,
-    config: &crate::config::VaultConfig,
-    analyzer: &crate::analyzer::MultilingualAnalyzer,
-    text_index_trusted: bool,
-    wtxn: &mut heed::RwTxn<'_>,
-) -> Result<()> {
-    #[cfg(test)]
-    test_hooks::note_full_reconciliation();
-    let stored_events = identity_topology_events_for_store_in_txn(store, &*wtxn)?;
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let stored_events = identity_topology_events_for_store_in_txn(store, rtxn)?;
     let mut touched = BTreeSet::new();
     for event in &stored_events {
         match &event.action {
@@ -1640,14 +1637,104 @@ fn reconcile_identity_topology_edges_for_store_in_txn(
             | IdentityTopologyAction::Undo { .. } => {}
         }
     }
-    if touched.is_empty() {
+    Ok(touched)
+}
+
+fn reconcile_identity_topology_edges_for_store_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_index_trusted: bool,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    #[cfg(test)]
+    test_hooks::note_full_reconciliation();
+    let touched = surviving_shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
+    reconcile_shell_edges_for_sources_in_txn(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &touched,
+    )
+}
+
+/// Post-eviction shell reconciliation for ONE-1604-D1 authority dominance:
+/// the sources to recompute are the UNION of `evicted_sources` (the removed
+/// type-76 row's own participants, captured by
+/// [`identity_topology_shell_sources_for_store_in_txn`] before the row went)
+/// and the SURVIVING family's sources, all against one final fold.
+///
+/// Neither half is sufficient alone, because removing an event replays the
+/// WHOLE fold:
+///
+/// - The surviving-family derivation cannot see the removed event's
+///   participants — it enumerates rows, and that row is gone. Only the
+///   explicit capture reaches them (fix-leg 4).
+/// - The explicit capture reaches only DIRECT participants, but deleting an
+///   event changes which LATER events apply, and those events have their own
+///   sources. Concretely: merge `T(A→B)`, a squatter undo `U(T)` (so `T` is
+///   reverted and a later `M([A,C]→D)` applies), then dominance evicts `U`.
+///   `T` becomes effective again, `M` folds to rejected — and `C`, which `U`
+///   never named, is left holding a `merged_into D` edge no ledger event
+///   justifies. That is the same ARCH-0055 wedge the eviction unwind exists
+///   to prevent, one hop further out. The union closes the set: any event
+///   whose effectiveness the replay can flip is, by definition, a surviving
+///   event, so its sources are in the surviving half.
+///
+/// Runs only when `evicted_sources` is non-empty — a batch without an
+/// eviction is append-only, where the surviving derivation is already exact
+/// and the ordinary reconciler has already run.
+pub(crate) fn reconcile_shell_edges_after_eviction_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_index_trusted: bool,
+    wtxn: &mut heed::RwTxn<'_>,
+    evicted_sources: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if evicted_sources.is_empty() {
+        return Ok(());
+    }
+    let mut sources = surviving_shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
+    sources.extend(evicted_sources.iter().copied());
+    reconcile_shell_edges_for_sources_in_txn(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &sources,
+    )
+}
+
+/// Reconciles the canonical shell edges of EXACTLY `sources` against the
+/// current ledger fold: edges the fold no longer mandates are deleted,
+/// mandated edges are (re)written when both endpoints are materialized.
+///
+/// Callers own the derivation of `sources`, and the two derivations are NOT
+/// interchangeable. Append-only batches use the surviving-family set
+/// ([`surviving_shell_edge_sources_for_store_in_txn`]); an eviction batch
+/// must use the union in
+/// [`reconcile_shell_edges_after_eviction_in_txn`], because a removed row is
+/// no longer enumerable AND its removal replays the whole fold.
+fn reconcile_shell_edges_for_sources_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_index_trusted: bool,
+    wtxn: &mut heed::RwTxn<'_>,
+    sources: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if sources.is_empty() {
         return Ok(());
     }
 
     let effective_events = fold_effective_identity_topology_events_for_store_in_txn(store, &*wtxn)?;
     let fold = fold_identity_topology_log(&effective_events);
     let mut ops = Vec::new();
-    for entity in &touched {
+    for entity in sources {
         let desired = desired_shell_edges_for_store_entity_in_txn(store, &*wtxn, &fold, entity)?;
         for kind in [EdgeKind::MergedInto, EdgeKind::SplitInto] {
             let existing =
@@ -1719,6 +1806,57 @@ fn reconcile_identity_topology_edges_for_store_in_txn(
         false,
         true,
     )
+}
+
+/// The shell-edge SOURCES a stored type-76 record induces — the entities
+/// whose `merged_into` / `split_into` rows the reconciler derives from it.
+/// `Ok(None)` when `id` holds no type-76 row (any other kind, or nothing).
+///
+/// An undo counter-event names no source of its own; its effect is on the
+/// sources of the event it reverts, so this resolves through to the TARGET
+/// record. Losing an undo row un-reverts its target, which is a shell-edge
+/// change on exactly those entities. The walk is ONE hop: an undo of an undo
+/// is rejected at the door ([`IdentityTopologyRejection::NotUndoable`]), so a
+/// second hop reaches nothing new and no cycle can be entered.
+///
+/// A squatter's undo may name any id at all, so the hop is fail-SOFT: a
+/// target that is missing, another kind, or undecodable contributes no
+/// sources instead of failing the caller. The caller is an AUTHORITY
+/// admission — letting a planted body abort it with a local-class error would
+/// be exactly the ONE-1604-D1 revocation suppression dominance exists to
+/// close. Only the row being evicted is read fail-closed: it passed a door
+/// that decoded it, so a decode failure there is on-disk corruption.
+///
+/// Read this BEFORE the row is removed — afterwards the action is gone and
+/// the induced sources are unrecoverable.
+pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return Ok(None);
+    }
+    let record = decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map_err(|_| Error::CorruptedIndex("identity topology event body"))?;
+    let action = match &record.action {
+        StoredIdentityOpAction::Undo { target } => {
+            match identity_topology_event_for_store_in_txn(store, rtxn, target) {
+                Ok(Some(target_record)) => target_record.action,
+                Ok(None) | Err(_) => return Ok(Some(BTreeSet::new())),
+            }
+        }
+        action => action.clone(),
+    };
+    Ok(Some(match action {
+        StoredIdentityOpAction::Merge { sources, .. } => sources.into_iter().collect(),
+        StoredIdentityOpAction::Split { entity, .. } => BTreeSet::from([entity]),
+        StoredIdentityOpAction::Undo { .. } => BTreeSet::new(),
+    }))
 }
 
 /// Shared successful-put boundary for every `apply_ops` caller. All puts in
