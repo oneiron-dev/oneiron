@@ -3602,13 +3602,25 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
         Ok(())
     })?;
 
+    let observed_before = crate::unix_seconds_now();
     let backfilled_fold = vault.authority_fold()?;
-    assert!(backfilled_fold.roster.contains_key(&enroll_key));
-    assert_eq!(
-        authority_first_seen_for_test(&vault, &enroll_sidecar)?,
-        Some(2),
-        "legacy sidecar migration should preserve the stored learned-at observation"
+    // fix-leg 4: the migration dates a legacy row at LOCAL OBSERVATION time, not
+    // at the peer-written `learned_at` in its header. Trusting the header let a
+    // sidecar-less `EnrollDevice` claiming `learned_at = 0` present as matured
+    // before it arrived. The consequence here is that the migrated enrollment
+    // starts its delay now, so it stays PENDING and its key stays out of the
+    // roster — a legacy widen serves its window once rather than skipping it.
+    let migrated = authority_first_seen_for_test(&vault, &enroll_sidecar)?
+        .expect("migration must write a sidecar");
+    assert!(
+        migrated >= observed_before,
+        "migrated first-seen must be the local observation ({migrated}), not learned_at (2)"
     );
+    assert!(
+        backfilled_fold.pending_widens.contains_key(&enroll_hash),
+        "an enrollment first observed at migration time is inside its delay"
+    );
+    assert!(!backfilled_fold.roster.contains_key(&enroll_key));
 
     vault.with_write_txn(|wtxn| {
         vault

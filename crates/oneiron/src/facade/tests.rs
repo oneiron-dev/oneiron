@@ -3309,3 +3309,2023 @@ fn witness_without_an_open_session_stays_valid() {
         .expect("witness sessionless turn");
     assert_eq!(vault.open_session().expect("open session read"), None);
 }
+
+// ── S-AUTH3: owner-verb authority-log teeth (ONE-1633 / ESB-C) ───────────
+
+/// A single-key authority root. One roster key means no peer cosign is
+/// required, so a rooted facade fixture is two entries total.
+fn authority_root(
+    seed: u8,
+) -> (
+    crate::authority::AuthorityLogEntry,
+    ed25519_dalek::SigningKey,
+) {
+    use crate::authority::{
+        AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+        AuthorityTier, DeviceAuthority, ROLE_ADMIN, ROLE_OWNER,
+    };
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let entry = AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: None,
+        seq: 0,
+        parent_hashes: Vec::new(),
+        op: AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            genesis_nonce: [seed.wrapping_add(10); 32],
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
+        },
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 100,
+    };
+    (sign_authority(entry, &signing), signing)
+}
+
+fn sign_authority(
+    mut entry: crate::authority::AuthorityLogEntry,
+    key: &ed25519_dalek::SigningKey,
+) -> crate::authority::AuthorityLogEntry {
+    use ed25519_dalek::Signer;
+    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = key.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+/// Roots `vault` and binds `actor` at `class` in ONE atomic ceremony.
+fn root_vault_binding(vault: &crate::Vault, seed: u8, actor: EntityId, class: &str) {
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    let (genesis, signing) = authority_root(seed);
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let bind = sign_authority(
+        AuthorityLogEntry {
+            schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: 1,
+            parent_hashes: vec![
+                crate::authority::authority_entry_hash(&genesis).expect("genesis hash"),
+            ],
+            op: AuthorityOp::BindActor {
+                authority_key: key.clone(),
+                actor_ref: actor,
+                actor_class: class.to_owned(),
+                epoch: 1,
+            },
+            signer: AuthoritySignature {
+                suite: key.suite(),
+                public_key: key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: 101,
+        },
+        &signing,
+    );
+    vault
+        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind, test_time(2), 2)])
+        .expect("atomic genesis owner-binding");
+}
+
+/// T9: on a ROOTED vault the three owner verbs demand a folded ACTIVE
+/// human-class binding. This is the ESB-C fix: asserting `human` at the
+/// facade is no longer enough — the authority log has to agree.
+#[test]
+fn owner_verbs_require_active_owner_binding_when_rooted() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x5E);
+    let agent = put_person(&vault, 0x5F);
+    let subject = put_person(&vault, 0x60);
+    let owner_facade = facade_for(&vault, owner);
+    let agent_facade = vault.memory_facade(agent, EdgeActorClass::Agent);
+    let agent_claim = agent_facade
+        .claim_upsert(&claim_input(
+            "profile.mood",
+            &subject,
+            "observed",
+            serde_json::json!("calm"),
+        ))
+        .expect("agent claim");
+
+    root_vault_binding(&vault, 0x71, owner, "human");
+
+    // Bound owner: every owner verb still works. No capability is removed by
+    // this lane — the binding just has to exist.
+    owner_facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "PERSON".to_owned(),
+            body: serde_json::json!({"name": "minted"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 700,
+            learned_at: None,
+        })
+        .expect("bound owner mints PERSON");
+    owner_facade
+        .claim_retract(&agent_claim.claim_short_id)
+        .expect("bound owner retracts another actor's claim");
+    owner_facade
+        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("bound owner deletes");
+
+    // An UNBOUND human actor on the same rooted vault is refused on all three.
+    let stranger = put_person(&vault, 0x61);
+    let stranger_facade = facade_for(&vault, stranger);
+    let victim = put_person(&vault, 0x62);
+    let other_claim = agent_facade
+        .claim_upsert(&claim_input(
+            "profile.color",
+            &victim,
+            "observed",
+            serde_json::json!("teal"),
+        ))
+        .expect("second agent claim");
+    for err in [
+        stranger_facade
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: "PERSON".to_owned(),
+                body: serde_json::json!({"name": "forged"}),
+                text_fields: None,
+                edges: None,
+                occurred_at: 701,
+                learned_at: None,
+            })
+            .expect_err("unbound PERSON mint"),
+        stranger_facade
+            .claim_retract(&other_claim.claim_short_id)
+            .expect_err("unbound cross-actor retract"),
+        stranger_facade
+            .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
+            .expect_err("unbound delete"),
+    ] {
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+        assert!(
+            err.message.contains("no active owner binding"),
+            "{}",
+            err.message
+        );
+    }
+
+    // Retracting your OWN claim is not an owner power and needs no binding.
+    let self_claim = stranger_facade
+        .claim_upsert(&claim_input(
+            "profile.note",
+            &victim,
+            "user_stated",
+            serde_json::json!("mine"),
+        ))
+        .expect("stranger writes own claim");
+    stranger_facade
+        .claim_retract(&self_claim.claim_short_id)
+        .expect("self-retraction never needs an owner binding");
+}
+
+/// T10: an UNROOTED vault keeps today's store-truth behavior exactly.
+///
+/// This pins the ratified enforcement mode (S-AUTH3 D6 fork (a),
+/// "enforce-when-root-exists"): teeth arrive when a host DECLARES authority,
+/// not before. Every shipped vault has no authority log at all, so nothing
+/// breaks on upgrade. [owner] fork note: under the alternate "hard flip"
+/// ruling these three expectations invert to FORBIDDEN.
+#[test]
+fn unrooted_vault_keeps_store_truth_owner_verbs() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x63);
+    let agent = put_person(&vault, 0x64);
+    let subject = put_person(&vault, 0x65);
+    let owner_facade = facade_for(&vault, owner);
+    let agent_claim = vault
+        .memory_facade(agent, EdgeActorClass::Agent)
+        .claim_upsert(&claim_input(
+            "profile.mood",
+            &subject,
+            "observed",
+            serde_json::json!("calm"),
+        ))
+        .expect("agent claim");
+
+    assert!(
+        vault.authority_fold().expect("fold").vault_id.is_none(),
+        "fixture must have no declared authority root"
+    );
+    owner_facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "PERSON".to_owned(),
+            body: serde_json::json!({"name": "minted"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 702,
+            learned_at: None,
+        })
+        .expect("unrooted PERSON mint unchanged");
+    owner_facade
+        .claim_retract(&agent_claim.claim_short_id)
+        .expect("unrooted cross-actor retract unchanged");
+    owner_facade
+        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("unrooted delete unchanged");
+}
+
+/// T11: the binding class is EXACT and revocation is real.
+#[test]
+fn exact_class_binding_no_cross_class_satisfaction() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x66);
+    let subject = put_person(&vault, 0x67);
+    // Bound at "agent" only. A human-class owner verb must NOT be satisfied
+    // by an agent-class binding — near-miss classes are the ESB-C defect.
+    root_vault_binding(&vault, 0x72, owner, "agent");
+
+    let err = facade_for(&vault, owner)
+        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+        .expect_err("agent-class binding must not satisfy a human-class verb");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        err.message.contains("no active owner binding"),
+        "{}",
+        err.message
+    );
+}
+
+/// T11b: a RevokeActor watermark takes the owner's teeth away again.
+#[test]
+fn revoked_binding_forbids_owner_verbs() {
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x68);
+    let subject = put_person(&vault, 0x69);
+    let facade = facade_for(&vault, owner);
+
+    let (genesis, signing) = authority_root(0x73);
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
+    let owner_entry = |seq: u64, op: AuthorityOp, parents: Vec<[u8; 32]>| {
+        sign_authority(
+            AuthorityLogEntry {
+                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(vault_id),
+                seq,
+                parent_hashes: parents,
+                op,
+                signer: AuthoritySignature {
+                    suite: key.suite(),
+                    public_key: key.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: 100 + seq,
+            },
+            &signing,
+        )
+    };
+    let bind = owner_entry(
+        1,
+        AuthorityOp::BindActor {
+            authority_key: key.clone(),
+            actor_ref: owner,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        vec![genesis_hash],
+    );
+    let bind_hash = crate::authority::authority_entry_hash(&bind).expect("bind hash");
+    vault
+        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind, test_time(2), 2)])
+        .expect("root + bind");
+    facade
+        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("bound owner deletes");
+
+    let revoke = owner_entry(
+        2,
+        AuthorityOp::RevokeActor {
+            authority_key: key.clone(),
+            epoch: 1,
+        },
+        vec![bind_hash],
+    );
+    vault
+        .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+        .expect("revoke binding");
+
+    let victim = put_person(&vault, 0x6A);
+    let err = facade
+        .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
+        .expect_err("a revoked binding must lose its owner teeth");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        err.message.contains("no active owner binding"),
+        "{}",
+        err.message
+    );
+}
+
+/// Roots `vault`, binds `actor` as `human`, and returns the SIGNED
+/// `RevokeActor` that takes the binding away again — unpersisted, so a caller
+/// chooses the exact instant it lands.
+fn root_binding_with_pending_revocation(
+    vault: &crate::Vault,
+    seed: u8,
+    actor: EntityId,
+) -> crate::authority::AuthorityLogEntry {
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    let (genesis, signing) = authority_root(seed);
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
+    let owner_entry = |seq: u64, op: AuthorityOp, parents: Vec<[u8; 32]>| {
+        sign_authority(
+            AuthorityLogEntry {
+                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(vault_id),
+                seq,
+                parent_hashes: parents,
+                op,
+                signer: AuthoritySignature {
+                    suite: key.suite(),
+                    public_key: key.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: 100 + seq,
+            },
+            &signing,
+        )
+    };
+    let bind = owner_entry(
+        1,
+        AuthorityOp::BindActor {
+            authority_key: key.clone(),
+            actor_ref: actor,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        vec![genesis_hash],
+    );
+    let bind_hash = crate::authority::authority_entry_hash(&bind).expect("bind hash");
+    vault
+        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind, test_time(2), 2)])
+        .expect("root + bind");
+    owner_entry(
+        2,
+        AuthorityOp::RevokeActor {
+            authority_key: key.clone(),
+            epoch: 1,
+        },
+        vec![bind_hash],
+    )
+}
+
+/// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.
+///
+/// `evaluate_deletion_gate` folds the owner binding in a read txn it then
+/// DROPS. Everything the destructive transactions do afterwards runs on that
+/// dropped snapshot's authority — so a `RevokeActor` committed in the window
+/// between the two was, before this fix, never observed and the delete tore
+/// anyway. The sibling owner verbs (`claim_retract`, the structural arm) never
+/// had the hole because they fold INSIDE their write txns; this drives the race
+/// deterministically through the ONE-1149 rendezvous seam and pins the same
+/// behavior for deletion.
+#[test]
+fn revocation_racing_a_gated_delete_refuses_and_tears_nothing() {
+    for reason in [
+        SafeDeleteReason::UserDelete,
+        SafeDeleteReason::UserHardDelete,
+    ] {
+        let (_dir, vault) = open_vault();
+        let owner = put_person(&vault, 0x90);
+        let subject = put_person(&vault, 0x91);
+        let revoke = root_binding_with_pending_revocation(&vault, 0x92, owner);
+
+        // Control: the binding is live, so the gate passes end to end.
+        let warmup = put_person(&vault, 0x93);
+        facade_for(&vault, owner)
+            .safe_delete(&warmup.to_hex(), reason)
+            .expect("control: a bound owner deletes");
+
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+        // The rendezvous fires from inside the delete AFTER its header read
+        // proves the target exists and BEFORE it takes any write lock — i.e.
+        // squarely inside the gate-to-purge window this test is about.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+        crate::deletion::install_after_header_read_signal(tx);
+
+        let err = std::thread::scope(|scope| {
+            let deleter_gate = std::sync::Arc::clone(&gate);
+            let vault_ref = &vault;
+            let deleter = scope.spawn(move || {
+                deleter_gate.wait();
+                facade_for(vault_ref, owner).safe_delete(&subject.to_hex(), reason)
+            });
+            // Stage the revocation in a HELD write txn: LMDB MVCC keeps it
+            // invisible to the deleter's gate fold, so the gate is guaranteed
+            // to evaluate against the still-live binding.
+            let mut wtxn = vault.store.env.write_txn().expect("write txn");
+            vault
+                .put_authority_log_entries_in_txn(&mut wtxn, &[(revoke, test_time(3), 3)])
+                .expect("stage revocation");
+            gate.wait();
+            // The deleter has read its header and signalled; commit the
+            // revocation now and release the write lock it is about to want.
+            rx.recv()
+                .expect("deleter must signal after the header read");
+            wtxn.commit().expect("commit revocation");
+            deleter
+                .join()
+                .expect("deleter thread must not panic")
+                .expect_err("a revocation landing before the destructive commit must refuse")
+        });
+
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "reason {reason:?}");
+        assert!(
+            err.message.contains("no active owner binding"),
+            "reason {reason:?}: the refusal must name the real cause, not a \
+             generic concurrency error: {}",
+            err.message
+        );
+        // Nothing torn: the subject survives intact.
+        assert_eq!(
+            vault.get_entity_type(&subject).expect("get subject"),
+            Some(ENTITY_TYPE_PERSON),
+            "reason {reason:?}: a refused delete must leave the entity whole"
+        );
+    }
+}
+
+/// fix-leg 6: a refusal must not publish.
+///
+/// fix-5 re-folded the owner at five destructive sites, but the sync leg's
+/// authority lived in `stage_deletion_gate_recovery`'s transaction, which
+/// COMMITS and drops its snapshot; `finish_crdt_tombstone_persist` then wrote
+/// the CRDT snapshot, the `u:w:` carrier and the delete-bearing `q:` row in a
+/// LATER transaction carrying no authority at all. A `RevokeActor` landing
+/// between the two therefore let the tombstone reach peers and only the purge
+/// re-check refused — `safe_delete` returned FORBIDDEN *after* an unauthorized
+/// deletion had already been published, which is unrecoverable: a peer that
+/// applied it has hard-deleted the entity.
+///
+/// The rendezvous fires exactly in that interval. The assertions are the
+/// no-publish invariant, carrier by carrier: no live-doc tombstone, no `d:w:`
+/// snapshot, no `u:w:` row, no `q:` queue row, and no pending gate sidecar
+/// that a later replay could redeem.
+#[cfg(feature = "sync")]
+#[test]
+fn revocation_racing_the_tombstone_publish_refuses_and_publishes_nothing() {
+    use std::sync::Arc;
+
+    use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
+
+    let _serial = lock_delete_rendezvous();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    let owner = put_person(&vault, 0x94);
+    let subject = put_person(&vault, 0x95);
+    let revoke = root_binding_with_pending_revocation(&vault, 0x96, owner);
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "facade-publish-boundary",
+    ));
+    // A connected peer: `route_live` would hand it the tombstone the instant
+    // the publish leaked one.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    manager.outbound().attach(tx);
+    let window_key = WindowKey::from_timestamp(1);
+    let window = manager
+        .open_window(&window_key)
+        .expect("open live deletion window");
+
+    // Control: with the binding live, the same path publishes end to end — so
+    // the assertions below pin the refusal, not a broken fixture.
+    let warmup = put_person(&vault, 0x97);
+    facade_for(&vault, owner)
+        .safe_delete(&warmup.to_hex(), SafeDeleteReason::UserHardDelete)
+        .expect("control: a bound owner publishes a tombstone");
+    rx.try_recv().expect("control: the peer receives it");
+
+    // Two-phase rendezvous: `arrived` fires once the deleter's gate sidecar is
+    // durably staged (its txn committed, no lock held); `resume` releases it
+    // into the publish txn after the revocation has landed. The deleter's own
+    // staging txn takes the write lock, so the fix-5 held-txn trick would
+    // deadlock here — the revocation has to commit while the deleter parks.
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
+    crate::deletion::install_delete_rendezvous(
+        crate::deletion::DeleteRendezvous::BeforeTombstonePublish,
+        subject,
+        arrived_tx,
+        resume_rx,
+    );
+
+    let (err, staged_decision_id) = std::thread::scope(|scope| {
+        let vault_ref = &vault;
+        let deleter = scope.spawn(move || {
+            facade_for(vault_ref, owner)
+                .safe_delete(&subject.to_hex(), SafeDeleteReason::UserHardDelete)
+        });
+        // The staged decision id: a refused delete returns no request id, so
+        // this is the only handle on the sidecar the refusal must withdraw.
+        let staged_decision_id = arrived_rx
+            .recv()
+            .expect("deleter must signal once its gate sidecar is staged")
+            .expect("a hard arm stages a gate sidecar and names it here");
+        // The pre-txn gate and the staging re-fold have BOTH already passed on
+        // the live binding; the delete is parked believing it is authorized.
+        vault
+            .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+            .expect("commit revocation inside the publish window");
+        resume_tx.send(()).expect("release the deleter");
+        let err = deleter
+            .join()
+            .expect("deleter thread must not panic")
+            .expect_err("a revocation landing before the publish commit must refuse");
+        (err, staged_decision_id)
+    });
+
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        err.message.contains("no active owner binding"),
+        "the parked pre-gate error must survive the publish boundary, not \
+         degrade to a generic concurrency code: {}",
+        err.message
+    );
+
+    // Victim intact.
+    assert_eq!(
+        vault.get_entity_type(&subject).expect("get subject"),
+        Some(ENTITY_TYPE_PERSON),
+        "a refused delete must leave the entity whole"
+    );
+
+    // No carrier published — live doc, snapshot, update row, queue row.
+    assert!(
+        window
+            .doc
+            .get_map("tombstones")
+            .get(&subject.to_hex())
+            .is_none(),
+        "a refused delete must not leave a tombstone in the shared live doc"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "a refused delete must not route an outbound update to the peer"
+    );
+    let snapshot = vault
+        .sync_state_get(&format!("d:w:{window_key}"))
+        .expect("read persisted window snapshot");
+    if let Some(snapshot) = snapshot {
+        let persisted = crate::sync::loro_support::doc_from_snapshot(&snapshot)
+            .expect("persisted snapshot decodes");
+        assert!(
+            persisted
+                .get_map("tombstones")
+                .get(&subject.to_hex())
+                .is_none(),
+            "the refused tombstone must not reach the d:w: snapshot"
+        );
+    }
+    for update_key in vault
+        .sync_state_keys_with_prefix(&format!("u:w:{window_key}:"))
+        .expect("read pending update rows")
+    {
+        let bytes = vault
+            .sync_state_get(&update_key)
+            .expect("read update row")
+            .expect("update row exists");
+        let replayed = crate::sync::schema::create_window_doc("probe", &window_key);
+        crate::sync::loro_support::import_doc(&replayed, &bytes).expect("update row imports");
+        assert!(
+            replayed
+                .get_map("tombstones")
+                .get(&subject.to_hex())
+                .is_none(),
+            "the refused tombstone must not reach a u:w: carrier ({update_key})"
+        );
+    }
+    let queue = crate::sync::SyncQueue::new(Arc::clone(&vault)).expect("open sync queue");
+    for queued in queue.drain_updates().expect("drain queued updates") {
+        let replayed = crate::sync::schema::create_window_doc("probe", &window_key);
+        crate::sync::loro_support::import_doc(&replayed, &queued.encoded)
+            .expect("queued update imports");
+        assert!(
+            replayed
+                .get_map("tombstones")
+                .get(&subject.to_hex())
+                .is_none(),
+            "the refused tombstone must not reach a delete-bearing q: row"
+        );
+    }
+
+    // No pending gate sidecar: the staging from the earlier txn must be
+    // withdrawn by the refusal itself, or a later replay would redeem it as a
+    // pending AUTHORIZED deletion.
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        vault
+            .store
+            .pending_deletion_gate_decision_in_txn(&rtxn, staged_decision_id)
+            .expect("read sidecar")
+            .is_none(),
+        "a refused publish must leave no redeemable authority sidecar"
+    );
+    drop(rtxn);
+    // ...and no authority record was minted for a deletion that never happened.
+    assert!(
+        vault
+            .gate_decisions(50)
+            .expect("gate decisions")
+            .iter()
+            .all(|decision| decision.decision_id != staged_decision_id),
+        "a refused publish must mint no gate decision"
+    );
+}
+
+/// A vault wired for the fix-leg 7 publish-boundary regressions: an attached
+/// peer channel plus, on the LIVE leg, an open registry window — so both halves
+/// of "did this delete publish?" are observable, the shared live doc and the
+/// outbound route.
+///
+/// `window: None` is the TRANSIENT leg (window never opened), where the publish
+/// takes the import-merge path instead of the shared doc. It is a genuinely
+/// different code path through `write_crdt_tombstone`, so every regression here
+/// runs both.
+/// Vector width for the orphan-residue fixture. Small and arbitrary — the
+/// headerless delete door only cares that a `vectors` row exists.
+#[cfg(feature = "sync")]
+const RESIDUE_VECTOR_DIMS: usize = 4;
+
+#[cfg(feature = "sync")]
+struct PublishBoundaryHarness {
+    _dir: tempfile::TempDir,
+    vault: std::sync::Arc<crate::Vault>,
+    window: Option<std::sync::Arc<crate::sync::window::LoadedWindow>>,
+    window_key: crate::sync::WindowKey,
+    outbound: tokio::sync::mpsc::UnboundedReceiver<crate::sync::types::LocalUpdate>,
+    _manager: std::sync::Arc<crate::sync::WindowManager>,
+}
+
+#[cfg(feature = "sync")]
+impl PublishBoundaryHarness {
+    fn open(label: &str, live_window: bool) -> Self {
+        Self::open_with_config(label, live_window, VaultConfig::default())
+    }
+
+    /// [`Self::open`] with an embedding model declared, which
+    /// `ensure_model_id_for_vector_write` requires before any vector write —
+    /// the only way to build the orphan-vector residue the headerless delete
+    /// door needs.
+    fn open_for_vector_residue(label: &str, live_window: bool) -> Self {
+        Self::open_with_config(
+            label,
+            live_window,
+            VaultConfig {
+                embedding_model: Some("test-model-v1".to_owned()),
+                dimensions: RESIDUE_VECTOR_DIMS,
+                ..VaultConfig::default()
+            },
+        )
+    }
+
+    fn open_with_config(label: &str, live_window: bool, config: VaultConfig) -> Self {
+        use std::sync::Arc;
+
+        use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Arc::new(crate::Vault::open(dir.path(), config).expect("open vault"));
+        let manager = Arc::new(WindowManager::new(
+            Arc::clone(&vault),
+            Arc::new(Materializer::new()),
+            label,
+        ));
+        let (tx, outbound) = tokio::sync::mpsc::unbounded_channel();
+        manager.outbound().attach(tx);
+        // Every fixture entity is put at `learned_at = 1`, so this is the window
+        // the headerful deletes address.
+        let window_key = WindowKey::from_timestamp(1);
+        // `open_window` also attaches the manager to the vault, which is what
+        // routes deletes at all — the transient leg does that explicitly so its
+        // outbound assertions mean something.
+        let window = if live_window {
+            Some(
+                manager
+                    .open_window(&window_key)
+                    .expect("open live deletion window"),
+            )
+        } else {
+            manager.attach_to_vault();
+            None
+        };
+        Self {
+            _dir: dir,
+            vault,
+            window,
+            window_key,
+            outbound,
+            _manager: manager,
+        }
+    }
+
+    /// Whether the shared live doc carries a tombstone for `id`. Vacuously
+    /// false on the transient leg, which has no live doc to carry one.
+    fn live_doc_tombstoned(&self, id: &EntityId) -> bool {
+        self.window
+            .as_ref()
+            .is_some_and(|window| window.doc.get_map("tombstones").get(&id.to_hex()).is_some())
+    }
+
+    /// Whether the persisted `d:w:` snapshot carries a tombstone for `id`.
+    /// A window with no snapshot row yet trivially carries none.
+    fn snapshot_tombstoned(&self, id: &EntityId) -> bool {
+        let Some(snapshot) = self
+            .vault
+            .sync_state_get(&format!("d:w:{}", self.window_key))
+            .expect("read persisted window snapshot")
+        else {
+            return false;
+        };
+        crate::sync::loro_support::doc_from_snapshot(&snapshot)
+            .expect("persisted snapshot decodes")
+            .get_map("tombstones")
+            .get(&id.to_hex())
+            .is_some()
+    }
+
+    /// Whether any pending `u:w:` update row replays a tombstone for `id`.
+    fn update_rows_tombstoned(&self, id: &EntityId) -> bool {
+        self.vault
+            .sync_state_keys_with_prefix(&format!("u:w:{}:", self.window_key))
+            .expect("read pending update rows")
+            .into_iter()
+            .any(|update_key| {
+                let bytes = self
+                    .vault
+                    .sync_state_get(&update_key)
+                    .expect("read update row")
+                    .expect("update row exists");
+                let replayed = crate::sync::schema::create_window_doc("probe", &self.window_key);
+                crate::sync::loro_support::import_doc(&replayed, &bytes)
+                    .expect("update row imports");
+                replayed.get_map("tombstones").get(&id.to_hex()).is_some()
+            })
+    }
+
+    /// Whether any queued `q:` row replays a tombstone for `id`. DRAINS the
+    /// queue, so call it once per subject.
+    fn queue_rows_tombstoned(&self, id: &EntityId) -> bool {
+        let queue = crate::sync::SyncQueue::new(std::sync::Arc::clone(&self.vault))
+            .expect("open sync queue");
+        queue
+            .drain_updates()
+            .expect("drain queued updates")
+            .into_iter()
+            .any(|queued| {
+                let replayed = crate::sync::schema::create_window_doc("probe", &self.window_key);
+                crate::sync::loro_support::import_doc(&replayed, &queued.encoded)
+                    .expect("queued update imports");
+                replayed.get_map("tombstones").get(&id.to_hex()).is_some()
+            })
+    }
+
+    /// Whether a `pt:` pending-tombstone marker for `id` survives — the
+    /// replayable carrier a refusal must withdraw. Checks BOTH candidate window
+    /// labels: the soft arm addresses `learned_at`'s window and the headerless
+    /// leg addresses NOW's, and at a month boundary those differ.
+    fn replayable_pending_marker(&self, id: &EntityId) -> bool {
+        [
+            self.window_key.as_str().to_owned(),
+            crate::deletion::window_label_from_timestamp(crate::unix_seconds_now()),
+        ]
+        .iter()
+        .any(|window_label| {
+            self.vault
+                .sync_state_get(&crate::deletion::pending_tombstone_key(window_label, id))
+                .expect("read pt: marker")
+                .is_some()
+        })
+    }
+
+    /// Every no-publish assertion in one call, for a delete that must have been
+    /// refused BEFORE its linearization point.
+    fn assert_nothing_published(&mut self, id: &EntityId, context: &str) {
+        assert!(
+            !self.live_doc_tombstoned(id),
+            "{context}: a refused delete must not leave a tombstone in the shared live doc"
+        );
+        assert!(
+            self.outbound.try_recv().is_err(),
+            "{context}: a refused delete must not route an outbound update to the peer"
+        );
+        assert!(
+            !self.snapshot_tombstoned(id),
+            "{context}: the refused tombstone must not reach the d:w: snapshot"
+        );
+        assert!(
+            !self.update_rows_tombstoned(id),
+            "{context}: the refused tombstone must not reach a u:w: carrier"
+        );
+        assert!(
+            !self.queue_rows_tombstoned(id),
+            "{context}: the refused tombstone must not reach a delete-bearing q: row"
+        );
+        assert!(
+            !self.replayable_pending_marker(id),
+            "{context}: the refused tombstone must not survive as a replayable pt: marker"
+        );
+    }
+}
+
+/// The delete rendezvous is ONE process-global slot, and `cargo test` runs these
+/// in parallel threads of a single process. Two tests installing concurrently
+/// would clobber each other's channels — one delete parks on a receiver the
+/// other test owns, the other gets a `RecvError` from a dropped sender. Every
+/// test that installs a rendezvous holds this lock for the whole install→join
+/// window. Poison is ignored deliberately: a panicking test has already failed
+/// and must not cascade into unrelated ones.
+static DELETE_RENDEZVOUS_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_delete_rendezvous() -> std::sync::MutexGuard<'static, ()> {
+    DELETE_RENDEZVOUS_TESTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Parks a gated delete at `step`, commits `revoke` while it waits, and returns
+/// the delete's result. The two-phase shape is forced: the steps around these
+/// seams take the LMDB write lock themselves, so the revocation cannot be
+/// pre-staged in a held txn — the deleter must announce while holding nothing.
+///
+/// Caller must hold [`lock_delete_rendezvous`].
+fn safe_delete_with_revocation_at(
+    vault: &std::sync::Arc<crate::Vault>,
+    owner: EntityId,
+    target: EntityId,
+    reason: SafeDeleteReason,
+    step: crate::deletion::DeleteRendezvous,
+    revoke: crate::authority::AuthorityLogEntry,
+) -> FacadeResult<DeleteReceipt> {
+    let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
+    crate::deletion::install_delete_rendezvous(step, target, arrived_tx, resume_rx);
+
+    std::thread::scope(|scope| {
+        let vault_ref = vault.as_ref();
+        let deleter =
+            scope.spawn(move || facade_for(vault_ref, owner).safe_delete(&target.to_hex(), reason));
+        arrived_rx
+            .recv()
+            .expect("the deleter must reach the installed rendezvous");
+        vault
+            .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+            .expect("commit the revocation while the deleter is parked");
+        resume_tx.send(()).expect("release the deleter");
+        deleter.join().expect("deleter thread must not panic")
+    })
+}
+
+/// fix-leg 7 P1-1: the SOFT arm's publish must pass the gate too.
+///
+/// `user_delete` scrubs the body to a 25 B shell in one txn, then publishes the
+/// tombstone. fix-5 re-folded the owner in the scrub txn and fix-6 gated the
+/// hard arms' publish — but the soft arm called `write_crdt_tombstone(..., None,
+/// None)`, so its publication passed NO gate at all. A `RevokeActor` landing
+/// between the scrub commit and the publish was never observed: the tombstone
+/// reached the live doc and the peer, the `d:w:`/`u:w:`/`q:` carriers persisted,
+/// and the `pt:` marker the scrub txn had already committed stayed on disk as a
+/// replayable propagation intent — an unauthorized soft delete, published.
+///
+/// Both legs, because they are different code paths through the publish: LIVE
+/// (window open, registry-owned shared doc, `route_live` on the wire) and
+/// TRANSIENT (window closed, doc import-merged from persisted state). fix-6's
+/// concern list flagged the transient-leg symmetry as an open follow-up; it is
+/// folded in here.
+#[cfg(feature = "sync")]
+#[test]
+fn revocation_racing_the_soft_delete_publish_refuses_and_publishes_nothing() {
+    let _serial = lock_delete_rendezvous();
+    for live_window in [true, false] {
+        let leg = if live_window { "live" } else { "transient" };
+        let mut harness = PublishBoundaryHarness::open("facade-soft-publish-boundary", live_window);
+        let owner = put_person(&harness.vault, 0x20);
+        let subject = put_person(&harness.vault, 0x2A);
+        let revoke = root_binding_with_pending_revocation(&harness.vault, 0x2B, owner);
+
+        // Control: with the binding live, the soft arm publishes end to end —
+        // so the assertions below pin the refusal, not a broken fixture.
+        let warmup = put_person(&harness.vault, 0x2C);
+        facade_for(&harness.vault, owner)
+            .safe_delete(&warmup.to_hex(), SafeDeleteReason::UserDelete)
+            .expect("control: a bound owner soft-deletes");
+        assert!(
+            harness.snapshot_tombstoned(&warmup),
+            "{leg} control: the d:w: snapshot must carry the warmup tombstone — \
+             on both legs the publish txn persists it"
+        );
+        if live_window {
+            assert!(
+                harness.live_doc_tombstoned(&warmup),
+                "{leg} control: the live doc must carry the warmup tombstone"
+            );
+            // `route_live` is the LIVE leg's last act. The transient leg has no
+            // open window to route through — its delivery is the queued `q:`
+            // row, which the control below leaves in place deliberately.
+            assert!(
+                harness.outbound.try_recv().is_ok(),
+                "{leg} control: the peer receives the warmup tombstone"
+            );
+        }
+        // Drain the control's outbound traffic so the refusal assertion below
+        // reads an empty channel only if the REFUSED delete routed nothing.
+        while harness.outbound.try_recv().is_ok() {}
+
+        let err = safe_delete_with_revocation_at(
+            &harness.vault,
+            owner,
+            subject,
+            SafeDeleteReason::UserDelete,
+            crate::deletion::DeleteRendezvous::BeforeTombstonePublish,
+            revoke,
+        )
+        .expect_err("a revocation landing before the publish commit must refuse");
+
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{leg}");
+        assert!(
+            err.message.contains("no active owner binding"),
+            "{leg}: the parked pre-gate error must survive the publish boundary, \
+             not degrade to a generic concurrency code: {}",
+            err.message
+        );
+        // The shell scrub already committed — that is the pre-publication act
+        // this arm is allowed to have done, and fix-5's re-fold gated it. What
+        // must NOT exist is any published or replayable carrier.
+        harness.assert_nothing_published(&subject, leg);
+    }
+}
+
+/// fix-leg 7 P1-2 (a): a revocation committed AFTER the publish commit does NOT
+/// refuse — the delete COMPLETES.
+///
+/// The publish commit is the delete's linearization point. fix-5 re-folded the
+/// owner at the destructive steps that follow it (soft-erase, purge, headerless
+/// purge), which meant a `RevokeActor` landing in the interval publish→purge
+/// produced the rejected-call-publishes shape: the caller got FORBIDDEN while
+/// the tombstone was already on the wire and peers were already tearing the
+/// entity. That refusal is both unactionable and false — sync replay of the
+/// published tombstone purges this replica regardless, so the local state the
+/// refusal claims to have preserved does not survive anyway.
+///
+/// Under the ruling the answer is settled at publish: a revocation LMDB-ordered
+/// after that commit simply follows an operation that was authorized when it
+/// committed, which is ordinary linearizable ordering, not a race. Both
+/// post-publication rendezvous points are driven, across every hard reason and
+/// the headerless door.
+///
+/// MUTATION PROBE: re-adding an authority re-fold at any post-publish site
+/// fails this test (the delete returns FORBIDDEN and the victim survives) while
+/// the pre-publish regressions above still pass — the two directions are pinned
+/// independently.
+#[cfg(feature = "sync")]
+#[test]
+fn revocation_after_the_publish_commit_lets_the_delete_complete() {
+    let _serial = lock_delete_rendezvous();
+    let steps = [
+        // Entry to the first post-publication destructive step: the soft-erase
+        // for gdpr/policy, the purge for user_hard_delete.
+        crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+        // Entry to the purge on the arms that ran a soft-erase first.
+        crate::deletion::DeleteRendezvous::BeforeHardPurge,
+    ];
+    let reasons = [
+        SafeDeleteReason::UserHardDelete,
+        SafeDeleteReason::GdprDelete,
+        SafeDeleteReason::PolicyDelete,
+    ];
+    for live_window in [true, false] {
+        for step in steps {
+            for reason in reasons {
+                let leg = if live_window { "live" } else { "transient" };
+                let case = format!("{leg}/{step:?}/{reason:?}");
+                let harness =
+                    PublishBoundaryHarness::open("facade-post-publish-boundary", live_window);
+                let owner = put_person(&harness.vault, 0x2D);
+                let subject = put_person(&harness.vault, 0x2E);
+                let revoke = root_binding_with_pending_revocation(&harness.vault, 0x2F, owner);
+
+                let receipt = safe_delete_with_revocation_at(
+                    &harness.vault,
+                    owner,
+                    subject,
+                    reason,
+                    step,
+                    revoke,
+                )
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "{case}: a revocation ordered AFTER the publish commit must not \
+                         refuse a committed deletion, but got {}: {}",
+                        err.code, err.message
+                    )
+                });
+
+                assert!(receipt.existed, "{case}: the delete must claim the erasure");
+                assert!(
+                    receipt.receipt_ref.is_some(),
+                    "{case}: every hard reason writes a REDACTION_AUDIT receipt"
+                );
+                // Torn for real: the entity row is gone, not merely shelled.
+                assert_eq!(
+                    harness
+                        .vault
+                        .get_entity_type(&subject)
+                        .expect("get subject"),
+                    None,
+                    "{case}: the victim must be purged"
+                );
+                // ...and the `dt:` local hard-delete truth is durable.
+                let rtxn = harness.vault.store.env.read_txn().expect("read txn");
+                assert!(
+                    harness
+                        .vault
+                        .local_hard_delete_marker_exists_in_txn(&rtxn, &subject)
+                        .expect("read dt: marker"),
+                    "{case}: the purge txn must write the dt: marker"
+                );
+            }
+        }
+    }
+}
+
+/// fix-leg 7 P1-2 (a), headerless door: same law where there is no header.
+///
+/// `delete_entity_without_header` erases orphan residue (a vector with no
+/// entities row). It publishes a tombstone first and purges after, so it has the
+/// same post-publication interval — and fix-5 put a re-fold in its purge txn
+/// too. Driven separately because the residue fixture cannot be built through
+/// `put_person`.
+#[cfg(feature = "sync")]
+#[test]
+fn revocation_after_the_publish_commit_lets_a_headerless_delete_complete() {
+    let _serial = lock_delete_rendezvous();
+    for live_window in [true, false] {
+        let leg = if live_window { "live" } else { "transient" };
+        let harness = PublishBoundaryHarness::open_for_vector_residue(
+            "facade-headerless-boundary",
+            live_window,
+        );
+        let owner = put_person(&harness.vault, 0x34);
+        let revoke = root_binding_with_pending_revocation(&harness.vault, 0x35, owner);
+
+        // Headerless residue: a vector with no entities row, so the delete takes
+        // `delete_entity_without_header`.
+        let subject = EntityId::from_bytes([0x3B; 16]).expect("residue id");
+        harness
+            .vault
+            .put_vector(&subject, &[0.1, 0.2, 0.3, 0.4])
+            .expect("put orphan vector");
+        assert!(
+            harness.vault.get_raw(&subject).expect("get raw").is_none(),
+            "{leg}: headerless precondition — no entities row"
+        );
+
+        let receipt = safe_delete_with_revocation_at(
+            &harness.vault,
+            owner,
+            subject,
+            SafeDeleteReason::GdprDelete,
+            crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+            revoke,
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "{leg}: the headerless purge must not re-decide authority after \
+                 publication, but got {}: {}",
+                err.code, err.message
+            )
+        });
+
+        // `existed` tracks the ENTITIES row, which a headerless residue has none
+        // of by construction — so the erasure evidence here is the audit receipt
+        // and the purged vector, exactly as the pre-existing headerless fixtures
+        // assert.
+        assert!(
+            receipt.receipt_ref.is_some(),
+            "{leg}: the headerless purge must write its REDACTION_AUDIT receipt"
+        );
+        assert_eq!(
+            harness.vault.get_vector(&subject).expect("get vector"),
+            None,
+            "{leg}: the orphan vector must be purged"
+        );
+        let rtxn = harness.vault.store.env.read_txn().expect("read txn");
+        assert!(
+            harness
+                .vault
+                .local_hard_delete_marker_exists_in_txn(&rtxn, &subject)
+                .expect("read dt: marker"),
+            "{leg}: the headerless purge txn must write the dt: marker"
+        );
+    }
+}
+
+/// fix-leg 8 P1: WITHOUT a publish commit there is no linearization point, so
+/// the first destructive transaction must still re-prove authority.
+///
+/// `write_crdt_tombstone` is a NO-OP in a build without `sync` — it publishes
+/// nothing and returns `crdt_persisted: false`. fix-7 read "after the publish
+/// commit, do not re-check" as unconditional and removed the soft-erase and
+/// purge re-folds, which on this build removed the ONLY in-transaction authority
+/// checks the hard arms had: nothing had published, so the check fix-7 relied on
+/// never ran. A `RevokeActor` landing after `safe_delete`'s entry fold then let
+/// `user_hard_delete` / `gdpr_delete` / `policy_delete` tear the entity locally,
+/// append an `allow` gate record, and commit the `pt:` marker whose verbatim
+/// tombstone bytes a later sync-enabled boot replays through
+/// `replay_pending_tombstones` — an unauthorized deletion, published on a delay.
+///
+/// The refined rule keys on `crdt_persisted`, not on the cargo feature: a
+/// `sync` build path that declines to publish must obey the same law, and a
+/// `#[cfg]` here would silently exempt it. The rendezvous parks the deleter in
+/// the window after the entry fold and before the first destructive commit —
+/// which on this build is where `AfterTombstonePublish` fires, since the
+/// "publish" it names did nothing.
+///
+/// MUTATION PROBE: drop the conditional reverify from the hard arms' first
+/// destructive txn and this test fails — the delete succeeds, the victim is
+/// purged, and the replayable `pt:` marker survives.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn revocation_after_a_nonpublishing_delete_refuses_and_tears_nothing() {
+    let _serial = lock_delete_rendezvous();
+    for reason in [
+        SafeDeleteReason::UserHardDelete,
+        SafeDeleteReason::GdprDelete,
+        SafeDeleteReason::PolicyDelete,
+    ] {
+        let case = format!("{reason:?}");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = std::sync::Arc::new(
+            crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"),
+        );
+        let owner = put_person(&vault, 0x40);
+        let subject = put_person(&vault, 0x41);
+        let revoke = root_binding_with_pending_revocation(&vault, 0x42, owner);
+
+        let err = safe_delete_with_revocation_at(
+            &vault,
+            owner,
+            subject,
+            reason,
+            crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+            revoke,
+        )
+        .expect_err(&format!(
+            "{case}: nothing published, so the first destructive txn is this \
+             delete's linearization point and MUST refuse"
+        ));
+
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{case}");
+        assert!(
+            err.message.contains("no active owner binding"),
+            "{case}: the parked pre-gate error must survive, not degrade to a \
+             generic concurrency code: {}",
+            err.message
+        );
+        // Intact, not merely un-purged: the shell scrub must not have run either.
+        assert_eq!(
+            vault.get_entity_type(&subject).expect("get subject"),
+            Some(ENTITY_TYPE_PERSON),
+            "{case}: a refused delete must leave the entity whole"
+        );
+        assert_eq!(
+            vault
+                .get_raw(&subject)
+                .expect("get raw")
+                .expect("subject row survives")
+                .len(),
+            crate::batch::ENTITY_METADATA_HEADER_LEN + b"facade person".len(),
+            "{case}: the body must be un-scrubbed — a 25 B shell would mean the \
+             soft-erase committed before the refusal"
+        );
+        assert_no_local_delete_artifacts(&vault, &subject, &case);
+    }
+}
+
+/// Every durable artifact a REFUSED sync-disabled delete must not leave behind,
+/// in one call. Distinct from `PublishBoundaryHarness::assert_nothing_published`,
+/// which pins the CRDT carriers a `sync` build could leak; without the feature
+/// there are no such carriers, and the whole surface is local:
+///
+/// - `pt:{window}:{id}` — the pending-tombstone marker. THE one that matters:
+///   it holds the verbatim 25 B tombstone wire value, and
+///   `sync::window::replay_pending_tombstones` turns it into a published
+///   tombstone on the next sync-enabled boot. A revoked owner leaving one behind
+///   has published an unauthorized deletion, just deferred.
+/// - `dt:{id}` — the permanent local hard-delete marker. It is
+///   presence-consulted by the materialization gates, so a stray one bricks the
+///   id against every future write.
+/// - `h:` sweep rows + REDACTION_AUDIT receipts — a refused delete audits no
+///   erasure, because none happened.
+/// - gate decisions — the authority ledger must not record an `allow` for a
+///   deletion the authority refused.
+///
+/// Both window labels are probed for `pt:`: the headerful arms address
+/// `learned_at`'s window and the headerless leg addresses NOW's, and at a month
+/// boundary those differ.
+#[cfg(not(feature = "sync"))]
+fn assert_no_local_delete_artifacts(vault: &crate::Vault, id: &EntityId, context: &str) {
+    use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    for window_label in [
+        crate::deletion::window_label_from_timestamp(1),
+        crate::deletion::window_label_from_timestamp(crate::unix_seconds_now()),
+    ] {
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(
+                    &rtxn,
+                    &crate::deletion::pending_tombstone_key(&window_label, id)
+                )
+                .expect("read pt: marker")
+                .is_none(),
+            "{context}: a refused delete must leave no replayable pt: marker \
+             (a sync-enabled boot would replay it into the very publication the \
+             refusal denied)"
+        );
+    }
+    assert!(
+        !vault
+            .local_hard_delete_marker_exists_in_txn(&rtxn, id)
+            .expect("read dt: marker"),
+        "{context}: a refused delete must write no dt: local hard-delete marker"
+    );
+    assert!(
+        vault
+            .store
+            .sync_queue
+            .prefix_iter(&rtxn, crate::deletion::HARD_ERASE_SWEEP_PREFIX)
+            .expect("iter sweep rows")
+            .next()
+            .is_none(),
+        "{context}: a refused delete must queue no h: hard-erase sweep row"
+    );
+    drop(rtxn);
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+            .expect("list receipts")
+            .is_empty(),
+        "{context}: a refused delete must mint no REDACTION_AUDIT receipt"
+    );
+    assert!(
+        vault
+            .gate_decisions(50)
+            .expect("gate decisions")
+            .iter()
+            .all(|decision| decision.content_kind != "deletion"),
+        "{context}: a refused delete must append no allow-gate deletion decision"
+    );
+}
+
+/// fix-leg 8 P1, headerless leg: same law where there is no header.
+///
+/// `delete_entity_without_header` erases orphan residue (a vector with no
+/// entities row). Its pre-publication guards were the scope probe's read txn and
+/// the publish txn's re-fold — and on a build with no `sync` the second does not
+/// exist, so fix-7's removal of the purge re-fold left this door with NO
+/// in-transaction authority check at all. The residue is the part that makes it
+/// bite differently from the headerful arms: it is the actual user data (a
+/// vector, a BM25 posting), and a refused delete must leave it whole.
+///
+/// MUTATION PROBE: drop the conditional reverify from the headerless purge txn
+/// and this test fails — the residue is erased and the receipt is minted.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing() {
+    let _serial = lock_delete_rendezvous();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = std::sync::Arc::new(
+        crate::Vault::open(
+            dir.path(),
+            VaultConfig {
+                embedding_model: Some("test-model-v1".to_owned()),
+                dimensions: 4,
+                ..VaultConfig::default()
+            },
+        )
+        .expect("open vault"),
+    );
+    let owner = put_person(&vault, 0x43);
+    let revoke = root_binding_with_pending_revocation(&vault, 0x44, owner);
+
+    // Headerless residue: a vector with no entities row, so the delete takes
+    // `delete_entity_without_header`.
+    let subject = EntityId::from_bytes([0x45; 16]).expect("residue id");
+    vault
+        .put_vector(&subject, &[0.1, 0.2, 0.3, 0.4])
+        .expect("put orphan vector");
+    assert!(
+        vault.get_raw(&subject).expect("get raw").is_none(),
+        "headerless precondition — no entities row"
+    );
+
+    let err = safe_delete_with_revocation_at(
+        &vault,
+        owner,
+        subject,
+        SafeDeleteReason::GdprDelete,
+        crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+        revoke,
+    )
+    .expect_err(
+        "the headerless purge is this delete's ONLY durable act when nothing \
+         published, so it MUST re-decide authority",
+    );
+
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        err.message.contains("no active owner binding"),
+        "{}",
+        err.message
+    );
+    // The residue itself survives — the point of the headerless door.
+    assert_eq!(
+        vault.get_vector(&subject).expect("get vector"),
+        Some(vec![0.1, 0.2, 0.3, 0.4]),
+        "a refused headerless delete must leave the orphan vector intact"
+    );
+    assert_no_local_delete_artifacts(&vault, &subject, "headerless");
+}
+
+/// fix-leg 9 P1: on the NON-PUBLISHING path the soft erase and the `pt:`
+/// propagation intent are ONE transaction.
+///
+/// fix-8 put the conditional re-fold in the gdpr/policy soft-erase txn, and that
+/// txn commits — but the replayable `pt:` marker was only written later, in the
+/// purge txn. Between those two commits the erasure had a shape no compliance
+/// path may have: the body was scrubbed locally and irreversibly, every peer
+/// still held the full data, and NO durable record of the intent to propagate
+/// the delete existed. A crash there — or any error on the purge path, which is
+/// the ordinary failure this reaches through — silently downgraded a GDPR /
+/// policy erasure to a local-only scrub. Nothing would ever heal it: a retry
+/// captures the bodiless 25 B shell, and the sync-enabled boot that would have
+/// replayed the deletion finds no marker to replay.
+///
+/// Driven by failing the marker write itself, which is the strongest available
+/// statement of atomicity: whatever the transaction had done up to that point
+/// must vanish with it. Both reasons that take the soft-erase phase, because
+/// they are one arm and a future edit could split them.
+///
+/// MUTATION PROBE: move the `pt:` write back to the purge txn (drop it from the
+/// scrub txn) and this test fails — the injection never fires, the delete
+/// SUCCEEDS, and `expect_err` panics.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn a_failed_first_txn_pending_tombstone_rolls_back_the_soft_erase() {
+    for reason in [SafeDeleteReason::GdprDelete, SafeDeleteReason::PolicyDelete] {
+        let case = format!("{reason:?}");
+
+        // Control, on its OWN vault: unarmed, the same delete completes and
+        // leaves the marker. It runs separately so the armed leg's
+        // "no artifacts at all" assertion stays absolute — a control delete in
+        // the same vault would leave a legitimate receipt and pt: row.
+        let (control_dir, control_vault) = open_nonpublishing_delete_vault();
+        let control_owner = put_person(&control_vault, 0x50);
+        let control_subject = put_person(&control_vault, 0x51);
+        root_vault_binding(&control_vault, 0x52, control_owner, "human");
+        facade_for(&control_vault, control_owner)
+            .safe_delete(&control_subject.to_hex(), reason)
+            .unwrap_or_else(|err| panic!("{case} control: {}: {}", err.code, err.message));
+        assert!(
+            first_txn_pending_tombstone_exists(&control_vault, &control_subject),
+            "{case} control: a completed sync-OFF erasure keeps its replayable \
+             pt: propagation intent, written in the scrub txn"
+        );
+        drop(control_dir);
+
+        let (_dir, vault) = open_nonpublishing_delete_vault();
+        let owner = put_person(&vault, 0x53);
+        let subject = put_person(&vault, 0x54);
+        // The soft erase deletes the vector row too, so a surviving vector is
+        // independent evidence that the scrub itself rolled back — not merely
+        // that the entity body was left alone.
+        vault
+            .put_vector(&subject, &[0.5, 0.6, 0.7, 0.8])
+            .expect("put subject vector");
+        root_vault_binding(&vault, 0x55, owner, "human");
+
+        crate::deletion::arm_fail_first_txn_pending_tombstone();
+        let err = facade_for(&vault, owner)
+            .safe_delete(&subject.to_hex(), reason)
+            .expect_err(
+                "the pt: marker is written INSIDE the re-verified soft-erase \
+                 txn, so failing it must fail the whole delete",
+            );
+        assert_eq!(err.code, FACADE_CODE_INTERNAL, "{case}");
+
+        // The scrub rolled back with the marker: body whole, vector whole.
+        assert_eq!(
+            vault
+                .get_raw(&subject)
+                .expect("get raw")
+                .expect("subject row survives")
+                .len(),
+            crate::batch::ENTITY_METADATA_HEADER_LEN + b"facade person".len(),
+            "{case}: a 25 B shell would mean the scrub committed without the \
+             marker — the exact split fix-leg 9 closes"
+        );
+        assert_eq!(
+            vault.get_vector(&subject).expect("get vector"),
+            Some(vec![0.5, 0.6, 0.7, 0.8]),
+            "{case}: the soft erase deletes the vector row, so it must return"
+        );
+        assert_no_local_delete_artifacts(&vault, &subject, &case);
+    }
+}
+
+/// fix-leg 9, the `existed` half of the guard: a soft erase that found NOTHING
+/// still writes no `pt:`.
+///
+/// Moving the marker into the scrub txn put a `pt:` write on a path that had
+/// none, so it inherits ONE-1149's rule and must be pinned there: a delete whose
+/// scope raced away between the header read and the scrub txn erased nothing,
+/// and a `pt:` marker is a claim that this delete has data to propagate away.
+/// Emitting one would replay a deletion for an id this call never touched.
+/// `assert_no_erasure_audit_artifacts` pins the same law for the purge txn's
+/// marker; nothing covered the new site, because the pre-existing headerful
+/// raced test uses `user_hard_delete`, which has no soft-erase phase at all.
+///
+/// MUTATION PROBE: drop `existed &&` from the scrub txn's marker guard and this
+/// test fails — the raced delete reports `missing()` while leaving a replayable
+/// `pt:` behind.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn a_soft_erase_that_erased_nothing_writes_no_pending_tombstone() {
+    for reason in [DeleteReason::GdprDelete, DeleteReason::PolicyDelete] {
+        let case = format!("{reason:?}");
+        let learned_at = 1_772_000_000;
+
+        for attempt in 0..3 {
+            let (_dir, vault) = open_nonpublishing_delete_vault();
+            let id = EntityId::from_bytes([0x56; 16]).expect("victim id");
+            vault
+                .batch()
+                .put(
+                    &id,
+                    ENTITY_TYPE_PERSON,
+                    TimeRange {
+                        start: learned_at,
+                        end: learned_at,
+                    },
+                    learned_at,
+                    b"raced-away-before-the-scrub",
+                )
+                .commit()
+                .expect("put victim");
+
+            // The eraser stages the full-scope erase in a HELD write txn, so the
+            // deleter's lock-free header read still sees the entity; the commit
+            // lands while the deleter blocks on the write lock, and its scrub txn
+            // then finds nothing. Identical construction to the ONE-1149
+            // raced-to-nothing legs.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+            crate::deletion::install_after_header_read_signal(tx);
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let outcome = std::thread::scope(|scope| {
+                let mut wtxn = vault.store.env.write_txn().expect("write txn");
+                crate::batch::deindex_entity(&vault.store, &mut wtxn, &id).expect("stage erase");
+                let deleter_barrier = std::sync::Arc::clone(&barrier);
+                let vault_ref = &vault;
+                let deleter = scope.spawn(move || {
+                    deleter_barrier.wait();
+                    vault_ref.delete_entity_with_reason(&id, reason)
+                });
+                barrier.wait();
+                rx.recv()
+                    .expect("deleter must signal after the header read");
+                wtxn.commit().expect("commit the racing erase");
+                deleter.join().expect("deleter thread must not panic")
+            })
+            .expect("a raced delete is not an error");
+
+            if vault.get_raw(&id).expect("get raw").is_some() {
+                // Scheduling miss: the deleter never reached the raced branch.
+                assert!(attempt < 2, "{case}: raced branch never constructed");
+                continue;
+            }
+            assert!(
+                !outcome.existed,
+                "{case}: a delete that erased nothing must not claim it did"
+            );
+            assert!(
+                !first_txn_pending_tombstone_exists(&vault, &id),
+                "{case}: the scrub txn erased nothing, so it must stage no \
+                 replayable pt: propagation intent for it"
+            );
+            break;
+        }
+    }
+}
+
+/// fix-leg 10 P1: an EMPTY commit settles nothing, so it must not latch
+/// `authority_settled`.
+///
+/// fix-8 latched the flag unconditionally the moment the soft-erase txn ran, on
+/// the theory that a committed destructive transaction is this delete's
+/// linearization point. It is — when it actually erased something. When the
+/// delete's scope raced away between the header read and the scrub txn
+/// (`existed == false`, ONE-1149's shape), that transaction commits nothing at
+/// all: no body scrubbed, no vector dropped, no `pt:` staged. Latching on it
+/// declared a linearization point that does not exist, and the purge txn then
+/// asked NO authority question.
+///
+/// What that bought an attacker: a `RevokeActor` AND a same-id re-put both
+/// landing in the window before the purge were ignored wholesale. The purge tore
+/// the REPLACEMENT state — data the revoked actor was never authorized to touch
+/// and that this delete never even read — wrote the `dt:` marker that bricks the
+/// id forever, committed the replayable `pt:` propagation intent, and appended
+/// the stale `allow` gate decision minted from a snapshot two commits stale.
+///
+/// Fully deterministic, using the rendezvous slot TWICE: the deleter parks
+/// before its scrub txn while the harness races the scope away, then parks again
+/// at `BeforeHardPurge` while the harness commits the revocation and the re-put.
+/// No `AFTER_HEADER_READ` contention with the other raced tests, and no retry
+/// loop — LMDB's single writer does the ordering.
+///
+/// MUTATION PROBE: latch unconditionally again (`authority_settled = true;`) and
+/// this test fails — the purge re-folds nothing, the delete SUCCEEDS, and
+/// `expect_err` panics with the replacement torn and `dt:`/`pt:`/receipt/gate
+/// artifacts on disk.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn a_raced_to_nothing_scrub_leaves_authority_unsettled_for_the_purge() {
+    const REPLACEMENT: &[u8] = b"state re-put after the empty scrub";
+    let _serial = lock_delete_rendezvous();
+
+    for reason in [SafeDeleteReason::GdprDelete, SafeDeleteReason::PolicyDelete] {
+        let case = format!("{reason:?}");
+        let (_dir, vault) = open_nonpublishing_delete_vault();
+        let owner = put_person(&vault, 0x57);
+        let revoke = root_binding_with_pending_revocation(&vault, 0x58, owner);
+        let subject = EntityId::from_bytes([0x59; 16]).expect("subject id");
+        vault
+            .put_entity(&subject, ENTITY_TYPE_PERSON, test_time(1), 1, b"original")
+            .expect("put the original scope");
+
+        // Park #1: after the entry gate and the no-op publish, BEFORE the scrub
+        // txn opens — the deleter holds no write lock here.
+        let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
+        crate::deletion::install_delete_rendezvous(
+            crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+            subject,
+            arrived_tx,
+            resume_rx,
+        );
+
+        let result = std::thread::scope(|scope| {
+            let vault_ref = &vault;
+            let deleter = scope
+                .spawn(move || facade_for(vault_ref, owner).safe_delete(&subject.to_hex(), reason));
+            arrived_rx
+                .recv()
+                .expect("the deleter must park before its scrub txn");
+
+            // Race the ORIGINAL scope to nothing. The scrub txn below will find
+            // `existed == false` and commit empty.
+            let mut wtxn = vault.store.env.write_txn().expect("write txn");
+            crate::batch::deindex_entity(&vault.store, &mut wtxn, &subject)
+                .expect("race the scope away");
+            wtxn.commit().expect("commit the racing erase");
+            assert!(
+                vault.get_raw(&subject).expect("get raw").is_none(),
+                "{case}: precondition — the scrub must find nothing"
+            );
+
+            // Park #2, installed while the deleter is still held at park #1: the
+            // slot was `take`n when it fired, so this is the next one it hits.
+            let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+            let (resume_purge_tx, resume_purge_rx) = std::sync::mpsc::sync_channel::<()>(0);
+            crate::deletion::install_delete_rendezvous(
+                crate::deletion::DeleteRendezvous::BeforeHardPurge,
+                subject,
+                arrived_tx,
+                resume_purge_rx,
+            );
+            resume_tx.send(()).expect("release into the empty scrub");
+            arrived_rx
+                .recv()
+                .expect("the deleter must park after the empty scrub commits");
+
+            // The two commits the empty scrub falsely claimed to have ordered
+            // behind it: authority is gone, and the id carries NEW state.
+            vault
+                .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+                .expect("commit the revocation");
+            vault
+                .put_entity(&subject, ENTITY_TYPE_PERSON, test_time(4), 4, REPLACEMENT)
+                .expect("re-put the same id");
+            vault
+                .put_vector(&subject, &[0.9, 0.8, 0.7, 0.6])
+                .expect("re-put a vector");
+            resume_purge_tx.send(()).expect("release into the purge");
+            deleter.join().expect("deleter thread must not panic")
+        });
+
+        let err = result.expect_err(&format!(
+            "{case}: the empty scrub linearized nothing, so the purge is this \
+             delete's first irreversible act and MUST re-prove authority"
+        ));
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "{case}");
+        assert!(
+            err.message.contains("no active owner binding"),
+            "{case}: the parked pre-gate error must survive, not degrade to a \
+             generic concurrency code: {}",
+            err.message
+        );
+        // The replacement is whole — the purge must not tear state this delete
+        // never read, on an authority that no longer exists.
+        assert_eq!(
+            vault
+                .get_raw(&subject)
+                .expect("get raw")
+                .expect("the replacement row survives")
+                .len(),
+            crate::batch::ENTITY_METADATA_HEADER_LEN + REPLACEMENT.len(),
+            "{case}: the re-put body must be untouched"
+        );
+        assert_eq!(
+            vault.get_vector(&subject).expect("get vector"),
+            Some(vec![0.9, 0.8, 0.7, 0.6]),
+            "{case}: the re-put vector must be untouched"
+        );
+        assert_no_local_delete_artifacts(&vault, &subject, &case);
+    }
+}
+
+/// A vault with vectors enabled, for the non-publishing delete regressions that
+/// need vector residue as rollback evidence.
+#[cfg(not(feature = "sync"))]
+fn open_nonpublishing_delete_vault() -> (tempfile::TempDir, crate::Vault) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(
+        dir.path(),
+        VaultConfig {
+            embedding_model: Some("test-model-v1".to_owned()),
+            dimensions: 4,
+            ..VaultConfig::default()
+        },
+    )
+    .expect("open vault");
+    (dir, vault)
+}
+
+/// Whether ANY `pt:` marker exists for `id`, in any window.
+///
+/// Prefix-scanned rather than keyed: the headerful arms address the entity's own
+/// `learned_at` window, and a helper that guessed one label would silently pass
+/// its "no marker" assertion for a marker written under a different one — the
+/// failure mode that hides exactly the leak these regressions hunt.
+#[cfg(not(feature = "sync"))]
+fn first_txn_pending_tombstone_exists(vault: &crate::Vault, id: &EntityId) -> bool {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let suffix = format!(":{}", id.to_hex());
+    vault
+        .store
+        .sync_state
+        .prefix_iter(&rtxn, crate::deletion::PENDING_TOMBSTONE_PREFIX)
+        .expect("iter pt: markers")
+        .any(|row| row.expect("pt: row").0.ends_with(&suffix))
+}
+
+/// P2-b: `fold.vault_id == None` is TWO states, and only one of them may pass.
+///
+/// A log carrying two independent genesis roots folds to `vault_id: None` with
+/// `ConflictingVaultRoot` issues and an EMPTY `actor_bindings` map — the same
+/// shape as a vault that never declared authority. Reading that as "unrooted,
+/// keep store truth" hands every owner verb to any caller precisely when the
+/// authority root is contested, which is the fail-open this pins shut.
+#[test]
+fn conflicting_vault_roots_fail_owner_verbs_closed() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x6B);
+    let subject = put_person(&vault, 0x6C);
+    let facade = facade_for(&vault, owner);
+
+    // Two independently rooted genesis entries in one log. Each is internally
+    // valid; together they are a collapse.
+    let (genesis_a, _) = authority_root(0x74);
+    let (genesis_b, _) = authority_root(0x75);
+    vault
+        .put_authority_log_entries(&[(genesis_a, test_time(1), 1), (genesis_b, test_time(2), 2)])
+        .expect("two independent roots are individually valid rows");
+
+    let fold = vault.authority_fold().expect("fold");
+    assert!(
+        fold.vault_root_is_conflicted(),
+        "fixture must produce the conflicting-roots collapse"
+    );
+    assert!(
+        fold.vault_id.is_none() && fold.actor_bindings.is_empty(),
+        "the collapse must be indistinguishable from unrooted on shape alone \
+         — that indistinguishability IS the bug being pinned"
+    );
+
+    // INVALID_STATE, not FORBIDDEN: nothing is wrong with the caller, the
+    // vault's authority is. The taxonomy is what tells a host to repair the
+    // log rather than to go mint a binding.
+    let err = facade
+        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+        .expect_err("owner verbs must fail closed under conflicting roots");
+    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert!(
+        err.message.contains("conflicting vault roots"),
+        "{}",
+        err.message
+    );
+
+    // The other two owner verbs take the same door.
+    for err in [
+        facade
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: "PERSON".to_owned(),
+                body: serde_json::json!({"name": "forged"}),
+                text_fields: None,
+                edges: None,
+                occurred_at: 703,
+                learned_at: None,
+            })
+            .expect_err("conflicted-root PERSON mint"),
+        {
+            let agent = put_person(&vault, 0x6D);
+            let claim = vault
+                .memory_facade(agent, EdgeActorClass::Agent)
+                .claim_upsert(&claim_input(
+                    "profile.mood",
+                    &subject,
+                    "observed",
+                    serde_json::json!("calm"),
+                ))
+                .expect("agent claim");
+            facade
+                .claim_retract(&claim.claim_short_id)
+                .expect_err("conflicted-root cross-actor retract")
+        },
+    ] {
+        assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    }
+}
+
+/// A sidecar-less rotation must never hand the RETIRED key owner verbs through
+/// the facade gate.
+///
+/// The owner gate reads `authority_fold_readonly_in_txn`, which used to omit
+/// entries with no first-seen sidecar — leaving a delayable widen pending
+/// forever. For `RotateKey` that is fail-OPEN: pending means the RETIRED key is
+/// still a live owner-capable roster key. On a legacy rooted vault whose
+/// rotation lost its sidecar, an attacker holding the retired key files a DAG
+/// SIBLING `BindActor(retired_key, attacker, "human")` parented at genesis, and
+/// the gate hands them every owner verb.
+///
+/// fix-3 closed that by synthesizing the migration's `learned_at.min(now)`.
+/// fix-leg 4 removes `learned_at` from the answer entirely — it is peer-written,
+/// so the long-past values in this fixture are the attacker's own claim — and
+/// the gate suspends instead: INVALID_STATE while the fold cannot date the
+/// rotation, cleared by one write-path fold, after which the rotation serves its
+/// delay from local observation. Either way the retired key never authorizes.
+#[test]
+fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    let (_dir, vault) = open_vault();
+    let attacker = put_person(&vault, 0x76);
+    let subject = put_person(&vault, 0x77);
+    let facade = facade_for(&vault, attacker);
+
+    let (genesis, signing) = authority_root(0x78);
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
+    let retired = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let successor = ed25519_dalek::SigningKey::from_bytes(&[0x79; 32]);
+    let owner_entry = |seq: u64, op: AuthorityOp, ts: u64| {
+        sign_authority(
+            AuthorityLogEntry {
+                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(vault_id),
+                seq,
+                // Every child parents at GENESIS: the squatting bind is a
+                // sibling of the rotation, so no topological rule kills it and
+                // only the rotation's MATURITY can.
+                parent_hashes: vec![genesis_hash],
+                op,
+                signer: AuthoritySignature {
+                    suite: retired.suite(),
+                    public_key: retired.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts,
+            },
+            &signing,
+        )
+    };
+    let rotate = owner_entry(
+        1,
+        AuthorityOp::RotateKey {
+            old_key: retired.clone(),
+            new_device: crate::authority::DeviceAuthority {
+                key: AuthorityKey::Ed25519(successor.verifying_key().to_bytes()),
+                transport_key_binding: [7; 32],
+                attestation: crate::authority::AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: crate::authority::AuthorityTier::Software,
+                roles: crate::authority::ROLE_OWNER | crate::authority::ROLE_ADMIN,
+            },
+        },
+        101,
+    );
+    let squat = owner_entry(
+        2,
+        AuthorityOp::BindActor {
+            authority_key: retired.clone(),
+            actor_ref: attacker,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        102,
+    );
+    vault
+        .put_authority_log_entries(&[
+            (genesis, test_time(1), 1),
+            (rotate, test_time(2), 2),
+            (squat, test_time(3), 3),
+        ])
+        .expect("legacy log rows are individually valid");
+
+    // Rewind to the legacy shape: no sidecars, migration marker unset. The
+    // long-past `learned_at` values are the attacker's claim that the rotation
+    // elapsed ages ago — which fix-leg 4 refuses to act on.
+    strip_authority_first_seen_state(&vault);
+
+    // Pre-migration the fold cannot date the rotation, so every owner verb is
+    // SUSPENDED — the gate refuses rather than reading maturity out of the
+    // attacker's own `learned_at`.
+    let agent = put_person(&vault, 0x7A);
+    let claim = vault
+        .memory_facade(agent, EdgeActorClass::Agent)
+        .claim_upsert(&claim_input(
+            "profile.mood",
+            &subject,
+            "observed",
+            serde_json::json!("calm"),
+        ))
+        .expect("agent claim");
+    for err in [
+        facade
+            .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+            .expect_err("retired key must not delete"),
+        facade
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: "PERSON".to_owned(),
+                body: serde_json::json!({"name": "forged"}),
+                text_fields: None,
+                edges: None,
+                occurred_at: 704,
+                learned_at: None,
+            })
+            .expect_err("retired key must not mint a PERSON"),
+        facade
+            .claim_retract(&claim.claim_short_id)
+            .expect_err("retired key must not retract another actor's claim"),
+    ] {
+        assert_eq!(err.code, FACADE_CODE_INVALID_STATE, "{}", err.message);
+        assert!(
+            err.message.contains("owner verbs are suspended"),
+            "{}",
+            err.message
+        );
+    }
+
+    // The suspension is self-clearing, not a brick: one write-path fold records
+    // the local observation and the rotation becomes datable. It is freshly
+    // observed, so it now sits INSIDE its delay — the veto window a legacy
+    // import is supposed to serve — rather than being declared elapsed by the
+    // peer that shipped it.
+    let full = vault.authority_fold().expect("fold");
+    assert!(
+        !full.pending_widens.is_empty(),
+        "the rotation is dated at migration time, so its delay has not elapsed"
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert_eq!(
+        vault
+            .authority_fold_readonly_in_txn(&rtxn)
+            .expect("a locally dated log folds"),
+        full,
+        "once observed locally the gate's fold agrees with the write-path fold"
+    );
+    drop(rtxn);
+}
+
+/// fix-3: a sidecar lost AFTER the one-shot migration is unrecoverable, so the
+/// owner gate suspends rather than authorizing on a fold it cannot compute.
+///
+/// Distinct from the legacy case above: there the migration had not run and the
+/// value is reproducible. Once the marker is set the migration will never revisit
+/// that row, and both remaining guesses are unsafe — so this is INVALID_STATE
+/// (the vault's authority is broken), never a silent pass.
+#[test]
+fn owner_verbs_suspend_when_a_first_seen_sidecar_is_lost_after_migration() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x7B);
+    let subject = put_person(&vault, 0x7C);
+    let facade = facade_for(&vault, owner);
+    root_vault_binding(&vault, 0x7D, owner, "human");
+
+    // Settle: the full fold is what sets the one-shot marker.
+    vault.authority_fold().expect("fold");
+    facade
+        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the bound owner works before the sidecar is lost");
+
+    let sidecars = authority_first_seen_sidecar_keys(&vault);
+    assert!(!sidecars.is_empty(), "the migration must have written rows");
+    vault
+        .with_write_txn(|wtxn| {
+            for key in &sidecars {
+                assert!(vault.store.sync_state.delete(wtxn, key.as_str())?);
+            }
+            Ok(())
+        })
+        .expect("drop the sidecars");
+
+    let victim = put_person(&vault, 0x7E);
+    let err = facade
+        .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
+        .expect_err("an uncomputable fold must suspend owner verbs");
+    assert_eq!(err.code, FACADE_CODE_INVALID_STATE);
+    assert!(
+        err.message.contains("owner verbs are suspended"),
+        "{}",
+        err.message
+    );
+}
+
+/// Every per-entry first-seen sidecar key currently stored.
+fn authority_first_seen_sidecar_keys(vault: &crate::Vault) -> Vec<String> {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let keys = vault
+        .store
+        .sync_state
+        .iter(&rtxn)
+        .expect("iter sync_state")
+        .map(|row| row.expect("sync_state row").0.into_owned())
+        .filter(|key| {
+            key.starts_with("authlog:first_seen:")
+                && key != crate::authority::authority_first_seen_clock_sync_key()
+                && key != crate::authority::authority_first_seen_backfill_sync_key()
+        })
+        .collect();
+    drop(rtxn);
+    keys
+}
+
+/// Rewinds a vault to the pre-migration shape: sidecars gone, marker unset.
+fn strip_authority_first_seen_state(vault: &crate::Vault) {
+    let mut keys = authority_first_seen_sidecar_keys(vault);
+    assert!(!keys.is_empty(), "fixture must have written sidecars");
+    keys.push(crate::authority::authority_first_seen_backfill_sync_key().to_owned());
+    vault
+        .with_write_txn(|wtxn| {
+            for key in &keys {
+                vault.store.sync_state.delete(wtxn, key.as_str())?;
+            }
+            Ok(())
+        })
+        .expect("strip first-seen state");
+}
