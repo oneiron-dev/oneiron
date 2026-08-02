@@ -133,6 +133,7 @@ fn append_gate_decision_for_claim(
                 grant_ref: None,
                 diff_handle: vec![0xA5],
                 read_frontier_hash: [0xB6; 32],
+                redacted_at: None,
             },
         )
     })?;
@@ -512,6 +513,7 @@ fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
             grant_ref: None,
             diff_handle: vec![0xA5],
             read_frontier_hash: [0xB6; 32],
+            redacted_at: None,
         };
         for _ in 0..MAX_RECEIPT_QUERY_SCAN {
             decision.decision_id = GateDecisionId::now();
@@ -584,6 +586,7 @@ fn gate_receipt_system_notice_selection_is_order_independent() {
         grant_ref: None,
         diff_handle: vec![0xA5],
         read_frontier_hash: [0xB6; 32],
+        redacted_at: None,
     };
 
     let receipt = gate_decision_receipt(&decision);

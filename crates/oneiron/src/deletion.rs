@@ -506,6 +506,7 @@ impl DeletionGateContext {
             grant_ref: None,
             diff_handle: diff.finalize().to_vec(),
             read_frontier_hash: self.read_frontier_hash,
+            redacted_at: None,
         }
     }
 }

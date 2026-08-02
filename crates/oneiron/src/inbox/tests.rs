@@ -121,6 +121,7 @@ fn add_pending_row(
         grant_ref: None,
         diff_handle: diff_handle.clone(),
         read_frontier_hash,
+        redacted_at: None,
     };
     let pending = PendingGateConsentRecord {
         version: 0,

@@ -286,6 +286,10 @@ const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`STORAGE_ABI_VERSION`] bump.
 pub(crate) const GATE_DECISION_LEDGER_VERSION: u8 = 0;
+/// Accepted DECODE version for an in-place-redacted row (ONE-1637/ONE-1638).
+/// [`GATE_DECISION_LEDGER_VERSION`] (0) remains the only APPEND version, so the
+/// ABI-pinned const above is unchanged and existing v0 bytes still round-trip.
+pub(crate) const GATE_DECISION_LEDGER_VERSION_REDACTED: u8 = 1;
 const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
 /// Pre-commit crash-recovery sidecar for a deletion authority record. This is
@@ -307,6 +311,25 @@ const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] = b"receipt_family_index:v1:versio
 /// [`STORAGE_ABI_VERSION`] bump.
 const RECEIPT_FAMILY_INDEX_VERSION: u8 = 1;
 const GATE_DECISION_GRANT_REF_INDEX_PREFIX: &[u8] = b"gate_decision:grant_ref_index:v1:";
+/// ERASE-A (ONE-1637) claim-keyed secondary index over the Gate decision
+/// ledger: `prefix ‖ claim_id(16B) ‖ decision_id(16B)`, empty value.
+///
+/// ACCELERATION ONLY. Erase-completeness verification must never consult it —
+/// an index cannot vouch for the completeness of the erase it accelerated (see
+/// [`Store::verify_claim_erasure_by_scan_in_txn`]).
+///
+/// INVARIANT: every mutation of a `gate_decision:v0:` row MUST route through
+/// `append_gate_decision_in_txn`, `delete_gate_decision_in_txn`, or
+/// `delete_gate_decisions_for_missing_off_record_turn_in_txn`. Future deleters
+/// inherit index coherence by using those, never a raw `vault_meta.delete`.
+const GATE_DECISION_CLAIM_INDEX_PREFIX: &[u8] = b"gate_decision_by_claim:v0:";
+/// Durable proof that every pre-existing ledger row is claim-indexed. While
+/// ABSENT, per-claim discovery falls back to a full keyspace scan; erase is
+/// never refused during backfill.
+const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY: &[u8] =
+    b"gate_decision_by_claim_backfill_complete";
+/// Only accepted value byte for the backfill-complete flag row.
+const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE: [u8; 1] = [1];
 const PENDING_GATE_CONSENT_RUN_INDEX_PREFIX: &[u8] = b"gate_pending:run_index:v1:";
 const PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX: &[u8] = b"gate_pending:group_index:v1:";
 const PENDING_GATE_CONSENT_HASH_INDEX_PREFIX: &[u8] = b"gate_pending:hash_index:v1:";
@@ -786,6 +809,20 @@ pub struct GateDecisionRecord {
     pub grant_ref: Option<String>,
     pub diff_handle: Vec<u8>,
     pub read_frontier_hash: [u8; 32],
+    /// Set when this row was redacted in place to its retention skeleton
+    /// (version 1). Never set at append time; the erase coupling (ONE-1638)
+    /// is the only writer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redacted_at: Option<u64>,
+}
+
+/// Outcome of one ERASE-A (ONE-1637) claim-index backfill run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GateClaimIndexBackfill {
+    /// Pre-existing claim-bound ledger rows written into the index by this run.
+    pub rows_indexed: u64,
+    /// The durable flag was already set, so the run was a no-op.
+    pub already_complete: bool,
 }
 
 /// Private TXN1 recovery data for a deletion authority record. The target and
@@ -1688,6 +1725,7 @@ impl Store {
         }
 
         store.ensure_receipt_family_indexes_on_open()?;
+        store.ensure_gate_claim_index_flag_on_open()?;
         Ok(store)
     }
 
@@ -1738,25 +1776,18 @@ impl Store {
             )?;
         }
 
-        let mut decisions = Vec::new();
-        let upper = gate_decision_upper_bound();
-        for row in self.vault_meta.range(
-            &wtxn,
-            &(
-                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            let decision_id = gate_decision_id_from_key(&key)?;
-            let record = decode_gate_decision(&value)?;
-            if record.decision_id != decision_id {
-                return Err(Error::CorruptedIndex("gate decision ledger"));
+        // Collect before writing (LMDB forbids mutating a DB while one of its
+        // iterators is live), but keep only what the grant-ref index row needs
+        // — not the whole decoded ledger.
+        let mut grant_refs = Vec::new();
+        self.for_each_gate_decision_in_txn(&wtxn, |record| {
+            if let Some(grant_ref) = record.grant_ref {
+                grant_refs.push((grant_ref, record.decision_id));
             }
-            decisions.push(record);
-        }
-        for decision in &decisions {
-            self.put_gate_decision_grant_ref_index_in_txn(&mut wtxn, decision)?;
+            Ok(())
+        })?;
+        for (grant_ref, decision_id) in &grant_refs {
+            self.put_gate_decision_grant_ref_index_row_in_txn(&mut wtxn, grant_ref, *decision_id)?;
         }
 
         let mut pending = Vec::new();
@@ -1787,6 +1818,101 @@ impl Store {
         )?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// Sets the ERASE-A (ONE-1637) backfill-complete flag for the vaults whose
+    /// backfill is trivially empty: a ledger with no rows is, vacuously, fully
+    /// indexed. Covers brand-new vaults and existing never-gated ones without a
+    /// maintenance run. A populated ledger leaves the flag unset, which costs
+    /// discovery speed (scan fallback) and never correctness.
+    fn ensure_gate_claim_index_flag_on_open(&self) -> Result<()> {
+        // One predicate, checked twice: the write txn re-confirms under lock
+        // what the optimistic read txn saw.
+        let needs_flag = |txn: &RoTxn<'_>| -> Result<bool> {
+            Ok(
+                !self.gate_decision_claim_index_backfill_complete_in_txn(txn)?
+                    && self.gate_decision_ledger_is_empty_in_txn(txn)?,
+            )
+        };
+        {
+            let rtxn = self.env.read_txn()?;
+            if !needs_flag(&rtxn)? {
+                return Ok(());
+            }
+        }
+
+        let mut wtxn = self.env.write_txn()?;
+        if !needs_flag(&wtxn)? {
+            return Ok(());
+        }
+        self.vault_meta.put(
+            &mut wtxn,
+            GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
+            &GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Single cursor seek over the primary ledger range.
+    fn gate_decision_ledger_is_empty_in_txn(&self, txn: &RoTxn<'_>) -> Result<bool> {
+        let upper = gate_decision_upper_bound();
+        Ok(self
+            .vault_meta
+            .range(
+                txn,
+                &(
+                    std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
+                    std::ops::Bound::Excluded(upper.as_slice()),
+                ),
+            )?
+            .next()
+            .transpose()?
+            .is_none())
+    }
+
+    /// One-time ERASE-A (ONE-1637) backfill: indexes every pre-existing
+    /// claim-bound ledger row and sets the durable completeness flag in ONE
+    /// write txn, so a crash leaves either nothing or everything (RCPT-1
+    /// crash-safety shape). Idempotent across reruns.
+    pub(crate) fn backfill_gate_decision_claim_index(&self) -> Result<GateClaimIndexBackfill> {
+        let mut wtxn = self.env.write_txn()?;
+        if self.gate_decision_claim_index_backfill_complete_in_txn(&wtxn)? {
+            return Ok(GateClaimIndexBackfill {
+                rows_indexed: 0,
+                already_complete: true,
+            });
+        }
+
+        // Collect before writing: LMDB forbids mutating a DB while one of its
+        // iterators is live. Only the two ids each index row needs are
+        // retained — the decoded record is dropped inside the walk, so an
+        // unbounded ledger of claim-free (or string-heavy) rows never
+        // accumulates here.
+        let mut claim_rows = Vec::new();
+        self.for_each_gate_decision_in_txn(&wtxn, |record| {
+            if let Some(claim_id) = record.claim_id {
+                claim_rows.push((claim_id, record.decision_id));
+            }
+            Ok(())
+        })?;
+        for (claim_id, decision_id) in &claim_rows {
+            self.vault_meta.put(
+                &mut wtxn,
+                &gate_decision_claim_index_key(claim_id, *decision_id),
+                b"",
+            )?;
+        }
+        self.vault_meta.put(
+            &mut wtxn,
+            GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
+            &GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE,
+        )?;
+        wtxn.commit()?;
+        Ok(GateClaimIndexBackfill {
+            rows_indexed: claim_rows.len() as u64,
+            already_complete: false,
+        })
     }
 
     pub(crate) fn put_attempt_run_index_in_txn(
@@ -2106,6 +2232,11 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &GateDecisionRecord,
     ) -> Result<()> {
+        // Decode accepts the redacted skeleton (ONE-1637); APPEND never mints
+        // one. Redaction is an in-place rewrite owned by the erase coupling.
+        if record.version != GATE_DECISION_LEDGER_VERSION || record.redacted_at.is_some() {
+            return Err(Error::InvariantViolation("gate decision born redacted"));
+        }
         vet_gate_decision_record(record)?;
         let key = gate_decision_key(record.decision_id);
         if self.vault_meta.get(wtxn, &key)?.is_some() {
@@ -2114,6 +2245,7 @@ impl Store {
         let value = encode_gate_decision(record)?;
         self.vault_meta.put(wtxn, &key, &value)?;
         self.put_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
+        self.put_gate_decision_claim_index_in_txn(wtxn, record)?;
         Ok(())
     }
 
@@ -2128,6 +2260,7 @@ impl Store {
             ));
         };
         self.delete_gate_decision_grant_ref_index_in_txn(wtxn, &record)?;
+        self.delete_gate_decision_claim_index_in_txn(wtxn, &record)?;
         self.vault_meta
             .delete(wtxn, &gate_decision_key(decision_id))?;
         Ok(())
@@ -2314,6 +2447,135 @@ impl Store {
         Ok(records)
     }
 
+    /// Per-claim discovery for the erase coupling (ONE-1638) and any per-claim
+    /// receipt read. Index-accelerated ONLY when the durable backfill flag is
+    /// set; otherwise a full keyspace scan, so a vault mid-backfill can never
+    /// hide rows from an erase. Both paths return records ascending by
+    /// decision_id and are result-identical.
+    ///
+    /// Redacted (version 1) skeletons ARE returned — they retain `claim_id` by
+    /// design. Completeness is decided by
+    /// [`Store::verify_claim_erasure_by_scan_in_txn`], never by this reader.
+    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
+    pub(crate) fn gate_decisions_for_claim_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim_id: &[u8; 16],
+    ) -> Result<Vec<GateDecisionRecord>> {
+        if !self.gate_decision_claim_index_backfill_complete_in_txn(txn)? {
+            return self.scan_gate_decisions_for_claim_in_txn(txn, claim_id);
+        }
+        let prefix = gate_decision_claim_index_prefix(claim_id);
+        let mut records = Vec::new();
+        for row in self.vault_meta.prefix_iter(txn, &prefix)? {
+            let (key, _) = row?;
+            let decision_id = GateDecisionId::from_bytes(index_suffix_id(
+                &key,
+                &prefix,
+                "gate decision claim index",
+            )?);
+            let Some(record) = self.gate_decision_in_txn(txn, decision_id)? else {
+                return Err(Error::CorruptedIndex("gate decision claim index"));
+            };
+            if record.claim_id != Some(*claim_id) {
+                return Err(Error::CorruptedIndex("gate decision claim index"));
+            }
+            records.push(record);
+        }
+        Ok(records)
+    }
+
+    /// Full-keyspace per-claim discovery: the fallback path taken while the
+    /// backfill flag is unset, and directly callable for parity checks.
+    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
+    pub(crate) fn scan_gate_decisions_for_claim_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim_id: &[u8; 16],
+    ) -> Result<Vec<GateDecisionRecord>> {
+        let mut records = Vec::new();
+        self.for_each_gate_decision_in_txn(txn, |record| {
+            if record.claim_id == Some(*claim_id) {
+                records.push(record);
+            }
+            Ok(())
+        })?;
+        Ok(records)
+    }
+
+    /// ERASE step-5 completeness verify: the decision ids still claim-bound AND
+    /// unredacted. ALWAYS a full `gate_decision:v0:` keyspace scan and NEVER a
+    /// read of the claim index, in any flag state — an index that accelerated
+    /// the erase cannot also certify it complete. An empty result means erasure
+    /// is complete for this claim. Deliberately uncapped: a correctness scan
+    /// takes no query-budget shortcut.
+    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
+    pub(crate) fn verify_claim_erasure_by_scan_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim_id: &[u8; 16],
+    ) -> Result<Vec<GateDecisionId>> {
+        let mut remaining = Vec::new();
+        self.for_each_gate_decision_in_txn(txn, |record| {
+            if record.claim_id == Some(*claim_id) && record.redacted_at.is_none() {
+                remaining.push(record.decision_id);
+            }
+            Ok(())
+        })?;
+        Ok(remaining)
+    }
+
+    /// Streams every primary ledger row in ascending decision_id order,
+    /// checking each row against its own key and handing ownership of the
+    /// decoded record to `visit`.
+    ///
+    /// MEMORY CONTRACT: the caller's filter runs INSIDE the cursor walk, so a
+    /// filtered read retains only its matches (or a projection of them) and the
+    /// ledger's size stops bounding peak memory on a long-lived vault. The
+    /// `Result<()>` return — not a `Vec` — is what enforces this; do not
+    /// reintroduce an intermediate collection of every record.
+    fn for_each_gate_decision_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        mut visit: impl FnMut(GateDecisionRecord) -> Result<()>,
+    ) -> Result<()> {
+        let upper = gate_decision_upper_bound();
+        for row in self.vault_meta.range(
+            txn,
+            &(
+                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
+            let (key, value) = row?;
+            let decision_id = gate_decision_id_from_key(&key)?;
+            let record = decode_gate_decision(&value)?;
+            if record.decision_id != decision_id {
+                return Err(Error::CorruptedIndex("gate decision ledger"));
+            }
+            visit(record)?;
+        }
+        Ok(())
+    }
+
+    /// Reads the durable backfill-complete flag. A present row with any byte
+    /// other than the pinned value is corruption, not a soft "incomplete".
+    pub(crate) fn gate_decision_claim_index_backfill_complete_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+    ) -> Result<bool> {
+        match self
+            .vault_meta
+            .get(txn, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY)?
+        {
+            Some(value) if *value == GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE => Ok(true),
+            Some(_) => Err(Error::CorruptedIndex(
+                "gate decision claim index backfill flag",
+            )),
+            None => Ok(false),
+        }
+    }
+
     pub(crate) fn matching_gate_decision_in_txn(
         &self,
         txn: &RwTxn<'_>,
@@ -2376,6 +2638,7 @@ impl Store {
         }
         for record in &records {
             self.delete_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
+            self.delete_gate_decision_claim_index_in_txn(wtxn, record)?;
             self.vault_meta
                 .delete(wtxn, &gate_decision_key(record.decision_id))?;
         }
@@ -2597,9 +2860,20 @@ impl Store {
         let Some(grant_ref) = record.grant_ref.as_deref() else {
             return Ok(());
         };
+        self.put_gate_decision_grant_ref_index_row_in_txn(wtxn, grant_ref, record.decision_id)
+    }
+
+    /// Parts-based form, so a streaming backfill can write the row without
+    /// holding the decoded record it came from.
+    fn put_gate_decision_grant_ref_index_row_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        grant_ref: &str,
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
         self.vault_meta.put(
             wtxn,
-            &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
+            &gate_decision_grant_ref_index_key(grant_ref, decision_id),
             b"1",
         )?;
         Ok(())
@@ -2616,6 +2890,37 @@ impl Store {
         self.vault_meta.delete(
             wtxn,
             &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
+        )?;
+        Ok(())
+    }
+
+    fn put_gate_decision_claim_index_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<()> {
+        let Some(claim_id) = record.claim_id.as_ref() else {
+            return Ok(());
+        };
+        self.vault_meta.put(
+            wtxn,
+            &gate_decision_claim_index_key(claim_id, record.decision_id),
+            b"",
+        )?;
+        Ok(())
+    }
+
+    fn delete_gate_decision_claim_index_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<()> {
+        let Some(claim_id) = record.claim_id.as_ref() else {
+            return Ok(());
+        };
+        self.vault_meta.delete(
+            wtxn,
+            &gate_decision_claim_index_key(claim_id, record.decision_id),
         )?;
         Ok(())
     }
@@ -2845,6 +3150,9 @@ impl Store {
             grant_ref,
             diff_handle: pending.diff_handle,
             read_frontier_hash: pending.read_frontier_hash,
+            // A resolution is a NEW decision, born unredacted: never propagate
+            // `original.redacted_at`.
+            redacted_at: None,
         };
         self.append_gate_decision_in_txn(wtxn, &record)?;
         self.delete_pending_gate_consent_in_txn(wtxn, claim_id)?;
@@ -4061,6 +4369,19 @@ fn gate_decision_grant_ref_index_key(grant_ref: &str, decision_id: GateDecisionI
     )
 }
 
+/// Both key components are fixed 16-byte ids, so the index needs no
+/// `string_index_prefix` length header to stay unambiguous.
+fn gate_decision_claim_index_prefix(claim_id: &[u8; 16]) -> Vec<u8> {
+    index_key_with_id(GATE_DECISION_CLAIM_INDEX_PREFIX, claim_id)
+}
+
+fn gate_decision_claim_index_key(claim_id: &[u8; 16], decision_id: GateDecisionId) -> Vec<u8> {
+    index_key_with_id(
+        &gate_decision_claim_index_prefix(claim_id),
+        &decision_id.as_bytes(),
+    )
+}
+
 fn pending_gate_consent_run_index_prefix(run_id: &str) -> Vec<u8> {
     string_index_prefix(PENDING_GATE_CONSENT_RUN_INDEX_PREFIX, run_id)
 }
@@ -4245,31 +4566,90 @@ fn decode_channel_identity_lifecycle_receipt(
     Ok(record)
 }
 
+/// Version-dispatched ledger vet. Version 0 is the live row shape; version 1 is
+/// the retention skeleton left behind by an in-place redaction (ONE-1638), whose
+/// claim-bearing fields are required to be scrubbed. Only version 0 may be
+/// APPENDED — decode accepts both.
+///
+/// ASYMMETRY, DELIBERATE: `actor_class` is required non-empty on the version-1
+/// skeleton ONLY, though E-A's D1 table lists it non-empty for both columns.
+/// The v0 exemption is load-bearing, not an oversight:
+///
+/// * On v0 the field is caller-asserted, attacker-influenced input. The
+///   external-effect door records the class the caller SENT
+///   (`record_external_effect_policy`), and `evaluate_gate` answers an empty
+///   one with `DenyMissingActorClass` — a recorded, auditable denial. Vetting
+///   it here would turn that fail-closed deny into
+///   `CorruptedIndex("gate decision ledger")`, i.e. let any caller abort the
+///   write txn (and, once a denial row is on disk, poison every later ledger
+///   scan) with an empty string. Recording what was actually asserted is the
+///   point of a decision ledger; the deny is the enforcement.
+/// * On v1 the field is ours. A skeleton is minted only by the erase coupling,
+///   from an already-vetted row, and `actor_class` is one of the few
+///   accountability fields the retention design keeps. Empty there means the
+///   redactor scrubbed something it must have retained — a real invariant
+///   break, correctly fatal.
+///
+/// `diff_handle` on the v1 skeleton must be EMPTY. This TIGHTENS E-A's D1
+/// table, which read "≤ `GATE_DIFF_HANDLE_MAX_LEN`, empty ALLOWED" and left the
+/// sentinel bytes to E-B (open question 4). A length cap alone cannot tell a
+/// fixed sentinel from a live handle, and the handle is a content binding — a
+/// pointer at the very body the redaction exists to scrub — so "empty allowed"
+/// let a redacted row keep one. Empty is the only self-evidently scrubbed
+/// value. E-B may still mint a sentinel, but only by pinning its bytes in a vet
+/// amendment here, which makes the sentinel checkable rather than assumed.
+///
+/// Pinned by `record_schema_v0_bytes_stable_and_v1_skeleton_vets` (empty-class
+/// v1 rejected, empty-class v0 accepted),
+/// `redacted_skeleton_must_not_retain_a_diff_handle`, and
+/// `gate::tests::effect_actor_class_spoof_fails_closed` (the deny path stays a
+/// deny). Tightening v0's `actor_class` is an E-B vet amendment, and needs the
+/// effect door to stop recording caller-asserted classes verbatim first.
 fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
-    if record.version != GATE_DECISION_LEDGER_VERSION
-        || record.outcome.is_empty()
-        || record.reason_codes.is_empty()
-        || record.content_kind.is_empty()
-        || record.policy_manifest_version.is_empty()
-        || record
-            .grant_ref
-            .as_deref()
-            .is_some_and(|grant_ref| grant_ref.trim().is_empty())
-        || record.diff_handle.is_empty()
-        || record.diff_handle.len() > GATE_DIFF_HANDLE_MAX_LEN
-        || !record
-            .reason_codes
-            .iter()
-            .all(|reason| reason.starts_with("gate."))
-        || !record
-            .receipt_reasons
-            .iter()
-            .all(|reason| valid_gate_receipt_reason(reason))
-        || !record
-            .system_notices
-            .iter()
-            .all(valid_gate_system_notice_record)
-    {
+    let shared_ok = !record.outcome.is_empty()
+        && !record.content_kind.is_empty()
+        && !record.policy_manifest_version.is_empty()
+        && record.diff_handle.len() <= GATE_DIFF_HANDLE_MAX_LEN;
+    let version_ok = match record.version {
+        GATE_DECISION_LEDGER_VERSION => {
+            record.redacted_at.is_none()
+                && !record.reason_codes.is_empty()
+                && record
+                    .grant_ref
+                    .as_deref()
+                    .is_none_or(|grant_ref| !grant_ref.trim().is_empty())
+                && !record.diff_handle.is_empty()
+                && record
+                    .reason_codes
+                    .iter()
+                    .all(|reason| reason.starts_with("gate."))
+                && record
+                    .receipt_reasons
+                    .iter()
+                    .all(|reason| valid_gate_receipt_reason(reason))
+                && record
+                    .system_notices
+                    .iter()
+                    .all(valid_gate_system_notice_record)
+        }
+        // The skeleton keeps only the accountability fields the retention
+        // design retains; everything claim-bearing must already be gone.
+        // `actor_class` is required here and NOT on v0 — see the asymmetry
+        // note above. `diff_handle` must be EMPTY, not merely bounded — see the
+        // handle note above.
+        GATE_DECISION_LEDGER_VERSION_REDACTED => {
+            record.redacted_at.is_some_and(|at| at > 0)
+                && !record.actor_class.is_empty()
+                && record.reason_codes.is_empty()
+                && record.receipt_reasons.is_empty()
+                && record.system_notices.is_empty()
+                && record.actor_ref.is_none()
+                && record.grant_ref.is_none()
+                && record.diff_handle.is_empty()
+        }
+        _ => false,
+    };
+    if !shared_ok || !version_ok {
         return Err(Error::CorruptedIndex("gate decision ledger"));
     }
     Ok(())
@@ -4288,6 +4668,8 @@ fn vet_pending_deletion_gate_decision_record(
     vet_gate_decision_record(&record.decision)
 }
 
+/// `redacted_at` is deliberately uncompared: both sides of a recovery match are
+/// freshly built and therefore born unredacted (ONE-1637).
 fn gate_decision_matches_pending_candidate(
     record: &GateDecisionRecord,
     expected: &GateDecisionRecord,

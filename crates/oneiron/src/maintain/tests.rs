@@ -1542,3 +1542,25 @@ fn rebuild_hnsw_empty_vault() -> Result<()> {
     assert_eq!(report.hnsw_invalid_vectors_skipped, 0);
     Ok(())
 }
+
+#[test]
+fn backfill_op_reports_through_maintenance_builder() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+
+    let report = vault
+        .maintain()
+        .backfill_gate_decision_claim_index()
+        .run()?;
+    assert!(
+        report.gate_claim_index_backfill_already_complete,
+        "an empty ledger self-flags at open, so the op is a no-op",
+    );
+    assert_eq!(report.gate_claim_index_rows_backfilled, 0);
+
+    // Not requesting the op must leave both counters at their defaults.
+    let untouched = vault.maintain().rebuild_hnsw().run()?;
+    assert!(!untouched.gate_claim_index_backfill_already_complete);
+    assert_eq!(untouched.gate_claim_index_rows_backfilled, 0);
+    Ok(())
+}

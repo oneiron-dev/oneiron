@@ -2596,6 +2596,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
             grant_ref: None,
             diff_handle: binding.diff_handle.clone(),
             read_frontier_hash: binding.read_frontier_hash,
+            redacted_at: None,
         };
 
         if mode.record_decision {
@@ -3099,6 +3100,7 @@ pub(crate) fn record_external_effect_policy(
             grant_ref,
             diff_handle: binding.diff_handle,
             read_frontier_hash: binding.read_frontier_hash,
+            redacted_at: None,
         },
     )?;
     if decision.outcome() == GateOutcome::Allow
