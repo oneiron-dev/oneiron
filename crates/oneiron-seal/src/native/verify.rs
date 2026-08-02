@@ -34,41 +34,24 @@ fn cert_path_err() -> SealError {
     }
 }
 
-/// Signer-leaf key-usage gate: when the leaf carries a KeyUsage extension it
-/// must permit signing — `digitalSignature` or `contentCommitment`
-/// (nonRepudiation). Any other class (e.g. keyEncipherment-only) cannot act
-/// as a signing identity. An ABSENT KeyUsage follows RFC 5280 §4.2.1.3 (the
-/// key is unconstrained) and passes; this mirrors the vendored pkix-chain
-/// TSA profile's treatment of a missing extension. The TSA chain does not
-/// ride this gate: tsp.rs keeps it on the vendored `verify_time_stamper`
-/// profile, which enforces the RFC 3161 signing-only shape.
-fn enforce_signer_leaf_key_usage(leaf: &x509_cert::Certificate) -> Result<(), SealError> {
-    use const_oid::AssociatedOid;
-    use der::Decode;
-    use x509_cert::ext::pkix::KeyUsage;
-    let Some(exts) = &leaf.tbs_certificate.extensions else {
-        return Ok(());
-    };
-    for ext in exts {
-        if ext.extn_id == KeyUsage::OID {
-            let ku = KeyUsage::from_der(ext.extn_value.as_bytes()).map_err(|_| cert_path_err())?;
-            if !ku.digital_signature() && !ku.non_repudiation() {
-                return Err(cert_path_err());
-            }
-        }
-    }
-    Ok(())
-}
-
-/// CRL-issuer key-usage gate: when the issuer certificate carries a KeyUsage
-/// extension it must assert `cRLSign` — a key verified to have signed a CRL
-/// is not enough; the certificate must also AUTHORIZE that use. An ABSENT
-/// KeyUsage follows the same documented RFC 5280 §4.2.1.3 posture as the
-/// signer-leaf gate (unconstrained key, passes). Shared with the seal-side
-/// CRL gather (profile.rs fetch_valid_crl): material that would fail this
-/// gate at verify time is refused at fetch time, so an unauthorized-issuer
-/// CRL degrades the profile instead of poisoning the sealed artifact.
-pub(crate) fn issuer_permits_crl_sign(cert: &x509_cert::Certificate) -> bool {
+/// The ONE KeyUsage turnstile every KU gate in this crate rides.
+///
+/// Three call sites (signer leaf, CRL issuer, OCSP delegate) must each stay
+/// fail-CLOSED on a malformed extension, so they share one body rather than
+/// three hand-rolled walks that can drift apart:
+/// - extensions absent, or no KeyUsage among them ⇒ `true`. RFC 5280
+///   §4.2.1.3: an absent KeyUsage leaves the key unconstrained.
+/// - KeyUsage PRESENT but its DER does not decode ⇒ `false`. A usage
+///   restriction we cannot read is not a restriction we may ignore.
+/// - KeyUsage present and readable ⇒ whatever `permits` says about it.
+///
+/// The matching extension decides: the walk returns on the first KeyUsage
+/// OID rather than continuing, so a second (non-DER-legal) copy cannot
+/// launder a verdict the first one already refused.
+fn key_usage_permits(
+    cert: &x509_cert::Certificate,
+    permits: impl Fn(&x509_cert::ext::pkix::KeyUsage) -> bool,
+) -> bool {
     use const_oid::AssociatedOid;
     use der::Decode;
     use x509_cert::ext::pkix::KeyUsage;
@@ -80,10 +63,38 @@ pub(crate) fn issuer_permits_crl_sign(cert: &x509_cert::Certificate) -> bool {
             let Ok(ku) = KeyUsage::from_der(ext.extn_value.as_bytes()) else {
                 return false;
             };
-            return ku.crl_sign();
+            return permits(&ku);
         }
     }
     true
+}
+
+/// Signer-leaf key-usage gate: when the leaf carries a KeyUsage extension it
+/// must permit signing — `digitalSignature` or `contentCommitment`
+/// (nonRepudiation). Any other class (e.g. keyEncipherment-only) cannot act
+/// as a signing identity. An ABSENT KeyUsage follows RFC 5280 §4.2.1.3 (the
+/// key is unconstrained) and passes; this mirrors the vendored pkix-chain
+/// TSA profile's treatment of a missing extension. The TSA chain does not
+/// ride this gate: tsp.rs keeps it on the vendored `verify_time_stamper`
+/// profile, which enforces the RFC 3161 signing-only shape.
+fn enforce_signer_leaf_key_usage(leaf: &x509_cert::Certificate) -> Result<(), SealError> {
+    if key_usage_permits(leaf, |ku| ku.digital_signature() || ku.non_repudiation()) {
+        Ok(())
+    } else {
+        Err(cert_path_err())
+    }
+}
+
+/// CRL-issuer key-usage gate: when the issuer certificate carries a KeyUsage
+/// extension it must assert `cRLSign` — a key verified to have signed a CRL
+/// is not enough; the certificate must also AUTHORIZE that use. An ABSENT
+/// KeyUsage follows the same documented RFC 5280 §4.2.1.3 posture as the
+/// signer-leaf gate (unconstrained key, passes). Shared with the seal-side
+/// CRL gather (profile.rs fetch_valid_crl): material that would fail this
+/// gate at verify time is refused at fetch time, so an unauthorized-issuer
+/// CRL degrades the profile instead of poisoning the sealed artifact.
+pub(crate) fn issuer_permits_crl_sign(cert: &x509_cert::Certificate) -> bool {
+    key_usage_permits(cert, x509_cert::ext::pkix::KeyUsage::crl_sign)
 }
 
 /// RFC 5280 path validation against configured trust anchors at the
@@ -137,10 +148,21 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
     matches!(obj, Object::Name(n) if n == expected)
 }
 
+/// Total nodes one AcroForm field-tree descent may visit. Real signature
+/// hierarchies are a handful of nodes deep; past this the tree is hostile
+/// (or corrupt) and discovery fails closed rather than burning work. The
+/// cycle guard alone bounds a self-referential `/Kids`, but a legal,
+/// acyclic, extremely wide tree still deserves a ceiling.
+const MAX_FIELD_TREE_WORK: usize = 16_384;
+
 /// Collect signature/timestamp dictionaries in revision order (earlier
 /// revisions cover fewer bytes). Discovery is by REACHABILITY: only
-/// dictionaries named by the catalog's `/AcroForm /Fields` field `/V` values
-/// are evaluated. A reachable field-`/V` candidate is then checked by
+/// dictionaries named by the `/V` of a signature field in the catalog's
+/// `/AcroForm` field TREE are evaluated — the walk descends `/Kids` and
+/// carries the inheritable `/FT` down, so a terminal signature field nested
+/// under a non-terminal parent is reached (ISO 32000 §12.7.3.2; the shape
+/// honest PAdES writers emit). A reachable field-`/V` candidate is then
+/// checked by
 /// `/Type /Sig|DocTimeStamp` AND by the typeless interop shape (real-world
 /// signers omit the optional `/Type`). Typeless candidacy requires
 /// `/ByteRange`: dictionaries without it are never candidates, whatever
@@ -197,18 +219,72 @@ fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
         .1
         .as_array()
         .map_err(|_| malformed_input())?;
-    for field in fields {
-        let field = doc
-            .dereference(field)
-            .map_err(|_| malformed_input())?
-            .1
-            .as_dict()
-            .map_err(|_| malformed_input())?;
-        // Signature-discovery looks only at SIGNATURE fields (/FT /Sig): a
-        // text/choice/button field carries an ordinary value /V (a draft
-        // string, an option index), never a signature dictionary, and must
-        // not trip the malformed gates below.
-        if !matches!(field.get(b"FT"), Ok(ft) if name_eq(ft, b"Sig")) {
+    // ISO 32000 §12.7.3.2: AcroForm fields form a TREE — a non-terminal
+    // field carries `/Kids`, and `/FT` is INHERITABLE, so a terminal
+    // signature field may carry only `/T` and `/V` with its `/FT` living on
+    // an ancestor. Honest PAdES writers emit exactly that shape, so a flat
+    // read of `/Fields` would treat a nested signature as unreachable and
+    // fail an honest document. `/V` is never inherited: each terminal field
+    // carries its own or is legally unfilled.
+    //
+    // The descent is bounded on both axes and fail-closed: `visited` stops a
+    // hostile `/Kids` cycle (self-loop or mutual) from spinning, and
+    // `MAX_FIELD_TREE_WORK` caps total nodes so a wide-and-deep tree cannot
+    // burn unbounded work. Every dereference stays bounded by lopdf's chain
+    // limit and maps a failure to malformed input, exactly as the flat walk
+    // did. Orphan carve-out unchanged: a signature-shaped object NOT reached
+    // through this tree is never evaluated.
+    let mut visited: std::collections::BTreeSet<lopdf::ObjectId> =
+        std::collections::BTreeSet::new();
+    let mut work = 0usize;
+    let mut stack: Vec<(&Object, bool)> = Vec::new();
+    for field in fields.iter().rev() {
+        stack.push((field, false));
+    }
+    while let Some((node, inherited_sig_ft)) = stack.pop() {
+        work = work.checked_add(1).ok_or_else(malformed_input)?;
+        if work > MAX_FIELD_TREE_WORK {
+            return Err(malformed_input());
+        }
+        let (node_id, node_obj) = doc.dereference(node).map_err(|_| malformed_input())?;
+        // A field reached twice (shared kid, or a /Kids cycle) is walked
+        // once: re-walking cannot discover a new signature, and refusing to
+        // recurse is what makes a cycle terminate.
+        if let Some(id) = node_id
+            && !visited.insert(id)
+        {
+            continue;
+        }
+        let field = node_obj.as_dict().map_err(|_| malformed_input())?;
+        // /FT is inheritable: a node's own /FT overrides, otherwise the
+        // ancestor's verdict carries down.
+        let is_sig_ft = match field.get(b"FT") {
+            Ok(ft) => name_eq(ft, b"Sig"),
+            Err(_) => inherited_sig_ft,
+        };
+        // Descend /Kids whenever present. A node's /Kids may hold CHILD
+        // FIELDS (the nesting this walk exists to reach) or, on a terminal
+        // field, its WIDGET annotations — ISO 32000 §12.7.3.1 permits both,
+        // and this crate's own writer emits the merged shape (`/FT /Sig /T
+        // ... /V n 0 R /Kids [widget]`). So descent and /V evaluation are
+        // NOT exclusive: a widget kid carries neither /FT nor /V and simply
+        // contributes nothing, while a child field is reached either way.
+        if let Ok(kids_obj) = field.get(b"Kids") {
+            let kids = doc
+                .dereference(kids_obj)
+                .map_err(|_| malformed_input())?
+                .1
+                .as_array()
+                .map_err(|_| malformed_input())?;
+            for kid in kids.iter().rev() {
+                stack.push((kid, is_sig_ft));
+            }
+        }
+        // Signature-discovery looks only at SIGNATURE fields (/FT /Sig,
+        // own or inherited): a text/choice/button field carries an ordinary
+        // value /V (a draft string, an option index), never a signature
+        // dictionary, and must not trip the malformed gates below.
+        if !is_sig_ft {
             continue;
         }
         let Ok(v) = field.get(b"V") else {
@@ -1161,7 +1237,6 @@ fn ocsp_responder_authorized(
     issuer: &EmbeddedCert,
     at_unix: u64,
 ) -> bool {
-    use const_oid::AssociatedOid;
     use der::Decode;
     use x509_cert::ext::pkix::KeyUsage;
     if responder.der == issuer.der {
@@ -1182,21 +1257,12 @@ fn ocsp_responder_authorized(
                         .is_ok_and(|eku| eku.0.iter().any(|o| o.as_bytes() == OID_OCSP_SIGNING))
             })
         });
-    // botfix7 P2-1: a PRESENT KeyUsage must permit signing — symmetric with
-    // the signer-leaf / CRL-issuer gates. An ABSENT KeyUsage follows the
-    // same documented RFC 5280 §4.2.1.3 posture (unconstrained, passes).
-    let ku_permits_signing = responder
-        .cert
-        .tbs_certificate
-        .extensions
-        .as_ref()
-        .is_none_or(|exts| {
-            !exts.iter().any(|e| {
-                e.extn_id == KeyUsage::OID
-                    && KeyUsage::from_der(e.extn_value.as_bytes())
-                        .is_ok_and(|ku| !ku.digital_signature())
-            })
-        });
+    // A PRESENT KeyUsage must permit signing — symmetric with the
+    // signer-leaf / CRL-issuer gates, and fail-CLOSED on a KeyUsage whose
+    // DER does not decode (botfix8 F2: the botfix-7 shape authorized a
+    // delegate carrying a present-but-unreadable KeyUsage). An ABSENT
+    // KeyUsage follows the documented RFC 5280 §4.2.1.3 posture (passes).
+    let ku_permits_signing = key_usage_permits(&responder.cert, KeyUsage::digital_signature);
     time_valid && has_eku && ku_permits_signing && issued_by(responder, issuer)
 }
 
@@ -1727,6 +1793,55 @@ mod tests {
             .push(rcgen::CustomExtension::from_oid_content(
                 &[2, 5, 29, 37],
                 eku,
+            ));
+        let issuer_rc = rcgen::Issuer::from_params(&issuer.rcgen_params, &issuer.rcgen_key);
+        let cert = params.signed_by(&key_pair, &issuer_rc).unwrap();
+        let cert_der = cert.der().to_vec();
+        let key = p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap();
+        let cert = x509_cert::Certificate::from_der(&cert_der).unwrap();
+        TestCa {
+            cert_der,
+            cert,
+            key,
+            rcgen_params: params,
+            rcgen_key: key_pair,
+        }
+    }
+
+    /// An OCSP delegate whose KeyUsage extension is PRESENT but carries DER
+    /// that does not decode as a KeyUsage BIT STRING. Everything else about
+    /// the delegate is honest: OCSPSigning EKU, time-valid, issued by
+    /// `issuer`. rcgen's `key_usages` always emits well-formed DER, so the
+    /// extension is injected raw.
+    fn ocsp_delegate_broken_ku(issuer: &TestCa, cn: &str) -> TestCa {
+        use p256::pkcs8::DecodePrivateKey;
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2030, 1, 1);
+        let eku = cms::tlv(
+            0x30,
+            &cms::oid_tlv(&der::asn1::ObjectIdentifier::new_unwrap(
+                "1.3.6.1.5.5.7.3.9",
+            )),
+        );
+        params
+            .custom_extensions
+            .push(rcgen::CustomExtension::from_oid_content(
+                &[2, 5, 29, 37],
+                eku,
+            ));
+        // KeyUsage (2.5.29.15) whose value is an OCTET STRING, not the
+        // BIT STRING the type requires: present, unreadable.
+        params
+            .custom_extensions
+            .push(rcgen::CustomExtension::from_oid_content(
+                &[2, 5, 29, 15],
+                cms::tlv(0x04, &[0x07, 0x80]),
             ));
         let issuer_rc = rcgen::Issuer::from_params(&issuer.rcgen_params, &issuer.rcgen_key);
         let cert = params.signed_by(&key_pair, &issuer_rc).unwrap();
@@ -2670,6 +2785,82 @@ mod tests {
     }
 
     #[test]
+    fn dss_ocsp_delegate_malformed_ku_fails_closed() {
+        // botfix8 F2: a delegate whose KeyUsage is PRESENT but whose DER
+        // does not decode must be REFUSED, not authorized. The botfix-7
+        // shape used `.is_ok_and(|ku| !ku.digital_signature())` inside a
+        // negated `any`, so a parse failure collapsed to "no violation
+        // found" and the delegate passed. Everything else here is honest —
+        // OCSPSigning EKU, time-valid, issued by the CA — so ONLY the
+        // unreadable usage restriction can produce the refusal.
+        use x509_cert::ext::pkix::KeyUsage;
+        let ca = test_ca("dss-ca");
+        let delegate = ocsp_delegate_broken_ku(&ca, "ocsp-delegate-broken-ku");
+        assert!(
+            !key_usage_permits(&delegate.cert, KeyUsage::digital_signature),
+            "fixture must present an undecodable KeyUsage"
+        );
+        let ocsp = build_ocsp_full(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+            AT_UNIX - 60,
+            &delegate,
+            true,
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn key_usage_turnstile_is_fail_closed_on_every_gate() {
+        // The shared turnstile all three KU gates ride: absent extension
+        // passes (RFC 5280 §4.2.1.3), present-and-readable defers to the
+        // predicate, present-but-undecodable REFUSES. Pinned here so the
+        // signer-leaf and CRL-issuer gates cannot silently drift open.
+        let ca = test_ca("ku-turnstile-ca");
+        let broken = ocsp_delegate_broken_ku(&ca, "broken-ku");
+        assert!(
+            !key_usage_permits(&broken.cert, |_| true),
+            "undecodable KeyUsage must refuse even a permit-everything predicate"
+        );
+        assert!(
+            enforce_signer_leaf_key_usage(&broken.cert).is_err(),
+            "signer-leaf gate must reject an undecodable KeyUsage"
+        );
+        assert!(
+            !issuer_permits_crl_sign(&broken.cert),
+            "CRL-issuer gate must reject an undecodable KeyUsage"
+        );
+        // Absent KeyUsage: unconstrained key, so the turnstile passes
+        // WITHOUT consulting the predicate (here: a predicate that would
+        // refuse everything it saw).
+        let no_ku = ocsp_delegate_with_kus(&ca, "no-ku", (2020, 1, 1), (2030, 1, 1), vec![]);
+        assert!(
+            no_ku
+                .cert
+                .tbs_certificate
+                .extensions
+                .as_ref()
+                .is_none_or(|exts| {
+                    use const_oid::AssociatedOid;
+                    !exts
+                        .iter()
+                        .any(|e| e.extn_id == x509_cert::ext::pkix::KeyUsage::OID)
+                }),
+            "fixture must omit KeyUsage entirely"
+        );
+        assert!(
+            key_usage_permits(&no_ku.cert, |_| false),
+            "absent KeyUsage passes without consulting the predicate"
+        );
+    }
+
+    #[test]
     fn tsp_token_without_content_type_attr_is_rejected() {
         // RFC 3161 §2.4.2: signedAttrs must carry content-type id-ct-TSTInfo.
         let tsa = tsa_ca();
@@ -3080,9 +3271,10 @@ mod tests {
         si.extend_from_slice(&alg_id(cms::OID_ECDSA_SHA256, false));
         si.extend_from_slice(&cms::tlv(0x04, &sig));
         let signer_info = cms::tlv(0x30, &si);
-        // SignedData version 1: the shape this parser supports — single
-        // issuerAndSerialNumber signer, no CRL sets, no attribute certs.
-        let mut sd = cms::tlv(0x02, &[1]);
+        // SignedData version 3: RFC 5652 5.1 mandates v3 whenever
+        // eContentType is not id-data, so every compliant RFC 3161 token
+        // (eContentType id-ct-TSTInfo) is exactly v3.
+        let mut sd = cms::tlv(0x02, &[3]);
         // DER SET OF sorting: the SHA-1 AlgorithmIdentifier (30 09 ...)
         // encodes before SHA-256 (30 0D ...), so the weak entry lands first.
         let digest_algs = if extra_digest_alg {
@@ -4296,6 +4488,186 @@ mod tests {
         let cat_id = doc.add_object(Object::Dictionary(catalog));
         doc.trailer.set("Root", Object::Reference(cat_id));
         assert!(collect_signatures(&doc).is_err());
+    }
+
+    // --- bot-fix leg 8 pins: AcroForm field TREE ---------------------------
+
+    /// A well-formed CAdES signature dictionary (typed, correct SubFilter,
+    /// four-element /ByteRange, hex /Contents) for the field-tree rows.
+    fn tree_sig_dict() -> lopdf::Dictionary {
+        let mut d = lopdf::Dictionary::new();
+        d.set("Type", Object::Name(b"Sig".to_vec()));
+        d.set("SubFilter", Object::Name(b"ETSI.CAdES.detached".to_vec()));
+        d.set(
+            "ByteRange",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(1),
+                Object::Integer(2),
+                Object::Integer(3),
+            ]),
+        );
+        d.set(
+            "Contents",
+            Object::String(vec![0u8; 2], lopdf::StringFormat::Hexadecimal),
+        );
+        d
+    }
+
+    /// Wrap `fields` as the catalog's `/AcroForm /Fields` array.
+    fn doc_with_fields(doc: &mut Document, fields: Vec<Object>) {
+        let mut af = lopdf::Dictionary::new();
+        af.set("Fields", Object::Array(fields));
+        let af_id = doc.add_object(Object::Dictionary(af));
+        let mut pages = lopdf::Dictionary::new();
+        pages.set("Type", Object::Name(b"Pages".to_vec()));
+        pages.set("Kids", Object::Array(vec![]));
+        pages.set("Count", Object::Integer(0));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+        let mut catalog = lopdf::Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        catalog.set("AcroForm", Object::Reference(af_id));
+        let cat_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+    }
+
+    #[test]
+    fn nested_signature_field_with_inherited_ft_is_reachable() {
+        // botfix8 F3 REGRESSION: the honest PAdES hierarchy — /Fields holds
+        // a NON-TERMINAL field carrying /FT /Sig and /T, whose /Kids holds
+        // the terminal field carrying only /V. /FT is inheritable
+        // (ISO 32000 §12.7.3.2), so the terminal field IS a signature
+        // field. botfix-7's flat walk read the top-level dict, saw no /V,
+        // and dropped the signature — an honest document failing with "no
+        // evaluable signature". verify_rs 0.6+ and pyHanko 0.35+ emit this.
+        let mut doc = Document::with_version("1.4");
+        let sig_id = doc.add_object(Object::Dictionary(tree_sig_dict()));
+        let mut terminal = lopdf::Dictionary::new();
+        terminal.set("T", Object::string_literal("child".to_string()));
+        terminal.set("V", Object::Reference(sig_id));
+        let terminal_id = doc.add_object(Object::Dictionary(terminal));
+        let mut parent = lopdf::Dictionary::new();
+        parent.set("FT", Object::Name(b"Sig".to_vec()));
+        parent.set("T", Object::string_literal("parent".to_string()));
+        parent.set("Kids", Object::Array(vec![Object::Reference(terminal_id)]));
+        let parent_id = doc.add_object(Object::Dictionary(parent));
+        doc_with_fields(&mut doc, vec![Object::Reference(parent_id)]);
+        let found = collect_signatures(&doc).expect("tree walk must succeed");
+        assert_eq!(
+            found.len(),
+            1,
+            "the nested signature field must be discovered through /Kids \
+             with /FT inherited from the parent"
+        );
+        assert!(!found[0].is_doc_ts);
+    }
+
+    #[test]
+    fn kids_cycle_terminates_without_hanging() {
+        // A hostile /Kids self-cycle must not spin: the visited-set stops
+        // re-descent, so discovery terminates. The reachable signature on
+        // the cycle is still found exactly once.
+        let mut doc = Document::with_version("1.4");
+        let sig_id = doc.add_object(Object::Dictionary(tree_sig_dict()));
+        // Reserve the parent id so the child can point back at it.
+        let parent_id = doc.add_object(Object::Null);
+        let mut child = lopdf::Dictionary::new();
+        child.set("V", Object::Reference(sig_id));
+        // The child's /Kids points BACK at its parent: a 2-cycle.
+        child.set("Kids", Object::Array(vec![Object::Reference(parent_id)]));
+        let child_id = doc.add_object(Object::Dictionary(child));
+        let mut parent = lopdf::Dictionary::new();
+        parent.set("FT", Object::Name(b"Sig".to_vec()));
+        parent.set("Kids", Object::Array(vec![Object::Reference(child_id)]));
+        doc.objects
+            .insert(parent_id, Object::Dictionary(parent.clone()));
+        doc_with_fields(&mut doc, vec![Object::Reference(parent_id)]);
+        let found = collect_signatures(&doc).expect("cycle must terminate, not hang");
+        assert_eq!(found.len(), 1, "the signature is collected exactly once");
+    }
+
+    #[test]
+    fn self_referential_kids_terminates() {
+        // The degenerate case: a field whose /Kids names itself.
+        let mut doc = Document::with_version("1.4");
+        let sig_id = doc.add_object(Object::Dictionary(tree_sig_dict()));
+        let field_id = doc.add_object(Object::Null);
+        let mut field = lopdf::Dictionary::new();
+        field.set("FT", Object::Name(b"Sig".to_vec()));
+        field.set("V", Object::Reference(sig_id));
+        field.set("Kids", Object::Array(vec![Object::Reference(field_id)]));
+        doc.objects.insert(field_id, Object::Dictionary(field));
+        doc_with_fields(&mut doc, vec![Object::Reference(field_id)]);
+        let found = collect_signatures(&doc).expect("self-cycle must terminate");
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn non_signature_parent_does_not_inherit_sig_ft_to_kids() {
+        // Inheritance carries the parent's ACTUAL /FT: a /Tx parent must not
+        // make its kids signature fields, and a kid's own /FT overrides the
+        // inherited one. Neither field here is a signature field, so the
+        // signature-shaped /V of the text field is never evaluated — the
+        // fail-closed posture botfix-7 established stays intact.
+        let mut doc = Document::with_version("1.4");
+        let sig_id = doc.add_object(Object::Dictionary(tree_sig_dict()));
+        let mut terminal = lopdf::Dictionary::new();
+        terminal.set("V", Object::Reference(sig_id));
+        let terminal_id = doc.add_object(Object::Dictionary(terminal));
+        let mut parent = lopdf::Dictionary::new();
+        parent.set("FT", Object::Name(b"Tx".to_vec()));
+        parent.set("Kids", Object::Array(vec![Object::Reference(terminal_id)]));
+        let parent_id = doc.add_object(Object::Dictionary(parent));
+        doc_with_fields(&mut doc, vec![Object::Reference(parent_id)]);
+        let found = collect_signatures(&doc).expect("walk succeeds");
+        assert!(
+            found.is_empty(),
+            "a /Tx subtree yields no signature candidates"
+        );
+
+        // Same tree, but the terminal field overrides with its own /FT /Sig.
+        let mut doc = Document::with_version("1.4");
+        let sig_id = doc.add_object(Object::Dictionary(tree_sig_dict()));
+        let mut terminal = lopdf::Dictionary::new();
+        terminal.set("FT", Object::Name(b"Sig".to_vec()));
+        terminal.set("V", Object::Reference(sig_id));
+        let terminal_id = doc.add_object(Object::Dictionary(terminal));
+        let mut parent = lopdf::Dictionary::new();
+        parent.set("FT", Object::Name(b"Tx".to_vec()));
+        parent.set("Kids", Object::Array(vec![Object::Reference(terminal_id)]));
+        let parent_id = doc.add_object(Object::Dictionary(parent));
+        doc_with_fields(&mut doc, vec![Object::Reference(parent_id)]);
+        assert_eq!(
+            collect_signatures(&doc).expect("walk succeeds").len(),
+            1,
+            "a kid's own /FT overrides the inherited one"
+        );
+    }
+
+    #[test]
+    fn terminal_field_with_widget_kids_is_still_evaluated() {
+        // This crate's own writer emits `/FT /Sig /T .. /V n 0 R /Kids
+        // [widget]` (pdf.rs build_objects): a TERMINAL field whose /Kids
+        // holds widget annotations, not child fields. Descent must not
+        // consume the node's own /V — /Kids and /V are not exclusive.
+        let mut doc = Document::with_version("1.4");
+        let sig_id = doc.add_object(Object::Dictionary(tree_sig_dict()));
+        let mut widget = lopdf::Dictionary::new();
+        widget.set("Type", Object::Name(b"Annot".to_vec()));
+        widget.set("Subtype", Object::Name(b"Widget".to_vec()));
+        let widget_id = doc.add_object(Object::Dictionary(widget));
+        let mut field = lopdf::Dictionary::new();
+        field.set("FT", Object::Name(b"Sig".to_vec()));
+        field.set("V", Object::Reference(sig_id));
+        field.set("Kids", Object::Array(vec![Object::Reference(widget_id)]));
+        let field_id = doc.add_object(Object::Dictionary(field));
+        doc_with_fields(&mut doc, vec![Object::Reference(field_id)]);
+        assert_eq!(
+            collect_signatures(&doc).expect("walk succeeds").len(),
+            1,
+            "a terminal field with widget /Kids keeps its own /V evaluated"
+        );
     }
 
     #[test]

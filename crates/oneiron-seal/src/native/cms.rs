@@ -13,6 +13,9 @@ use crate::api::{Sha256Digest, SignatureAlgorithm};
 use crate::error::{FatalCode, SealError, SealStage};
 
 pub(crate) const OID_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
+/// `id-ct-TSTInfo`: the encapsulated content type of an RFC 3161 token.
+pub(crate) const OID_CT_TST_INFO: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4");
 pub(crate) const OID_SIGNED_DATA: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
 pub(crate) const OID_SHA256: ObjectIdentifier =
@@ -418,13 +421,10 @@ pub(crate) fn parse_cms(der: &[u8]) -> Result<ParsedCms, SealError> {
         return Err(cms_err());
     }
     let mut s = DerReader::new(sd.content);
-    // SignedData.version: this parser supports only the v1 shape (one
-    // signer, no CRL sets / subjectKeyIdentifier sid). Any other version
-    // introduces fields this parser silently misreads — reject it.
+    // SignedData.version is enforced below, once eContentType is known:
+    // RFC 5652 §5.1 makes the version a FUNCTION of the encapsulated
+    // content type, so the two must be checked as a pair.
     let sd_version = s.expect(0x02)?;
-    if sd_version.content != [1] {
-        return Err(cms_err());
-    }
     let digest_set = s.expect(0x31)?;
     let mut digest_algs = Vec::new();
     let mut dr = DerReader::new(digest_set.content);
@@ -442,6 +442,25 @@ pub(crate) fn parse_cms(der: &[u8]) -> Result<ParsedCms, SealError> {
         let os = DerReader::new(wrapper.content).expect(0x04)?;
         Some(os.content.to_vec())
     };
+    // RFC 5652 §5.1: the SignedData version is DETERMINED by eContentType —
+    // version 1 iff the content type is id-data, version 3 whenever it is
+    // anything else. This parser implements exactly two encapsulations, so
+    // each is pinned to the one version the standard permits for it:
+    //   id-data       (detached CAdES document signature) => 1
+    //   id-ct-TSTInfo (RFC 3161 timestamp token)          => 3
+    // Both are single-signer / issuerAndSerialNumber shapes; a mismatched
+    // pair, or any other content type, is a shape this parser would read
+    // under the wrong field layout — reject it rather than guess.
+    let required_version: &[u8] = if econtent_oid == OID_DATA.as_bytes() {
+        &[1]
+    } else if econtent_oid == OID_CT_TST_INFO.as_bytes() {
+        &[3]
+    } else {
+        return Err(cms_err());
+    };
+    if sd_version.content != required_version {
+        return Err(cms_err());
+    }
     let mut certificates = Vec::new();
     let mut seen_certificates = false;
     let mut signer_info_der = None;
@@ -953,21 +972,85 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn signed_data_version_three_is_rejected() {
-        // botfix7 P2-2: SignedData.version is enforced, not expect-then-
-        // discarded. A v3 envelope (the multi-signer / sid-by-key shape this
-        // parser does not implement) must fail the parse.
+    /// Offset of the SignedData version INTEGER's single value octet inside
+    /// a ContentInfo DER emitted by `build_signed_data`.
+    fn version_value_offset(der: &[u8]) -> usize {
         fn header_len(buf: &[u8]) -> usize {
             assert!(buf.len() >= 2, "header present");
             let first_len = buf[1];
             if first_len & 0x80 == 0 {
                 2
             } else {
-                let n = usize::from(first_len & 0x7F);
-                2 + n
+                2 + usize::from(first_len & 0x7F)
             }
         }
+        let mut at = header_len(der); // start of ci.content == OID tlv
+        at += DerReader::new(&der[at..])
+            .expect(0x06)
+            .expect("oid")
+            .full
+            .len(); // start of [0] wrapper
+        assert_eq!(der[at], 0xA0, "signed-data wrapper tag");
+        at += header_len(&der[at..]); // start of SignedData SEQUENCE
+        assert_eq!(der[at], 0x30, "SignedData sequence tag");
+        at += header_len(&der[at..]); // start of version INTEGER
+        assert_eq!(der[at], 0x02, "version is an INTEGER");
+        assert_eq!(der[at + 1], 0x01, "version length 1");
+        at + 2
+    }
+
+    /// A signed-attribute wire + signer material pair reused by the envelope
+    /// fixtures below.
+    fn version_probe_signer_info(cert: &[u8]) -> Vec<u8> {
+        let (issuer, serial) = issuer_and_serial(cert).expect("i/s");
+        let attrs = vec![
+            attr_content_type_data(),
+            attr_message_digest(&[7u8; 32]),
+            attr_signing_cert_v2(cert, &issuer, &serial),
+        ];
+        let (wire, _) = assemble_signed_attrs(attrs);
+        let material = SignerMaterial {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_cert_der: cert,
+            issuer_name_der: &issuer,
+            serial_der: &serial,
+            chain_ders: &[],
+        };
+        let der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
+        let ci = DerReader::new(&der).expect(0x30).expect("ci");
+        let mut r = DerReader::new(ci.content);
+        r.expect(0x06).expect("oid");
+        let w = r.expect(0xA0).expect("wrapper");
+        let sd = DerReader::new(w.content).expect(0x30).expect("sd");
+        let mut s = DerReader::new(sd.content);
+        s.expect(0x02).expect("version");
+        s.expect(0x31).expect("digestAlgorithms");
+        s.expect(0x30).expect("eci");
+        s.expect(0xA0).expect("certificates");
+        s.expect(0x31).expect("signerInfos").full.to_vec()
+    }
+
+    /// A detached SignedData at a caller-chosen version and eContentType.
+    /// Only the envelope shape matters: `parse_cms` checks structure here,
+    /// not the encapsulated body.
+    fn envelope_with(version: u8, econtent_type: &ObjectIdentifier) -> Vec<u8> {
+        let cert = cert_der();
+        let signer_info = version_probe_signer_info(&cert);
+        let mut sd_body = tlv(0x02, &[version]);
+        sd_body.extend_from_slice(&tlv(0x31, &alg_id(&OID_SHA256, true)));
+        sd_body.extend_from_slice(&tlv(0x30, &oid_tlv(econtent_type)));
+        sd_body.extend_from_slice(&tlv(0xA0, &cert));
+        sd_body.extend_from_slice(&signer_info);
+        let mut ci_body = oid_tlv(&OID_SIGNED_DATA);
+        ci_body.extend_from_slice(&tlv(0xA0, &tlv(0x30, &sd_body)));
+        tlv(0x30, &ci_body)
+    }
+
+    #[test]
+    fn id_data_signed_data_requires_version_one() {
+        // RFC 5652 5.1: eContentType id-data => version 1. The detached
+        // CAdES document-signature shape this parser reads is exactly that,
+        // so every other version is a field layout it would misread.
         let cert = cert_der();
         let (issuer, serial) = issuer_and_serial(&cert).expect("i/s");
         let attrs = vec![
@@ -983,33 +1066,60 @@ mod tests {
             serial_der: &serial,
             chain_ders: &[],
         };
-        let mut der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
-        assert!(parse_cms(&der).is_ok(), "control: v1 parses");
-        // Locate the SignedData version INTEGER by walking: CI SEQ content
-        // = OID tlv then the [0] EXPLICIT wrapper; SignedData SEQ opens
-        // with the version INTEGER as its first field.
-        // Offset of ci.content inside der: ci.full begins right after the
-        // CI SEQUENCE header.
-        let ci = DerReader::new(&der).expect(0x30).expect("ci");
-        assert_eq!(ci.tag, 0x30);
-        let mut at = header_len(&der); // start of ci.content == OID tlv
-        let oid_len = DerReader::new(&der[at..])
-            .expect(0x06)
-            .expect("oid")
-            .full
-            .len();
-        at += oid_len; // start of [0] wrapper
-        assert_eq!(der[at], 0xA0, "signed-data wrapper tag");
-        at += header_len(&der[at..]); // start of SignedData SEQUENCE
-        assert_eq!(der[at], 0x30, "SignedData sequence tag");
-        at += header_len(&der[at..]); // start of version INTEGER
-        assert_eq!(der[at], 0x02, "version is an INTEGER");
-        assert_eq!(der[at + 1], 0x01, "version length 1");
-        assert_eq!(der[at + 2], 0x01, "control: version is 1");
-        der[at + 2] = 0x03; // version := 3
+        let base = build_signed_data(&material, &wire, &[9u8; 64], &[]);
+        let at = version_value_offset(&base);
+        assert_eq!(base[at], 1, "control: builder emits v1 under id-data");
+        assert!(parse_cms(&base).is_ok(), "id-data at v1 parses");
+        for bad in [0u8, 2, 3, 4, 5] {
+            let mut der = base.clone();
+            der[at] = bad;
+            assert!(
+                parse_cms(&der).is_err(),
+                "id-data SignedData at version {bad} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn tst_info_signed_data_requires_version_three() {
+        // botfix8 F1 REGRESSION: botfix-7 pinned every SignedData to v1,
+        // which rejects EVERY standards-compliant RFC 3161 token — RFC 5652
+        // 5.1 mandates v3 whenever eContentType is not id-data, and both
+        // tsp.rs paths bind econtent_oid to id-ct-TSTInfo before use. An
+        // unconditional `== 1` gate breaks the live timestamp paths; an
+        // unconditional `== 3` gate breaks the CAdES document path.
         assert!(
-            parse_cms(&der).is_err(),
-            "SignedData version 3 must be rejected"
+            parse_cms(&envelope_with(3, &OID_CT_TST_INFO)).is_ok(),
+            "id-ct-TSTInfo at version 3 must parse"
         );
+        for bad in [0u8, 1, 2, 4, 5] {
+            assert!(
+                parse_cms(&envelope_with(bad, &OID_CT_TST_INFO)).is_err(),
+                "id-ct-TSTInfo SignedData at version {bad} must be rejected"
+            );
+        }
+        // The mismatched pair in the other direction: id-data never rides v3.
+        assert!(
+            parse_cms(&envelope_with(3, &OID_DATA)).is_err(),
+            "id-data at version 3 must be rejected"
+        );
+        assert!(
+            parse_cms(&envelope_with(1, &OID_DATA)).is_ok(),
+            "control: id-data at version 1 parses through this builder too"
+        );
+    }
+
+    #[test]
+    fn unknown_econtent_type_is_rejected() {
+        // Only the two encapsulations this parser implements are admitted;
+        // any other content type has a field layout this code does not read,
+        // so it must not reach the signature checks at any version.
+        let other = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.2"); // id-ct-authData
+        for version in [1u8, 3] {
+            assert!(
+                parse_cms(&envelope_with(version, &other)).is_err(),
+                "unimplemented eContentType at v{version} must be rejected"
+            );
+        }
     }
 }

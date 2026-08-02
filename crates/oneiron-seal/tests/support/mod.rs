@@ -410,9 +410,10 @@ pub(crate) fn build_token_cms(tsa: &TestIdentity, tst_der: &[u8]) -> Vec<u8> {
     si.extend_from_slice(&tlv(0x04, &signature));
     let signer_info = tlv(0x30, &si);
 
-    // SignedData version 1: the shape this verifier parses (single
-    // issuerAndSerialNumber signer, no CRL sets, no attribute certs).
-    let mut sd = tlv(0x02, &[1]);
+    // SignedData version 3: RFC 5652 5.1 mandates v3 whenever eContentType
+    // is not id-data, so every compliant RFC 3161 token (eContentType
+    // id-ct-TSTInfo) is exactly v3.
+    let mut sd = tlv(0x02, &[3]);
     sd.extend_from_slice(&tlv(0x31, &alg_id(OID_SHA256, true)));
     let mut eci = oid_tlv(OID_TST_INFO);
     eci.extend_from_slice(&tlv(0xA0, &tlv(0x04, tst_der)));
