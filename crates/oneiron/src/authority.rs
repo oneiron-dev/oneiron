@@ -2889,7 +2889,10 @@ fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
-    if context.enforce_seen_time_delay && !state.pending_widens.is_empty() {
+    if context.enforce_seen_time_delay
+        && !state.pending_widens.is_empty()
+        && !op_applies_despite_pending_widen(&entry.op)
+    {
         return EntryFold::Waiting;
     }
     if state
@@ -3184,6 +3187,48 @@ fn op_is_delayable_widen(
     participants: &BTreeSet<AuthorityKey>,
 ) -> bool {
     op_can_be_pending_widen(state, op) && !op_has_instant_widen_authority(state, op, participants)
+}
+
+/// Whether `op` still folds while an UNRELATED widen is pending.
+///
+/// A pending widen freezes the log: every later entry waits, because the widen
+/// may yet be vetoed and folding on a roster that might change would decide the
+/// entry against the wrong state. That is the right default for anything that
+/// GRANTS — the grant can afford to wait out the veto window, and waiting is the
+/// conservative direction.
+///
+/// It is the wrong default for `RevokeActor`. A revocation is the operator's
+/// emergency brake: it WITHDRAWS consent, and withdrawal of consent is
+/// unconditional — no roster the pending widen could produce makes a revoked
+/// actor's authority legitimate again. Deferring it hands the widen's clock (up
+/// to `MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS`) to the revocation, so an owner who
+/// files a revocation because a key is compromised watches that key keep every
+/// owner verb until an unrelated enrollment matures. Worse, the attacker chooses
+/// the delay: filing any delayable widen of their own extends their own
+/// authority.
+///
+/// The asymmetry is deliberate and narrow. `BindActor`/`RebindActor` GRANT
+/// identity, so they keep the deferral; only the withdrawal skips it. Skipping
+/// is safe because a revocation cannot widen anything: it only raises a
+/// per-key watermark that kills bindings at or below it, so folding it early
+/// can strictly REMOVE authority from the derived roster, never add it — and
+/// the pending widen still matures on its own clock, unaffected.
+fn op_applies_despite_pending_widen(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::RevokeActor { .. } => true,
+        AuthorityOp::Genesis { .. }
+        | AuthorityOp::EnrollDevice { .. }
+        | AuthorityOp::RevokeDevice { .. }
+        | AuthorityOp::SetCeiling { .. }
+        | AuthorityOp::RotateKey { .. }
+        | AuthorityOp::SetTierFloor { .. }
+        | AuthorityOp::RecoveryReboot { .. }
+        | AuthorityOp::FederationConfirm(_)
+        | AuthorityOp::VetoPendingWiden { .. }
+        | AuthorityOp::FederationLifecycle(_)
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. } => false,
+    }
 }
 
 fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {

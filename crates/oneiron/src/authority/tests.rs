@@ -10797,3 +10797,350 @@ fn sync_state_snapshot(vault: &crate::Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
     drop(rtxn);
     rows
 }
+
+/// The pending-widen freeze that a `RevokeActor` builds its fixture from: a
+/// two-key roster, a live human binding, and a cosigned `EnrollDevice` that is
+/// still inside its veto delay, so `state.pending_widens` is non-empty for every
+/// entry that follows.
+struct PendingWidenFreeze {
+    fixture: BindFixture,
+    entries: Vec<AuthorityLogEntry>,
+    first_seen: BTreeMap<AuthorityEntryHash, u64>,
+    widen_hash: AuthorityEntryHash,
+    bind_hash: AuthorityEntryHash,
+    now_secs: u64,
+}
+
+/// Builds the freeze. `long_ago` first-seen times keep genesis/enroll/bind out of
+/// the delay; the widen is first seen at `now`, which is what pins it pending.
+fn pending_widen_freeze(seed: u8) -> PendingWidenFreeze {
+    let fixture = bind_fixture(seed);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    let widen = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&ed_key(seed.wrapping_add(4))),
+                ROLE_AGENT,
+                AuthorityTier::Software,
+            ),
+        },
+        103,
+    );
+    let widen_hash = authority_entry_hash(&widen).unwrap();
+
+    let now_secs = 10_000_000;
+    let mut first_seen = BTreeMap::new();
+    for hash in [genesis_hash, enroll_hash, bind_hash] {
+        first_seen.insert(hash, 1);
+    }
+    first_seen.insert(widen_hash, now_secs);
+
+    PendingWidenFreeze {
+        entries: vec![fixture.genesis.clone(), fixture.enroll.clone(), bind, widen],
+        fixture,
+        first_seen,
+        widen_hash,
+        bind_hash,
+        now_secs,
+    }
+}
+
+/// fix-leg 11 P1-1: a `RevokeActor` must NOT wait behind an unrelated pending
+/// widen — a revocation is the operator's emergency brake.
+///
+/// A pending widen freezes the log: `fold_entry_state` returned `Waiting` for
+/// every entry that followed one, so a revocation filed while any enrollment sat
+/// inside its veto window did not take effect until that enrollment matured. The
+/// consequences run the wrong way on every axis. The revocation is the response
+/// to a compromise, so the window it is deferred across is exactly the window the
+/// compromised key keeps every owner verb — up to
+/// `MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS`. And the delay is ATTACKER-CHOSEN: the
+/// compromised key can cosign a delayable widen of its own and thereby extend the
+/// life of its own authority, re-arming the freeze each time one matures.
+///
+/// Folding the revocation early is sound because a revocation cannot widen: it
+/// only raises a per-key watermark, so an early fold strictly REMOVES authority.
+/// Nothing about the pending widen changes — it still matures on its own clock,
+/// which the last assertion pins.
+///
+/// MUTATION PROBE: restore the unconditional deferral (drop the
+/// `op_applies_despite_pending_widen` term at the `pending_widens.is_empty()`
+/// guard) and this test fails — the revocation folds Waiting and the binding
+/// stays Active.
+#[test]
+fn revoke_actor_applies_immediately_despite_an_unrelated_pending_widen() {
+    let freeze = pending_widen_freeze(240);
+    let key = freeze.fixture.owner_key.clone();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        revoke_actor_op(&key, 5),
+        104,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    // Baseline: with no revocation the binding authorizes, so the assertions
+    // below pin the revocation's effect and not a broken fixture.
+    let before =
+        fold_authority_log_with_seen_times(&freeze.entries, &freeze.first_seen, freeze.now_secs);
+    assert!(
+        before.pending_widens.contains_key(&freeze.widen_hash),
+        "fixture: the widen must start inside its veto delay"
+    );
+    assert!(
+        actor_binding_is_active(&before, &freeze.fixture.actor, "human"),
+        "fixture: the binding must authorize before the revocation"
+    );
+
+    let mut entries = freeze.entries.clone();
+    entries.push(revoke);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(revoke_hash, freeze.now_secs);
+    let after = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+
+    assert!(
+        after.issues.is_empty(),
+        "the revocation must fold cleanly: {:?}",
+        after.issues
+    );
+    assert!(
+        after.valid_entries.contains(&revoke_hash),
+        "the revocation must fold VALID, not park as Waiting behind the widen"
+    );
+    assert_eq!(
+        folded_status(&after, &key),
+        Some(ActorBindingStatus::Revoked),
+        "the revocation must kill the binding NOW"
+    );
+    assert!(
+        !actor_binding_is_active(&after, &freeze.fixture.actor, "human"),
+        "a revoked actor must lose its authority immediately, not when an \
+         unrelated enrollment matures"
+    );
+    // The widen keeps its OWN clock: the revocation neither matures nor vetoes it.
+    assert!(
+        after.pending_widens.contains_key(&freeze.widen_hash),
+        "the pending widen must still mature on its own clock"
+    );
+    assert_eq!(
+        after.pending_widens[&freeze.widen_hash], before.pending_widens[&freeze.widen_hash],
+        "the revocation must not disturb the pending widen's delay bookkeeping"
+    );
+}
+
+/// The other half of the same ruling: GRANTS still wait.
+///
+/// `RevokeActor` skips the freeze because withdrawing consent is unconditional.
+/// `BindActor` and `RebindActor` do the opposite — they hand an actor authority —
+/// so they keep the deferral: folding a grant against a roster the pending widen
+/// may still change is exactly what the freeze exists to prevent. Pinned so a
+/// future edit cannot widen the exemption from "the withdrawal" to "the actor
+/// ops".
+///
+/// MUTATION PROBE: make `op_applies_despite_pending_widen` return true for the
+/// bind arms and this test fails.
+#[test]
+fn bind_and_rebind_still_defer_behind_a_pending_widen() {
+    for (label, op, seq) in [
+        (
+            "rebind",
+            rebind_op(
+                &pending_widen_freeze(244).fixture.owner_key,
+                scope_entity(0x71),
+                "human",
+                2,
+            ),
+            4_u64,
+        ),
+        (
+            "bind",
+            bind_op(
+                &pending_widen_freeze(244).fixture.agent_key,
+                scope_entity(0x72),
+                "agent",
+                1,
+            ),
+            4,
+        ),
+    ] {
+        let freeze = pending_widen_freeze(244);
+        let entry = cosigned_entry(&freeze.fixture, vec![freeze.widen_hash], seq, op, 104);
+        let entry_hash = authority_entry_hash(&entry).unwrap();
+        let mut entries = freeze.entries.clone();
+        entries.push(entry);
+        let mut first_seen = freeze.first_seen.clone();
+        first_seen.insert(entry_hash, freeze.now_secs);
+
+        let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+        assert!(
+            fold.pending_widens.contains_key(&freeze.widen_hash),
+            "{label}: fixture — the widen must still be pending"
+        );
+        assert!(
+            !fold.valid_entries.contains(&entry_hash),
+            "{label}: a GRANT must stay deferred behind the pending widen"
+        );
+        // The pre-existing binding is untouched: the deferred grant changed nothing.
+        assert!(
+            actor_binding_is_active(&fold, &freeze.fixture.actor, "human"),
+            "{label}: the deferred grant must leave the existing binding alone"
+        );
+        assert!(
+            fold.valid_entries.contains(&freeze.bind_hash),
+            "{label}: the pre-widen bind must remain valid"
+        );
+    }
+}
+
+/// fix-leg 11 P1-2: a matured ENROLLMENT must survive a restart under a
+/// rolled-back wall clock, which is what makes the write fold's floor
+/// persistence load-bearing in the GRANT direction.
+///
+/// `readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied`
+/// already pins the revoke direction: a matured `RotateKey` must stay applied, or
+/// the retired key's owner binding comes back. That test cannot catch a
+/// regression in the other direction, because a lost floor pushes a rotation back
+/// INTO `pending_widens`, which for a rotation is the fail-OPEN outcome its
+/// assertions are built around.
+///
+/// The grant direction fails the opposite way and needs its own row. An
+/// `EnrollDevice` matured on this vault's monotonic clock authorizes its child
+/// bind; if the floor is not persisted, a restart drops the process-local clock,
+/// the fold falls back to a wall clock sitting far BELOW the observation, and the
+/// enrollment reverts to pending — so a legitimately matured owner enrollment
+/// silently loses its authority. That is fail-CLOSED but wrong, and it is
+/// indistinguishable from the feature simply not working: the operator waited out
+/// the veto window, and a reboot took it back.
+///
+/// MUTATION PROBE: drop the floor `put` from `Vault::authority_fold`'s write txn
+/// and this test fails at the post-reopen assertions.
+#[test]
+fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    // Park the authority clock far ahead of real Unix time, so every later
+    // observation is written from a future reading and `unix_seconds_now()` is
+    // the BACKWARD-skewed clock a reopen would otherwise trust.
+    let domain = vault.store.authority_clock_domain;
+    let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, 0, future),
+        future
+    );
+
+    let owner = ed_key(231);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(231, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let second = ed_key(232);
+    let second_key = authority_key_from_ed(&second);
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 232,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let actor = scope_entity(0x67);
+    let bind = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![enroll_hash],
+            bind_op(&second_key, actor, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+        &second,
+    );
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (enroll, TimeRange { start: 2, end: 2 }, 2),
+            (bind, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+
+    let before = vault.authority_fold().unwrap();
+    assert!(
+        before.pending_widens.contains_key(&enroll_hash),
+        "the enrollment starts inside its veto delay"
+    );
+    assert!(
+        !actor_binding_is_active(&before, &actor, "human"),
+        "its child bind must not authorize while the enrollment is pending"
+    );
+
+    // Run the local monotonic clock past the delay, then let a WRITE fold record
+    // the observation — this is the commit whose floor must outlive the process.
+    let matured_at = future + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, matured_at, 0),
+        matured_at
+    );
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        !full.pending_widens.contains_key(&enroll_hash),
+        "the enrollment must mature once the local clock passes its delay"
+    );
+    assert!(
+        actor_binding_is_active(&full, &actor, "human"),
+        "the matured enrollment must authorize its child bind"
+    );
+    // The floor is the durable half of that observation.
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let persisted_floor = vault
+        .store
+        .sync_state
+        .get(&rtxn, authority_first_seen_clock_sync_key())
+        .unwrap()
+        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        .unwrap_or(0);
+    drop(rtxn);
+    assert!(
+        persisted_floor >= matured_at,
+        "the write fold must persist its derived observation as the floor \
+         (monotone max): floor={persisted_floor} < observed={matured_at}"
+    );
+
+    // Restart. The process-local clock dies with the vault, so the rolled-back
+    // wall clock is the only other candidate reading — the persisted floor is
+    // the sole thing keeping the enrollment matured.
+    drop(vault);
+    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let rtxn = reopened.store.env.read_txn().unwrap();
+    let after_reopen = reopened.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !after_reopen.pending_widens.contains_key(&enroll_hash),
+        "a restart under a rolled-back wall clock must not un-mature the \
+         enrollment — the persisted floor is what carries the observation across"
+    );
+    assert!(
+        actor_binding_is_active(&after_reopen, &actor, "human"),
+        "a legitimately matured owner enrollment must keep authorizing its child \
+         bind across a restart"
+    );
+}
