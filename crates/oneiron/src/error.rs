@@ -290,6 +290,8 @@ pub enum ErrorKind {
     ReservedEdgeKind,
     #[cfg(feature = "sync")]
     IdentityTopologyEventDivergence,
+    AuthorityLogAppendOnlyViolation,
+    AuthorityLogStoreKeyMismatch,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1439,6 +1441,25 @@ pub enum Error {
     /// effect.
     #[error("identity topology op is not armed yet: {0}")]
     IdentityTopologyUnarmed(&'static str),
+    /// An AUTHORITY_LOG row is append-only at its store key (ONE-1604-D1): a
+    /// write carried body-divergent bytes for an existing type-122 id. Local
+    /// callers get this as a hard error; replicated doors classify it as a
+    /// remote rejection — the payload is quarantined and local bytes are kept
+    /// (never silent LWW on the authority substrate).
+    #[error(
+        "authority log row {} is append-only: body-divergent overwrite rejected",
+        id.to_hex()
+    )]
+    AuthorityLogAppendOnlyViolation { id: EntityId },
+    /// An AUTHORITY_LOG row's entity id does not equal the id derived from
+    /// the BLAKE3 hash of its canonical signed body (ONE-1604-D1 content
+    /// address). Raised at every import/replay door; replicated instances
+    /// are quarantined.
+    #[error(
+        "authority log row {} does not match its content-derived store key",
+        id.to_hex()
+    )]
+    AuthorityLogStoreKeyMismatch { id: EntityId },
 }
 
 impl Error {
@@ -1679,6 +1700,10 @@ impl Error {
             Self::IdentityTopologyEventDivergence { .. } => {
                 ErrorKind::IdentityTopologyEventDivergence
             }
+            Self::AuthorityLogAppendOnlyViolation { .. } => {
+                ErrorKind::AuthorityLogAppendOnlyViolation
+            }
+            Self::AuthorityLogStoreKeyMismatch { .. } => ErrorKind::AuthorityLogStoreKeyMismatch,
         }
     }
 
