@@ -418,7 +418,13 @@ pub(crate) fn parse_cms(der: &[u8]) -> Result<ParsedCms, SealError> {
         return Err(cms_err());
     }
     let mut s = DerReader::new(sd.content);
-    s.expect(0x02)?; // version
+    // SignedData.version: this parser supports only the v1 shape (one
+    // signer, no CRL sets / subjectKeyIdentifier sid). Any other version
+    // introduces fields this parser silently misreads — reject it.
+    let sd_version = s.expect(0x02)?;
+    if sd_version.content != [1] {
+        return Err(cms_err());
+    }
     let digest_set = s.expect(0x31)?;
     let mut digest_algs = Vec::new();
     let mut dr = DerReader::new(digest_set.content);
@@ -945,5 +951,65 @@ mod tests {
             SignatureAlgorithm::EcdsaP256Sha256,
             OID_RSA_PSS.as_bytes()
         ));
+    }
+
+    #[test]
+    fn signed_data_version_three_is_rejected() {
+        // botfix7 P2-2: SignedData.version is enforced, not expect-then-
+        // discarded. A v3 envelope (the multi-signer / sid-by-key shape this
+        // parser does not implement) must fail the parse.
+        fn header_len(buf: &[u8]) -> usize {
+            assert!(buf.len() >= 2, "header present");
+            let first_len = buf[1];
+            if first_len & 0x80 == 0 {
+                2
+            } else {
+                let n = usize::from(first_len & 0x7F);
+                2 + n
+            }
+        }
+        let cert = cert_der();
+        let (issuer, serial) = issuer_and_serial(&cert).expect("i/s");
+        let attrs = vec![
+            attr_content_type_data(),
+            attr_message_digest(&[7u8; 32]),
+            attr_signing_cert_v2(&cert, &issuer, &serial),
+        ];
+        let (wire, _) = assemble_signed_attrs(attrs);
+        let material = SignerMaterial {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_cert_der: &cert,
+            issuer_name_der: &issuer,
+            serial_der: &serial,
+            chain_ders: &[],
+        };
+        let mut der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
+        assert!(parse_cms(&der).is_ok(), "control: v1 parses");
+        // Locate the SignedData version INTEGER by walking: CI SEQ content
+        // = OID tlv then the [0] EXPLICIT wrapper; SignedData SEQ opens
+        // with the version INTEGER as its first field.
+        // Offset of ci.content inside der: ci.full begins right after the
+        // CI SEQUENCE header.
+        let ci = DerReader::new(&der).expect(0x30).expect("ci");
+        assert_eq!(ci.tag, 0x30);
+        let mut at = header_len(&der); // start of ci.content == OID tlv
+        let oid_len = DerReader::new(&der[at..])
+            .expect(0x06)
+            .expect("oid")
+            .full
+            .len();
+        at += oid_len; // start of [0] wrapper
+        assert_eq!(der[at], 0xA0, "signed-data wrapper tag");
+        at += header_len(&der[at..]); // start of SignedData SEQUENCE
+        assert_eq!(der[at], 0x30, "SignedData sequence tag");
+        at += header_len(&der[at..]); // start of version INTEGER
+        assert_eq!(der[at], 0x02, "version is an INTEGER");
+        assert_eq!(der[at + 1], 0x01, "version length 1");
+        assert_eq!(der[at + 2], 0x01, "control: version is 1");
+        der[at + 2] = 0x03; // version := 3
+        assert!(
+            parse_cms(&der).is_err(),
+            "SignedData version 3 must be rejected"
+        );
     }
 }

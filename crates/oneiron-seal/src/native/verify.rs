@@ -138,13 +138,32 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 }
 
 /// Collect signature/timestamp dictionaries in revision order (earlier
-/// revisions cover fewer bytes). Discovery is by `/Type /Sig|DocTimeStamp`
-/// AND by the typeless interop shape (real-world signers omit the optional
-/// `/Type`). Typeless candidacy requires `/ByteRange`: dictionaries without
-/// it are never candidates, whatever `/Contents` holds — an ordinary `/Page`
-/// dictionary carries `/Contents` for its page content stream. A
-/// `/ByteRange` without `/Contents` is a partial signature shape: malformed
-/// input, never a silent skip.
+/// revisions cover fewer bytes). Discovery is by REACHABILITY: only
+/// dictionaries named by the catalog's `/AcroForm /Fields` field `/V` values
+/// are evaluated. A reachable field-`/V` candidate is then checked by
+/// `/Type /Sig|DocTimeStamp` AND by the typeless interop shape (real-world
+/// signers omit the optional `/Type`). Typeless candidacy requires
+/// `/ByteRange`: dictionaries without it are never candidates, whatever
+/// `/Contents` holds — an ordinary `/Page` dictionary carries `/Contents`
+/// for its page content stream. A `/ByteRange` without `/Contents` is a
+/// partial signature shape: malformed input, never a silent skip.
+///
+/// An orphaned signature-shaped dictionary (well-formed but unreferenced
+/// from `/Fields`) is NEVER evaluated: the malformed checks must bind the
+/// verdict only to bytes the verifier actually reaches — a hostile document
+/// must not wedge an honest document's verification by carrying
+/// never-referenced malformed signature-shaped baggage. A document whose
+/// only signature shape is orphan-bound is left with no evaluable CAdES
+/// signature and fails verification; a dangling or non-dictionary `/V`
+/// (partial field shape) is malformed input, never a silent skip.
+///
+/// When the catalog carries no `/AcroForm` at all, or the `/AcroForm` holds
+/// no `/Fields`, the document contains no reachable signature field: no
+/// candidates, no evaluation. A PRESENT `/AcroForm` that does not resolve
+/// to a dictionary, or whose `/Fields` does not resolve to an array, is
+/// malformed input (a hostile catalog must not dodge the malformed verdict
+/// by hiding broken form state); both dereferences are bounded and
+/// fail-closed through lopdf's chain limit.
 ///
 /// `/SubFilter` dispatch (fail-closed): a candidate is evaluated ONLY under
 /// the handler its `/SubFilter` names — `/Sig` requires
@@ -159,8 +178,47 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 /// laundered into CAdES candidacy through the typeless path.
 fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
     let mut out = Vec::new();
-    for obj in doc.objects.values() {
-        let Object::Dictionary(d) = obj else { continue };
+    let catalog = doc.catalog().map_err(|_| malformed_input())?;
+    let Ok(af_obj) = catalog.get(b"AcroForm") else {
+        return Ok(out);
+    };
+    let af = doc
+        .dereference(af_obj)
+        .map_err(|_| malformed_input())?
+        .1
+        .as_dict()
+        .map_err(|_| malformed_input())?;
+    let Ok(fields_obj) = af.get(b"Fields") else {
+        return Ok(out);
+    };
+    let fields = doc
+        .dereference(fields_obj)
+        .map_err(|_| malformed_input())?
+        .1
+        .as_array()
+        .map_err(|_| malformed_input())?;
+    for field in fields {
+        let field = doc
+            .dereference(field)
+            .map_err(|_| malformed_input())?
+            .1
+            .as_dict()
+            .map_err(|_| malformed_input())?;
+        // Signature-discovery looks only at SIGNATURE fields (/FT /Sig): a
+        // text/choice/button field carries an ordinary value /V (a draft
+        // string, an option index), never a signature dictionary, and must
+        // not trip the malformed gates below.
+        if !matches!(field.get(b"FT"), Ok(ft) if name_eq(ft, b"Sig")) {
+            continue;
+        }
+        let Ok(v) = field.get(b"V") else {
+            // An unfilled signature field (absent /V) is a legal AcroForm
+            // shape, never evaluated.
+            continue;
+        };
+        let Object::Dictionary(d) = doc.dereference(v).map_err(|_| malformed_input())?.1 else {
+            return Err(malformed_input());
+        };
         let is_doc_ts = match d.get(b"Type") {
             Ok(t) if name_eq(t, b"Sig") => {
                 if !matches!(d.get(b"SubFilter"), Ok(sf) if name_eq(sf, b"ETSI.CAdES.detached")) {
@@ -257,6 +315,15 @@ fn is_pdf_whitespace(b: u8) -> bool {
     matches!(b, 0x00 | 0x09 | 0x0A | 0x0C | 0x0D | 0x20)
 }
 
+/// Defense-in-depth cap on the post-whitespace-strip decoded `/Contents`:
+/// the decoded bytes live inside the document that carries them, so a
+/// decoded count larger than the input file is structurally impossible.
+/// Checked separately from the hex-digit count so a future reordering of
+/// `check_byte_range`'s clauses cannot silently admit an oversized claim.
+fn decoded_contents_within_input(decoded_len: usize, input_len: usize) -> bool {
+    decoded_len <= input_len
+}
+
 /// ByteRange shape, bounds, non-overlap, and exact `/Contents` exclusion.
 fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
     let [s1, l1, s2, l2] = e.byte_range;
@@ -291,6 +358,11 @@ fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
         .iter()
         .filter(|b| !is_pdf_whitespace(**b))
         .count();
+    // botfix7 P3: enforce the bytes cap on the decoded /Contents (defense
+    // in depth) after the whitespace strip has measured the digit count.
+    if !decoded_contents_within_input(e.contents.len(), bytes.len()) {
+        return false;
+    }
     hex_chars == e.contents.len() * 2
 }
 
@@ -1089,7 +1161,9 @@ fn ocsp_responder_authorized(
     issuer: &EmbeddedCert,
     at_unix: u64,
 ) -> bool {
+    use const_oid::AssociatedOid;
     use der::Decode;
+    use x509_cert::ext::pkix::KeyUsage;
     if responder.der == issuer.der {
         return true;
     }
@@ -1108,7 +1182,22 @@ fn ocsp_responder_authorized(
                         .is_ok_and(|eku| eku.0.iter().any(|o| o.as_bytes() == OID_OCSP_SIGNING))
             })
         });
-    time_valid && has_eku && issued_by(responder, issuer)
+    // botfix7 P2-1: a PRESENT KeyUsage must permit signing — symmetric with
+    // the signer-leaf / CRL-issuer gates. An ABSENT KeyUsage follows the
+    // same documented RFC 5280 §4.2.1.3 posture (unconstrained, passes).
+    let ku_permits_signing = responder
+        .cert
+        .tbs_certificate
+        .extensions
+        .as_ref()
+        .is_none_or(|exts| {
+            !exts.iter().any(|e| {
+                e.extn_id == KeyUsage::OID
+                    && KeyUsage::from_der(e.extn_value.as_bytes())
+                        .is_ok_and(|ku| !ku.digital_signature())
+            })
+        });
+    time_valid && has_eku && ku_permits_signing && issued_by(responder, issuer)
 }
 
 /// Does this candidate certificate match the BasicOCSPResponse responderID?
@@ -1600,6 +1689,23 @@ mod tests {
         not_before: (i32, u8, u8),
         not_after: (i32, u8, u8),
     ) -> TestCa {
+        ocsp_delegate_with_kus(
+            issuer,
+            cn,
+            not_before,
+            not_after,
+            vec![rcgen::KeyUsagePurpose::DigitalSignature],
+        )
+    }
+
+    /// `ocsp_delegate` with caller-chosen KeyUsage purposes.
+    fn ocsp_delegate_with_kus(
+        issuer: &TestCa,
+        cn: &str,
+        not_before: (i32, u8, u8),
+        not_after: (i32, u8, u8),
+        kus: Vec<rcgen::KeyUsagePurpose>,
+    ) -> TestCa {
         use p256::pkcs8::DecodePrivateKey;
         let key_pair = rcgen::KeyPair::generate().unwrap();
         let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
@@ -1607,7 +1713,7 @@ mod tests {
         params
             .distinguished_name
             .push(rcgen::DnType::CommonName, cn.to_string());
-        params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+        params.key_usages = kus;
         params.not_before = rcgen::date_time_ymd(not_before.0, not_before.1, not_before.2);
         params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
         let eku = cms::tlv(
@@ -2533,6 +2639,37 @@ mod tests {
     }
 
     #[test]
+    fn dss_ocsp_delegate_crl_sign_only_ku_fails() {
+        // botfix7 P2-1: a PRESENT delegate KeyUsage omitting
+        // digitalSignature (here: cRLSign-only) is unauthorized even with
+        // the OCSPSigning EKU — symmetric with the signer-leaf / CRL-issuer
+        // gates. The time-valid delegate with digitalSignature (the control
+        // above) still passes.
+        let ca = test_ca("dss-ca");
+        let delegate = ocsp_delegate_with_kus(
+            &ca,
+            "ocsp-delegate-nosig",
+            (2020, 1, 1),
+            (2030, 1, 1),
+            vec![rcgen::KeyUsagePurpose::CrlSign],
+        );
+        let ocsp = build_ocsp_full(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            Some(AT_UNIX + 3600),
+            x509_ocsp::CertStatus::good(),
+            AT_UNIX - 60,
+            &delegate,
+            true,
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
     fn tsp_token_without_content_type_attr_is_rejected() {
         // RFC 3161 §2.4.2: signedAttrs must carry content-type id-ct-TSTInfo.
         let tsa = tsa_ca();
@@ -2943,7 +3080,9 @@ mod tests {
         si.extend_from_slice(&alg_id(cms::OID_ECDSA_SHA256, false));
         si.extend_from_slice(&cms::tlv(0x04, &sig));
         let signer_info = cms::tlv(0x30, &si);
-        let mut sd = cms::tlv(0x02, &[3]);
+        // SignedData version 1: the shape this parser supports — single
+        // issuerAndSerialNumber signer, no CRL sets, no attribute certs.
+        let mut sd = cms::tlv(0x02, &[1]);
         // DER SET OF sorting: the SHA-1 AlgorithmIdentifier (30 09 ...)
         // encodes before SHA-256 (30 0D ...), so the weak entry lands first.
         let digest_algs = if extra_digest_alg {
@@ -3360,11 +3499,29 @@ mod tests {
             ocsps_der: Vec::new(),
             crls_der: vec![crl],
         };
-        // ts object first (m+1), then the DSS material (m+2..=dss_num).
-        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 2).unwrap();
+        // ts object first (m+1), then the DSS material (m+3..=dss_num);
+        // m+2 is the /FT /Sig field binding the doc-ts (botfix7 P1: only
+        // field-/V-reachable signature dictionaries are evaluated). The
+        // effective /AcroForm keeps its existing fields and gains the
+        // doc-ts field's reference — the field must also survive the NEXT
+        // production revision's register_field, which rewrites /Fields from
+        // the reparsed state (so the new reference must be IN the state).
+        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 3).unwrap();
         let (ts_body, br_rel, lt_rel) = doc_ts_body(64 * 1024);
+        let field_body =
+            format!("<< /FT /Sig /T (Span-DocTimeStamp) /V {} 0 R >>", m + 1).into_bytes();
         let cat_body = catalog_body(&state, Some(dss_num));
-        let mut objs: Vec<(u32, Vec<u8>)> = vec![(m + 1, ts_body)];
+        let af = state.acroform.unwrap();
+        let mut next_fields: Vec<String> = state
+            .acroform_fields
+            .iter()
+            .filter_map(|o| o.as_reference().ok())
+            .map(|r| format!("{} {} R", r.0, r.1))
+            .collect();
+        next_fields.push(format!("{} 0 R", m + 2));
+        let af_body = format!("<< /Fields [{}] /SigFlags 3 >>", next_fields.join(" ")).into_bytes();
+        let mut objs: Vec<(u32, Vec<u8>)> =
+            vec![(m + 1, ts_body), (m + 2, field_body), (af.0, af_body)];
         objs.append(&mut dss_objs);
         objs.push((state.root.0, cat_body));
         let filler1 = dss_num + 1;
@@ -3807,9 +3964,13 @@ mod tests {
         out[lt + 1..lt + 1 + hex.len()].copy_from_slice(hex.as_bytes());
     }
 
-    /// Hand-emit a one-object signature revision (no field/widget — the
-    /// native verifier discovers signatures by object scan) with a real CMS
-    /// over the ByteRange digest.
+    /// Hand-emit one signature revision anchored through the production
+    /// field-registration shape (the verifier discovers signatures through
+    /// /AcroForm /Fields → field /V — botfix7 P1). The fixed-up revision is
+    /// signature-shaped from the base input: fresh sig-dict bytes (the
+    /// caller's shape), a field binding that dict by /V, and the AcroForm
+    /// registration + catalog link on this revision, so the collected
+    /// ByteRange measures the full final document.
     fn crafted_sig_revision(name: &str, typed: bool, spaced_hex: bool) -> (Vec<u8>, TestCa) {
         let signer = test_ca(name);
         let input = base_input();
@@ -3817,7 +3978,27 @@ mod tests {
         let capacity = 64 * 1024;
         let (body, br_rel, lt_rel) = sig_body_shaped(capacity, typed);
         let sig_num = state.max_obj + 1;
-        let (mut bytes, written) = emit_revision(&input, &state, &[(sig_num, body)], None);
+        let field_num = sig_num + 1;
+        let field = format!("<< /FT /Sig /T ({name}) /V {sig_num} 0 R >>");
+        let acroform = format!("<< /Fields [{field_num} 0 R] /SigFlags 3 >>");
+        let pages = state
+            .root_dict
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .unwrap();
+        let catalog = format!(
+            "<< /Type /Catalog /Pages {} {} R /AcroForm {} 0 R >>",
+            pages.0,
+            pages.1,
+            state.max_obj + 3
+        );
+        let objs = vec![
+            (sig_num, body),
+            (field_num, field.into_bytes()),
+            (state.max_obj + 3, acroform.into_bytes()),
+            (state.root.0, catalog.into_bytes()),
+        ];
+        let (mut bytes, written) = emit_revision(&input, &state, &objs, None);
         let (_, _, body_start) = written.iter().find(|w| w.0 == sig_num).copied().unwrap();
         let lt = (body_start as usize) + lt_rel;
         let gt = lt + 1 + capacity * 2;
@@ -3862,6 +4043,90 @@ mod tests {
             "typeless signature doc must verify: {report:?}"
         );
         assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineB));
+    }
+
+    #[test]
+    fn orphan_malformed_sig_dict_does_not_block_reachable_pin() {
+        // botfix7 P1: a REACHABLE malformed partial shape (no /Contents)
+        // still errors — the gate binds reached dictionaries only. An
+        // unreachable copy of the same shape beside it is not consulted.
+        let mut doc = Document::with_version("1.4");
+        let mut partial = lopdf::Dictionary::new();
+        partial.set(
+            "ByteRange",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(1),
+                Object::Integer(2),
+                Object::Integer(3),
+            ]),
+        );
+        let reachable_id = doc.add_object(Object::Dictionary(partial.clone()));
+        // The unreachable twin: identical shape, never named by any field.
+        doc.add_object(Object::Dictionary(partial));
+        let mut field = lopdf::Dictionary::new();
+        field.set("FT", Object::Name(b"Sig".to_vec()));
+        field.set("V", Object::Reference(reachable_id));
+        let field_id = doc.add_object(Object::Dictionary(field));
+        let mut af = lopdf::Dictionary::new();
+        af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
+        let af_id = doc.add_object(Object::Dictionary(af));
+        let mut pages = lopdf::Dictionary::new();
+        pages.set("Type", Object::Name(b"Pages".to_vec()));
+        pages.set("Kids", Object::Array(vec![]));
+        pages.set("Count", Object::Integer(0));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+        let mut catalog = lopdf::Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        catalog.set("AcroForm", Object::Reference(af_id));
+        let cat_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+        assert!(
+            collect_signatures(&doc).is_err(),
+            "the reachable partial shape must still be judged malformed"
+        );
+    }
+
+    #[test]
+    fn orphan_only_sig_dict_leaves_no_evaluable_signature() {
+        // botfix7 P1: a document whose ONLY signature shape is orphan-bound
+        // has no evaluable CAdES signature — collect_signatures yields no
+        // evaluable candidates and the document fails verification (the
+        // pin is at the collection boundary the seal-side verdict reads).
+        let mut doc = Document::with_version("1.4");
+        let mut orphan = lopdf::Dictionary::new();
+        orphan.set("Type", Object::Name(b"Sig".to_vec()));
+        orphan.set("SubFilter", Object::Name(b"ETSI.CAdES.detached".to_vec()));
+        orphan.set(
+            "ByteRange",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(1),
+                Object::Integer(2),
+                Object::Integer(3),
+            ]),
+        );
+        orphan.set(
+            "Contents",
+            Object::String(vec![0xAB], lopdf::StringFormat::Hexadecimal),
+        );
+        doc.add_object(Object::Dictionary(orphan));
+        let mut pages = lopdf::Dictionary::new();
+        pages.set("Type", Object::Name(b"Pages".to_vec()));
+        pages.set("Kids", Object::Array(vec![]));
+        pages.set("Count", Object::Integer(0));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+        let mut catalog = lopdf::Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        let cat_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+        let found = collect_signatures(&doc).unwrap();
+        assert!(
+            found.is_empty(),
+            "an orphan signature-shaped dict is never evaluated"
+        );
     }
 
     #[test]
@@ -3923,22 +4188,73 @@ mod tests {
         assert!(!check_byte_range(bytes, &long));
     }
 
+    #[test]
+    fn byte_range_rejects_oversized_decoded_contents() {
+        // botfix7 P3: the post-whitespace-strip decoded /Contents count is
+        // capped at the input size — a /Contents claim larger than the
+        // document it lives inside is structurally impossible, and must
+        // fail the gate before any hex-length comparison.
+        let bytes = b"xx<AB CD>yy";
+        let oversized = SigEntry {
+            is_doc_ts: false,
+            byte_range: [0, 2, 9, 2],
+            contents: vec![0u8; bytes.len() + 1],
+        };
+        assert!(
+            !check_byte_range(bytes, &oversized),
+            "decoded /Contents past the input size must be rejected"
+        );
+        // Composition pin: the cap helper itself rejects decoded_len > input
+        // (the hex-digit gate alone cannot observe an oversized claim when
+        // it also fails the digit count, so the helper is probed directly).
+        assert!(!decoded_contents_within_input(bytes.len() + 1, bytes.len()));
+        assert!(decoded_contents_within_input(bytes.len(), bytes.len()));
+    }
+
     // --- bot-fix leg 4 pins -------------------------------------------------
+
+    /// Field-anchored reachability for the leg-3b orphan-scan pins: the
+    /// added dictionaries stay reachable (the document keeps its catalog /
+    /// AcroForm /Fields path) but the added dicts themselves are never
+    /// named by any field `/V`, so they are never evaluated. Returns the
+    /// document plus the id of every added (orphan) object.
+    fn doc_with_orphans(dicts: Vec<lopdf::Dictionary>) -> (Document, Vec<lopdf::ObjectId>) {
+        let mut doc = Document::with_version("1.4");
+        let field_id = doc.add_object(Object::Dictionary(lopdf::Dictionary::new()));
+        let mut af = lopdf::Dictionary::new();
+        af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
+        let af_id = doc.add_object(Object::Dictionary(af));
+        let mut pages = lopdf::Dictionary::new();
+        pages.set("Type", Object::Name(b"Pages".to_vec()));
+        pages.set("Kids", Object::Array(vec![]));
+        pages.set("Count", Object::Integer(0));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+        let mut catalog = lopdf::Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        catalog.set("AcroForm", Object::Reference(af_id));
+        let cat_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(cat_id));
+        let ids = dicts
+            .into_iter()
+            .map(|d| doc.add_object(Object::Dictionary(d)))
+            .collect();
+        (doc, ids)
+    }
 
     #[test]
     fn contents_without_byte_range_is_never_a_signature_candidate() {
         // P1-1: ordinary /Page dictionaries carry /Contents (the page
         // content stream) without /ByteRange — typeless candidacy requires
         // /ByteRange, so these must be IGNORED, never rejected as malformed
-        // (leg 3b's XOR gate false-rejected every non-blank page).
-        let mut doc = Document::with_version("1.4");
+        // (leg 3b's XOR gate false-rejected every non-blank page). Neither
+        // dictionary is a field /V: both are orphaned, hence unexamined.
         let mut page = lopdf::Dictionary::new();
         page.set("Type", Object::Name(b"Page".to_vec()));
         page.set("Contents", Object::Reference((42, 0)));
-        doc.add_object(Object::Dictionary(page));
         let mut bare = lopdf::Dictionary::new();
         bare.set("Contents", Object::string_literal(b"BT ET".to_vec()));
-        doc.add_object(Object::Dictionary(bare));
+        let (doc, _) = doc_with_orphans(vec![page, bare]);
         let found = collect_signatures(&doc).unwrap();
         assert!(found.is_empty(), "page /Contents is not a signature");
     }
@@ -3946,10 +4262,11 @@ mod tests {
     #[test]
     fn byte_range_without_contents_stays_malformed() {
         // P1-1 rejection pin: a /ByteRange dictionary with no /Contents is
-        // a partial signature shape — malformed, never a silent skip.
-        let mut doc = Document::with_version("1.4");
-        let mut d = lopdf::Dictionary::new();
-        d.set(
+        // a partial signature shape — malformed, never a silent skip. The
+        // signature shape must be REACHABLE to be judged (botfix7 P1): it
+        // rides a field /V, so the malformed gate binds it.
+        let mut partial = lopdf::Dictionary::new();
+        partial.set(
             "ByteRange",
             Object::Array(vec![
                 Object::Integer(0),
@@ -3958,7 +4275,26 @@ mod tests {
                 Object::Integer(3),
             ]),
         );
-        doc.add_object(Object::Dictionary(d));
+        let mut doc = Document::with_version("1.4");
+        let sig_id = doc.add_object(Object::Dictionary(partial));
+        let mut field = lopdf::Dictionary::new();
+        field.set("FT", Object::Name(b"Sig".to_vec()));
+        field.set("V", Object::Reference(sig_id));
+        let field_id = doc.add_object(Object::Dictionary(field));
+        let mut af = lopdf::Dictionary::new();
+        af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
+        let af_id = doc.add_object(Object::Dictionary(af));
+        let mut pages = lopdf::Dictionary::new();
+        pages.set("Type", Object::Name(b"Pages".to_vec()));
+        pages.set("Kids", Object::Array(vec![]));
+        pages.set("Count", Object::Integer(0));
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+        let mut catalog = lopdf::Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        catalog.set("AcroForm", Object::Reference(af_id));
+        let cat_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(cat_id));
         assert!(collect_signatures(&doc).is_err());
     }
 
@@ -3968,6 +4304,9 @@ mod tests {
         // names; absent/foreign SubFilter on a typed dict is skipped, never
         // evaluated as CAdES.
         fn doc_with(type_name: Option<&[u8]>, subfilter: Option<&[u8]>) -> Document {
+            // Each dictionary rides a field /V so every row REACHES the
+            // dispatch (botfix7 P1); /SubFilter discriminates with the
+            // signature shape already satisfied.
             let mut doc = Document::with_version("1.4");
             let mut d = lopdf::Dictionary::new();
             if let Some(t) = type_name {
@@ -3989,7 +4328,25 @@ mod tests {
                 "Contents",
                 Object::String(vec![0u8; 2], lopdf::StringFormat::Hexadecimal),
             );
-            doc.add_object(Object::Dictionary(d));
+            let sig_id = doc.add_object(Object::Dictionary(d));
+            let mut field = lopdf::Dictionary::new();
+            field.set("FT", Object::Name(b"Sig".to_vec()));
+            field.set("V", Object::Reference(sig_id));
+            let field_id = doc.add_object(Object::Dictionary(field));
+            let mut af = lopdf::Dictionary::new();
+            af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
+            let af_id = doc.add_object(Object::Dictionary(af));
+            let mut pages = lopdf::Dictionary::new();
+            pages.set("Type", Object::Name(b"Pages".to_vec()));
+            pages.set("Kids", Object::Array(vec![]));
+            pages.set("Count", Object::Integer(0));
+            let pages_id = doc.add_object(Object::Dictionary(pages));
+            let mut catalog = lopdf::Dictionary::new();
+            catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+            catalog.set("Pages", Object::Reference(pages_id));
+            catalog.set("AcroForm", Object::Reference(af_id));
+            let cat_id = doc.add_object(Object::Dictionary(catalog));
+            doc.trailer.set("Root", Object::Reference(cat_id));
             doc
         }
         let cades: &[u8] = b"ETSI.CAdES.detached";
@@ -4048,6 +4405,8 @@ mod tests {
         // /ByteRange + /Contents dictionary is skipped, never evaluated as
         // CAdES through the typeless path.
         fn doc_with_type_obj(type_obj: Option<Object>, subfilter: Option<&[u8]>) -> Document {
+            // Each dictionary rides a field /V so the row reaches the /Type
+            // dispatch (botfix7 P1).
             let mut doc = Document::with_version("1.4");
             let mut d = lopdf::Dictionary::new();
             if let Some(t) = type_obj {
@@ -4069,7 +4428,25 @@ mod tests {
                 "Contents",
                 Object::String(vec![0u8; 2], lopdf::StringFormat::Hexadecimal),
             );
-            doc.add_object(Object::Dictionary(d));
+            let sig_id = doc.add_object(Object::Dictionary(d));
+            let mut field = lopdf::Dictionary::new();
+            field.set("FT", Object::Name(b"Sig".to_vec()));
+            field.set("V", Object::Reference(sig_id));
+            let field_id = doc.add_object(Object::Dictionary(field));
+            let mut af = lopdf::Dictionary::new();
+            af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
+            let af_id = doc.add_object(Object::Dictionary(af));
+            let mut pages = lopdf::Dictionary::new();
+            pages.set("Type", Object::Name(b"Pages".to_vec()));
+            pages.set("Kids", Object::Array(vec![]));
+            pages.set("Count", Object::Integer(0));
+            let pages_id = doc.add_object(Object::Dictionary(pages));
+            let mut catalog = lopdf::Dictionary::new();
+            catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+            catalog.set("Pages", Object::Reference(pages_id));
+            catalog.set("AcroForm", Object::Reference(af_id));
+            let cat_id = doc.add_object(Object::Dictionary(catalog));
+            doc.trailer.set("Root", Object::Reference(cat_id));
             doc
         }
         // /Type /Foo with the interop shape (absent SubFilter): skipped.
