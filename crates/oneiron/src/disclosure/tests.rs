@@ -2912,68 +2912,12 @@ fn clearance_racing_into_the_purge_window_is_honored() -> Result<()> {
     Ok(())
 }
 
-/// P2 REGRESSION (fix-5) — THE TWO DESTRUCTIVE PHASES SHARE ONE COMMIT.
-///
-/// The racing tests above prove the OUTCOME (a refusal leaves no damage) but
-/// only by racing; this one pins the SHAPE the outcome depends on, so a future
-/// re-split is caught by construction rather than by a flaky assertion.
-///
-/// `GdprDelete`/`PolicyDelete` erase in two phases: a SoftErase that truncates
-/// the body, then a purge that tears the rows. While those phases were two
-/// TRANSACTIONS the SoftErase committed first, so a stamp or clearance landing
-/// in the gap produced a refusal over a body that was ALREADY destroyed — a
-/// partial destructive delete with the caller told nothing happened.
-///
-/// The probe reads the entity from another thread at the exact phase boundary,
-/// where the deleter is fenced while holding the write lock. LMDB readers never
-/// block on that lock, so the read returns the last COMMITTED state. One
-/// transaction ⇒ the erase phase is invisible and the body is whole. Two
-/// transactions ⇒ the same read returns the 25 B shell.
-#[test]
-fn destructive_delete_phases_share_one_commit() -> Result<()> {
-    for reason in [
-        crate::DeleteReason::GdprDelete,
-        crate::DeleteReason::PolicyDelete,
-    ] {
-        let (_tmp, vault) = temp_vault();
-        let facet = test_id(0xD1);
-        put_facet(&vault, &facet);
-        let body_before = vault.get(&facet)?.expect("facet body before");
-        assert!(!body_before.is_empty(), "fixture has a real body");
-
-        let (released_tx, released_rx) = std::sync::mpsc::sync_channel::<()>(0);
-        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(0);
-        crate::deletion::install_between_destructive_phases_fence(released_tx, resume_rx);
-        let vault = &vault;
-        let observed = std::thread::scope(|scope| -> Result<Option<Vec<u8>>> {
-            let deleter = scope.spawn(move || vault.delete_entity_with_reason(&facet, reason));
-            // The deleter has finished its erase phase and is fenced at the
-            // boundary, holding the write lock, before the purge.
-            released_rx
-                .recv()
-                .expect("deleter must reach the phase boundary");
-            let observed = vault.get(&facet)?;
-            // Release the deleter into the purge.
-            resume_tx.send(()).expect("deleter must still be fenced");
-            let outcome = deleter
-                .join()
-                .expect("deleter thread must not panic")
-                .expect("an ungated delete of a bare facet succeeds");
-            assert!(outcome.existed, "the delete erased the facet");
-            Ok(observed)
-        })?;
-
-        assert_eq!(
-            observed.as_deref(),
-            Some(body_before.as_slice()),
-            "at the phase boundary NOTHING destructive is committed yet — \
-             a truncated body here means the phases were re-split into two commits"
-        );
-        // And the completed delete is unaffected by the fence.
-        assert!(vault.get_entity_type(&facet)?.is_none(), "entity gone");
-    }
-    Ok(())
-}
+// The fix-5 shape pin (`destructive_delete_phases_share_one_commit`) does not
+// cross the splice: the landed fix-legs 8..10 keep soft-erase and purge as
+// SEPARATE transactions (see the splice note in `deletion.rs`), and the racing
+// tests above pin the no-damage-on-refusal outcome directly — the scrub txn's
+// in-txn facet-state gate is what closes the window the one-commit shape closed
+// by construction. The `BeforeHardPurge` rendezvous pins the boundary itself.
 // ─── ONE-1646 fix leg 6: the gate's unknown-type arm + mirror custody ───────
 
 /// P1 REGRESSION — A HEADERLESS ID STILL CANNOT BE UNSTAMPED BY DELETION.

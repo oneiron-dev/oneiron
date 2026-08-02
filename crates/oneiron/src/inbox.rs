@@ -1079,6 +1079,7 @@ fn accept_member_in_txn(
         grant_ref: Some(bundle_ref.to_owned()),
         diff_handle: pending.diff_handle,
         read_frontier_hash: pending.read_frontier_hash,
+        redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(wtxn, &record)?;
     Ok(Some(record))
@@ -1130,6 +1131,7 @@ fn append_bundle_decision_in_txn(
         read_frontier_hash: basis
             .first()
             .map_or([0; 32], |record| record.read_frontier_hash),
+        redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(wtxn, &record)?;
     Ok(record)

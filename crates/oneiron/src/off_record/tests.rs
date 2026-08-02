@@ -143,6 +143,7 @@ fn floor_gate_decision() -> GateDecisionRecord {
         grant_ref: None,
         diff_handle: vec![0xA5],
         read_frontier_hash: [0xB6; 32],
+        redacted_at: None,
     }
 }
 

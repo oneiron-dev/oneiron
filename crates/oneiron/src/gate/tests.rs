@@ -5883,6 +5883,7 @@ fn gate_ledger_accepts_only_pinned_receipt_reason_prefix_families() {
                     grant_ref: None,
                     diff_handle: vec![0xAA],
                     read_frontier_hash: [0; 32],
+                    redacted_at: None,
                 },
             )
         })

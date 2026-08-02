@@ -11,6 +11,15 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Inverse of [`hex`], for decoding pinned golden vectors back to bytes.
+fn hex_bytes(text: &str) -> Vec<u8> {
+    assert!(text.len().is_multiple_of(2), "hex literal must be even");
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+        .collect()
+}
+
 fn ed_key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }
@@ -490,6 +499,87 @@ fn legacy_genesis_without_pending_delay_decodes_with_default_and_old_hash() {
     assert_eq!(genesis_vault_id(&decoded).unwrap(), legacy_hash);
 }
 
+/// ONE-1604-D1 T5: the type-122 store key is pinned to the first 16 bytes of
+/// the entry's BLAKE3 hash, and survives an encode/decode round trip. The
+/// genesis corollary: a genesis row's entity id is the first 16 bytes of the
+/// vault id, since `genesis_vault_id == authority_entry_hash(genesis)`.
+#[test]
+fn authority_log_entity_id_is_first_sixteen_bytes_of_entry_hash() {
+    let signing = ed_key(96);
+    let key = authority_key_from_ed(&signing);
+    let op = AuthorityOp::Genesis {
+        device: device(
+            key.clone(),
+            ROLE_OWNER | ROLE_ADMIN,
+            AuthorityTier::Software,
+        ),
+        genesis_nonce: [96; 32],
+        tier_floor: AuthorityTier::Software,
+        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    };
+    let genesis = sign_ed(unsigned_entry(None, 0, Vec::new(), op, key, 1), &signing);
+    let hash = authority_entry_hash(&genesis).unwrap();
+
+    let id = authority_log_entity_id(&genesis).unwrap();
+    assert_eq!(id.as_bytes(), &hash[..16]);
+    assert_eq!(
+        id.as_bytes(),
+        &genesis_vault_id(&genesis).unwrap()[..16],
+        "a genesis row's store key is the first 16 bytes of the vault id"
+    );
+
+    let encoded = encode_authority_log_entry_body(&genesis).unwrap();
+    let decoded = decode_authority_log_entry_body(&encoded).unwrap();
+    assert_eq!(
+        authority_log_entity_id(&decoded).unwrap(),
+        id,
+        "the derived store key must survive an encode/decode round trip"
+    );
+    assert_eq!(authority_log_entity_id_from_hash(&hash).unwrap(), id);
+}
+
+/// ONE-1604-D1 T5b: the derived store key is stable for a legacy-signed
+/// genesis, whose hash is taken over the LEGACY signed bytes rather than the
+/// current canonical encoding. Only the legacy bytes carry a verifying
+/// signature, so only they decode — the current re-encoding of the same entry
+/// is refused at body validation and can never reach a door under this key.
+/// That is why the key==hash bind alone determines admissibility here, and
+/// the append-only guard behind it stays defense-in-depth.
+#[test]
+fn legacy_signed_genesis_derives_a_stable_store_key_from_its_legacy_bytes() {
+    let signing = ed_key(97);
+    let key = authority_key_from_ed(&signing);
+    let op = AuthorityOp::Genesis {
+        device: device(
+            key.clone(),
+            ROLE_OWNER | ROLE_ADMIN,
+            AuthorityTier::Software,
+        ),
+        genesis_nonce: [97; 32],
+        tier_floor: AuthorityTier::Software,
+        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    };
+    let legacy = sign_ed_legacy_genesis(unsigned_entry(None, 0, Vec::new(), op, key, 1), &signing);
+    let legacy_encoded =
+        encode_value(&entry_value_with_genesis_delay(&legacy, true, false)).unwrap();
+    let current_encoded = encode_authority_log_entry_body(&legacy).unwrap();
+
+    assert_ne!(
+        legacy_encoded, current_encoded,
+        "the two encodings must genuinely differ for this to be a divergence case"
+    );
+    let decoded = decode_authority_log_entry_body(&legacy_encoded).unwrap();
+    assert_eq!(
+        authority_log_entity_id(&decoded).unwrap(),
+        authority_log_entity_id(&legacy).unwrap(),
+        "the legacy bytes decode to an entry with the same derived store key"
+    );
+    assert!(
+        decode_authority_log_entry_body(&current_encoded).is_err(),
+        "the current re-encoding carries no verifying signature, so no door admits it"
+    );
+}
+
 #[test]
 fn genesis_rejects_pending_widen_delay_outside_ceremony_band() {
     let signing = ed_key(80);
@@ -559,6 +649,63 @@ fn authority_clock_domain_release_drops_process_local_state() {
     assert_eq!(
         reset, 10,
         "released clock domains must not keep process-local state"
+    );
+    release_authority_clock_domain(domain);
+}
+
+/// fix-leg 5 item 2: sub-second remainders must NOT be discarded.
+///
+/// `Duration::as_secs` truncates, so a per-call anchor reset banks a zero every
+/// time two folds land inside the same wall second — a sustained >1 Hz readonly
+/// fold would then freeze `now_secs` at its first observation and stall every
+/// veto delay. The anchor is stable, so real elapsed time crosses the boundary.
+#[test]
+fn sub_second_readonly_folds_still_advance_the_observed_clock() {
+    let domain = 0x1325_0004;
+    let first = authority_observation_secs_for_domain(domain, 0, 1_000);
+    assert_eq!(first, 1_000);
+
+    // Six sub-second calls inside one ~0.6 s window: each measures a truncated
+    // ZERO elapsed second and must leave the anchor alone.
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(
+            authority_observation_secs_for_domain(domain, first, 1_000),
+            first,
+            "a sub-second call must not advance the whole-second observation"
+        );
+    }
+    // Total real elapsed time is now > 1 s from the ORIGINAL anchor. With a
+    // per-call reset every one of those 100 ms gaps truncated to zero and this
+    // assert reads 1_000; with a stable anchor it reads 1_001.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, first, 1_000),
+        first + 1,
+        "sub-second remainders must accumulate: ~1.1 s of real time crosses a second boundary"
+    );
+    release_authority_clock_domain(domain);
+}
+
+/// The rebase half of the same anchor: a persisted floor ABOVE the
+/// anchor-derived value re-origins the clock (monotone upward), and the next
+/// call then advances from the NEW origin rather than from the stale one.
+#[test]
+fn persisted_floor_lift_rebases_the_authority_clock_anchor() {
+    let domain = 0x1325_0005;
+    let first = authority_observation_secs_for_domain(domain, 0, 1_000);
+    assert_eq!(first, 1_000);
+
+    // Another writer advanced the persisted floor well past this anchor.
+    let lifted = authority_observation_secs_for_domain(domain, 5_000, 1_000);
+    assert_eq!(lifted, 5_000, "a floor above the anchor must lift it");
+
+    // The lifted value is now the origin: a lower floor cannot pull it back,
+    // and elapsed time counts from the lift, not from the original anchor.
+    let held = authority_observation_secs_for_domain(domain, 0, 1_000);
+    assert_eq!(
+        held, lifted,
+        "the rebased anchor is monotone: a lower floor never moves it backward"
     );
     release_authority_clock_domain(domain);
 }
@@ -781,6 +928,8 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_grant_bindings: BTreeMap::new(),
+        actor_bindings: BTreeMap::new(),
+        actor_binding_revocations: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     let entry = cosign_ed(
@@ -852,6 +1001,8 @@ fn single_owner_state(seed: u8) -> (SigningKey, AuthorityKey, AuthorityEntryHash
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_grant_bindings: BTreeMap::new(),
+        actor_bindings: BTreeMap::new(),
+        actor_binding_revocations: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     (owner, owner_key, parent, state)
@@ -7464,6 +7615,8 @@ fn fold_state_with_pact(fixture: &PactFixture, status: Option<FederationPactStat
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_grant_bindings: BTreeMap::new(),
+        actor_bindings: BTreeMap::new(),
+        actor_binding_revocations: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key, 0)]),
     };
     if let Some(status) = status {
@@ -7956,18 +8109,11 @@ fn lifecycle_entries_use_existing_type_122_doors() {
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
     let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
 
-    let genesis_id = scope_entity(0x51);
-    let connect_id = scope_entity(0x52);
     vault
-        .put_authority_log_entry(
-            &genesis_id,
-            &fixture.genesis,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .put_authority_log_entry(&fixture.genesis, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
-    vault
-        .put_authority_log_entry(&connect_id, &connect, TimeRange { start: 2, end: 2 }, 2)
+    let connect_id = vault
+        .put_authority_log_entry(&connect, TimeRange { start: 2, end: 2 }, 2)
         .unwrap();
     assert_eq!(
         vault.get_authority_log_entry(&connect_id).unwrap(),
@@ -8516,4 +8662,2871 @@ fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
         authority_key_from_ed(&fixture.peer).min(authority_key_from_ed(&other_peer))
     );
     assert_eq!(pact.pact_scope, fixture.scope);
+}
+
+// ── S-AUTH3: actor-binding ops (ONE-1633 / ONE-1604-D2) ──────────────────
+
+/// A rooted two-key vault: `owner` carries OWNER|ADMIN, `agent` is an enrolled
+/// ROLE_AGENT software key. Two active roster keys means every non-genesis op
+/// needs a peer cosign, which is exactly the shape the bind ops ship into.
+struct BindFixture {
+    owner: SigningKey,
+    agent: SigningKey,
+    owner_key: AuthorityKey,
+    agent_key: AuthorityKey,
+    vault_id: AuthorityVaultId,
+    genesis: AuthorityLogEntry,
+    enroll: AuthorityLogEntry,
+    actor: EntityId,
+}
+
+fn bind_fixture(seed: u8) -> BindFixture {
+    let genesis = genesis_entry(seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 100);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let owner = ed_key(seed);
+    let agent = ed_key(seed.wrapping_add(1));
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: seed.wrapping_add(1),
+            roles: ROLE_AGENT,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 101,
+        },
+    );
+    BindFixture {
+        owner_key: authority_key_from_ed(&owner),
+        agent_key: authority_key_from_ed(&agent),
+        owner,
+        agent,
+        vault_id,
+        genesis,
+        enroll,
+        actor: scope_entity(seed),
+    }
+}
+
+/// Signs an owner op onto `parents` with the agent as peer cosigner — the
+/// two-key roster makes a cosign mandatory for every non-genesis op.
+fn cosigned_entry(
+    fixture: &BindFixture,
+    parents: Vec<AuthorityEntryHash>,
+    seq: u64,
+    op: AuthorityOp,
+    ts: u64,
+) -> AuthorityLogEntry {
+    let entry = unsigned_entry(
+        Some(fixture.vault_id),
+        seq,
+        parents,
+        op,
+        fixture.owner_key.clone(),
+        ts,
+    );
+    cosign_ed(entry, &fixture.owner, &fixture.agent)
+}
+
+fn bind_op(key: &AuthorityKey, actor: EntityId, class: &str, epoch: u64) -> AuthorityOp {
+    AuthorityOp::BindActor {
+        authority_key: key.clone(),
+        actor_ref: actor,
+        actor_class: class.to_owned(),
+        epoch,
+    }
+}
+
+fn rebind_op(key: &AuthorityKey, actor: EntityId, class: &str, epoch: u64) -> AuthorityOp {
+    AuthorityOp::RebindActor {
+        authority_key: key.clone(),
+        actor_ref: actor,
+        actor_class: class.to_owned(),
+        epoch,
+    }
+}
+
+fn revoke_actor_op(key: &AuthorityKey, epoch: u64) -> AuthorityOp {
+    AuthorityOp::RevokeActor {
+        authority_key: key.clone(),
+        epoch,
+    }
+}
+
+/// The rejection reason recorded for `entry`, if the fold refused it.
+fn binding_rejection(
+    fold: &AuthorityFold,
+    entry: &AuthorityLogEntry,
+) -> Option<ActorBindingRejection> {
+    let hash = authority_entry_hash(entry).unwrap();
+    fold.issues.iter().find_map(|issue| match issue {
+        AuthorityFoldIssue::ActorBindingRejected {
+            entry: rejected,
+            reason,
+        } if *rejected == hash => Some(*reason),
+        _ => None,
+    })
+}
+
+#[test]
+fn bind_rebind_revoke_ops_roundtrip_and_golden_vectors() {
+    let fixture = bind_fixture(200);
+    let key = fixture.owner_key.clone();
+    let actor = fixture.actor;
+    for op in [
+        bind_op(&key, actor, "human", 1),
+        rebind_op(&key, actor, "agent", 2),
+        revoke_actor_op(&key, 3),
+    ] {
+        let decoded = decode_op(&op_value_with_genesis_delay(&op, true)).unwrap();
+        assert_eq!(
+            decoded, op,
+            "op must survive a canonical encode/decode cycle"
+        );
+    }
+
+    // GOLDEN BYTE VECTORS — literal MessagePack captured from the reviewed
+    // encoder, NOT re-derived from it. Comparing structure against the current
+    // encoder passes vacuously under any encoding change; these bytes do not.
+    //
+    // Pinned wire contract, decodable straight out of the hex below:
+    //   bind/rebind: fixmap(5) {kind, authority_key, actor_ref, actor_class, epoch}
+    //   revoke:      fixmap(3) {kind, authority_key, epoch}
+    //   kind:          "bind_actor" | "rebind_actor" | "revoke_actor"
+    //   authority_key: fixmap(2) {suite: "ed25519", public_key: bin8(32)}
+    //   actor_ref:     str8, 32 lowercase hex chars (the grant_ref precedent)
+    //   actor_class:   str, EXACT ("human"/"agent"/"system" — never normalized)
+    //   epoch:         positive fixint
+    // Changing ANY of field order, key spelling, map arity, or a value's
+    // MessagePack type breaks these vectors, which is the entire point.
+    //
+    // Fixture inputs the vectors were captured against; pinned so a fixture
+    // drift reports itself here instead of as an opaque byte mismatch.
+    assert_eq!(
+        key,
+        AuthorityKey::Ed25519(
+            <[u8; 32]>::try_from(
+                hex_bytes("97ffc883c80bee7237ef95d9b9b703d4ad63e60a21e605867682b75b8b3f4303")
+                    .as_slice()
+            )
+            .unwrap()
+        )
+    );
+    assert_eq!(actor.to_hex(), "c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8");
+    for (label, op, golden) in [
+        (
+            "bind_actor",
+            bind_op(&key, actor, "human", 1),
+            concat!(
+                "85a46b696e64aa62696e645f6163746f72ad617574686f726974795f6b657982",
+                "a57375697465a765643235353139aa7075626c69635f6b6579c42097ffc883c8",
+                "0bee7237ef95d9b9b703d4ad63e60a21e605867682b75b8b3f4303a96163746f",
+                "725f726566d92063386338633863386338633863386338633863386338633863",
+                "38633863386338ab6163746f725f636c617373a568756d616ea565706f636801",
+            ),
+        ),
+        (
+            "rebind_actor",
+            rebind_op(&key, actor, "agent", 2),
+            concat!(
+                "85a46b696e64ac726562696e645f6163746f72ad617574686f726974795f6b65",
+                "7982a57375697465a765643235353139aa7075626c69635f6b6579c42097ffc8",
+                "83c80bee7237ef95d9b9b703d4ad63e60a21e605867682b75b8b3f4303a96163",
+                "746f725f726566d9206338633863386338633863386338633863386338633863",
+                "386338633863386338ab6163746f725f636c617373a56167656e74a565706f63",
+                "6802",
+            ),
+        ),
+        (
+            "revoke_actor",
+            revoke_actor_op(&key, 3),
+            concat!(
+                "83a46b696e64ac7265766f6b655f6163746f72ad617574686f726974795f6b65",
+                "7982a57375697465a765643235353139aa7075626c69635f6b6579c42097ffc8",
+                "83c80bee7237ef95d9b9b703d4ad63e60a21e605867682b75b8b3f4303a56570",
+                "6f636803",
+            ),
+        ),
+    ] {
+        let encoded = encode_value(&op_value_with_genesis_delay(&op, true)).unwrap();
+        assert_eq!(
+            hex(&encoded),
+            golden,
+            "{label} encoding drifted from its golden vector"
+        );
+        // The vector is also a DECODE fixture: these exact bytes must still
+        // parse back to the op, so a decoder that only understands the new
+        // encoding cannot pass by changing both sides together.
+        assert_eq!(
+            decode_op(
+                &rmpv::decode::read_value(&mut Cursor::new(hex_bytes(golden).as_slice())).unwrap()
+            )
+            .unwrap(),
+            op,
+            "{label} golden bytes must decode back to the op"
+        );
+    }
+
+    // Unknown discriminants still fail closed: a pre-1633 binary rejecting a
+    // bind body is the correct pre-release behavior, and the reverse (this
+    // binary meeting a future kind) must stay a hard error, never a silent
+    // default.
+    let mut unknown = op_value_with_genesis_delay(&bind_op(&key, actor, "human", 1), true)
+        .as_map()
+        .unwrap()
+        .clone();
+    unknown[0].1 = Value::from("bind_actor_v2");
+    assert_eq!(
+        decode_op(&Value::Map(unknown)).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidAuthorityLogBody
+    );
+
+    // Signed-entry hash stability: the bind entry round-trips through the
+    // canonical body encoder with an unchanged content hash.
+    let entry = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&fixture.enroll).unwrap()],
+        2,
+        bind_op(&key, actor, "human", 1),
+        102,
+    );
+    let bytes = encode_authority_log_entry_body(&entry).unwrap();
+    let round_tripped = decode_authority_log_entry_body(&bytes).unwrap();
+    assert_eq!(round_tripped, entry);
+    assert_eq!(
+        authority_entry_hash(&round_tripped).unwrap(),
+        authority_entry_hash(&entry).unwrap()
+    );
+}
+
+#[test]
+fn bind_op_validate_rows() {
+    let fixture = bind_fixture(201);
+    let key = fixture.owner_key.clone();
+    let actor = fixture.actor;
+
+    // EXACT class vocabulary. "Human" and "owner" are the plausible
+    // near-misses; admitting either would reintroduce ESB-C through a
+    // spelling.
+    for class in ["human", "agent", "system"] {
+        validate_op(&bind_op(&key, actor, class, 1)).expect("vocabulary class must validate");
+        validate_op(&rebind_op(&key, actor, class, 1)).expect("vocabulary class must validate");
+    }
+    for class in ["Human", "owner", "", "human ", "HUMAN", "person"] {
+        assert_eq!(
+            validate_op(&bind_op(&key, actor, class, 1))
+                .unwrap_err()
+                .kind(),
+            crate::error::ErrorKind::InvalidAuthorityLogBody,
+            "non-vocabulary class {class:?} must fail closed"
+        );
+        assert_eq!(
+            validate_op(&rebind_op(&key, actor, class, 1))
+                .unwrap_err()
+                .kind(),
+            crate::error::ErrorKind::InvalidAuthorityLogBody
+        );
+    }
+
+    // Epoch 0 is the revocation watermark's zero value: a binding at epoch 0
+    // could never out-rank a watermark, so it is refused at the door.
+    for op in [
+        bind_op(&key, actor, "human", 0),
+        rebind_op(&key, actor, "human", 0),
+        revoke_actor_op(&key, 0),
+    ] {
+        assert_eq!(
+            validate_op(&op).unwrap_err().kind(),
+            crate::error::ErrorKind::InvalidAuthorityLogBody
+        );
+    }
+
+    // Key validation still runs on every arm.
+    let bad_key = AuthorityKey::P256(vec![9; 33]);
+    for op in [
+        bind_op(&bad_key, actor, "human", 1),
+        rebind_op(&bad_key, actor, "human", 1),
+        revoke_actor_op(&bad_key, 1),
+    ] {
+        assert!(
+            validate_op(&op).is_err(),
+            "invalid key must fail validate_op"
+        );
+    }
+
+    // Reserved-sentinel actor_ref fails DECODE (from_hex routes from_bytes).
+    let mut fields = op_value_with_genesis_delay(&bind_op(&key, actor, "human", 1), true)
+        .as_map()
+        .unwrap()
+        .clone();
+    fields[2].1 = Value::from(hex(&[0; 16]));
+    assert_eq!(
+        decode_op(&Value::Map(fields.clone())).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidAuthorityLogBody,
+        "reserved sentinel actor_ref must fail closed at decode"
+    );
+    // Non-canonical hex is refused by the round-trip check.
+    fields[2].1 = Value::from(actor.to_hex().to_uppercase());
+    assert_eq!(
+        decode_op(&Value::Map(fields)).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidAuthorityLogBody
+    );
+}
+
+/// Folded status for `key`, or `None` when no binding folded at all.
+fn folded_status(fold: &AuthorityFold, key: &AuthorityKey) -> Option<ActorBindingStatus> {
+    fold.actor_bindings.get(key).map(|binding| binding.status)
+}
+
+#[test]
+fn actor_binding_fold_transition_table() {
+    let fixture = bind_fixture(202);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+    let other_actor = scope_entity(0x5a);
+
+    // bind -> Active
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let base = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        bind.clone(),
+    ];
+    let fold = fold_authority_log_without_seen_time_delay(&base);
+    assert!(
+        fold.issues.is_empty(),
+        "clean bind must fold without issues"
+    );
+    assert_eq!(folded_status(&fold, &key), Some(ActorBindingStatus::Active));
+    assert!(actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // rebind bumps the epoch and retargets the actor
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    let rebind = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        rebind_op(&key, other_actor, "human", 2),
+        103,
+    );
+    let mut with_rebind = base.clone();
+    with_rebind.push(rebind);
+    let fold = fold_authority_log_without_seen_time_delay(&with_rebind);
+    assert!(fold.issues.is_empty());
+    let binding = &fold.actor_bindings[&key];
+    assert_eq!(binding.actor_ref, other_actor);
+    assert_eq!(binding.epoch, 2);
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+    assert!(actor_binding_is_active(&fold, &other_actor, "human"));
+
+    // revoke watermark kills every binding at epoch <= watermark
+    let revoke = cosigned_entry(&fixture, vec![bind_hash], 3, revoke_actor_op(&key, 1), 104);
+    let mut with_revoke = base;
+    with_revoke.push(revoke.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&with_revoke);
+    assert!(fold.issues.is_empty());
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // A revoke that folds on a branch which never saw the bind is VALID and
+    // still suppresses the bind once the branches merge. This is the reason
+    // watermarks live in their own map: order must not matter.
+    let orphan_revoke = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        revoke_actor_op(&key, 1),
+        105,
+    );
+    let merged = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        orphan_revoke.clone(),
+        bind,
+    ];
+    let fold = fold_authority_log_without_seen_time_delay(&merged);
+    assert!(binding_rejection(&fold, &orphan_revoke).is_none());
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // Re-binding ABOVE the watermark re-activates.
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let rebind_above = cosigned_entry(
+        &fixture,
+        vec![revoke_hash],
+        4,
+        bind_op(&key, fixture.actor, "human", 2),
+        106,
+    );
+    let mut revived = with_revoke.clone();
+    revived.push(rebind_above);
+    let fold = fold_authority_log_without_seen_time_delay(&revived);
+    assert!(fold.issues.is_empty());
+    assert_eq!(folded_status(&fold, &key), Some(ActorBindingStatus::Active));
+    assert!(actor_binding_is_active(&fold, &fixture.actor, "human"));
+}
+
+#[test]
+fn actor_binding_rejection_rows_leave_state_untouched() {
+    let fixture = bind_fixture(203);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+    let other_actor = scope_entity(0x5b);
+
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    let base = vec![fixture.genesis.clone(), fixture.enroll.clone(), bind];
+
+    // BindingExists: a second bind on a live binding must not silently
+    // overwrite it — a stolen key must not be able to re-point an existing
+    // identity without going through rebind's epoch discipline.
+    let double_bind = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        bind_op(&key, other_actor, "human", 5),
+        103,
+    );
+    let mut entries = base.clone();
+    entries.push(double_bind.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &double_bind),
+        Some(ActorBindingRejection::BindingExists)
+    );
+    assert_eq!(
+        fold.actor_bindings[&key].actor_ref, fixture.actor,
+        "rejected bind must leave the live binding untouched"
+    );
+    assert_eq!(fold.actor_bindings[&key].epoch, 1);
+
+    // BindingMissing: rebind with nothing live.
+    let orphan_rebind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        rebind_op(&key, fixture.actor, "human", 1),
+        104,
+    );
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        orphan_rebind.clone(),
+    ]);
+    assert_eq!(
+        binding_rejection(&fold, &orphan_rebind),
+        Some(ActorBindingRejection::BindingMissing)
+    );
+    assert!(fold.actor_bindings.is_empty());
+
+    // EpochNotAdvanced: rebind at or below the live epoch is a replay.
+    let stale_rebind = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        rebind_op(&key, other_actor, "human", 1),
+        105,
+    );
+    let mut entries = base.clone();
+    entries.push(stale_rebind.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &stale_rebind),
+        Some(ActorBindingRejection::EpochNotAdvanced)
+    );
+    assert_eq!(fold.actor_bindings[&key].actor_ref, fixture.actor);
+
+    // EpochNotAdvanced on a REVOKED key: replaying the original bind after a
+    // revocation must not resurrect it.
+    let revoke = cosigned_entry(&fixture, vec![bind_hash], 3, revoke_actor_op(&key, 4), 106);
+    let replay = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&revoke).unwrap()],
+        4,
+        bind_op(&key, fixture.actor, "human", 1),
+        107,
+    );
+    let mut entries = base;
+    entries.push(revoke);
+    entries.push(replay.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &replay),
+        Some(ActorBindingRejection::EpochNotAdvanced)
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+}
+
+#[test]
+fn human_class_bind_requires_owner_capable_key() {
+    let fixture = bind_fixture(204);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let base = [fixture.genesis.clone(), fixture.enroll.clone()];
+
+    // The hole this closes: binding a ROLE_AGENT key at "human" class would
+    // let an agent key exercise owner verbs. Human class demands a key that
+    // could itself give owner consent.
+    let agent_as_human = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&fixture.agent_key, fixture.actor, "human", 1),
+        102,
+    );
+    let mut entries = base.to_vec();
+    entries.push(agent_as_human.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &agent_as_human),
+        Some(ActorBindingRejection::OwnerCapabilityRequired)
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // The SAME key at "agent" class is legitimate — this is the 1634 machine
+    // identity seam, and refusing it would be gold-plating.
+    let agent_as_agent = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&fixture.agent_key, fixture.actor, "agent", 1),
+        103,
+    );
+    let mut entries = base.to_vec();
+    entries.push(agent_as_agent);
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert!(fold.issues.is_empty());
+    assert_eq!(
+        folded_status(&fold, &fixture.agent_key),
+        Some(ActorBindingStatus::Active)
+    );
+    assert!(actor_binding_is_active(&fold, &fixture.actor, "agent"));
+    // EXACT class: an agent-class binding never satisfies a human-class ask.
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // KeyNotInRoster: a binding may only attach to an enrolled key.
+    let stranger = authority_key_from_ed(&ed_key(240));
+    let unenrolled = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&stranger, fixture.actor, "agent", 1),
+        104,
+    );
+    let mut entries = base.to_vec();
+    entries.push(unenrolled.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        binding_rejection(&fold, &unenrolled),
+        Some(ActorBindingRejection::KeyNotInRoster)
+    );
+    assert!(fold.actor_bindings.is_empty());
+}
+
+#[test]
+fn binding_dies_with_roster_key() {
+    let fixture = bind_fixture(205);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let base = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        bind.clone(),
+    ];
+    assert!(actor_binding_is_active(
+        &fold_authority_log_without_seen_time_delay(&base),
+        &fixture.actor,
+        "human"
+    ));
+
+    // No cascade is written into binding state: Active simply requires a live
+    // roster key, so every roster-killing op takes dependent bindings with it
+    // automatically and order-independently.
+    let recovery = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&bind).unwrap()],
+        3,
+        AuthorityOp::RecoveryReboot {
+            new_genesis_nonce: [231; 32],
+            new_device: device(
+                authority_key_from_ed(&ed_key(231)),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+            tier_floor: AuthorityTier::Software,
+        },
+        108,
+    );
+    let mut entries = base.clone();
+    entries.push(recovery);
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(
+        !actor_binding_is_active(&fold, &fixture.actor, "human"),
+        "recovery reboot must kill bindings on the retired key"
+    );
+
+    // A rotation does NOT migrate the binding: the new key is a NEW identity
+    // claim and needs its own BindActor. Explicitness over magic.
+    let rotate = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&bind).unwrap()],
+        3,
+        AuthorityOp::RotateKey {
+            old_key: key.clone(),
+            new_device: device(
+                authority_key_from_ed(&ed_key(232)),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+        109,
+    );
+    let mut entries = base.clone();
+    entries.push(rotate.clone());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+    let rotated_key = authority_key_from_ed(&ed_key(232));
+    assert!(
+        !fold.actor_bindings.contains_key(&rotated_key),
+        "rotation must not silently carry the binding to the new key"
+    );
+
+    // A fresh bind on the rotated key restores the identity.
+    let rebound = {
+        let entry = unsigned_entry(
+            Some(fixture.vault_id),
+            4,
+            vec![authority_entry_hash(&rotate).unwrap()],
+            bind_op(&rotated_key, fixture.actor, "human", 1),
+            rotated_key.clone(),
+            109,
+        );
+        cosign_ed(entry, &ed_key(232), &fixture.agent)
+    };
+    let mut entries = base;
+    entries.push(rotate);
+    entries.push(rebound);
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded_status(&fold, &rotated_key),
+        Some(ActorBindingStatus::Active)
+    );
+    assert!(actor_binding_is_active(&fold, &fixture.actor, "human"));
+}
+
+/// P2-a: a key that FAILS the bind transition table's own key predicate after
+/// the merge must not keep an Active binding. Roster presence alone was the
+/// fail-open: the row survives quarantine and survives role stripping.
+#[test]
+fn binding_dies_when_key_loses_its_bind_qualification() {
+    // ── quarantined key ──────────────────────────────────────────────────
+    // AUTH-5: the owner key signs two DIFFERENT entries at the same seq. That
+    // key is precisely the one an attacker is holding, so its roster row
+    // outliving the equivocation must not keep it speaking for a human owner.
+    let fixture = bind_fixture(214);
+    let key = fixture.owner_key.clone();
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let mut clean = vec![fixture.genesis.clone(), fixture.enroll.clone(), bind];
+    let fold = fold_authority_log_without_seen_time_delay(&clean);
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Active),
+        "control: a clean owner key backs its binding"
+    );
+
+    // Same signer, same seq, divergent content (ts differs) -> equivocation.
+    let equivocation = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        103,
+    );
+    clean.push(equivocation);
+    let quarantined = clean;
+    let fold = fold_authority_log_without_seen_time_delay(&quarantined);
+    assert!(
+        fold.authority_forks
+            .iter()
+            .any(|fork| fork.signer == key && fork.status == AuthorityForkStatus::Quarantined),
+        "fixture must actually quarantine the bound key"
+    );
+    // fix-leg 5 item 3 STRENGTHENED this outcome. The bind is signed by the
+    // forked key with only a ROLE_AGENT cosigner, so post-quarantine scrutiny
+    // finds no independent owner consent and REFUSES both fork candidates —
+    // the binding never enters `actor_bindings` rather than entering and being
+    // marked `Revoked`. Both are fail-closed and the invariant below is the
+    // load-bearing one; what must never happen is `Active`.
+    assert_ne!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Active),
+        "an equivocation-quarantined key must not back a binding"
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // ── role-stripped key ────────────────────────────────────────────────
+    // Two concurrent branches enroll the SAME third key with different roles.
+    // The merge's most-restrictive `roles &=` leaves AGENT only, so the key can
+    // no longer give owner consent — exactly the state that would have REJECTED
+    // the human bind with `OwnerCapabilityRequired` had it arrived first.
+    let fixture = bind_fixture(216);
+    let third = ed_key(216_u8.wrapping_add(2));
+    let third_key = authority_key_from_ed(&third);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let wide_enroll = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                third_key.clone(),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+        102,
+    );
+    let bind = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&wide_enroll).unwrap()],
+        3,
+        bind_op(&third_key, fixture.actor, "human", 1),
+        103,
+    );
+    let owner_capable = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        wide_enroll,
+        bind,
+    ];
+    let fold = fold_authority_log_without_seen_time_delay(&owner_capable);
+    assert_eq!(
+        fold.roster[&third_key].roles & (ROLE_OWNER | ROLE_ADMIN),
+        ROLE_OWNER | ROLE_ADMIN,
+        "control fixture must leave the key owner-capable"
+    );
+    assert_eq!(
+        folded_status(&fold, &third_key),
+        Some(ActorBindingStatus::Active),
+        "control: an owner-capable key backs a human binding"
+    );
+
+    // The concurrent narrow enroll is what strips the bits on merge.
+    let narrow_enroll = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        4,
+        AuthorityOp::EnrollDevice {
+            device: device(third_key.clone(), ROLE_AGENT, AuthorityTier::Software),
+        },
+        104,
+    );
+    let mut stripped = owner_capable;
+    stripped.push(narrow_enroll);
+    let fold = fold_authority_log_without_seen_time_delay(&stripped);
+    assert_eq!(
+        fold.roster[&third_key].roles & (ROLE_OWNER | ROLE_ADMIN),
+        0,
+        "fixture must actually strip the owner-capable bits"
+    );
+    assert!(
+        !fold.roster[&third_key].revoked,
+        "the stripped key must stay UNREVOKED — roster presence is the fail-open"
+    );
+    assert_eq!(
+        folded_status(&fold, &third_key),
+        Some(ActorBindingStatus::Revoked),
+        "a role-stripped key must not back a human binding"
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
+
+    // ── revoked key, NON-human class ─────────────────────────────────────
+    // Owner-capability is a human-class rule, so the roster-liveness leg is
+    // the ONLY thing killing an agent-class binding on a revoked key. Pinned
+    // separately or the human-class rows would mask its removal.
+    // A third agent key is what gets revoked, so the owner+agent pair still
+    // forms the surviving quorum a RevokeDevice needs.
+    let fixture = bind_fixture(217);
+    let spare = ed_key(217_u8.wrapping_add(2));
+    let spare_key = authority_key_from_ed(&spare);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let enroll_spare = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        AuthorityOp::EnrollDevice {
+            device: device(spare_key.clone(), ROLE_AGENT, AuthorityTier::Software),
+        },
+        102,
+    );
+    let bind = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&enroll_spare).unwrap()],
+        3,
+        bind_op(&spare_key, fixture.actor, "agent", 1),
+        103,
+    );
+    let live = vec![
+        fixture.genesis.clone(),
+        fixture.enroll.clone(),
+        enroll_spare,
+        bind.clone(),
+    ];
+    assert_eq!(
+        folded_status(
+            &fold_authority_log_without_seen_time_delay(&live),
+            &spare_key
+        ),
+        Some(ActorBindingStatus::Active),
+        "control: a live agent key backs an agent-class binding"
+    );
+    let revoke_device = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&bind).unwrap()],
+        4,
+        AuthorityOp::RevokeDevice {
+            revoked_key: spare_key.clone(),
+        },
+        104,
+    );
+    let mut revoked = live;
+    revoked.push(revoke_device);
+    let fold = fold_authority_log_without_seen_time_delay(&revoked);
+    assert!(
+        fold.issues.is_empty(),
+        "revoke fixture must fold cleanly: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.roster[&spare_key].revoked,
+        "fixture must actually revoke the roster key"
+    );
+    assert_eq!(
+        folded_status(&fold, &spare_key),
+        Some(ActorBindingStatus::Revoked),
+        "a revoked roster key must not back an agent-class binding either"
+    );
+    assert!(!actor_binding_is_active(&fold, &fixture.actor, "agent"));
+}
+
+/// A rooted vault where the owner key `K1` has enrolled a SECOND owner-capable
+/// key `K2`, then equivocated at one seq with two `BindActor(K2, …, "human")`
+/// legs naming DIFFERENT actors. `K1` is quarantined by the fork; `K2` is
+/// clean. The fork winner therefore decides which actor `K2` speaks for.
+struct QuarantinedBindFixture {
+    entries: Vec<AuthorityLogEntry>,
+    control: Vec<AuthorityLogEntry>,
+    signer_key: AuthorityKey,
+    bound_key: AuthorityKey,
+    actor_a: EntityId,
+    actor_b: EntityId,
+    /// Rebind fixtures only: the actor bound by a PREFORK entry the signer
+    /// made while still clean. It must survive — the quarantine is positional.
+    prefork_actor: Option<EntityId>,
+}
+
+fn quarantined_signer_bind_fixture(seed: u8, rebind: bool) -> QuarantinedBindFixture {
+    let fixture = bind_fixture(seed);
+    let bound = ed_key(seed.wrapping_add(2));
+    let bound_key = authority_key_from_ed(&bound);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    // K2 enters the roster owner-capable, so a "human" bind onto it satisfies
+    // `apply_actor_binding`'s OwnerCapabilityRequired leg.
+    let enroll_bound = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                bound_key.clone(),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+        102,
+    );
+    let enroll_bound_hash = authority_entry_hash(&enroll_bound).unwrap();
+    let actor_a = scope_entity(seed.wrapping_add(0x30));
+    let actor_b = scope_entity(seed.wrapping_add(0x40));
+    // Rebind needs a live binding to advance, so the rebind fixture lands a
+    // clean epoch-1 bind on a THIRD actor first and equivocates on the epoch-2
+    // REBIND. The seed actor doubles as the prefork control: an entry the
+    // signer made while still clean must NOT be retracted by a later fork.
+    let (base, fork_parent, fork_seq, op_a, op_b, prefork_actor) = if rebind {
+        let prefork_actor = scope_entity(seed.wrapping_add(0x50));
+        let seed_bind = cosigned_entry(
+            &fixture,
+            vec![enroll_bound_hash],
+            3,
+            bind_op(&bound_key, prefork_actor, "human", 1),
+            103,
+        );
+        let seed_hash = authority_entry_hash(&seed_bind).unwrap();
+        (
+            vec![
+                fixture.genesis.clone(),
+                fixture.enroll.clone(),
+                enroll_bound,
+                seed_bind,
+            ],
+            seed_hash,
+            4,
+            rebind_op(&bound_key, actor_a, "human", 2),
+            rebind_op(&bound_key, actor_b, "human", 2),
+            Some(prefork_actor),
+        )
+    } else {
+        (
+            vec![
+                fixture.genesis.clone(),
+                fixture.enroll.clone(),
+                enroll_bound,
+            ],
+            enroll_bound_hash,
+            3,
+            bind_op(&bound_key, actor_a, "human", 1),
+            bind_op(&bound_key, actor_b, "human", 1),
+            None,
+        )
+    };
+    let leg_a = cosigned_entry(&fixture, vec![fork_parent], fork_seq, op_a, 110);
+    let leg_b = cosigned_entry(&fixture, vec![fork_parent], fork_seq, op_b, 111);
+
+    let mut control = base.clone();
+    control.push(leg_a.clone());
+    let mut entries = base;
+    entries.push(leg_a);
+    entries.push(leg_b);
+    QuarantinedBindFixture {
+        entries,
+        control,
+        signer_key: fixture.owner_key,
+        bound_key,
+        actor_a,
+        actor_b,
+        prefork_actor,
+    }
+}
+
+/// fix-leg 5 item 3: a `BindActor`/`RebindActor` that WINS an equivocation
+/// group must survive the same post-quarantine scrutiny `RevokeDevice` gets.
+///
+/// fix-1 strips a binding only when the BOUND key is quarantined. A signer that
+/// equivocated is exactly the key an attacker holds — and it can spend its last
+/// pre-quarantine act binding owner authority onto a DIFFERENT, clean roster
+/// key, which fix-1 leaves Active. `fork_winner_post_quarantine_issue` is the
+/// place the fold already re-derives quorum + consent WITHOUT the forked key;
+/// the bind ops now take that same door, so a bind whose only owner-capable
+/// backing was the forked key itself is refused.
+#[test]
+fn fork_winner_bind_by_quarantined_signer_is_refused() {
+    for rebind in [false, true] {
+        let fixture =
+            quarantined_signer_bind_fixture(220_u8.wrapping_add(u8::from(rebind)), rebind);
+
+        // Control: without the divergent sibling the bind folds Active. The
+        // fixture is only interesting if the CLEAN path really works.
+        let control = fold_authority_log_without_seen_time_delay(&fixture.control);
+        assert_eq!(
+            folded_status(&control, &fixture.bound_key),
+            Some(ActorBindingStatus::Active),
+            "rebind={rebind}: control must bind the clean owner-capable key"
+        );
+        assert!(
+            actor_binding_is_active(&control, &fixture.actor_a, "human"),
+            "rebind={rebind}: control must bind actor_a"
+        );
+
+        let fold = fold_authority_log_without_seen_time_delay(&fixture.entries);
+        assert!(
+            fold.authority_forks
+                .iter()
+                .any(|fork| fork.signer == fixture.signer_key
+                    && fork.status == AuthorityForkStatus::Quarantined),
+            "rebind={rebind}: fixture must actually quarantine the SIGNING key"
+        );
+        assert!(
+            !fold.roster[&fixture.bound_key].revoked
+                && fold.roster[&fixture.bound_key].roles & (ROLE_OWNER | ROLE_ADMIN) != 0,
+            "rebind={rebind}: the BOUND key must stay clean and owner-capable — \
+             that is the fail-open fix-1 leaves open"
+        );
+
+        // The teeth: neither actor may hold owner authority through a bind the
+        // quarantined signer alone backed.
+        for actor in [fixture.actor_a, fixture.actor_b] {
+            assert!(
+                !actor_binding_is_active(&fold, &actor, "human"),
+                "rebind={rebind}: a fork-winner bind signed by a quarantined key \
+                 must not mint owner authority for {}",
+                actor.to_hex()
+            );
+        }
+        assert!(
+            fold.issues.iter().any(|issue| matches!(
+                issue,
+                AuthorityFoldIssue::MissingAuthorityConsent(_)
+                    | AuthorityFoldIssue::MissingQuorum(_)
+            )),
+            "rebind={rebind}: the refusal must be recorded, not silent: {:?}",
+            fold.issues
+        );
+
+        // Positional, not retroactive: the entry the signer made BEFORE it
+        // equivocated keeps its binding. Over-stripping here would let any
+        // later self-equivocation retract the vault's whole owner identity —
+        // a denial-of-authority the quarantine must not hand the attacker.
+        if let Some(prefork_actor) = fixture.prefork_actor {
+            assert!(
+                actor_binding_is_active(&fold, &prefork_actor, "human"),
+                "rebind={rebind}: a PREFORK binding must survive the later fork"
+            );
+        }
+    }
+}
+
+/// The other half of item 3, and the one that proves the gate is not just a
+/// blanket refusal: the SAME quarantined-signer shape, but the bind carries TWO
+/// independent owner-capable cosigners. Delete the forked key from both sides
+/// and the entry still satisfies its own admission rules — consent from a clean
+/// owner, quorum from a clean pair — so it must be ADMITTED.
+///
+/// Without this pin, "refuse every bind by a forked signer" would pass the
+/// refusal test above while silently converting any self-equivocation into a
+/// denial of the vault's owner identity. The fold re-derives; it does not
+/// blacklist.
+#[test]
+fn fork_winner_bind_with_independent_quorum_still_binds() {
+    let fixture = bind_fixture(240);
+    let clean_a = ed_key(243);
+    let clean_b = ed_key(244);
+    let bound = ed_key(245);
+    let (key_a, key_b, bound_key) = (
+        authority_key_from_ed(&clean_a),
+        authority_key_from_ed(&clean_b),
+        authority_key_from_ed(&bound),
+    );
+    let mut parent_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let mut entries = vec![fixture.genesis.clone(), fixture.enroll.clone()];
+    for (seq, key) in [(2, &key_a), (3, &key_b), (4, &bound_key)] {
+        let enroll = cosigned_entry(
+            &fixture,
+            vec![parent_hash],
+            seq,
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            100 + seq,
+        );
+        parent_hash = authority_entry_hash(&enroll).unwrap();
+        entries.push(enroll);
+    }
+    // The forked owner signs both legs; the cosigners are clean and owner-capable.
+    let bind_leg = |actor, ts| {
+        let entry = unsigned_entry(
+            Some(fixture.vault_id),
+            5,
+            vec![parent_hash],
+            bind_op(&bound_key, actor, "human", 1),
+            fixture.owner_key.clone(),
+            ts,
+        );
+        cosign_ed_two(entry, &fixture.owner, &clean_a, &clean_b)
+    };
+    let actor_a = scope_entity(0x81);
+    entries.push(bind_leg(actor_a, 120));
+    entries.push(bind_leg(scope_entity(0x82), 121));
+
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert!(
+        fold.authority_forks
+            .iter()
+            .any(|fork| fork.signer == fixture.owner_key
+                && fork.status == AuthorityForkStatus::Quarantined),
+        "fixture must still quarantine the signing key"
+    );
+    assert_eq!(
+        folded_status(&fold, &bound_key),
+        Some(ActorBindingStatus::Active),
+        "a bind an independent owner quorum backs must survive its signer's quarantine"
+    );
+    assert!(
+        actor_binding_is_active(&fold, &actor_a, "human"),
+        "the fork WINNER's actor keeps owner authority"
+    );
+}
+
+/// Divergent branches over one key's identity: both siblings parent on the
+/// enroll, bind the SAME key at the SAME epoch to DIFFERENT actors, and a
+/// third branch revokes an unrelated epoch. Fold order must not decide who
+/// the key speaks for.
+struct BindingDag {
+    entries: Vec<AuthorityLogEntry>,
+    key: AuthorityKey,
+    actor_a: EntityId,
+    actor_b: EntityId,
+    late_actor: EntityId,
+}
+
+fn binding_dag() -> BindingDag {
+    let fixture = bind_fixture(206);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+    let actor_a = scope_entity(0x12);
+    let actor_b = scope_entity(0x23);
+    let late_actor = scope_entity(0x34);
+
+    // Equal-epoch divergent content on two branches. Distinct seqs keep this
+    // a genuine DAG divergence rather than signer equivocation.
+    let branch_a = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, actor_a, "human", 1),
+        110,
+    );
+    let branch_b = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        3,
+        bind_op(&key, actor_b, "human", 1),
+        111,
+    );
+    // A merge entry above both branches, plus a later rebind that must beat
+    // the conflicted epoch-1 state on epoch alone.
+    let merge = cosigned_entry(
+        &fixture,
+        vec![
+            authority_entry_hash(&branch_a).unwrap(),
+            authority_entry_hash(&branch_b).unwrap(),
+        ],
+        4,
+        revoke_actor_op(&key, 1),
+        112,
+    );
+    let late = cosigned_entry(
+        &fixture,
+        vec![authority_entry_hash(&merge).unwrap()],
+        5,
+        bind_op(&key, late_actor, "human", 2),
+        113,
+    );
+    BindingDag {
+        entries: vec![
+            fixture.genesis,
+            fixture.enroll,
+            branch_a,
+            branch_b,
+            merge,
+            late,
+        ],
+        key,
+        actor_a,
+        actor_b,
+        late_actor,
+    }
+}
+
+#[test]
+fn equal_epoch_divergent_bindings_fail_closed() {
+    let dag = binding_dag();
+    // Only the two branches: nothing resolves the divergence, so the merged
+    // binding must be deterministic AND dead. A fork over identity is exactly
+    // where picking a silent winner would be the bug.
+    let fold = fold_authority_log_without_seen_time_delay(&dag.entries[..4]);
+    let binding = &dag.key;
+    assert_eq!(
+        folded_status(&fold, binding),
+        Some(ActorBindingStatus::Revoked),
+        "conflicted binding must never authorize"
+    );
+    assert_eq!(
+        fold.actor_bindings[binding].actor_ref,
+        dag.actor_a.min(dag.actor_b),
+        "conflict winner must be the byte-wise smaller tuple"
+    );
+    assert!(!actor_binding_is_active(&fold, &dag.actor_a, "human"));
+    assert!(!actor_binding_is_active(&fold, &dag.actor_b, "human"));
+}
+
+proptest! {
+    #[test]
+    fn binding_fold_is_permutation_invariant(
+        perm in prop::collection::vec(0_usize..6, 6),
+    ) {
+        let dag = binding_dag();
+        let baseline = fold_authority_log_without_seen_time_delay(&dag.entries);
+
+        let mut permuted = Vec::new();
+        for index in perm {
+            if let Some(entry) = dag.entries.get(index % dag.entries.len()) {
+                permuted.push(entry.clone());
+            }
+        }
+        for entry in &dag.entries {
+            if !permuted.iter().any(|candidate| candidate == entry) {
+                permuted.push(entry.clone());
+            }
+        }
+        let folded = fold_authority_log_without_seen_time_delay(&permuted);
+
+        // Absolute checks, not just baseline equality: a consistently
+        // order-biased merge would agree with itself under every permutation.
+        prop_assert_eq!(
+            folded.actor_bindings[&dag.key].actor_ref,
+            dag.late_actor
+        );
+        prop_assert_eq!(
+            folded.actor_bindings[&dag.key].status,
+            ActorBindingStatus::Active
+        );
+        prop_assert!(actor_binding_is_active(&folded, &dag.late_actor, "human"));
+        prop_assert!(!actor_binding_is_active(&folded, &dag.actor_a, "human"));
+        prop_assert!(!actor_binding_is_active(&folded, &dag.actor_b, "human"));
+        prop_assert_eq!(folded, baseline);
+    }
+}
+
+#[test]
+fn atomic_genesis_owner_binding_door() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+
+    // The genesis owner-binding ceremony: a single-key roster needs no cosign,
+    // so [genesis, bind] is one atomic host call.
+    let genesis = genesis_entry(207, DEFAULT_PENDING_WIDEN_DELAY_SECS, 200);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let owner = ed_key(207);
+    let owner_key = authority_key_from_ed(&owner);
+    let actor = scope_entity(0x5c);
+    let bind = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key.clone(),
+            201,
+        ),
+        &owner,
+    );
+
+    let ids = vault
+        .put_authority_log_entries(&[
+            (genesis.clone(), TimeRange { start: 1, end: 1 }, 1),
+            (bind.clone(), TimeRange { start: 2, end: 2 }, 2),
+        ])
+        .unwrap();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0], authority_log_entity_id(&genesis).unwrap());
+    assert_eq!(ids[1], authority_log_entity_id(&bind).unwrap());
+    assert_eq!(
+        vault.get_authority_log_entry(&ids[1]).unwrap(),
+        Some(bind.clone())
+    );
+    let fold = vault.authority_fold().unwrap();
+    assert_eq!(fold.vault_id, Some(vault_id));
+    assert!(
+        actor_binding_is_active(&fold, &actor, "human"),
+        "the atomic ceremony must leave a live owner binding"
+    );
+
+    // All-or-nothing: a pair whose SECOND entry is invalid stores NEITHER.
+    // Without this the host could end up rooted-but-unbound, which fail-closes
+    // its own owner verbs.
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = crate::Vault::open(other_dir.path(), crate::VaultConfig::device()).unwrap();
+    let mut broken = bind;
+    broken.signer.signature = vec![0; 64];
+    other
+        .put_authority_log_entries(&[
+            (genesis.clone(), TimeRange { start: 1, end: 1 }, 1),
+            (broken, TimeRange { start: 2, end: 2 }, 2),
+        ])
+        .expect_err("an invalid entry must abort the whole batch");
+    assert_eq!(
+        other
+            .get_authority_log_entry(&authority_log_entity_id(&genesis).unwrap())
+            .unwrap(),
+        None,
+        "nothing may be stored when any entry in the batch is invalid"
+    );
+
+    // A lone genesis is accepted: enforcement lives at the facade, not here.
+    other
+        .put_authority_log_entries(&[(genesis, TimeRange { start: 1, end: 1 }, 1)])
+        .unwrap();
+    assert_eq!(other.authority_fold().unwrap().vault_id, Some(vault_id));
+}
+
+#[test]
+fn readonly_fold_matches_full_fold_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    // A settled store: single-key roster, so no enroll widen is in flight and
+    // the binding is live. (A pending widen would make dependent entries
+    // Waiting in BOTH fold variants identically — the divergence D5 bounds.)
+    //
+    // Coverage boundary (fix-leg 2): being settled is exactly why this test is
+    // BLIND to which clock the readonly fold reads. With no widen in flight
+    // every observation time folds to the same roster, so wall-clock skew is
+    // invisible here. The two `readonly_fold_*_wall_clock_skew_*` tests below
+    // build logs with a widen actually pending — the only shape that can drive
+    // the two folds apart on the clock alone.
+    let genesis = genesis_entry(208, DEFAULT_PENDING_WIDEN_DELAY_SECS, 200);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let owner = ed_key(208);
+    let owner_key = authority_key_from_ed(&owner);
+    let actor = scope_entity(0x5d);
+    let bind = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key,
+            201,
+        ),
+        &owner,
+    );
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (bind, TimeRange { start: 2, end: 2 }, 2),
+        ])
+        .unwrap();
+
+    // Settle first: the full fold backfills sidecars and advances the
+    // first-seen clock, so compare against a settled baseline.
+    let full = vault.authority_fold().unwrap();
+    assert!(actor_binding_is_active(&full, &actor, "human"));
+
+    let sync_state_before = sync_state_snapshot(&vault);
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert_eq!(
+        readonly, full,
+        "the in-txn fold must agree with the full fold on a settled store"
+    );
+    assert_eq!(
+        sync_state_snapshot(&vault),
+        sync_state_before,
+        "the readonly fold must not write a single sync_state byte"
+    );
+}
+
+/// Forward wall-clock skew must not mature a pending widen in the readonly fold.
+///
+/// `readonly_fold_matches_full_fold_and_writes_nothing` above CANNOT see this:
+/// its log is settled — no widen in flight — so every clock value folds to the
+/// same roster and the two variants agree by construction. Only a log with a
+/// widen actually pending can drive the folds apart on the clock alone, which
+/// is what this fixture builds.
+///
+/// The skew modelled: the device's monotonic authority clock has barely moved
+/// (it sits at 1_000) while the wall clock reads real Unix time, far past the
+/// 24h delay. A readonly fold on the raw wall clock would mature the owner
+/// enrollment, fold the cosigned `BindActor` child, and hand the facade's
+/// owner gate an Active human binding INSIDE the veto window.
+#[test]
+fn readonly_fold_forward_wall_clock_skew_keeps_owner_enrollment_pending() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    // A freshly opened vault owns an untouched clock domain; seed it low so
+    // the monotonic reading stays far behind real Unix time for the whole test.
+    let domain = vault.store.authority_clock_domain;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, 0, 1_000),
+        1_000
+    );
+
+    let owner = ed_key(213);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(213, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let second = ed_key(214);
+    let second_key = authority_key_from_ed(&second);
+    // Owner-capable, so a "human" bind on it is admissible the moment the
+    // enrollment lands — the whole point of the delay.
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 214,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let actor = scope_entity(0x5e);
+    // Cosigned: once the enrollment applies the roster holds two active keys,
+    // so the bind needs a quorum. A lone-signed bind would be rejected for
+    // MissingQuorum on the skewed path and hide the divergence.
+    let bind = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![enroll_hash],
+            bind_op(&second_key, actor, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+        &second,
+    );
+
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (enroll, TimeRange { start: 2, end: 2 }, 2),
+            (bind, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        full.pending_widens.contains_key(&enroll_hash),
+        "the monotonic clock keeps the enrollment inside its delay"
+    );
+    assert!(!full.roster.contains_key(&second_key));
+    assert!(!actor_binding_is_active(&full, &actor, "human"));
+
+    let sync_state_before = sync_state_snapshot(&vault);
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !actor_binding_is_active(&readonly, &actor, "human"),
+        "wall-clock skew must not mature the enrollment and expose an owner binding inside the veto window"
+    );
+    assert_eq!(
+        readonly, full,
+        "both folds must read the same monotonic observation time"
+    );
+    assert_eq!(
+        sync_state_snapshot(&vault),
+        sync_state_before,
+        "deriving the observation time must not make the readonly fold write"
+    );
+}
+
+/// Backward wall-clock skew must not un-apply an elapsed widen.
+///
+/// Mirror of the forward case: here the device's authority clock has legitimately
+/// advanced past a rotation's delay (so the rotation APPLIED and killed the old
+/// key's owner binding), and the wall clock then reads far BELOW the persisted
+/// floor. A readonly fold on the raw wall clock would put the rotation back in
+/// `pending_widens`, leaving the retired key unrevoked and its owner binding
+/// Active again — a revoked device speaking for the owner.
+///
+/// Checked TWICE, because the monotonic clock has two layers and only the
+/// second pins the persisted floor:
+///
+/// 1. same process — the process-local clock alone already refuses the
+///    rollback;
+/// 2. after a reopen — the process-local clock is gone with the old vault, so
+///    the ONLY thing standing between the rolled-back wall clock and a
+///    resurrected owner binding is the floor this fold reads through `txn`.
+#[test]
+fn readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    // Park the authority clock well ahead of real Unix time. Every first-seen
+    // sidecar and the persisted floor are then written from that future
+    // reading, so `unix_seconds_now()` is the BACKWARD-skewed clock here.
+    let domain = vault.store.authority_clock_domain;
+    let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, 0, future),
+        future
+    );
+
+    let owner = ed_key(215);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(215, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let actor = scope_entity(0x5f);
+    let bind = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key.clone(),
+            2,
+        ),
+        &owner,
+    );
+    // A rotation retires `owner_key`; bindings deliberately do not migrate, so
+    // the human binding dies with the key the moment this widen applies.
+    let rotated = ed_key(216);
+    let rotate = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![authority_entry_hash(&bind).unwrap()],
+            AuthorityOp::RotateKey {
+                old_key: owner_key.clone(),
+                new_device: device(
+                    authority_key_from_ed(&rotated),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            owner_key,
+            3,
+        ),
+        &owner,
+    );
+    let rotate_hash = authority_entry_hash(&rotate).unwrap();
+
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (bind, TimeRange { start: 2, end: 2 }, 2),
+            (rotate, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+
+    let pending = vault.authority_fold().unwrap();
+    assert!(
+        pending.pending_widens.contains_key(&rotate_hash),
+        "the rotation starts inside its delay"
+    );
+    assert!(actor_binding_is_active(&pending, &actor, "human"));
+
+    // Let the MONOTONIC clock run past the delay (raising the floor is the only
+    // way time moves here; the wall clock stays where it is).
+    let elapsed_at = future + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, elapsed_at, 0),
+        elapsed_at
+    );
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        !full.pending_widens.contains_key(&rotate_hash),
+        "the rotation must mature once the local clock passes the delay"
+    );
+    assert!(
+        !actor_binding_is_active(&full, &actor, "human"),
+        "the applied rotation retires the bound key, so the binding must die with it"
+    );
+
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !actor_binding_is_active(&readonly, &actor, "human"),
+        "wall-clock rollback must not un-apply the rotation and resurrect the retired key's owner binding"
+    );
+    assert_eq!(
+        readonly, full,
+        "both folds must read the same monotonic observation time"
+    );
+
+    // Layer 2: reopen. Dropping the vault releases its clock domain, so the
+    // process-local floor is gone and the rolled-back wall clock is the only
+    // candidate reading left. The persisted floor read through the txn is what
+    // must hold the line now.
+    drop(vault);
+    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let rtxn = reopened.store.env.read_txn().unwrap();
+    let after_reopen = reopened.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !after_reopen.pending_widens.contains_key(&rotate_hash),
+        "the persisted clock floor must survive a reopen and keep the rotation applied"
+    );
+    assert!(
+        !actor_binding_is_active(&after_reopen, &actor, "human"),
+        "a reopen under a rolled-back wall clock must not resurrect the retired key's owner binding"
+    );
+}
+
+/// Rewinds a vault to the pre-migration shape a legacy rooted store has: every
+/// first-seen sidecar gone and the one-shot backfill marker unset.
+fn strip_first_seen_sidecars(vault: &crate::Vault, drop_backfill_marker: bool) {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let keys: Vec<String> = vault
+        .store
+        .sync_state
+        .iter(&rtxn)
+        .unwrap()
+        .map(|row| row.unwrap().0.into_owned())
+        .filter(|key| {
+            key.starts_with("authlog:first_seen:")
+                && key != authority_first_seen_clock_sync_key()
+                && (drop_backfill_marker || key != authority_first_seen_backfill_sync_key())
+        })
+        .collect();
+    drop(rtxn);
+    assert!(
+        !keys.is_empty(),
+        "fixture must have written sidecars to strip"
+    );
+    vault
+        .with_write_txn(|wtxn| {
+            for key in &keys {
+                assert!(vault.store.sync_state.delete(wtxn, key.as_str())?);
+            }
+            Ok(())
+        })
+        .unwrap();
+}
+
+/// A SIDECAR-LESS rotation must not leave the retired key authorizing — pending
+/// is fail-OPEN for the mixed ops, so the readonly fold refuses instead.
+///
+/// The naive readonly fold simply omitted an entry with no sidecar from
+/// `first_seen_at_secs`, on the reasoning that a widen without a first-seen time
+/// stays pending and pending is conservative. It is not, for the two ops that
+/// revoke while they grant. Here a legacy rooted vault's `RotateKey` K→K2 is
+/// sidecar-less; an attacker still holding the RETIRED K files a DAG SIBLING
+/// `BindActor(K, attacker, "human")` parented at genesis, so no topological rule
+/// kills it. Leave the rotation pending and K is still a live owner-capable
+/// roster key, so that binding folds Active and the attacker passes every owner
+/// verb.
+///
+/// fix-leg 4 rewrites the answer. `learned_at` is peer-written metadata, so the
+/// long-past values here prove nothing about when THIS vault saw the rows; the
+/// fold assumes first-seen-now, which leaves the rotation pending, and then
+/// refuses because a pending entry it cannot date is deciding the roster. The
+/// attacker is denied through the refusal rather than through a maturity verdict
+/// synthesized from their own claim.
+#[test]
+fn readonly_fold_refuses_when_a_sidecarless_rotation_decides_the_roster() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(219);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(219, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+
+    let rotated = ed_key(220);
+    let rotate = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![genesis_hash],
+            AuthorityOp::RotateKey {
+                old_key: owner_key.clone(),
+                new_device: device(
+                    authority_key_from_ed(&rotated),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            owner_key.clone(),
+            2,
+        ),
+        &owner,
+    );
+    let rotate_hash = authority_entry_hash(&rotate).unwrap();
+    let attacker = scope_entity(0x62);
+    // Sibling, not descendant: parented at GENESIS, so it does not sit behind
+    // the rotation in the DAG and only the rotation's own maturity can kill it.
+    let squat = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![genesis_hash],
+            bind_op(&owner_key, attacker, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+    );
+
+    // `learned_at` values sit far in the past, which is what a legacy vault's
+    // stored rows look like — the rotation's delay elapsed long ago.
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (rotate, TimeRange { start: 2, end: 2 }, 2),
+            (squat, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+    strip_first_seen_sidecars(&vault, true);
+
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let err = vault
+        .authority_fold_readonly_in_txn(&rtxn)
+        .expect_err("an undatable rotation must not silently decide the roster");
+    drop(rtxn);
+    assert!(
+        is_indeterminate_first_seen(&err),
+        "a pre-migration gap is recoverable, not corruption: {err}"
+    );
+
+    // The refusal is not a permanent brick. One write-path fold records the
+    // local observation, and the rotation then serves its delay from THERE —
+    // still pending (it was observed moments ago, not at its long-past claimed
+    // `learned_at`), but now on a time this vault actually witnessed, so the
+    // readonly fold computes instead of refusing.
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        full.pending_widens.contains_key(&rotate_hash),
+        "migration dates the rotation at local observation time, so its delay has NOT elapsed"
+    );
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let after_backfill = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert_eq!(
+        after_backfill, full,
+        "once observed locally, both folds must agree"
+    );
+    // The attacker's sibling bind rides a key the rotation has not yet retired,
+    // so it is live here — and that is correct: the rotation genuinely has not
+    // matured on any clock this vault can vouch for. What fix-leg 4 removes is
+    // the ability to reach a MATURE verdict from the attacker's own metadata.
+    assert!(
+        actor_binding_is_active(&after_backfill, &attacker, "human"),
+        "before the freshly dated rotation matures the retired key is still live"
+    );
+}
+
+/// The assumed first-seen time is the LOCAL observation regardless of what
+/// `learned_at` claims — in either direction.
+///
+/// Fix-leg 3 clamped with `min(learned_at, now)`, which handled a forged FUTURE
+/// claim (park past every reachable deadline) but swallowed a forged PAST one.
+/// Taking the observation outright covers both: this fixture ships the future
+/// claim, its twin below ships `learned_at = 0`, and neither moves the value.
+#[test]
+fn readonly_fold_ignores_future_learned_at_and_assumes_local_observation() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(221);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(221, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let enrolled = ed_key(222);
+    let enroll = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![genesis_hash],
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    authority_key_from_ed(&enrolled),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            owner_key,
+            2,
+        ),
+        &owner,
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let far_future = crate::unix_seconds_now() + 3650 * 24 * 60 * 60;
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (
+                enroll,
+                TimeRange {
+                    start: 2,
+                    end: far_future,
+                },
+                far_future,
+            ),
+        ])
+        .unwrap();
+    strip_first_seen_sidecars(&vault, true);
+
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let err = vault
+        .authority_fold_readonly_in_txn(&rtxn)
+        .expect_err("an undated pending enrollment must refuse, not authorize");
+    drop(rtxn);
+    assert!(is_indeterminate_first_seen(&err), "{err}");
+
+    // The migration records the local observation, and the forged future date
+    // leaves no trace in it.
+    let full = vault.authority_fold().unwrap();
+    let pending = full
+        .pending_widens
+        .get(&enroll_hash)
+        .expect("a freshly observed enrollment must still be inside its delay");
+    assert_eq!(
+        pending.first_seen_at_secs,
+        Some(readonly_observation_secs(&vault)),
+        "first-seen must be the local observation, never the forged future"
+    );
+    let rtxn = vault.store.env.read_txn().unwrap();
+    assert_eq!(vault.authority_fold_readonly_in_txn(&rtxn).unwrap(), full);
+    drop(rtxn);
+}
+
+/// The P2 this leg exists for: `learned_at = 0` must not read as "first seen in
+/// the distant past, delay long elapsed".
+///
+/// Mirror of the future-dated case, and the dangerous direction. A legacy,
+/// sidecar-less `EnrollDevice` of an OWNER-CAPABLE key is shipped claiming
+/// `learned_at = 0`; a child `BindActor(new_key, attacker, "human")` rides it.
+/// Under `learned_at.min(floor)` the enrollment dates to 1970, folds MATURE on
+/// arrival, puts the attacker's key in the owner-capable roster, and the child
+/// bind folds ACTIVE — every owner verb, no veto window, straight through both
+/// folds. `observed_floor` never caught this: it clamps FUTURE claims only.
+///
+/// Local observation is the whole fix. Neither fold can date the row, so the
+/// readonly fold refuses; the migration then dates it NOW, which keeps it
+/// pending for the full delay and the bind non-authorizing.
+#[test]
+fn zero_learned_at_enrollment_cannot_instantly_authorize_a_child_bind() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(225);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(225, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+
+    // Owner-capable, so a "human" bind on it is admissible the instant the
+    // enrollment applies — which is exactly what the delay exists to prevent.
+    let attacker_signing = ed_key(226);
+    let attacker_key = authority_key_from_ed(&attacker_signing);
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 226,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let attacker = scope_entity(0x64);
+    // Cosigned: once the enrollment applies the roster holds two active keys,
+    // so a lone-signed bind would die on MissingQuorum and hide the divergence.
+    let bind = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![enroll_hash],
+            bind_op(&attacker_key, attacker, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+        &attacker_signing,
+    );
+
+    // `learned_at = 0` on every row: the peer's claim that these were learned at
+    // the epoch. Only the ENROLL's claim matters — it is the delayable widen.
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 0),
+            (enroll, TimeRange { start: 1, end: 1 }, 0),
+            (bind, TimeRange { start: 1, end: 1 }, 0),
+        ])
+        .unwrap();
+    strip_first_seen_sidecars(&vault, true);
+
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let err = vault
+        .authority_fold_readonly_in_txn(&rtxn)
+        .expect_err("a `learned_at = 0` enrollment must not date itself into maturity");
+    drop(rtxn);
+    assert!(is_indeterminate_first_seen(&err), "{err}");
+
+    // The migration is the other half: it must date the row at local observation
+    // too, or the attack simply moves one fold over.
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        full.pending_widens.contains_key(&enroll_hash),
+        "an enrollment first observed just now is inside its delay, whatever it claims"
+    );
+    assert!(
+        !full.roster.contains_key(&attacker_key),
+        "a pending enrollment must not put the attacker's key in the roster"
+    );
+    assert!(
+        !actor_binding_is_active(&full, &attacker, "human"),
+        "the child bind must not authorize while its enrollment is inside the veto window"
+    );
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !actor_binding_is_active(&readonly, &attacker, "human"),
+        "both folds must deny; divergence here is the bug class this leg kills"
+    );
+    assert_eq!(readonly, full);
+}
+
+/// The denial above must not be a blanket "nothing ever matures": an enrollment
+/// this vault has genuinely held past its delay still matures and still
+/// authorizes its child bind, through BOTH folds.
+///
+/// Without this row the fix is indistinguishable from breaking the feature.
+#[test]
+fn locally_matured_enrollment_still_authorizes_its_child_bind() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(227);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(227, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let second = ed_key(228);
+    let second_key = authority_key_from_ed(&second);
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 228,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let actor = scope_entity(0x65);
+    let bind = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![enroll_hash],
+            bind_op(&second_key, actor, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+        &second,
+    );
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (enroll, TimeRange { start: 2, end: 2 }, 2),
+            (bind, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+
+    // Sidecars exist (the write path recorded them), so the fold is computable
+    // from the start and the enrollment begins inside its delay.
+    let before = vault.authority_fold().unwrap();
+    assert!(before.pending_widens.contains_key(&enroll_hash));
+    assert!(!actor_binding_is_active(&before, &actor, "human"));
+
+    // Advance the LOCAL monotonic clock past the delay — the only kind of time
+    // that counts here.
+    let matured_at = readonly_observation_secs(&vault) + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    assert_eq!(
+        authority_observation_secs_for_domain(vault.store.authority_clock_domain, matured_at, 0),
+        matured_at
+    );
+
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        !full.pending_widens.contains_key(&enroll_hash),
+        "a locally matured enrollment must apply"
+    );
+    assert!(full.roster.contains_key(&second_key));
+    assert!(
+        actor_binding_is_active(&full, &actor, "human"),
+        "the child bind must authorize once its enrollment has genuinely matured"
+    );
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert_eq!(
+        readonly, full,
+        "both folds must agree on the matured roster"
+    );
+}
+
+/// The observation seconds a readonly fold would derive right now, without
+/// disturbing the persisted floor.
+fn readonly_observation_secs(vault: &crate::Vault) -> u64 {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let floor = vault
+        .store
+        .sync_state
+        .get(&rtxn, authority_first_seen_clock_sync_key())
+        .unwrap()
+        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        .unwrap_or(0);
+    drop(rtxn);
+    authority_observation_secs_for_domain(
+        vault.store.authority_clock_domain,
+        floor,
+        crate::unix_seconds_now(),
+    )
+}
+
+/// A sidecar missing AFTER the one-shot migration ran is unrecoverable, so the
+/// readonly fold must refuse rather than pick a side.
+///
+/// Synthesis is only sound while the backfill has not run: it reproduces what
+/// the migration WOULD write. Once the marker is set the migration will never
+/// visit that row again, so a re-synthesized `learned_at.min(now)` would silently
+/// disagree with every sidecar its peers kept — and both available guesses are
+/// unsafe (mature early = skipped veto window; stay pending = live retired key).
+/// An undecodable row is the same state and takes the same door.
+#[test]
+fn readonly_fold_rejects_sidecar_lost_after_backfill() {
+    for corrupt_in_place in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        let owner = ed_key(223);
+        let owner_key = authority_key_from_ed(&owner);
+        let genesis = genesis_entry(223, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+        let genesis_hash = authority_entry_hash(&genesis).unwrap();
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let actor = scope_entity(0x63);
+        let bind = sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                1,
+                vec![genesis_hash],
+                bind_op(&owner_key, actor, "human", 1),
+                owner_key,
+                2,
+            ),
+            &owner,
+        );
+        let bind_hash = authority_entry_hash(&bind).unwrap();
+        vault
+            .put_authority_log_entries(&[
+                (genesis, TimeRange { start: 1, end: 1 }, 1),
+                (bind, TimeRange { start: 2, end: 2 }, 2),
+            ])
+            .unwrap();
+        // Settle: this is what sets the one-shot marker.
+        vault.authority_fold().unwrap();
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, authority_first_seen_backfill_sync_key())
+                .unwrap()
+                .is_some(),
+            "the full fold must have set the one-shot marker"
+        );
+        drop(rtxn);
+
+        let sidecar = authority_first_seen_sync_key(&bind_hash);
+        vault
+            .with_write_txn(|wtxn| {
+                if corrupt_in_place {
+                    // Present but undecodable: not 8 bytes.
+                    vault.store.sync_state.put(wtxn, sidecar.as_str(), &[9])?;
+                } else {
+                    assert!(vault.store.sync_state.delete(wtxn, sidecar.as_str())?);
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        let err = vault
+            .authority_fold_readonly_in_txn(&rtxn)
+            .expect_err("a post-migration sidecar gap must refuse the fold");
+        drop(rtxn);
+        assert!(
+            is_corrupt_first_seen_sidecar(&err),
+            "corrupt_in_place={corrupt_in_place}: {err}"
+        );
+    }
+}
+
+fn sync_state_snapshot(vault: &crate::Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let rows = vault
+        .store
+        .sync_state
+        .iter(&rtxn)
+        .unwrap()
+        .map(|row| {
+            let (key, value) = row.unwrap();
+            (key.as_bytes().to_vec(), value.to_vec())
+        })
+        .collect();
+    drop(rtxn);
+    rows
+}
+
+/// The pending-widen freeze that a `RevokeActor` builds its fixture from: a
+/// two-key roster, a live human binding, and a cosigned `EnrollDevice` that is
+/// still inside its veto delay, so `state.pending_widens` is non-empty for every
+/// entry that follows.
+struct PendingWidenFreeze {
+    fixture: BindFixture,
+    entries: Vec<AuthorityLogEntry>,
+    first_seen: BTreeMap<AuthorityEntryHash, u64>,
+    widen_hash: AuthorityEntryHash,
+    bind_hash: AuthorityEntryHash,
+    now_secs: u64,
+}
+
+/// Builds the freeze. `long_ago` first-seen times keep genesis/enroll/bind out of
+/// the delay; the widen is first seen at `now`, which is what pins it pending.
+fn pending_widen_freeze(seed: u8) -> PendingWidenFreeze {
+    let fixture = bind_fixture(seed);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    let widen = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&ed_key(seed.wrapping_add(4))),
+                ROLE_AGENT,
+                AuthorityTier::Software,
+            ),
+        },
+        103,
+    );
+    let widen_hash = authority_entry_hash(&widen).unwrap();
+
+    let now_secs = 10_000_000;
+    let mut first_seen = BTreeMap::new();
+    for hash in [genesis_hash, enroll_hash, bind_hash] {
+        first_seen.insert(hash, 1);
+    }
+    first_seen.insert(widen_hash, now_secs);
+
+    PendingWidenFreeze {
+        entries: vec![fixture.genesis.clone(), fixture.enroll.clone(), bind, widen],
+        fixture,
+        first_seen,
+        widen_hash,
+        bind_hash,
+        now_secs,
+    }
+}
+
+/// fix-leg 11 P1-1: a `RevokeActor` must NOT wait behind an unrelated pending
+/// widen — a revocation is the operator's emergency brake.
+///
+/// A pending widen freezes the log: `fold_entry_state` returned `Waiting` for
+/// every entry that followed one, so a revocation filed while any enrollment sat
+/// inside its veto window did not take effect until that enrollment matured. The
+/// consequences run the wrong way on every axis. The revocation is the response
+/// to a compromise, so the window it is deferred across is exactly the window the
+/// compromised key keeps every owner verb — up to
+/// `MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS`. And the delay is ATTACKER-CHOSEN: the
+/// compromised key can cosign a delayable widen of its own and thereby extend the
+/// life of its own authority, re-arming the freeze each time one matures.
+///
+/// Folding the revocation early is sound because a revocation cannot widen: it
+/// only raises a per-key watermark, so an early fold strictly REMOVES authority.
+/// Nothing about the pending widen changes — it still matures on its own clock,
+/// which the last assertion pins.
+///
+/// MUTATION PROBE: restore the unconditional deferral (drop the
+/// `op_applies_despite_pending_widen` term at the `pending_widens.is_empty()`
+/// guard) and this test fails — the revocation folds Waiting and the binding
+/// stays Active.
+#[test]
+fn revoke_actor_applies_immediately_despite_an_unrelated_pending_widen() {
+    let freeze = pending_widen_freeze(240);
+    let key = freeze.fixture.owner_key.clone();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        revoke_actor_op(&key, 5),
+        104,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    // Baseline: with no revocation the binding authorizes, so the assertions
+    // below pin the revocation's effect and not a broken fixture.
+    let before =
+        fold_authority_log_with_seen_times(&freeze.entries, &freeze.first_seen, freeze.now_secs);
+    assert!(
+        before.pending_widens.contains_key(&freeze.widen_hash),
+        "fixture: the widen must start inside its veto delay"
+    );
+    assert!(
+        actor_binding_is_active(&before, &freeze.fixture.actor, "human"),
+        "fixture: the binding must authorize before the revocation"
+    );
+
+    let mut entries = freeze.entries.clone();
+    entries.push(revoke);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(revoke_hash, freeze.now_secs);
+    let after = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+
+    assert!(
+        after.issues.is_empty(),
+        "the revocation must fold cleanly: {:?}",
+        after.issues
+    );
+    assert!(
+        after.valid_entries.contains(&revoke_hash),
+        "the revocation must fold VALID, not park as Waiting behind the widen"
+    );
+    assert_eq!(
+        folded_status(&after, &key),
+        Some(ActorBindingStatus::Revoked),
+        "the revocation must kill the binding NOW"
+    );
+    assert!(
+        !actor_binding_is_active(&after, &freeze.fixture.actor, "human"),
+        "a revoked actor must lose its authority immediately, not when an \
+         unrelated enrollment matures"
+    );
+    // The widen keeps its OWN clock: the revocation neither matures nor vetoes it.
+    assert!(
+        after.pending_widens.contains_key(&freeze.widen_hash),
+        "the pending widen must still mature on its own clock"
+    );
+    assert_eq!(
+        after.pending_widens[&freeze.widen_hash], before.pending_widens[&freeze.widen_hash],
+        "the revocation must not disturb the pending widen's delay bookkeeping"
+    );
+}
+
+/// The other half of the same ruling: GRANTS still wait.
+///
+/// `RevokeActor` skips the freeze because withdrawing consent is unconditional.
+/// `BindActor` and `RebindActor` do the opposite — they hand an actor authority —
+/// so they keep the deferral: folding a grant against a roster the pending widen
+/// may still change is exactly what the freeze exists to prevent. Pinned so a
+/// future edit cannot widen the exemption from "the withdrawal" to "the actor
+/// ops".
+///
+/// MUTATION PROBE: make `op_applies_despite_pending_widen` return true for the
+/// bind arms and this test fails.
+#[test]
+fn bind_and_rebind_still_defer_behind_a_pending_widen() {
+    for (label, op, seq) in [
+        (
+            "rebind",
+            rebind_op(
+                &pending_widen_freeze(244).fixture.owner_key,
+                scope_entity(0x71),
+                "human",
+                2,
+            ),
+            4_u64,
+        ),
+        (
+            "bind",
+            bind_op(
+                &pending_widen_freeze(244).fixture.agent_key,
+                scope_entity(0x72),
+                "agent",
+                1,
+            ),
+            4,
+        ),
+    ] {
+        let freeze = pending_widen_freeze(244);
+        let entry = cosigned_entry(&freeze.fixture, vec![freeze.widen_hash], seq, op, 104);
+        let entry_hash = authority_entry_hash(&entry).unwrap();
+        let mut entries = freeze.entries.clone();
+        entries.push(entry);
+        let mut first_seen = freeze.first_seen.clone();
+        first_seen.insert(entry_hash, freeze.now_secs);
+
+        let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+        assert!(
+            fold.pending_widens.contains_key(&freeze.widen_hash),
+            "{label}: fixture — the widen must still be pending"
+        );
+        assert!(
+            !fold.valid_entries.contains(&entry_hash),
+            "{label}: a GRANT must stay deferred behind the pending widen"
+        );
+        // The pre-existing binding is untouched: the deferred grant changed nothing.
+        assert!(
+            actor_binding_is_active(&fold, &freeze.fixture.actor, "human"),
+            "{label}: the deferred grant must leave the existing binding alone"
+        );
+        assert!(
+            fold.valid_entries.contains(&freeze.bind_hash),
+            "{label}: the pre-widen bind must remain valid"
+        );
+    }
+}
+
+/// fix-leg 12 P1: the freeze exemption must survive the ANCESTRY hurdle — a
+/// revoked key cannot stall its own revocation by parenting it on a grant the
+/// key itself froze.
+///
+/// fix-leg 11 exempted `RevokeActor` from the pending-widen freeze, but the
+/// exemption sits BELOW the parent-ancestry resolution: a parent with no folded
+/// state returns `Waiting` before any op-specific rule runs. The compromised key
+/// C turns that ordering into a stall lever. C files a grant of its own as a
+/// child of an unrelated pending widen; by fix-11's own (correct) ruling that
+/// grant defers. The operator's `RevokeActor` naming the deferred grant as its
+/// parent then inherits the wait, and C keeps every owner verb its binding
+/// carries until the widen matures — up to `MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS`
+/// on the compromised key's own forging. That is the exact live bug fix-11
+/// shipped against, re-entered one level up.
+///
+/// Note what C needs to build the lever: only the ability to author a
+/// `BindActor`, which asks for ordinary authority consent and never inspects the
+/// signer's own actor binding. A key already stripped down to veto-only can
+/// still do it, so "C cannot mature its own widen" does not close the hole —
+/// the stall is the veto WINDOW, not the widen.
+///
+/// MUTATION PROBE: drop the `RevokeActor` arm from
+/// `unstick_stalled_revocation` (or restore the unconditional
+/// `return EntryFold::Waiting` for an unresolved parent) and this test fails —
+/// the revocation lands in `issues` as `InvalidAncestry` and the binding stays
+/// Active.
+#[test]
+fn revoke_actor_folds_past_a_grant_frozen_in_its_own_ancestry() {
+    let freeze = pending_widen_freeze(248);
+    let key = freeze.fixture.owner_key.clone();
+
+    // C's stall lever: C's OWN grant, filed under the pending widen so the
+    // freeze parks it. `bind_and_rebind_still_defer_behind_a_pending_widen`
+    // pins that this entry cannot fold while the widen is pending.
+    let stall = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&freeze.fixture.agent_key, scope_entity(0x73), "agent", 1),
+        104,
+    );
+    let stall_hash = authority_entry_hash(&stall).unwrap();
+    // The operator's emergency brake, parented on that deferred grant.
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![stall_hash],
+        5,
+        revoke_actor_op(&key, 5),
+        105,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    let mut entries = freeze.entries.clone();
+    entries.push(stall);
+    entries.push(revoke);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(stall_hash, freeze.now_secs);
+    first_seen.insert(revoke_hash, freeze.now_secs);
+    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+
+    assert!(
+        fold.valid_entries.contains(&revoke_hash),
+        "the revocation must fold past a parent frozen behind an unrelated widen"
+    );
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked),
+        "withdrawal of consent must take effect NOW, not when the widen matures"
+    );
+    assert!(
+        !actor_binding_is_active(&fold, &freeze.fixture.actor, "human"),
+        "a revoked actor must not keep owner authority because it parented the \
+         revocation on a grant it froze itself"
+    );
+    // The exemption stays exactly one op wide: the GRANT keeps waiting, and the
+    // widen keeps its own clock.
+    assert!(
+        !fold.valid_entries.contains(&stall_hash),
+        "the deferred grant must NOT be dragged past the freeze with the revocation"
+    );
+    assert!(
+        fold.pending_widens.contains_key(&freeze.widen_hash),
+        "the pending widen must still mature on its own clock"
+    );
+}
+
+/// fix-leg 13 P1: the freeze classifier must mirror the fold's own rule, which
+/// reads the MERGED parent state — not each branch in isolation.
+///
+/// fix-12's `entry_is_frozen_by_pending_widen` asked whether EVERY parent
+/// branch resolves to a state carrying a pending widen. The fold does not work
+/// that way. `fold_entry_state` merges all parents first and then freezes on
+/// `!state.pending_widens.is_empty()`, so ONE widen-bearing branch is enough to
+/// park the entry. A grant parented on `[widen, ordinary_ready_entry]` is
+/// therefore Waiting in the fold and "not frozen" to the classifier — the two
+/// disagree, and the disagreement is what the attacker gets to pick.
+///
+/// C only has to add a second, entirely innocuous parent to its stall grant to
+/// re-open the exact hole fix-12 closed: the child `RevokeActor` asks the
+/// bypass to step over that grant, the classifier says the parent is not frozen,
+/// `nearest_unfrozen_ancestor_state` refuses the whole walk, and the revocation
+/// falls out as `InvalidAncestry` while the compromised key keeps every owner
+/// verb for the widen's full veto window. Multi-parent entries are ordinary in
+/// this log — the merge loop above exists for them — so this is not an exotic
+/// shape, it is the same lever with one more edge drawn.
+///
+/// MUTATION PROBE: restore the per-branch `all()` shape in
+/// `entry_is_frozen_by_pending_widen` (classify from each parent's own nearest
+/// ancestor state instead of their merge) and this test fails — the revocation
+/// lands in `issues` as `InvalidAncestry` and the binding stays Active.
+#[test]
+fn revoke_actor_folds_past_a_grant_frozen_through_only_one_of_its_parents() {
+    let freeze = pending_widen_freeze(220);
+    let key = freeze.fixture.owner_key.clone();
+
+    // The mixed parentage: the pending widen AND an ordinary, already-folded
+    // sibling that carries no widen at all. `bind_hash` is the plain
+    // Genesis -> Enroll -> Bind chain entry the fixture folds first.
+    let stall = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash, freeze.bind_hash],
+        4,
+        bind_op(&freeze.fixture.agent_key, scope_entity(0x77), "agent", 1),
+        104,
+    );
+    let stall_hash = authority_entry_hash(&stall).unwrap();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![stall_hash],
+        5,
+        revoke_actor_op(&key, 5),
+        105,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    let mut entries = freeze.entries.clone();
+    entries.push(stall);
+    entries.push(revoke);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(stall_hash, freeze.now_secs);
+    first_seen.insert(revoke_hash, freeze.now_secs);
+    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+
+    // Fixture: the mixed-parent grant really is frozen, and the sibling branch
+    // really did fold clean — that pairing is the whole point of the row.
+    assert!(
+        fold.pending_widens.contains_key(&freeze.widen_hash),
+        "fixture: the widen must still be pending"
+    );
+    assert!(
+        fold.valid_entries.contains(&freeze.bind_hash),
+        "fixture: the second parent must be an ordinary FOLDED entry with no widen"
+    );
+    assert!(
+        !fold.valid_entries.contains(&stall_hash),
+        "fixture: one widen-bearing parent must be enough to freeze the grant"
+    );
+
+    assert!(
+        fold.valid_entries.contains(&revoke_hash),
+        "the revocation must fold past a parent the fold froze through ONE of its \
+         parents: a branch with no widen must not veto the freeze classification"
+    );
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked),
+        "withdrawal of consent must take effect NOW, not when the widen matures"
+    );
+    assert!(
+        !actor_binding_is_active(&fold, &freeze.fixture.actor, "human"),
+        "adding one innocuous second parent to the stall grant must not buy the \
+         compromised key another veto window of owner authority"
+    );
+    // The narrowings hold: the grant itself is not dragged along, and the widen
+    // keeps its own clock.
+    assert!(
+        !fold.valid_entries.contains(&stall_hash),
+        "the deferred grant must NOT be dragged past the freeze with the revocation"
+    );
+    assert!(
+        fold.pending_widens.contains_key(&freeze.widen_hash),
+        "the pending widen must still mature on its own clock"
+    );
+}
+
+/// The second fix-12 narrowing: the bypass steps over a FROZEN parent, never an
+/// invalid one.
+///
+/// "Resolve against the nearest ready ancestor" is only sound while the skipped
+/// entries are ones the fold is deliberately holding. An entry the fold REJECTED
+/// is a different animal: nothing above it was ever validated, and walking past
+/// it would let a revocation fold over ancestry the vault refused. The
+/// revocation is removal-only, so this is not a privilege escalation — but it
+/// would silently admit an entry whose parent is not part of the log's valid
+/// history, which is a fold-integrity break the wider machinery (permutation
+/// invariance, `valid_entries` as the authority of record) relies on not
+/// happening.
+///
+/// Here the revocation's parent is a double-`BindActor`, rejected with
+/// `BindingExists`. No pending widen is involved at all, so the revocation must
+/// simply fail its ancestry as it always did.
+///
+/// MUTATION PROBE: relax `nearest_unfrozen_ancestor_state` to walk past any
+/// unfolded ancestor (drop the `pending` / `entry_is_frozen_by_pending_widen`
+/// terms) and this test fails — the revocation folds valid on top of a rejected
+/// parent.
+#[test]
+fn the_bypass_does_not_walk_past_a_rejected_parent() {
+    let fixture = bind_fixture(228);
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let key = fixture.owner_key.clone();
+
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    // Rejected: a live binding already exists on this key.
+    let double_bind = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        bind_op(&key, scope_entity(0x76), "human", 5),
+        103,
+    );
+    let double_bind_hash = authority_entry_hash(&double_bind).unwrap();
+    let revoke = cosigned_entry(
+        &fixture,
+        vec![double_bind_hash],
+        4,
+        revoke_actor_op(&key, 5),
+        104,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    let entries = vec![
+        fixture.genesis.clone(),
+        fixture.enroll,
+        bind,
+        double_bind.clone(),
+        revoke,
+    ];
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+
+    assert_eq!(
+        binding_rejection(&fold, &double_bind),
+        Some(ActorBindingRejection::BindingExists),
+        "fixture: the parent must be REJECTED, not merely deferred"
+    );
+    assert!(
+        !fold.valid_entries.contains(&revoke_hash),
+        "the bypass must not carry a revocation over a parent the fold rejected: \
+         only a parent frozen by a pending widen may be stepped over"
+    );
+}
+
+/// The `RevokeActor`-only gate on the fix-12 bypass, probed where it actually
+/// bites: `VetoPendingWiden`.
+///
+/// Most ops are held back a second time by the freeze check inside
+/// `fold_entry_state`, so opening the bypass to them changes nothing
+/// observable. A veto is the exception — `fold_entry_state` resolves it BEFORE
+/// the freeze, since a veto's whole job is to kill a pending widen. So a veto
+/// is the one op that would really travel through an ancestry bypass, and it is
+/// the one that must not: a veto folded against a state from before the frozen
+/// entry is a veto evaluated against a roster the vault has not settled, decided
+/// on `has_veto_authority_consent` from stale ancestry.
+///
+/// Here C parents a veto of the widen on its own frozen grant. The veto must
+/// stay stuck. It carries the same shape as the revocation that DOES get
+/// through in the test above, so what separates them is only the op gate.
+///
+/// MUTATION PROBE: drop the `matches!(entry.op, AuthorityOp::RevokeActor {..})`
+/// guard from `revocation_bypass_states` and this test fails — the veto folds
+/// valid and the pending widen dies without ever being weighed against a
+/// settled roster.
+#[test]
+fn a_veto_may_not_ride_the_revocation_ancestry_bypass() {
+    let freeze = pending_widen_freeze(236);
+    let stall = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&freeze.fixture.agent_key, scope_entity(0x75), "agent", 1),
+        104,
+    );
+    let stall_hash = authority_entry_hash(&stall).unwrap();
+    let veto = veto_entry(
+        freeze.fixture.vault_id,
+        &stall,
+        &freeze.fixture.owner,
+        freeze.widen_hash,
+        5,
+    );
+    let veto_hash = authority_entry_hash(&veto).unwrap();
+
+    let mut entries = freeze.entries.clone();
+    entries.push(stall);
+    entries.push(veto);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(stall_hash, freeze.now_secs);
+    first_seen.insert(veto_hash, freeze.now_secs);
+    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+
+    assert!(
+        !fold.valid_entries.contains(&veto_hash),
+        "a veto must NOT travel the revocation bypass: it is resolved before the \
+         freeze check, so an ancestry bypass would let it kill a widen from a \
+         roster the fold has not settled"
+    );
+    assert!(
+        !fold.vetoed_widens.contains(&freeze.widen_hash),
+        "the widen must not be vetoed by an entry that never folded"
+    );
+    assert!(
+        fold.pending_widens.contains_key(&freeze.widen_hash),
+        "the widen must still be pending on its own clock"
+    );
+}
+
+/// The other half of the fix-12 ruling: a revocation folded past the freeze must
+/// stay in force once the widen it bypassed matures.
+///
+/// The bypass resolves the revocation against an ancestry state that predates
+/// the frozen grant, so the obvious failure mode is a stranded watermark: the
+/// widen matures, the grant folds for real, the revocation re-folds on the
+/// now-available parent, and some ordering loses the raised
+/// `actor_binding_revocations` entry. Merge is monotone by max, so this should
+/// fall out — pinned so it stays true.
+#[test]
+fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
+    let freeze = pending_widen_freeze(252);
+    let key = freeze.fixture.owner_key.clone();
+    let stall = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&freeze.fixture.agent_key, scope_entity(0x74), "agent", 1),
+        104,
+    );
+    let stall_hash = authority_entry_hash(&stall).unwrap();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![stall_hash],
+        5,
+        revoke_actor_op(&key, 5),
+        105,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    let mut entries = freeze.entries.clone();
+    entries.push(stall);
+    entries.push(revoke);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(stall_hash, freeze.now_secs);
+    first_seen.insert(revoke_hash, freeze.now_secs);
+
+    // Same log, one clock apart: frozen, then matured.
+    let matured_at = freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    let after = fold_authority_log_with_seen_times(&entries, &first_seen, matured_at);
+    assert!(
+        !after.pending_widens.contains_key(&freeze.widen_hash),
+        "fixture: the widen must have matured at the later reading"
+    );
+    assert!(
+        after.valid_entries.contains(&stall_hash),
+        "fixture: the grant must fold once the freeze lifts"
+    );
+    assert!(
+        after.valid_entries.contains(&revoke_hash),
+        "the revocation must still fold once its parent is available for real"
+    );
+    assert_eq!(
+        folded_status(&after, &key),
+        Some(ActorBindingStatus::Revoked),
+        "the revocation's watermark must survive the widen maturing"
+    );
+    assert!(
+        !actor_binding_is_active(&after, &freeze.fixture.actor, "human"),
+        "a matured widen must not resurrect the revoked actor's authority"
+    );
+}
+
+/// fix-leg 11 P1-2: a matured ENROLLMENT must survive a restart under a
+/// rolled-back wall clock, which is what makes the write fold's floor
+/// persistence load-bearing in the GRANT direction.
+///
+/// `readonly_fold_backward_wall_clock_skew_keeps_elapsed_rotation_applied`
+/// already pins the revoke direction: a matured `RotateKey` must stay applied, or
+/// the retired key's owner binding comes back. That test cannot catch a
+/// regression in the other direction, because a lost floor pushes a rotation back
+/// INTO `pending_widens`, which for a rotation is the fail-OPEN outcome its
+/// assertions are built around.
+///
+/// The grant direction fails the opposite way and needs its own row. An
+/// `EnrollDevice` matured on this vault's monotonic clock authorizes its child
+/// bind; if the floor is not persisted, a restart drops the process-local clock,
+/// the fold falls back to a wall clock sitting far BELOW the observation, and the
+/// enrollment reverts to pending — so a legitimately matured owner enrollment
+/// silently loses its authority. That is fail-CLOSED but wrong, and it is
+/// indistinguishable from the feature simply not working: the operator waited out
+/// the veto window, and a reboot took it back.
+///
+/// MUTATION PROBE: drop the floor `put` from `Vault::authority_fold`'s write txn
+/// and this test fails at the post-reopen assertions.
+#[test]
+fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    // Park the authority clock far ahead of real Unix time, so every later
+    // observation is written from a future reading and `unix_seconds_now()` is
+    // the BACKWARD-skewed clock a reopen would otherwise trust.
+    let domain = vault.store.authority_clock_domain;
+    let future = crate::unix_seconds_now() + 10 * 24 * 60 * 60;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, 0, future),
+        future
+    );
+
+    let owner = ed_key(231);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(231, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let second = ed_key(232);
+    let second_key = authority_key_from_ed(&second);
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 232,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let actor = scope_entity(0x67);
+    let bind = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![enroll_hash],
+            bind_op(&second_key, actor, "human", 1),
+            owner_key,
+            3,
+        ),
+        &owner,
+        &second,
+    );
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (enroll, TimeRange { start: 2, end: 2 }, 2),
+            (bind, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+
+    let before = vault.authority_fold().unwrap();
+    assert!(
+        before.pending_widens.contains_key(&enroll_hash),
+        "the enrollment starts inside its veto delay"
+    );
+    assert!(
+        !actor_binding_is_active(&before, &actor, "human"),
+        "its child bind must not authorize while the enrollment is pending"
+    );
+
+    // Run the local monotonic clock past the delay, then let a WRITE fold record
+    // the observation — this is the commit whose floor must outlive the process.
+    let matured_at = future + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    assert_eq!(
+        authority_observation_secs_for_domain(domain, matured_at, 0),
+        matured_at
+    );
+    let full = vault.authority_fold().unwrap();
+    assert!(
+        !full.pending_widens.contains_key(&enroll_hash),
+        "the enrollment must mature once the local clock passes its delay"
+    );
+    assert!(
+        actor_binding_is_active(&full, &actor, "human"),
+        "the matured enrollment must authorize its child bind"
+    );
+    // The floor is the durable half of that observation.
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let persisted_floor = vault
+        .store
+        .sync_state
+        .get(&rtxn, authority_first_seen_clock_sync_key())
+        .unwrap()
+        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        .unwrap_or(0);
+    drop(rtxn);
+    assert!(
+        persisted_floor >= matured_at,
+        "the write fold must persist its derived observation as the floor \
+         (monotone max): floor={persisted_floor} < observed={matured_at}"
+    );
+
+    // Restart. The process-local clock dies with the vault, so the rolled-back
+    // wall clock is the only other candidate reading — the persisted floor is
+    // the sole thing keeping the enrollment matured.
+    drop(vault);
+    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let rtxn = reopened.store.env.read_txn().unwrap();
+    let after_reopen = reopened.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    drop(rtxn);
+    assert!(
+        !after_reopen.pending_widens.contains_key(&enroll_hash),
+        "a restart under a rolled-back wall clock must not un-mature the \
+         enrollment — the persisted floor is what carries the observation across"
+    );
+    assert!(
+        actor_binding_is_active(&after_reopen, &actor, "human"),
+        "a legitimately matured owner enrollment must keep authorizing its child \
+         bind across a restart"
+    );
 }

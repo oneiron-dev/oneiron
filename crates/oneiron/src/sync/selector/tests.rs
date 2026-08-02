@@ -663,19 +663,19 @@ fn federated_admission_rejects_foreign_authority_log() {
     let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xB2));
     let local = authority_genesis_entry(0x51);
     vault
-        .put_authority_log_entry(&entity_id(0x51), &local, TimeRange { start: 1, end: 1 }, 1)
+        .put_authority_log_entry(&local, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
 
     let foreign = authority_genesis_entry(0x52);
     let foreign_body = encode_authority_log_entry_body(&foreign).unwrap();
+    // The row carries its own CORRECT content-derived id, so the store-key
+    // bind passes and the FOREIGN-ROOT rejection is what is actually under
+    // test (the key bind precedes the vault-id fold check, mirroring the
+    // write door's ordering in `batch.rs`).
+    let foreign_id = authority_log_entity_id(&foreign).unwrap();
     let window_key = WindowKey::new("2026-03");
     let doc = create_window_doc("remote", &window_key);
-    insert_entity(
-        &doc,
-        entity_id(0x52),
-        ENTITY_TYPE_AUTHORITY_LOG,
-        &foreign_body,
-    );
+    insert_entity(&doc, foreign_id, ENTITY_TYPE_AUTHORITY_LOG, &foreign_body);
     doc.commit();
     let update = doc.export(ExportMode::all_updates()).unwrap();
 
@@ -687,6 +687,92 @@ fn federated_admission_rejects_foreign_authority_log() {
     )
     .expect_err("foreign authority roots must not enter admitted federation updates");
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
+}
+
+/// ONE-1604-D1 (fix-leg 4, admission door): admission validated the type-122
+/// BODY and the vault root but never bound the CRDT row's KEY to the id
+/// derived from that body. A wrong-key authority row therefore entered the
+/// ADMITTED doc — the bytes the ordinary replay path imports — and only
+/// failed later at materialize, after this door had already re-authored it
+/// under a federation-admission origin. The bind is the same content-address
+/// rule `check_authority_log_store_key` enforces at the write door.
+#[test]
+fn federated_admission_rejects_wrong_key_authority_row() {
+    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xB3));
+    let local = authority_genesis_entry(0x55);
+    vault
+        .put_authority_log_entry(&local, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+
+    // A row whose body is fully valid AND shares the local vault root, so
+    // every other admission check passes: only the key is wrong.
+    let body = encode_authority_log_entry_body(&local).unwrap();
+    let derived = authority_log_entity_id(&local).unwrap();
+    let wrong_key = entity_id(0xEE);
+    assert_ne!(wrong_key, derived, "the fixture key must genuinely differ");
+
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote", &window_key);
+    insert_entity(&doc, wrong_key, ENTITY_TYPE_AUTHORITY_LOG, &body);
+    doc.commit();
+    let update = doc.export(ExportMode::all_updates()).unwrap();
+
+    let err = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect_err("a wrong-key authority row must not reach the admitted doc");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
+    );
+    // H2: the typed reason is a REMOTE rejection, so the replay sites
+    // quarantine-and-continue instead of aborting the whole window.
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
+        "the bind must reject remotely, never as a local fail-closed error"
+    );
+}
+
+/// The healing half of the bind: a CORRECT-key authority row sharing the
+/// local vault root still admits and reaches the admitted doc byte-for-byte.
+/// Without this, a bind that rejected everything would look identical to a
+/// bind that works.
+#[test]
+fn federated_admission_admits_correct_key_authority_row() {
+    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xB4));
+    let local = authority_genesis_entry(0x56);
+    vault
+        .put_authority_log_entry(&local, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+
+    let body = encode_authority_log_entry_body(&local).unwrap();
+    let derived = authority_log_entity_id(&local).unwrap();
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote", &window_key);
+    insert_entity(&doc, derived, ENTITY_TYPE_AUTHORITY_LOG, &body);
+    doc.commit();
+    let update = doc.export(ExportMode::all_updates()).unwrap();
+
+    let admitted = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect("a correct-key authority row must heal normally");
+
+    let receiver = create_window_doc("receiver", &window_key);
+    receiver.import(&admitted).unwrap();
+    let blob = map_get_bytes(&receiver.get_map("entities"), &derived.to_hex())
+        .expect("admitted authority row");
+    assert_eq!(
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+        body.as_slice(),
+        "the admitted authority body must pass through unchanged"
+    );
 }
 
 #[test]
@@ -2585,6 +2671,242 @@ fn selector_document_only_target_scopes_only_when_it_types_a_facet() {
     );
 }
 
+/// The admission drop is TERMINAL, so it must schedule no retry work.
+///
+/// `rm:w:{window}:{entity_hex}` means "a forward rematerialization pass still
+/// owes work on this entity", and forward remat discharges it by REPLAYING the
+/// row out of the document. A row the admission door DROPPED is never in any
+/// document, so no replay can reach it and the marker can never clear. Two
+/// things break at once if the drop marks: the marker pends forever, and
+/// because a pending `rm:` row is the engine's GDPR purge-may-have-failed
+/// signal, the erasure SLA channel is permanently poisoned by a peer's forged
+/// edge — a remote-controlled false alarm on the one channel that must stay
+/// trustworthy.
+///
+/// The quarantine `x:` row is the WHOLE account of a terminal drop, and it is
+/// complete on its own: typed reason, hashed key, hashed payload.
+#[test]
+fn admission_drop_leaves_no_pending_remat_work() {
+    let member = entity_id(0x5B);
+    let (_dir, vault, _grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-04");
+
+    let facet = entity_id(0x5C);
+    let person = entity_id(0x5D);
+
+    // The forged stamp with BOTH endpoint types knowable from this frame:
+    // PERSON is off the source half of the table, so the door DROPS it.
+    let remote = create_window_doc("federation-peer", &window_key);
+    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
+    insert_entity(&remote, person, ENTITY_TYPE_PERSON, b"person");
+    insert_edge(&remote, person, EdgeKind::FacetOf, facet);
+    remote.commit();
+    let update = remote.export(ExportMode::all_updates()).unwrap();
+
+    let admitted = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect("a forged stamp must not fail the admission closed");
+
+    let local = create_window_doc("local", &window_key);
+    local.import(&admitted).unwrap();
+    assert!(
+        map_get_bytes(
+            &local.get_map("edges"),
+            &edge_key(person, EdgeKind::FacetOf, facet)
+        )
+        .is_none(),
+        "precondition — the forged row must actually be DROPPED, or this test \
+         proves nothing about a drop's marker shape"
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert!(
+        records
+            .iter()
+            .any(|(_, record)| record.reason_code == "InvalidFacetOfEdge"
+                && record.container == QuarantineContainer::Edges),
+        "the drop must still leave typed durable evidence — silent drops are \
+         the failure this whole surface exists to prevent"
+    );
+
+    assert!(
+        crate::sync::quarantine::pending_remat_windows(&vault)
+            .unwrap()
+            .is_empty(),
+        "an admission-DROPPED row can never be replayed out of a document it \
+         never entered, so a needs-remat marker for it would pend forever and \
+         permanently signal a GDPR purge failure that never happened"
+    );
+
+    // Draining is the operator's discharge path; it must find nothing to do.
+    let report = crate::sync::quarantine::sync_doctor(&vault).unwrap();
+    assert!(
+        report.rm_pending_windows.is_empty(),
+        "the doctor's erasure-SLA channel must stay clean after a peer's \
+         forged edge is dropped"
+    );
+    assert_eq!(
+        report.quarantine_count, 1,
+        "exactly the one forged row is accounted"
+    );
+}
+
+/// N forged rows in one admission cost EXACTLY ONE extra transaction.
+///
+/// The peer chooses N. A `write_txn` + commit per rejected row therefore hands
+/// it an amplification primitive: one admission, unbounded fsync traffic. The
+/// rejections ride one batch that commits once for the whole pass.
+///
+/// The commit count is observed through LMDB's own committed-transaction id
+/// (`Env::info().last_txn_id`), which is the property that actually matters —
+/// asserting on a Rust-side counter would pass even if the batching were
+/// removed.
+///
+/// The pin is an exact DELTA against a baseline, not a loose upper bound. An
+/// admission also commits traffic that has nothing to do with rejections
+/// (policy-manifest resolution today, whatever the path grows tomorrow), so a
+/// bare `commits < N` would still pass with the batch sharded into sixteen
+/// write transactions — the amplification fix could regress by an order of
+/// magnitude without failing a green test. The BASELINE pass is the same
+/// fixture with an ON-TABLE source type: identical row count, identical key
+/// shape, identical vault construction, and nothing rejected, so its
+/// `TerminalRejectionBatch` takes no transaction at all. The forged pass must
+/// then cost the baseline PLUS EXACTLY ONE — the single batch commit.
+#[test]
+fn admission_drops_commit_in_one_bounded_batch() {
+    // Enough rows that a per-row commit is unmistakable against a one-txn pass.
+    const STAMPER_COUNT: usize = 0x20;
+
+    /// One admission over `STAMPER_COUNT` `FacetOf` rows whose sources carry
+    /// `source_type`. Returns the vault (temp dir held alive by the caller)
+    /// and the committed-transaction delta the admission itself cost.
+    fn admission_txn_delta(source_type: u8) -> (tempfile::TempDir, Vault, usize) {
+        let (dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x6B));
+        let window_key = WindowKey::new("2026-05");
+        let facet = entity_id(0x6C);
+
+        let remote = create_window_doc("federation-peer", &window_key);
+        insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
+        for id in (0x70_u8..0x90).map(entity_id) {
+            insert_entity(&remote, id, source_type, b"stamper");
+            insert_edge(&remote, id, EdgeKind::FacetOf, facet);
+        }
+        remote.commit();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+
+        let before = vault.store.env.info().last_txn_id;
+        admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Member,
+        )
+        .expect("neither pass may fail the admission closed");
+        let delta = vault.store.env.info().last_txn_id - before;
+        (dir, vault, delta)
+    }
+
+    // EVENT is on the `FacetOf` source table, PERSON is not: the two passes
+    // differ in ONE type byte, so their txn delta isolates the rejections.
+    let (_baseline_dir, baseline_vault, baseline_commits) = admission_txn_delta(ENTITY_TYPE_EVENT);
+    let (_forged_dir, forged_vault, forged_commits) = admission_txn_delta(ENTITY_TYPE_PERSON);
+
+    assert!(
+        quarantined_records(&baseline_vault).unwrap().is_empty(),
+        "the baseline must reject NOTHING — a baseline that also paid for a \
+         rejection batch would make the delta below vacuously true"
+    );
+    assert_eq!(
+        quarantined_records(&forged_vault).unwrap().len(),
+        STAMPER_COUNT,
+        "every rejected row is still accounted with its own typed evidence \
+         row — bounding the COMMITS must not bound the ACCOUNTING"
+    );
+
+    assert_eq!(
+        forged_commits,
+        baseline_commits + 1,
+        "{STAMPER_COUNT} forged rows cost {forged_commits} transactions \
+         against a {baseline_commits}-transaction rejection-free baseline — \
+         the whole pass owes EXACTLY ONE batch commit, so any sharding of it \
+         is a peer-controlled multiplier on our fsync traffic"
+    );
+
+    assert!(
+        crate::sync::quarantine::pending_remat_windows(&forged_vault)
+            .unwrap()
+            .is_empty(),
+        "the batch keeps the terminal no-marker shape for every row"
+    );
+}
+
+/// Past the per-pass evidence bound, rejections are accounted by COUNT.
+///
+/// The `x:` ring is SHARED and capped at 4096 rows, so an unbounded per-pass
+/// mint would let one hostile frame flush every unrelated quarantine record the
+/// vault holds — evidence destruction dressed as evidence keeping. The bound
+/// caps what one pass mints; the remainder increments a doctor-visible counter,
+/// so nothing is silently dropped. The reason code is uniform within a pass, so
+/// the capped rows carry no information the kept rows do not.
+///
+/// H2 liveness is unaffected: the ADMISSION continues either way — this is only
+/// about how the rejection is accounted.
+#[test]
+fn admission_drops_past_the_evidence_bound_are_counted_not_dropped() {
+    use crate::sync::quarantine::MAX_QUARANTINE_ROWS_PER_PASS;
+
+    let member = entity_id(0x7B);
+    let (_dir, vault, _grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-06");
+
+    let facet = entity_id(0x7C);
+    let over_cap = 5_usize;
+    let total = MAX_QUARANTINE_ROWS_PER_PASS + over_cap;
+
+    let remote = create_window_doc("federation-peer", &window_key);
+    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
+    for index in 0..total {
+        // 16-byte ids from a counter: the fixture needs more distinct forged
+        // sources than the single-byte seed helper can mint without colliding
+        // with the pinned-id list.
+        let mut bytes = [0x11_u8; 16];
+        bytes[0..8].copy_from_slice(&(index as u64 + 1).to_le_bytes());
+        let id = EntityId::from_bytes(bytes).unwrap();
+        insert_entity(&remote, id, ENTITY_TYPE_PERSON, b"person");
+        insert_edge(&remote, id, EdgeKind::FacetOf, facet);
+    }
+    remote.commit();
+    let update = remote.export(ExportMode::all_updates()).unwrap();
+
+    admit_federated_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+    )
+    .expect("an over-cap forged frame must not fail the admission closed");
+
+    let report = crate::sync::quarantine::sync_doctor(&vault).unwrap();
+    assert_eq!(
+        report.quarantine_count, MAX_QUARANTINE_ROWS_PER_PASS,
+        "one pass mints at most the per-pass bound, so a hostile frame cannot \
+         flush the shared 4096-row evidence ring"
+    );
+    assert_eq!(
+        report.batch_drop_count, over_cap as u64,
+        "the rows past the bound are accounted by COUNT — a bounded evidence \
+         budget must never become a silent drop"
+    );
+    assert!(
+        report.rm_pending_windows.is_empty(),
+        "over-cap rows keep the terminal no-marker shape too"
+    );
+}
+
 #[test]
 fn selector_facet_closure_does_not_expand_from_facet_entities() {
     let member = entity_id(0x3A);
@@ -2934,20 +3256,10 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     );
     let connect_hash = authority_entry_hash(&connect).unwrap();
     vault
-        .put_authority_log_entry(
-            &entity_id(0x5E),
-            &genesis,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
     vault
-        .put_authority_log_entry(
-            &entity_id(0xE2),
-            &connect,
-            TimeRange { start: 2, end: 2 },
-            2,
-        )
+        .put_authority_log_entry(&connect, TimeRange { start: 2, end: 2 }, 2)
         .unwrap();
 
     let unilateral = |kind: FederationLifecycleKind, seq: u64| {
@@ -3052,10 +3364,9 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
         // Two concurrent equal-epoch repacts with divergent digests.
         PactSeedStatus::Suspended => vec![repact(2, 0x21, 0x66), repact(3, 0x22, 0x67)],
     };
-    for (index, entry) in extras.into_iter().enumerate() {
-        let row = entity_id(0xE3 + u8::try_from(index).unwrap());
+    for entry in extras {
         vault
-            .put_authority_log_entry(&row, &entry, TimeRange { start: 3, end: 3 }, 3)
+            .put_authority_log_entry(&entry, TimeRange { start: 3, end: 3 }, 3)
             .unwrap();
     }
 }
@@ -3104,6 +3415,48 @@ fn selector_authorization_gates_on_pact_activation() {
     }
 }
 
+/// ONE-1604-D1 T10 (the 1632 seam floor): the keystone changes no
+/// authorization outcome. A rejected divergent-overwrite attempt against an
+/// admitted type-122 row leaves `authorize_sync_selector` deciding exactly as
+/// it did before — 1631 hardens the store, it does not move the
+/// authorization edge that 1632 will later split.
+#[test]
+fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
+    let member = entity_id(0x34);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Active);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("precondition: the pact-bound grant authorizes");
+
+    // Attempt a body-divergent write at an admitted authority row's key.
+    let foreign = authority_genesis_entry(0x77);
+    let foreign_body = encode_authority_log_entry_body(&foreign).unwrap();
+    let occupied = vault
+        .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("an authority row must be seeded");
+    let err = vault
+        .batch()
+        .put_replicated(
+            &occupied,
+            ENTITY_TYPE_AUTHORITY_LOG,
+            TimeRange { start: 9, end: 9 },
+            9,
+            &foreign_body,
+        )
+        .commit()
+        .expect_err("a divergent body at an occupied type-122 key must be rejected");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
+    );
+
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("authorization must be byte-for-byte unchanged after the rejected overwrite");
+}
 // ─── fix-12 item 4: the member/guest plane is removal-free ──────────────────
 
 /// THE INVARIANT THE REPLICATED-REMOVAL DOOR STANDS ON (fix-12 item 4).

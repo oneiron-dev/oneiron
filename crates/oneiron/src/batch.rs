@@ -1764,6 +1764,12 @@ pub(crate) fn apply_ops_with_gate_mode(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
+    // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
+    // inducing type-76 rows are gone, so the full reconciler's
+    // surviving-events derivation can no longer reach them. Non-empty here
+    // also SIGNALS that a row left the ledger, which is what forces the
+    // wider post-eviction union pass at the end of the batch.
+    let mut evicted_shell_sources = BTreeSet::new();
     let mut text_manifest_checked = false;
     let later_text_coverage_by_op = text_coverage_after_op(&ops);
     let write_policy = if contains_local_claim_put(&ops) && !claim_gate_prechecked {
@@ -1857,6 +1863,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     claim_gate_prechecked,
                     Some(&companion_retired_histories),
                 )?;
+                evicted_shell_sources.extend(applied.evicted_shell_sources);
                 #[cfg(feature = "sync")]
                 let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
                     crate::embed::EMBED_PRIORITY_SERVER
@@ -2171,6 +2178,21 @@ pub(crate) fn apply_ops_with_gate_mode(
         text_index_trusted,
         wtxn,
         &materialized_entity_ids,
+    )?;
+    // ONE-1604-D1 (fix-leg 5): the dominance eviction removed a type-76 event
+    // ROW, which both hides the removed event's own participants from the
+    // reconciler above (it enumerates SURVIVING rows) and replays the entire
+    // fold, so LATER events can flip effective/rejected and strand THEIR
+    // sources' edges too. Recompute the union of both families against one
+    // final fold. Ordered after the materialization pass so both see the same
+    // ledger, and a no-op on every batch without an eviction.
+    crate::identity_topology::reconcile_shell_edges_after_eviction_in_txn(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &evicted_shell_sources,
     )?;
 
     #[cfg(feature = "sync")]
@@ -2785,6 +2807,9 @@ struct AppliedPut {
     cleared_pending_embedding: bool,
     had_vector_mutation: bool,
     is_lexical_query_hint_claim: bool,
+    /// Shell-edge sources an ONE-1604-D1 dominance eviction orphaned, for the
+    /// caller's explicit-source reconciliation. Empty on every other path.
+    evicted_shell_sources: BTreeSet<EntityId>,
 }
 
 #[expect(
@@ -2852,6 +2877,11 @@ fn apply_put(
     let mut new_skill_record = None;
     let mut new_agent_definition = None;
     let mut decoded_claim_body = None;
+    let mut authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash> = None;
+    // ONE-1604-D1 dominance VERDICT, recorded by the AUTHORITY_LOG arm below
+    // and acted on only at the pre-write site: see the eviction comment there
+    // for why the mutation cannot ride along with the check.
+    let mut authority_dominates_key_squatter = false;
     if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
@@ -2976,10 +3006,21 @@ fn apply_put(
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         if replicated {
-            validate_replicated_authority_log_for_local_vault(store, wtxn, data)?;
+            validate_replicated_authority_log_for_local_vault(store, wtxn, &id, data)?;
         } else {
             crate::authority::validate_authority_log_entry_body_bytes(data)?;
         }
+        let entry = crate::authority::decode_authority_log_entry_body(data)?;
+        let entry_hash = crate::authority::authority_entry_hash(&entry)?;
+        // ONE-1604-D1 chokepoint: every materialization path funnels through
+        // here, so the store-key bind, the append-only guard, and the
+        // cross-type dominance verdict are computed on every import/replay
+        // door in one place. The CHECK runs here (it can still reject); the
+        // eviction it authorizes is deferred to the pre-write site below.
+        authority_dominates_key_squatter =
+            check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
+                == AuthorityLogKeyOccupant::CrossTypeSquatter;
+        authority_entry_hash_pin = Some(entry_hash);
     } else if entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
@@ -3014,14 +3055,35 @@ fn apply_put(
             end: occurred.end,
         });
     }
-    let authority_first_seen_key = if entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
-        let entry = crate::authority::decode_authority_log_entry_body(data)?;
-        Some(crate::authority::authority_first_seen_sync_key(
-            &crate::authority::authority_entry_hash(&entry)?,
-        ))
+    // ONE-1604-D1 dominance MUTATION (fix-leg 2, P2): every side-effect-free
+    // check that can reject this row REMOTELY has now run — including the
+    // envelope's time-range validation directly above. That ordering is the
+    // whole point: `InvalidTimeRange` is a `remote_rejection_reason`, so
+    // Observer B quarantines it and COMMITS the transaction (sync/bridge.rs
+    // quarantine-and-continue). An eviction performed before that check would
+    // therefore survive the rejection as a durable side effect — a rejected
+    // authority row would empty the key it failed to claim. A rejected input
+    // must be a pure no-op, so the squatter is deindexed only here, past the
+    // last remotely-rejectable gate.
+    //
+    // Placed BEFORE short-id planning and the old-record arm below (rather
+    // than at the `store.entities.put` line) because both read the row this
+    // eviction removes: the old-record arm would otherwise reject the
+    // dominant row with `EntityTypeImmutable`, and a short-id plan built from
+    // the squatter's rows would outlive them. Everything still fallible
+    // between here and the write is LOCAL-class (storage/overflow), which
+    // aborts the whole batch instead of committing — so it cannot strand this
+    // mutation either.
+    let evicted_shell_sources = if authority_dominates_key_squatter {
+        evict_authority_log_store_key_squatter(store, wtxn, &id)?
     } else {
-        None
+        BTreeSet::new()
     };
+    // The AUTHORITY_LOG arm above already decoded the body and hashed it for
+    // the store-key bind; reuse that hash instead of decoding a second time.
+    let authority_first_seen_key = authority_entry_hash_pin
+        .as_ref()
+        .map(crate::authority::authority_first_seen_sync_key);
     // Maintenance-band kinds (REDACTION_AUDIT = 120) carry no short ID (static
     // registry `short_id_prefix: None`), matching the engine's direct receipt writer.
     // Only the internal sync path reaches here with such a kind (public puts are
@@ -3299,6 +3361,7 @@ fn apply_put(
         cleared_pending_embedding,
         had_vector_mutation,
         is_lexical_query_hint_claim,
+        evicted_shell_sources,
     })
 }
 
@@ -3311,13 +3374,169 @@ pub(crate) struct ReplicatedAuthorityLogValidation {
     pub(crate) local_vault_id: crate::authority::AuthorityVaultId,
 }
 
+/// What currently occupies a validated type-122 row's content-derived store
+/// key. `CrossTypeSquatter` is NOT a rejection — see
+/// [`check_authority_log_store_key`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthorityLogKeyOccupant {
+    /// The key is free, or already holds this exact authority row.
+    Admissible,
+    /// A non-authority row occupies the key and must be evicted before the
+    /// authority row is written.
+    CrossTypeSquatter,
+}
+
+/// ONE-1604-D1 store-key checks shared by every AUTHORITY_LOG write door:
+/// the row's id must equal the key derived from its canonical signed body
+/// hash (store-key bind: replacement-at-key cannot edit fold history), and
+/// an existing AUTHORITY_LOG row's BODY is immutable at that key (append-only
+/// guard). Byte-identical body re-puts stay admitted — idempotent replay with
+/// metadata-only occurred/learned updates — so no legitimate convergence path
+/// is narrowed. A NON-authority occupant is reported, not rejected: see the
+/// cross-type squat reasoning inline.
+fn check_authority_log_store_key(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entry_hash: &crate::authority::AuthorityEntryHash,
+    data: &[u8],
+) -> Result<AuthorityLogKeyOccupant> {
+    if crate::authority::authority_log_entity_id_from_hash(entry_hash)? != *id {
+        return Err(Error::AuthorityLogStoreKeyMismatch { id: *id });
+    }
+    let Some(existing) = store.entities.get(wtxn, id.as_bytes())? else {
+        return Ok(AuthorityLogKeyOccupant::Admissible);
+    };
+    let existing_type = EntityMetadataHeader::parse(&existing)
+        .ok_or(Error::CorruptedIndex("entity header"))?
+        .entity_type;
+    // ONE-1604-D1 cross-type squat: the derived id lives in the SAME global
+    // entity namespace every other kind is keyed in, and signing is
+    // deterministic over predictable RevokeDevice/Dissolve bodies — so a
+    // hostile peer (including the very device a pending RevokeDevice names)
+    // can precompute the revocation's derived id and pre-occupy it with an
+    // ordinary row. If that squatter won, the append-only guard below would
+    // quarantine the REVOCATION and the revoked key would stay active: the
+    // guard meant to protect authority history would suppress it instead.
+    //
+    // A type-122 write that reaches this check has already cleared FULL
+    // validation at its door — canonical encoding, origin signature, and (at
+    // the replicated door) the local vault-id fold — and its id is a pure
+    // function of exactly those verified bytes. That is what licenses
+    // dominance, and it is why a FORGED authority row cannot use it: such a
+    // row fails validation and never gets here, so any occupant a real entry
+    // displaces is by construction a squatter at a key it could not have
+    // derived. Same-type occupants keep the append-only rule unchanged.
+    if existing_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
+        if existing[ENTITY_METADATA_HEADER_LEN..] != *data {
+            return Err(Error::AuthorityLogAppendOnlyViolation { id: *id });
+        }
+        return Ok(AuthorityLogKeyOccupant::Admissible);
+    }
+    Ok(AuthorityLogKeyOccupant::CrossTypeSquatter)
+}
+
+/// Evicts a non-authority occupant of a validated type-122 row's store key so
+/// the authority row can be written (ONE-1604-D1 dominance). Index rows and
+/// incident edges go with it — a squatter must leave no stale carrier — and
+/// the eviction is confined to the single write chokepoint so the replicated
+/// validator stays side-effect-free.
+///
+/// The edge half is [`deindex_entity`] → `delete_related_edges`, which drops
+/// BOTH directions (`edges_out` and `edges_in`) of every incident edge. That
+/// is load-bearing, not incidental: a surviving edge row keeps a revoked
+/// squatter traversable through the graph after its entity row is gone, so
+/// any future narrowing of the eviction must keep the edge sweep. Pinned by
+/// `authority_log_put_evicts_cross_type_squatter_incident_edges`; the CRDT
+/// mirror of this rule lives on the reverse-remat door in `sync/window.rs`.
+///
+/// Call ONLY from `apply_put`'s pre-write site, never from
+/// `check_authority_log_store_key`: the check runs while remotely-rejectable
+/// preflight is still outstanding, and a remote rejection COMMITS
+/// (quarantine-and-continue), so an eviction taken at check time would
+/// outlive a rejected row.
+///
+/// DOMINANCE OUTRANKS DELETE PROTECTION — deliberately, and this is the one
+/// place in the engine where it does. The eviction does NOT exempt kinds in
+/// [`registry::is_delete_protected_engine_record`] (POLICY_MANIFEST,
+/// AUTHORITY_LOG, SKILL_CONTENT_ANCHOR, IDENTITY_TOPOLOGY_EVENT), because:
+/// (a) the key is a pure function of FULLY VALIDATED authority bytes, so any
+/// non-122 occupant sits at an address its own kind could never derive and is
+/// adversarial by construction; (b) the eviction UNWINDS the squatter's
+/// induced shell effects rather than orphaning them — a type-76 squatter that
+/// arrived by replicated ingest was enumerated by the ARCH-0055 reconciler
+/// like any ledger event, so it may have installed real `merged_into` /
+/// `split_into` edges on live participants, and both those participants and
+/// every surviving merge/split source are reconciled against the fold that
+/// remains after the eviction; for a copied row this is curative (the fold
+/// would otherwise see one event twice); (c) an
+/// exemption would hand attackers a protected band to squat from, letting a
+/// planted row suppress a pending `RevokeDevice` — exactly the ONE-1604-D1
+/// attack this dominance exists to close. Pinned by
+/// `authority_log_put_evicts_delete_protected_squatter`; narrowing the
+/// eviction to spare protected kinds is a design decision, not an edit.
+///
+/// Returns the shell-edge sources the evicted row induced (empty unless the
+/// occupant was a type-76 event). A non-empty return means a row LEFT the
+/// ledger, and the caller MUST hand it to
+/// [`identity_topology::reconcile_shell_edges_after_eviction_in_txn`], which
+/// reconciles it together with the surviving family. Both halves are needed:
+/// `deindex_entity` drops only edges incident to the EVENT id while the
+/// redirect edges sit on the merge/split PARTICIPANTS, and the removed event
+/// stops being enumerable (so the surviving-set derivation misses them);
+/// meanwhile the removal replays the whole fold, so later events can flip
+/// effective/rejected and strand THEIR sources' edges (so the explicit
+/// capture alone misses those). Left unreconciled either way they are shell
+/// edges with no ledger writer: the ARCH-0055 wedge (participant undo →
+/// [`Error::EntityNotFound`]) reached through authority dominance, which is
+/// the state type-76 delete protection exists to prevent.
+///
+/// [`registry::is_delete_protected_engine_record`]: crate::registry::is_delete_protected_engine_record
+/// [`identity_topology::reconcile_shell_edges_after_eviction_in_txn`]: crate::identity_topology::reconcile_shell_edges_after_eviction_in_txn
+fn evict_authority_log_store_key_squatter(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    tracing::warn!(
+        entity = %id.to_hex(),
+        "authority log admission displaced a non-authority row squatting its content-derived store key"
+    );
+    // Captured BEFORE the deindex: afterwards the action bytes are gone and
+    // the induced sources are unrecoverable.
+    let induced_shell_sources =
+        crate::identity_topology::identity_topology_shell_sources_for_store_in_txn(
+            store, wtxn, id,
+        )?
+        .unwrap_or_default();
+    let (_existed, had_vector, had_graph_mutation, neighbors) = deindex_entity(store, wtxn, id)?;
+    ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
+    if had_graph_mutation {
+        ppr::increment_graph_version(store, wtxn)?;
+    }
+    if had_vector {
+        crate::hnsw::increment_vector_version(store, wtxn)?;
+    }
+    Ok(induced_shell_sources)
+}
+
 pub(crate) fn validate_replicated_authority_log_for_local_vault(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
     data: &[u8],
 ) -> Result<ReplicatedAuthorityLogValidation> {
     crate::authority::validate_authority_log_entry_body_bytes(data)?;
     let entry = crate::authority::decode_authority_log_entry_body(data)?;
+    let entry_hash = crate::authority::authority_entry_hash(&entry)?;
+    // ONE-1604-D1 mirror at the replicated door: content-address + append-only
+    // are STORE checks, not ancestry checks — the door stays structural +
+    // origin-sig + vault_id (ONE-1604-D2). Rejecting here (before the quota
+    // debit) quarantines hostile rows without consuming ingest quota. A
+    // cross-type squatter is not a rejection — this row dominates it — and
+    // the eviction itself belongs to the `apply_put` chokepoint that writes
+    // the row, so this validator stays a pure check.
+    let _ = check_authority_log_store_key(store, wtxn, id, &entry_hash, data)?;
     let entry_vault_id = match &entry.op {
         crate::authority::AuthorityOp::Genesis { .. } => {
             crate::authority::genesis_vault_id(&entry)?
