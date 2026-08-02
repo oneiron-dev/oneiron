@@ -1,0 +1,8 @@
+[project]
+name = "oneiron-seal-oracle"
+version = "0.1.0"
+description = "CI-only differential oracle for the native PAdES seal engine"
+requires-python = ">=3.11"
+dependencies = [
+    "pyhanko ==0.35.2",
+]
