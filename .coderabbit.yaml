@@ -1,0 +1,8 @@
+# CodeRabbit: manual-summon-only precision reviewer (fair-usage ladder de-rates continuous
+# coverage to 1 review/hr). Summon with `@coderabbitai review` at merge candidates —
+# manual triggers work on any base branch, which also covers stacked PRs.
+reviews:
+  auto_review:
+    enabled: false
+  path_filters:
+    - "!crates/*/vendor/**"
