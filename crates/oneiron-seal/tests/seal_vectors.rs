@@ -4,7 +4,7 @@
 
 mod support;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use oneiron_seal::{
     FetchPolicy, NativeSealEngine, OfflineFetcher, PadesProfile, PdfSealEngine,
@@ -155,6 +155,105 @@ async fn seal_baseline_t_with_fixture_tsa() {
     assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
 }
 
+/// Two functional TSAs: the first endpoint mints tokens dated past the
+/// documented clock skew, the second mints valid ones.
+struct TwoTsaFetcher {
+    skewed_tsa: TestIdentity,
+    good_tsa: TestIdentity,
+    skewed_url: String,
+    good_url: String,
+    calls: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl oneiron_seal::SealFetcher for TwoTsaFetcher {
+    async fn fetch(
+        &self,
+        request: oneiron_seal::FetchRequest,
+    ) -> Result<oneiron_seal::FetchResponse, oneiron_seal::FetchError> {
+        self.calls.lock().unwrap().push(request.url.to_string());
+        if request.purpose != oneiron_seal::FetchPurpose::Timestamp {
+            return Err(oneiron_seal::FetchError::Unavailable);
+        }
+        let body = if request.url.as_str() == self.skewed_url {
+            support::tsa_response_at(
+                &self.skewed_tsa,
+                &request.request_body,
+                TEST_TIME_MS + 600_000,
+            )
+        } else if request.url.as_str() == self.good_url {
+            support::tsa_response(&self.good_tsa, &request.request_body)
+        } else {
+            None
+        };
+        body.map(|body| oneiron_seal::FetchResponse {
+            body,
+            content_type: Some("application/timestamp-reply".to_string()),
+        })
+        .ok_or(oneiron_seal::FetchError::Unavailable)
+    }
+}
+
+#[tokio::test]
+async fn seal_fails_over_past_over_skew_tsa_token() {
+    // The first TSA returns a token dated past the documented skew: the
+    // seal-side validation must skip it (the verify path would reject it),
+    // so the seal succeeds through the second TSA instead of producing an
+    // artifact its own mandatory self-verify refuses.
+    let signer = p256_identity(false);
+    let skewed_tsa = p256_identity(true);
+    let good_tsa = p256_identity(true);
+    let anchors = vec![
+        signer.cert_der.clone(),
+        skewed_tsa.cert_der.clone(),
+        good_tsa.cert_der.clone(),
+    ];
+    let fetcher = Arc::new(TwoTsaFetcher {
+        skewed_tsa,
+        good_tsa,
+        skewed_url: "https://tsa-skewed.example.test/".to_string(),
+        good_url: "https://tsa-good.example.test/".to_string(),
+        calls: Mutex::new(Vec::new()),
+    });
+    let mut config = config_for(anchors, false);
+    config.timestamp_authorities = vec![
+        TsaEndpoint {
+            url: url::Url::parse("https://tsa-skewed.example.test/").unwrap(),
+            expected_policy_oid: None,
+        },
+        TsaEndpoint {
+            url: url::Url::parse("https://tsa-good.example.test/").unwrap(),
+            expected_policy_oid: None,
+        },
+    ];
+    let (engine, _b) = engine_with(signer, fetcher.clone(), config);
+    let out = engine
+        .seal_pdf(
+            &fixture_pdf("classic_1page.pdf"),
+            &request(PadesProfile::BaselineT),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.achieved_profile, PadesProfile::BaselineT);
+    assert!(
+        out.warnings.is_empty(),
+        "failover to a valid TSA is not a degradation"
+    );
+    assert!(out.self_verify_report.passes_self_verify());
+    let calls = fetcher.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls,
+        vec![
+            "https://tsa-skewed.example.test/".to_string(),
+            "https://tsa-good.example.test/".to_string()
+        ],
+        "the over-skew token must be skipped and the next TSA tried"
+    );
+    let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
+    assert!(report.valid);
+    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+}
+
 #[tokio::test]
 async fn seal_baseline_lt_and_lta_full_assembly() {
     let signer = rsa_identity(false);
@@ -187,6 +286,109 @@ async fn seal_baseline_lt_and_lta_full_assembly() {
     let report2 = engine2.verify_sealed_pdf(&out2.bytes).unwrap();
     assert!(report2.valid);
     assert_eq!(report2.achieved_profile, Some(PadesProfile::BaselineLta));
+}
+
+#[tokio::test]
+async fn seal_degrades_to_b_t_when_available_crl_issuer_lacks_crl_sign() {
+    // The leaf's CRL DP serves a well-formed, fresh, correctly-signed CRL —
+    // but the issuer certificate's KeyUsage omits cRLSign. The gather must
+    // refuse it (the verify path would), so the seal degrades to B-T with a
+    // structured warning instead of embedding material the mandatory
+    // self-verify would reject as a whole-seal VerifyFailed.
+    let root = support::ca_with_kus(
+        "root-no-crlsign",
+        vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::KeyCertSign,
+        ],
+    );
+    let leaf = support::leaf_identity_with_crl_dp(
+        &root,
+        "signer-leaf",
+        "https://crl.example.test/root.crl",
+    );
+    let tsa = p256_identity(true);
+    let crl = support::signed_crl_der(&root, "20260730070000Z", "20260730090000Z");
+    let anchors = vec![root.cert_der.clone(), tsa.cert_der.clone()];
+    let mut fetcher = FixtureFetcher::with_tsa(tsa);
+    fetcher.responses.insert(
+        "https://crl.example.test/root.crl".to_string(),
+        oneiron_seal::FetchResponse {
+            body: crl,
+            content_type: None,
+        },
+    );
+    let (engine, _b) = engine_with(leaf, Arc::new(fetcher), config_for(anchors, true));
+    let out = engine
+        .seal_pdf(
+            &fixture_pdf("classic_1page.pdf"),
+            &request(PadesProfile::BaselineLt),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.achieved_profile, PadesProfile::BaselineT);
+    assert!(
+        out.warnings.iter().any(|w| matches!(
+            w,
+            SealWarning::ProfileDegraded {
+                requested,
+                achieved,
+                reason,
+            } if *requested == PadesProfile::BaselineLt
+                && *achieved == PadesProfile::BaselineT
+                && *reason == ProfileDegradeReason::ValidationMaterialUnavailable
+        )),
+        "expected a B-LT → B-T ValidationMaterialUnavailable degradation: {:?}",
+        out.warnings
+    );
+    assert!(out.self_verify_report.passes_self_verify());
+    let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
+    assert!(report.valid);
+    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+}
+
+#[tokio::test]
+async fn seal_achieves_b_lt_when_crl_issuer_asserts_crl_sign() {
+    // Control: the same chain and CRL shape with an issuer KeyUsage that
+    // asserts cRLSign gathers and reaches B-LT — the gate rejects
+    // unauthorized USE, not CRL evidence in general.
+    let root = support::ca_with_kus(
+        "root-crlsign",
+        vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ],
+    );
+    let leaf = support::leaf_identity_with_crl_dp(
+        &root,
+        "signer-leaf",
+        "https://crl.example.test/root.crl",
+    );
+    let tsa = p256_identity(true);
+    let crl = support::signed_crl_der(&root, "20260730070000Z", "20260730090000Z");
+    let anchors = vec![root.cert_der.clone(), tsa.cert_der.clone()];
+    let mut fetcher = FixtureFetcher::with_tsa(tsa);
+    fetcher.responses.insert(
+        "https://crl.example.test/root.crl".to_string(),
+        oneiron_seal::FetchResponse {
+            body: crl,
+            content_type: None,
+        },
+    );
+    let (engine, _b) = engine_with(leaf, Arc::new(fetcher), config_for(anchors, true));
+    let out = engine
+        .seal_pdf(
+            &fixture_pdf("classic_1page.pdf"),
+            &request(PadesProfile::BaselineLt),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.achieved_profile, PadesProfile::BaselineLt);
+    assert!(out.warnings.is_empty());
+    let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
+    assert!(report.valid);
+    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLt));
 }
 
 #[tokio::test]

@@ -153,6 +153,7 @@ async fn fetch_timestamp_token(
             &nonce,
             endpoint.expected_policy_oid.as_deref(),
             &anchors,
+            ctx.clock_ms,
         );
         if let Ok(token) = validated {
             return Ok(Some(token));
@@ -348,6 +349,10 @@ fn crl_urls_for(cert_der: &[u8]) -> Vec<url::Url> {
 /// Fetch + minimally validate one CRL: parses, signature verifies against
 /// the issuing certificate, and is fresh at the applicable time
 /// (thisUpdate not in the future; a present nextUpdate not in the past).
+/// The issuer certificate must also AUTHORIZE CRL signing (the shared
+/// verify-side cRLSign KeyUsage gate): an unauthorized-issuer CRL embedded
+/// here would fail the mandatory self-verify, turning an expected B-LT
+/// degradation into a VerifyFailed for the whole seal.
 async fn fetch_valid_crl(
     ctx: &SealContext<'_>,
     issuer_cert_der: &[u8],
@@ -371,6 +376,13 @@ async fn fetch_valid_crl(
     let alg = cms::cert_signature_algorithm(issuer_cert_der).ok()?;
     let tbs = crl.tbs_cert_list.to_der().ok()?;
     cms::verify_signature_value(alg, issuer_cert_der, &tbs, crl.signature.raw_bytes()).ok()?;
+    // Key verification alone is not authorization: when the issuer carries
+    // a KeyUsage it must assert cRLSign (same gate the verifier applies to
+    // embedded DSS CRLs).
+    let issuer_cert = x509_cert::Certificate::from_der(issuer_cert_der).ok()?;
+    if !verify::issuer_permits_crl_sign(&issuer_cert) {
+        return None;
+    }
     let now_secs = ctx.clock_ms / 1000;
     if !verify::evidence_fresh(
         crl.tbs_cert_list.this_update,
@@ -931,6 +943,29 @@ mod tests {
         crl_ca_from(params, key_pair, cert_der)
     }
 
+    /// A CA whose KeyUsage omits cRLSign: its key CAN sign a CRL, but the
+    /// certificate does not authorize that use.
+    fn crl_ca_without_crl_sign() -> CrlCa {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = crl_ca_params("crl-ca-unauthorized");
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::KeyCertSign,
+        ];
+        let cert_der = params.self_signed(&key_pair).unwrap().der().to_vec();
+        crl_ca_from(params, key_pair, cert_der)
+    }
+
+    /// A CA with no KeyUsage extension at all (unconstrained key, RFC 5280
+    /// §4.2.1.3 posture).
+    fn crl_ca_no_key_usage() -> CrlCa {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = crl_ca_params("crl-ca-no-ku");
+        params.key_usages = Vec::new();
+        let cert_der = params.self_signed(&key_pair).unwrap().der().to_vec();
+        crl_ca_from(params, key_pair, cert_der)
+    }
+
     /// A child CA issued by `parent` (fresh key pair), optionally carrying
     /// one CRL DP URL.
     fn child_crl_ca(parent: &CrlCa, cn: &str, dp: Option<&str>) -> CrlCa {
@@ -1060,6 +1095,56 @@ mod tests {
         let ctx = crl_ctx(&config, &backend, &fetcher);
         let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
         assert!(fetch_valid_crl(&ctx, &ca.cert_der, url).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_valid_crl_rejects_issuer_without_crl_sign() {
+        // Seal-side mirror of the verify-side issuer KeyUsage gate: a CRL
+        // whose issuer KU omits cRLSign would fail the mandatory
+        // self-verify if embedded, so it is refused at fetch time — the
+        // gather degrades to B-T instead of poisoning the artifact.
+        let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
+        let fresh = |ca: &CrlCa| signed_crl(ca, CRL_NOW_SECS - 3600, Some(CRL_NOW_SECS + 3600));
+        let mk_parts = |crl: Vec<u8>| {
+            let config = SealConfig {
+                trust_anchors_der: Vec::new(),
+                timestamp_authorities: Vec::new(),
+                fetch_policy: FetchPolicy::default(),
+                resource_limits: crate::api::SealResourceLimits::default(),
+            };
+            let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+            let fetcher: Arc<dyn SealFetcher> = Arc::new(StaticFetcher(crl));
+            (config, backend, fetcher)
+        };
+        let unauthorized = crl_ca_without_crl_sign();
+        let (config, backend, fetcher) = mk_parts(fresh(&unauthorized));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        assert!(
+            fetch_valid_crl(&ctx, &unauthorized.cert_der, url.clone())
+                .await
+                .is_none(),
+            "issuer KU without cRLSign must be refused at fetch time"
+        );
+        // Controls: the gate rejects unauthorized USE, not CRLs in general —
+        // an asserting KU or an absent KU both pass with the same fresh CRL.
+        let asserting = crl_ca();
+        let (config, backend, fetcher) = mk_parts(fresh(&asserting));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        assert!(
+            fetch_valid_crl(&ctx, &asserting.cert_der, url.clone())
+                .await
+                .is_some(),
+            "issuer KU asserting cRLSign passes"
+        );
+        let unconstrained = crl_ca_no_key_usage();
+        let (config, backend, fetcher) = mk_parts(fresh(&unconstrained));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        assert!(
+            fetch_valid_crl(&ctx, &unconstrained.cert_der, url)
+                .await
+                .is_some(),
+            "absent KeyUsage follows the RFC 5280 §4.2.1.3 posture and passes"
+        );
     }
 
     #[tokio::test]

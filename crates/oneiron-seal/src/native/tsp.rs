@@ -155,13 +155,19 @@ fn parse_certs(ders: &[Vec<u8>]) -> Result<Vec<x509_cert::Certificate>, SealErro
 }
 
 /// Validate a TimeStampResp against the request's imprint/nonce/policy and
-/// the configured trust anchors (§7.4 step 5).
+/// the configured trust anchors (§7.4 step 5). `clock_ms` is the seal clock:
+/// the same genTime skew bound the verifier applies is enforced here, so an
+/// over-skew response is refused BEFORE it can be returned as validated —
+/// the caller's TSA failover (or profile degradation) stays available
+/// instead of the seal embedding a token its own self-verification would
+/// reject.
 pub(crate) fn validate_response(
     resp_der: &[u8],
     expected_imprint: &Sha256Digest,
     nonce: &[u8; 16],
     expected_policy_oid: Option<&str>,
     anchors: &[pkix_chain::TrustAnchor],
+    clock_ms: u64,
 ) -> Result<ValidatedToken, SealError> {
     let token_ci = extract_token(resp_der)?;
     let parsed = cms::parse_cms(&token_ci)?;
@@ -199,6 +205,12 @@ pub(crate) fn validate_response(
         )
         .collect();
     let gen_time_unix = generalized_time_unix(&tst);
+    // The verify path rejects a genTime ahead of the clock past the
+    // documented skew (never clamps); the seal path must refuse the same
+    // token here or the artifact fails its own mandatory self-verification.
+    if super::verify::gen_time_beyond_skew(gen_time_unix, clock_ms) {
+        return Err(ts_err());
+    }
     validate_tsa_chain(&chain_ders, anchors, gen_time_unix)?;
     Ok(ValidatedToken {
         content_info_der: token_ci,

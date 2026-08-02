@@ -64,8 +64,11 @@ fn enforce_signer_leaf_key_usage(leaf: &x509_cert::Certificate) -> Result<(), Se
 /// extension it must assert `cRLSign` — a key verified to have signed a CRL
 /// is not enough; the certificate must also AUTHORIZE that use. An ABSENT
 /// KeyUsage follows the same documented RFC 5280 §4.2.1.3 posture as the
-/// signer-leaf gate (unconstrained key, passes).
-fn issuer_permits_crl_sign(cert: &x509_cert::Certificate) -> bool {
+/// signer-leaf gate (unconstrained key, passes). Shared with the seal-side
+/// CRL gather (profile.rs fetch_valid_crl): material that would fail this
+/// gate at verify time is refused at fetch time, so an unauthorized-issuer
+/// CRL degrades the profile instead of poisoning the sealed artifact.
+pub(crate) fn issuer_permits_crl_sign(cert: &x509_cert::Certificate) -> bool {
     use const_oid::AssociatedOid;
     use der::Decode;
     use x509_cert::ext::pkix::KeyUsage;
@@ -150,7 +153,10 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 /// `/adbe.pkcs7.detached`) is SKIPPED, never evaluated as CAdES; a document
 /// left with no evaluable CAdES signature fails verification. The typeless
 /// interop path tolerates an ABSENT `/SubFilter` (that is the shape it
-/// exists for) but a PRESENT one must still name the CAdES handler.
+/// exists for) but a PRESENT one must still name the CAdES handler. The
+/// interop allowance itself is gated on an ABSENT `/Type`: a present
+/// `/Type` naming neither handler — or not even a name — is skipped, never
+/// laundered into CAdES candidacy through the typeless path.
 fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
     let mut out = Vec::new();
     for obj in doc.objects.values() {
@@ -168,8 +174,12 @@ fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
                 }
                 true
             }
-            _ if !d.has(b"ByteRange") => continue,
-            _ => {
+            // A PRESENT /Type naming neither handler (or not a name at all)
+            // is never a candidate: the typeless interop allowance exists
+            // only for an ABSENT /Type.
+            Ok(_) => continue,
+            Err(_) if !d.has(b"ByteRange") => continue,
+            Err(_) => {
                 if !d.has(b"Contents") {
                     return Err(malformed_input());
                 }
@@ -1008,8 +1018,11 @@ const OCSP_PRODUCED_AT_MAX_SKEW_SECS: u64 = 300;
 /// Within-skew passes: TSA and verifier clocks are not assumed synchronized.
 const TS_GEN_TIME_MAX_SKEW_SECS: u64 = 300;
 
-/// genTime ahead of the verify clock beyond the documented skew?
-fn gen_time_beyond_skew(gen_time: u64, clock_ms: u64) -> bool {
+/// genTime ahead of the verify clock beyond the documented skew? Shared
+/// with the seal-side response validation (tsp.rs validate_response): one
+/// bound on both paths so a token the verifier would reject is never
+/// returned as validated at seal time.
+pub(crate) fn gen_time_beyond_skew(gen_time: u64, clock_ms: u64) -> bool {
     gen_time > (clock_ms / 1000).saturating_add(TS_GEN_TIME_MAX_SKEW_SECS)
 }
 
@@ -2576,13 +2589,88 @@ mod tests {
             "extra weak digest alg must fail the verify path"
         );
         assert!(
-            tsp::validate_response(&wrap_granted(&weak), &imprint, &nonce, None, &anchors).is_err(),
+            tsp::validate_response(
+                &wrap_granted(&weak),
+                &imprint,
+                &nonce,
+                None,
+                &anchors,
+                AT_UNIX * 1000,
+            )
+            .is_err(),
             "extra weak digest alg must fail the response path"
         );
         let clean = mint_token_custom(&tsa, &imprint, AT_UNIX, true, Some(nonce), false);
         assert!(tsp::validate_token_for_verify(&clean, &imprint, &anchors).is_ok());
         assert!(
-            tsp::validate_response(&wrap_granted(&clean), &imprint, &nonce, None, &anchors).is_ok()
+            tsp::validate_response(
+                &wrap_granted(&clean),
+                &imprint,
+                &nonce,
+                None,
+                &anchors,
+                AT_UNIX * 1000,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_response_rejects_over_skew_gen_time() {
+        // The seal-side response path applies the SAME clock bound as the
+        // verify path: an over-skew token must be refused at validation so
+        // TSA failover (or profile degradation) stays available, instead of
+        // the seal embedding a token its own self-verify rejects.
+        let tsa = tsa_ca();
+        let imprint = [9u8; 32];
+        let nonce = [7u8; 16];
+        let anchors = anchors_of(&tsa);
+        let wrap_granted = |token: &[u8]| {
+            let mut body = cms::tlv(0x30, &cms::tlv(0x02, &[0]));
+            body.extend_from_slice(token);
+            cms::tlv(0x30, &body)
+        };
+        let over = mint_token_custom(
+            &tsa,
+            &imprint,
+            AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS + 1,
+            true,
+            Some(nonce),
+            false,
+        );
+        assert!(
+            tsp::validate_response(
+                &wrap_granted(&over),
+                &imprint,
+                &nonce,
+                None,
+                &anchors,
+                AT_UNIX * 1000,
+            )
+            .is_err(),
+            "over-skew genTime must fail the seal-side response path"
+        );
+        // Within skew passes: TSA and sealer clocks are not assumed
+        // synchronized.
+        let near = mint_token_custom(
+            &tsa,
+            &imprint,
+            AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS - 1,
+            true,
+            Some(nonce),
+            false,
+        );
+        assert!(
+            tsp::validate_response(
+                &wrap_granted(&near),
+                &imprint,
+                &nonce,
+                None,
+                &anchors,
+                AT_UNIX * 1000,
+            )
+            .is_ok(),
+            "within-skew genTime must pass the seal-side response path"
         );
     }
 
@@ -3951,6 +4039,70 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn present_unrecognized_type_is_never_a_candidate() {
+        // The typeless interop allowance applies only when /Type is ABSENT:
+        // a present-but-unrecognized (or malformed) /Type on a
+        // /ByteRange + /Contents dictionary is skipped, never evaluated as
+        // CAdES through the typeless path.
+        fn doc_with_type_obj(type_obj: Option<Object>, subfilter: Option<&[u8]>) -> Document {
+            let mut doc = Document::with_version("1.4");
+            let mut d = lopdf::Dictionary::new();
+            if let Some(t) = type_obj {
+                d.set("Type", t);
+            }
+            if let Some(sf) = subfilter {
+                d.set("SubFilter", Object::Name(sf.to_vec()));
+            }
+            d.set(
+                "ByteRange",
+                Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(1),
+                    Object::Integer(2),
+                    Object::Integer(3),
+                ]),
+            );
+            d.set(
+                "Contents",
+                Object::String(vec![0u8; 2], lopdf::StringFormat::Hexadecimal),
+            );
+            doc.add_object(Object::Dictionary(d));
+            doc
+        }
+        // /Type /Foo with the interop shape (absent SubFilter): skipped.
+        assert!(
+            collect_signatures(&doc_with_type_obj(
+                Some(Object::Name(b"Foo".to_vec())),
+                None
+            ))
+            .unwrap()
+            .is_empty(),
+            "present-but-unrecognized /Type must not ride the typeless path"
+        );
+        // /Type /Foo even with the CAdES SubFilter named: not a handler's
+        // type, still skipped.
+        assert!(
+            collect_signatures(&doc_with_type_obj(
+                Some(Object::Name(b"Foo".to_vec())),
+                Some(b"ETSI.CAdES.detached")
+            ))
+            .unwrap()
+            .is_empty()
+        );
+        // Malformed /Type (not a name object): skipped, never candidacy.
+        assert!(
+            collect_signatures(&doc_with_type_obj(Some(Object::Integer(1)), None))
+                .unwrap()
+                .is_empty(),
+            "malformed /Type must not ride the typeless path"
+        );
+        // Control: the ABSENT-/Type interop row still collects.
+        let found = collect_signatures(&doc_with_type_obj(None, None)).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].is_doc_ts);
     }
 
     /// A chain of `hops` reference-linked objects ending in a terminal

@@ -334,13 +334,22 @@ pub(crate) const TEST_TIME_MS: u64 = 1_785_398_400_000;
 /// Build a granted TimeStampResp for `request_der` signed by the fixture TSA
 /// identity. Returns None for malformed requests.
 pub(crate) fn tsa_response(tsa: &TestIdentity, request_der: &[u8]) -> Option<Vec<u8>> {
+    tsa_response_at(tsa, request_der, TEST_TIME_MS)
+}
+
+/// `tsa_response` minting at a caller-chosen genTime (clock-skew gate rows).
+pub(crate) fn tsa_response_at(
+    tsa: &TestIdentity,
+    request_der: &[u8],
+    gen_time_ms: u64,
+) -> Option<Vec<u8>> {
     use der::{Decode, Encode};
     let req = x509_tsp::TimeStampReq::from_der(request_der).ok()?;
     if !req.cert_req {
         return None;
     }
     let gen_time = der::asn1::GeneralizedTime::from_unix_duration(
-        std::time::Duration::from_millis(TEST_TIME_MS),
+        std::time::Duration::from_millis(gen_time_ms),
     )
     .ok()?;
     let serial = der::asn1::Int::new(&[0x01]).ok()?;
@@ -413,4 +422,88 @@ pub(crate) fn build_token_cms(tsa: &TestIdentity, tst_der: &[u8]) -> Vec<u8> {
     let mut ci = oid_tlv(OID_SIGNED_DATA);
     ci.extend_from_slice(&tlv(0xA0, &signed_data));
     tlv(0x30, &ci)
+}
+
+// ---------------------------------------------------------------------------
+// CA / leaf / CRL fixtures (seal-side CRL gather rows)
+// ---------------------------------------------------------------------------
+
+/// A self-signed CA with caller-chosen KeyUsage purposes.
+pub(crate) struct TestCa {
+    pub(crate) cert_der: Vec<u8>,
+    pub(crate) params: rcgen::CertificateParams,
+    pub(crate) key_pair: rcgen::KeyPair,
+    pub(crate) signing_key: p256::ecdsa::SigningKey,
+}
+
+pub(crate) fn ca_with_kus(cn: &str, kus: Vec<rcgen::KeyUsagePurpose>) -> TestCa {
+    use p256::pkcs8::DecodePrivateKey;
+    let key_pair = rcgen::KeyPair::generate().unwrap();
+    let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, cn.to_string());
+    params.key_usages = kus;
+    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    let cert_der = params.self_signed(&key_pair).unwrap().der().to_vec();
+    let signing_key = p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap();
+    TestCa {
+        cert_der,
+        params,
+        key_pair,
+        signing_key,
+    }
+}
+
+/// A P-256 leaf identity issued by `ca`, carrying one CRL DP URL. The
+/// backend signs with the leaf key; the leaf is a non-anchor chain tip so
+/// the B-LT gather owes CRL evidence for it.
+pub(crate) fn leaf_identity_with_crl_dp(ca: &TestCa, cn: &str, url: &str) -> TestIdentity {
+    use p256::pkcs8::DecodePrivateKey;
+    let key_pair = rcgen::KeyPair::generate().unwrap();
+    let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, cn.to_string());
+    params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+    // rcgen 0.14 skips the extension block unless a CA flag demands it;
+    // ExplicitNoCa writes basicConstraints CA:FALSE plus the CRL DP.
+    params.is_ca = rcgen::IsCa::ExplicitNoCa;
+    params.crl_distribution_points = vec![rcgen::CrlDistributionPoint {
+        uris: vec![url.to_string()],
+    }];
+    let issuer = rcgen::Issuer::from_params(&ca.params, &ca.key_pair);
+    let cert_der = params.signed_by(&key_pair, &issuer).unwrap().der().to_vec();
+    let sk = p256::ecdsa::SigningKey::from_pkcs8_der(&key_pair.serialize_der()).unwrap();
+    TestIdentity {
+        algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+        cert_der,
+        key: TestKey::P256(sk),
+    }
+}
+
+/// A complete-scope v2 CRL signed by `ca` (P-256): no revoked certificates,
+/// no extensions. `this_update`/`next_update` are RFC 5280 GeneralizedTime
+/// strings ("YYYYMMDDHHMMSSZ").
+pub(crate) fn signed_crl_der(ca: &TestCa, this_update: &str, next_update: &str) -> Vec<u8> {
+    use p256::ecdsa::signature::hazmat::PrehashSigner;
+    // For the self-signed fixture CA the issuer Name TLV is the subject.
+    let (issuer_name, _serial) = issuer_and_serial(&ca.cert_der);
+    let alg = alg_id(OID_ECDSA_SHA256, false);
+    let mut tbs_body = tlv(0x02, &[1]); // version v2
+    tbs_body.extend_from_slice(&alg);
+    tbs_body.extend_from_slice(&issuer_name);
+    tbs_body.extend_from_slice(&tlv(0x18, this_update.as_bytes()));
+    tbs_body.extend_from_slice(&tlv(0x18, next_update.as_bytes()));
+    let tbs = tlv(0x30, &tbs_body);
+    let digest = sha256(&tbs);
+    let sig: p256::ecdsa::Signature = ca.signing_key.sign_prehash(&digest).unwrap();
+    let mut bit_string = vec![0u8]; // no unused bits
+    bit_string.extend_from_slice(sig.to_der().as_bytes());
+    let mut body = tbs;
+    body.extend_from_slice(&alg);
+    body.extend_from_slice(&tlv(0x03, &bit_string));
+    tlv(0x30, &body)
 }
