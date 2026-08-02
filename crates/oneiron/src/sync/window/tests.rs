@@ -3198,6 +3198,115 @@ fn reverse_rematerialization_preserves_admissible_authority_carrier() -> Result<
     Ok(())
 }
 
+/// ONE-1645 REPLAY door for the `FacetOf` type table.
+///
+/// The local batch door (`batch::validate_facet_of_edge` on `BatchOp::Edge` /
+/// `PublicEdgeWithCreatedAt`) aborts an off-table facet stamp atomically, but
+/// the replicated arm `BatchOp::EdgeWithCreatedAt` is deliberately UNGATED —
+/// a hard abort on a replay shape would wedge sync permanently (H2). Forward
+/// rematerialization therefore runs the table itself at the write chokepoint
+/// and QUARANTINES the off-table row.
+///
+/// Why it matters: the federation selector (`selector::facet_scope_by_source`)
+/// treats ANY `FacetOf` source as a facet seed with no source-type check, so a
+/// member/guest peer replaying a `PERSON -> FACET` stamp — a shape no local
+/// public writer can produce — would move entities and their one-hop
+/// neighbors across the facet disclosure boundary. That is an authorization
+/// bypass through replay, not a mere schema violation.
+///
+/// Both arms of the table are pinned in ONE window: the off-table PERSON
+/// stamp quarantines with the typed reason while the on-table EVENT stamp
+/// (admitted since the ONE-1645 widening) writes normally, and an unrelated
+/// ordinary edge in the same pass still heals — one forged row must never
+/// starve the other N-1.
+#[test]
+fn forward_remat_quarantines_off_table_facet_of_and_admits_the_on_table_row() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let person = EntityId::from_bytes([0xD1; 16])?;
+    let event = EntityId::from_bytes([0xD2; 16])?;
+    let facet = EntityId::from_bytes([0xD3; 16])?;
+    let ordinary_src = EntityId::from_bytes([0xD4; 16])?;
+    for (id, entity_type) in [
+        (&person, crate::registry::ENTITY_TYPE_PERSON),
+        (&event, crate::registry::ENTITY_TYPE_EVENT),
+        (&facet, crate::registry::ENTITY_TYPE_FACET),
+        (&ordinary_src, crate::registry::ENTITY_TYPE_PERSON),
+    ] {
+        vault.put_entity(
+            id,
+            entity_type,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"fixture",
+        )?;
+    }
+
+    let doc = create_window_doc("remote", &window_key);
+    let edges = doc.get_map("edges");
+    // The injected off-table stamp: PERSON -> FACET. `vault.put_edge` cannot
+    // write this shape at all, which is exactly why replay must not.
+    let forged_key = format_edge_key(&person, EdgeKind::FacetOf, &facet);
+    let forged_value = encode_edge_value_for_crdt(EdgeKind::FacetOf, 0.7, 10, None, None)?;
+    map_insert_bytes(&edges, &forged_key, &forged_value)?;
+    // On-table control: EVENT -> FACET is admitted by the widened table.
+    let admitted_key = format_edge_key(&event, EdgeKind::FacetOf, &facet);
+    map_insert_bytes(
+        &edges,
+        &admitted_key,
+        &encode_edge_value_for_crdt(EdgeKind::FacetOf, 0.7, 11, None, None)?,
+    )?;
+    // Unrelated control: a plain edge that shares the window but not the kind.
+    let ordinary_key = format_edge_key(&ordinary_src, EdgeKind::Mentions, &facet);
+    map_insert_bytes(
+        &edges,
+        &ordinary_key,
+        &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.4, 12, None, None)?,
+    )?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        count, 2,
+        "the off-table stamp is skipped while the other N-1 edges still heal"
+    );
+    assert!(
+        !vault.edge_exists(&person, EdgeKind::FacetOf, &facet)?,
+        "a PERSON-sourced facet stamp must never land through replay: the \
+         federation selector would treat it as a facet seed"
+    );
+    assert!(
+        vault.edge_exists(&event, EdgeKind::FacetOf, &facet)?,
+        "the on-table EVENT stamp must replicate normally"
+    );
+    assert!(
+        vault.edge_exists(&ordinary_src, EdgeKind::Mentions, &facet)?,
+        "one off-table row must not abort the rest of the rematerialization pass"
+    );
+
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "exactly the forged row is quarantined"
+    );
+    let record = &quarantined[0].1;
+    assert_eq!(record.container, QuarantineContainer::Edges);
+    assert_eq!(
+        record.reason_code, "InvalidFacetOfEdge",
+        "the peer's row must carry the typed table reason, not a generic one"
+    );
+    assert_eq!(
+        (record.crdt_key_hash, record.crdt_key_len),
+        crate::sync::quarantine::crdt_key_metadata(&forged_key)
+    );
+    assert_eq!(
+        record.payload_hash,
+        crate::sync::quarantine::payload_hash(&forged_value)
+    );
+    Ok(())
+}
+
 /// ONE-1604-D1 (fix-leg 3, P2 — regression 3, legacy-genesis leg): the
 /// decode layer's dual-encoding posture must reach the dominance verdict
 /// UNCHANGED. `decode_authority_log_entry_body` admits both the exact
@@ -3271,6 +3380,67 @@ fn legacy_genesis_carrier_is_admissible_and_its_current_reencoding_is_not() -> R
             &make_entity_blob_with_range(ENTITY_TYPE_AUTHORITY_LOG, 9, 5, 9, &legacy_body)
         ),
         "an inverted occurred range must dominate even a legacy-valid body"
+    );
+    Ok(())
+}
+
+/// The replay door must never turn an ORDERING accident into a permanent
+/// rejection. The type table reads endpoint types from entity rows, so it is
+/// deliberately placed AFTER the endpoint-existence check: a facet stamp whose
+/// endpoints have not arrived yet DEFERS (stays in the CRDT, no `x:` row) and
+/// materializes on the next pass once the endpoints land.
+///
+/// Without this ordering an out-of-order but perfectly legitimate TURN
+/// stamp would be read as `src_type = None` — the fail-closed
+/// "unknowable type" arm — and quarantined forever. That is the H2 wedge the
+/// batch arm exists to avoid, reintroduced one layer up.
+#[test]
+fn forward_remat_defers_facet_of_with_absent_endpoints_instead_of_quarantining() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let turn_src = EntityId::from_bytes([0xE1; 16])?;
+    let facet = EntityId::from_bytes([0xE2; 16])?;
+
+    let doc = create_window_doc("remote", &window_key);
+    map_insert_bytes(
+        &doc.get_map("edges"),
+        &format_edge_key(&turn_src, EdgeKind::FacetOf, &facet),
+        &encode_edge_value_for_crdt(EdgeKind::FacetOf, 0.7, 10, None, None)?,
+    )?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)?.is_empty(),
+        "an edge whose endpoints have not arrived defers; it is not a table rejection"
+    );
+    assert!(!vault.edge_exists(&turn_src, EdgeKind::FacetOf, &facet)?);
+
+    // The endpoints arrive in a later window pass; the same CRDT row now
+    // materializes because the table can finally read real types.
+    vault.put_entity(
+        &turn_src,
+        ENTITY_TYPE_TURN,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"turn fixture",
+    )?;
+    vault.put_entity(
+        &facet,
+        crate::registry::ENTITY_TYPE_FACET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"facet fixture",
+    )?;
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert!(
+        vault.edge_exists(&turn_src, EdgeKind::FacetOf, &facet)?,
+        "a deferred on-table stamp must heal once its endpoints exist"
+    );
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)?.is_empty(),
+        "a legitimate deferred replay must never leave quarantine evidence"
     );
     Ok(())
 }

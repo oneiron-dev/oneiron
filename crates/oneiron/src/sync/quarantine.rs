@@ -248,7 +248,16 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // validation but exceeds this device's local ingest budget is a
         // remote-op rejection. Quarantine keeps evidence and lets a later
         // rematerialization pass re-run the door when quota is under budget.
-        | ErrorKind::MaintenanceIngestQuotaExceeded => Some(reason_code_for(error)),
+        | ErrorKind::MaintenanceIngestQuotaExceeded
+        // ONE-1645: a replayed `FacetOf` edge whose endpoints fall outside
+        // the write-time type table (`CLAIM | TURN | EVENT -> FACET`) is a
+        // rejection of that remote op. The local batch door aborts on it,
+        // but the replay arm (`BatchOp::EdgeWithCreatedAt`) is ungated by
+        // H2 design, so forward remat runs the table itself and needs the
+        // typed reason here — off-table stamp quarantined, window continues.
+        // Endpoint types are read AFTER the endpoint-existence check, so a
+        // not-yet-arrived endpoint defers instead of reaching this arm.
+        | ErrorKind::InvalidFacetOfEdge => Some(reason_code_for(error)),
         _ => None,
     }
 }

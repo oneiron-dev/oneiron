@@ -2049,6 +2049,12 @@ pub(crate) fn apply_ops_with_gate_mode(
             // permanent local sync-wedging abort (H2). The public timestamped
             // builders route through the gated `PublicEdgeWithCreatedAt` arm
             // instead.
+            //
+            // Ungated is not unvalidated: the ONE-1645 `FacetOf` type table
+            // runs at the REPLAY chokepoint instead — `sync::window`'s
+            // forward-remat edge write calls `validate_facet_of_edge` and
+            // QUARANTINES an off-table stamp (never aborts), so a federation
+            // peer cannot replay a facet stamp local writers may not write.
             BatchOp::EdgeWithCreatedAt {
                 src,
                 kind,
