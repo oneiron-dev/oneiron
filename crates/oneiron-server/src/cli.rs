@@ -37,6 +37,47 @@ pub enum Command {
     Doctor(VaultArgs),
     /// Resolve repo commit provenance trailers against a vault claim.
     Provenance(Box<ProvenanceArgs>),
+    /// Mint bearer tokens against the configured auth secret.
+    #[command(subcommand)]
+    Token(TokenCommand),
+}
+
+#[derive(Subcommand)]
+pub enum TokenCommand {
+    /// Mint a scoped core bearer token and print it to stdout.
+    Mint(Box<TokenMintArgs>),
+    /// Revoke one previously minted token by its id.
+    Revoke(Box<TokenRevokeArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct TokenMintArgs {
+    /// Core scopes to grant, comma-separated (e.g. `core:read,core:write`).
+    /// Omit to mint an owner-grade token carrying every scope.
+    #[arg(long, value_delimiter = ',', num_args = 1..)]
+    pub scope: Option<Vec<String>>,
+
+    /// Bind the token to a third-party principal, as 32 lowercase hex
+    /// characters. Requires `--scope`: an owner-grade token is never bound.
+    #[arg(long = "principal-ref", requires = "scope")]
+    pub principal_ref: Option<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// Revoking one token is an explicit act on one named identity. It is
+/// deliberately not a side effect of rotation: rotation rewraps the MAC key
+/// and invalidates every token at once, which is the other lever.
+#[derive(Args, Clone, Debug)]
+pub struct TokenRevokeArgs {
+    /// Token id (`jti`) to revoke, as 32 lowercase hex characters. It is
+    /// printed by `token mint` and carried in the token's visible claims.
+    #[arg(long)]
+    pub jti: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -143,6 +184,8 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Init(args) => commands::init(args),
         Command::Doctor(args) => commands::doctor(args),
         Command::Provenance(args) => commands::provenance(*args),
+        Command::Token(TokenCommand::Mint(args)) => commands::token_mint(*args),
+        Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
     }
 }
 
@@ -328,6 +371,105 @@ mod tests {
             "/tmp/oneiron-vault",
         ]) {
             Ok(_) => panic!("expected provenance target requirement"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn token_mint_parses_scope_list_and_principal_ref() {
+        let cli = Cli::try_parse_from([
+            "oneiron-server",
+            "token",
+            "mint",
+            "--scope",
+            "core:read,companion:profile:read",
+            "--principal-ref",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ])
+        .unwrap();
+
+        match cli.into_command() {
+            Command::Token(TokenCommand::Mint(args)) => {
+                assert_eq!(
+                    args.scope,
+                    Some(vec![
+                        "core:read".to_owned(),
+                        "companion:profile:read".to_owned()
+                    ])
+                );
+                assert_eq!(
+                    args.principal_ref.as_deref(),
+                    Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                );
+            }
+            _ => panic!("expected token mint command"),
+        }
+    }
+
+    #[test]
+    fn token_mint_defaults_to_owner_grade_claims() {
+        let cli = Cli::try_parse_from(["oneiron-server", "token", "mint"]).unwrap();
+
+        match cli.into_command() {
+            Command::Token(TokenCommand::Mint(args)) => {
+                assert!(args.scope.is_none());
+                assert!(args.principal_ref.is_none());
+            }
+            _ => panic!("expected token mint command"),
+        }
+    }
+
+    #[test]
+    fn token_revoke_parses_jti_and_serve_config_flags() {
+        let cli = Cli::try_parse_from([
+            "oneiron-server",
+            "token",
+            "revoke",
+            "--jti",
+            "0123456789abcdef0123456789abcdef",
+            "--vault-path",
+            "/tmp/oneiron-vault",
+        ])
+        .unwrap();
+
+        match cli.into_command() {
+            Command::Token(TokenCommand::Revoke(args)) => {
+                assert_eq!(args.jti, "0123456789abcdef0123456789abcdef");
+                assert_eq!(
+                    args.serve.vault_path,
+                    Some(PathBuf::from("/tmp/oneiron-vault"))
+                );
+            }
+            _ => panic!("expected token revoke command"),
+        }
+    }
+
+    /// Revocation names an identity; there is no "revoke everything" arm here,
+    /// because that lever is rotation.
+    #[test]
+    fn token_revoke_requires_a_jti() {
+        let err = match Cli::try_parse_from(["oneiron-server", "token", "revoke"]) {
+            Ok(_) => panic!("expected --jti to be required"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    /// Mirrors the server-side grammar rule: an owner-grade token is never
+    /// bound to a third-party principal, so the flag pair is rejected at parse.
+    #[test]
+    fn token_mint_principal_ref_requires_scope() {
+        let err = match Cli::try_parse_from([
+            "oneiron-server",
+            "token",
+            "mint",
+            "--principal-ref",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ]) {
+            Ok(_) => panic!("expected --principal-ref to require --scope"),
             Err(err) => err,
         };
 

@@ -53,7 +53,7 @@ pub(crate) async fn serve_artifact_root(
     Path(artifact): Path<String>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    check_api_auth(&headers, &server.config).map_err(EnvelopedApiError::from)?;
+    check_api_auth(&headers, &server).map_err(EnvelopedApiError::from)?;
     if !uri.path().ends_with('/') {
         return artifact_root_redirect_response(&uri);
     }
@@ -66,7 +66,7 @@ pub(crate) async fn serve_artifact_path(
     Path((artifact, path)): Path<(String, String)>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    check_api_auth(&headers, &server.config).map_err(EnvelopedApiError::from)?;
+    check_api_auth(&headers, &server).map_err(EnvelopedApiError::from)?;
     serve_artifact_file(server, artifact, &path, query, &headers)
 }
 

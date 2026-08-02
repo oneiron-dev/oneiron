@@ -100,7 +100,7 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -117,7 +117,7 @@ pub(crate) async fn search_vector(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<SearchResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -212,7 +212,7 @@ pub(crate) struct TextSearchQuery {
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -229,7 +229,7 @@ pub(crate) async fn search_text(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<SearchResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 

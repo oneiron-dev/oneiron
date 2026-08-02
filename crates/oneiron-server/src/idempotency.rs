@@ -10,7 +10,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
-use crate::auth::{CoreAuth, check_auth};
+use crate::auth::{CoreAuth, require_owner_auth};
 use crate::config::SyncServerConfig;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
@@ -299,12 +299,13 @@ pub(crate) async fn idempotency_middleware(
 ) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
     let is_core_auth_route = is_core_auth_route(request_path(&request));
-    let core_auth =
-        is_core_auth_route.then(|| CoreAuth::from_headers(request.headers(), &state.server.config));
+    let revoked = state.server.vault().as_ref();
+    let core_auth = is_core_auth_route
+        .then(|| CoreAuth::from_headers(request.headers(), &state.server.config, revoked));
     let auth_ok = match &core_auth {
         Some(Ok(auth)) => !auth.principal().is_empty(),
         Some(Err(_)) => false,
-        None => check_auth(request.headers(), &state.server.config).is_ok(),
+        None => require_owner_auth(request.headers(), &state.server.config, revoked).is_ok(),
     };
     if has_idempotency_header && !auth_ok {
         return api_error_response(ApiError::unauthorized(), is_core_auth_route);
@@ -321,7 +322,7 @@ pub(crate) async fn idempotency_middleware(
         Some(Err(_)) => {
             return api_error_response(ApiError::unauthorized(), is_core_auth_route);
         }
-        None => principal_from_headers(request.headers(), &state.server.config),
+        None => principal_for_non_core_route(&state.server.config),
     };
     let store_key = store_key(&principal, &key);
     let (parts, body) = request.into_parts();
@@ -406,19 +407,19 @@ fn is_core_auth_route(path: &str) -> bool {
     path.starts_with("/v1/core/") || path.starts_with("/v1/companion/")
 }
 
-fn principal_from_headers(headers: &HeaderMap, config: &SyncServerConfig) -> String {
+/// Idempotency principal for non-core routes.
+///
+/// A configured secret means every caller here is the same owner-grade
+/// principal; without one the server is in unauthenticated dev mode and all
+/// callers share the anonymous principal. There is no per-caller partition to
+/// derive, and the previous header-derived one was never a boundary — any
+/// client could pick its own.
+fn principal_for_non_core_route(config: &SyncServerConfig) -> String {
     if config.auth_secret.is_some() {
-        return SHARED_SECRET_PRINCIPAL.to_owned();
+        SHARED_SECRET_PRINCIPAL.to_owned()
+    } else {
+        ANONYMOUS_PRINCIPAL.to_owned()
     }
-
-    headers
-        .get("x-oneiron-secret")
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.is_empty())
-        .map_or_else(
-            || ANONYMOUS_PRINCIPAL.to_owned(),
-            |value| format!("dev-secret:{value}"),
-        )
 }
 
 fn conflict_response(key: &str, is_core_route: bool) -> Response {

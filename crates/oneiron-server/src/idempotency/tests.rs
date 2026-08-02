@@ -68,6 +68,9 @@ async fn spawn_counted_app_with_config(
     let state = IdempotencyLayerState { server, store };
     let app = Router::new()
         .route("/mutate", post(counted_handler))
+        // Same handler on a core-auth path: that prefix is what switches the
+        // middleware from the owner-grade fallback to CoreAuth partitioning.
+        .route("/v1/core/mutate", post(counted_handler))
         .layer(Extension(counter))
         .route_layer(middleware::from_fn_with_state(
             state,
@@ -81,13 +84,23 @@ async fn spawn_counted_app_with_config(
     (addr, handle)
 }
 
-async fn http_post(addr: SocketAddr, body: &str, key: &str, principal: Option<&str>) -> Vec<u8> {
+async fn http_post(addr: SocketAddr, body: &str, key: &str, credential: Option<&str>) -> Vec<u8> {
+    http_post_to(addr, "/mutate", body, key, credential).await
+}
+
+async fn http_post_to(
+    addr: SocketAddr,
+    path: &str,
+    body: &str,
+    key: &str,
+    credential: Option<&str>,
+) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let principal_header = principal
-        .map(|principal| format!("x-oneiron-secret: {principal}\r\n"))
+    let auth_header = credential
+        .map(|credential| format!("Authorization: Bearer {credential}\r\n"))
         .unwrap_or_default();
     let request = format!(
-        "POST /mutate HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\nIdempotency-Key: {key}\r\n{principal_header}\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\nIdempotency-Key: {key}\r\n{auth_header}\r\n{body}",
         body.len()
     );
     stream.write_all(request.as_bytes()).await.unwrap();
@@ -146,8 +159,8 @@ async fn replay_short_circuits_handler_and_returns_byte_identical_body() {
     let counter = Arc::new(AtomicUsize::new(0));
     let (addr, handle) = spawn_counted_app(store.store.clone(), counter.clone()).await;
 
-    let first = http_post(addr, r#"{"value":1}"#, "replay-key", Some("principal-a")).await;
-    let second = http_post(addr, r#"{"value":1}"#, "replay-key", Some("principal-a")).await;
+    let first = http_post(addr, r#"{"value":1}"#, "replay-key", None).await;
+    let second = http_post(addr, r#"{"value":1}"#, "replay-key", None).await;
 
     assert_eq!(status(&first), 200);
     assert_eq!(status(&second), 200);
@@ -163,8 +176,8 @@ async fn same_key_different_body_conflicts_without_handler_execution() {
     let counter = Arc::new(AtomicUsize::new(0));
     let (addr, handle) = spawn_counted_app(store.store.clone(), counter.clone()).await;
 
-    let first = http_post(addr, r#"{"value":1}"#, "conflict-key", Some("principal-a")).await;
-    let second = http_post(addr, r#"{"value":2}"#, "conflict-key", Some("principal-a")).await;
+    let first = http_post(addr, r#"{"value":1}"#, "conflict-key", None).await;
+    let second = http_post(addr, r#"{"value":2}"#, "conflict-key", None).await;
 
     assert_eq!(status(&first), 200);
     assert_eq!(status(&second), 409);
@@ -181,19 +194,94 @@ async fn same_key_different_body_conflicts_without_handler_execution() {
     handle.abort();
 }
 
+/// On core-auth routes the partition follows the authenticated grant, so two
+/// differently-scoped tokens never share a cache entry. This is the only
+/// partition that was ever a boundary: the old non-core one was derived from
+/// a client-chosen header.
 #[tokio::test]
 async fn same_key_and_body_are_isolated_by_principal() {
     let store = test_store(Arc::new(SystemClock));
     let counter = Arc::new(AtomicUsize::new(0));
-    let (addr, handle) = spawn_counted_app(store.store.clone(), counter.clone()).await;
+    let (addr, handle) = spawn_counted_app_with_config(
+        store.store.clone(),
+        counter.clone(),
+        SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        },
+    )
+    .await;
 
-    let first = http_post(addr, r#"{"value":1}"#, "shared-key", Some("principal-a")).await;
-    let second = http_post(addr, r#"{"value":1}"#, "shared-key", Some("principal-b")).await;
+    let read = crate::auth::mint_core_token_v2("secret", "scope=core:read");
+    let write = crate::auth::mint_core_token_v2("secret", "scope=core:write");
+    let first = http_post_to(
+        addr,
+        "/v1/core/mutate",
+        r#"{"value":1}"#,
+        "shared-key",
+        Some(&read),
+    )
+    .await;
+    let second = http_post_to(
+        addr,
+        "/v1/core/mutate",
+        r#"{"value":1}"#,
+        "shared-key",
+        Some(&write),
+    )
+    .await;
 
     assert_eq!(status(&first), 200);
     assert_eq!(status(&second), 200);
     assert_eq!(counter.load(Ordering::SeqCst), 2);
     assert_ne!(body(&first), body(&second));
+
+    handle.abort();
+}
+
+/// The non-core fallback is owner-grade only: a scoped delegation token
+/// cannot drive an idempotent mutation on a route with no CoreAuth plane.
+#[tokio::test]
+async fn non_core_route_rejects_scoped_token_and_accepts_owner_grade() {
+    let store = test_store(Arc::new(SystemClock));
+    let counter = Arc::new(AtomicUsize::new(0));
+    let (addr, handle) = spawn_counted_app_with_config(
+        store.store.clone(),
+        counter.clone(),
+        SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let scoped = crate::auth::mint_core_token_v2("secret", "scope=core:write");
+    let rejected = http_post(addr, r#"{"value":1}"#, "scoped-key", Some(&scoped)).await;
+    assert_eq!(status(&rejected), 401);
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+    let accepted = http_post(addr, r#"{"value":1}"#, "owner-key", Some("secret")).await;
+    assert_eq!(status(&accepted), 200);
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+    handle.abort();
+}
+
+/// In dev mode every non-core caller shares the anonymous partition: there is
+/// no authenticated identity to separate them by.
+#[tokio::test]
+async fn dev_mode_non_core_callers_share_the_anonymous_partition() {
+    let store = test_store(Arc::new(SystemClock));
+    let counter = Arc::new(AtomicUsize::new(0));
+    let (addr, handle) = spawn_counted_app(store.store.clone(), counter.clone()).await;
+
+    let first = http_post(addr, r#"{"value":1}"#, "shared-key", None).await;
+    let second = http_post(addr, r#"{"value":1}"#, "shared-key", None).await;
+
+    assert_eq!(status(&first), 200);
+    assert_eq!(status(&second), 200);
+    assert_eq!(counter.load(Ordering::SeqCst), 1, "second call must replay");
+    assert_eq!(body(&first), body(&second));
 
     handle.abort();
 }
@@ -304,7 +392,7 @@ async fn oversized_idempotent_request_is_rejected_before_handler() {
     let (addr, handle) = spawn_counted_app(store.store.clone(), counter.clone()).await;
     let body = "x".repeat(IDEMPOTENCY_MAX_REQUEST_BODY_BYTES + 1);
 
-    let response = http_post(addr, &body, "large-body-key", Some("principal-a")).await;
+    let response = http_post(addr, &body, "large-body-key", None).await;
 
     assert_eq!(status(&response), 413);
     assert_eq!(counter.load(Ordering::SeqCst), 0);

@@ -26,7 +26,7 @@ pub(crate) const SKILL_PACK_LAYER_BOUNDARY: &str =
 
 pub(crate) const SKILL_PACK_LOAD_HINT: &str = "GET /api/skills/oneiron.skills.md from the same Oneiron HTTP origin before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.";
 
-pub(crate) const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the same origin used for /api/core/discover and send the configured x-oneiron-secret; do not resolve the pack against a local working directory.";
+pub(crate) const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the same origin used for /api/core/discover and send the configured bearer credential; do not resolve the pack against a local working directory.";
 
 /// Returns the generated OpenAPI document for the HTTP API.
 #[utoipa::path(
@@ -41,14 +41,14 @@ pub(crate) const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the sam
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json",
             example = json!({
                 "code": "UNAUTHORIZED",
-                "message": "unauthorized",
+                "message": "request is not authorized",
                 "details": { "code": "UNAUTHORIZED" },
-                "suggestions": ["set x-oneiron-secret to the configured shared secret"]
+                "suggestions": ["Send Authorization: Bearer credentials and retry."]
             })
         )
     )
@@ -57,7 +57,7 @@ pub(crate) async fn openapi_json(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<Value>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     Ok(Json(openapi_document()))
 }
 
@@ -75,14 +75,14 @@ pub(crate) async fn openapi_json(
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json",
             example = json!({
                 "code": "UNAUTHORIZED",
                 "message": "request is not authorized",
                 "details": { "code": "UNAUTHORIZED" },
-                "suggestions": ["Send the configured x-oneiron-secret header and retry."]
+                "suggestions": ["Send Authorization: Bearer credentials and retry."]
             })
         )
     )
@@ -91,7 +91,7 @@ pub(crate) async fn skills_pack(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     Ok((
         [(CONTENT_TYPE, skills_pack_artifact::MEDIA_TYPE)],
         skills_pack_artifact::CONTENT,
@@ -500,7 +500,7 @@ pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {
         spec,
         "CoreContextPackResponse",
         "interlocutors",
-        "Resolved per-speaker interlocutor stamps when an interlocutors block was supplied or the auth is principal_ref-scoped.",
+        "Resolved per-speaker interlocutor stamps when an interlocutors block was supplied or the auth is narrowed (scoped or principal_ref-bound).",
     );
     set_schema_property_description(
         spec,
@@ -826,29 +826,27 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         .as_object_mut()
         .expect("OpenAPI securitySchemes must be an object")
         .insert(
-            "OneironSecret".to_owned(),
-            json!({
-                "type": "apiKey",
-                "in": "header",
-                "name": "x-oneiron-secret",
-                "description": "Phase-1 shared secret required by protected API routes when unauthenticated development access is disabled."
-            }),
-        );
-    components
-        .entry("securitySchemes")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .expect("OpenAPI securitySchemes must be an object")
-        .insert(
             "CoreBearer".to_owned(),
             json!({
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Scoped bearer token for canonical /v1/core/* and companion control-plane routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'."
+                "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The protected legacy `/api/*` routes (all except the public `/api/health`), `/v1/consumer/*`, and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names."
             }),
         );
 
-    let protected_operations = [
+    // One scheme covers every protected route: all of them are presented as
+    // `Authorization: Bearer`. The grade required is per-route, not per-plane:
+    // the legacy `/api/*` routes listed below demand an owner-grade
+    // credential, and so do the `/v1/consumer/*` and `/v1/usage/*` routes,
+    // which authenticate through the same `check_api_auth`. Scoped tokens
+    // reach `/v1/core/*` and the companion control-plane routes, which read a
+    // `CoreAuth` and enforce the scopes it names.
+    //
+    // `/api/health` is absent from this list by design, not by omission: it is
+    // public (it takes no `CoreAuth` and calls no `check_api_auth`), so
+    // attaching `CoreBearer` to it would document a gate that does not exist.
+    // Anything added here must actually authenticate.
+    for (path, method) in [
         ("/api/openapi.json", "get"),
         ("/api/skills/oneiron.skills.md", "get"),
         ("/api/core/discover", "get"),
@@ -862,21 +860,6 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/v1/usage/events", "post"),
         ("/v1/usage/tenants/{tenant_id}/rollup", "get"),
         ("/api/lease/revoke", "post"),
-    ];
-    for (path, method) in protected_operations {
-        if let Some(operation) = spec
-            .get_mut("paths")
-            .and_then(Value::as_object_mut)
-            .and_then(|paths| paths.get_mut(path))
-            .and_then(Value::as_object_mut)
-            .and_then(|path_item| path_item.get_mut(method))
-            .and_then(Value::as_object_mut)
-        {
-            operation.insert("security".to_owned(), json!([{ "OneironSecret": [] }]));
-        }
-    }
-
-    for (path, method) in [
         ("/v1/core/query", "post"),
         ("/v1/core/context-pack", "post"),
         ("/v1/core/hydrate", "post"),
@@ -921,10 +904,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             .and_then(|path_item| path_item.get_mut(method))
             .and_then(Value::as_object_mut)
         {
-            operation.insert(
-                "security".to_owned(),
-                json!([{ "CoreBearer": [] }, { "OneironSecret": [] }]),
-            );
+            operation.insert("security".to_owned(), json!([{ "CoreBearer": [] }]));
         }
     }
 }

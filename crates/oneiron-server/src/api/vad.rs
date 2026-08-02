@@ -213,7 +213,7 @@ impl TurnVadAnnotateResponse {
         ),
         (
             status = 401,
-            description = "Missing or invalid scoped bearer token, or missing/invalid legacy `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
@@ -300,7 +300,7 @@ pub(crate) async fn annotate_turn_vad(
         ),
         (
             status = 401,
-            description = "Missing or invalid scoped bearer token, or missing/invalid legacy `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiErrorEnvelope,
             content_type = "application/json"
         ),

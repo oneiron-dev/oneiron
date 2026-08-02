@@ -29,7 +29,7 @@ pub(crate) async fn resume(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<ResumeBundle>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let caller = resume_caller(&headers);
     resume_bundle(&server, &caller).await.map(Json)
 }

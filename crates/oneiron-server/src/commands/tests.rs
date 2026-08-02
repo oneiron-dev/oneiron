@@ -1,4 +1,5 @@
 use super::*;
+use crate::auth::mint_core_token_v2;
 
 #[test]
 fn empty_cors_origin_list_stays_restrictive() {
@@ -232,4 +233,219 @@ fn auto_discovers_candidate_with_cjk_dict_marker() {
 
     assert_eq!(resolution.paths, vec![root]);
     assert_eq!(resolution.warning, None);
+}
+
+/// The CLI mint surface must produce exactly the pinned wire format, so a
+/// token minted by ops verifies against a server running the same secret.
+#[test]
+fn token_mint_claims_reproduce_the_golden_vectors() {
+    const VECTOR_SECRET: &str = "correct horse battery staple";
+
+    let owner = build_token_claims(None, None);
+    assert_eq!(owner, "");
+    assert_eq!(
+        mint_core_token_v2(VECTOR_SECRET, &owner),
+        "v2..326ad3492c855a6d722398f75f006241ce8808250d79f38ffd4af64470118743"
+    );
+
+    let scoped = build_token_claims(Some(&["core:read".to_owned()]), None);
+    assert_eq!(scoped, "scope=core:read");
+    assert_eq!(
+        mint_core_token_v2(VECTOR_SECRET, &scoped),
+        "v2.scope=core:read.1f166e678c06858ee6dca47da42e5bf257db95cadc993fa1f5db90f52370eda4"
+    );
+
+    let bound = build_token_claims(
+        Some(&["companion:profile:read".to_owned()]),
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+    );
+    assert_eq!(
+        bound,
+        "scope=companion:profile:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(
+        mint_core_token_v2(VECTOR_SECRET, &bound),
+        "v2.scope=companion:profile:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.547000c78580b12473a643b569d46d4078fa9df6eab25a69cac5d72a80afc102"
+    );
+}
+
+/// F3 — the secret is the MAC key for every minted token and BLAKE3 is fast,
+/// so a recipient can test guesses offline against the claims/MAC pair they
+/// were handed. The mint door warns on the same threshold `serve` does: an
+/// operator who only ever mints never sees the startup warning.
+#[test]
+fn mint_path_warns_on_a_weak_secret_and_stays_quiet_otherwise() {
+    let short = "x".repeat(MIN_RECOMMENDED_AUTH_SECRET_BYTES - 1);
+    let warning = prepare_token_mint(&short, None, None)
+        .expect("mint succeeds")
+        .warning
+        .expect("the mint path must carry the warning, not just compute it");
+    assert!(warning.contains("MAC key for every minted bearer token"));
+    assert!(warning.contains(&MIN_RECOMMENDED_AUTH_SECRET_BYTES.to_string()));
+    assert!(
+        !warning.contains(&short),
+        "the warning must never quote the secret"
+    );
+
+    // Same threshold as the serve door, so an operator who only ever mints
+    // gets the same nudge. The boundary is a floor: exactly-at-length is fine.
+    for secret in [
+        "x".repeat(MIN_RECOMMENDED_AUTH_SECRET_BYTES),
+        "x".repeat(64),
+    ] {
+        assert!(
+            prepare_token_mint(&secret, Some(&["core:read".to_owned()]), None)
+                .expect("mint succeeds")
+                .warning
+                .is_none(),
+            "an adequate secret must stay quiet"
+        );
+    }
+
+    // A warning is a nudge, not a wall: the token is still minted and valid.
+    let weak = prepare_token_mint(&short, None, None).expect("mint succeeds");
+    assert!(weak.token.starts_with("v2."));
+    assert!(weak.token.contains(&format!("jti={}", weak.jti)));
+}
+
+/// F2 — the explicit revocation act, end to end through the CLI's storage.
+/// Idempotent, and the row it writes is exactly the one the verify path reads.
+#[test]
+fn token_revoke_records_the_id_the_verify_path_consults() {
+    use crate::auth::RevokedTokenJtis;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut vault_config = oneiron::VaultConfig::server();
+    vault_config.dimensions = 32;
+    vault_config.map_size = 64 * 1024 * 1024;
+    let vault = oneiron::Vault::open(dir.path().join("vault"), vault_config).unwrap();
+
+    let (_token, jti) = mint_identified_core_token_v2("secret", "scope=core:read");
+    let sibling = mint_identified_core_token_v2("secret", "scope=core:read").1;
+
+    assert!(!vault.is_revoked(&jti).unwrap(), "nothing starts revoked");
+
+    assert!(
+        revoke_token_jti(&vault, &jti).unwrap(),
+        "first call revokes"
+    );
+    assert!(
+        !revoke_token_jti(&vault, &jti).unwrap(),
+        "revoking twice is idempotent and reports no change"
+    );
+
+    assert!(vault.is_revoked(&jti).unwrap());
+    assert!(
+        !vault.is_revoked(&sibling).unwrap(),
+        "revocation names one identity, not a claims class"
+    );
+}
+
+/// A typo'd id would write a row no token can ever present, which would look
+/// like a successful revocation while the token stayed live.
+#[test]
+fn token_revoke_refuses_a_malformed_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut vault_config = oneiron::VaultConfig::server();
+    vault_config.dimensions = 32;
+    vault_config.map_size = 64 * 1024 * 1024;
+    let vault = oneiron::Vault::open(dir.path().join("vault"), vault_config).unwrap();
+
+    for bad in ["", "0123456789abcdef", &"0".repeat(33), &"A".repeat(32)] {
+        let error = revoke_token_jti(&vault, bad)
+            .expect_err(&format!("{bad:?} must not be accepted"))
+            .to_string();
+        assert!(error.contains("lowercase hex"), "{error}");
+    }
+    assert!(
+        vault
+            .sync_state_keys_with_prefix("auth:revoked-token-jti:")
+            .unwrap()
+            .is_empty(),
+        "a refused revocation must write nothing"
+    );
+}
+
+/// The revoke command refuses to create storage: a fresh vault holds no
+/// tokens, so it would report success against state the server never reads.
+#[tokio::test]
+async fn token_revoke_refuses_missing_vault_path_without_creating_storage() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("missing-vault");
+
+    let err = token_revoke(TokenRevokeArgs {
+        jti: "0".repeat(32),
+        serve: ServeArgs {
+            vault_path: Some(vault_path.clone()),
+            dimensions: Some(32),
+            map_size: Some(64 * 1024 * 1024),
+            dict_search_paths: Some(Vec::new()),
+            ..Default::default()
+        },
+    })
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("refusing to create a new vault for revoke")
+    );
+    assert!(!vault_path.join("data.mdb").exists());
+}
+
+/// Every issued token carries an identity, and identical claims mint distinct
+/// tokens — the property that makes per-token revocation meaningful at all.
+#[test]
+fn identified_mint_attaches_a_fresh_id_to_every_token() {
+    for claims in ["", "scope=core:read"] {
+        let (first, first_jti) = mint_identified_core_token_v2("secret", claims);
+        let (second, second_jti) = mint_identified_core_token_v2("secret", claims);
+
+        assert_ne!(first_jti, second_jti);
+        assert_ne!(first, second);
+        assert!(first.contains(&format!("jti={first_jti}")));
+        assert!(
+            validate_bearer_claims(&format!(
+                "{}jti={first_jti}",
+                if claims.is_empty() {
+                    String::new()
+                } else {
+                    format!("{claims};")
+                }
+            ))
+            .is_ok(),
+            "the identified claims must satisfy the server's grammar"
+        );
+    }
+}
+
+/// Reject-before-mint: claims the server would 401 never leave the CLI.
+#[test]
+fn token_mint_rejects_claims_the_server_would_refuse() {
+    let multi = build_token_claims(
+        Some(&["core:read".to_owned(), "core:write".to_owned()]),
+        None,
+    );
+    assert_eq!(multi, "scope=core:read,core:write");
+    assert!(validate_bearer_claims(&multi).is_ok());
+
+    for claims in [
+        build_token_claims(Some(&["core:admin".to_owned()]), None),
+        build_token_claims(Some(&["core:read".to_owned()]), Some("not-an-entity")),
+    ] {
+        assert!(
+            validate_bearer_claims(&claims).is_err(),
+            "{claims:?} must be refused before minting"
+        );
+    }
+
+    // The refusal is on the mint path itself, not merely available to it.
+    for (scope, principal_ref) in [
+        (vec!["core:admin".to_owned()], None),
+        (vec!["core:read".to_owned()], Some("not-an-entity")),
+    ] {
+        assert!(
+            prepare_token_mint("secret", Some(&scope), principal_ref).is_err(),
+            "{scope:?}/{principal_ref:?} must never be minted"
+        );
+    }
 }

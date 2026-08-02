@@ -329,7 +329,8 @@ pub(crate) struct EiriCompanionControls {
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct CoreInterlocutorControls {
     /// Physical owner presence asserted by the embedder. May only be `true`
-    /// on an owner-grade session (403 otherwise); `false` always narrows.
+    /// on an owner-grade credential — un-narrowed on both the scope and the
+    /// `principal_ref` axis (403 otherwise); `false` always narrows.
     #[serde(default, rename = "owner_present", alias = "ownerPresent")]
     #[schema(example = true)]
     owner_present: Option<bool>,
@@ -970,15 +971,20 @@ pub(crate) async fn core_context_pack(
 /// (OF-365 ILD-1, design §11).
 ///
 /// Returns `None` exactly when no interlocutors block was supplied on an
-/// owner-grade session: that request/response pair stays byte-identical to
+/// owner-grade credential: that request/response pair stays byte-identical to
 /// pre-ILD behavior. In every other case the resolved set is echoed as
 /// stamps on the response.
+///
+/// Owner-grade is `CoreAuth::is_owner_grade` — un-narrowed on BOTH axes. A
+/// delegated token narrowed by scope alone is NOT owner-grade, so it takes
+/// the clamp like any other narrowed credential rather than silently
+/// skipping the gate.
 pub(crate) fn resolve_core_interlocutor_set(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     controls: Option<&CoreInterlocutorControls>,
 ) -> Result<Option<oneiron::InterlocutorSet>, ApiError> {
-    if controls.is_none() && auth.is_owner_session() {
+    if controls.is_none() && auth.is_owner_grade() {
         return Ok(None);
     }
 
@@ -986,7 +992,7 @@ pub(crate) fn resolve_core_interlocutor_set(
     let mut parties = Vec::new();
     let mut voice_session_ref = None;
     if let Some(controls) = controls {
-        if controls.owner_present == Some(true) && !auth.is_owner_session() {
+        if controls.owner_present == Some(true) && !auth.is_owner_grade() {
             return Err(ApiError::forbidden_scope("interlocutors.owner_present"));
         }
         if controls.third_parties.len() > MAX_INTERLOCUTOR_THIRD_PARTIES {
@@ -1032,7 +1038,12 @@ pub(crate) fn resolve_core_interlocutor_set(
         parties.push(party);
     }
 
-    let owner_session = owner_present.unwrap_or(auth.is_owner_session()) && auth.is_owner_session();
+    // Owner presence is a conjunction, never a request assertion: the
+    // credential must be owner-grade AND the caller must not have narrowed
+    // itself away. `owner_present == Some(true)` was already rejected above
+    // for non-owner-grade auth, so the `&&` here is the belt to that
+    // suspenders — a narrowed credential can only ever resolve to `false`.
+    let owner_session = auth.is_owner_grade() && owner_present.unwrap_or(true);
     let input = oneiron::InterlocutorResolutionInput {
         owner_session,
         parties,
