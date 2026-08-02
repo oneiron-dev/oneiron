@@ -1661,6 +1661,7 @@ fn reconcile_identity_topology_edges_for_store_in_txn(
                         src: *entity,
                         kind,
                         tgt: *peer,
+                        replicated_consent_verified: false,
                     });
                 }
             }
@@ -2012,7 +2013,12 @@ impl Vault {
         let mut edges = Vec::new();
         if write.is_effective() {
             for (src, kind, tgt) in removed_edges {
-                edges.push(BatchOp::DeleteEdge { src, kind, tgt });
+                edges.push(BatchOp::DeleteEdge {
+                    src,
+                    kind,
+                    tgt,
+                    replicated_consent_verified: false,
+                });
             }
         }
         let transitions = shelled

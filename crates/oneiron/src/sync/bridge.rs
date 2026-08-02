@@ -1027,7 +1027,70 @@ fn materialize_edges_from_delta(
                         )?;
                         continue;
                     }
-                    ops.push(BatchOp::DeleteEdge { src, kind, tgt });
+                    // ONE-1646 unstamp consent, REPLICATED side (fix-10
+                    // item 1).
+                    //
+                    // PROPAGATION: this arm is reachable only from the
+                    // VAULT-DEVICE plane. The member/guest plane enters
+                    // through `admit_federated_window_update`, which builds a
+                    // FRESH admission doc and COPIES admitted rows into it —
+                    // an insert-only construction with no way to express a
+                    // removal — and `reject_federated_tombstones` refuses the
+                    // whole frame if the peer sends deletions at all. So the
+                    // hostile-unstamp case (a member peer removing a stamp it
+                    // never consented to) never reaches this door; it dies at
+                    // admission. What arrives here is the owner's OWN other
+                    // device echoing an act the owner already consented to.
+                    //
+                    // The absolute local refusal cannot run here: it made a
+                    // consented unstamp UNPROPAGATABLE, and — because a
+                    // refusal returns out of `apply_ops` — let one row deny an
+                    // honest peer's whole update (H2). So the door admits on
+                    // replicated proof, DEFERS while proof may still arrive,
+                    // and quarantines only the row that can never have any.
+                    match crate::disclosure::classify_replicated_facet_of_unstamp(
+                        &vault.store,
+                        &*wtxn,
+                        &src,
+                        kind,
+                        &tgt,
+                    )? {
+                        crate::disclosure::ReplicatedUnstampVerdict::Admit => {}
+                        crate::disclosure::ReplicatedUnstampVerdict::Defer => {
+                            // The removal stays in the CRDT and replays once
+                            // the consent mirror lands. Deferral is NOT a
+                            // rejection: no quarantine row, nothing torn.
+                            tracing::debug!(
+                                edge = %key,
+                                "observer-b: FacetOf removal deferred — consent proof not yet arrived"
+                            );
+                            continue;
+                        }
+                        crate::disclosure::ReplicatedUnstampVerdict::Quarantine => {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key.as_ref(),
+                                &Error::FacetUnstampWithoutConsent {
+                                    facet: tgt,
+                                    stamped_by: Some(src),
+                                },
+                                &[],
+                            )?;
+                            continue;
+                        }
+                    }
+                    ops.push(BatchOp::DeleteEdge {
+                        src,
+                        kind,
+                        tgt,
+                        // Classified above, on THIS wtxn, and the op applies
+                        // in the same one — so the flag can never outlive the
+                        // snapshot that justified it.
+                        replicated_consent_verified: true,
+                    });
                     metas.push(EdgeOpMeta::for_key(key.as_ref(), &[]));
                 }
                 _ => {
@@ -1293,7 +1356,7 @@ fn apply_materialized_edge_ops(
                     op,
                 });
             }
-            BatchOp::DeleteEdge { src, kind, tgt } if *kind == EdgeKind::ChildOf => {
+            BatchOp::DeleteEdge { src, kind, tgt, .. } if *kind == EdgeKind::ChildOf => {
                 child_of_deletes.push(PendingChildOfOp {
                     index,
                     src: *src,

@@ -3935,3 +3935,361 @@ fn any_window_scan_finds_a_tombstone_in_a_snapshotless_window() -> Result<()> {
     );
     Ok(())
 }
+
+// ─── fix-10 item 1: replicated FacetOf removals ────────────────────────────
+
+/// The stamp incarnation a replicated removal is judged against.
+#[cfg(feature = "sync")]
+fn stamp_created_at(vault: &Vault, record: &EntityId, facet: &EntityId) -> Result<u64> {
+    let key = Store::encode_edge_key(record, EdgeKind::FacetOf, facet);
+    let rtxn = vault.store.env.read_txn()?;
+    let value = vault
+        .store
+        .edges_out
+        .get(&rtxn, &key)?
+        .expect("stamp must exist");
+    Ok(crate::vault::parse_edge_record(&key, &value)?.created_at)
+}
+
+/// Runs the replicated-removal classifier the sync bridge calls.
+#[cfg(feature = "sync")]
+fn classify(
+    vault: &Vault,
+    record: &EntityId,
+    facet: &EntityId,
+) -> Result<ReplicatedUnstampVerdict> {
+    let rtxn = vault.store.env.read_txn()?;
+    classify_replicated_facet_of_unstamp(&vault.store, &rtxn, record, EdgeKind::FacetOf, facet)
+}
+
+/// P1 REGRESSION (fix-10 item 1) — a CONSENTED unstamp must be able to
+/// PROPAGATE, and a consentless one must not.
+///
+/// Device A's owner unstamps through the dedicated door; that writes the
+/// consent event and its replicating mirror in the same commit. Device B then
+/// receives the bare edge-map removal. Before this fix the replicated door ran
+/// the absolute local refusal, so B refused FOREVER: the stamp survived on B
+/// and the two devices permanently disagreed about which clamp class a
+/// surviving record was in.
+///
+/// The four rows here are the whole decision table, on ONE pair, in the order
+/// a device actually meets them.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_unstamp_admits_only_on_replicated_consent_proof() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xC1);
+    put_facet(&vault, &facet);
+    let claim = test_id(0xC2);
+    put_public_claim(&vault, &claim, test_id(0xC3));
+    stamp_facet_of(&vault, &claim, &facet);
+
+    // 1. PROOF-LAGGING ARRIVAL. The stamp is live and the pair has no ledger
+    //    at all: the removal and the mirror are independent CRDT rows with no
+    //    ordering between them, so this is a delivery-order accident and must
+    //    DEFER — not quarantine, which would make the accident permanent.
+    assert_eq!(
+        classify(&vault, &claim, &facet)?,
+        ReplicatedUnstampVerdict::Defer
+    );
+
+    // 2. NON-FacetOf and NO-OP removals are untouched by the door.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            classify_replicated_facet_of_unstamp(
+                &vault.store,
+                &rtxn,
+                &claim,
+                EdgeKind::Mentions,
+                &facet,
+            )?,
+            ReplicatedUnstampVerdict::Admit,
+            "a non-FacetOf removal is not this door's business"
+        );
+        assert_eq!(
+            classify_replicated_facet_of_unstamp(
+                &vault.store,
+                &rtxn,
+                &test_id(0xC9),
+                EdgeKind::FacetOf,
+                &facet,
+            )?,
+            ReplicatedUnstampVerdict::Admit,
+            "a removal that removes nothing widens nothing"
+        );
+    }
+
+    // 3. THE PROOF LANDS. Simulating device B: the consent event for THIS
+    //    incarnation replicates in. The removal now converges.
+    let stamped_at = stamp_created_at(&vault, &claim, &facet)?;
+    vault.with_write_txn(|wtxn| {
+        append_facet_reclassification_event_in_txn(&vault, wtxn, &claim, &facet, stamped_at.max(1))
+    })?;
+    assert_eq!(
+        classify(&vault, &claim, &facet)?,
+        ReplicatedUnstampVerdict::Admit
+    );
+    Ok(())
+}
+
+/// P1 REGRESSION (fix-10 item 1) — the proof is bound to the STAMP
+/// INCARNATION, so it cannot be replayed onto a later stamp.
+///
+/// This is fix-2's hazard checked at the replicated door: a consent event
+/// minted for the stamp that existed THEN must not authorize removing a stamp
+/// created AFTER it. The pair's ledger is non-empty, so a later-arriving row
+/// cannot rescue it — the peer's own ledger is the evidence — and the verdict
+/// is QUARANTINE, not defer.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_consent_does_not_replay_onto_a_later_stamp_incarnation() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xD1);
+    put_facet(&vault, &facet);
+    let claim = test_id(0xD2);
+    put_public_claim(&vault, &claim, test_id(0xD3));
+
+    // One legitimate, consented unstamp — the event the attack wants to spend
+    // a second time.
+    stamp_facet_of(&vault, &claim, &facet);
+    assert!(vault.unstamp_facet_of(&claim, &facet, 1)?);
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?.len(),
+        1
+    );
+
+    // RE-STAMP: a brand-new incarnation, created after that consent.
+    vault
+        .batch()
+        .edge_with_created_at(&claim, EdgeKind::FacetOf, &facet, 1.0, 5_000)
+        .commit()?;
+    assert!(stamp_created_at(&vault, &claim, &facet)? > 1);
+
+    // The stale event does not cover it, and the non-empty ledger proves no
+    // covering event can arrive: quarantine THIS ROW.
+    assert_eq!(
+        classify(&vault, &claim, &facet)?,
+        ReplicatedUnstampVerdict::Quarantine,
+        "a consent minted for an earlier incarnation must not authorize this removal"
+    );
+
+    // Consenting to the NEW incarnation admits it — the remedy is the same
+    // dedicated door, once per incarnation.
+    vault.with_write_txn(|wtxn| {
+        append_facet_reclassification_event_in_txn(&vault, wtxn, &claim, &facet, 5_000)
+    })?;
+    assert_eq!(
+        classify(&vault, &claim, &facet)?,
+        ReplicatedUnstampVerdict::Admit
+    );
+    Ok(())
+}
+
+/// P1 REGRESSION (fix-10 item 1) — the LOCAL doors keep their absolute
+/// refusal even when a covering consent event is on disk.
+///
+/// The ledger is audit history, never a capability. This is the exact
+/// mutation the fix must not introduce: if a local generic delete could spend
+/// a ledger row, fix-2's laundering path reopens on the local plane.
+#[cfg(feature = "sync")]
+#[test]
+fn a_ledger_event_never_authorizes_a_local_generic_delete() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0xE5);
+    put_facet(&vault, &facet);
+    let claim = test_id(0xE6);
+    put_public_claim(&vault, &claim, test_id(0xE7));
+    stamp_facet_of(&vault, &claim, &facet);
+
+    // A covering event exists — the replicated door would admit on it.
+    let stamped_at = stamp_created_at(&vault, &claim, &facet)?;
+    vault.with_write_txn(|wtxn| {
+        append_facet_reclassification_event_in_txn(&vault, wtxn, &claim, &facet, stamped_at.max(1))
+    })?;
+    assert_eq!(
+        classify(&vault, &claim, &facet)?,
+        ReplicatedUnstampVerdict::Admit
+    );
+
+    // Both LOCAL generic doors still refuse, and nothing is torn.
+    assert_eq!(
+        vault
+            .delete_edge(&claim, EdgeKind::FacetOf, &facet)
+            .expect_err("delete_edge must still refuse")
+            .kind(),
+        ErrorKind::FacetUnstampWithoutConsent
+    );
+    assert_eq!(
+        vault
+            .batch()
+            .delete_edge(&claim, EdgeKind::FacetOf, &facet)
+            .commit()
+            .expect_err("BatchOp::DeleteEdge must still refuse")
+            .kind(),
+        ErrorKind::FacetUnstampWithoutConsent
+    );
+    assert!(
+        vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "a refused local unstamp writes nothing, ledger or no ledger"
+    );
+    Ok(())
+}
+
+/// P2 REGRESSION (fix-10 item 2) — the mirror WRITE door refuses to overwrite
+/// a foreign claim squatting the derived id.
+///
+/// Fix-6 item 2 gave the CLEANUP side custody: it will not TEAR a row that is
+/// not the expected mirror. The write side had none — it overwrote whatever
+/// sat at the derived id. Same hazard, same public sha256 derivation, worse
+/// outcome: an overwrite destroys the foreign record AND leaves a plausible
+/// disclosure record standing in its place, where a tear at least leaves the
+/// id empty.
+#[test]
+fn mirror_write_refuses_to_overwrite_a_foreign_claim_at_the_derived_id() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let contact = test_id(0x2A);
+    seed_contact(&vault, contact, "a@example.com");
+    let facet = test_id(0x2B);
+    put_facet(&vault, &facet);
+
+    // Relocate a DIFFERENT family's mirror onto the contact's clearance-mirror
+    // id — the same collision shape the cleanup-side test models.
+    let clearance_mirror = facet_clearance_claim_id(&contact)?;
+    let exposure_mirror = facet_exposure_claim_id(&facet)?;
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+    vault.with_write_txn(|wtxn| {
+        let raw = vault
+            .store
+            .entities
+            .get(&*wtxn, exposure_mirror.as_bytes())?
+            .expect("exposure mirror row")
+            .to_vec();
+        vault
+            .store
+            .entities
+            .put(wtxn, clearance_mirror.as_bytes(), &raw)?;
+        Ok(())
+    })?;
+    let before = vault.get_claim(&clearance_mirror)?.expect("squatter");
+
+    // Granting the contact a clearance would write its mirror at that id.
+    // REFUSE — and write nothing at all, enforcement row included.
+    let refusal = vault
+        .set_contact_facet_clearance(&contact, &FacetClearance::granted(vec![facet], 200)?)
+        .expect_err("the mirror write must refuse a foreign occupant");
+    assert_eq!(refusal.kind(), ErrorKind::InvalidClaimBody);
+    assert_eq!(
+        vault.get_claim(&clearance_mirror)?,
+        Some(before),
+        "the foreign claim is byte-identical after the refusal"
+    );
+    assert!(
+        vault.contact_facet_clearance(&contact)?.is_none(),
+        "the refusal is atomic — no enforcement row either"
+    );
+
+    // The ordinary re-set (this family's own mirror) still passes: custody is
+    // about foreign occupants, not about forbidding the CID-7 overwrite.
+    vault.set_facet_exposure(&facet, FacetExposure::Private, 300)?;
+    assert_eq!(
+        vault.facet_exposure(&facet)?,
+        Some(FacetExposureState {
+            exposure: FacetExposure::Private,
+            updated_at: 300,
+        }),
+        "this family's own mirror still re-sets (the CID-7 overwrite)"
+    );
+    Ok(())
+}
+
+/// P2 REGRESSION (fix-10 item 3) — a HEADERLESS facet deletion leaves no
+/// facet-state residue.
+///
+/// `deindex_entity` returns early when no entity row exists, and that early
+/// return skipped the facet-state cleanup entirely. Facet state is keyed by
+/// ID ALONE, so it survived: the `facet.exposure.v1` row kept voting "public"
+/// in every future resolve for an id with nothing behind it, and its claim
+/// mirror stayed on the owner's consent surface.
+#[test]
+fn headerless_facet_deletion_leaves_no_facet_state_residue() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let facet = test_id(0x3A);
+    put_facet(&vault, &facet);
+    vault.set_facet_exposure(&facet, FacetExposure::Public, 100)?;
+    let exposure_mirror = facet_exposure_claim_id(&facet)?;
+    assert!(vault.get_claim(&exposure_mirror)?.is_some());
+
+    // HEADERLESS: strip the entity row out from under the facet state, so the
+    // delete takes the no-type early return.
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.delete(wtxn, facet.as_bytes())?;
+        Ok(())
+    })?;
+    assert_eq!(
+        vault.facet_exposure(&facet)?,
+        Some(FacetExposureState {
+            exposure: FacetExposure::Public,
+            updated_at: 100,
+        }),
+        "the state outlives its entity row — this is the residue"
+    );
+
+    vault.batch().delete(&facet).commit()?;
+    assert_eq!(
+        vault.facet_exposure(&facet)?,
+        None,
+        "the headerless delete swept the exposure row"
+    );
+    assert!(
+        vault.get_claim(&exposure_mirror)?.is_none(),
+        "and its owner-visible mirror"
+    );
+    Ok(())
+}
+
+/// The CONTACT half of the same headerless sweep, plus the reclassification
+/// ledger — one delete, no type byte, all three families keyed by id alone.
+#[test]
+fn headerless_contact_deletion_leaves_no_clearance_or_ledger_residue() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let contact = test_id(0x3B);
+    seed_contact(&vault, contact, "a@example.com");
+    let facet = test_id(0x3C);
+    put_facet(&vault, &facet);
+    grant_clearance(&vault, &contact, vec![facet]);
+    let clearance_mirror = facet_clearance_claim_id(&contact)?;
+
+    // A ledger event whose RECORD is the contact — swept by the record-side
+    // prefix scan, which needs no type either.
+    let claim = test_id(0x3D);
+    put_public_claim(&vault, &claim, test_id(0x3E));
+    stamp_facet_of(&vault, &claim, &facet);
+    assert!(vault.unstamp_facet_of(&claim, &facet, 200)?);
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?.len(),
+        1
+    );
+
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.delete(wtxn, contact.as_bytes())?;
+        vault.store.entities.delete(wtxn, claim.as_bytes())?;
+        Ok(())
+    })?;
+
+    vault.batch().delete(&contact).commit()?;
+    assert!(
+        vault.contact_facet_clearance(&contact)?.is_none(),
+        "headerless contact delete swept the clearance row"
+    );
+    assert!(vault.get_claim(&clearance_mirror)?.is_none());
+
+    vault.batch().delete(&claim).commit()?;
+    assert!(
+        vault
+            .facet_reclassification_ledger(&claim, &facet)?
+            .is_empty(),
+        "headerless record delete swept its ledger events"
+    );
+    Ok(())
+}

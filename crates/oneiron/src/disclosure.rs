@@ -1605,6 +1605,7 @@ impl Vault {
             ));
         }
         validate_disclosure_claim_structure(body)?;
+        require_mirror_write_custody(&self.store, wtxn, claim_id, body)?;
         let data = encode_claim_body(body)?;
         validate_claim_body_bytes(&data, true)?;
         let mut ops = vec![BatchOp::Put {
@@ -1736,29 +1737,68 @@ pub(crate) struct FacetStateCleanup {
 /// `disclosure.scope.v1` / `disclosure.tier_a.v1` rows have the identical
 /// orphan shape and are NOT swept — that is pre-existing and belongs to the
 /// erasure chain that owns those families, not to a facet-state fix.
+///
+/// TYPE-OPTIONAL, and the `None` case is REAL (fix-10 item 3). `deindex_entity`
+/// returns early for a HEADERLESS id — no entity row, so no type byte — and
+/// used to skip this sweep entirely on that path. Facet state is keyed by ID
+/// ALONE, so it outlives a headerless delete: a `facet.exposure.v1` row keeps
+/// voting "public" in every future resolve for an id whose entity row is gone,
+/// and a `contact.clearance.v1` row keeps naming facet ids for a contact that
+/// no longer exists. Both are the residue this function exists to prevent,
+/// reached by deleting the one thing whose type nobody can vouch for — the
+/// same headerless hole [`gate_hard_delete_facet_state_for_stored_type`] closed
+/// on the GATE side, closed here on the CLEANUP side.
+///
+/// With no type to dispatch on, BOTH families are swept: every derived key and
+/// mirror id is a pure function of the id, and each tear is already custody-
+/// checked (the meta row is family-prefixed; the mirror must decode as the
+/// expected family and name this id back). So sweeping the family a headerless
+/// id never belonged to removes nothing — there is no row at that key — and
+/// the cost is two `vault_meta` point lookups plus, for a genuinely absent
+/// mirror, one `entities` miss.
 pub(crate) fn delete_facet_state_for_entity_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    entity_type: u8,
+    entity_type: Option<u8>,
 ) -> Result<FacetStateCleanup> {
     let mut cleanup = delete_facet_reclassification_consents_in_txn(store, wtxn, id, entity_type)?;
-    let (meta_key, claim_id, identity) = match entity_type {
-        ENTITY_TYPE_COUNTERPARTY_CONTACT => (
-            facet_clearance_meta_key(id),
-            facet_clearance_claim_id(id)?,
+    if matches!(entity_type, None | Some(ENTITY_TYPE_COUNTERPARTY_CONTACT)) {
+        sweep_facet_state_family_in_txn(
+            store,
+            wtxn,
+            &facet_clearance_meta_key(id),
+            &facet_clearance_claim_id(id)?,
             DisclosureMirrorIdentity::Clearance { contact: *id },
-        ),
-        ENTITY_TYPE_FACET => (
-            facet_exposure_meta_key(id),
-            facet_exposure_claim_id(id)?,
+            &mut cleanup,
+        )?;
+    }
+    if matches!(entity_type, None | Some(ENTITY_TYPE_FACET)) {
+        sweep_facet_state_family_in_txn(
+            store,
+            wtxn,
+            &facet_exposure_meta_key(id),
+            &facet_exposure_claim_id(id)?,
             DisclosureMirrorIdentity::FacetExposure { facet: *id },
-        ),
-        _ => return Ok(cleanup),
-    };
-    store.vault_meta.delete(wtxn, &meta_key)?;
-    delete_disclosure_mirror_in_txn(store, wtxn, &claim_id, identity, &mut cleanup)?;
+            &mut cleanup,
+        )?;
+    }
     Ok(cleanup)
+}
+
+/// One facet-state family's tear: the `vault_meta` enforcement row, then its
+/// claim mirror through the custody-checked door. Deleting an absent row is a
+/// no-op, which is what makes the headerless both-families sweep above safe.
+fn sweep_facet_state_family_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    meta_key: &[u8],
+    claim_id: &EntityId,
+    identity: DisclosureMirrorIdentity,
+    cleanup: &mut FacetStateCleanup,
+) -> Result<()> {
+    store.vault_meta.delete(wtxn, meta_key)?;
+    delete_disclosure_mirror_in_txn(store, wtxn, claim_id, identity, cleanup)
 }
 
 /// WHICH mirror a derived id is supposed to hold — the expectation
@@ -1818,6 +1858,70 @@ impl DisclosureMirrorIdentity {
             }
         }
     }
+}
+
+/// CUSTODY CHECK, WRITE SIDE (fix-10 item 2) — is the row this Put is about to
+/// OVERWRITE actually this family's mirror?
+///
+/// Same rule as the cleanup-side check one function down, at the other end of
+/// the same hazard. Mirror ids are public sha256 derivations, so a foreign
+/// CLAIM can already be sitting at the derived id when a set/clear runs. The
+/// write side had NO precheck: it overwrote whatever was there. That is the
+/// harm the cleanup side already refuses in reverse — an unrelated record
+/// destroyed as a side effect of a disclosure op the owner did not frame as
+/// touching it — except overwriting is worse than tearing, because it leaves a
+/// plausible disclosure record standing where another family's record used to
+/// be, and the tear at least leaves the id EMPTY and re-derivable.
+///
+/// An ABSENT row is the ordinary first write and passes. A row that decodes as
+/// THIS family's mirror for THIS subject is the ordinary re-set (the CID-7
+/// overwrite pattern) and passes. Anything else REFUSES, loudly and typed: the
+/// mirror is the owner's consent surface, so silently writing it over a
+/// foreign record would corrupt the surface the owner audits.
+///
+/// REFUSE, where the cleanup side LEAVES-AND-LOGS — the asymmetry is
+/// deliberate, and it is the same reasoning inverted. The cleanup side is
+/// establishing erasure completeness, so refusing there would let a squatter
+/// wall off an erasure (the worse harm, so it proceeds and logs). Here the
+/// caller is establishing a CONSENT RECORD; proceeding over a foreign row
+/// destroys data to publish a record the owner cannot trust, and refusing
+/// costs the owner nothing but a typed error naming the collision. Fail
+/// closed.
+fn require_mirror_write_custody(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    let Some(raw) = store.entities.get(txn, claim_id.as_bytes())? else {
+        return Ok(());
+    };
+    let stored = EntityMetadataHeader::parse(&raw)
+        .filter(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+        .and_then(|_| raw.get(ENTITY_METADATA_HEADER_LEN..))
+        .and_then(|payload| decode_claim_body(payload, true).ok());
+    // The expectation is the INCOMING body's own family and subject: the
+    // caller derived this id from them, so the row already there must name
+    // them back. A stored ledger row additionally has to be the same EVENT —
+    // `(record, facet, sequence)` — which `matches` pins for that variant.
+    let entitled = stored.is_some_and(|stored| {
+        stored.predicate == body.predicate
+            && stored.subject == body.subject
+            && (stored.predicate != PREDICATE_DISCLOSURE_FACET_RECLASSIFICATION
+                || decode_facet_reclassification_value(&stored.value).ok()
+                    == decode_facet_reclassification_value(&body.value).ok())
+    });
+    if entitled {
+        return Ok(());
+    }
+    tracing::warn!(
+        mirror = %claim_id.to_hex(),
+        predicate = %body.predicate,
+        "disclosure mirror write refused: a foreign claim occupies the derived id"
+    );
+    Err(Error::InvalidClaimBody(
+        "disclosure mirror id is occupied by a foreign claim",
+    ))
 }
 
 /// CUSTODY CHECK (fix-6 item 2) — is the claim stored at `claim_id` actually
@@ -2009,12 +2113,14 @@ fn delete_disclosure_mirror_in_txn(
 /// Scan shapes follow the key layout (`prefix ‖ record ‖ facet ‖ sequence`):
 /// the record side is an exact prefix scan, so it costs O(that record's events)
 /// for any deleted entity. The facet side has no such prefix and needs a
-/// filtered scan over the family, so it runs ONLY for FACET-typed deletes.
+/// filtered scan over the family, so it runs only for a delete that COULD be a
+/// facet — a FACET-typed one, or (fix-10 item 3) a HEADERLESS one, whose type
+/// is unknowable and therefore not proof that it was not a facet.
 fn delete_facet_reclassification_consents_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    entity_type: u8,
+    entity_type: Option<u8>,
 ) -> Result<FacetStateCleanup> {
     let mut doomed: Vec<(Vec<u8>, EntityId, EntityId, u64)> = Vec::new();
     {
@@ -2027,7 +2133,7 @@ fn delete_facet_reclassification_consents_in_txn(
             doomed.push((key.to_vec(), *id, facet, sequence));
         }
     }
-    if entity_type == ENTITY_TYPE_FACET {
+    if matches!(entity_type, None | Some(ENTITY_TYPE_FACET)) {
         for row in store
             .vault_meta
             .prefix_iter(&*wtxn, FACET_RECLASSIFICATION_KEY_PREFIX)?
@@ -2184,6 +2290,128 @@ pub(crate) fn gate_facet_of_unstamp(
         facet: *tgt,
         stamped_by: Some(*src),
     })
+}
+
+/// What the REPLICATED-removal door may do with one `FacetOf` removal
+/// (fix-10 item 1).
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReplicatedUnstampVerdict {
+    /// Not a live `FacetOf` stamp, or backed by replicated consent proof
+    /// covering THIS stamp incarnation. Apply the removal.
+    Admit,
+    /// The stamp is live and the proof has not arrived yet. DEFER the row —
+    /// the removal stays in the CRDT and re-materializes once the mirror
+    /// lands. Not a rejection: proof and removal are separate CRDT rows with
+    /// no delivery-order guarantee between them.
+    Defer,
+    /// The stamp is live and a proof covering this incarnation can never
+    /// arrive, because the peer's own consent ledger for the pair is complete
+    /// and does not cover it. Quarantine THIS ROW.
+    Quarantine,
+}
+
+/// THE REPLICATED half of [`gate_facet_of_unstamp`] — the door a CRDT edge-map
+/// removal takes (fix-10 item 1).
+///
+/// WHY THE LOCAL RULE CANNOT BE THE REPLICATED RULE. The local rule is "no
+/// generic door may remove a stamp; the only removal is
+/// [`Vault::unstamp_facet_of`], which consents and acts in one commit". On the
+/// ORIGIN device that is exactly right and stays unchanged. But the origin's
+/// commit is one device's; the removal then REPLICATES, and on every other
+/// device it arrives as a bare `edges` map removal — the only shape the CRDT
+/// has. Running the absolute refusal there had two teeth:
+///
+/// * a CONSENTED unstamp could not propagate. Device A's owner unstamps
+///   through the dedicated door; device B refuses the replicated removal
+///   forever, so the stamp survives on B and the two devices disagree about
+///   which clamp class a surviving record is in — the exact divergence the
+///   gate exists to prevent, now permanent and owner-invisible.
+/// * one such row DENIED AN HONEST PEER'S WHOLE UPDATE (H2 no-wedge). The
+///   refusal propagated out of `apply_ops` and aborted the batch, so every
+///   other row in that frame was lost with it.
+///
+/// WHAT COUNTS AS PROOF, and why it is not the fix-2 replay hazard. The proof
+/// is the `disclosure.facet_reclassification` LEDGER MIRROR for this
+/// `(record, facet)` pair — the claim
+/// [`append_facet_reclassification_event_in_txn`] writes in the SAME
+/// transaction as the origin unstamp, so it replicates as an entity alongside
+/// the removal. Fix-2's rejected shape was a durable per-PAIR consent record
+/// consulted by a LOCAL door: it outlived the stamp incarnation it was minted
+/// for, so a re-stamp made it spendable a second time. This is not that. The
+/// proof is per-EVENT (`sequence`), and it is matched against the stamp
+/// incarnation actually standing here: the event must be NEWER than the local
+/// stamp's `created_at`, so a proof minted for an earlier incarnation cannot
+/// authorize the removal of a stamp created after it. A re-stamped pair
+/// therefore needs its own unstamp — and its own event — on the origin, which
+/// is precisely what the origin door already enforces.
+///
+/// AND THE LOCAL DOORS ARE UNCHANGED. Nothing here gives a local caller a way
+/// to spend a ledger row: [`gate_facet_of_unstamp`] still refuses every local
+/// generic removal outright, whatever the ledger says. The authorization is
+/// still the act; this door only recognizes that the act ALREADY HAPPENED,
+/// once, on the device that consented to it.
+///
+/// A MEMBER/GUEST PEER CANNOT REACH THIS AT ALL, which is what makes the proof
+/// meaningful — see the propagation note on
+/// [`crate::sync::bridge::materialize_edges_from_delta`]'s removal arm.
+#[cfg(feature = "sync")]
+pub(crate) fn classify_replicated_facet_of_unstamp(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+) -> Result<ReplicatedUnstampVerdict> {
+    if kind != EdgeKind::FacetOf {
+        return Ok(ReplicatedUnstampVerdict::Admit);
+    }
+    // A removal that removes nothing widens nothing — the same no-op stance
+    // the local gate takes, and the common case for a re-delivered frame.
+    let key = Store::encode_edge_key(src, kind, tgt);
+    let Some(value) = store.edges_out.get(txn, &key)? else {
+        return Ok(ReplicatedUnstampVerdict::Admit);
+    };
+    let stamped_at = crate::vault::parse_edge_record(&key, &value)?.created_at;
+
+    // The proof: any consent event for this pair minted at or after the
+    // standing stamp was created. Reading the LEDGER ROWS (not the mirror
+    // claim) keeps this on the same rows the owner's audit surface shows, and
+    // the mirror is what carries them between devices.
+    let prefix = facet_reclassification_pair_prefix(src, tgt);
+    let mut sequences_seen = 0_u64;
+    for row in store.vault_meta.prefix_iter(txn, &prefix)? {
+        let (key, value) = row?;
+        let (consent, sequence) = decode_facet_reclassification_body(&value)?;
+        if consent.record != record_of_reclassification_key(&key)?
+            || consent.facet != facet_of_reclassification_key(&key)?
+            || sequence != sequence_of_reclassification_key(&key)?
+        {
+            return Err(Error::CorruptedIndex(
+                "facet reclassification body disagrees with its row key",
+            ));
+        }
+        sequences_seen = sequences_seen.saturating_add(1);
+        if consent.consented_at >= stamped_at {
+            return Ok(ReplicatedUnstampVerdict::Admit);
+        }
+    }
+
+    // No covering event. DEFER rather than quarantine while the pair has NO
+    // ledger at all: that is the ordinary proof-lagging arrival (the mirror
+    // entity and the edge removal are independent CRDT rows), and quarantining
+    // it would turn a delivery-order accident into a permanent divergence.
+    //
+    // Once events for the pair EXIST but none covers this incarnation, the
+    // peer's own ledger is evidence against the removal — it consented to
+    // unstamping an EARLIER incarnation and is now removing a newer one.
+    // No later-arriving row can change that, so quarantine THIS ROW (the
+    // caller keeps the rest of the frame).
+    if sequences_seen == 0 {
+        Ok(ReplicatedUnstampVerdict::Defer)
+    } else {
+        Ok(ReplicatedUnstampVerdict::Quarantine)
+    }
 }
 
 /// THE hard-delete facet-state gate, type-dispatched — the ONE predicate every
