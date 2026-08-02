@@ -52,4 +52,4 @@ jobs:
       # Oracle matrix rows 2 (native seal -> pyHanko validate) and 4
       # (native seal -> pdfsig validate) plus rows 1/3 coverage of the
       # native paths. Nothing else runs on this leg.
-      - run: cargo test -p oneiron-seal --features seal-oracle --test oracle
+      - run: cargo test --locked -p oneiron-seal --features seal-oracle --test oracle

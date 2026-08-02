@@ -10,10 +10,13 @@ no sealed bytes are written anywhere.
 
 import json
 import sys
+from importlib.metadata import version as dist_version
 
 
 def validate(path: str) -> dict:
-    from pyhanko import __version__
+    # pyHanko 0.35.x exposes no top-level __version__; the distribution
+    # metadata is the pinned source of truth (uv.lock -> pyhanko==0.35.2).
+    pyhanko_version = dist_version("pyhanko")
     from pyhanko.pdf_utils.reader import PdfFileReader
     from pyhanko.sign.validation import ValidationContext, validate_pdf_signature
     from pyhanko.sign.validation.settings import KeyUsageConstraints
@@ -25,7 +28,7 @@ def validate(path: str) -> dict:
         # crash the oracle with a KeyError traceback.
         sigs = reader.embedded_signatures
         if not sigs:
-            return {"valid": False, "validator": "pyhanko", "version": __version__}
+            return {"valid": False, "validator": "pyhanko", "version": pyhanko_version}
         # EKU None = unrestricted; an empty set rejects every EKU.
         ku = KeyUsageConstraints(key_usage=set(), extd_key_usage=None)
         # Trust root = the certificate chain EMITTED in the document's own
@@ -39,11 +42,12 @@ def validate(path: str) -> dict:
             ci.chosen for ci in cms_certs if ci.name == "certificate"
         ] or [sig.signer_cert]
         vc = ValidationContext(trust_roots=trust_roots, allow_fetching=False)
-        status = validate_pdf_signature(sig, validation_context=vc, key_usage_settings=ku)
+        # 0.35.x names the embedded-signature context signer_validation_context.
+        status = validate_pdf_signature(sig, signer_validation_context=vc, key_usage_settings=ku)
         return {
             "valid": bool(status.bottom_line),
             "validator": "pyhanko",
-            "version": __version__,
+            "version": pyhanko_version,
         }
 
 

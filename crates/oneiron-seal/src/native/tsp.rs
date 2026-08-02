@@ -168,6 +168,7 @@ pub(crate) fn validate_response(
     if parsed.econtent_oid != OID_TST_INFO {
         return Err(ts_err());
     }
+    check_digest_algs(&parsed)?;
     let econtent = parsed.econtent.clone().ok_or_else(ts_err)?;
     let tst = TstInfo::from_der(&econtent).map_err(|_| ts_err())?;
     check_tst_fields(&tst, expected_imprint, nonce, expected_policy_oid)?;
@@ -237,6 +238,16 @@ fn generalized_time_unix(tst: &TstInfo) -> u64 {
     tst.gen_time.to_unix_duration().as_secs()
 }
 
+/// SignedData digestAlgorithms surface (mirrors the CAdES envelope gate in
+/// verify.rs): exactly one algorithm, SHA-256. Checked on both tsp paths so
+/// a weak declared digest cannot hide behind a checked SignerInfo field.
+fn check_digest_algs(parsed: &cms::ParsedCms) -> Result<(), SealError> {
+    if parsed.digest_algs.len() != 1 || !cms::is_sha256_oid(&parsed.digest_algs[0]) {
+        return Err(ts_err());
+    }
+    Ok(())
+}
+
 /// Locate the CMS certificate whose ESS binding matches the token signer.
 fn find_bound_cert(certs: &[Vec<u8>], signer: &cms::ParsedSignerInfo) -> Result<usize, SealError> {
     for (i, cert) in certs.iter().enumerate() {
@@ -286,8 +297,16 @@ pub(crate) fn validate_token_for_verify(
     if parsed.econtent_oid != OID_TST_INFO {
         return Err(ts_err());
     }
+    check_digest_algs(&parsed)?;
     let econtent = parsed.econtent.clone().ok_or_else(ts_err)?;
     let tst = TstInfo::from_der(&econtent).map_err(|_| ts_err())?;
+    // TSTInfo version enforced on BOTH tsp paths (the seal-time path gets it
+    // via check_tst_fields): only v1 tokens exist under RFC 3161. NOTE: with
+    // x509-tsp 0.1 the Enumerated decode rejects unknown versions first —
+    // this check is the explicit posture if the crate ever grows variants.
+    if tst.version != TspVersion::V1 {
+        return Err(ts_err());
+    }
     if tst.message_imprint.hash_algorithm.oid != OID_SHA256 {
         return Err(ts_err());
     }

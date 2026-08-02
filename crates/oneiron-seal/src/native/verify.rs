@@ -60,6 +60,29 @@ fn enforce_signer_leaf_key_usage(leaf: &x509_cert::Certificate) -> Result<(), Se
     Ok(())
 }
 
+/// CRL-issuer key-usage gate: when the issuer certificate carries a KeyUsage
+/// extension it must assert `cRLSign` — a key verified to have signed a CRL
+/// is not enough; the certificate must also AUTHORIZE that use. An ABSENT
+/// KeyUsage follows the same documented RFC 5280 §4.2.1.3 posture as the
+/// signer-leaf gate (unconstrained key, passes).
+fn issuer_permits_crl_sign(cert: &x509_cert::Certificate) -> bool {
+    use const_oid::AssociatedOid;
+    use der::Decode;
+    use x509_cert::ext::pkix::KeyUsage;
+    let Some(exts) = &cert.tbs_certificate.extensions else {
+        return true;
+    };
+    for ext in exts {
+        if ext.extn_id == KeyUsage::OID {
+            let Ok(ku) = KeyUsage::from_der(ext.extn_value.as_bytes()) else {
+                return false;
+            };
+            return ku.crl_sign();
+        }
+    }
+    true
+}
+
 /// RFC 5280 path validation against configured trust anchors at the
 /// applicable time, plus the signer-leaf key-usage gate. Shared by the
 /// assembler (B-LT chain pre-check) and the verifier.
@@ -119,17 +142,39 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 /// dictionary carries `/Contents` for its page content stream. A
 /// `/ByteRange` without `/Contents` is a partial signature shape: malformed
 /// input, never a silent skip.
+///
+/// `/SubFilter` dispatch (fail-closed): a candidate is evaluated ONLY under
+/// the handler its `/SubFilter` names — `/Sig` requires
+/// `/ETSI.CAdES.detached`, `/DocTimeStamp` requires `/ETSI.RFC3161`. A typed
+/// dictionary with an absent or foreign `/SubFilter` (e.g.
+/// `/adbe.pkcs7.detached`) is SKIPPED, never evaluated as CAdES; a document
+/// left with no evaluable CAdES signature fails verification. The typeless
+/// interop path tolerates an ABSENT `/SubFilter` (that is the shape it
+/// exists for) but a PRESENT one must still name the CAdES handler.
 fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
     let mut out = Vec::new();
     for obj in doc.objects.values() {
         let Object::Dictionary(d) = obj else { continue };
         let is_doc_ts = match d.get(b"Type") {
-            Ok(t) if name_eq(t, b"Sig") => false,
-            Ok(t) if name_eq(t, b"DocTimeStamp") => true,
+            Ok(t) if name_eq(t, b"Sig") => {
+                if !matches!(d.get(b"SubFilter"), Ok(sf) if name_eq(sf, b"ETSI.CAdES.detached")) {
+                    continue;
+                }
+                false
+            }
+            Ok(t) if name_eq(t, b"DocTimeStamp") => {
+                if !matches!(d.get(b"SubFilter"), Ok(sf) if name_eq(sf, b"ETSI.RFC3161")) {
+                    continue;
+                }
+                true
+            }
             _ if !d.has(b"ByteRange") => continue,
             _ => {
                 if !d.has(b"Contents") {
                     return Err(malformed_input());
+                }
+                if matches!(d.get(b"SubFilter"), Ok(sf) if !name_eq(sf, b"ETSI.CAdES.detached")) {
+                    continue;
                 }
                 false
             }
@@ -400,7 +445,7 @@ fn verify_signer(
         sig_ok,
         VerifyFindingCode::SignatureMismatch,
     );
-    let ts_gen_time = verify_ts_token(signer, anchors, checks, covered);
+    let ts_gen_time = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered);
     let at_unix = ts_gen_time.unwrap_or(ctx.clock_ms / 1000);
     let chain_ders: Vec<Vec<u8>> = std::iter::once(cert_der.clone())
         .chain(
@@ -422,8 +467,11 @@ fn verify_signer(
 /// Validate the optional `signatureTimeStampToken` unsigned attribute.
 /// Present-but-malformed fails; absent is allowed. Returns the token genTime
 /// (unix seconds) for applicable-time chain validation; a validated token's
-/// TSA chain is recorded in `covered` for the DSS binding.
+/// TSA chain is recorded in `covered` for the DSS binding. The genTime is
+/// bounded against the verify clock (`clock_ms`): a future-dated token past
+/// the documented skew is rejected, never clamped.
 fn verify_ts_token(
+    clock_ms: u64,
     signer: &cms::ParsedSignerInfo,
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
@@ -458,6 +506,14 @@ fn verify_ts_token(
     let imprint = cms::sha256(&signer.signature);
     match tsp::validate_token_for_verify(&token, &imprint, anchors) {
         Ok((gen_time, tsa_chain_ders)) => {
+            if gen_time_beyond_skew(gen_time, clock_ms) {
+                checks.record(
+                    VerifyCheckKind::SignatureTimestamp,
+                    false,
+                    VerifyFindingCode::TimestampInvalid,
+                );
+                return None;
+            }
             checks.record(
                 VerifyCheckKind::SignatureTimestamp,
                 true,
@@ -487,7 +543,9 @@ fn verify_ts_token(
 /// rejected token leaves no trace in the binding set. Returns the token's
 /// genTime (unix seconds) when every check passes; the caller feeds it to
 /// DSS evidence freshness only when the ByteRange provably covers the final
-/// /DSS revision (`dss_revision_end`).
+/// /DSS revision (`dss_revision_end`). The genTime is bounded against the
+/// verify clock (`clock_ms`): a future-dated token past the documented skew
+/// is rejected, never clamped.
 fn verify_doc_ts(
     bytes: &[u8],
     e: &SigEntry,
@@ -495,6 +553,7 @@ fn verify_doc_ts(
     checks: &mut Checks,
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
+    clock_ms: u64,
 ) -> Option<u64> {
     let br_ok = check_byte_range(bytes, e);
     let covers_end = !is_last
@@ -513,7 +572,10 @@ fn verify_doc_ts(
         let imprint = pdf::hash_byte_range(bytes, e.byte_range).ok()?;
         tsp::validate_token_for_verify(der, &imprint, anchors).ok()
     });
-    let ok = br_ok && covers_end && token.is_some();
+    let future_dated = token
+        .as_ref()
+        .is_some_and(|(gen_time, _)| gen_time_beyond_skew(*gen_time, clock_ms));
+    let ok = br_ok && covers_end && token.is_some() && !future_dated;
     checks.record(
         VerifyCheckKind::DocumentTimestamp,
         ok,
@@ -896,6 +958,11 @@ fn crl_entry_valid<'a>(
         cms::sig_alg_permitted(alg, oid)
             && cms::verify_signature_value(alg, &cand.der, &tbs, crl.signature.raw_bytes()).is_ok()
     })?;
+    // Key verification alone is not authorization: the issuer certificate
+    // must permit CRL signing (cRLSign) when it carries a KeyUsage.
+    if !issuer_permits_crl_sign(&issuer.cert) {
+        return None;
+    }
     if !evidence_fresh(
         crl.tbs_cert_list.this_update,
         crl.tbs_cert_list.next_update,
@@ -932,6 +999,19 @@ const OID_OCSP_SIGNING: &[u8] = b"\x2b\x06\x01\x05\x05\x07\x03\x09";
 
 /// Clock-skew tolerance for the OCSP producedAt sanity bound (seconds).
 const OCSP_PRODUCED_AT_MAX_SKEW_SECS: u64 = 300;
+
+/// Clock-skew tolerance for RFC 3161 token genTime sanity (seconds). A token
+/// whose genTime lies further ahead of the verify clock than this anchors the
+/// applicable time in the FUTURE, gaming every freshness window that consumes
+/// it; such a token is rejected outright (never clamped — a clamped genTime
+/// would still certify a signature the TSA had not seen at the clamp time).
+/// Within-skew passes: TSA and verifier clocks are not assumed synchronized.
+const TS_GEN_TIME_MAX_SKEW_SECS: u64 = 300;
+
+/// genTime ahead of the verify clock beyond the documented skew?
+fn gen_time_beyond_skew(gen_time: u64, clock_ms: u64) -> bool {
+    gen_time > (clock_ms / 1000).saturating_add(TS_GEN_TIME_MAX_SKEW_SECS)
+}
 
 /// Hash `data` with the CertID hash algorithm; only SHA-1 and SHA-256 are
 /// recognized evidence-hash forms.
@@ -1334,9 +1414,15 @@ pub(crate) fn verify_document(
     let mut covering_dts_valid = false;
     for (i, e) in sigs.iter().enumerate() {
         if e.is_doc_ts {
-            if let Some(gen_time) =
-                verify_doc_ts(bytes, e, &anchors, &mut checks, i == last_idx, &mut covered)
-            {
+            if let Some(gen_time) = verify_doc_ts(
+                bytes,
+                e,
+                &anchors,
+                &mut checks,
+                i == last_idx,
+                &mut covered,
+                ctx.clock_ms,
+            ) {
                 let br_end = e.byte_range[2].saturating_add(e.byte_range[3]);
                 if dss_end.is_some_and(|end| br_end >= end) {
                     archival_time = Some(gen_time);
@@ -1418,6 +1504,17 @@ mod tests {
     }
 
     fn test_ca(cn: &str) -> TestCa {
+        ca_with_kus(
+            cn,
+            vec![
+                rcgen::KeyUsagePurpose::DigitalSignature,
+                rcgen::KeyUsagePurpose::CrlSign,
+            ],
+        )
+    }
+
+    /// A self-signed CA-shaped identity with caller-chosen KeyUsage purposes.
+    fn ca_with_kus(cn: &str, kus: Vec<rcgen::KeyUsagePurpose>) -> TestCa {
         use p256::pkcs8::DecodePrivateKey;
         let key_pair = rcgen::KeyPair::generate().unwrap();
         let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
@@ -1425,10 +1522,7 @@ mod tests {
         params
             .distinguished_name
             .push(rcgen::DnType::CommonName, cn.to_string());
-        params.key_usages = vec![
-            rcgen::KeyUsagePurpose::DigitalSignature,
-            rcgen::KeyUsagePurpose::CrlSign,
-        ];
+        params.key_usages = kus;
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         let cert = params.self_signed(&key_pair).unwrap();
         let cert_der = cert.der().to_vec();
@@ -2441,6 +2535,163 @@ mod tests {
     }
 
     #[test]
+    fn tsp_v2_token_is_rejected_on_verify_path() {
+        // TSTInfo version is enforced on BOTH tsp paths: a v2 token must be
+        // rejected by validate_token_for_verify, not only at seal time.
+        let tsa = tsa_ca();
+        let imprint = [9u8; 32];
+        let anchors = anchors_of(&tsa);
+        let mut token = mint_token(&tsa, &imprint, AT_UNIX);
+        // The TSTInfo body opens `INTEGER 1` (version) immediately followed
+        // by the policy OID tag — a byte pattern unique to the eContent.
+        let marker = [0x02, 0x01, 0x01, 0x06];
+        let pos = token
+            .windows(marker.len())
+            .position(|w| w == marker)
+            .expect("TSTInfo version marker present");
+        token[pos + 2] = 0x02; // version := v2
+        assert!(
+            tsp::validate_token_for_verify(&token, &imprint, &anchors).is_err(),
+            "a non-v1 TSTInfo must fail the verify path"
+        );
+    }
+
+    #[test]
+    fn tsp_digest_algs_surface_checked_on_both_paths() {
+        // The SignedData digestAlgorithms SET is policy surface: an extra
+        // weak entry must fail the verify path AND the response path, not
+        // just the CAdES envelope gate.
+        let tsa = tsa_ca();
+        let imprint = [9u8; 32];
+        let nonce = [7u8; 16];
+        let anchors = anchors_of(&tsa);
+        let wrap_granted = |token: &[u8]| {
+            let mut body = cms::tlv(0x30, &cms::tlv(0x02, &[0]));
+            body.extend_from_slice(token);
+            cms::tlv(0x30, &body)
+        };
+        let weak = mint_token_custom(&tsa, &imprint, AT_UNIX, true, Some(nonce), true);
+        assert!(
+            tsp::validate_token_for_verify(&weak, &imprint, &anchors).is_err(),
+            "extra weak digest alg must fail the verify path"
+        );
+        assert!(
+            tsp::validate_response(&wrap_granted(&weak), &imprint, &nonce, None, &anchors).is_err(),
+            "extra weak digest alg must fail the response path"
+        );
+        let clean = mint_token_custom(&tsa, &imprint, AT_UNIX, true, Some(nonce), false);
+        assert!(tsp::validate_token_for_verify(&clean, &imprint, &anchors).is_ok());
+        assert!(
+            tsp::validate_response(&wrap_granted(&clean), &imprint, &nonce, None, &anchors).is_ok()
+        );
+    }
+
+    #[test]
+    fn future_dated_ts_token_is_rejected_within_skew_passes() {
+        // genTime ahead of the verify clock past the documented skew anchors
+        // the applicable time in the future: rejected, never clamped.
+        let signer = test_ca("skew-signer");
+        let tsa = tsa_ca();
+        let input = base_input();
+        let anchors = vec![signer.cert_der.clone(), tsa.cert_der.clone()];
+        let future = append_sig_revision(
+            &input,
+            &signer,
+            "skew-a",
+            Some(&tsa),
+            AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS + 1,
+        );
+        let engine = verify_engine(anchors, AT_UNIX);
+        let report = engine.verify_sealed_pdf(&future).unwrap();
+        assert!(!report.valid, "future-dated token must fail verification");
+        let ts = report
+            .checks
+            .iter()
+            .find(|c| c.kind == VerifyCheckKind::SignatureTimestamp)
+            .unwrap();
+        assert_eq!(
+            (ts.status, ts.finding),
+            (
+                VerifyCheckStatus::Fail,
+                Some(VerifyFindingCode::TimestampInvalid)
+            )
+        );
+        // Within skew: TSA/verifier clocks are not assumed synchronized.
+        let near = append_sig_revision(
+            &input,
+            &signer,
+            "skew-b",
+            Some(&tsa),
+            AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS - 1,
+        );
+        let report = engine.verify_sealed_pdf(&near).unwrap();
+        assert!(report.valid, "within-skew token must pass: {report:?}");
+        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+    }
+
+    #[test]
+    fn future_dated_doc_timestamp_is_rejected() {
+        // The DocTimeStamp genTime feeds archival evidence freshness; a
+        // future-dated one must fail, not launder stale evidence.
+        let signer = test_ca("dts-skew-signer");
+        let tsa = tsa_ca();
+        let input = base_input();
+        let b1 = append_sig_revision(&input, &signer, "dts-skew", Some(&tsa), AT_UNIX);
+        let b2 = append_doc_ts_revision(&b1, &tsa, AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS + 1);
+        let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], AT_UNIX);
+        let report = engine.verify_sealed_pdf(&b2).unwrap();
+        let dts = report
+            .checks
+            .iter()
+            .find(|c| c.kind == VerifyCheckKind::DocumentTimestamp)
+            .unwrap();
+        assert_eq!(
+            (dts.status, dts.finding),
+            (
+                VerifyCheckStatus::Fail,
+                Some(VerifyFindingCode::DocumentTimestampInvalid)
+            ),
+            "future-dated DocTimeStamp must fail its check"
+        );
+        assert!(!report.valid);
+    }
+
+    #[test]
+    fn dss_crl_issuer_key_usage_without_crl_sign_fails() {
+        // Key verification is not authorization: a CRL signed by a cert
+        // whose KeyUsage lacks cRLSign fails even though its signature
+        // verifies against that cert's key.
+        let issuer = ca_with_kus("no-crlsign", vec![rcgen::KeyUsagePurpose::DigitalSignature]);
+        let crl = build_crl(&issuer, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
+        let doc = dss_doc(std::slice::from_ref(&issuer.cert_der), &[crl], &[]);
+        let covered = covered_of(&[&issuer.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+        // Control: the same shape with cRLSign asserted is accepted.
+        let ok_issuer = ca_with_kus(
+            "with-crlsign",
+            vec![
+                rcgen::KeyUsagePurpose::DigitalSignature,
+                rcgen::KeyUsagePurpose::CrlSign,
+            ],
+        );
+        let crl = build_crl(
+            &ok_issuer,
+            AT_UNIX - 3600,
+            Some(AT_UNIX + 3600),
+            None,
+            vec![],
+        );
+        let doc = dss_doc(std::slice::from_ref(&ok_issuer.cert_der), &[crl], &[]);
+        let covered = covered_of(&[&ok_issuer.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert!(
+            checks.passed(VerifyCheckKind::ValidationMaterial),
+            "cRLSign-authorized CRL must pass"
+        );
+    }
+
+    #[test]
     fn rejected_doc_ts_leaves_no_trace_in_covered() {
         // A DocTimeStamp whose ByteRange is malformed must not extend the
         // DSS binding set, even when its token would validate.
@@ -2461,7 +2712,15 @@ mod tests {
         };
         let mut checks = Checks::new();
         let mut covered: Vec<EmbeddedCert> = Vec::new();
-        let got = verify_doc_ts(bytes, &entry, &anchors, &mut checks, false, &mut covered);
+        let got = verify_doc_ts(
+            bytes,
+            &entry,
+            &anchors,
+            &mut checks,
+            false,
+            &mut covered,
+            AT_UNIX * 1000,
+        );
         assert!(got.is_none(), "bad ByteRange rejects the DocTimeStamp");
         assert!(
             covered.is_empty(),
@@ -2530,7 +2789,7 @@ mod tests {
     /// Mint a TimeStampToken ContentInfo over `imprint` (RFC 3161, detached
     /// signature shape with eContent TSTInfo), signed by `tsa`.
     fn mint_token(tsa: &TestCa, imprint: &Sha256Digest, gen_time: u64) -> Vec<u8> {
-        mint_token_shaped(tsa, imprint, gen_time, true)
+        mint_token_custom(tsa, imprint, gen_time, true, None, false)
     }
 
     /// `mint_token` with a shape switch: `with_content_type` drops the
@@ -2540,6 +2799,20 @@ mod tests {
         imprint: &Sha256Digest,
         gen_time: u64,
         with_content_type: bool,
+    ) -> Vec<u8> {
+        mint_token_custom(tsa, imprint, gen_time, with_content_type, None, false)
+    }
+
+    /// Full fixture switchboard: `nonce` populates TSTInfo.nonce (needed by
+    /// the seal-side response path), `extra_digest_alg` adds a weak SHA-1
+    /// entry to the SignedData digestAlgorithms SET.
+    fn mint_token_custom(
+        tsa: &TestCa,
+        imprint: &Sha256Digest,
+        gen_time: u64,
+        with_content_type: bool,
+        nonce: Option<[u8; 16]>,
+        extra_digest_alg: bool,
     ) -> Vec<u8> {
         let tst = x509_tsp::TstInfo {
             version: x509_tsp::TspVersion::V1,
@@ -2555,7 +2828,7 @@ mod tests {
             gen_time: gt(gen_time),
             accuracy: None,
             ordering: false,
-            nonce: None,
+            nonce: nonce.map(|n| der::asn1::Int::new(&n).unwrap()),
             tsa: None,
             extensions: None,
         };
@@ -2583,7 +2856,17 @@ mod tests {
         si.extend_from_slice(&cms::tlv(0x04, &sig));
         let signer_info = cms::tlv(0x30, &si);
         let mut sd = cms::tlv(0x02, &[3]);
-        sd.extend_from_slice(&cms::tlv(0x31, &alg_id(cms::OID_SHA256, true)));
+        // DER SET OF sorting: the SHA-1 AlgorithmIdentifier (30 09 ...)
+        // encodes before SHA-256 (30 0D ...), so the weak entry lands first.
+        let digest_algs = if extra_digest_alg {
+            let sha1 = der::asn1::ObjectIdentifier::new_unwrap("1.3.14.3.2.26");
+            let mut both = alg_id(sha1, true);
+            both.extend_from_slice(&alg_id(cms::OID_SHA256, true));
+            both
+        } else {
+            alg_id(cms::OID_SHA256, true)
+        };
+        sd.extend_from_slice(&cms::tlv(0x31, &digest_algs));
         let mut eci = cms::oid_tlv(&ct_oid);
         eci.extend_from_slice(&cms::tlv(0xA0, &cms::tlv(0x04, &tst_der)));
         sd.extend_from_slice(&cms::tlv(0x30, &eci));
@@ -3589,6 +3872,85 @@ mod tests {
         );
         doc.add_object(Object::Dictionary(d));
         assert!(collect_signatures(&doc).is_err());
+    }
+
+    #[test]
+    fn subfilter_dispatch_is_fail_closed() {
+        // A candidate is evaluated ONLY under the handler its /SubFilter
+        // names; absent/foreign SubFilter on a typed dict is skipped, never
+        // evaluated as CAdES.
+        fn doc_with(type_name: Option<&[u8]>, subfilter: Option<&[u8]>) -> Document {
+            let mut doc = Document::with_version("1.4");
+            let mut d = lopdf::Dictionary::new();
+            if let Some(t) = type_name {
+                d.set("Type", Object::Name(t.to_vec()));
+            }
+            if let Some(sf) = subfilter {
+                d.set("SubFilter", Object::Name(sf.to_vec()));
+            }
+            d.set(
+                "ByteRange",
+                Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(1),
+                    Object::Integer(2),
+                    Object::Integer(3),
+                ]),
+            );
+            d.set(
+                "Contents",
+                Object::String(vec![0u8; 2], lopdf::StringFormat::Hexadecimal),
+            );
+            doc.add_object(Object::Dictionary(d));
+            doc
+        }
+        let cades: &[u8] = b"ETSI.CAdES.detached";
+        let rfc3161: &[u8] = b"ETSI.RFC3161";
+        // The finding's shape: /Sig with /adbe.pkcs7.detached is NOT CAdES.
+        assert!(
+            collect_signatures(&doc_with(Some(b"Sig"), Some(b"adbe.pkcs7.detached")))
+                .unwrap()
+                .is_empty()
+        );
+        // Typed dicts with ABSENT SubFilter are skipped too.
+        assert!(
+            collect_signatures(&doc_with(Some(b"Sig"), None))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            collect_signatures(&doc_with(Some(b"DocTimeStamp"), None))
+                .unwrap()
+                .is_empty()
+        );
+        // Wrong handler for the type: an RFC3161-subfiltered /Sig and a
+        // CAdES-subfiltered DocTimeStamp are both skipped.
+        assert!(
+            collect_signatures(&doc_with(Some(b"Sig"), Some(rfc3161)))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            collect_signatures(&doc_with(Some(b"DocTimeStamp"), Some(cades)))
+                .unwrap()
+                .is_empty()
+        );
+        // Correct handler per type is collected.
+        let found = collect_signatures(&doc_with(Some(b"Sig"), Some(cades))).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].is_doc_ts);
+        let found = collect_signatures(&doc_with(Some(b"DocTimeStamp"), Some(rfc3161))).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].is_doc_ts);
+        // Typeless interop: absent SubFilter tolerated, foreign one skipped.
+        let found = collect_signatures(&doc_with(None, None)).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].is_doc_ts);
+        assert!(
+            collect_signatures(&doc_with(None, Some(b"adbe.pkcs7.detached")))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// A chain of `hops` reference-linked objects ending in a terminal

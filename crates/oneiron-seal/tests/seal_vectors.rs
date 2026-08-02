@@ -65,6 +65,34 @@ fn engine_with(
 }
 
 #[tokio::test]
+async fn seal_output_exceeding_verify_cap_is_refused_at_seal_time() {
+    // Self-consistency (bot-fix leg 5): verify_document rejects
+    // len > max_input_bytes, so the sealer must REFUSE to emit a document
+    // past that cap instead of producing a self-rejecting artifact.
+    let id = p256_identity(false);
+    let anchor = id.cert_der.clone();
+    let input = fixture_pdf("classic_1page.pdf");
+    let mut config = config_for(vec![anchor], false);
+    // Admits the input but not the signature-revision growth.
+    config.resource_limits.max_input_bytes = input.len() + 1024;
+    let (engine, _backend) = engine_with(id, Arc::new(OfflineFetcher), config);
+    let err = engine
+        .seal_pdf(&input, &request(PadesProfile::BaselineB))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            SealError::Fatal {
+                stage: oneiron_seal::SealStage::PdfIncrementalUpdate,
+                code: oneiron_seal::FatalCode::PdfInvariantFailed,
+            }
+        ),
+        "over-cap seal must be refused at seal time: {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn seal_baseline_b_both_suites_and_fixtures() {
     for (mk, name) in [
         (p256_identity as fn(bool) -> TestIdentity, "p256"),

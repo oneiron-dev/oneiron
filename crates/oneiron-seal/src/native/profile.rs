@@ -638,6 +638,17 @@ pub(crate) async fn assemble(
             code: FatalCode::PdfInvariantFailed,
         });
     }
+    // Self-consistency cap: the sealer must never emit a document the
+    // verifier would refuse as input (verify_document rejects
+    // len > max_input_bytes). The two caps derive from the SAME configured
+    // limits struct, so a seal that would exceed the verify cap is refused
+    // at seal time.
+    if bytes.len() > ctx.config.resource_limits.max_input_bytes {
+        return Err(SealError::Fatal {
+            stage: SealStage::PdfIncrementalUpdate,
+            code: FatalCode::PdfInvariantFailed,
+        });
+    }
     Ok(AssemblyOutcome {
         bytes,
         achieved,

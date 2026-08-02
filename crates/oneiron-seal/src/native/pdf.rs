@@ -702,7 +702,12 @@ fn build_objects(
             // signature FIELDS, not by scanning for /Type: register the DTS
             // dictionary as the value of an /FT /Sig field in /AcroForm
             // /Fields (no widget — an archival timestamp has no appearance).
-            let field = format!("<< /FT /Sig /V {sig_num} 0 R >>");
+            // The field carries a /T name, unique within the document via
+            // the freshly allocated field object number: ISO 32000 requires
+            // field names for well-formed AcroForm trees, and some
+            // validators reject nameless fields.
+            let field =
+                format!("<< /FT /Sig /T (Seal-DocTimeStamp-{field_num}) /V {sig_num} 0 R >>");
             objs.push((sig_num, 0, sig_body));
             objs.push((field_num, 0, field.into_bytes()));
             sig_info = Some((sig_num, br_rel, lt_rel));
@@ -1308,11 +1313,17 @@ mod tests {
                     .and_then(|(_, o)| o.as_dict().ok())
                     .is_some_and(|d| d.get(b"Type").is_ok_and(|t| name_is(t, b"DocTimeStamp")))
             });
-            ft_ok && v_is_dts
+            // The field must carry a /T name (unique within the document):
+            // nameless fields are rejected by some validators.
+            let t_named = field.get(b"T").is_ok_and(|t| {
+                t.as_str()
+                    .is_ok_and(|n| n.starts_with(b"Seal-DocTimeStamp-"))
+            });
+            ft_ok && v_is_dts && t_named
         });
         assert!(
             dts_registered,
-            "AcroForm /Fields must contain an /FT /Sig field whose /V is the DTS dict"
+            "AcroForm /Fields must contain a /T-named /FT /Sig field whose /V is the DTS dict"
         );
     }
 
