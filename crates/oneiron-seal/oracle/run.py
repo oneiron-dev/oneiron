@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""CI-only pyHanko differential oracle for oneiron-seal.
+
+Usage: run.py validate <sealed.pdf>
+
+Prints one normalized JSON line: {"valid": bool, "validator": "pyhanko",
+"version": "<pyhanko version>"}. No credential references, no fetch URLs,
+no sealed bytes are written anywhere.
+"""
+
+import json
+import sys
+from importlib.metadata import version as dist_version
+
+
+def validate(path: str) -> dict:
+    # pyHanko 0.35.x exposes no top-level __version__; the distribution
+    # metadata is the pinned source of truth (uv.lock -> pyhanko==0.35.2).
+    pyhanko_version = dist_version("pyhanko")
+    from pyhanko.pdf_utils.reader import PdfFileReader
+    from pyhanko.sign.validation import ValidationContext, validate_pdf_signature
+    from pyhanko.sign.validation.settings import KeyUsageConstraints
+
+    with open(path, "rb") as fh:
+        reader = PdfFileReader(fh, strict=True)
+        # embedded_signatures is the tolerant discovery path: a document
+        # without /AcroForm (or with an unusual field layout) must not
+        # crash the oracle with a KeyError traceback.
+        sigs = reader.embedded_signatures
+        if not sigs:
+            return {"valid": False, "validator": "pyhanko", "version": pyhanko_version}
+        # EKU None = unrestricted; an empty set rejects every EKU.
+        ku = KeyUsageConstraints(key_usage=set(), extd_key_usage=None)
+        # Trust root = the certificate chain EMITTED in the document's own
+        # CMS (the fixture sample anchors on its self-signed signer cert).
+        # Without an explicit ValidationContext the witness is blind: every
+        # verdict would report untrusted regardless of cryptographic health.
+        # No key material is embedded here or read from anywhere else.
+        sig = sigs[0]
+        cms_certs = list(sig.signed_data["certificates"])
+        trust_roots = [
+            ci.chosen for ci in cms_certs if ci.name == "certificate"
+        ] or [sig.signer_cert]
+        vc = ValidationContext(trust_roots=trust_roots, allow_fetching=False)
+        # 0.35.x names the embedded-signature context signer_validation_context.
+        status = validate_pdf_signature(sig, signer_validation_context=vc, key_usage_settings=ku)
+        return {
+            "valid": bool(status.bottom_line),
+            "validator": "pyhanko",
+            "version": pyhanko_version,
+        }
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] != "validate":
+        print(__doc__, file=sys.stderr)
+        return 2
+    result = validate(sys.argv[2])
+    json.dump(result, sys.stdout)
+    return 0 if result["valid"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

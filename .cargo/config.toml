@@ -1,0 +1,14 @@
+# ONE-1837 GATE-1 amendment A7 (card crypto:ops, ratified 2026-07-29):
+# pkix-chain stays at the exact =0.4.1 pin AND ships a vendored snapshot so
+# a yanked release cannot break the build. The snapshot lives at
+# crates/oneiron-seal/vendor/pkix-chain-0.4.1 (see the README there for the
+# recorded crates.io checksum).
+#
+# A `[patch.crates-io]` redirect is used instead of a `[source]` directory
+# replacement on purpose: a replacement source must carry the ENTIRE
+# crates.io graph, while the patch redirects only this one crate. A7's open
+# item is resolved with no direct pkix-path-builder dependency — the lane
+# calls only pkix_chain::verify_chain, which re-exports and drives
+# pkix-path-builder internally.
+[patch.crates-io]
+pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }

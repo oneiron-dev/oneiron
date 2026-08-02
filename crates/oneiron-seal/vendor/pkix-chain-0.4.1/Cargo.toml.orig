@@ -1,0 +1,80 @@
+[package]
+name        = "pkix-chain"
+description = "High-level X.509 certificate chain verification (pkix-path + pkix-revocation)"
+version               = "0.4.1"  # transitively breaking: pkix-path 0.3 ValidatedPath re-export; see CHANGELOG.md
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+authors.workspace     = true
+keywords    = ["x509", "certificate", "pki", "pkix", "chain"]
+categories  = ["cryptography"]
+
+[features]
+default     = ["pkix-path/default"]
+rustcrypto  = ["pkix-path/rustcrypto"]
+crl         = ["pkix-revocation/crl"]
+ocsp        = ["pkix-revocation/ocsp"]
+
+# Enable serde::Serialize / serde::Deserialize on the public Error type
+# (AGENTS.md non-negotiable #6, PKIX-2l0v.1). Propagates through to
+# the upstream Error variants and the pkix-identity::IdentityError
+# variant carried by Error::Identity.
+serde = [
+    "dep:serde",
+    "pkix-path/serde",
+    "pkix-path-builder/serde",
+    "pkix-revocation/serde",
+    "pkix-identity/serde",
+    "pkix-aia/serde",
+]
+
+[dependencies]
+pkix-path       = { workspace = true, features = ["std"] }
+pkix-revocation = { workspace = true, features = ["std"] }
+pkix-identity   = { workspace = true, features = ["std"] }
+pkix-profiles   = { workspace = true }
+serde           = { workspace = true, optional = true }
+# pkix-aia ships the AiaFetcher trait that `Verifier` is generic over
+# (3rd generic with NoAiaFetcher default per PKIX-zkjb.9). When the
+# caller-supplied chain is missing an intermediate, `Verifier` invokes
+# the fetcher to retrieve candidate certs from `id-ad-caIssuers`
+# AccessDescription URIs and feeds them to `pkix-path-builder` for
+# reassembly. `NoAiaFetcher` short-circuits this path by returning
+# `AiaError::FetchingDisabled`, preserving the historical "caller
+# supplies the full chain" semantics. Real HTTP fetching lives in
+# `pkix-aia-http`.
+pkix-aia          = { workspace = true, features = ["std"] }
+# pkix-path-builder provides the `CertPool` + `build_first_valid_path`
+# entry points used to reassemble an incomplete chain from AIA-fetched
+# intermediates (PKIX-zkjb.7). Note: pkix-path-builder is no_std-friendly
+# by default; we pull the `std` feature so its consumers in this crate
+# get `core::error::Error` impls on the error type.
+pkix-path-builder = { workspace = true, features = ["std"] }
+der               = { workspace = true }
+# spki is used by `verify_responder_is_delegated_by` to call the
+# `SignatureVerifier` directly with the supplied issuer's SPKI — the
+# RFC 6960 §4.2.2.2 delegation check requires a cryptographic
+# binding, not just DN equality (PKIX-q9hv.3).
+spki              = { workspace = true }
+x509-cert         = { workspace = true }
+
+[dev-dependencies]
+# Used by tests/serde_round_trip.rs (gated by required-features).
+serde      = { workspace = true }
+serde_json = { workspace = true }
+# End-to-end AIA integration test (`tests/aia_http_e2e.rs`, PKIX-zkjb.8)
+# drives `Verifier::verify_one` through `pkix-aia-http::HttpFetcher`
+# against an in-process `mockito` HTTP server. pkix-aia-http is dev-only
+# here — the runtime crate has no reason to bind to a specific HTTP
+# transport.
+pkix-aia-http = { workspace = true }
+mockito       = "1.7"
+
+[[test]]
+name = "serde_round_trip"
+required-features = ["serde"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

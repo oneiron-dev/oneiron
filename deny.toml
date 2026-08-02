@@ -13,6 +13,9 @@ ignore = [
     { id = "RUSTSEC-2025-0141", reason = "transitive via loro/heed chain; see ONE-335" },
     { id = "RUSTSEC-2026-0097", reason = "rand 0.8.5 aliased mut ref; transitive via loro; see ONE-335" },
     { id = "RUSTSEC-2026-0215", reason = "smallstr unmaintained (all versions, no safe upgrade); transitive DEV-only via yrs 0.25 (oneiron dev-deps, sync test harness); unmaintained != vulnerability; remove when yrs migrates off smallstr; see ONE-1923" },
+    # ONE-1837 GATE-1 amendment A1 (card crypto:gseal): the rsa 0.9 line has no
+    # patched release; oneiron-seal's exposure is signing-only.
+    { id = "RUSTSEC-2023-0071", reason = "rsa 0.9 Marvin oracle; signing-only exposure in oneiron-seal, no decryption path; no patched 0.9 release; ONE-1837 A1" },
 ]
 
 [licenses]
@@ -23,6 +26,8 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    # CDLA-Permissive-2.0: webpki-roots root-store data (rustls ecosystem standard), via reqwest rustls-tls-webpki-roots (ONE-1837 network-fetch)
+    "CDLA-Permissive-2.0",
     "ISC",
     "MPL-2.0",
     "Unicode-3.0",
