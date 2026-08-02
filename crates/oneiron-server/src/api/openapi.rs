@@ -830,17 +830,22 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             json!({
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The legacy `/api/*` routes, `/v1/consumer/*`, and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names."
+                "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The protected legacy `/api/*` routes (all except the public `/api/health`), `/v1/consumer/*`, and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names."
             }),
         );
 
     // One scheme covers every protected route: all of them are presented as
     // `Authorization: Bearer`. The grade required is per-route, not per-plane:
-    // legacy `/api/*` demands an owner-grade credential, and so do the
-    // `/v1/consumer/*` and `/v1/usage/*` routes below, which authenticate
-    // through the same `check_api_auth`. Scoped tokens reach `/v1/core/*` and
-    // the companion control-plane routes, which read a `CoreAuth` and enforce
-    // the scopes it names.
+    // the legacy `/api/*` routes listed below demand an owner-grade
+    // credential, and so do the `/v1/consumer/*` and `/v1/usage/*` routes,
+    // which authenticate through the same `check_api_auth`. Scoped tokens
+    // reach `/v1/core/*` and the companion control-plane routes, which read a
+    // `CoreAuth` and enforce the scopes it names.
+    //
+    // `/api/health` is absent from this list by design, not by omission: it is
+    // public (it takes no `CoreAuth` and calls no `check_api_auth`), so
+    // attaching `CoreBearer` to it would document a gate that does not exist.
+    // Anything added here must actually authenticate.
     for (path, method) in [
         ("/api/openapi.json", "get"),
         ("/api/skills/oneiron.skills.md", "get"),

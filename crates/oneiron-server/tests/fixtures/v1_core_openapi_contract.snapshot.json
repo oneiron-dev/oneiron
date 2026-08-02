@@ -3800,7 +3800,7 @@
     },
     "securitySchemes": {
       "CoreBearer": {
-        "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The legacy `/api/*` routes, `/v1/consumer/*`, and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names.",
+        "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The protected legacy `/api/*` routes (all except the public `/api/health`), `/v1/consumer/*`, and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names.",
         "scheme": "bearer",
         "type": "http"
       }

@@ -519,6 +519,71 @@ async fn ws_upgrade_allows_unauthenticated_only_in_dev_mode() {
     handle.abort();
 }
 
+/// Mints a v2 token over arbitrary claims, the way `auth.rs` derives the MAC.
+///
+/// Spelled out rather than called into the crate for the same reason as
+/// [`mint_identified_owner_token`]: this is the black-box side, so the KDF
+/// context and the `v2.<claims>.<mac-hex>` framing are pinned as wire facts.
+fn mint_token_with_claims(secret: &str, claims: &str) -> String {
+    let key = blake3::derive_key(
+        "oneiron-server 2026-07 core-token-v2 mac",
+        secret.as_bytes(),
+    );
+    let mac = blake3::keyed_hash(&key, claims.as_bytes());
+    format!("v2.{claims}.{}", mac.to_hex())
+}
+
+/// The `/ws` device plane is owner-grade only, and a scoped token is refused
+/// at the upgrade — before any socket exists to send an UPDATE on.
+///
+/// `/ws` imports full-fidelity CRDT updates into the shared window doc: a
+/// session that reaches the message layer can mutate vault state directly.
+/// The vault's own devices authenticate owner-grade; a scoped `v2` token is
+/// an API delegate for the `/v1` plane, not a device. The boundary was
+/// enforced (`require_owner_auth` at the upgrade) but pinned nowhere: the
+/// existing `/ws` auth rows only cover an ABSENT credential and a WRONG
+/// secret, and the revocation rows mint owner-grade claims, so relaxing the
+/// upgrade to any authenticated bearer left the whole suite green while a
+/// `scope=core:read` token — read-only by name — gained full doc-mutating
+/// import rights.
+///
+/// The refusal is at the upgrade rather than per message arm, which is the
+/// stronger shape: no scoped session is ever established, so there is no
+/// UPDATE arm to gate and no read-only subset to define. The token is proven
+/// live and authentic on its own `/v1` route in the same test, so the 401
+/// reads as the plane boundary and not a broken credential.
+///
+/// Mutation probe: swapping `require_owner_auth` for a bare
+/// `CoreAuth::from_headers` at the upgrade fails this row (and only this row).
+#[tokio::test]
+async fn ws_upgrade_rejects_a_live_scoped_token_that_works_on_v1() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("scoped-ws-secret")),
+    )
+    .await;
+
+    // Widest scopes a mint can carry: the refusal is about grade, not reach.
+    let scoped = mint_token_with_claims("scoped-ws-secret", "scope=core:read,core:write");
+
+    // The credential is authentic and live: it is served on its own /v1 route.
+    let response = http_get(addr, "/v1/core/outbound/capabilities", Some(&scoped)).await;
+    assert_http_status(&response, 200);
+
+    // Same credential at /ws: refused before the upgrade completes, so no
+    // socket — and therefore no doc-mutating import — ever exists.
+    let err = connect(addr, Some(&scoped)).await.unwrap_err();
+    assert_unauthorized(&err);
+
+    // The owner-grade half: the same server admits a device credential and
+    // serves it the Phase-1 root snapshot.
+    let mut ws = connect(addr, Some("scoped-ws-secret")).await.unwrap();
+    assert_eq!(next_binary(&mut ws).await[0], TAG_SYNC_UPDATE);
+
+    handle.abort();
+}
+
 // ─── /ws live-session revocation ──────────────────────────────────────────────
 
 /// Mints an owner-grade v2 token carrying `jti`, computing the MAC the way
