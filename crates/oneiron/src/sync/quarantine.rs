@@ -27,6 +27,9 @@
 //! materialization batch carrying that entity's op fails as a whole txn
 //! (lost create/update writes = silent LMDB↔CRDT divergence), and when an
 //! entity/edge replay op is quarantined with no healing write (ONE-1167).
+//! A row rejected TERMINALLY — refused by a door that never lets it into any
+//! document, so no replay can ever heal it — takes no marker at all; see
+//! [`TerminalRejectionBatch`].
 //! Replay/quarantine-origin markers also carry a sidecar provenance row so
 //! terminal `x:` quarantine can discharge only non-delete retry work. An
 //! unproven `rm:` row is delete-safety/unknown and must survive terminal
@@ -61,9 +64,24 @@ pub(crate) const LAST_QUARANTINE_SEQ_KEY: &[u8] = b"m:last_quarantine_seq";
 /// Metadata key storing the cumulative quarantine eviction counter (u64 LE).
 /// An eviction is itself doctor-visible through this counter.
 pub(crate) const QUARANTINE_EVICTIONS_KEY: &[u8] = b"m:quarantine_evictions";
+/// Metadata key storing the cumulative count of rejected rows accounted by
+/// COUNT ONLY — rows past [`MAX_QUARANTINE_ROWS_PER_PASS`] in a single
+/// terminal batch, which get no `x:` row of their own (u64 LE).
+pub(crate) const QUARANTINE_BATCH_DROPS_KEY: &[u8] = b"m:quarantine_batch_drops";
 
 /// Retention cap: maximum number of persisted quarantine rows.
 pub const MAX_QUARANTINE_ROWS: usize = 4096;
+/// Per-pass evidence bound for [`TerminalRejectionBatch`]: the maximum number
+/// of `x:` rows ONE rejection pass may mint.
+///
+/// A peer controls how many rejectable rows one frame carries, so an unbounded
+/// batch would let a single admission both cost O(N) row writes AND flush the
+/// SHARED 4096-row ring, destroying unrelated evidence. Rows past this bound
+/// are accounted by COUNT (`m:quarantine_batch_drops`, doctor-visible as
+/// [`SyncQuarantineReport::batch_drop_count`]) instead of by row — the reason
+/// code is uniform within a pass, so the (N - cap)th typed row carries no
+/// information the first cap rows do not already carry.
+pub const MAX_QUARANTINE_ROWS_PER_PASS: usize = 64;
 /// Retention age bound: quarantine rows older than 30 days are evicted.
 pub const QUARANTINE_MAX_AGE_SECS: u64 = 30 * 86_400;
 /// Number of most-recent reason codes surfaced by [`sync_doctor`].
@@ -248,7 +266,16 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // validation but exceeds this device's local ingest budget is a
         // remote-op rejection. Quarantine keeps evidence and lets a later
         // rematerialization pass re-run the door when quota is under budget.
-        | ErrorKind::MaintenanceIngestQuotaExceeded => Some(reason_code_for(error)),
+        | ErrorKind::MaintenanceIngestQuotaExceeded
+        // ONE-1645: a replayed `FacetOf` edge whose endpoints fall outside
+        // the write-time type table (`CLAIM | TURN | EVENT -> FACET`) is a
+        // rejection of that remote op. The local batch door aborts on it,
+        // but the replay arm (`BatchOp::EdgeWithCreatedAt`) is ungated by
+        // H2 design, so forward remat runs the table itself and needs the
+        // typed reason here — off-table stamp quarantined, window continues.
+        // Endpoint types are read AFTER the endpoint-existence check, so a
+        // not-yet-arrived endpoint defers instead of reaching this arm.
+        | ErrorKind::InvalidFacetOfEdge => Some(reason_code_for(error)),
         _ => None,
     }
 }
@@ -415,6 +442,136 @@ pub(crate) fn quarantine_rejected_op(
     Ok(seq)
 }
 
+/// One row a TERMINAL rejection pass refused, held until the pass commits.
+struct TerminalRejection {
+    container: QuarantineContainer,
+    crdt_key_hash: u64,
+    crdt_key_len: u32,
+    reason_code: String,
+    payload_hash: u64,
+}
+
+/// Accumulator for rows rejected TERMINALLY — refused by a door that never
+/// admits them into any document, so no forward materialization pass can ever
+/// re-run them.
+///
+/// TWO properties distinguish it from [`quarantine_rejected_op`], and both come
+/// from the same fact: the peer, not the host, chooses how many rows one frame
+/// carries.
+///
+/// * ONE txn per PASS, not per row. A per-row `write_txn` + commit hands a peer
+///   an amplification primitive — N forged rows in one admission cost N fsyncs.
+///   Rows accumulate in memory and land in the single [`Self::commit`] txn.
+/// * NO `rm:` retry marker. The `rm:w:` marker means "a forward
+///   rematerialization pass still owes work on this entity", and forward remat
+///   heals by REPLAYING the row from the document. A terminally-rejected row is
+///   never in a document, so no replay can ever discharge its marker: it would
+///   pend forever and, because a pending `rm:` row is a GDPR
+///   purge-may-have-failed signal, permanently poison [`sync_doctor`]'s
+///   erasure-SLA channel with a row that has nothing to do with erasure.
+///   Terminal-quarantine rows are complete evidence on their own — the `x:`
+///   record IS the durable account.
+///
+/// Evidence is bounded at [`MAX_QUARANTINE_ROWS_PER_PASS`]; the remainder is
+/// accounted by count. Nothing is silently dropped in either arm.
+pub(crate) struct TerminalRejectionBatch {
+    window_key: String,
+    rows: Vec<TerminalRejection>,
+    over_cap: u64,
+}
+
+impl TerminalRejectionBatch {
+    pub(crate) fn new(window_key: &str) -> Self {
+        Self {
+            window_key: window_key.to_string(),
+            rows: Vec::new(),
+            over_cap: 0,
+        }
+    }
+
+    /// Records one terminally-rejected row. Past
+    /// [`MAX_QUARANTINE_ROWS_PER_PASS`] the row is counted rather than kept —
+    /// H2 liveness is preserved either way because the ADMISSION continues
+    /// regardless of how the rejection was accounted.
+    pub(crate) fn push(
+        &mut self,
+        container: QuarantineContainer,
+        crdt_key: &str,
+        error: &Error,
+        payload: &[u8],
+    ) {
+        if self.rows.len() >= MAX_QUARANTINE_ROWS_PER_PASS {
+            self.over_cap = self.over_cap.saturating_add(1);
+            return;
+        }
+        let (crdt_key_hash, crdt_key_len) = crdt_key_metadata(crdt_key);
+        self.rows.push(TerminalRejection {
+            container,
+            crdt_key_hash,
+            crdt_key_len,
+            reason_code: reason_code_for(error),
+            payload_hash: payload_hash(payload),
+        });
+    }
+
+    /// Commits every accumulated row plus the over-cap counter in ONE write
+    /// transaction. A pass that rejected nothing takes no transaction at all.
+    pub(crate) fn commit(self, vault: &Vault) -> Result<()> {
+        if self.rows.is_empty() && self.over_cap == 0 {
+            return Ok(());
+        }
+        let quarantined_at = crate::unix_seconds_now();
+        vault.with_write_txn(|wtxn| {
+            for row in &self.rows {
+                record_in_txn(
+                    vault,
+                    wtxn,
+                    &QuarantineRecord {
+                        window_key: self.window_key.clone(),
+                        container: row.container,
+                        crdt_key_hash: row.crdt_key_hash,
+                        crdt_key_len: row.crdt_key_len,
+                        reason_code: row.reason_code.clone(),
+                        payload_hash: row.payload_hash,
+                        quarantined_at,
+                    },
+                )?;
+            }
+            if self.over_cap > 0 {
+                bump_batch_drop_counter_in_txn(vault, wtxn, self.over_cap)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+/// Adds `count` to `m:quarantine_batch_drops`. Self-heals a malformed counter
+/// row (diagnostics must never fail an admission closed), saturating so the
+/// counter can never wrap a rejection into invisibility.
+fn bump_batch_drop_counter_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    count: u64,
+) -> Result<()> {
+    let prior = vault
+        .store
+        .sync_queue
+        .get(&*wtxn, QUARANTINE_BATCH_DROPS_KEY)?
+        .and_then(|raw| decode_u64_le_counter(&raw))
+        .unwrap_or(0);
+    let total = prior.saturating_add(count);
+    vault
+        .store
+        .sync_queue
+        .put(wtxn, QUARANTINE_BATCH_DROPS_KEY, &total.to_le_bytes())?;
+    tracing::warn!(
+        dropped = count,
+        total,
+        "sync: terminal rejection evidence bound reached — rows accounted by count"
+    );
+    Ok(())
+}
+
 fn allocate_next_quarantine_seq(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
     let metadata = vault
         .store
@@ -570,6 +727,12 @@ pub struct SyncQuarantineReport {
     pub recent_reason_codes: Vec<String>,
     /// Cumulative retention evictions (`m:quarantine_evictions`).
     pub eviction_count: u64,
+    /// Cumulative rows a [`TerminalRejectionBatch`] accounted by COUNT rather
+    /// than by `x:` row, because the pass exceeded
+    /// [`MAX_QUARANTINE_ROWS_PER_PASS`] (`m:quarantine_batch_drops`). Nonzero
+    /// means a peer sent a frame with more rejectable rows than one pass mints
+    /// evidence for — the rejections happened and are accounted here.
+    pub batch_drop_count: u64,
     /// Windows with at least one pending `rm:w:{window}:{entity_hex}`
     /// marker — needs-rematerialization. Non-empty is an ERROR signal: a
     /// CRDT-tombstone purge failed, so hard-deleted content may still be
@@ -598,6 +761,12 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
         .get(&rtxn, QUARANTINE_EVICTIONS_KEY)?
         .and_then(|raw| decode_u64_le_counter(&raw))
         .unwrap_or(0);
+    let batch_drop_count = vault
+        .store
+        .sync_queue
+        .get(&rtxn, QUARANTINE_BATCH_DROPS_KEY)?
+        .and_then(|raw| decode_u64_le_counter(&raw))
+        .unwrap_or(0);
     drop(rtxn);
 
     let rm_pending_windows = pending_remat_windows(vault)?;
@@ -605,6 +774,7 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
         quarantine_count,
         recent_reason_codes,
         eviction_count,
+        batch_drop_count,
         rm_pending_windows,
     };
     if !report.rm_pending_windows.is_empty() {

@@ -509,6 +509,19 @@ fn world_model_lambda_budgets_bind_in_propagation() -> Result<()> {
         let src = entity(byte);
         let tgt = entity(byte + 1);
         byte += 2;
+        // The ONE-1645 FacetOf write-time type table requires both endpoints
+        // to be established facts with admitted types. EVENT → FACET is the
+        // world-model arm of that table (inert on the local query door, though
+        // still disclosure-effective on the federation selector), which is
+        // exactly the traversal semantics this λ budget pins. The rows are
+        // inert for scoring: PPR reads `entities` only for cache TTL, seed
+        // liveness (already live via the edge), and the CLAIM-typed
+        // lexical-hint check.
+        if kind == EdgeKind::FacetOf {
+            let tr = TimeRange { start: 1, end: 1 };
+            vault.put_entity(&src, crate::registry::ENTITY_TYPE_EVENT, tr, 1, b"src")?;
+            vault.put_entity(&tgt, crate::registry::ENTITY_TYPE_FACET, tr, 1, b"tgt")?;
+        }
         vault.put_edge(&src, kind, &tgt, stored_weight)?;
 
         let rtxn = vault.store.env.read_txn()?;

@@ -156,6 +156,31 @@ fn ambiguous_sensitivity_band_fails_closed() {
     assert!(persona_snapshot_tier_a_clamped(&body));
 }
 
+/// ONE-1645: the unstamped floor (band 2) sits deliberately BELOW the persona
+/// clamp (band 3). An unstamped claim is private-to-others — Tier A at
+/// `disclosure_tier` — yet still visible to the OWNER in their own persona
+/// compile. Private means not-disclosed-to-others, not invisible-to-self.
+/// This asymmetry is chosen, not accidental; the two constants are separate
+/// boundaries and this test pins them apart.
+#[test]
+fn unstamped_claim_not_persona_clamped() {
+    let subject = EntityId::from_bytes([0x63; 16]).expect("entity id");
+    let unstamped = claim_body(subject, "profile.preference", "text", 0.5, None);
+    assert_eq!(
+        crate::claim::claim_sensitivity_band(&unstamped),
+        Some(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND),
+        "the probe body must actually be unstamped"
+    );
+    assert!(
+        !persona_snapshot_tier_a_clamped(&unstamped),
+        "the floor band must stay below the persona clamp"
+    );
+
+    // Control: an explicitly restricted claim is still clamped.
+    let restricted = claim_body(subject, "profile.preference", "text", 0.5, Some(3));
+    assert!(persona_snapshot_tier_a_clamped(&restricted));
+}
+
 #[test]
 fn export_honors_strike_list_and_explicit_unstrike() -> Result<()> {
     let (_dir, vault) = test_vault();

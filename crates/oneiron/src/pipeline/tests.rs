@@ -4364,6 +4364,12 @@ fn facet_strict_excluded_claims_free_result_limit_slots() -> Result<()> {
 
 /// AC 5 — a claim with no `FacetOf` edge surfaces under all three
 /// modes with the exact same (never boosted) score.
+///
+/// ONE-1645: this relevance neutrality is RATIFIED behavior and stays green.
+/// Passing here says nothing about disclosure — stamp-absence is never
+/// invariant evidence (P3/V2). The exposure decision lives on the disclosure
+/// axis; see `unfaceted_scope_is_not_invariant_evidence_contract` for the
+/// pair of assertions that pins the two apart.
 #[test]
 fn facet_unfaceted_claim_passes_all_three_modes_unchanged() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -4395,6 +4401,39 @@ fn facet_unfaceted_claim_passes_all_three_modes_unchanged() -> Result<()> {
             "unfaceted claim score must be exactly R2 under {label} mode"
         );
     }
+    Ok(())
+}
+
+/// ONE-1645 seam contract: "kept by relevance" is NOT "publicly disclosable".
+/// One unfaceted claim, two axes asserted together — it survives STRICT-mode
+/// relevance filtering, and its unstamped body simultaneously reads the
+/// band-2 disclosure floor. The pair is the contract that forbids ONE-1646
+/// from ever reading `ClaimFacetScope::Unfaceted` as invariant evidence:
+/// invariant admission needs positive public-provenance, never stamp-absence.
+#[test]
+fn unfaceted_scope_is_not_invariant_evidence_contract() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fixture = setup_facet_fixture(&vault)?;
+
+    // Axis 1 — relevance: the unfaceted claim passes the strict-mode filter.
+    let strict = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .facet(&fixture.facet_a, FacetMode::Strict)
+        .run()?;
+    assert!(
+        to_score_map(&strict).contains_key(&fixture.claim_core),
+        "the unfaceted claim must survive strict-mode relevance"
+    );
+
+    // Axis 2 — disclosure: the very same claim's body is unstamped, so it
+    // reads the floor band and fails closed at every disclosure surface.
+    let body = crate::claim::decode_claim_body(&facet_claim_body(), false)?;
+    assert_eq!(
+        crate::claim::claim_sensitivity_band(&body),
+        Some(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND),
+        "the fixture claim body must be unstamped, so relevance-kept != disclosable"
+    );
     Ok(())
 }
 

@@ -545,6 +545,23 @@ fn source_trust_claim(source: ClaimSource) -> ClaimBody {
     body
 }
 
+/// Stamps `sensitivity: public` (band 0) on a claim body.
+///
+/// The ONE-1645 provenance floor makes an UNSTAMPED claim read band 2, which
+/// exceeds every `max_auto_sensitivity: 0` source-trust row and sends the
+/// write to the consent queue. Fixtures whose SUBJECT is some other gate axis
+/// — actor ceilings, manifest signatures, connector-ref resolution, federated
+/// admission — stamp public here so they keep exercising the axis they exist
+/// to test rather than re-testing the floor. The floor itself is pinned
+/// directly by `gate_source_trust_unstamped_claim_hits_floor_band`.
+fn public_stamped(mut body: ClaimBody) -> ClaimBody {
+    body.scope = Some(Value::Map(vec![(
+        Value::from("sensitivity"),
+        Value::from("public"),
+    )]));
+    body
+}
+
 fn core_read_scoped_grant_entry(actor_ref: &str, scope: Value) -> (Value, Value) {
     (
         Value::from(POLICY_SCOPED_GRANTS_KEY),
@@ -2285,6 +2302,47 @@ fn gate_evaluator_missing_source_preserves_write_gate_semantics() -> Result<()> 
     Ok(())
 }
 
+/// ONE-1645 write-path consequence, deliberate: a source under a band-capped
+/// trust row (`max_auto_sensitivity = 1`) still auto-approves an explicitly
+/// public claim, but an UNSTAMPED claim now reads the band-2 floor and
+/// exceeds the cap — it queues for consent instead of auto-writing. Hosts
+/// restore auto by stamping `public`; that is the floor doing its job, not a
+/// regression.
+#[test]
+fn gate_source_trust_unstamped_claim_hits_floor_band() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::UserStated, 1)]);
+    put_policy_manifest_bytes(&vault, test_id(0x77), &data)?;
+    let policy = resolve(&vault)?;
+
+    let table: [(&str, Option<Value>, bool); 3] = [
+        (
+            "explicit public stamp",
+            Some(Value::Map(vec![(
+                Value::from("sensitivity"),
+                Value::from("public"),
+            )])),
+            true,
+        ),
+        ("unstamped: no scope map", None, false),
+        (
+            "unstamped: scope map without a sensitivity key",
+            Some(Value::Map(vec![(
+                Value::from("federated_original_source"),
+                Value::from("user_stated"),
+            )])),
+            false,
+        ),
+    ];
+    for (label, scope, expect_auto) in table {
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.scope = scope;
+        let allowed = check_claim_source_trust(&body, &policy).is_ok();
+        assert_eq!(allowed, expect_auto, "{label}");
+    }
+    Ok(())
+}
+
 #[test]
 fn gate_evaluator_source_trust_respects_sensitivity_ceiling() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -3347,7 +3405,7 @@ fn policy_manifest_valid_fixture_resolves_gate_inputs() -> Result<()> {
     assert_eq!(policy.signatures().len(), 1);
 
     let id = test_id(0x63);
-    let body = source_trust_claim(ClaimSource::ToolOutput);
+    let body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
     let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
     reset_claim_body_decode_count();
     vault
@@ -3370,7 +3428,7 @@ fn first_party_eiri_tool_output_auto_write_reaches_auto() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xB4), &data)?;
 
     let claim_id = test_id(0xB5);
-    let body = source_trust_claim(ClaimSource::ToolOutput);
+    let body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
     let (candidate, envelope) = claim_candidate_write_parts_for_actor(
         &vault,
         &body,
@@ -3413,7 +3471,7 @@ fn dreamer_generated_auto_write_requires_manifest_signature() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xC4), &data)?;
 
     let claim_id = test_id(0xC5);
-    let body = source_trust_claim(ClaimSource::Generated);
+    let body = public_stamped(source_trust_claim(ClaimSource::Generated));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
@@ -3446,7 +3504,7 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
     put_policy_manifest_bytes(&vault, test_id(0xC6), &data)?;
 
     let claim_id = test_id(0xC7);
-    let body = source_trust_claim(ClaimSource::Generated);
+    let body = public_stamped(source_trust_claim(ClaimSource::Generated));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
@@ -3485,7 +3543,7 @@ fn foreign_tool_output_connector_stays_pending_actor_ceiling() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xB6), &data)?;
 
     let claim_id = test_id(0xB7);
-    let body = source_trust_claim(ClaimSource::ToolOutput);
+    let body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
     let (candidate, envelope) =
         claim_candidate_write_parts_for_actor(&vault, &body, test_id(0xB8), EdgeActorClass::Agent)?;
 
@@ -3576,7 +3634,7 @@ fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
     put_policy_manifest_bytes(&unknown_vault, test_id(0xB9), &data)?;
 
     let unknown_claim = test_id(0xBA);
-    let body = source_trust_claim(ClaimSource::ToolOutput);
+    let body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
     let (candidate, envelope) = claim_candidate_write_parts_for_actor(
         &unknown_vault,
         &body,
@@ -4981,7 +5039,7 @@ fn federated_admission_allows_and_restamps_imported_claim() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0x8A), &data)?;
 
     let id = test_id(0x8B);
-    let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+    let remote_body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
     let update = federated_claim_update(&id, &remote_body)?;
     let key = WindowKey::new("2026-03");
     let admitted =

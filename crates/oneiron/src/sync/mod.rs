@@ -56,10 +56,10 @@ pub use loro::{LoroValue, Subscription};
 pub use loro_support::export_updates_since;
 pub use manager::WindowManager;
 pub use quarantine::{
-    MAX_QUARANTINE_ROWS, QUARANTINE_MAX_AGE_SECS, QuarantineContainer, QuarantineRecord,
-    ReassertDrainReport, RematDrainReport, SyncQuarantineReport, drain_reassert_markers,
-    drain_remat_markers, pending_reassert_windows, pending_remat_windows, quarantined_records,
-    sync_doctor,
+    MAX_QUARANTINE_ROWS, MAX_QUARANTINE_ROWS_PER_PASS, QUARANTINE_MAX_AGE_SECS,
+    QuarantineContainer, QuarantineRecord, ReassertDrainReport, RematDrainReport,
+    SyncQuarantineReport, drain_reassert_markers, drain_remat_markers, pending_reassert_windows,
+    pending_remat_windows, quarantined_records, sync_doctor,
 };
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use quota::{

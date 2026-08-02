@@ -155,8 +155,22 @@ fn install_self_memory_policy_trusting_source(
             Value::from("source_trust"),
             Value::Map(vec![(
                 Value::from(source.as_str()),
+                // Band 2, not 0. These fixtures' subject is write-trap
+                // ROUTING — that each self-memory op emits its own gate
+                // decision and receipt, and that a source outside the trusted
+                // row is refused. The gate bodies for the edge and supersede
+                // traps are built by production `operation_gate_body`, which
+                // records no `sensitivity` scope, so under the ONE-1645
+                // provenance floor they read the unstamped band 2 and a
+                // ceiling of 0 would queue EVERY op — erasing the routing
+                // signal these tests measure. Admitting band 2 here keeps the
+                // trusted-source arm auto-writable while
+                // `code_run_edge_and_supersede_traps_force_generated_source_into_g2`
+                // still pins the untrusted-source rejection. This is a
+                // test-local manifest; the SHIPPED `default_policy_manifest()`
+                // ToolOutput ceiling stays 0 on purpose.
                 Value::Map(vec![
-                    (Value::from("max_auto_sensitivity"), Value::from(0_u64)),
+                    (Value::from("max_auto_sensitivity"), Value::from(2_u64)),
                     (Value::from("receipted"), Value::Boolean(true)),
                     (Value::from("warned"), Value::Boolean(true)),
                 ]),

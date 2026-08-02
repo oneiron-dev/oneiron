@@ -1629,6 +1629,56 @@ pub fn forward_rematerialize(
                 if !src_exists || !tgt_exists {
                     return Ok(EdgeRematOutcome::Deferred);
                 }
+
+                // ONE-1645 replay door for the FacetOf type table. The batch
+                // arm this write lands on (`BatchOp::EdgeWithCreatedAt`) is
+                // deliberately UNGATED — a hard abort there would wedge sync
+                // permanently (H2) — so the table is enforced HERE, at the
+                // remat chokepoint, as a quarantine-and-continue rejection.
+                //
+                // Without it a federation peer could replay an off-table
+                // stamp (e.g. PERSON -> FACET) that no local public writer
+                // can write, and it would reach LMDB — where the local query
+                // door reads facet adjacency with no admitted-set filter of
+                // its own. The federation selector no longer honors such a
+                // source (`selector::facet_scope_by_source` mirrors this same
+                // table on read), but the LMDB write is still an
+                // authorization-boundary bypass via replay: this door is what
+                // keeps the shape out of the retrieval truth at all.
+                //
+                // Ordered AFTER the endpoint-existence check on purpose: a
+                // cross-window endpoint that has not arrived yet is a
+                // DEFERRAL, not a rejection, and the type table reads
+                // endpoint types from the entity rows this check just proved
+                // present. Reversing the order would burn a legitimate
+                // out-of-order replay as a permanent quarantine.
+                //
+                // The match is GUARDED (ONE-1124 fail-closed split): only a
+                // remote-classifiable error may quarantine. The table also
+                // surfaces LOCAL faults — `CorruptedIndex("entity header")`
+                // on a stored row it cannot parse, and heed read errors on
+                // the type lookups themselves — and those must ABORT the
+                // drain. Quarantining one would be doubly wrong: it swallows
+                // our own storage defect behind a continue, and the `x:` row
+                // it writes is PERMANENT false evidence accusing the peer of
+                // a forgery it never sent.
+                match crate::batch::validate_facet_of_edge(&vault.store, &*wtxn, src, kind, tgt) {
+                    Ok(()) => {}
+                    Err(off_table) if quarantine::remote_rejection_reason(&off_table).is_some() => {
+                        quarantine::quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            QuarantineContainer::Edges,
+                            key,
+                            &off_table,
+                            buf,
+                        )?;
+                        return Ok(EdgeRematOutcome::Quarantined);
+                    }
+                    Err(local) => return Err(local),
+                }
+
                 let out_key = Store::encode_edge_key(&src, kind, &tgt);
                 let in_key = Store::encode_edge_key(&tgt, kind, &src);
                 let out_matches = vault

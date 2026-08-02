@@ -249,6 +249,14 @@ fn gate_regression_denied_claim_matrix_leaves_no_committed_side_effects() -> Res
             predicate: "profile.name",
             expected: ExpectedError::EntityNotFound,
         },
+        // Deliberate gate consequence of the ONE-1645 provenance floor:
+        // unstamped ToolOutput queues for consent under the default manifest.
+        // This candidate carries no `sensitivity` scope, so post-floor it reads
+        // band 2 and trips the default manifest's ToolOutput
+        // `max_auto_sensitivity: 0` ceiling IN ADDITION to the critical
+        // predicate's floor. Both reasons are correct and both are reported;
+        // the case's subject — a denied batch commits no side effects — is
+        // unchanged.
         DeniedClaimCase {
             name: "tool output criticality floor denial",
             seed: 0xC8,
@@ -259,7 +267,10 @@ fn gate_regression_denied_claim_matrix_leaves_no_committed_side_effects() -> Res
             predicate: "health.allergy",
             expected: ExpectedError::GateWriteRejected {
                 outcome: "pending",
-                reason_codes: &["gate.pending.criticality_floor"],
+                reason_codes: &[
+                    "gate.pending.source_trust",
+                    "gate.pending.criticality_floor",
+                ],
             },
         },
         DeniedClaimCase {

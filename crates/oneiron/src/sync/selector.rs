@@ -46,6 +46,8 @@ use super::bridge::parse_edge_key;
 use super::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
 };
+#[cfg(feature = "sync")]
+use super::quarantine::{self, QuarantineContainer};
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 
@@ -259,7 +261,7 @@ pub fn filtered_window_doc(
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
     authorize_sync_selector(vault, grant_scope, selector)?;
-    Ok(filter_window_doc(source, key, grant_scope, selector))
+    filter_window_doc(vault, source, key, grant_scope, selector)
 }
 
 /// Builds and signs a guest-share envelope from selector-filtered window bytes.
@@ -291,7 +293,7 @@ pub fn guest_share_envelope_body(
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
     authorize_sync_selector(vault, grant_scope, selector)?;
-    let filtered = filter_window_doc(source, key, grant_scope, selector);
+    let filtered = filter_window_doc(vault, source, key, grant_scope, selector)?;
     let stripped = strip_guest_share_metadata(&filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())
@@ -352,7 +354,13 @@ pub fn admit_federated_window_update(
 
     reject_federated_tombstones(&remote)?;
     copy_admitted_entities(vault, &policy, &remote, &admitted)?;
-    copy_admitted_edges(&remote.get_map("edges"), &admitted.get_map("edges"))?;
+    copy_admitted_edges(
+        vault,
+        key,
+        &remote.get_map("entities"),
+        &remote.get_map("edges"),
+        &admitted.get_map("edges"),
+    )?;
 
     admitted.commit_with(CommitOptions::new().origin(role.origin()));
     admitted
@@ -568,24 +576,198 @@ fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> R
 /// the host's entities. Keys that do not parse as edge keys copy through
 /// unchanged: the ordinary materialization path quarantines them with
 /// evidence (the same division Observer B uses).
+///
+/// ONE-1645 admission boundary for the `FacetOf` type table. The replay
+/// chokepoint (`window::forward_rematerialize`) already quarantines an
+/// off-table stamp before it reaches LMDB, but the FEDERATION SELECTOR reads
+/// the RAW Loro map, not LMDB: a forged `PERSON -> <selected FACET>` row that
+/// merely SITS in the admitted / live document could scope what this vault
+/// exports to a facet-limited peer — quarantined-but-present is enough. The
+/// complete fix is layered: this door keeps a PROVABLY off-table row out of
+/// the doc, and [`facet_scope_by_source`] mirrors the same table on the READ
+/// side so whatever residue survives the H2 defer is inert anyway.
+///
+/// The invariant here is deliberately asymmetric, and the asymmetry is the
+/// whole design (see [`admitted_facet_of_verdict`]):
+///
+/// * PROVABLY off-table on the facts in hand — a KNOWN off-table source, or a
+///   KNOWN non-FACET target, either one sufficient ALONE — is DROPPED with a
+///   typed [`Error::InvalidFacetOfEdge`] quarantine record. The row is not
+///   copied, so the selector can never read it.
+/// * UNKNOWABLE deciding endpoint — the endpoint has not arrived yet — PASSES
+///   THROUGH. The remat gate's defer-then-validate owns those: a hard verdict
+///   here would burn a legitimate out-of-order delivery permanently (H2). The
+///   read mirror is what makes that pass-through safe even after the missing
+///   endpoint later lands off-table.
+///
+/// Dropping the edge while still admitting its source entity is harmless: the
+/// entity arrives UNSTAMPED, which is strictly less disclosure than the peer
+/// asked for.
+///
+/// THE DROP IS TERMINAL, and the quarantine shape follows from that. A dropped
+/// row never enters the admitted doc, so no forward rematerialization can ever
+/// replay it — the evidence written here is the WHOLE account of that row, and
+/// it must not schedule retry work nobody can discharge. The rejections
+/// therefore ride a [`quarantine::TerminalRejectionBatch`]: no `rm:w:` marker
+/// (an unhealable marker would pend forever and permanently poison the erasure
+/// SLA channel `rm:` exists to carry), and ONE write transaction for the whole
+/// pass rather than one per rejected row (the peer chooses N, so a per-row
+/// commit is an amplification primitive it controls). Evidence is bounded at
+/// [`quarantine::MAX_QUARANTINE_ROWS_PER_PASS`] rows per pass; beyond that
+/// rejections are accounted by count, never silently.
 #[cfg(feature = "sync")]
-fn copy_admitted_edges(source: &loro::LoroMap, target: &loro::LoroMap) -> Result<()> {
+fn copy_admitted_edges(
+    vault: &Vault,
+    window_key: &WindowKey,
+    source_entities: &loro::LoroMap,
+    source: &loro::LoroMap,
+    target: &loro::LoroMap,
+) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut rejections = quarantine::TerminalRejectionBatch::new(window_key.as_str());
     let mut result = Ok(());
     map_for_each_value_bytes(source, |key, value| {
         if result.is_err() {
             return;
         }
-        if let Some((_, kind, _)) = super::bridge::parse_edge_key(key)
-            && let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
-        {
-            result = Err(reserved);
-            return;
+        if let Some((src, kind, tgt)) = super::bridge::parse_edge_key(key) {
+            if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+                result = Err(reserved);
+                return;
+            }
+            match admitted_facet_of_verdict(vault, &rtxn, source_entities, src, kind, tgt) {
+                Ok(AdmittedEdgeVerdict::Copy) => {}
+                Ok(AdmittedEdgeVerdict::DropOffTable(off_table)) => {
+                    // Quarantine-and-continue: the peer's forged row gets
+                    // typed durable evidence, the window's other N-1 rows
+                    // still admit. `payload` is the raw value when present.
+                    rejections.push(
+                        QuarantineContainer::Edges,
+                        key,
+                        &off_table,
+                        value.unwrap_or(&[]),
+                    );
+                    return;
+                }
+                // A LOCAL fault reading endpoint types (corrupted stored
+                // header, heed read error) is never the peer's rejection:
+                // fail closed on the whole admission rather than record a
+                // quarantine row that misattributes our defect to them.
+                Err(local) => {
+                    result = Err(local);
+                    return;
+                }
+            }
         }
         result = value
             .ok_or(Error::InvalidKey)
             .and_then(|bytes| map_insert_bytes(target, key, bytes));
     });
-    result
+    result?;
+    // Evidence commits only once the copy pass itself succeeded: a pass that
+    // fails closed admits nothing, so recording peer rejections from a frame
+    // this vault refused whole would be an account of a thing that never
+    // happened.
+    drop(rtxn);
+    rejections.commit(vault)
+}
+
+/// What the admission boundary does with one parsed edge row.
+#[cfg(feature = "sync")]
+enum AdmittedEdgeVerdict {
+    /// On-table, not a `FacetOf` row at all, or a row whose DECIDING endpoint
+    /// type is not knowable yet — copy it and let the replay gate own it.
+    Copy,
+    /// PROVABLY off-table on the facts in hand: a known off-table source, or a
+    /// known non-FACET target, is each sufficient alone. Drop with this typed
+    /// rejection.
+    DropOffTable(Error),
+}
+
+/// Resolves the ONE-1645 `FacetOf` table for ONE admitted row.
+///
+/// Endpoint types resolve from two sources, in this order:
+///
+/// 1. the LOCAL vault row (`batch::stored_entity_type`) — entity type is
+///    immutable per id ([`Error::EntityTypeImmutable`]), so a stored type is
+///    permanent truth about that id;
+/// 2. the ADMITTED UPDATE's own entities map — the endpoint arriving in the
+///    SAME frame as its stamp is the common legitimate case, and reading it
+///    here is what keeps a well-formed peer from being forced through the
+///    defer path on every first delivery.
+///
+/// The verdict is ONE-SIDED-sufficient
+/// ([`crate::batch::facet_of_endpoints_provably_off_table`]): the table is a
+/// conjunction of two independent per-endpoint predicates, so a KNOWN off-table
+/// source alone proves the row bad no matter what its target turns out to be,
+/// and a KNOWN non-FACET target alone proves it bad no matter what its source
+/// turns out to be. Demanding BOTH endpoints before rejecting would let a
+/// forger buy a pass by simply withholding the endpoint that is not the
+/// incriminating one.
+///
+/// Only a row whose DECIDING endpoint stays unknowable passes through: the
+/// endpoint has not arrived, and the remat gate's defer-then-validate owns it.
+/// This is the H2 line — an unknowable type is not evidence of a forgery, and
+/// treating it as one would wedge out-of-order delivery permanently. That
+/// residue is inert on the export path regardless, because
+/// [`facet_scope_by_source`] now honors a scope only from a row whose BOTH
+/// endpoints resolve onto this same table.
+///
+/// The table itself is [`crate::batch::facet_of_endpoint_types_on_table`] and
+/// its halves, the single copy the write/replay door also runs.
+#[cfg(feature = "sync")]
+fn admitted_facet_of_verdict(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    source_entities: &loro::LoroMap,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+) -> Result<AdmittedEdgeVerdict> {
+    if kind != EdgeKind::FacetOf {
+        return Ok(AdmittedEdgeVerdict::Copy);
+    }
+    let src_type = admitted_endpoint_type(vault, rtxn, source_entities, &src)?;
+    let tgt_type = admitted_endpoint_type(vault, rtxn, source_entities, &tgt)?;
+    if !crate::batch::facet_of_endpoints_provably_off_table(src_type, tgt_type) {
+        return Ok(AdmittedEdgeVerdict::Copy);
+    }
+    Ok(AdmittedEdgeVerdict::DropOffTable(
+        Error::InvalidFacetOfEdge {
+            src,
+            src_type,
+            tgt,
+            tgt_type,
+        },
+    ))
+}
+
+/// One endpoint's type byte at admission time: the stored row first (permanent
+/// truth — entity type is immutable per id), then the admitted update's own
+/// entities map. `None` = not knowable yet.
+///
+/// A remote blob too short to carry a header is NOT a local defect and must
+/// not fail the admission closed — it is unparsable REMOTE input, which the
+/// entity pass and the replay door already reject on their own terms. It reads
+/// as unknowable here, so a forged stamp cannot dodge the table by shipping a
+/// truncated endpoint blob: the endpoint never materializes, so the stamp's
+/// source never becomes exportable either.
+#[cfg(feature = "sync")]
+fn admitted_endpoint_type(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    source_entities: &loro::LoroMap,
+    id: &EntityId,
+) -> Result<Option<u8>> {
+    if let Some(stored) = crate::batch::stored_entity_type(&vault.store, rtxn, id)? {
+        return Ok(Some(stored));
+    }
+    Ok(
+        super::loro_support::map_get_bytes(source_entities, &id.to_hex())
+            .as_deref()
+            .and_then(EntityMetadataHeader::parse)
+            .map(|header| header.entity_type),
+    )
 }
 
 #[cfg(feature = "sync")]
@@ -699,11 +881,12 @@ fn guest_share_metadata_blob(blob: &[u8]) -> bool {
 }
 
 fn filter_window_doc(
+    vault: &Vault,
     source: &LoroDoc,
     key: &WindowKey,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
-) -> LoroDoc {
+) -> Result<LoroDoc> {
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -717,7 +900,7 @@ fn filter_window_doc(
         tombstoned.insert(id);
     });
 
-    let facet_scope = facet_scope_by_source(&source_edges, selector);
+    let facet_scope = facet_scope_by_source(vault, &source_entities, &source_edges, selector)?;
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
@@ -813,9 +996,16 @@ fn filter_window_doc(
     });
 
     out.commit();
-    out
+    Ok(out)
 }
 
+/// One source entity's `FacetOf` scope, as read by [`facet_scope_by_source`].
+///
+/// A source with NO entry is Unfaceted — either it carries no `FacetOf` rows
+/// at all, or every row it carries was SCOPE-INERT (the source is not typed
+/// into the admitted set, or the row's target does not resolve to a FACET).
+/// The two are deliberately the same state: an inert stamp is not a withhold,
+/// it is a non-statement.
 #[derive(Debug, Default)]
 struct FacetScope {
     any: bool,
@@ -830,21 +1020,121 @@ struct EntitySelectorDecision {
     facet_seed: bool,
 }
 
+/// Builds the per-source facet scope a facet-limited peer's export is filtered
+/// against, honoring a `FacetOf` row's scope ONLY when BOTH endpoints resolve
+/// onto the ONE-1645 table: the source into the admitted set
+/// (`CLAIM | TURN | EVENT`) and the target to a FACET.
+///
+/// READ MIRROR OF THE WRITE TABLE — the why. This door reads the RAW Loro map,
+/// never LMDB, so it sees rows no write door would have accepted: the local
+/// batch door aborts an off-table stamp, the remat chokepoint quarantines one,
+/// and [`copy_admitted_edges`] drops a PROVABLY off-table one at the
+/// federation trust boundary — but the H2 defer deliberately lets a row whose
+/// deciding endpoint is not knowable YET pass through, and that row is still
+/// sitting in the document after its endpoint later arrives typed off-table.
+/// Honoring it would let a forged `PERSON -> <selected FACET>` stamp pull the
+/// PERSON and its one-hop neighbors across the disclosure boundary, which is
+/// an authorization bypass, not a schema violation.
+///
+/// So the read side runs the SAME table the write side runs, on BOTH endpoints
+/// ([`crate::batch::facet_of_endpoint_types_on_table`]): a stamp is honored
+/// here exactly when it is a stamp the engine would have let be WRITTEN. A row
+/// failing either half is SCOPE-INERT — never a seed, never a withhold — so
+/// its source is simply Unfaceted, judged on the selector's other filters like
+/// any unstamped entity.
+///
+/// BOTH HALVES ARE LOAD-BEARING, and the target half is the subtler one. A
+/// selector's `facets` list is a set of ids the peer NAMED; membership in it
+/// is not evidence the id exists, still less that it is a FACET. A forged
+/// `<on-table src> -> <selected id>` row aimed at an ABSENT id would, under a
+/// source-only mirror, seed closure from an id the document never typed — and
+/// a later frame delivering that id as a PERSON would keep the seed live,
+/// because nothing re-examines a resident row. Requiring the target to RESOLVE
+/// TO A FACET makes the row inert until such a blob actually exists, at which
+/// point the row HEALS into ordinary scoping.
+///
+/// ENDPOINT TYPES RESOLVE STORED-FIRST, the same two-source order
+/// [`admitted_endpoint_type`] uses at the admission boundary:
+///
+/// 1. the LOCAL vault row — entity type is immutable per id
+///    ([`Error::EntityTypeImmutable`]), so a stored type is PERMANENT truth
+///    about that id, and the quarantine door that enforces it leaves LMDB
+///    holding the first-writer type;
+/// 2. else the document blob.
+///
+/// Reading the document blob FIRST would be LWW-gameable: a peer stores an
+/// endpoint as PERSON (the type-conflict quarantine correctly leaves LMDB at
+/// PERSON) while a higher-Lamport EVENT blob wins the Loro map, and a
+/// blob-first mirror reads the fake.
+///
+/// WHERE THE TWO DISAGREE the STORED type wins, in BOTH endpoint roles: the
+/// conflicting blob is a write the immutability gate rejected, and a rejected
+/// write is never consulted for anything. [`mirrored_endpoint_type`] carries
+/// the rule and its full argument.
+///
+/// The asymmetry — inert rather than fail-closed — is deliberate. Making the
+/// mirror "helpfully" withhold on an unwritable row would hand a hostile peer
+/// a SUPPRESSION primitive: spray `<host's PERSON> -> <any facet>` rows into
+/// the window and the host's own entities vanish from a legitimate grant.
+/// Refusing to READ an unwritable row is the fix; letting it DENY is the same
+/// bug with the sign flipped.
+///
+/// SCOPE OF THIS MIRROR: it is the read-side twin of THIS lane's write table,
+/// nothing wider. The broader exposure-gate design — which disclosure surfaces
+/// should consult facet scope at all, and how facet exposure state is
+/// consented — is S-DISC2's, and ONE-1646's gate table is derived from door
+/// behavior that this function's admitted set now defines on both sides.
+/// EVENT is admitted, so EVENT-sourced stamps stay disclosure-effective here
+/// (pinned by `tests::selector_denies_event_scoped_to_unselected_facet`).
 fn facet_scope_by_source(
+    vault: &Vault,
+    entities: &loro::LoroMap,
     edges: &loro::LoroMap,
     selector: &SyncSelector,
-) -> HashMap<EntityId, FacetScope> {
+) -> Result<HashMap<EntityId, FacetScope>> {
     let selected: HashSet<EntityId> = selector.facets.iter().copied().collect();
     let mut scopes = HashMap::<EntityId, FacetScope>::new();
     if selected.is_empty() {
-        return scopes;
+        return Ok(scopes);
     }
 
+    let rtxn = vault.store.env.read_txn()?;
+    // Endpoint types are read once per id, not once per row: a source may
+    // carry many stamps and a facet may be named by many sources. One rule
+    // serves both roles, so an id appearing in both still costs one read.
+    let mut types = HashMap::<EntityId, Option<u8>>::new();
+    let mut result = Ok(());
     map_for_each_value_bytes(edges, |raw_key, maybe_value| {
+        if result.is_err() {
+            return;
+        }
         let Some((src, kind, tgt)) = parse_edge_key(raw_key) else {
             return;
         };
         if kind != EdgeKind::FacetOf {
+            return;
+        }
+        // BOTH endpoints must resolve onto the table. A LOCAL fault reading
+        // stored types (corrupted header, heed read error) is our defect, not
+        // the peer's: fail the export closed rather than silently drop a scope
+        // and over-disclose.
+        let (src_type, tgt_type) = match (
+            mirrored_endpoint_type(vault, &rtxn, entities, &mut types, &src),
+            mirrored_endpoint_type(vault, &rtxn, entities, &mut types, &tgt),
+        ) {
+            (Ok(src_type), Ok(tgt_type)) => (src_type, tgt_type),
+            (Err(local), _) | (_, Err(local)) => {
+                result = Err(local);
+                return;
+            }
+        };
+        // A row that fails either half is SCOPE-INERT: not a seed, and not a
+        // withhold either. The target half is the one a source-only mirror
+        // misses — a selector's `facets` list is ids the peer NAMED, which is
+        // no evidence any of them exists or is a FACET.
+        let on_table = matches!((src_type, tgt_type), (Some(src_type), Some(tgt_type))
+            if crate::batch::facet_of_endpoint_types_on_table(src_type, tgt_type));
+        if !on_table {
             return;
         }
         let entry = scopes.entry(src).or_default();
@@ -859,7 +1149,76 @@ fn facet_scope_by_source(
             entry.unselected = true;
         }
     });
-    scopes
+    result.map(|()| scopes)
+}
+
+/// One `FacetOf` endpoint's effective type byte for the read mirror, memoized
+/// per id. ONE rule, both roles — an endpoint carries the same type whichever
+/// end of the row it sits on, so a single memo entry serves both.
+///
+/// Resolution is [`admitted_endpoint_type`]'s STORED-FIRST order, with the
+/// stored row winning OUTRIGHT when the two facts disagree:
+///
+/// 1. the LOCAL vault row — entity type is immutable per id
+///    ([`Error::EntityTypeImmutable`]), so a stored type is PERMANENT truth
+///    and the quarantine door that enforces it leaves LMDB holding the
+///    first-writer type. When it exists, nothing else is consulted;
+/// 2. else the document blob — the not-yet-materialized endpoint of an honest
+///    out-of-order delivery (the H2 line), which the ONE-1645 table then
+///    judges on its own merits;
+/// 3. neither ⇒ `None`: unknowable, hence scope-inert until the endpoint
+///    really lands, at which point the row HEALS into ordinary scoping.
+///
+/// STORED-WINS IS THE WHOLE CONFLICT RULE, and it is one rule rather than a
+/// per-role pair because a CONFLICTING blob is a write the immutability gate
+/// REJECTED — a rejected write is not evidence about anything, so it is never
+/// consulted, in either role, for any purpose. Both attacks die on the same
+/// clause:
+///
+/// * a conflicting blob never CREATES a seed. A stored PERSON with a forged
+///   admitted-type blob still reads PERSON, so the stamp stays off the table
+///   and seeds nothing — the peer cannot BUY scope with a type the engine
+///   refused to write. Symmetrically on the target: a forged FACET blob over
+///   a stored PERSON cannot manufacture a facet.
+/// * a conflicting blob never ERASES a withhold. A stored EVENT source and a
+///   stored FACET target keep scoping through any retype aimed at either end,
+///   so an entity withheld from a facet-limited peer stays withheld. Reading a
+///   conflict as `None` on EITHER end would make the row inert and delete
+///   containment a valid stored row had already established.
+///
+/// SUPPRESSION STILL CANNOT BE MANUFACTURED, which is the property the
+/// inert-not-fail-closed rule protects: the withholds that survive are exactly
+/// the ones the STORED types already justified. A forged unselected stamp
+/// aimed at a stored-PERSON source is off the table and stays inert, so no new
+/// suppression primitive appears — a peer cannot make the host's own rows
+/// vanish from a legitimate grant by spraying rejected blobs.
+///
+/// FAIL DIRECTION: stored truth never loses to a rejected write, in either
+/// role. A peer-controlled conflict can therefore never move a row from
+/// withheld to exported, nor from contained to seeded.
+///
+/// Absent, non-binary, and header-unparsable document blobs all read as no
+/// document fact. A LOCAL fault reading the stored row (unparsable header) is
+/// our defect, not the peer's, and propagates.
+fn mirrored_endpoint_type(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    entities: &loro::LoroMap,
+    cache: &mut HashMap<EntityId, Option<u8>>,
+    id: &EntityId,
+) -> Result<Option<u8>> {
+    if let Some(cached) = cache.get(id) {
+        return Ok(*cached);
+    }
+    let resolved = match crate::batch::stored_entity_type(&vault.store, rtxn, id)? {
+        Some(stored) => Some(stored),
+        None => super::loro_support::map_get_bytes(entities, &id.to_hex())
+            .as_deref()
+            .and_then(EntityMetadataHeader::parse)
+            .map(|header| header.entity_type),
+    };
+    cache.insert(*id, resolved);
+    Ok(resolved)
 }
 
 fn entity_selector_decision(

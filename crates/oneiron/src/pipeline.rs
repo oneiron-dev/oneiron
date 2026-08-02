@@ -424,8 +424,20 @@ pub struct DreamerWorkingSet {
 
 /// A claim's facet scope relative to the query's active facet, derived from
 /// its outgoing `FacetOf` (`CLAIM → FACET`, u8 17) adjacency.
+///
+/// CLAIM-sourced adjacency only — this is the local query door. The write
+/// table also admits `TURN | EVENT → FACET`, and those stamps carry disclosure
+/// weight on the federation selector door even though they never reach this
+/// enum (see [`crate::batch::validate_facet_of_edge`]).
 enum ClaimFacetScope {
-    /// No `FacetOf` edge: a core / unfaceted claim. Passes every mode.
+    /// No `FacetOf` edge — a relevance-neutral claim. Passes every mode.
+    ///
+    /// NOT invariant evidence: absence of a facet stamp never widens
+    /// disclosure (ONE-1645, P3/V2). The disclosure conjunct (ONE-1646) must
+    /// derive invariant admission from POSITIVE evidence only — a stored
+    /// public stamp or a promotion record — never from this variant. The
+    /// live disclosure floor for unstamped provenance is
+    /// `claim_sensitivity_band`, which reads band 2 on a missing stamp.
     Unfaceted,
     /// At least one `FacetOf` edge targets the active facet.
     ActiveFacet,
@@ -3021,6 +3033,21 @@ fn import_claim_gate_decisions_for_scores(
 /// Fail-closed: a malformed `edges_out` key under the scanned
 /// `(claim, FacetOf)` prefix is a typed [`Error::CorruptedIndex`], never a
 /// skip.
+///
+/// Disclosure contract (ONE-1645): this is the ARCH-0039 RELEVANCE stage, not
+/// an exposure boundary. Keeping an unfaceted claim here says nothing about
+/// whether it may be disclosed — stamp-absence is never invariant evidence.
+/// The exposure decision lives on the disclosure axis: the unstamped
+/// sensitivity floor (`claim_sensitivity_band` reads band 2 on a missing
+/// stamp) today, and the ONE-1646 `disclosable_set` conjunct inside
+/// `admits()` next. Relevance never bypasses that conjunct (P7).
+///
+/// Scope of the CLAIM-only reading: this stage is the LOCAL QUERY door, and a
+/// non-CLAIM `FacetOf` stamp being inert HERE is not a statement about the
+/// entity's exposure anywhere else. `crate::sync::selector` is a second door
+/// that scopes by every source type the ONE-1645 table admits, so a TURN- or
+/// EVENT-sourced stamp is disclosure-effective there. "Inert on this door"
+/// never generalizes to "disclosure-inert".
 fn apply_facet_filter(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
@@ -3999,6 +4026,11 @@ fn pipeline_candidate_matches_filters_and_gate(
     Ok(true)
 }
 
+/// The candidate-scan twin of [`apply_facet_filter`], with the same
+/// disclosure contract (ONE-1645): this is a RELEVANCE decision. Admitting an
+/// unfaceted claim here is not evidence that it is invariant or publicly
+/// disclosable — the unstamped sensitivity floor and the ONE-1646
+/// `disclosable_set` conjunct own that axis.
 fn pipeline_candidate_matches_facet_filter(
     store: &Store,
     rtxn: &RoTxn<'_>,

@@ -1349,3 +1349,74 @@ fn predicate_root_table() {
     assert_eq!(predicate_root(".leading_dot"), ".leading_dot");
     assert_eq!(predicate_root("trailing_dot."), "trailing_dot");
 }
+
+// ─── ONE-1645 unstamped sensitivity floor ───────────────────────────────────
+
+fn band_probe_body(scope: Option<Value>) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        "profile.hobby",
+        ClaimSubject::Entity(EntityId::from_bytes([0x51; 16]).expect("valid id")),
+        Value::from("value"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.scope = scope;
+    body
+}
+
+/// A claim with no recorded provenance reads the floor band, not band 0.
+/// Both shapes of "missing" collapse to the same answer: no scope map at all,
+/// and a scope map that simply carries no `sensitivity` key.
+#[test]
+fn unstamped_claim_sensitivity_reads_floor_band() {
+    let table: [(&str, Option<Value>); 3] = [
+        ("no scope map", None),
+        ("empty scope map", Some(Value::Map(vec![]))),
+        (
+            "scope map without a sensitivity key",
+            Some(Value::Map(vec![(
+                Value::from("federated_original_source"),
+                Value::from("imported"),
+            )])),
+        ),
+    ];
+    for (label, scope) in table {
+        assert_eq!(
+            claim_sensitivity_band(&band_probe_body(scope)),
+            Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND),
+            "{label} must read the unstamped floor"
+        );
+    }
+    // The floor is the disclosure-closing band, below the persona clamp.
+    assert_eq!(UNSTAMPED_CLAIM_SENSITIVITY_BAND, 2);
+}
+
+/// Positive evidence still wins: an explicit public stamp reads band 0 in
+/// both its string and integer encodings. The floor narrows absence only.
+#[test]
+fn stamped_public_claim_reads_band_zero() {
+    let table: [(&str, Value); 2] = [
+        ("string encoding", Value::from("public")),
+        ("integer encoding", Value::from(0_u64)),
+    ];
+    for (label, stamp) in table {
+        let scope = Value::Map(vec![(Value::from("sensitivity"), stamp)]);
+        assert_eq!(
+            claim_sensitivity_band(&band_probe_body(Some(scope))),
+            Some(0),
+            "{label} of an explicit public stamp must read band 0"
+        );
+    }
+}
+
+/// Ambiguous is not missing: a duplicated key stays unreadable (`None`), so
+/// consumers that clamp harder on `None` than on the floor keep doing so.
+#[test]
+fn duplicate_sensitivity_still_ambiguous() {
+    let scope = Value::Map(vec![
+        (Value::from("sensitivity"), Value::from("public")),
+        (Value::from("sensitivity"), Value::from("restricted")),
+    ]);
+    assert_eq!(claim_sensitivity_band(&band_probe_body(Some(scope))), None);
+}
