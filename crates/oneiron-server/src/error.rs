@@ -283,7 +283,7 @@ impl ApiError {
         Self::new(
             "request is not authorized",
             ApiErrorDetails::Unauthorized,
-            ["Send the configured x-oneiron-secret header and retry."],
+            ["Send Authorization: Bearer credentials and retry."],
         )
     }
 

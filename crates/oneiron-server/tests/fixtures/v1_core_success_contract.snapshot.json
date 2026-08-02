@@ -87,7 +87,7 @@
     "name": "core_context_pack",
     "request": {
       "auth": {
-        "scope": "core:read",
+        "grade": "owner",
         "type": "bearer"
       },
       "body": {
@@ -167,6 +167,7 @@
     "name": "core_context_pack_v4",
     "request": {
       "auth": {
+        "principal_ref": "bound",
         "scope": "core:read",
         "type": "bearer"
       },

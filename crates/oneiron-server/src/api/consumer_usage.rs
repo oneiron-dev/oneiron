@@ -71,7 +71,7 @@ pub(crate) struct UsageRollupQuery {
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -88,7 +88,7 @@ pub(crate) async fn get_consumer_usage(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<ConsumerUsageQuery>, QueryRejection>,
 ) -> Result<Json<ConsumerUsageState>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let usage = server
         .usage_ledger
@@ -122,7 +122,7 @@ pub(crate) async fn get_consumer_usage(
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -139,7 +139,7 @@ pub(crate) async fn get_consumer_usage_details(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<ConsumerUsageQuery>, QueryRejection>,
 ) -> Result<Json<ConsumerUsageDetails>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let details = server
         .usage_ledger
@@ -187,7 +187,7 @@ pub(crate) async fn get_consumer_usage_details(
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -204,7 +204,7 @@ pub(crate) async fn top_up_consumer(
     State(server): State<Arc<SyncServer>>,
     request: Result<Json<ConsumerTopUpRequest>, JsonRejection>,
 ) -> Result<Json<ConsumerTopUpState>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let request = json_payload(request)?;
     let state = server
         .usage_ledger
@@ -266,7 +266,7 @@ pub(crate) async fn top_up_consumer(
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -283,7 +283,7 @@ pub(crate) async fn record_usage_event(
     State(server): State<Arc<SyncServer>>,
     Json(event): Json<UsageEvent>,
 ) -> Result<Json<UsageRecordResult>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let usage_mode = usage_mode_for_event(&server.config, &event)?;
     let result = server
         .usage_ledger
@@ -345,7 +345,7 @@ pub(crate) fn usage_mode_for_event(
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -369,7 +369,7 @@ pub(crate) async fn get_usage_rollup(
     Path(tenant_id): Path<String>,
     query: Result<Query<UsageRollupQuery>, QueryRejection>,
 ) -> Result<Json<UsageRollup>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     let params = query_params(query)?;
     let rollup = if let Some(vault_id) = params.vault_id {
         server

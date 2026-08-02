@@ -159,25 +159,44 @@ async fn connect(
     addr: SocketAddr,
     secret: Option<&str>,
 ) -> Result<WsStream, tokio_tungstenite::tungstenite::Error> {
+    let mut ws = connect_without_hello(addr, secret).await?;
+    send_protocol_hello(&mut ws).await?;
+    Ok(ws)
+}
+
+/// Completes the upgrade but sends NO protocol hello.
+///
+/// The upgrade and the hello are two distinct instants — the server waits up
+/// to `HELLO_TIMEOUT_SECS` between them — so a test can place a revocation
+/// inside that gap, which is exactly where the credential's proven liveness
+/// goes stale before the first byte of sync is served.
+async fn connect_without_hello(
+    addr: SocketAddr,
+    secret: Option<&str>,
+) -> Result<WsStream, tokio_tungstenite::tungstenite::Error> {
     let url = format!("ws://{addr}/ws");
     let mut request = url.into_client_request().unwrap();
     if let Some(secret) = secret {
         request
             .headers_mut()
-            .insert("x-oneiron-secret", secret.parse().unwrap());
+            .insert("authorization", format!("Bearer {secret}").parse().unwrap());
     }
-    let mut ws = tokio_tungstenite::connect_async(request)
+    tokio_tungstenite::connect_async(request)
         .await
-        .map(|(ws, _resp)| ws)?;
-    // Phase 0 (ONE-1127): the FIRST frame must be the protocol-version
-    // hello, or the server closes with 4006 before any sync payload flows.
-    // These integration tests exercise the legacy unscoped full-window lane;
-    // selector sync is gated behind the v3 hello.
+        .map(|(ws, _resp)| ws)
+}
+
+/// Phase 0 (ONE-1127): the FIRST frame must be the protocol-version hello, or
+/// the server closes with 4006 before any sync payload flows. These
+/// integration tests exercise the legacy unscoped full-window lane; selector
+/// sync is gated behind the v3 hello.
+async fn send_protocol_hello(
+    ws: &mut WsStream,
+) -> Result<(), tokio_tungstenite::tungstenite::Error> {
     ws.send(Message::Binary(
         transport::encode_legacy_full_window_protocol_hello().into(),
     ))
-    .await?;
-    Ok(ws)
+    .await
 }
 
 async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
@@ -238,7 +257,7 @@ async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String 
 async fn http_get_bytes(addr: SocketAddr, path: &str, secret: Option<&str>) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let secret_header = secret
-        .map(|secret| format!("x-oneiron-secret: {secret}\r\n"))
+        .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
         .unwrap_or_default();
     let request =
         format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{secret_header}\r\n");
@@ -261,7 +280,7 @@ async fn http_post(
 ) -> String {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let secret_header = secret
-        .map(|secret| format!("x-oneiron-secret: {secret}\r\n"))
+        .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
         .unwrap_or_default();
     let idempotency_header = idempotency_key
         .map(|key| format!("Idempotency-Key: {key}\r\n"))
@@ -496,6 +515,489 @@ async fn ws_upgrade_allows_unauthenticated_only_in_dev_mode() {
     let mut ws = connect(addr, None).await.unwrap();
     let first = next_binary(&mut ws).await;
     assert_eq!(first[0], TAG_SYNC_UPDATE);
+
+    handle.abort();
+}
+
+/// Mints a v2 token over arbitrary claims, the way `auth.rs` derives the MAC.
+///
+/// Spelled out rather than called into the crate for the same reason as
+/// [`mint_identified_owner_token`]: this is the black-box side, so the KDF
+/// context and the `v2.<claims>.<mac-hex>` framing are pinned as wire facts.
+fn mint_token_with_claims(secret: &str, claims: &str) -> String {
+    let key = blake3::derive_key(
+        "oneiron-server 2026-07 core-token-v2 mac",
+        secret.as_bytes(),
+    );
+    let mac = blake3::keyed_hash(&key, claims.as_bytes());
+    format!("v2.{claims}.{}", mac.to_hex())
+}
+
+/// The `/ws` device plane is owner-grade only, and a scoped token is refused
+/// at the upgrade — before any socket exists to send an UPDATE on.
+///
+/// `/ws` imports full-fidelity CRDT updates into the shared window doc: a
+/// session that reaches the message layer can mutate vault state directly.
+/// The vault's own devices authenticate owner-grade; a scoped `v2` token is
+/// an API delegate for the `/v1` plane, not a device. The boundary was
+/// enforced (`require_owner_auth` at the upgrade) but pinned nowhere: the
+/// existing `/ws` auth rows only cover an ABSENT credential and a WRONG
+/// secret, and the revocation rows mint owner-grade claims, so relaxing the
+/// upgrade to any authenticated bearer left the whole suite green while a
+/// `scope=core:read` token — read-only by name — gained full doc-mutating
+/// import rights.
+///
+/// The refusal is at the upgrade rather than per message arm, which is the
+/// stronger shape: no scoped session is ever established, so there is no
+/// UPDATE arm to gate and no read-only subset to define. The token is proven
+/// live and authentic on its own `/v1` route in the same test, so the 401
+/// reads as the plane boundary and not a broken credential.
+///
+/// Mutation probe: swapping `require_owner_auth` for a bare
+/// `CoreAuth::from_headers` at the upgrade fails this row (and only this row).
+#[tokio::test]
+async fn ws_upgrade_rejects_a_live_scoped_token_that_works_on_v1() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("scoped-ws-secret")),
+    )
+    .await;
+
+    // Widest scopes a mint can carry: the refusal is about grade, not reach.
+    let scoped = mint_token_with_claims("scoped-ws-secret", "scope=core:read,core:write");
+
+    // The credential is authentic and live: it is served on its own /v1 route.
+    let response = http_get(addr, "/v1/core/outbound/capabilities", Some(&scoped)).await;
+    assert_http_status(&response, 200);
+
+    // Same credential at /ws: refused before the upgrade completes, so no
+    // socket — and therefore no doc-mutating import — ever exists.
+    let err = connect(addr, Some(&scoped)).await.unwrap_err();
+    assert_unauthorized(&err);
+
+    // The owner-grade half: the same server admits a device credential and
+    // serves it the Phase-1 root snapshot.
+    let mut ws = connect(addr, Some("scoped-ws-secret")).await.unwrap();
+    assert_eq!(next_binary(&mut ws).await[0], TAG_SYNC_UPDATE);
+
+    handle.abort();
+}
+
+// ─── /ws live-session revocation ──────────────────────────────────────────────
+
+/// Mints an owner-grade v2 token carrying `jti`, computing the MAC the way
+/// `auth.rs` does.
+///
+/// Spelled out here rather than called into the crate on purpose: this is the
+/// black-box side of the contract, so the KDF context string and the
+/// `v2.<claims>.<mac-hex>` framing are pinned as wire facts. Claims are the
+/// `jti` alone, which leaves the token owner-grade and therefore admissible
+/// at `/ws`.
+fn mint_identified_owner_token(secret: &str, jti: &str) -> String {
+    let key = blake3::derive_key(
+        "oneiron-server 2026-07 core-token-v2 mac",
+        secret.as_bytes(),
+    );
+    let claims = format!("jti={jti}");
+    let mac = blake3::keyed_hash(&key, claims.as_bytes());
+    format!("v2.{claims}.{}", mac.to_hex())
+}
+
+/// Records `jti` as revoked, byte-for-byte as `oneiron-server token revoke`
+/// does: one `sync_state` row whose KEY is the fact, with an empty value.
+fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) {
+    vault
+        .sync_state_put(&format!("auth:revoked-token-jti:{jti}"), &[])
+        .unwrap();
+}
+
+/// Reads the socket until it serves sync data or closes.
+///
+/// `None` — closed or ended with nothing further sent — is the fail-closed
+/// shape a revoked session must show. A timeout is a failure in its own
+/// right: a socket left open and silently idle is not "no further service",
+/// it is a session still holding its seat.
+async fn next_binary_or_close(ws: &mut WsStream) -> Option<Vec<u8>> {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Binary(data))) => return Some(data.to_vec()),
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                None | Some(Ok(Message::Close(_))) | Some(Err(_)) => return None,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await
+    .expect("timed out: the socket neither served sync nor closed")
+}
+
+/// Revoking a token must reach the socket it already opened.
+///
+/// The upgrade handshake proves liveness at one instant; the socket outlives
+/// it. Without a live consult, `token revoke` would only bar new HTTP
+/// requests and new upgrades while the peer already inside kept full vault
+/// service indefinitely.
+#[tokio::test]
+async fn revoked_token_stops_serving_its_already_open_socket() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("live-revoke-secret")),
+    )
+    .await;
+
+    let jti = "a".repeat(32);
+    let token = mint_identified_owner_token("live-revoke-secret", &jti);
+
+    let mut ws = connect(addr, Some(&token)).await.unwrap();
+    let first = next_binary(&mut ws).await;
+    assert_eq!(
+        first[0], TAG_SYNC_UPDATE,
+        "an identified owner token opens the socket"
+    );
+
+    // Baseline: this socket really is being served before the revocation, so
+    // the assertion below is about revocation and not about a dead client.
+    let client = LoroDoc::new();
+    let vv_request = transport::encode_window_sync(
+        "2026-02",
+        window_sub_tags::VV_REQUEST,
+        &client.oplog_vv().encode(),
+    );
+    ws.send(Message::Binary(vv_request.clone().into()))
+        .await
+        .unwrap();
+    // A served VV_REQUEST answers with BOTH halves of the exchange: the delta
+    // the client is missing, then the server's own VV (reverse SyncStep1).
+    // Both are drained here, so the post-revocation assertion below cannot
+    // pass on a frame that was merely still in flight from the baseline.
+    for expected_sub_tag in [window_sub_tags::UPDATE, window_sub_tags::VV_RESPONSE] {
+        let served = next_binary(&mut ws).await;
+        assert_eq!(served[0], TAG_WINDOW_SYNC);
+        let (_key, sub_tag, _payload) = transport::decode_window_sync(&served[1..]).unwrap();
+        assert_eq!(
+            sub_tag, expected_sub_tag,
+            "a live token's VV_REQUEST is answered in full"
+        );
+    }
+
+    // The operator revokes THIS token while the socket stays open.
+    revoke_token_jti(server.vault(), &jti);
+
+    // Same privileged message, same socket: no further sync data, and the
+    // connection closes rather than lingering.
+    ws.send(Message::Binary(vv_request.into())).await.unwrap();
+    let after_revocation = next_binary_or_close(&mut ws).await;
+    assert!(
+        after_revocation.is_none(),
+        "revoked socket was still served sync data: {after_revocation:?}"
+    );
+
+    handle.abort();
+}
+
+/// A revoked peer that merely LISTENS must also stop receiving.
+///
+/// Gating only inbound messages would leave a revoked socket subscribed to
+/// every other client's window updates — full read access to the vault's
+/// live stream, obtained by saying nothing.
+#[tokio::test]
+async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("fanout-revoke-secret")),
+    )
+    .await;
+
+    let jti = "b".repeat(32);
+    let revoked_token = mint_identified_owner_token("fanout-revoke-secret", &jti);
+
+    // A holds the token that gets revoked; B holds the trust root and stays
+    // live, so it keeps authoring the updates A must stop receiving.
+    let mut client_a = connect(addr, Some(&revoked_token)).await.unwrap();
+    let mut client_b = connect(addr, Some("fanout-revoke-secret")).await.unwrap();
+    let _ = next_binary(&mut client_a).await;
+    let _ = next_binary(&mut client_b).await;
+
+    let author = LoroDoc::new();
+    author
+        .get_map("entities")
+        .insert("e-before", b"before-revocation".as_slice())
+        .unwrap();
+    author.commit();
+    let before = author.export(ExportMode::all_updates()).unwrap();
+    client_b
+        .send(Message::Binary(
+            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &before).into(),
+        ))
+        .await
+        .unwrap();
+
+    // Baseline: A is on the fan-out path before the revocation.
+    let relayed = next_binary(&mut client_a).await;
+    assert_eq!(
+        relayed[0], TAG_WINDOW_SYNC,
+        "A receives relayed updates while its token is live"
+    );
+
+    revoke_token_jti(server.vault(), &jti);
+
+    // B authors again. A sends nothing at all from here on — the only thing
+    // that changed is its token's liveness.
+    let vv_before = author.oplog_vv();
+    author
+        .get_map("entities")
+        .insert("e-after", b"after-revocation".as_slice())
+        .unwrap();
+    author.commit();
+    let after = author.export(ExportMode::updates(&vv_before)).unwrap();
+    client_b
+        .send(Message::Binary(
+            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &after).into(),
+        ))
+        .await
+        .unwrap();
+
+    let fanned_out = next_binary_or_close(&mut client_a).await;
+    assert!(
+        fanned_out.is_none(),
+        "revoked socket kept receiving fan-out: {fanned_out:?}"
+    );
+
+    handle.abort();
+}
+
+/// Dev mode honours revocation on live sockets too.
+///
+/// With no secret configured the MAC goes unverified, but the registry is
+/// real state: an operator who revoked a `jti` must not find it still served
+/// merely because nothing checked the signature. Mirrors the HTTP-side
+/// `dev_mode_honours_revocation`.
+#[tokio::test]
+async fn dev_mode_revocation_reaches_an_open_socket() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let jti = "c".repeat(32);
+    // Dev mode requires the v2 framing but verifies no MAC, so the segment is
+    // empty — the same token shape production speaks, minus the signature.
+    let mut ws = connect(addr, Some(&format!("v2.jti={jti}.")))
+        .await
+        .unwrap();
+    let first = next_binary(&mut ws).await;
+    assert_eq!(first[0], TAG_SYNC_UPDATE);
+
+    revoke_token_jti(server.vault(), &jti);
+
+    let client = LoroDoc::new();
+    ws.send(Message::Binary(
+        transport::encode_window_sync(
+            "2026-02",
+            window_sub_tags::VV_REQUEST,
+            &client.oplog_vv().encode(),
+        )
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    let after_revocation = next_binary_or_close(&mut ws).await;
+    assert!(
+        after_revocation.is_none(),
+        "dev mode kept serving a revoked socket: {after_revocation:?}"
+    );
+
+    handle.abort();
+}
+
+/// A revocation landing between the upgrade and the hello must reach the
+/// Phase-1 sends.
+///
+/// The upgrade and the client's first frame are separate instants — the
+/// server waits up to the hello timeout in between — so a token can be
+/// upgraded, sit silent, be revoked, and only then say hello. Everything the
+/// server writes in response (the root snapshot, the late-join ephemeral
+/// snapshot) is vault state served to a credential that is already dead, and
+/// it all happens before the inbound dispatch gate is ever consulted.
+#[tokio::test]
+async fn revocation_between_upgrade_and_hello_serves_no_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("pre-hello-secret")),
+    )
+    .await;
+
+    // Seed hub ephemeral state, so the late-join snapshot this socket would
+    // otherwise receive is non-empty and its absence below is a real refusal
+    // rather than an empty-store no-op.
+    let mut seeder = connect(addr, Some("pre-hello-secret")).await.unwrap();
+    let _ = next_binary(&mut seeder).await;
+    seeder
+        .send(Message::Binary(
+            encode_ephemeral_set("presence:seeder", "online").into(),
+        ))
+        .await
+        .unwrap();
+
+    let jti = "d".repeat(32);
+    let token = mint_identified_owner_token("pre-hello-secret", &jti);
+
+    // Upgraded, authenticated, and deliberately silent.
+    let mut ws = connect_without_hello(addr, Some(&token)).await.unwrap();
+
+    // The operator revokes while the socket is parked pre-hello.
+    revoke_token_jti(server.vault(), &jti);
+
+    send_protocol_hello(&mut ws).await.unwrap();
+
+    let served = next_binary_or_close(&mut ws).await;
+    assert!(
+        served.is_none(),
+        "a token revoked before its hello was still served Phase-1 state: {served:?}"
+    );
+
+    handle.abort();
+}
+
+/// A revoked bearer must stop PUBLISHING, not just stop reading.
+///
+/// Ephemeral presence/cursor state carries no vault content, which is why the
+/// read side could argue for exempting it. The write side cannot: the handler
+/// applies the payload to the hub store and fans it out to every live peer,
+/// so an exemption leaves a revoked credential broadcasting to the fleet
+/// after it has lost all read access.
+#[tokio::test]
+async fn revoked_token_cannot_publish_ephemeral_state_to_peers() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("ephemeral-revoke-secret")),
+    )
+    .await;
+
+    let jti = "e".repeat(32);
+    let token = mint_identified_owner_token("ephemeral-revoke-secret", &jti);
+
+    // A holds the token that gets revoked; B holds the trust root and is the
+    // live peer A must stop reaching.
+    let mut client_a = connect(addr, Some(&token)).await.unwrap();
+    let mut client_b = connect(addr, Some("ephemeral-revoke-secret"))
+        .await
+        .unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+    let _ = next_binary(&mut client_b).await; // root snapshot
+
+    // Baseline: A really can publish while its token is live.
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_set("presence:device-a", "online").into(),
+        ))
+        .await
+        .unwrap();
+    let relayed = next_binary(&mut client_b).await;
+    let receiver = EphemeralStore::new(30_000);
+    apply_ephemeral_frame(&receiver, &relayed);
+    assert_eq!(receiver.get("presence:device-a"), Some("online".into()));
+
+    revoke_token_jti(server.vault(), &jti);
+
+    // Same socket, same message class — only the token's liveness changed.
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_set("presence:device-a-revoked", "still-here").into(),
+        ))
+        .await
+        .unwrap();
+
+    // (a) The publisher's own socket closes rather than being served.
+    let after_revocation = next_binary_or_close(&mut client_a).await;
+    assert!(
+        after_revocation.is_none(),
+        "revoked publisher was still served: {after_revocation:?}"
+    );
+    // (b) The live peer receives nothing at all.
+    expect_no_binary(&mut client_b, Duration::from_millis(300)).await;
+
+    // (c) The hub store never took the write. A late joiner still receives
+    // the pre-revocation snapshot, so this asserts the revoked key's absence
+    // from a snapshot that is otherwise present — not an empty-store no-op.
+    let mut client_c = connect(addr, Some("ephemeral-revoke-secret"))
+        .await
+        .unwrap();
+    let root = next_binary(&mut client_c).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    let snapshot = next_binary(&mut client_c).await;
+    let late_join = EphemeralStore::new(30_000);
+    apply_ephemeral_frame(&late_join, &snapshot);
+    assert_eq!(
+        late_join.get("presence:device-a"),
+        Some("online".into()),
+        "the pre-revocation publish is still hub state"
+    );
+    assert!(
+        late_join.get("presence:device-a-revoked").is_none(),
+        "the hub store applied a revoked bearer's ephemeral write"
+    );
+
+    handle.abort();
+}
+
+/// The dev-mode row of the publish ban.
+///
+/// With no secret configured the MAC goes unverified, but the registry is
+/// real state — and the write side is where an unverified bearer does the
+/// most damage, since it reaches every live peer.
+#[tokio::test]
+async fn dev_mode_revoked_bearer_cannot_publish_ephemeral_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let jti = "f".repeat(32);
+    let mut client_a = connect(addr, Some(&format!("v2.jti={jti}.")))
+        .await
+        .unwrap();
+    let mut client_b = connect(addr, None).await.unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+    let _ = next_binary(&mut client_b).await; // root snapshot
+
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_set("presence:dev-a", "online").into(),
+        ))
+        .await
+        .unwrap();
+    let relayed = next_binary(&mut client_b).await;
+    let receiver = EphemeralStore::new(30_000);
+    apply_ephemeral_frame(&receiver, &relayed);
+    assert_eq!(receiver.get("presence:dev-a"), Some("online".into()));
+
+    revoke_token_jti(server.vault(), &jti);
+
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_set("presence:dev-a-revoked", "still-here").into(),
+        ))
+        .await
+        .unwrap();
+
+    let after_revocation = next_binary_or_close(&mut client_a).await;
+    assert!(
+        after_revocation.is_none(),
+        "dev mode kept serving a revoked publisher: {after_revocation:?}"
+    );
+    expect_no_binary(&mut client_b, Duration::from_millis(300)).await;
 
     handle.abort();
 }

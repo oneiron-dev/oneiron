@@ -61,7 +61,7 @@ pub(crate) struct LeaseRevokeResponse {
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -78,7 +78,7 @@ pub(crate) async fn lease_revoke(
     State(server): State<Arc<SyncServer>>,
     Json(req): Json<LeaseRevokeRequest>,
 ) -> Result<Json<LeaseRevokeResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
 
     if req.client_id.len() != 16
         || !req

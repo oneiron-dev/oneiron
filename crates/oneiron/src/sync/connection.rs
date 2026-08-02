@@ -39,6 +39,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
 use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus, next_backoff};
 use crate::sync::loro_support::doc_version_vector;
@@ -344,23 +345,23 @@ impl SyncConnection {
         >,
         String,
     > {
-        // Connect WebSocket. Phase-1 auth: the shared secret
-        // (SyncClientConfig.auth_token) rides as the `x-oneiron-secret`
-        // header on the upgrade request — the same scheme the server HTTP
-        // API uses — and the server rejects the upgrade when a secret is
-        // configured and the header is missing or wrong (fail-closed).
+        // Connect WebSocket. The credential (SyncClientConfig.auth_token)
+        // rides as `Authorization: Bearer` on the upgrade request — the same
+        // scheme the server HTTP API uses — and the server rejects the
+        // upgrade when a secret is configured and the credential is missing
+        // or wrong (fail-closed). Sync pulls the full root snapshot, so the
+        // server requires an owner-grade credential here: the trust-root
+        // secret or an empty-claims token, never a scoped one.
         let url = &self.config.client_config.server_url;
         let mut request = url
             .into_client_request()
             .map_err(|e| format!("WS connect failed: {e}"))?;
         let auth_token = &self.config.client_config.auth_token;
         if !auth_token.is_empty() {
-            let header_value = auth_token
+            let header_value = format!("Bearer {auth_token}")
                 .parse()
                 .map_err(|_| "Auth token is not a valid header value".to_string())?;
-            request
-                .headers_mut()
-                .insert("x-oneiron-secret", header_value);
+            request.headers_mut().insert(AUTHORIZATION, header_value);
         }
         let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
             .await

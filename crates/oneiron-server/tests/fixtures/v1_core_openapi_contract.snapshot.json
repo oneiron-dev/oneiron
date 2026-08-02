@@ -3800,15 +3800,9 @@
     },
     "securitySchemes": {
       "CoreBearer": {
-        "description": "Scoped bearer token for canonical /v1/core/* and companion control-plane routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'.",
+        "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The protected legacy `/api/*` routes (all except the public `/api/health`), `/v1/consumer/*`, and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names.",
         "scheme": "bearer",
         "type": "http"
-      },
-      "OneironSecret": {
-        "description": "Phase-1 shared secret required by protected API routes when unauthenticated development access is disabled.",
-        "in": "header",
-        "name": "x-oneiron-secret",
-        "type": "apiKey"
       }
     }
   },
@@ -3855,9 +3849,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -3904,9 +3895,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -3953,9 +3941,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4034,9 +4019,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       },
@@ -4081,9 +4063,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4176,9 +4155,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       },
@@ -4244,9 +4220,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4299,9 +4272,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4337,9 +4307,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4387,9 +4354,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4445,9 +4409,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4494,9 +4455,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4550,9 +4508,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4599,9 +4554,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4655,9 +4607,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4698,7 +4647,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid scoped bearer token, or missing/invalid legacy `x-oneiron-secret` header.",
+            "description": "Missing or invalid bearer credentials.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
@@ -4725,9 +4674,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       },
@@ -4751,7 +4697,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid scoped bearer token, or missing/invalid legacy `x-oneiron-secret` header.",
+            "description": "Missing or invalid bearer credentials.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
@@ -4784,9 +4730,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }
@@ -4854,9 +4797,6 @@
         "security": [
           {
             "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
           }
         ]
       }

@@ -727,7 +727,7 @@ async fn discover_advertises_outbound_manifest_schema_on_demand() {
 
     let request = Request::builder()
         .uri("/api/core/discover")
-        .header("x-oneiron-secret", "secret")
+        .header(AUTHORIZATION, owner_bearer())
         .body(Body::empty())
         .expect("discover request");
     let (status, body) = route_json(server, request).await;
@@ -1123,7 +1123,7 @@ async fn local_artifact_route_requires_api_auth_when_configured() {
         server,
         Request::builder()
             .uri("/a/site/")
-            .header("x-oneiron-secret", "secret")
+            .header(AUTHORIZATION, owner_bearer())
             .body(Body::empty())
             .expect("artifact request"),
     )
@@ -1188,8 +1188,21 @@ fn json_request(method: &str, uri: &str, body: Value) -> Request<Body> {
         .expect("request")
 }
 
+/// Mints a v2 token against the `"secret"` these tests configure everywhere.
+fn test_bearer(claims: &str) -> String {
+    format!(
+        "Bearer {}",
+        crate::auth::mint_core_token_v2("secret", claims)
+    )
+}
+
+/// Owner-grade credential: the bare trust root over the standard header.
+fn owner_bearer() -> String {
+    "Bearer secret".to_owned()
+}
+
 fn core_request(method: &str, uri: &str, scope: &str, body: Option<&Value>) -> Request<Body> {
-    core_request_with_authz(method, uri, format!("Bearer secret;scope={scope}"), body)
+    core_request_with_authz(method, uri, test_bearer(&format!("scope={scope}")), body)
 }
 
 fn core_request_with_principal_ref(
@@ -1202,7 +1215,7 @@ fn core_request_with_principal_ref(
     core_request_with_authz(
         method,
         uri,
-        format!("Bearer secret;scope={scope};principal_ref={principal_ref}"),
+        test_bearer(&format!("scope={scope};principal_ref={principal_ref}")),
         body,
     )
 }
@@ -2057,6 +2070,35 @@ fn contract_exchange(
     auth_scope: Option<&str>,
     request_body: Option<Value>,
     status: StatusCode,
+    response_body: Value,
+) -> Value {
+    contract_exchange_with_auth(
+        name,
+        method,
+        path,
+        auth_scope.map_or_else(
+            || json!({ "type": "none" }),
+            |scope| json!({ "type": "bearer", "scope": scope }),
+        ),
+        request_body,
+        status,
+        response_body,
+    )
+}
+
+/// Records one contract exchange under an explicitly described credential.
+///
+/// The `auth` descriptor is part of the contract, not decoration: a scoped
+/// bearer and an owner-grade one produce genuinely different context-pack
+/// bodies (the former is disclosure-clamped), so an exchange that documents
+/// the wrong credential documents an unreachable response.
+fn contract_exchange_with_auth(
+    name: &str,
+    method: &str,
+    path: &str,
+    auth: Value,
+    request_body: Option<Value>,
+    status: StatusCode,
     mut response_body: Value,
 ) -> Value {
     normalize_contract_body(&mut response_body);
@@ -2065,10 +2107,7 @@ fn contract_exchange(
         "request": {
             "method": method,
             "path": path,
-            "auth": auth_scope.map_or_else(
-                || json!({ "type": "none" }),
-                |scope| json!({ "type": "bearer", "scope": scope }),
-            ),
+            "auth": auth,
             "body": request_body.unwrap_or(Value::Null),
         },
         "response": {
@@ -2222,6 +2261,25 @@ async fn core_json(
     route_json(server, core_request(method, uri, scope, body)).await
 }
 
+/// Drives a `/v1/core` route with the owner-grade credential.
+///
+/// A `scope=…` bearer is a delegated instrument and is NOT owner-grade
+/// (`CoreAuth::is_owner_grade`), so any assertion about owner-presence,
+/// `owner_present: true`, or the absent-disclosure-block byte-identity
+/// guarantee must travel on this helper rather than `core_json`.
+async fn owner_json(
+    server: Arc<SyncServer>,
+    method: &str,
+    uri: &str,
+    body: Option<&Value>,
+) -> (StatusCode, Value) {
+    route_json(
+        server,
+        core_request_with_authz(method, uri, owner_bearer(), body),
+    )
+    .await
+}
+
 fn seed_turn(server: &SyncServer, text: &str) -> oneiron::EntityId {
     let turn = oneiron::EntityId::now();
     let body = rmp_serde::to_vec_named(&json!({
@@ -2308,10 +2366,7 @@ fn v1_core_openapi_contract_snapshot_matches_fixture() {
             "paths": paths,
             "components": {
                 "schemas": schemas,
-                "securitySchemes": {
-                    "CoreBearer": spec["components"]["securitySchemes"]["CoreBearer"].clone(),
-                    "OneironSecret": spec["components"]["securitySchemes"]["OneironSecret"].clone(),
-                },
+                "securitySchemes": spec["components"]["securitySchemes"].clone(),
             },
         }),
         V1_CORE_OPENAPI_CONTRACT_SNAPSHOT,
@@ -2513,11 +2568,13 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         "view": "full",
         "include_edges": false
     });
-    let (status, context_pack_body) = core_json(
+    // Owner-grade: this exchange documents the un-clamped context-pack shape,
+    // so it must travel on the credential that reaches it. On a scoped bearer
+    // the same request is disclosure-clamped and returns no results.
+    let (status, context_pack_body) = owner_json(
         server.clone(),
         "POST",
         "/v1/core/context-pack",
-        "core:read",
         Some(&context_pack_request),
     )
     .await;
@@ -2530,11 +2587,11 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
             .as_str()
             .expect("content hash")
     );
-    exchanges.push(contract_exchange(
+    exchanges.push(contract_exchange_with_auth(
         "core_context_pack",
         "POST",
         "/v1/core/context-pack",
-        Some("core:read"),
+        json!({ "type": "bearer", "grade": "owner" }),
         Some(context_pack_request),
         status,
         context_pack_body,
@@ -2583,11 +2640,11 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         context_pack_v4_body["session_rag"]["query_count"],
         Value::from(1)
     );
-    exchanges.push(contract_exchange(
+    exchanges.push(contract_exchange_with_auth(
         "core_context_pack_v4",
         "POST",
         "/v1/core/context-pack",
-        Some("core:read"),
+        json!({ "type": "bearer", "scope": "core:read", "principal_ref": "bound" }),
         Some(context_pack_v4_request),
         status,
         context_pack_v4_body,
@@ -3416,15 +3473,22 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "DiscoverResponse must reference the skill-pack discovery schema"
     );
 
-    assert_eq!(
-        spec["components"]["securitySchemes"]["OneironSecret"]["name"],
-        Value::from("x-oneiron-secret"),
-        "protected operations must document the x-oneiron-secret auth header"
+    assert!(
+        spec["components"]["securitySchemes"]
+            .get("OneironSecret")
+            .is_none(),
+        "the removed custom-header scheme must not be documented"
     );
     assert_eq!(
         spec["components"]["securitySchemes"]["CoreBearer"]["scheme"],
         Value::from("bearer"),
-        "v1 core operations must document bearer auth"
+        "protected operations must document bearer auth"
+    );
+    assert!(
+        !serde_json::to_string(&spec)
+            .expect("serialize spec")
+            .contains("x-oneiron-secret"),
+        "no description, example, or scheme in the spec may still name the removed header"
     );
     for (path, method) in [
         ("/api/openapi.json", "get"),
@@ -3438,14 +3502,6 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         ("/v1/consumer/usage", "get"),
         ("/v1/consumer/usage/details", "get"),
         ("/v1/consumer/top-up", "post"),
-    ] {
-        assert_eq!(
-            spec["paths"][path][method]["security"],
-            json!([{ "OneironSecret": [] }]),
-            "{method} {path} must require OneironSecret"
-        );
-    }
-    for (path, method) in [
         ("/v1/core/batch", "post"),
         ("/v1/core/query", "post"),
         ("/v1/core/context-pack", "post"),
@@ -3479,8 +3535,8 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
     ] {
         assert_eq!(
             spec["paths"][path][method]["security"],
-            json!([{ "CoreBearer": [] }, { "OneironSecret": [] }]),
-            "{method} {path} must accept scoped bearer auth with legacy secret fallback"
+            json!([{ "CoreBearer": [] }]),
+            "{method} {path} must require bearer auth as the single scheme"
         );
     }
 
@@ -3744,6 +3800,155 @@ async fn v1_core_route_missing_auth_returns_typed_error_envelope() {
     assert_eq!(error_envelope(&body)["details"]["code"], "UNAUTHORIZED");
 }
 
+/// The revocation registry has teeth on the wire, not just in the auth unit
+/// tests: a revoked bearer gets the same uniform 401 as any other refusal,
+/// while a sibling minted from identical claims keeps working.
+#[tokio::test]
+async fn v1_core_route_rejects_a_revoked_bearer_and_admits_its_sibling() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+
+    let (revoked, revoked_jti) =
+        crate::auth::mint_identified_core_token_v2("secret", "scope=core:read");
+    let (sibling, _) = crate::auth::mint_identified_core_token_v2("secret", "scope=core:read");
+    let uri = "/v1/core/turns/annotate?turn_id=not-an-entity";
+
+    // Both authenticate before the revocation act (the 400 is the handler
+    // rejecting the deliberately malformed turn id — auth already passed).
+    for token in [&revoked, &sibling] {
+        let (status, _) = route_json(
+            server.clone(),
+            core_request_with_authz("GET", uri, format!("Bearer {token}"), None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "token must authenticate");
+    }
+
+    crate::auth::revoke_token_jti(server.vault(), &revoked_jti).expect("revoke");
+
+    let (status, body) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", uri, format!("Bearer {revoked}"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_error_envelope(&body, "UNAUTHORIZED");
+
+    let (status, _) = route_json(
+        server,
+        core_request_with_authz("GET", uri, format!("Bearer {sibling}"), None),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "revoking one token must not revoke its sibling"
+    );
+}
+
+/// The owner-grade surfaces consult the registry too: revocation binds to the
+/// token's identity, not to which plane it is presented on.
+#[tokio::test]
+async fn legacy_api_route_rejects_a_revoked_owner_grade_bearer() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+
+    let (token, jti) = crate::auth::mint_identified_core_token_v2("secret", "");
+    let uri = "/api/core/discover";
+
+    let (status, _) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", uri, format!("Bearer {token}"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "an identified owner token is live");
+
+    crate::auth::revoke_token_jti(server.vault(), &jti).expect("revoke");
+
+    let (status, _) = route_json(
+        server,
+        core_request_with_authz("GET", uri, format!("Bearer {token}"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// The owner-grade boundary itself, not revocation: a perfectly live scoped
+/// bearer — authentic MAC, unrevoked jti, a scope the route would honor on
+/// `/v1` — is still refused on the legacy `/api/*` plane, which reads the
+/// whole vault under one actor ref. The same credential works on its own
+/// `/v1` route in the same test, so the 401 pins the plane boundary and not
+/// a broken token.
+#[tokio::test]
+async fn legacy_api_route_rejects_a_live_scoped_bearer_that_works_on_v1() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+
+    let (scoped, jti) = crate::auth::mint_identified_core_token_v2("secret", "scope=core:read");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        format!("Bearer {scoped}").parse().expect("bearer header"),
+    );
+    let auth = CoreAuth::from_headers(&headers, &server.config, server.vault().as_ref())
+        .expect("scoped bearer authenticates");
+    assert!(
+        !auth.is_owner_grade(),
+        "the fixture must be a scoped, non-owner-grade credential"
+    );
+    assert!(
+        !crate::auth::is_revoked_or_unreadable(&jti, server.vault().as_ref()),
+        "the fixture must be live: this test is about the plane, not revocation"
+    );
+
+    // Same credential, same server: accepted on its scoped /v1 route.
+    let (status, _) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "GET",
+            "/v1/core/outbound/capabilities",
+            format!("Bearer {scoped}"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a scoped bearer is a /v1-plane instrument and must work there"
+    );
+
+    // Refused on every legacy `/api/*` route, read and mutating alike.
+    for (method, uri, body) in [
+        ("GET", "/api/core/discover", None),
+        ("GET", "/api/openapi.json", None),
+        ("GET", "/api/skills/oneiron.skills.md", None),
+        ("GET", "/api/search/text?query=anything", None),
+        (
+            "POST",
+            "/api/lease/revoke",
+            Some(json!({ "client_id": "0000000000000042" })),
+        ),
+    ] {
+        let (status, _) = route_json(
+            server.clone(),
+            core_request_with_authz(method, uri, format!("Bearer {scoped}"), body.as_ref()),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "legacy {method} {uri} must refuse a scoped bearer"
+        );
+    }
+}
+
 #[tokio::test]
 async fn v1_core_idempotency_preflight_uses_typed_error_envelope() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -3790,7 +3995,7 @@ async fn v1_core_route_rejects_valid_bearer_without_required_scope() {
         server,
         Request::builder()
             .uri("/v1/core/turns/annotate?turn_id=not-an-entity")
-            .header(AUTHORIZATION, "Bearer secret;scope=core:write")
+            .header(AUTHORIZATION, test_bearer("scope=core:write"))
             .body(Body::empty())
             .expect("request"),
     )
@@ -3815,7 +4020,7 @@ async fn v1_core_route_wraps_handler_errors_after_bearer_auth() {
         server,
         Request::builder()
             .uri("/v1/core/turns/annotate?turn_id=not-an-entity")
-            .header(AUTHORIZATION, "Bearer secret;scope=core:read")
+            .header(AUTHORIZATION, test_bearer("scope=core:read"))
             .body(Body::empty())
             .expect("request"),
     )
@@ -4509,10 +4714,10 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
         .uri(&refresh_query_path)
         .header(
             AUTHORIZATION,
-            format!(
-                "Bearer secret;scope=companion:profile:read;principal_ref={}",
+            test_bearer(&format!(
+                "scope=companion:profile:read;principal_ref={}",
                 principal_ref.to_hex()
-            ),
+            )),
         )
         .header(CONTENT_TYPE, "application/json")
         .body(Body::from("{"))
@@ -4626,7 +4831,7 @@ async fn v1_companion_access_grant_create_replays_idempotency_key() {
         Request::builder()
             .method("POST")
             .uri("/v1/companion/access-grants")
-            .header(AUTHORIZATION, "Bearer secret;scope=core:auth")
+            .header(AUTHORIZATION, test_bearer("scope=core:auth"))
             .header("Idempotency-Key", "companion-create-replay")
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(create_request.to_string()))
@@ -5205,7 +5410,10 @@ async fn v1_core_idempotency_read_only_token_cannot_replay_cached_write_success(
     let (write_status, write_body) = idempotent_core_annotate(
         server.clone(),
         "scoped-write-success",
-        (AUTHORIZATION.as_str(), "Bearer secret;scope=core:write"),
+        (
+            AUTHORIZATION.as_str(),
+            test_bearer("scope=core:write").as_str(),
+        ),
         &body,
     )
     .await;
@@ -5215,7 +5423,10 @@ async fn v1_core_idempotency_read_only_token_cannot_replay_cached_write_success(
     let (read_status, read_body) = idempotent_core_annotate(
         server,
         "scoped-write-success",
-        (AUTHORIZATION.as_str(), "Bearer secret;scope=core:read"),
+        (
+            AUTHORIZATION.as_str(),
+            test_bearer("scope=core:read").as_str(),
+        ),
         &body,
     )
     .await;
@@ -5239,7 +5450,10 @@ async fn v1_core_idempotency_write_token_retry_is_not_poisoned_by_read_only_403(
     let (read_status, read_body) = idempotent_core_annotate(
         server.clone(),
         "scoped-read-poison",
-        (AUTHORIZATION.as_str(), "Bearer secret;scope=core:read"),
+        (
+            AUTHORIZATION.as_str(),
+            test_bearer("scope=core:read").as_str(),
+        ),
         &body,
     )
     .await;
@@ -5249,7 +5463,10 @@ async fn v1_core_idempotency_write_token_retry_is_not_poisoned_by_read_only_403(
     let (write_status, write_body) = idempotent_core_annotate(
         server.clone(),
         "scoped-read-poison",
-        (AUTHORIZATION.as_str(), "Bearer secret;scope=core:write"),
+        (
+            AUTHORIZATION.as_str(),
+            test_bearer("scope=core:write").as_str(),
+        ),
         &body,
     )
     .await;
@@ -5276,7 +5493,7 @@ async fn v1_core_idempotency_legacy_shared_secret_still_replays_and_conflicts() 
     let (first_status, first_body) = idempotent_core_annotate(
         server.clone(),
         "legacy-core-idem",
-        ("x-oneiron-secret", "secret"),
+        (AUTHORIZATION.as_str(), owner_bearer().as_str()),
         &body,
     )
     .await;
@@ -5285,7 +5502,7 @@ async fn v1_core_idempotency_legacy_shared_secret_still_replays_and_conflicts() 
     let (replay_status, replay_body) = idempotent_core_annotate(
         server.clone(),
         "legacy-core-idem",
-        ("x-oneiron-secret", "secret"),
+        (AUTHORIZATION.as_str(), owner_bearer().as_str()),
         &body,
     )
     .await;
@@ -5296,7 +5513,7 @@ async fn v1_core_idempotency_legacy_shared_secret_still_replays_and_conflicts() 
     let (conflict_status, conflict_body) = idempotent_core_annotate(
         server,
         "legacy-core-idem",
-        ("x-oneiron-secret", "secret"),
+        (AUTHORIZATION.as_str(), owner_bearer().as_str()),
         &changed_body,
     )
     .await;
@@ -7917,6 +8134,22 @@ async fn core_context_pack_owner_session_without_block_carries_no_interlocutors_
     let (_dir, server) = interlocutor_test_server();
     seed_turn(&server, "owner alone regression needle");
     let request = json!({ "query": "regression needle", "limit": 3 });
+    let (status, body) = owner_json(
+        server.clone(),
+        "POST",
+        "/v1/core/context-pack",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("interlocutors").is_none(),
+        "owner-grade auth with no block must stay byte-identical: {body:?}"
+    );
+
+    // The same request on a scope-narrowed token is NOT the owner-grade path:
+    // a delegated credential resolves an interlocutor set and gets echoed
+    // stamps even though it carries no principal_ref.
     let (status, body) = core_json(
         server,
         "POST",
@@ -7927,8 +8160,8 @@ async fn core_context_pack_owner_session_without_block_carries_no_interlocutors_
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        body.get("interlocutors").is_none(),
-        "owner-grade auth with no block must stay byte-identical: {body:?}"
+        body.get("interlocutors").is_some(),
+        "a scope-narrowed token is not owner-grade: {body:?}"
     );
 }
 
@@ -7952,14 +8185,7 @@ async fn core_context_pack_echoes_stamps_for_supplied_block_on_owner_session() {
             ]
         }
     });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
+    let (status, body) = owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
     assert_eq!(status, StatusCode::OK);
     let stamps = body["interlocutors"].as_array().expect("stamps echoed");
     assert_eq!(stamps.len(), 4);
@@ -8287,14 +8513,9 @@ async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
             "third_parties": [{ "contact_ref": contact_id.to_hex() }]
         }
     });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
+    // Supervised mode requires an owner-grade credential: `owner_present:
+    // true` is a 403 on any narrowed token.
+    let (status, body) = owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["disclosure"]["mode"], Value::from("supervised"));
     let notice = body["disclosure"]["notice"].as_str().expect("notice");
@@ -8529,14 +8750,7 @@ async fn core_context_pack_owner_auth_without_block_carries_no_disclosure_field(
     let (_dir, server) = interlocutor_test_server();
     seed_text_turn(&server, "owner alone regression needle24");
     let request = json!({ "query": "needle24", "limit": 3 });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
+    let (status, body) = owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         body.get("disclosure").is_none(),
@@ -8545,6 +8759,84 @@ async fn core_context_pack_owner_auth_without_block_carries_no_disclosure_field(
     assert!(
         !body["results"].as_array().expect("results").is_empty(),
         "owner-alone behavior unchanged"
+    );
+}
+
+/// P1 regression (`l1-r2-verdicts`): a v2 token narrowed by SCOPE ALONE — no
+/// `principal_ref` — is a delegated read-only credential, not the owner.
+///
+/// The old `is_owner_session` predicate read only `principal_ref.is_none()`,
+/// so this token classified as owner-present: `resolve_core_interlocutor_set`
+/// returned `None` and NO absence clamp applied, handing a delegated bearer
+/// the owner's full Tier-B vault. Both halves of the fix are pinned here: the
+/// clamp now applies, and `owner_present: true` is refused.
+#[tokio::test]
+async fn core_context_pack_scope_only_token_is_clamped_and_cannot_assert_owner_present() {
+    let (_dir, server) = interlocutor_test_server();
+    let diary = seed_text_turn(&server, "tier b memory needle25");
+    let request = json!({ "query": "needle25", "limit": 10 });
+
+    // The owner-grade credential still reads its own vault, unclamped.
+    let (status, owner_body) = owner_json(
+        server.clone(),
+        "POST",
+        "/v1/core/context-pack",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(owner_body.get("disclosure").is_none());
+    let diary_id = diary.to_hex();
+    assert!(
+        owner_body["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .filter_map(|entity| entity["id"].as_str())
+            .any(|id| id == diary_id),
+        "owner-grade verdict unchanged: {owner_body:?}"
+    );
+
+    // The same request on `scope=core:read` with NO principal_ref takes the
+    // absence clamp. No party is identified, so the deny-all scope applies.
+    let (status, body) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["disclosure"]["mode"],
+        Value::from("absence_clamp"),
+        "an unbound scoped token must receive the clamp: {body:?}"
+    );
+    assert!(
+        body["results"].as_array().expect("results").is_empty(),
+        "Tier-B memory must not reach a delegated read-only token: {body:?}"
+    );
+
+    // ...and it cannot buy the supervised path back by asserting presence.
+    let asserted = json!({
+        "query": "needle25",
+        "limit": 10,
+        "interlocutors": { "owner_present": true }
+    });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&asserted),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_error_envelope(&body, "FORBIDDEN");
+    assert_eq!(
+        body["error"]["details"]["requiredScope"],
+        Value::from("interlocutors.owner_present")
     );
 }
 
@@ -8560,11 +8852,10 @@ async fn core_context_pack_caps_the_third_parties_block() {
         "query": "hallway",
         "interlocutors": { "third_parties": at_cap }
     });
-    let (status, body) = core_json(
+    let (status, body) = owner_json(
         server.clone(),
         "POST",
         "/v1/core/context-pack",
-        "core:read",
         Some(&request),
     )
     .await;
@@ -8791,7 +9082,7 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
         .method("POST")
         .uri("/api/companion/resume")
         .header(CONTENT_TYPE, "application/json")
-        .header("x-oneiron-secret", "secret")
+        .header(AUTHORIZATION, owner_bearer())
         .header("x-oneiron-caller", principal_ref.as_str())
         .body(Body::from("{}"))
         .expect("resume request");
@@ -9286,7 +9577,7 @@ async fn context_pack_v4_session_state_is_partitioned_by_caller() {
             .method("POST")
             .uri("/api/companion/resume")
             .header(CONTENT_TYPE, "application/json")
-            .header("x-oneiron-secret", "secret")
+            .header(AUTHORIZATION, owner_bearer())
             .header("x-oneiron-caller", caller)
             .body(Body::from("{}"))
             .expect("resume request")

@@ -67,7 +67,7 @@ async fn spawn_server(
 async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let secret_header = secret
-        .map(|secret| format!("x-oneiron-secret: {secret}\r\n"))
+        .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
         .unwrap_or_default();
     let request =
         format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{secret_header}\r\n");
@@ -84,7 +84,7 @@ async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String 
 async fn http_post(addr: SocketAddr, path: &str, secret: Option<&str>, body: &str) -> String {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let secret_header = secret
-        .map(|secret| format!("x-oneiron-secret: {secret}\r\n"))
+        .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
         .unwrap_or_default();
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{secret_header}\r\n{body}",
@@ -567,7 +567,7 @@ async fn discover_requires_auth_and_returns_empty_contract() {
         body["skill_pack"]["how_to_load"]
             .as_str()
             .is_some_and(|hint| hint.contains("same origin")
-                && hint.contains("x-oneiron-secret")
+                && hint.contains("bearer credential")
                 && hint.contains("local working directory")),
         "skill_pack.how_to_load should clarify HTTP endpoint resolution semantics"
     );

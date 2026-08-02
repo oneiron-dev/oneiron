@@ -50,8 +50,13 @@ pub struct SyncServerConfig {
     /// Maximum uncompressed BulkTransfer chunk size in bytes (M5 Phase-3
     /// bulk sender).
     pub bulk_chunk_size: usize,
-    /// Shared secret for Phase 1 auth (`x-oneiron-secret` header) — checked
-    /// on both the HTTP API and the `/ws` upgrade.
+    /// Bearer trust root, checked on both the HTTP API and the `/ws` upgrade.
+    ///
+    /// Two roles: the constant-time-compared owner credential, and the
+    /// BLAKE3 `derive_key` input for v2 token MACs. Rotate by replacing the
+    /// value and restarting — rotation rewraps the MAC key, so previously
+    /// minted tokens and derived credential hashes stop resolving. Revoking
+    /// an individual token is a separate, explicit act.
     pub auth_secret: Option<String>,
     /// Explicit local/dev escape hatch for running without `auth_secret`.
     pub allow_unauthenticated: bool,
@@ -215,7 +220,8 @@ pub struct ServeArgs {
     #[arg(long)]
     pub port: Option<u16>,
 
-    /// Shared secret for API authentication (Phase 1).
+    /// Bearer trust root: the owner credential and the MAC key input for
+    /// minted `v2` tokens. Rotating it invalidates all minted tokens.
     #[arg(long)]
     pub auth_secret: Option<String>,
 

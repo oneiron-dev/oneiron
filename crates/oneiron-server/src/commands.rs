@@ -9,14 +9,19 @@ use serde_json::{Value as JsonValue, json};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
+use crate::auth::{mint_identified_core_token_v2, revoke_token_jti, validate_bearer_claims};
 use crate::build_app;
-use crate::cli::{ProvenanceArgs, RevokeArgs, SkillsPackArgs, VaultArgs};
+use crate::cli::{
+    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenMintArgs, TokenRevokeArgs, VaultArgs,
+};
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
 use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
 const MAX_MSGPACK_JSON_DEPTH: usize = 32;
+/// Below this the auth secret is weak MAC key material; warn, do not refuse.
+const MIN_RECOMMENDED_AUTH_SECRET_BYTES: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictSearchResolution {
@@ -69,6 +74,119 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+/// Mints a v2 core bearer token and prints it to stdout.
+///
+/// The secret resolves through the normal serve-config precedence and is
+/// never printed or logged. Claims are validated before minting, so a token
+/// that would 401 is never emitted. Every minted token carries a fresh `jti`
+/// so it can later be revoked individually; the id is printed to stderr so
+/// piping stdout still yields exactly the token.
+pub fn token_mint(args: TokenMintArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    let auth_secret = config
+        .sync_server_config()
+        .auth_secret
+        .filter(|secret| !secret.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no auth secret configured; set --auth-secret, ONEIRON_AUTH_SECRET, or auth_secret in the config file"
+            )
+        })?;
+
+    let mint = prepare_token_mint(
+        &auth_secret,
+        args.scope.as_deref(),
+        args.principal_ref.as_deref(),
+    )?;
+
+    if let Some(warning) = &mint.warning {
+        eprintln!("warning: {warning}");
+    }
+    eprintln!("token id (jti): {}", mint.jti);
+    println!("{}", mint.token);
+    Ok(())
+}
+
+/// One minted token plus everything the operator must be told about it.
+struct TokenMint {
+    token: String,
+    jti: String,
+    warning: Option<String>,
+}
+
+/// The whole mint decision, with no IO, so what the operator is told is
+/// testable rather than inferred from a `println!`.
+fn prepare_token_mint(
+    auth_secret: &str,
+    scope: Option<&[String]>,
+    principal_ref: Option<&str>,
+) -> anyhow::Result<TokenMint> {
+    let claims = build_token_claims(scope, principal_ref);
+    validate_bearer_claims(&claims).map_err(|_| {
+        anyhow::anyhow!("refusing to mint a token the server would reject: {claims}")
+    })?;
+
+    let (token, jti) = mint_identified_core_token_v2(auth_secret, &claims);
+    Ok(TokenMint {
+        token,
+        jti,
+        warning: weak_auth_secret_warning(auth_secret),
+    })
+}
+
+/// Revokes one previously minted token by its id.
+///
+/// Its own explicit act, on one named identity, against the server's
+/// persistent registry — never a side effect of rotation. Idempotent:
+/// revoking an already-revoked id succeeds and reports `false`.
+pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    init_tracing(&config.log_level);
+
+    let dicts = resolve_dict_search_paths(&config.dict_search_paths);
+    let mut vault_config = config.vault_config();
+    vault_config.dict_search_paths = dicts.paths;
+    // A fresh vault holds no tokens, so creating one here would report a
+    // successful revocation against storage the server does not read.
+    ensure_existing_vault_for_revoke(&config.vault_path)?;
+    let vault = oneiron::Vault::open(&config.vault_path, vault_config)
+        .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
+
+    let revoked = revoke_token_jti(&vault, &args.jti)?;
+    println!("{}", serde_json::json!({ "revoked": revoked }));
+    Ok(())
+}
+
+/// The secret is the MAC key for every minted token, and BLAKE3 is fast: a
+/// recipient holding a token holds a known claims/MAC pair to test guesses
+/// against offline. Warned at both doors that handle the secret — serve and
+/// mint — because an operator who only ever mints never sees the other one.
+fn weak_auth_secret_warning(secret: &str) -> Option<String> {
+    (secret.len() < MIN_RECOMMENDED_AUTH_SECRET_BYTES).then(|| {
+        format!(
+            "configured auth_secret is shorter than {MIN_RECOMMENDED_AUTH_SECRET_BYTES} bytes; it is the MAC key for every minted bearer token"
+        )
+    })
+}
+
+/// Assembles a claims string in the bearer grammar. No flags yields an empty
+/// claims string, which mints an owner-grade token.
+fn build_token_claims(scope: Option<&[String]>, principal_ref: Option<&str>) -> String {
+    let mut claims = String::new();
+    if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
+        claims.push_str("scope=");
+        claims.push_str(&scope.join(","));
+    }
+    if let Some(principal_ref) = principal_ref {
+        if !claims.is_empty() {
+            claims.push(';');
+        }
+        claims.push_str("principal_ref=");
+        claims.push_str(principal_ref);
+    }
+    claims
 }
 
 pub fn skills_pack(args: SkillsPackArgs) -> anyhow::Result<()> {
@@ -308,10 +426,17 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let vault = oneiron::Vault::open(&config.vault_path, vault_config)?;
 
     let server_config = config.sync_server_config();
-    if server_config.auth_secret.is_none() && !server_config.allow_unauthenticated {
-        tracing::warn!(
+    match server_config.auth_secret.as_deref() {
+        None if !server_config.allow_unauthenticated => tracing::warn!(
             "server started with no auth_secret and allow_unauthenticated=false; refusing all requests; set ONEIRON_AUTH_SECRET or pass --insecure-allow-unauthenticated for local dev"
-        );
+        ),
+        // A nudge, not a wall: short dev secrets keep working.
+        Some(secret) => {
+            if let Some(warning) = weak_auth_secret_warning(secret) {
+                tracing::warn!("{warning}");
+            }
+        }
+        None => {}
     }
     let cors_layer = build_cors_layer(&server_config)?;
 

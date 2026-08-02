@@ -30,6 +30,20 @@ Keep those layers aligned but not duplicated. This pack names the live HTTP rout
 
 ARCH-0006a/b conversation endpoints are design documents, not live routes in the current server route table. They are intentionally excluded from the live endpoint catalog until the server registers them.
 
+## Authentication
+
+One credential travels, in the standard header: `Authorization: Bearer <credential>`.
+
+- **Owner-grade** — the configured trust-root secret sent verbatim, or a minted token carrying no narrowing claims. Required by the legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
+- **Scoped** — a minted token of the form `v2.<claims>.<mac>`, where `<claims>` is `scope=…[;principal_ref=…][;jti=<hex32>]`. Accepted on `/v1/core/*` and companion control-plane routes with exactly the scopes it names. Mint one with `oneiron token mint --scope core:read[,…] [--principal-ref <hex32>]`.
+
+The claims are visible but not editable: they are authenticated by a MAC keyed on the server's secret, which appears in no token. Editing, widening, or deleting the claims invalidates the token. Every authentication failure — absent, malformed, wrong MAC, unknown claim, revoked — returns the same `UNAUTHORIZED`; the response never says which.
+
+Every token minted by the current `token mint` carries a `jti`, its identity: mint always attaches one. The claim itself is optional in the grammar, because tokens minted before the identity claim existed are still authentic and still resolve — they simply have no id to revoke, and rotation is the only lever that retires them. A `jti` narrows nothing on its own: a token whose only claim is its id stays owner-grade. `token mint` prints the token on stdout and its id on stderr. Two mints of identical claims produce two distinct tokens, so one can be revoked without touching the other.
+
+**Revoking one token.** `oneiron token revoke --jti <hex32>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
+
+**Rotating the secret.** Replace the configured value and restart. Rotation rewraps the key the tokens are MAC'd under, so previously minted tokens and derived credential hashes stop resolving and must be reissued; credentials minted under the new secret work immediately. Rotation is the all-at-once lever; revoking an individual token is the separate, explicit act above, never a side effect of rotation.
 ## Tier-1: Endpoint Activation Index
 
 Fetch Tier-1 first. It contains one endpoint block per live route literal and no Tier-2 parameters or Tier-3 schemas.
@@ -41,7 +55,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "show OpenAPI"
   - "generate client from schema"
   - "inspect API schema"
-- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
 
 #### skills-pack - `GET /api/skills/oneiron.skills.md`
 
@@ -50,7 +64,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "fetch Oneiron skill pack"
   - "download agent skills"
   - "serve progressive disclosure pack"
-- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
 
 #### local-artifact-published-root - `GET /a/{artifact}`
 
@@ -104,7 +118,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "discover this vault"
   - "what can I access?"
   - "list personas and conversations"
-- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
 
 #### core-outbound-capabilities - `GET /v1/core/outbound/capabilities`
 
@@ -212,7 +226,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "resume companion session"
   - "hydrate resume bundle"
   - "get pending notifications"
-- safety: Read-only aggregation with a POST body; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+- safety: Read-only aggregation with a POST body; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
 
 #### companion-relationship-end - `POST /v1/companion/register/records/{record_id}/end-relationship`
 
@@ -230,7 +244,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "show consumer usage"
   - "check allowance balance"
   - "read allowance warning"
-- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
 
 #### consumer-usage-details - `GET /v1/consumer/usage/details`
 
@@ -239,7 +253,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "show detailed consumer usage"
   - "break down consumer usage"
   - "inspect usage by service"
-- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
 
 #### consumer-top-up - `POST /v1/consumer/top-up`
 
@@ -266,7 +280,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "show tenant usage"
   - "read vault usage rollup"
   - "break down usage by model"
-- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+- safety: Read-only; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
 
 #### lease-revoke - `POST /api/lease/revoke`
 
@@ -275,7 +289,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "revoke device lease"
   - "lost device recovery"
   - "disable this client id"
-- safety: Mutating and terminal for the binding. Requires auth. Use an `Idempotency-Key` header when retrying after transport failure.
+- safety: Mutating and terminal for the binding. Requires an owner-grade credential; scoped bearers are refused. Use an `Idempotency-Key` header when retrying after transport failure.
 
 ## Tier-2: Endpoint Details
 
@@ -324,7 +338,7 @@ Example response:
 
 Method: `GET`
 
-Authentication: `x-oneiron-secret` unless development config explicitly allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config explicitly allows unauthenticated access.
 
 Parameters: None.
 
@@ -338,7 +352,7 @@ Response:
 
 Method: `GET`
 
-Authentication: `x-oneiron-secret` unless development config explicitly allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config explicitly allows unauthenticated access.
 
 Parameters: None.
 
@@ -375,7 +389,7 @@ Response behavior:
 
 Method: `GET`
 
-Authentication: `x-oneiron-secret` unless development config explicitly allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config explicitly allows unauthenticated access.
 
 Parameters: None.
 
@@ -407,7 +421,7 @@ Example response:
     "pack_format": "agentskills.io",
     "mime_type": "text/markdown",
     "when_to_load": "GET /api/skills/oneiron.skills.md from the same Oneiron HTTP origin before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.",
-    "how_to_load": "Resolve endpoint against the same origin used for /api/core/discover and send the configured x-oneiron-secret; do not resolve the pack against a local working directory.",
+    "how_to_load": "Resolve endpoint against the same origin used for /api/core/discover and send the configured bearer credential; do not resolve the pack against a local working directory.",
     "layer_boundary": "skills = how to think about memory; MCP tools = what to call"
   },
   "bound": { "vault": null, "persona": null, "conversation": null },
@@ -466,7 +480,7 @@ Notes:
 
 Method: `GET`
 
-Authentication: `x-oneiron-secret` unless development config allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config allows unauthenticated access.
 
 Query parameters:
 
@@ -504,7 +518,7 @@ Example response:
 
 Method: `GET`
 
-Authentication: `x-oneiron-secret` unless development config allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config allows unauthenticated access.
 
 Query parameters:
 
@@ -528,7 +542,7 @@ Example response:
 
 Method: `GET`
 
-Authentication: `x-oneiron-secret` unless development config allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config allows unauthenticated access.
 
 Path parameter:
 
@@ -559,7 +573,7 @@ Example summary response:
 
 Method: `GET`
 
-Authentication: `x-oneiron-secret` unless development config allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config allows unauthenticated access.
 
 Path parameter:
 
@@ -592,7 +606,7 @@ Example response:
 
 Methods: `GET`, `POST`
 
-Authentication: `x-oneiron-secret` unless development config allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config allows unauthenticated access.
 
 POST request body:
 
@@ -643,7 +657,7 @@ Example response:
 
 Method: `POST`
 
-Authentication: `x-oneiron-secret` unless development config allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config allows unauthenticated access.
 
 Request body:
 
@@ -673,7 +687,7 @@ Agent note: Treat `state.kind` and `state.reason` as the typed missing-data or l
 
 Method: `POST`
 
-Authentication: `x-oneiron-secret` unless development config allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` unless development config allows unauthenticated access.
 
 Request body: Empty JSON object.
 
@@ -713,7 +727,7 @@ Example response:
 
 Method: `POST`
 
-Authentication: scoped core bearer with `companion:register:write`, or `x-oneiron-secret` fallback when allowed.
+Authentication: scoped core bearer with `companion:register:write`, or an owner-grade bearer credential.
 
 Headers:
 
@@ -758,7 +772,7 @@ Example response:
 
 Method: `POST`
 
-Authentication: `x-oneiron-secret` required unless development config allows unauthenticated access.
+Authentication: owner-grade credential required — the configured trust-root secret sent verbatim, or a minted token carrying no narrowing claims. This is a legacy `/api/*` route: a scoped bearer authenticates but is refused here with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Unauthenticated only when development config explicitly allows it.
 
 Headers:
 
@@ -899,7 +913,7 @@ Fetch Tier-3 only when writing validation code, generating clients, or recoverin
     "when_to_load": { "type": "string" },
     "how_to_load": {
       "type": "string",
-      "const": "Resolve endpoint against the same origin used for /api/core/discover and send the configured x-oneiron-secret; do not resolve the pack against a local working directory."
+      "const": "Resolve endpoint against the same origin used for /api/core/discover and send the configured bearer credential; do not resolve the pack against a local working directory."
     },
     "layer_boundary": {
       "type": "string",
@@ -991,13 +1005,13 @@ Fully specified entries:
     "error_code": "UNAUTHORIZED",
     "human_message": "request is not authorized",
     "recovery_suggestions": [
-      "Send the configured x-oneiron-secret header and retry."
+      "Send Authorization: Bearer credentials and retry."
     ],
     "wire_fields": {
       "code": "UNAUTHORIZED",
       "message": "request is not authorized",
       "details": { "code": "UNAUTHORIZED" },
-      "suggestions": ["Send the configured x-oneiron-secret header and retry."]
+      "suggestions": ["Send Authorization: Bearer credentials and retry."]
     }
   },
   {
@@ -1052,7 +1066,7 @@ Closed code catalog currently emitted by server API code:
 
 ### Recovery Rules
 
-- Auth failures: add or correct `x-oneiron-secret`, then retry once.
+- Auth failures: add or correct the `Authorization: Bearer` credential, then retry once.
 - Bad path ids: validate 32 lowercase hex characters before retrying entity or edge reads.
 - Bad vector query: send comma-separated `f32` values with no empty segments.
 - Invalid view: use `summary`, `standard`, or `full`.

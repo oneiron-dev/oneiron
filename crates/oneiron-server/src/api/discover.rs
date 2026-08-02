@@ -280,7 +280,7 @@ pub(crate) struct RateLimitStatus {
                     "pack_format": "agentskills.io",
                     "mime_type": "text/markdown",
                     "when_to_load": "GET /api/skills/oneiron.skills.md from the same Oneiron HTTP origin before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.",
-                    "how_to_load": "Resolve endpoint against the same origin used for /api/core/discover and send the configured x-oneiron-secret; do not resolve the pack against a local working directory.",
+                    "how_to_load": "Resolve endpoint against the same origin used for /api/core/discover and send the configured bearer credential; do not resolve the pack against a local working directory.",
                     "layer_boundary": "skills = how to think about memory; MCP tools = what to call"
                 },
                 "bound": {
@@ -343,14 +343,14 @@ pub(crate) struct RateLimitStatus {
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
+            description = "Missing or invalid bearer credentials.",
             body = ApiError,
             content_type = "application/json",
             example = json!({
                 "code": "UNAUTHORIZED",
-                "message": "unauthorized",
+                "message": "request is not authorized",
                 "details": { "code": "UNAUTHORIZED" },
-                "suggestions": ["set x-oneiron-secret to the configured shared secret"]
+                "suggestions": ["Send Authorization: Bearer credentials and retry."]
             })
         ),
         (
@@ -365,7 +365,7 @@ pub(crate) async fn discover(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server)?;
     discover_response(&server).map(Json)
 }
 
