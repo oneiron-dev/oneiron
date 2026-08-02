@@ -315,6 +315,15 @@ pub(crate) fn merge_persisted_state_into_doc(
             blobs.push(v.to_vec());
         }
     }
+    // NO device-import provenance here (fix-13 P1-1), deliberately — unlike
+    // the sibling replays this one merges into a doc that did NOT necessarily
+    // author these ops (that is the whole point: the anti-clobber guard exists
+    // for state a PARALLEL writer persisted). Tagging it would let one doc's
+    // rejected-but-persisted local removal be re-presented to another doc's
+    // Observer B as admitted. It costs nothing to stay strict: a removal
+    // `Vault::unstamp_facet_of` authored has already torn the LMDB rows, and
+    // `gate_facet_of_unstamp` PASSES on an absent stamp, so the honest case
+    // never needs the relaxation on this path.
     for blob in &blobs {
         import_doc(doc, blob)?;
     }
@@ -361,6 +370,14 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
 /// re-implementing the replay out-of-crate is precisely the
 /// production-divergence class that ticket closes, and `#[cfg(test)]`
 /// helpers are invisible to integration-test crates.
+///
+/// DEVICE-IMPORT PROVENANCE (fix-13 P1-1). These `u:w:` rows are bytes this
+/// device already ADMITTED once — Observer A persists local commits, and the
+/// remote arm persists only frames that cleared their admission gate. Replaying
+/// them is therefore in-domain, and the replay carries the internal
+/// device-import origin so a re-observed `FacetOf` removal it already applied
+/// is not re-gated into a refusal on restart. Bytes that never passed an
+/// admission gate never reach this row family.
 pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
     // Prefix iterator (B-tree range seek); `{seq:08x}` keys sort in order.
@@ -369,7 +386,7 @@ pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKe
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
         let (_k, v) = entry?;
-        import_doc(doc, &v)?;
+        bridge::import_device_admitted_update(doc, &v)?;
         applied += 1;
     }
     Ok(applied)
@@ -613,7 +630,10 @@ pub fn rebuild_window_from_updates(
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
         let (_k, v) = entry?;
-        import_doc(&doc, &v)?;
+        // Same already-admitted family as `apply_pending_window_updates`
+        // (fix-13 P1-1) — kept identical so a rebuild and a replay of the
+        // same rows can never disagree on provenance.
+        bridge::import_device_admitted_update(&doc, &v)?;
     }
     Ok(doc)
 }

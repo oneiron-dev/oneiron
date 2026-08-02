@@ -1426,6 +1426,19 @@ impl Vault {
     /// record into a fresh incarnation of the same stamp). Authorization held
     /// apart from the act, in any form, can be spent on a different act.
     ///
+    /// THE DOC REMOVAL RIDES THE SAME ACT (fix-13 P1-2). Tearing only the LMDB
+    /// rows left the CRDT stamp standing, and a stamp alive in the doc is not
+    /// an inert leftover: restart's forward rematerialization walks the edges
+    /// map and writes every surviving stamp BACK into LMDB, so an unstamp the
+    /// owner consented to silently UNDID itself on the next open — and
+    /// propagated the survivor to every peer. `remove_facet_of_edge_from_docs`
+    /// therefore removes the `edges`-map key as part of this operation, under
+    /// the internal `FACET_UNSTAMP_ORIGIN` provenance so Observer B does not
+    /// re-materialize (and re-gate) the removal it just performed. The ledger
+    /// event, its mirror, the LMDB tear and the doc removal are ONE local act;
+    /// propagation is then the ordinary echo, which the receiving device's
+    /// device-import door applies (fix-12/13 P1-1).
+    ///
     /// Returns `false` when no such stamp existed. Nothing is written in that
     /// case — there was no reclassification, so the ledger records none.
     pub fn unstamp_facet_of(
@@ -1436,7 +1449,7 @@ impl Vault {
     ) -> Result<bool> {
         let key_out = Store::encode_edge_key(record, EdgeKind::FacetOf, facet_id);
         let key_in = Store::encode_edge_key(facet_id, EdgeKind::FacetOf, record);
-        self.with_write_txn(|wtxn| {
+        let unstamped = self.with_write_txn(|wtxn| {
             if self.store.edges_out.get(&*wtxn, &key_out)?.is_none() {
                 return Ok(false);
             }
@@ -1446,7 +1459,113 @@ impl Vault {
             crate::ppr::invalidate_ppr_for_edge(&self.store, wtxn, record, facet_id)?;
             crate::ppr::increment_graph_version(&self.store, wtxn)?;
             Ok(true)
+        })?;
+        if unstamped {
+            self.remove_facet_of_edge_from_docs(record, facet_id)?;
+        }
+        Ok(unstamped)
+    }
+
+    /// Removes the `record -FacetOf-> facet` key from every window doc that
+    /// can carry it, so a consented unstamp does not survive in the CRDT and
+    /// get re-materialized by restart recovery (fix-13 P1-2).
+    ///
+    /// Scope is EVERY live window plus the record's own persisted window: the
+    /// CRDT edge key lives in the SOURCE entity's `learned_at` month (that is
+    /// where reverse remat packs it), which need not be open — and a transient
+    /// load is exactly how the deletion path reaches a closed month too. A
+    /// missing entity row (headerless residue) or a window with no persisted
+    /// state is not an error here: there is then no doc carrier to remove, the
+    /// LMDB tear already committed, and the live pass below still covers any
+    /// open month that happens to hold the key.
+    ///
+    /// Commits carry `FACET_UNSTAMP_ORIGIN`, which Observer B skips — the LMDB
+    /// rows are already gone in the same act, so a re-materialization would be
+    /// a redundant second tear (the `DELETION_TOMBSTONE_ORIGIN` precedent).
+    /// Observer A is NOT suppressed: this removal MUST become a `u:w:` row and
+    /// an outbound update, or it would never reach the other devices.
+    #[cfg(feature = "sync")]
+    fn remove_facet_of_edge_from_docs(&self, record: &EntityId, facet_id: &EntityId) -> Result<()> {
+        use crate::sync::bridge::{FACET_UNSTAMP_ORIGIN, format_edge_key};
+        use crate::sync::loro_support::{map_contains_key, map_delete};
+        use loro::CommitOptions;
+
+        let edge_key = format_edge_key(record, EdgeKind::FacetOf, facet_id);
+        let mut covered_live = false;
+        for window in self.live_windows() {
+            let edges = window.doc.get_map("edges");
+            if map_contains_key(&edges, &edge_key) {
+                map_delete(&edges, &edge_key)?;
+                // Observer B skips this origin (the LMDB rows are already gone
+                // in the same act); Observer A is deliberately NOT suppressed,
+                // so the removal lands as an ordinary `u:w:` carrier row and an
+                // outbound update — that IS the propagation, and it is what a
+                // restart replays.
+                window
+                    .doc
+                    .commit_with(CommitOptions::new().origin(FACET_UNSTAMP_ORIGIN));
+                covered_live = true;
+            }
+        }
+        if covered_live {
+            return Ok(());
+        }
+
+        // The source's own window, when no live doc carried the key. A
+        // `learned_at` we cannot read (headerless residue) addresses nothing,
+        // and a window with no persisted state has no carrier to remove.
+        let learned_at = match self.get_learned_at(record) {
+            Ok(learned_at) => learned_at,
+            Err(crate::Error::EntityNotFound) => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        let window_key = crate::sync::WindowKey::from_timestamp(learned_at);
+        let doc = match crate::sync::window::load_window_from_state(self, "local", &window_key) {
+            Ok(doc) => doc,
+            Err(crate::Error::WindowNotFound { .. }) => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        let edges = doc.get_map("edges");
+        if !map_contains_key(&edges, &edge_key) {
+            return Ok(());
+        }
+        map_delete(&edges, &edge_key)?;
+        doc.commit_with(CommitOptions::new().origin(FACET_UNSTAMP_ORIGIN));
+        // Transient doc — no observers, so the durable record is written here.
+        // The snapshot subsumes the `u:w:` rows `load_window_from_state` just
+        // merged, so those rows are deliberately left in place (re-importing a
+        // subsumed add-op into a doc that already holds the later removal is a
+        // VV-dominated no-op) and `svf:` is recomputed LAST from the surviving
+        // set (ONE-1151) — it reads STALE, which makes the fast-reconnect
+        // reader full-open rather than trust a partial VV. Propagation for a
+        // CLOSED month is the ordinary next-open VV exchange, whose delta now
+        // carries the removal.
+        let snapshot =
+            crate::sync::window::export_scrubbed_window_snapshot(self, &window_key, &doc)?;
+        let vv = crate::sync::loro_support::doc_version_vector(&doc);
+        self.with_write_txn(|wtxn| {
+            crate::sync::window::persist_window_doc_in_txn(
+                self,
+                wtxn,
+                &window_key,
+                &snapshot,
+                &vv,
+            )?;
+            crate::sync::window::write_window_svf_in_txn(self, wtxn, &window_key)
         })
+    }
+
+    #[cfg(not(feature = "sync"))]
+    #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
+    fn remove_facet_of_edge_from_docs(
+        &self,
+        _record: &EntityId,
+        _facet_id: &EntityId,
+    ) -> Result<()> {
+        // No CRDT in this build: the LMDB tear IS the whole act, and a
+        // sync-enabled boot rebuilds the doc from LMDB (reverse remat), which
+        // inserts MISSING records only — it never re-adds a row that is gone.
+        Ok(())
     }
 
     /// Reads the append-only reclassification LEDGER for one `(record, facet)`

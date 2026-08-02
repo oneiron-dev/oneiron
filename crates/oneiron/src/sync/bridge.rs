@@ -54,6 +54,66 @@ pub const BRIDGE_ORIGIN: &str = "bridge";
 /// skips it, preserving the tombstone-first → local-purge ordering.
 pub(crate) const DELETION_TOMBSTONE_ORIGIN: &str = "deletion_tombstone";
 
+/// Origin tag for bytes this device ADMITTED as a device-plane import
+/// (fix-13 P1-1) — the ONLY provenance under which Observer B may run the
+/// relaxed replicated-edge door.
+///
+/// Fix-12 relaxed `gate_facet_of_unstamp` for every Observer-B edge batch,
+/// arguing plane topology. But Observer B fires for ANY doc mutation, and the
+/// lane OFFERS several raw local seams onto the same observed doc — the public
+/// `LoadedWindow.doc`, `SyncClient::import_queued_update`, and the offline
+/// `SyncQueue` replay. A bare `edges`-map removal authored through any of them
+/// reached the relaxed arm and tore the LMDB stamp with no consent event: the
+/// exact laundering shape this lane exists to close, reached by writing to the
+/// doc instead of calling a delete. Trusting the host does not make an
+/// invariant the lane's own surface can violate hold.
+///
+/// So the relaxation binds PROVENANCE, not merely "the observer ran". The tag
+/// is written by exactly two internal sites and is unforgeable from outside
+/// the crate ([`import_device_admitted_update`] is `pub(crate)`; the constant
+/// is private):
+///
+/// * the LIVE device-import path (`SyncClient::import_accepted_window_update`,
+///   after the federation/bulk admission gates have run), and
+/// * REPLAY of our own persisted accepted bytes
+///   (`window::apply_pending_window_updates`, `window::forward_rematerialize`)
+///   — those bytes were admitted through the live path once, so replaying them
+///   is in-domain by construction.
+///
+/// Everything else — raw local commits, queued-update imports, direct doc
+/// mutation by a host — keeps the ABSOLUTE gate, so on those paths the only
+/// removal that can reach LMDB is still [`crate::Vault::unstamp_facet_of`].
+const DEVICE_IMPORT_ORIGIN: &str = "device_import";
+
+/// Imports already-admitted device-plane bytes into an OBSERVED doc under the
+/// internal [`DEVICE_IMPORT_ORIGIN`] provenance.
+///
+/// This is the ONLY way to open the relaxed replicated-edge door. Callers must
+/// have run their admission gate first (federation admission, bulk-transfer
+/// admission) or be replaying bytes this device already admitted.
+#[allow(clippy::doc_markdown)]
+pub(crate) fn import_device_admitted_update(doc: &LoroDoc, bytes: &[u8]) -> Result<()> {
+    doc.import_with(bytes, DEVICE_IMPORT_ORIGIN)
+        .map_err(|source| Error::CrdtDecodeError {
+            context: "import device-admitted update",
+            source,
+        })?;
+    Ok(())
+}
+
+/// Origin tag for the CRDT edge removal `Vault::unstamp_facet_of` authors as
+/// part of its atomic consent+act (fix-13 P1-2).
+///
+/// The consent event, its Tier-A ledger mirror, the LMDB tear AND the doc
+/// removal are ONE local act; propagation is then the ordinary echo. Observer
+/// B skips this origin — the LMDB rows are already gone in the same commit, so
+/// re-materializing the removal would be a redundant second tear (and would
+/// re-enter the gate on a path that has already consented). Same precedent as
+/// [`DELETION_TOMBSTONE_ORIGIN`], which the deletion path uses for exactly the
+/// same reason.
+#[cfg(feature = "sync")]
+pub(crate) const FACET_UNSTAMP_ORIGIN: &str = "facet_unstamp";
+
 thread_local! {
     /// `write_crdt_tombstone` commits a live-doc update before it can assemble
     /// the snapshot/delta inputs for its one LMDB TXN1. Suppress Observer A
@@ -403,15 +463,54 @@ pub fn register_observer_b(
     (entity_sub, edge_sub, tombstone_sub)
 }
 
+/// What an Observer B callback may do with a `FacetOf` removal it sees.
+///
+/// Carried per-EVENT, derived from the commit's origin (fix-13 P1-1) — never
+/// from ambient state, so two docs, two threads, or a re-entrant commit cannot
+/// leak one plane's provenance onto another's batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EdgeRemovalProvenance {
+    /// Bytes this device admitted through the device-plane import path (or a
+    /// replay of bytes it already admitted): the removal is another of the
+    /// owner's devices echoing a consent its own local gate already enforced,
+    /// so the relaxed door applies it (fix-12 plane trust, now provenance
+    /// bound).
+    DeviceAdmitted,
+    /// Anything else — a raw local commit on the observed doc, a queued-update
+    /// import, a host writing `LoadedWindow.doc` directly. The ABSOLUTE
+    /// `gate_facet_of_unstamp` runs, so the removal is refused and quarantined
+    /// rather than tearing the stamp consent-free.
+    Local,
+}
+
+impl EdgeRemovalProvenance {
+    fn for_origin(origin: &str) -> Self {
+        if origin == DEVICE_IMPORT_ORIGIN {
+            Self::DeviceAdmitted
+        } else {
+            Self::Local
+        }
+    }
+
+    const fn replicated_door(self) -> bool {
+        matches!(self, Self::DeviceAdmitted)
+    }
+}
+
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
+///
+/// The event's ORIGIN is classified into an [`EdgeRemovalProvenance`] and
+/// handed to the materializer: only `DEVICE_IMPORT_ORIGIN` opens the relaxed
+/// replicated-edge door (fix-13 P1-1). Entity/tombstone materializers ignore
+/// the argument — the relaxation is edge-only.
 fn subscribe_map_observer(
     doc: &LoroDoc,
     map: &LoroMap,
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
     window_key: &str,
-    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str, u64),
+    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str, u64, EdgeRemovalProvenance),
 ) -> Subscription {
     let callback_doc = doc.clone();
     let subscription_doc = doc.clone();
@@ -423,9 +522,13 @@ fn subscribe_map_observer(
     subscription_doc.subscribe(
         &cid,
         Arc::new(move |event| {
-            if matches!(event.origin, BRIDGE_ORIGIN | DELETION_TOMBSTONE_ORIGIN) {
+            if matches!(
+                event.origin,
+                BRIDGE_ORIGIN | DELETION_TOMBSTONE_ORIGIN | FACET_UNSTAMP_ORIGIN
+            ) {
                 return;
             }
+            let provenance = EdgeRemovalProvenance::for_origin(event.origin);
             let _guard = materializer.lock();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
@@ -435,6 +538,7 @@ fn subscribe_map_observer(
                         &vault,
                         &window_key,
                         lease_vault_id,
+                        provenance,
                     );
                 }
             }
@@ -456,12 +560,15 @@ fn subscribe_map_observer(
 /// txn had applied (ONE-1147, parity with the hardened tombstone path) —
 /// the ops stay committed in the CRDT doc, so a bare log would leave a
 /// silent LMDB↔CRDT divergence until the next full window recovery.
+/// `_removal_provenance`: the edge-door relaxation is edge-only — an entity
+/// batch has no `FacetOf` removal to decide (fix-13 P1-1).
 fn materialize_entities_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
     lease_vault_id: u64,
+    _removal_provenance: EdgeRemovalProvenance,
 ) {
     let tombstones_map = doc.get_map("tombstones");
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
@@ -698,12 +805,18 @@ fn materialize_entities_from_delta(
 /// re-walk the whole window's entities/edges maps, so the source id is
 /// sufficient to get the edge re-processed, and the marker discharges when
 /// the healing edge write lands.
+/// `removal_provenance` decides ONE thing (fix-13 P1-1): whether a `FacetOf`
+/// removal in this batch may ride the relaxed replicated door. Only bytes
+/// admitted through [`import_device_admitted_update`] qualify; every other
+/// origin keeps the absolute `gate_facet_of_unstamp`. Every other check in
+/// this function is provenance-independent.
 fn materialize_edges_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
     lease_vault_id: u64,
+    removal_provenance: EdgeRemovalProvenance,
 ) {
     // ONE-1147: source id + LMDB edge key + op bytes for every UPSERT
     // pushed into the batch, retained outside the txn for the swallow site
@@ -1027,9 +1140,24 @@ fn materialize_edges_from_delta(
                         )?;
                         continue;
                     }
-                    // ONE-1646 unstamp consent, REPLICATED side: this door
-                    // APPLIES a `FacetOf` removal. It carries no consent gate,
-                    // and the PLANE TOPOLOGY is why (fix-12, plane-trust v1):
+                    // ONE-1646 unstamp consent, REPLICATED side. This arm may
+                    // APPLY a `FacetOf` removal — but ONLY under
+                    // `EdgeRemovalProvenance::DeviceAdmitted` (fix-13 P1-1).
+                    // The provenance travels with the EVENT, from the origin
+                    // the commit was made under, so no ambient state and no
+                    // other doc can lend it.
+                    //
+                    // Under `Local` provenance the ABSOLUTE gate runs and the
+                    // removal is refused + quarantined: a raw commit on the
+                    // observed doc (public `LoadedWindow.doc`,
+                    // `import_queued_update`, a `SyncQueue` replay) must not be
+                    // able to tear a stamp the local plane would never let a
+                    // delete touch. The lane's invariant — FacetOf removals
+                    // only via `Vault::unstamp_facet_of` — has to hold on every
+                    // path the lane OFFERS, trusted host or not.
+                    //
+                    // For DEVICE-ADMITTED bytes the fix-12 plane-trust argument
+                    // stands unchanged:
                     //
                     // * the MEMBER/GUEST plane cannot EXPRESS a removal at
                     //   all. It enters through
@@ -1064,6 +1192,40 @@ fn materialize_edges_from_delta(
                     // binding that this argument assumes of the device plane;
                     // without it a scoped token would be a third removal-
                     // capable plane and this door would need a real gate.
+                    //
+                    // THE LOCAL-PROVENANCE REFUSAL, decided HERE and not left
+                    // to the gate inside `apply_ops` (fix-13 P1-1). The gate
+                    // ABORTS, and an abort at Observer B is the H2 wedge the
+                    // whole replay design avoids: one refused row would take
+                    // the entire batch — every unrelated sibling op in the same
+                    // commit — down with it, permanently. So the refusal is
+                    // taken at the staging point as a QUARANTINE-AND-CONTINUE,
+                    // with the same typed reason (`FacetUnstampWithoutConsent`)
+                    // the local doors return. The decision is in-txn (fix-4):
+                    // this block runs inside the batch's own `wtxn`, so it sees
+                    // exactly the edge row the removal would tear. The gate
+                    // inside `apply_ops` stays as the backstop for any arm that
+                    // forgets — it just never fires from here.
+                    if !removal_provenance.replicated_door()
+                        && let Err(refusal) = crate::disclosure::gate_facet_of_unstamp(
+                            &vault.store,
+                            &*wtxn,
+                            &src,
+                            kind,
+                            &tgt,
+                        )
+                    {
+                        quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Edges,
+                            key.as_ref(),
+                            &refusal,
+                            &[],
+                        )?;
+                        continue;
+                    }
                     ops.push(BatchOp::DeleteEdge { src, kind, tgt });
                     metas.push(EdgeOpMeta::for_key(key.as_ref(), &[]));
                 }
@@ -1082,7 +1244,14 @@ fn materialize_edges_from_delta(
                 }
             }
         }
-        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)?;
+        apply_materialized_edge_ops(
+            vault,
+            wtxn,
+            ops,
+            &metas,
+            window_key,
+            removal_provenance,
+        )?;
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(
@@ -1282,20 +1451,27 @@ fn quarantine_edge_apply_failure(
     Ok(())
 }
 
-/// The ONE seam every replicated edge op applies through, so no arm of
+/// The ONE seam every Observer-B edge op applies through, so no arm of
 /// [`apply_materialized_edge_ops`] can drift from another on which gates run.
 ///
-/// It marks the batch as the REPLICATED EDGE DOOR
+/// `provenance` decides whether the batch carries the REPLICATED EDGE DOOR
 /// ([`batch::ApplyOpsGateMode::with_replicated_edge_door`]), which relaxes
-/// exactly `gate_facet_of_unstamp` — a LOCAL-plane rule, see the plane-trust
-/// note on [`materialize_edges_from_delta`]'s removal arm. Nothing else
-/// changes: this is the same `record_decisions=false`,
+/// exactly `gate_facet_of_unstamp`. Only `DeviceAdmitted` bytes open it
+/// (fix-13 P1-1); `Local` runs the absolute gate. Nothing else changes with
+/// provenance: both are the same `record_decisions=false`,
 /// `persist_pending_consent=false` mode the replicated path always used.
 fn apply_replicated_edge_ops(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     ops: Vec<BatchOp>,
+    provenance: EdgeRemovalProvenance,
 ) -> Result<()> {
+    let gate_mode = batch::ApplyOpsGateMode::new(false, false);
+    let gate_mode = if provenance.replicated_door() {
+        gate_mode.with_replicated_edge_door()
+    } else {
+        gate_mode
+    };
     batch::apply_ops_with_gate_mode(
         &vault.store,
         &vault.config,
@@ -1305,7 +1481,7 @@ fn apply_replicated_edge_ops(
         vault
             .text_index_trusted
             .load(std::sync::atomic::Ordering::Acquire),
-        batch::ApplyOpsGateMode::new(false, false).with_replicated_edge_door(),
+        gate_mode,
     )
 }
 
@@ -1318,6 +1494,7 @@ fn apply_materialized_edge_ops(
     ops: Vec<BatchOp>,
     metas: &[EdgeOpMeta],
     window_key: &str,
+    provenance: EdgeRemovalProvenance,
 ) -> Result<()> {
     debug_assert_eq!(ops.len(), metas.len());
     let mut child_of_adds = Vec::<PendingChildOfOp>::new();
@@ -1366,7 +1543,7 @@ fn apply_materialized_edge_ops(
                 });
             }
             _ => {
-                let apply_result = apply_replicated_edge_ops(vault, wtxn, vec![op]);
+                let apply_result = apply_replicated_edge_ops(vault, wtxn, vec![op], provenance);
                 match apply_result {
                     Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
                     Err(e) => {
@@ -1381,7 +1558,7 @@ fn apply_materialized_edge_ops(
     child_of_deletes.sort_by(cmp_pending_child_of_ops);
     for pending in child_of_deletes {
         let index = pending.index;
-        let apply_result = apply_replicated_edge_ops(vault, wtxn, vec![pending.op]);
+        let apply_result = apply_replicated_edge_ops(vault, wtxn, vec![pending.op], provenance);
         match apply_result {
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
             Err(e) => {
@@ -1401,7 +1578,7 @@ fn apply_materialized_edge_ops(
         let mut component_ops = component;
         component_ops.sort_by(cmp_pending_child_of_ops);
         let ops: Vec<BatchOp> = component_ops.iter().map(|entry| entry.op.clone()).collect();
-        let apply_result = apply_replicated_edge_ops(vault, wtxn, ops);
+        let apply_result = apply_replicated_edge_ops(vault, wtxn, ops, provenance);
         match apply_result {
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
             Err(_) => {
@@ -1412,7 +1589,8 @@ fn apply_materialized_edge_ops(
                 // quarantined — never falsely recording siblings that are valid
                 // on their own.
                 for pending in component_ops {
-                    let apply_result = apply_replicated_edge_ops(vault, wtxn, vec![pending.op]);
+                    let apply_result =
+                        apply_replicated_edge_ops(vault, wtxn, vec![pending.op], provenance);
                     match apply_result {
                         Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
                         Err(e) => {
@@ -1518,6 +1696,7 @@ fn materialize_tombstones_from_delta(
     vault: &Vault,
     window_key: &str,
     _lease_vault_id: u64,
+    _removal_provenance: EdgeRemovalProvenance,
 ) {
     let entities_map = doc.get_map("entities");
     for (key, new_val) in &delta.updated {
