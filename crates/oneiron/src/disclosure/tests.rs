@@ -201,6 +201,50 @@ fn tier_rule_3_sensitivity_band_fails_closed() -> Result<()> {
     Ok(())
 }
 
+/// ONE-1645: the unstamped floor reaches the tier boundary. A claim with no
+/// recorded provenance fails closed to Tier A — never disclosed to a
+/// non-owner party — while a claim carrying a positive public stamp still
+/// reaches Tier B. Proves the floor narrows absence without swallowing
+/// legitimately-public claims.
+#[test]
+fn tier_rule_3_unstamped_claim_fails_closed_to_tier_a() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let id = test_id(0x16);
+
+    let table: [(&str, Option<Value>, DisclosureTier); 4] = [
+        ("no scope map", None, DisclosureTier::TierA),
+        (
+            "empty scope map",
+            Some(Value::Map(vec![])),
+            DisclosureTier::TierA,
+        ),
+        (
+            "scope map without a sensitivity key",
+            Some(Value::Map(vec![(
+                Value::from("federated_original_source"),
+                Value::from("imported"),
+            )])),
+            DisclosureTier::TierA,
+        ),
+        (
+            "explicit public stamp",
+            Some(sensitivity_scope("public")),
+            DisclosureTier::TierB,
+        ),
+    ];
+    for (label, scope, expected) in table {
+        // A non-Tier-A predicate, so rule 3 is the only rule in play.
+        let body = claim_with_scope("profile.hobby", scope);
+        assert_eq!(
+            disclosure_tier(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&body))?,
+            expected,
+            "{label} must resolve to {expected:?}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -221,7 +265,10 @@ fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
             "predicate {predicate} must be Tier A"
         );
     }
-    let control = claim_with_scope("profile.hobby", None);
+    // The control carries an explicit public stamp so this test isolates rule
+    // 4: without one it would fail closed at rule 3 on the ONE-1645 unstamped
+    // floor before ever reaching the predicate check.
+    let control = claim_with_scope("profile.hobby", Some(sensitivity_scope("public")));
     assert_eq!(
         disclosure_tier(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&control))?,
         DisclosureTier::TierB

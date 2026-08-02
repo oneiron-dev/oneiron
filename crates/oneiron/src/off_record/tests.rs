@@ -2,6 +2,7 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::error::{Error, ErrorKind};
+use crate::genui::ConsentActorIdentity;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchPipeline, OutboundDispatchRequest,
@@ -19,6 +20,17 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
     (tmp, vault)
+}
+
+/// The owner principal every promote test authenticates against.
+const OWNER_PRINCIPAL: &str = "owner-test";
+
+/// A `SurfaceActor` that authenticates [`OWNER_PRINCIPAL`] — the ordinary
+/// authenticated-promote caller. Promote-auth itself is pinned separately.
+fn owner_actor() -> ConsentActorIdentity {
+    ConsentActorIdentity::SurfaceActor {
+        actor_ref: OWNER_PRINCIPAL.to_owned(),
+    }
 }
 
 fn seed_turn(vault: &Vault, at: u64) -> EntityId {
@@ -669,11 +681,12 @@ fn off_record_promote_writes_exactly_one_turn() {
     assert!(surfaced_turns(&vault).is_empty());
 
     let receipt = vault
-        .promote_off_record_turn("sess-promote", &kept)
+        .promote_off_record_turn("sess-promote", &kept, &owner_actor(), OWNER_PRINCIPAL)
         .expect("promote");
     assert_eq!(receipt.turn, *kept.as_bytes());
     assert_eq!(receipt.session_ref, "sess-promote");
-    assert_eq!(receipt.initiator, "user");
+    assert_eq!(receipt.initiator_ref, OWNER_PRINCIPAL);
+    assert_eq!(receipt.initiator_kind, "surface_actor");
 
     // Exactly one turn crossed the fence.
     let record = vault
@@ -686,7 +699,7 @@ fn off_record_promote_writes_exactly_one_turn() {
     assert_eq!(surfaced, vec![kept]);
 
     let repromote = vault
-        .promote_off_record_turn("sess-promote", &kept)
+        .promote_off_record_turn("sess-promote", &kept, &owner_actor(), OWNER_PRINCIPAL)
         .expect_err("promote lifts one live fence");
     assert_eq!(repromote.kind(), ErrorKind::OffRecordTurnNotFenced);
 
@@ -744,7 +757,12 @@ fn off_record_close_and_promote_are_serialized_by_registry_lock() {
         let promote_vault = &vault;
         let promote = scope.spawn(move || {
             promote_barrier.wait();
-            promote_vault.promote_off_record_turn("sess-close-promote", &turn)
+            promote_vault.promote_off_record_turn(
+                "sess-close-promote",
+                &turn,
+                &owner_actor(),
+                OWNER_PRINCIPAL,
+            )
         });
         barrier.wait();
         (
@@ -813,7 +831,7 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
         .expect_err("tag during close");
     assert_eq!(tag.kind(), ErrorKind::OffRecordSessionClosing);
     let promote = vault
-        .promote_off_record_turn("sess-toctou", &fenced)
+        .promote_off_record_turn("sess-toctou", &fenced, &owner_actor(), OWNER_PRINCIPAL)
         .expect_err("promote during close");
     assert_eq!(promote.kind(), ErrorKind::OffRecordSessionClosing);
     // A promote rejected because the session is closing must NOT have committed
@@ -1070,7 +1088,7 @@ fn off_record_session_ref_bounds_are_enforced_everywhere() {
         .expect_err("oversized note");
     assert_eq!(note.kind(), ErrorKind::InvalidConfig);
     let promote = vault
-        .promote_off_record_turn(&oversized, &turn)
+        .promote_off_record_turn(&oversized, &turn, &owner_actor(), OWNER_PRINCIPAL)
         .expect_err("oversized promote");
     assert_eq!(promote.kind(), ErrorKind::InvalidConfig);
     let log = vault
@@ -1171,7 +1189,8 @@ fn promote_without_entity_keeps_guard_active_for_late_write() -> Result<()> {
 
     // Promote the body-less turn. The fence must NOT be lifted into an open
     // durable write door.
-    let receipt = vault.promote_off_record_turn(session_ref, &id)?;
+    let receipt =
+        vault.promote_off_record_turn(session_ref, &id, &owner_actor(), OWNER_PRINCIPAL)?;
     assert_eq!(receipt.turn, *id.as_bytes());
 
     // A later ordinary put_entity for the promoted-but-never-written id must
@@ -1225,7 +1244,7 @@ fn tag_rejects_re_fencing_a_durably_promoted_turn_in_a_later_session() -> Result
     let id = seed_turn(&vault, 1000); // entity exists, so promote lifts the fence.
     vault.enter_off_record_session("sess-1", OffRecordBackendClass::Local)?;
     vault.tag_turn_off_record("sess-1", &id)?;
-    vault.promote_off_record_turn("sess-1", &id)?;
+    vault.promote_off_record_turn("sess-1", &id, &owner_actor(), OWNER_PRINCIPAL)?;
     let log = vault.off_record_receipt_log("sess-1")?;
     vault.close_off_record_session("sess-1", log)?;
     assert!(
@@ -1396,5 +1415,109 @@ fn off_record_orphaned_context_receipt_is_swept_on_reopen() -> Result<()> {
     // Idempotent: a second reopen is a clean no-op.
     let reopened_again = Vault::open(tmp.path(), VaultConfig::default())?;
     assert!(reopened_again.retrieval_run(run_id)?.is_none());
+    Ok(())
+}
+
+// ─── ONE-1645 authenticated promote ─────────────────────────────────────────
+
+/// Promote is a widening op, so an actor that does not authenticate the owner
+/// principal is rejected before any state is read. The fence stands, no
+/// receipt is minted, and the turn is still fenced in the session record.
+///
+/// The table covers every way `authenticates_principal` can fail closed,
+/// including an unverified voice path — the bool's ANCHORING is ONE-1647's
+/// leg, but rejecting the false case is this lane's.
+#[test]
+fn promote_requires_authenticated_actor() -> Result<()> {
+    let table: [(&str, ConsentActorIdentity, &str); 4] = [
+        (
+            "actor_ref does not match the principal",
+            ConsentActorIdentity::SurfaceActor {
+                actor_ref: "someone-else".to_owned(),
+            },
+            OWNER_PRINCIPAL,
+        ),
+        (
+            "blank principal",
+            ConsentActorIdentity::SurfaceActor {
+                actor_ref: OWNER_PRINCIPAL.to_owned(),
+            },
+            "   ",
+        ),
+        (
+            "blank actor ref",
+            ConsentActorIdentity::SurfaceActor {
+                actor_ref: String::new(),
+            },
+            OWNER_PRINCIPAL,
+        ),
+        (
+            "unverified voice path",
+            ConsentActorIdentity::VoicePath {
+                speaker_ref: OWNER_PRINCIPAL.to_owned(),
+                owner_voice_print_verified: false,
+            },
+            OWNER_PRINCIPAL,
+        ),
+    ];
+
+    for (label, actor, principal) in table {
+        let (_tmp, vault) = temp_vault();
+        let turn = seed_turn(&vault, 1000);
+        vault.enter_off_record_session("sess-auth", OffRecordBackendClass::Local)?;
+        vault.tag_turn_off_record("sess-auth", &turn)?;
+
+        let err = vault
+            .promote_off_record_turn("sess-auth", &turn, &actor, principal)
+            .expect_err(label);
+        assert_eq!(
+            err.kind(),
+            ErrorKind::OffRecordPromoteUnauthenticated,
+            "{label}"
+        );
+        assert!(
+            vault.off_record_promote_receipt(&turn)?.is_none(),
+            "{label}: an unauthenticated promote must mint no receipt"
+        );
+        assert!(
+            vault.is_turn_off_record_fenced(&turn)?,
+            "{label}: the fence must stand"
+        );
+        let record = vault
+            .off_record_session("sess-auth")?
+            .expect("session record");
+        assert_eq!(
+            record.fenced_turns,
+            vec![*turn.as_bytes()],
+            "{label}: the turn stays fenced in the session record"
+        );
+        assert!(record.promoted_turns.is_empty(), "{label}");
+    }
+    Ok(())
+}
+
+/// A verified voice path authenticates, and the receipt records WHICH
+/// identity variant consented — never a literal.
+#[test]
+fn promote_receipt_records_authenticated_initiator() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    vault.enter_off_record_session("sess-voice", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-voice", &turn)?;
+
+    let actor = ConsentActorIdentity::VoicePath {
+        speaker_ref: OWNER_PRINCIPAL.to_owned(),
+        owner_voice_print_verified: true,
+    };
+    let receipt = vault.promote_off_record_turn("sess-voice", &turn, &actor, OWNER_PRINCIPAL)?;
+    assert_eq!(receipt.initiator_ref, OWNER_PRINCIPAL);
+    assert_eq!(receipt.initiator_kind, "voice_path");
+    assert_eq!(receipt.version, 0);
+
+    // The durable row round-trips the same authenticated initiator.
+    let stored = vault
+        .off_record_promote_receipt(&turn)?
+        .expect("durable receipt");
+    assert_eq!(stored, receipt);
     Ok(())
 }

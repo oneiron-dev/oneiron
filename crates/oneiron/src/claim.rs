@@ -803,7 +803,19 @@ const CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY: &str = "federated_original_sour
 pub(crate) const CLAIM_SCOPE_EVIDENCE_TAINT_KEY: &str = "evidence_taint";
 #[cfg(feature = "sync")]
 const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";
-const DEFAULT_CLAIM_SENSITIVITY_BAND: u8 = 0;
+/// Provenance inheritance floor (ONE-1645, P3/V2): the band an UNSTAMPED
+/// claim reads. A claim with no scope map, or a scope map carrying no
+/// `sensitivity` key, has no recorded provenance — so it reads "sensitive"
+/// (band 2) and every disclosure surface fails closed against it.
+///
+/// Positive-evidence rule: public is an explicit act. Only a stored
+/// `"sensitivity": "public" | 0` stamp reads band 0; absence never reads
+/// public. Band 2 (not 3) is deliberate — it holds unstamped claims out of
+/// non-owner disclosure (`disclosure_tier` Rule 3 fails closed at >= 2) while
+/// leaving them visible to the OWNER in persona compiles
+/// (`TIER_A_MIN_SENSITIVITY_BAND` = 3). Private means not-disclosed-to-others,
+/// not invisible-to-self.
+pub(crate) const UNSTAMPED_CLAIM_SENSITIVITY_BAND: u8 = 2;
 
 enum MapValue<'a> {
     Missing,
@@ -824,13 +836,20 @@ fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue
     found.map_or(MapValue::Missing, MapValue::Present)
 }
 
+/// Reads a claim's sensitivity band. Two distinct fail-closed shapes:
+///
+/// * **missing** (no scope map, or no `sensitivity` key) ⇒
+///   `Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND)` — the ONE-1645 inheritance
+///   floor. Unrecorded provenance reads private at every disclosure surface.
+/// * **ambiguous** (duplicate `sensitivity` key) ⇒ `None` — unreadable, not
+///   merely unstamped; consumers clamp harder on `None` than on the floor.
 pub(crate) fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
     let Some(Value::Map(entries)) = &body.scope else {
-        return Some(DEFAULT_CLAIM_SENSITIVITY_BAND);
+        return Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND);
     };
 
     match single_map_value(entries, CLAIM_SCOPE_SENSITIVITY_KEY) {
-        MapValue::Missing => Some(DEFAULT_CLAIM_SENSITIVITY_BAND),
+        MapValue::Missing => Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND),
         MapValue::Present(value) => sensitivity_band_from_value(value),
         MapValue::Duplicate => None,
     }
