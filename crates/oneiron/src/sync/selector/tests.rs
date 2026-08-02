@@ -3103,3 +3103,86 @@ fn selector_authorization_gates_on_pact_activation() {
         );
     }
 }
+
+// ─── fix-12 item 4: the member/guest plane is removal-free ──────────────────
+
+/// THE INVARIANT THE REPLICATED-REMOVAL DOOR STANDS ON (fix-12 item 4).
+///
+/// `sync::bridge::materialize_edges_from_delta`'s `FacetOf` removal arm
+/// APPLIES the removal with no consent gate, and the argument for that is
+/// TOPOLOGICAL: every plane that can reach the arm is in-domain, because the
+/// member/guest plane cannot EXPRESS a removal at all. Two independent
+/// mechanisms make that true, and this test pins BOTH — if either ever gains
+/// a removal-capable path, the replicated door silently becomes a laundering
+/// door, so this test must fail LOUDLY rather than the failure surfacing as a
+/// disclosure bug three layers away.
+///
+/// 1. INSERT-ONLY CONSTRUCTION. `admit_federated_window_update` never mutates
+///    the remote doc; it authors a FRESH admission doc and COPIES admitted
+///    rows into it. An absent key in the peer's frame is simply a key that is
+///    never inserted — there is no shape in the output that says "remove the
+///    receiver's row". Asserted by admitting a frame that OMITS an edge the
+///    receiver holds and checking the admitted update carries no removal of
+///    it: importing it into a doc that HAS the edge leaves the edge standing.
+/// 2. TOMBSTONE REJECTION. `reject_federated_tombstones` refuses the WHOLE
+///    frame when the peer sends deletions at all, so the other CRDT shape
+///    that could express a removal is refused at the door.
+#[test]
+fn federated_admission_cannot_express_a_removal() {
+    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x64));
+    let window_key = WindowKey::new("2026-03");
+    let claim = entity_id(0x65);
+    let facet = entity_id(0x66);
+
+    // The RECEIVER already holds the stamp a hostile peer would want gone.
+    let receiver = create_window_doc("receiver", &window_key);
+    insert_entity(&receiver, facet, ENTITY_TYPE_FACET, b"facet");
+    insert_edge(&receiver, claim, EdgeKind::FacetOf, facet);
+    receiver.commit();
+
+    // 1. INSERT-ONLY: the peer's frame simply OMITS the stamp. Admission
+    //    copies what IS there; omission is not a removal.
+    let remote = create_window_doc("remote", &window_key);
+    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
+    remote.commit();
+    let admitted = admit_federated_window_update(
+        &vault,
+        &window_key,
+        &remote.export(ExportMode::all_updates()).unwrap(),
+        FederationAdmissionRole::Member,
+    )
+    .expect("an omission is an ordinary frame");
+    receiver.import(&admitted).unwrap();
+    assert!(
+        map_get_bytes(
+            &receiver.get_map("edges"),
+            &edge_key(claim, EdgeKind::FacetOf, facet)
+        )
+        .is_some(),
+        "an admitted frame must never be able to remove the receiver's stamp"
+    );
+
+    // 2. TOMBSTONES: the only other removal-shaped input refuses the frame.
+    let with_tombstone = create_window_doc("remote-tombstone", &window_key);
+    insert_entity(&with_tombstone, facet, ENTITY_TYPE_FACET, b"facet");
+    insert_tombstone(&with_tombstone, claim);
+    with_tombstone.commit();
+    for role in [
+        FederationAdmissionRole::Member,
+        FederationAdmissionRole::Guest,
+    ] {
+        let err = admit_federated_window_update(
+            &vault,
+            &window_key,
+            &with_tombstone.export(ExportMode::all_updates()).unwrap(),
+            role,
+        )
+        .expect_err("a peer frame carrying deletions must be refused whole");
+        assert!(matches!(
+            err,
+            Error::SyncProtocolError {
+                context: SyncProtocolValidation::FederatedTombstoneAdmission
+            }
+        ));
+    }
+}

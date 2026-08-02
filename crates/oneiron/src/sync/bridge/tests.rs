@@ -456,7 +456,6 @@ fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
                     src: c,
                     kind: EdgeKind::ChildOf,
                     tgt: b,
-                    replicated_consent_verified: false,
                 },
                 BatchOp::EdgeWithCreatedAt {
                     src: a,

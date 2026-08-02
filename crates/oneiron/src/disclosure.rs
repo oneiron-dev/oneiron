@@ -2260,14 +2260,24 @@ fn reclassification_key_id(key: &[u8], offset: usize) -> Result<EntityId> {
 /// writes are an append-only LEDGER for the owner's consent surface; no gate
 /// reads them, and adding one back would restore the replay.
 ///
-/// The gate is TOTAL over the three removal paths, because all three converge
-/// on removing a row that the conjunct reads:
+/// The gate is TOTAL over the three LOCAL removal paths, because all three
+/// converge on removing a row that the conjunct reads:
 ///
 /// * [`Vault::delete_edge`] — the direct convenience door;
 /// * `BatchOp::DeleteEdge` — the staged-op arm;
 /// * FACET-entity hard delete — the cascade in `batch::delete_related_edges`
 ///   tears every inbound stamp at once, so it is gated on the facet itself
 ///   rather than per-edge.
+///
+/// LOCAL is the whole scope, and deliberately so. The REPLICATED-removal door
+/// — the sync bridge's reverse-remat arm, where another of the owner's devices
+/// echoes an unstamp it already consented to — APPLIES the removal instead
+/// (see the plane-trust note on that arm in
+/// [`crate::sync::bridge::materialize_edges_from_delta`]). Consent is enforced
+/// ONCE, at the origin device's local gate; refusing the echo would not add a
+/// second consent, it would only make a consented unstamp unpropagatable and
+/// leave the devices permanently disagreeing about a surviving record's clamp
+/// class.
 ///
 /// Non-`FacetOf` kinds pass untouched, and a NON-EXISTENT stamp passes: a
 /// delete that removes nothing widens nothing, so the gate never converts an
@@ -2290,128 +2300,6 @@ pub(crate) fn gate_facet_of_unstamp(
         facet: *tgt,
         stamped_by: Some(*src),
     })
-}
-
-/// What the REPLICATED-removal door may do with one `FacetOf` removal
-/// (fix-10 item 1).
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReplicatedUnstampVerdict {
-    /// Not a live `FacetOf` stamp, or backed by replicated consent proof
-    /// covering THIS stamp incarnation. Apply the removal.
-    Admit,
-    /// The stamp is live and the proof has not arrived yet. DEFER the row —
-    /// the removal stays in the CRDT and re-materializes once the mirror
-    /// lands. Not a rejection: proof and removal are separate CRDT rows with
-    /// no delivery-order guarantee between them.
-    Defer,
-    /// The stamp is live and a proof covering this incarnation can never
-    /// arrive, because the peer's own consent ledger for the pair is complete
-    /// and does not cover it. Quarantine THIS ROW.
-    Quarantine,
-}
-
-/// THE REPLICATED half of [`gate_facet_of_unstamp`] — the door a CRDT edge-map
-/// removal takes (fix-10 item 1).
-///
-/// WHY THE LOCAL RULE CANNOT BE THE REPLICATED RULE. The local rule is "no
-/// generic door may remove a stamp; the only removal is
-/// [`Vault::unstamp_facet_of`], which consents and acts in one commit". On the
-/// ORIGIN device that is exactly right and stays unchanged. But the origin's
-/// commit is one device's; the removal then REPLICATES, and on every other
-/// device it arrives as a bare `edges` map removal — the only shape the CRDT
-/// has. Running the absolute refusal there had two teeth:
-///
-/// * a CONSENTED unstamp could not propagate. Device A's owner unstamps
-///   through the dedicated door; device B refuses the replicated removal
-///   forever, so the stamp survives on B and the two devices disagree about
-///   which clamp class a surviving record is in — the exact divergence the
-///   gate exists to prevent, now permanent and owner-invisible.
-/// * one such row DENIED AN HONEST PEER'S WHOLE UPDATE (H2 no-wedge). The
-///   refusal propagated out of `apply_ops` and aborted the batch, so every
-///   other row in that frame was lost with it.
-///
-/// WHAT COUNTS AS PROOF, and why it is not the fix-2 replay hazard. The proof
-/// is the `disclosure.facet_reclassification` LEDGER MIRROR for this
-/// `(record, facet)` pair — the claim
-/// [`append_facet_reclassification_event_in_txn`] writes in the SAME
-/// transaction as the origin unstamp, so it replicates as an entity alongside
-/// the removal. Fix-2's rejected shape was a durable per-PAIR consent record
-/// consulted by a LOCAL door: it outlived the stamp incarnation it was minted
-/// for, so a re-stamp made it spendable a second time. This is not that. The
-/// proof is per-EVENT (`sequence`), and it is matched against the stamp
-/// incarnation actually standing here: the event must be NEWER than the local
-/// stamp's `created_at`, so a proof minted for an earlier incarnation cannot
-/// authorize the removal of a stamp created after it. A re-stamped pair
-/// therefore needs its own unstamp — and its own event — on the origin, which
-/// is precisely what the origin door already enforces.
-///
-/// AND THE LOCAL DOORS ARE UNCHANGED. Nothing here gives a local caller a way
-/// to spend a ledger row: [`gate_facet_of_unstamp`] still refuses every local
-/// generic removal outright, whatever the ledger says. The authorization is
-/// still the act; this door only recognizes that the act ALREADY HAPPENED,
-/// once, on the device that consented to it.
-///
-/// A MEMBER/GUEST PEER CANNOT REACH THIS AT ALL, which is what makes the proof
-/// meaningful — see the propagation note on
-/// [`crate::sync::bridge::materialize_edges_from_delta`]'s removal arm.
-#[cfg(feature = "sync")]
-pub(crate) fn classify_replicated_facet_of_unstamp(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    src: &EntityId,
-    kind: EdgeKind,
-    tgt: &EntityId,
-) -> Result<ReplicatedUnstampVerdict> {
-    if kind != EdgeKind::FacetOf {
-        return Ok(ReplicatedUnstampVerdict::Admit);
-    }
-    // A removal that removes nothing widens nothing — the same no-op stance
-    // the local gate takes, and the common case for a re-delivered frame.
-    let key = Store::encode_edge_key(src, kind, tgt);
-    let Some(value) = store.edges_out.get(txn, &key)? else {
-        return Ok(ReplicatedUnstampVerdict::Admit);
-    };
-    let stamped_at = crate::vault::parse_edge_record(&key, &value)?.created_at;
-
-    // The proof: any consent event for this pair minted at or after the
-    // standing stamp was created. Reading the LEDGER ROWS (not the mirror
-    // claim) keeps this on the same rows the owner's audit surface shows, and
-    // the mirror is what carries them between devices.
-    let prefix = facet_reclassification_pair_prefix(src, tgt);
-    let mut sequences_seen = 0_u64;
-    for row in store.vault_meta.prefix_iter(txn, &prefix)? {
-        let (key, value) = row?;
-        let (consent, sequence) = decode_facet_reclassification_body(&value)?;
-        if consent.record != record_of_reclassification_key(&key)?
-            || consent.facet != facet_of_reclassification_key(&key)?
-            || sequence != sequence_of_reclassification_key(&key)?
-        {
-            return Err(Error::CorruptedIndex(
-                "facet reclassification body disagrees with its row key",
-            ));
-        }
-        sequences_seen = sequences_seen.saturating_add(1);
-        if consent.consented_at >= stamped_at {
-            return Ok(ReplicatedUnstampVerdict::Admit);
-        }
-    }
-
-    // No covering event. DEFER rather than quarantine while the pair has NO
-    // ledger at all: that is the ordinary proof-lagging arrival (the mirror
-    // entity and the edge removal are independent CRDT rows), and quarantining
-    // it would turn a delivery-order accident into a permanent divergence.
-    //
-    // Once events for the pair EXIST but none covers this incarnation, the
-    // peer's own ledger is evidence against the removal — it consented to
-    // unstamping an EARLIER incarnation and is now removing a newer one.
-    // No later-arriving row can change that, so quarantine THIS ROW (the
-    // caller keeps the rest of the frame).
-    if sequences_seen == 0 {
-        Ok(ReplicatedUnstampVerdict::Defer)
-    } else {
-        Ok(ReplicatedUnstampVerdict::Quarantine)
-    }
 }
 
 /// THE hard-delete facet-state gate, type-dispatched — the ONE predicate every

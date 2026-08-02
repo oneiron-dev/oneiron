@@ -289,19 +289,6 @@ pub(crate) enum BatchOp {
         src: EntityId,
         kind: EdgeKind,
         tgt: EntityId,
-        /// ONE-1646 unstamp consent, replicated arm (fix-10 item 1). `true`
-        /// ONLY on the sync bridge's reverse-remat removal path, and only for
-        /// a row that already passed
-        /// [`crate::disclosure::classify_replicated_facet_of_unstamp`] in the
-        /// SAME transaction this op will apply in. It suppresses nothing but
-        /// the re-evaluation of that one gate: `apply_delete_edge` and every
-        /// other check run identically.
-        ///
-        /// Every other constructor sets `false` and keeps today's absolute
-        /// refusal, which is what makes the local rule ("the only removal is
-        /// [`crate::vault::Vault::unstamp_facet_of`]") still total for local
-        /// callers.
-        replicated_consent_verified: bool,
     },
 }
 
@@ -818,7 +805,6 @@ impl<'a> BatchBuilder<'a> {
             src: *src,
             kind,
             tgt: *tgt,
-            replicated_consent_verified: false,
         });
         self
     }
@@ -1357,7 +1343,6 @@ impl<'a> TxnBatchBuilder<'a> {
             src: *src,
             kind,
             tgt: *tgt,
-            replicated_consent_verified: false,
         });
         self
     }
@@ -1649,6 +1634,7 @@ pub(crate) struct ApplyOpsGateMode {
     persist_pending_consent: bool,
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
+    replicated_edge_door: bool,
 }
 
 impl ApplyOpsGateMode {
@@ -1658,11 +1644,28 @@ impl ApplyOpsGateMode {
             persist_pending_consent,
             include_source_in_gate_input: false,
             claim_gate_prechecked: false,
+            replicated_edge_door: false,
         }
     }
 
     pub(crate) const fn with_source_in_gate_input(mut self) -> Self {
         self.include_source_in_gate_input = true;
+        self
+    }
+
+    /// Marks this batch as the sync bridge's REPLICATED edge door — the arm
+    /// that applies another of the owner's devices' already-consented
+    /// `FacetOf` removals (fix-12, plane-trust v1).
+    ///
+    /// It relaxes exactly one thing: `gate_facet_of_unstamp`, whose absolute
+    /// refusal is a LOCAL rule (see the plane-trust note in
+    /// [`crate::sync::bridge::materialize_edges_from_delta`]). Every other
+    /// check — child-of validation, secret scan, `apply_delete_edge` — runs
+    /// identically, and every LOCAL caller keeps the refusal because only the
+    /// bridge's own edge-apply seam sets this.
+    #[cfg(feature = "sync")]
+    pub(crate) const fn with_replicated_edge_door(mut self) -> Self {
+        self.replicated_edge_door = true;
         self
     }
 
@@ -1753,6 +1756,7 @@ pub(crate) fn apply_ops_with_gate_mode(
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
+    let replicated_edge_door = gate_mode.replicated_edge_door;
 
     secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
@@ -2140,23 +2144,16 @@ pub(crate) fn apply_ops_with_gate_mode(
                 had_graph_mutation |= deleted_graph_state;
                 had_vector_mutation |= had_vector;
             }
-            BatchOp::DeleteEdge {
-                src,
-                kind,
-                tgt,
-                replicated_consent_verified,
-            } => {
+            BatchOp::DeleteEdge { src, kind, tgt } => {
                 // ONE-1646: the staged-op half of the exposure-consent gate on
                 // FacetOf unstamping. Aborts the batch atomically before the
                 // row comes off, matching `validate_facet_of_edge`'s stance on
                 // the write side of the same seam.
                 //
-                // The replicated arm is the ONE exception (fix-10 item 1): the
-                // sync bridge already classified this exact row against the
-                // replicated consent proof, on THIS transaction, and admitted
-                // it. Re-running the absolute refusal here would undo that
-                // decision and re-wedge propagation of a consented unstamp.
-                if !replicated_consent_verified {
+                // Decided HERE rather than at the builder because the gate
+                // reads the stamp it is protecting: only an in-txn decision
+                // sees the same edge row the removal will tear (fix-4).
+                if !replicated_edge_door {
                     crate::disclosure::gate_facet_of_unstamp(store, wtxn, &src, kind, &tgt)?;
                 }
                 if apply_delete_edge(store, wtxn, src, kind, tgt)? {
