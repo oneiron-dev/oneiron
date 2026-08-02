@@ -3018,6 +3018,7 @@ fn put_topology_participant_for_test(vault: &Vault, id: &EntityId, body: &[u8]) 
 /// Asserts BOTH halves of the canonical shell pair agree with `present` — a
 /// one-sided sweep leaves the mirrored `edges_in` row naming a peer with no
 /// ledger writer, which is the residue these regressions exist to catch.
+#[cfg(feature = "sync")]
 fn assert_shell_edge_pair(
     vault: &Vault,
     src: &EntityId,

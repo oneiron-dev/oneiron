@@ -1640,7 +1640,6 @@ fn surviving_shell_edge_sources_for_store_in_txn(
     Ok(touched)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn reconcile_identity_topology_edges_for_store_in_txn(
     store: &Store,
     config: &crate::config::VaultConfig,
