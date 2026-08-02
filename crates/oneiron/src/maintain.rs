@@ -37,6 +37,7 @@ pub struct MaintenanceBuilder<'a> {
     do_hard_erase_sweep: bool,
     do_cleanup_attempt_queue: bool,
     attempt_queue_lease_timeout_secs: u64,
+    do_backfill_gate_claim_index: bool,
 }
 
 /// Aggregate counters for maintenance operations.
@@ -113,6 +114,14 @@ pub struct MaintenanceReport {
     /// Attempt-queue lease cleanup counts. This is device-local runner-store
     /// state and carries only stable counters, never payloads or lease owners.
     pub attempt_queue_cleanup: crate::attempt_queue::AttemptQueueCleanupReport,
+    /// Pre-existing claim-bound Gate decision rows written into the ERASE-A
+    /// (ONE-1637) claim index by `backfill_gate_decision_claim_index`.
+    pub gate_claim_index_rows_backfilled: u64,
+    /// The durable backfill-complete flag was already set, so the op was a
+    /// no-op. SIBLING of `gate_claim_index_rows_backfilled`: a zero-row run on
+    /// an unflagged empty ledger is a distinct signal from an already-complete
+    /// one.
+    pub gate_claim_index_backfill_already_complete: bool,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -129,6 +138,7 @@ impl<'a> MaintenanceBuilder<'a> {
             do_hard_erase_sweep: false,
             do_cleanup_attempt_queue: false,
             attempt_queue_lease_timeout_secs: 0,
+            do_backfill_gate_claim_index: false,
         }
     }
 
@@ -208,6 +218,16 @@ impl<'a> MaintenanceBuilder<'a> {
         self
     }
 
+    /// One-time ERASE-A (ONE-1637) backfill of the claim-keyed Gate decision
+    /// index for vaults created before the index existed. Idempotent: a no-op
+    /// once the durable backfill-complete flag is set. Until it is set,
+    /// per-claim discovery uses the keyspace-scan fallback — running this op
+    /// changes cost, never correctness.
+    pub fn backfill_gate_decision_claim_index(mut self) -> Self {
+        self.do_backfill_gate_claim_index = true;
+        self
+    }
+
     pub fn run(self) -> Result<MaintenanceReport> {
         let mut report = MaintenanceReport::default();
 
@@ -257,6 +277,12 @@ impl<'a> MaintenanceBuilder<'a> {
             report.sweep_quarantine_rows_expired = run.quarantine_rows_expired;
             report.sweep_obligations_missing = run.obligations_missing;
             report.sweep_obligations_undecodable = run.obligations_undecodable;
+        }
+
+        if self.do_backfill_gate_claim_index {
+            let backfill = self.vault.store.backfill_gate_decision_claim_index()?;
+            report.gate_claim_index_rows_backfilled = backfill.rows_indexed;
+            report.gate_claim_index_backfill_already_complete = backfill.already_complete;
         }
 
         if self.do_cleanup_attempt_queue {
