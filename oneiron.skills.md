@@ -34,7 +34,7 @@ ARCH-0006a/b conversation endpoints are design documents, not live routes in the
 
 One credential travels, in the standard header: `Authorization: Bearer <credential>`.
 
-- **Owner-grade** — the configured trust-root secret sent verbatim, or a minted token carrying no claims. Required by the legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
+- **Owner-grade** — the configured trust-root secret sent verbatim, or a minted token carrying no narrowing claims. Required by the legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
 - **Scoped** — a minted token of the form `v2.<claims>.<mac>`, where `<claims>` is `scope=…[;principal_ref=…][;jti=<hex32>]`. Accepted on `/v1/core/*` and companion control-plane routes with exactly the scopes it names. Mint one with `oneiron token mint --scope core:read[,…] [--principal-ref <hex32>]`.
 
 The claims are visible but not editable: they are authenticated by a MAC keyed on the server's secret, which appears in no token. Editing, widening, or deleting the claims invalidates the token. Every authentication failure — absent, malformed, wrong MAC, unknown claim, revoked — returns the same `UNAUTHORIZED`; the response never says which.

@@ -830,7 +830,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             json!({
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. Legacy `/api/*` routes require an owner-grade credential; scoped tokens are accepted on /v1/core/* and companion control-plane routes."
+                "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The legacy `/api/*` routes, `/v1/consumer/*`, and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names."
             }),
         );
 
