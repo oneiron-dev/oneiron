@@ -11093,6 +11093,105 @@ fn revoke_actor_folds_past_a_grant_frozen_in_its_own_ancestry() {
     );
 }
 
+/// fix-leg 13 P1: the freeze classifier must mirror the fold's own rule, which
+/// reads the MERGED parent state — not each branch in isolation.
+///
+/// fix-12's `entry_is_frozen_by_pending_widen` asked whether EVERY parent
+/// branch resolves to a state carrying a pending widen. The fold does not work
+/// that way. `fold_entry_state` merges all parents first and then freezes on
+/// `!state.pending_widens.is_empty()`, so ONE widen-bearing branch is enough to
+/// park the entry. A grant parented on `[widen, ordinary_ready_entry]` is
+/// therefore Waiting in the fold and "not frozen" to the classifier — the two
+/// disagree, and the disagreement is what the attacker gets to pick.
+///
+/// C only has to add a second, entirely innocuous parent to its stall grant to
+/// re-open the exact hole fix-12 closed: the child `RevokeActor` asks the
+/// bypass to step over that grant, the classifier says the parent is not frozen,
+/// `nearest_unfrozen_ancestor_state` refuses the whole walk, and the revocation
+/// falls out as `InvalidAncestry` while the compromised key keeps every owner
+/// verb for the widen's full veto window. Multi-parent entries are ordinary in
+/// this log — the merge loop above exists for them — so this is not an exotic
+/// shape, it is the same lever with one more edge drawn.
+///
+/// MUTATION PROBE: restore the per-branch `all()` shape in
+/// `entry_is_frozen_by_pending_widen` (classify from each parent's own nearest
+/// ancestor state instead of their merge) and this test fails — the revocation
+/// lands in `issues` as `InvalidAncestry` and the binding stays Active.
+#[test]
+fn revoke_actor_folds_past_a_grant_frozen_through_only_one_of_its_parents() {
+    let freeze = pending_widen_freeze(220);
+    let key = freeze.fixture.owner_key.clone();
+
+    // The mixed parentage: the pending widen AND an ordinary, already-folded
+    // sibling that carries no widen at all. `bind_hash` is the plain
+    // Genesis -> Enroll -> Bind chain entry the fixture folds first.
+    let stall = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash, freeze.bind_hash],
+        4,
+        bind_op(&freeze.fixture.agent_key, scope_entity(0x77), "agent", 1),
+        104,
+    );
+    let stall_hash = authority_entry_hash(&stall).unwrap();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![stall_hash],
+        5,
+        revoke_actor_op(&key, 5),
+        105,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+
+    let mut entries = freeze.entries.clone();
+    entries.push(stall);
+    entries.push(revoke);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(stall_hash, freeze.now_secs);
+    first_seen.insert(revoke_hash, freeze.now_secs);
+    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+
+    // Fixture: the mixed-parent grant really is frozen, and the sibling branch
+    // really did fold clean — that pairing is the whole point of the row.
+    assert!(
+        fold.pending_widens.contains_key(&freeze.widen_hash),
+        "fixture: the widen must still be pending"
+    );
+    assert!(
+        fold.valid_entries.contains(&freeze.bind_hash),
+        "fixture: the second parent must be an ordinary FOLDED entry with no widen"
+    );
+    assert!(
+        !fold.valid_entries.contains(&stall_hash),
+        "fixture: one widen-bearing parent must be enough to freeze the grant"
+    );
+
+    assert!(
+        fold.valid_entries.contains(&revoke_hash),
+        "the revocation must fold past a parent the fold froze through ONE of its \
+         parents: a branch with no widen must not veto the freeze classification"
+    );
+    assert_eq!(
+        folded_status(&fold, &key),
+        Some(ActorBindingStatus::Revoked),
+        "withdrawal of consent must take effect NOW, not when the widen matures"
+    );
+    assert!(
+        !actor_binding_is_active(&fold, &freeze.fixture.actor, "human"),
+        "adding one innocuous second parent to the stall grant must not buy the \
+         compromised key another veto window of owner authority"
+    );
+    // The narrowings hold: the grant itself is not dragged along, and the widen
+    // keeps its own clock.
+    assert!(
+        !fold.valid_entries.contains(&stall_hash),
+        "the deferred grant must NOT be dragged past the freeze with the revocation"
+    );
+    assert!(
+        fold.pending_widens.contains_key(&freeze.widen_hash),
+        "the pending widen must still mature on its own clock"
+    );
+}
+
 /// The second fix-12 narrowing: the bypass steps over a FROZEN parent, never an
 /// invalid one.
 ///

@@ -2677,6 +2677,15 @@ fn entry_waits_on_pending_parent_outside_group(
 /// The walk is bounded by the ancestry it traverses and introduces no clock
 /// dependency: a revocation is not time-based, and this decides nothing about
 /// when any pending widen matures.
+///
+/// KNOWN DURABILITY RESIDUAL. A revocation rescued by this bypass survives the
+/// widen merely maturing
+/// (`revocation_folded_past_a_freeze_survives_the_widen_maturing`), but NOT the
+/// skipped grant later becoming retroactively invalid through the matured
+/// state — that durability is a GATE-2 packet item, not an in-lane fix. Closing
+/// it needs a representation in which an accepted revocation's effect outlives
+/// ancestry invalidation of the entries above it (a journal, or per-hash bypass
+/// state), which is a design surface rather than a change to this function.
 fn revocation_bypass_states(
     entry: &AuthorityLogEntry,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -2752,6 +2761,21 @@ fn nearest_unfrozen_ancestor_state(
 /// ancestry must actually carry a pending widen, and the entry's op must be one
 /// the freeze defers. An entry that is waiting for any other reason fails this
 /// and stops the walk.
+///
+/// The classification is read off the MERGED ancestry, because that is the only
+/// picture the freeze itself ever sees. `fold_entry_state` merges every parent
+/// state before testing `!state.pending_widens.is_empty()`, so a single
+/// widen-bearing branch parks the entry no matter how many clean siblings it
+/// has. Asking instead whether EVERY branch carries a widen would answer a
+/// question the fold never poses, and the disagreement is attacker-selectable:
+/// hanging one ordinary already-folded parent off a stall grant would make the
+/// classifier call a frozen entry unfrozen and collapse the bypass
+/// (`revoke_actor_folds_past_a_grant_frozen_through_only_one_of_its_parents`).
+///
+/// Every parent must still RESOLVE. That is the narrowing this shares with
+/// [`nearest_unfrozen_ancestor_state`]: a branch that dead-ends in an invalid,
+/// missing, or otherwise-waiting ancestor refuses the classification outright,
+/// so "frozen" never widens to mean "stuck for some reason we did not identify."
 fn entry_is_frozen_by_pending_widen(
     entry: &AuthorityLogEntry,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -2762,10 +2786,20 @@ fn entry_is_frozen_by_pending_widen(
     if !context.enforce_seen_time_delay || op_applies_despite_pending_widen(&entry.op) {
         return false;
     }
-    entry.parent_hashes.iter().all(|parent| {
-        nearest_unfrozen_ancestor_state(*parent, by_hash, states, pending, context)
-            .is_some_and(|state| !state.pending_widens.is_empty())
-    })
+    let mut merged: Option<FoldState> = None;
+    for parent in &entry.parent_hashes {
+        let Some(state) =
+            nearest_unfrozen_ancestor_state(*parent, by_hash, states, pending, context)
+        else {
+            return false;
+        };
+        merged = Some(match merged {
+            Some(current) if current.vault_id != state.vault_id => return false,
+            Some(current) => merge_states(&current, &state),
+            None => state,
+        });
+    }
+    merged.is_some_and(|state| !state.pending_widens.is_empty())
 }
 
 fn entry_ancestor_index(
