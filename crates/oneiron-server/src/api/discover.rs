@@ -348,7 +348,7 @@ pub(crate) struct RateLimitStatus {
             content_type = "application/json",
             example = json!({
                 "code": "UNAUTHORIZED",
-                "message": "unauthorized",
+                "message": "request is not authorized",
                 "details": { "code": "UNAUTHORIZED" },
                 "suggestions": ["Send Authorization: Bearer credentials and retry."]
             })

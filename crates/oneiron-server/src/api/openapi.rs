@@ -46,7 +46,7 @@ pub(crate) const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the sam
             content_type = "application/json",
             example = json!({
                 "code": "UNAUTHORIZED",
-                "message": "unauthorized",
+                "message": "request is not authorized",
                 "details": { "code": "UNAUTHORIZED" },
                 "suggestions": ["Send Authorization: Bearer credentials and retry."]
             })
@@ -834,9 +834,13 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             }),
         );
 
-    // One scheme now covers every protected route: legacy `/api/*` requires
-    // an owner-grade credential, `/v1` additionally accepts scoped tokens,
-    // but both are presented as `Authorization: Bearer`.
+    // One scheme covers every protected route: all of them are presented as
+    // `Authorization: Bearer`. The grade required is per-route, not per-plane:
+    // legacy `/api/*` demands an owner-grade credential, and so do the
+    // `/v1/consumer/*` and `/v1/usage/*` routes below, which authenticate
+    // through the same `check_api_auth`. Scoped tokens reach `/v1/core/*` and
+    // the companion control-plane routes, which read a `CoreAuth` and enforce
+    // the scopes it names.
     for (path, method) in [
         ("/api/openapi.json", "get"),
         ("/api/skills/oneiron.skills.md", "get"),

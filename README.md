@@ -113,6 +113,15 @@ profiles and the slow-test tier live in `.config/nextest.toml`. Plain
 
 ## Upgrade Notes
 
+- The protected legacy `/api/*` routes on `oneiron-server` now require an
+  **owner-grade** bearer: the configured trust-root secret sent verbatim, or a
+  minted token carrying no narrowing claims. A scoped token (`scope=…` and/or
+  `principal_ref=…`) authenticates but is refused there with `UNAUTHORIZED`,
+  however wide its scopes — those routes read the whole vault under one actor
+  ref. (`/api/health` stays unauthenticated.) Scoped tokens remain `/v1`-plane
+  instruments and keep working on `/v1/core/*` and the companion control-plane
+  routes. Callers that drove `/api/*` with a scoped token must switch to the
+  trust-root credential or move to the equivalent `/v1` route.
 - `ANALYZER_VERSION = "v2"` changes analyzer-manifest hashes to capture
   Han `whichlang` routing behavior. Existing text indexes built with older
   analyzer manifests must be rebuilt after upgrading; create a `VaultConfig`,

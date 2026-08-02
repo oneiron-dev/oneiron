@@ -3877,6 +3877,78 @@ async fn legacy_api_route_rejects_a_revoked_owner_grade_bearer() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+/// The owner-grade boundary itself, not revocation: a perfectly live scoped
+/// bearer — authentic MAC, unrevoked jti, a scope the route would honor on
+/// `/v1` — is still refused on the legacy `/api/*` plane, which reads the
+/// whole vault under one actor ref. The same credential works on its own
+/// `/v1` route in the same test, so the 401 pins the plane boundary and not
+/// a broken token.
+#[tokio::test]
+async fn legacy_api_route_rejects_a_live_scoped_bearer_that_works_on_v1() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+
+    let (scoped, jti) = crate::auth::mint_identified_core_token_v2("secret", "scope=core:read");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        format!("Bearer {scoped}").parse().expect("bearer header"),
+    );
+    let auth = CoreAuth::from_headers(&headers, &server.config, server.vault().as_ref())
+        .expect("scoped bearer authenticates");
+    assert!(
+        !auth.is_owner_grade(),
+        "the fixture must be a scoped, non-owner-grade credential"
+    );
+    assert!(
+        !crate::auth::is_revoked_or_unreadable(&jti, server.vault().as_ref()),
+        "the fixture must be live: this test is about the plane, not revocation"
+    );
+
+    // Same credential, same server: accepted on its scoped /v1 route.
+    let (status, _) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "GET",
+            "/v1/core/outbound/capabilities",
+            format!("Bearer {scoped}"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a scoped bearer is a /v1-plane instrument and must work there"
+    );
+
+    // Refused on every legacy `/api/*` route, read and mutating alike.
+    for (method, uri, body) in [
+        ("GET", "/api/core/discover", None),
+        ("GET", "/api/openapi.json", None),
+        ("GET", "/api/skills/oneiron.skills.md", None),
+        ("GET", "/api/search/text?query=anything", None),
+        (
+            "POST",
+            "/api/lease/revoke",
+            Some(json!({ "client_id": "0000000000000042" })),
+        ),
+    ] {
+        let (status, _) = route_json(
+            server.clone(),
+            core_request_with_authz(method, uri, format!("Bearer {scoped}"), body.as_ref()),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "legacy {method} {uri} must refuse a scoped bearer"
+        );
+    }
+}
+
 #[tokio::test]
 async fn v1_core_idempotency_preflight_uses_typed_error_envelope() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
