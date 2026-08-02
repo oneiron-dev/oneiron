@@ -632,16 +632,10 @@ impl SyncClient {
         // would durably append an unvalidated frame as a `u:w:` row, and
         // window load is fail-closed on pending updates — one malformed frame
         // would brick every future open of this window.
-        //
-        // DEVICE-IMPORT PROVENANCE (fix-13 P1-1). This is THE live admitted
-        // device-plane entry point: full-window `UPDATE` frames land here, and
-        // so does `import_federated_window_update` AFTER
-        // `admit_federated_window_update` has rebuilt the frame insert-only.
-        // Only bytes arriving through this seam (and replays of bytes that
-        // once did) may open the relaxed replicated-edge door in Observer B —
-        // `import_queued_update` and raw host commits deliberately do NOT.
         let vv_before = window.doc.oplog_vv();
-        crate::sync::bridge::import_device_admitted_update(&window.doc, payload)
+        window
+            .doc
+            .import(payload)
             .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
         let key = WindowKey::new(window_key);
         let history_free =
@@ -805,9 +799,9 @@ impl SyncClient {
             if let Some(window) = self.window(window_key) {
                 // Window is live: import through the observed doc so
                 // Observer B materializes, then persist the merged state.
-                // Device-import provenance (fix-13 P1-1): a bulk snapshot is
-                // the same admitted device-plane channel as a live UPDATE.
-                crate::sync::bridge::import_device_admitted_update(&window.doc, doc_state)
+                window
+                    .doc
+                    .import(doc_state)
                     .map_err(|_| TransportError::InvalidPayload("bulk doc state import failed"))?;
                 if let Err(e) = window.persist_state(&self.vault) {
                     // Never leave RAM ahead of durable state on a FAILED
@@ -861,9 +855,7 @@ impl SyncClient {
                 // durable state (same discipline as the live arm and the
                 // WindowSync UPDATE arm).
                 let window = self.ensure_window(window_key)?;
-                if crate::sync::bridge::import_device_admitted_update(&window.doc, doc_state)
-                    .is_err()
-                {
+                if window.doc.import(doc_state).is_err() {
                     self.manager.discard_window(&WindowKey::new(window_key));
                     return Err(TransportError::InvalidPayload(
                         "bulk doc state import failed",
@@ -936,16 +928,6 @@ impl SyncClient {
     /// VV-equal against a fresh local doc — and the queue would be cleared
     /// with the ops lost in flight (for a delete-bearing update, a vanished
     /// GDPR tombstone).
-    ///
-    /// NO DEVICE-IMPORT PROVENANCE (fix-13 P1-1), deliberately. `update` is
-    /// caller-supplied raw bytes on a `pub` seam — nothing here proves they
-    /// came from an admitted device frame, so Observer B classifies this as a
-    /// LOCAL commit and a `FacetOf` removal inside it is refused +
-    /// quarantined by the absolute gate rather than tearing the stamp. The
-    /// honest queued replay is unaffected: `q:` rows carry the outbound ops
-    /// this device already authored, and the only local removal that can
-    /// exist in them was authored by [`crate::Vault::unstamp_facet_of`],
-    /// whose LMDB tear already committed.
     pub fn import_queued_update(
         &mut self,
         window_key: &str,

@@ -1661,15 +1661,8 @@ impl ApplyOpsGateMode {
     /// refusal is a LOCAL rule (see the plane-trust note in
     /// [`crate::sync::bridge::materialize_edges_from_delta`]). Every other
     /// check — child-of validation, secret scan, `apply_delete_edge` — runs
-    /// identically.
-    ///
-    /// PROVENANCE-BOUND (fix-13 P1-1). Only the bridge's own edge-apply seam
-    /// sets this, and only when the Observer-B event's commit ORIGIN proves
-    /// the bytes were admitted through the device-import path
-    /// (`bridge::import_device_admitted_update`). A raw commit on the observed
-    /// doc — the public `LoadedWindow.doc`, `SyncClient::import_queued_update`,
-    /// an offline `SyncQueue` replay — runs the same seam WITHOUT this flag and
-    /// keeps the absolute refusal.
+    /// identically, and every LOCAL caller keeps the refusal because only the
+    /// bridge's own edge-apply seam sets this.
     #[cfg(feature = "sync")]
     pub(crate) const fn with_replicated_edge_door(mut self) -> Self {
         self.replicated_edge_door = true;

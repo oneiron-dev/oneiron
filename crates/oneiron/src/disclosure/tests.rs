@@ -4093,3 +4093,243 @@ fn headerless_contact_deletion_leaves_no_clearance_or_ledger_residue() -> Result
     );
     Ok(())
 }
+
+// ─── fix-14 defect 1: the unstamp's two commits are bridged by a marker ─────
+
+/// Builds a window doc carrying `record -FacetOf-> facet` and persists it,
+/// returning the window key and the CRDT edge key — the durable shape a real
+/// window has after Observer A / reverse remat published the stamp.
+#[cfg(feature = "sync")]
+fn publish_stamp_to_window(
+    vault: &Vault,
+    record: &EntityId,
+    facet: &EntityId,
+) -> Result<(crate::sync::WindowKey, String)> {
+    use crate::sync::bridge::format_edge_key;
+    use crate::sync::loro_support::doc_version_vector;
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::window::{persist_window_doc_in_txn, write_window_svf_in_txn};
+
+    let window_key = crate::sync::WindowKey::from_timestamp(vault.get_learned_at(record)?);
+    let doc = create_window_doc("local", &window_key);
+    let edge_key = format_edge_key(record, EdgeKind::FacetOf, facet);
+    crate::sync::window::reverse_rematerialize(vault, &doc, &window_key)?;
+    assert!(
+        crate::sync::loro_support::map_get_bytes(&doc.get_map("edges"), &edge_key).is_some(),
+        "fixture: reverse remat must publish the stamp into the window doc"
+    );
+    let snapshot = crate::sync::window::export_scrubbed_window_snapshot(vault, &window_key, &doc)?;
+    let vv = doc_version_vector(&doc);
+    vault.with_write_txn(|wtxn| {
+        persist_window_doc_in_txn(vault, wtxn, &window_key, &snapshot, &vv)?;
+        write_window_svf_in_txn(vault, wtxn, &window_key)
+    })?;
+    Ok((window_key, edge_key))
+}
+
+/// Whether a window's DURABLE state carries an `edges` key, read the way
+/// production recovery reads it (snapshot + pending rows, or a pure rebuild).
+#[cfg(feature = "sync")]
+fn persisted_window_holds_edge(
+    vault: &Vault,
+    window_key: &crate::sync::WindowKey,
+    edge_key: &str,
+) -> Result<bool> {
+    let doc = match crate::sync::window::load_window_from_state(vault, "local", window_key) {
+        Ok(doc) => doc,
+        Err(Error::WindowNotFound { .. }) => {
+            crate::sync::window::rebuild_window_from_updates(vault, "local", window_key)?
+        }
+        Err(err) => return Err(err),
+    };
+    Ok(crate::sync::loro_support::map_get_bytes(&doc.get_map("edges"), edge_key).is_some())
+}
+
+/// Runs the recovery pass that used to RESTORE the stamp: load the window's
+/// durable doc and forward-rematerialize it, exactly as `open_window` does.
+#[cfg(feature = "sync")]
+fn recover_window(vault: &Vault, window_key: &crate::sync::WindowKey) -> Result<()> {
+    let doc = match crate::sync::window::load_window_from_state(vault, "local", window_key) {
+        Ok(doc) => doc,
+        Err(Error::WindowNotFound { .. }) => {
+            crate::sync::window::rebuild_window_from_updates(vault, "local", window_key)?
+        }
+        Err(err) => return Err(err),
+    };
+    crate::sync::window::forward_rematerialize(
+        vault,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        window_key,
+    )?;
+    // The recovered doc is what an open would go on to persist.
+    let snapshot = crate::sync::window::export_scrubbed_window_snapshot(vault, window_key, &doc)?;
+    let vv = crate::sync::loro_support::doc_version_vector(&doc);
+    vault.with_write_txn(|wtxn| {
+        crate::sync::window::persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        crate::sync::window::write_window_svf_in_txn(vault, wtxn, window_key)
+    })
+}
+
+/// THE RECOVERY-ATOMICITY REGRESSION — a crash AFTER the LMDB commit.
+///
+/// `unstamp_facet_of` commits consent + the LMDB tear, then removes the CRDT
+/// carrier in a SECOND commit (Loro and LMDB are separate durability domains —
+/// there is no one-commit option). A crash in between leaves consent and the
+/// LMDB deletion durable while the doc stamp survives, and retry is no escape:
+/// the LMDB row is already absent, so a re-issued call answers `false` and does
+/// nothing, while the next open's forward remat writes the surviving doc stamp
+/// straight back into LMDB. A CONSENTED unstamp reversing itself is the worst
+/// failure direction this lane has.
+///
+/// The crash is injected at exactly that point, so the durable state under test
+/// is the real one: ledger event, torn rows and pending marker on disk, CRDT
+/// carrier alive.
+///
+/// MUTATION PROBE: drop the `facet_unstamp_pending_key` write from
+/// `unstamp_facet_of`'s txn, or the `drain_pending_facet_unstamps` call in
+/// `forward_rematerialize`, and this fails — the stamp is back in LMDB.
+#[cfg(feature = "sync")]
+#[test]
+fn a_crash_after_the_lmdb_commit_resumes_the_unstamp_on_recovery() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x71);
+    let facet = test_id(0x72);
+    put_facet(&vault, &facet);
+    put_public_claim(&vault, &claim, test_id(0x73));
+    stamp_facet_of(&vault, &claim, &facet);
+    let (window_key, edge_key) = publish_stamp_to_window(&vault, &claim, &facet)?;
+
+    // THE CRASH: the LMDB txn commits, the process dies before the doc removal.
+    super::INJECT_UNSTAMP_DOC_REMOVAL_SKIP.with(|cell| cell.set(true));
+    assert!(vault.unstamp_facet_of(&claim, &facet, 500)?);
+    assert!(
+        !vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "fixture: the LMDB tear committed"
+    );
+    assert_eq!(
+        vault.facet_reclassification_ledger(&claim, &facet)?.len(),
+        1,
+        "fixture: the consent is durable"
+    );
+    assert!(
+        persisted_window_holds_edge(&vault, &window_key, &edge_key)?,
+        "fixture: the CRDT carrier survived the crash — this is the hazard"
+    );
+    assert_eq!(
+        super::pending_unstamp_count(&vault)?,
+        1,
+        "the pending marker is the crash's durable signature"
+    );
+    assert!(
+        !vault.unstamp_facet_of(&claim, &facet, 501)?,
+        "a re-issued unstamp finds nothing to tear — recovery is the only path"
+    );
+
+    // RECOVERY. Forward remat runs; without the drain it writes the surviving
+    // doc stamp back into LMDB.
+    recover_window(&vault, &window_key)?;
+    assert!(
+        !vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "the consented unstamp must NOT reverse itself on recovery"
+    );
+    assert!(
+        !persisted_window_holds_edge(&vault, &window_key, &edge_key)?,
+        "recovery finishes the removal instead of restoring the stamp"
+    );
+    assert_eq!(
+        super::pending_unstamp_count(&vault)?,
+        0,
+        "and discharges the marker"
+    );
+
+    // A second recovery pass is a no-op.
+    recover_window(&vault, &window_key)?;
+    assert!(!vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?);
+    assert!(!persisted_window_holds_edge(
+        &vault,
+        &window_key,
+        &edge_key
+    )?);
+    Ok(())
+}
+
+/// The same crash one step later: the DOC removal committed but the process
+/// died before the marker could clear. The drain must be idempotent — re-running
+/// a removal that already landed removes nothing, restores nothing, and clears
+/// the marker.
+#[cfg(feature = "sync")]
+#[test]
+fn a_crash_after_the_doc_commit_leaves_nothing_to_restore() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x74);
+    let facet = test_id(0x75);
+    put_facet(&vault, &facet);
+    put_public_claim(&vault, &claim, test_id(0x76));
+    stamp_facet_of(&vault, &claim, &facet);
+    let (window_key, edge_key) = publish_stamp_to_window(&vault, &claim, &facet)?;
+
+    assert!(vault.unstamp_facet_of(&claim, &facet, 500)?);
+    assert!(!persisted_window_holds_edge(
+        &vault,
+        &window_key,
+        &edge_key
+    )?);
+    assert_eq!(super::pending_unstamp_count(&vault)?, 0);
+
+    // Re-arm: "the doc removal landed, the marker clear did not".
+    super::rearm_pending_unstamp(&vault, &claim, &facet)?;
+
+    recover_window(&vault, &window_key)?;
+    assert!(
+        !vault.edge_exists(&claim, EdgeKind::FacetOf, &facet)?,
+        "the stamp stays gone from LMDB"
+    );
+    assert!(
+        !persisted_window_holds_edge(&vault, &window_key, &edge_key)?,
+        "and from the window — the drain is idempotent"
+    );
+    assert_eq!(
+        super::pending_unstamp_count(&vault)?,
+        0,
+        "the marker discharges once the removal is proven durable"
+    );
+    Ok(())
+}
+
+/// A malformed pending-unstamp marker key is LOUD, never a silent skip: a key
+/// we cannot parse names an unstamp we cannot finish, and continuing past it
+/// would let the resurrection the drain exists to stop proceed unnoticed.
+/// Same stance as every other key parse in this module.
+#[cfg(feature = "sync")]
+#[test]
+fn a_malformed_pending_unstamp_marker_fails_loud() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x77);
+    let facet = test_id(0x78);
+    put_facet(&vault, &facet);
+    put_public_claim(&vault, &claim, test_id(0x79));
+    stamp_facet_of(&vault, &claim, &facet);
+    let (window_key, _) = publish_stamp_to_window(&vault, &claim, &facet)?;
+
+    // A truncated key: the pair prefix without the facet half. Reading a prefix
+    // of it would address some OTHER pair — i.e. remove a different record's
+    // stamp — so length is exact.
+    let mut short = super::facet_unstamp_pending_key(&claim, &facet);
+    short.truncate(short.len() - 1);
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &short, &[])?;
+        Ok(())
+    })?;
+
+    let doc = crate::sync::window::load_window_from_state(&vault, "local", &window_key)?;
+    let err = crate::sync::window::forward_rematerialize(
+        &vault,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &window_key,
+    )
+    .expect_err("a malformed marker must abort recovery, not be skipped");
+    assert_eq!(err.kind(), ErrorKind::CorruptedIndex);
+    Ok(())
+}

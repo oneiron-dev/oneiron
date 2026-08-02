@@ -109,7 +109,7 @@ fn assert_fenced_history_absent_from_export(
     let export =
         export_window_updates_since(vault, window_key, doc, &VersionVector::default().encode())?;
     let peer = create_window_doc("history-proof-peer", window_key);
-    crate::sync::loro_support::import_doc(&peer, &export)?;
+    import_doc(&peer, &export)?;
 
     assert!(
         map_get_bytes(&peer.get_map("entities"), &fenced.to_hex()).is_none(),

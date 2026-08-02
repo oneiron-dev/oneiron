@@ -315,15 +315,6 @@ pub(crate) fn merge_persisted_state_into_doc(
             blobs.push(v.to_vec());
         }
     }
-    // NO device-import provenance here (fix-13 P1-1), deliberately — unlike
-    // the sibling replays this one merges into a doc that did NOT necessarily
-    // author these ops (that is the whole point: the anti-clobber guard exists
-    // for state a PARALLEL writer persisted). Tagging it would let one doc's
-    // rejected-but-persisted local removal be re-presented to another doc's
-    // Observer B as admitted. It costs nothing to stay strict: a removal
-    // `Vault::unstamp_facet_of` authored has already torn the LMDB rows, and
-    // `gate_facet_of_unstamp` PASSES on an absent stamp, so the honest case
-    // never needs the relaxation on this path.
     for blob in &blobs {
         import_doc(doc, blob)?;
     }
@@ -370,14 +361,6 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
 /// re-implementing the replay out-of-crate is precisely the
 /// production-divergence class that ticket closes, and `#[cfg(test)]`
 /// helpers are invisible to integration-test crates.
-///
-/// DEVICE-IMPORT PROVENANCE (fix-13 P1-1). These `u:w:` rows are bytes this
-/// device already ADMITTED once — Observer A persists local commits, and the
-/// remote arm persists only frames that cleared their admission gate. Replaying
-/// them is therefore in-domain, and the replay carries the internal
-/// device-import origin so a re-observed `FacetOf` removal it already applied
-/// is not re-gated into a refusal on restart. Bytes that never passed an
-/// admission gate never reach this row family.
 pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
     // Prefix iterator (B-tree range seek); `{seq:08x}` keys sort in order.
@@ -386,7 +369,7 @@ pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKe
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
         let (_k, v) = entry?;
-        bridge::import_device_admitted_update(doc, &v)?;
+        import_doc(doc, &v)?;
         applied += 1;
     }
     Ok(applied)
@@ -630,10 +613,7 @@ pub fn rebuild_window_from_updates(
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
         let (_k, v) = entry?;
-        // Same already-admitted family as `apply_pending_window_updates`
-        // (fix-13 P1-1) — kept identical so a rebuild and a replay of the
-        // same rows can never disagree on provenance.
-        bridge::import_device_admitted_update(&doc, &v)?;
+        import_doc(&doc, &v)?;
     }
     Ok(doc)
 }
@@ -1023,6 +1003,21 @@ pub fn forward_rematerialize(
     window_key: &WindowKey,
 ) -> Result<u32> {
     let _guard = materializer.lock();
+    // ONE-1646 fix-14 defect 1, BEFORE the entity/edge passes below. A crash
+    // between `unstamp_facet_of`'s LMDB txn and its CRDT removal leaves a
+    // CONSENTED unstamp half-done: LMDB rows torn, doc stamp alive. This pass
+    // is exactly what would then write that surviving stamp back into LMDB —
+    // an unstamp REVERSING itself — and a retry cannot help because the LMDB
+    // row is already absent. Draining the pair-bound markers here finishes the
+    // removal first, so there is nothing left to restore.
+    let resumed_unstamps = crate::disclosure::drain_pending_facet_unstamps(vault, doc, window_key)?;
+    if resumed_unstamps > 0 {
+        tracing::info!(
+            window = %window_key,
+            resumed_unstamps,
+            "forward-remat: resumed interrupted FacetOf unstamps before rematerialization"
+        );
+    }
     let lease_vault_id = materializer.lease_vault_id();
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
