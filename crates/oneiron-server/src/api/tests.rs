@@ -10348,6 +10348,84 @@ async fn v1_core_surface_event_submit_honors_the_idempotency_middleware() {
     assert_error_envelope(&conflict, "IDEMPOTENCY_REPLAY_CONFLICT");
 }
 
+/// A 422 route rejection is a verdict about identity state, and identity state
+/// moves: an address still provisioning at first submission goes Active
+/// minutes later. The adapter's retry under its original key is exactly the
+/// one that should now be admitted, so the middleware must not have frozen the
+/// rejection for the whole 24h TTL.
+#[tokio::test]
+async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let identity_ref = seeded_test_entity_id(0x1259_0090);
+    let agent_ref = seeded_test_entity_id(0x1259_0091);
+    let address = "surface-provisioning@example.com";
+    server
+        .vault
+        .create_channel_identity(
+            &identity_ref,
+            &oneiron::ChannelIdentity::requested(
+                "email",
+                address,
+                oneiron::ChannelIdentityShape::DedicatedAddress,
+                oneiron::ChannelIdentityBinding::agent(agent_ref),
+                1_782_357_000,
+            ),
+        )
+        .expect("seed requested identity");
+
+    let body = surface_event_body(address, "provider-idem-retry-1");
+    let submit = || {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/core/surface-events")
+            .header(AUTHORIZATION, test_bearer("scope=core:write"))
+            .header("Idempotency-Key", "provider-idem-retry-1")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request");
+        route_json(server.clone(), request)
+    };
+
+    // The identity has not been fulfilled yet, so routing refuses to queue.
+    let (rejected_status, receipt) = submit().await;
+    assert_eq!(rejected_status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        receipt["rejection_reason"],
+        Value::from("inactive_receiving_identity")
+    );
+
+    // Provisioning completes.
+    server
+        .vault
+        .transition_channel_identity(
+            &identity_ref,
+            oneiron::ChannelIdentityState::PendingFulfillment,
+            Some(oneiron::ChannelIdentityFulfillment::Api),
+            1_782_357_100,
+            None,
+        )
+        .expect("pend fulfillment");
+    server
+        .vault
+        .transition_channel_identity(
+            &identity_ref,
+            oneiron::ChannelIdentityState::Active,
+            None,
+            1_782_357_200,
+            None,
+        )
+        .expect("activate identity");
+
+    // Same key, same body: admitted for real, not replayed as the stale 422.
+    let (accepted_status, ack) = submit().await;
+    assert_eq!(accepted_status, StatusCode::ACCEPTED);
+    assert_eq!(ack["replayed"], Value::from(false));
+    assert_eq!(ack["state"], Value::from("queued"));
+}
+
 #[tokio::test]
 async fn v1_core_surface_event_durability_does_not_depend_on_the_middleware() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
