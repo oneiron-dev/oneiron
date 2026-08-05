@@ -765,7 +765,7 @@ fn ms05_amended_receipt_carries_delta_others_do_not() {
         seam::resolve_proposal(&vault, amended, ProposalRuling::AmendThenApprove(&narrowed));
     assert_eq!(
         seam::receipt_delta_payload(&vault, amended_receipt),
-        Some(narrowed.clone())
+        Some(narrowed)
     );
 
     let untouched = seam::submit_merge_proposal(&vault, &a, &c);
@@ -799,10 +799,7 @@ fn ms05_delta_field_is_reserved_opaque_not_built() {
     let proposal = seam::submit_merge_proposal(&vault, &a, &b);
     let (_, receipt) =
         seam::resolve_proposal(&vault, proposal, ProposalRuling::AmendThenApprove(&opaque));
-    assert_eq!(
-        seam::receipt_delta_payload(&vault, receipt),
-        Some(opaque.clone())
-    );
+    assert_eq!(seam::receipt_delta_payload(&vault, receipt), Some(opaque));
 
     let fields = seam::receipt_field_names(&vault, receipt);
     for reserved in [
