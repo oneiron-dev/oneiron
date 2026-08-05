@@ -90,17 +90,10 @@ pub(crate) enum BroadcastError {
 /// also its only caller, so it inherits that module's dead-code posture in the
 /// non-test build.
 ///
-/// Two things separate it from [`BroadcastSubscriber`], which stays exactly as
-/// it is for WebSocket forwarding:
-///
-/// - **No echo suppression.** Every origin is observed, including `conn_id = 0`
-///   local/bridge writes and frames the consumer's own connection sent. A
-///   writer's own device must still refresh its LMDB-derived view, so the
-///   sender connection id is deliberately discarded here.
-/// - **No disconnect escalation.** Lag is a data-freshness problem for a local
-///   read, not a connection fault: it surfaces as
-///   [`ReactiveChange::InvalidateAll`] so the query re-reads coarsely instead
-///   of tearing anything down.
+/// Unlike [`BroadcastSubscriber`], which stays exactly as it is for WebSocket
+/// forwarding, lag here surfaces as [`ReactiveChange::InvalidateAll`] so the
+/// query re-reads coarsely instead of escalating to a disconnect: staleness is
+/// a data-freshness problem, not a connection fault.
 pub(crate) struct ReactiveChangeSubscriber {
     /// Receiver end of the broadcast channel.
     rx: broadcast::Receiver<BroadcastPayload>,
@@ -114,13 +107,15 @@ impl ReactiveChangeSubscriber {
 
     /// Waits for the next persistent-change notice.
     ///
-    /// Non-persistent frames are skipped inside the loop and never surface.
-    /// Returns `None` once the channel is closed — terminal, but the caller's
-    /// retained snapshot stays valid.
+    /// Non-persistent frames are skipped inside the loop and never surface;
+    /// the sender connection id is deliberately discarded — a writer's own
+    /// device must still refresh its LMDB-derived view. Returns `None` once
+    /// the channel is closed: terminal, but the caller's retained snapshot
+    /// stays valid.
     pub(crate) async fn recv(&mut self) -> Option<ReactiveChange> {
         loop {
             match self.rx.recv().await {
-                Ok((_sender_conn_id, data)) => {
+                Ok((_, data)) => {
                     if let Some(change) = persistent_change(&data) {
                         return Some(change);
                     }

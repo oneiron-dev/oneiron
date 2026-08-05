@@ -177,8 +177,7 @@ impl<Q: ReactiveLocalQuery> ReactiveLocalRead<Q> {
     /// Waits past every notice that does not touch this query's dependencies,
     /// then re-reads once and returns the fresh snapshot.
     ///
-    /// A lagged channel arrives as
-    /// [`ReactiveChange::InvalidateAll`](ReactiveChange::InvalidateAll) and is
+    /// A lagged channel arrives as [`ReactiveChange::InvalidateAll`] and is
     /// honoured as a coarse full re-read: losing notices must degrade to extra
     /// work, never to stale data.
     pub(crate) async fn refresh_on_change(&mut self) -> Result<&Q::Output, ReactiveReadError> {
@@ -190,10 +189,9 @@ impl<Q: ReactiveLocalQuery> ReactiveLocalRead<Q> {
                 continue;
             }
             self.snapshot = self.query.read(&self.vault)?;
-            self.revision = self.revision.saturating_add(1);
-            break;
+            self.revision += 1;
+            return Ok(&self.snapshot);
         }
-        Ok(&self.snapshot)
     }
 }
 

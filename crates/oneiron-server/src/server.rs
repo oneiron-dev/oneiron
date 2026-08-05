@@ -201,10 +201,7 @@ impl SyncServer {
         reassert_manager.attach_to_vault();
         // Detached on purpose: the relay ends by itself when the manager (and
         // with it the outbound sink holding the sender) drops with this server.
-        drop(spawn_local_change_producer(
-            &reassert_manager,
-            &broadcast_tx,
-        ));
+        spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
@@ -928,19 +925,22 @@ impl SyncServer {
 /// their own coarse delta stay correct: a client importing the same update
 /// twice converges to the same state.
 ///
-/// Returns `None` outside a Tokio runtime — synchronous unit-test construction.
-/// Nothing is attached in that case, so Observer A keeps its durable
-/// `SyncQueue` fallback and no unread sender can accumulate updates.
+/// Does nothing outside a Tokio runtime (synchronous unit-test construction).
+/// The attach therefore happens only once the relay task can actually run, so
+/// Observer A keeps its durable `SyncQueue` fallback and no unread sender can
+/// accumulate updates.
 fn spawn_local_change_producer(
     reassert_manager: &Arc<WindowManager>,
     broadcast_tx: &broadcast::Sender<BroadcastPayload>,
-) -> Option<tokio::task::JoinHandle<()>> {
-    let runtime = tokio::runtime::Handle::try_current().ok()?;
+) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
     let (updates_tx, mut updates_rx) = tokio::sync::mpsc::unbounded_channel();
     reassert_manager.outbound().attach(updates_tx);
 
     let broadcast_tx = broadcast_tx.clone();
-    Some(runtime.spawn(async move {
+    runtime.spawn(async move {
         while let Some(update) = updates_rx.recv().await {
             let window_key = update.window_key;
             match crate::protocol::encode_window_sync(
@@ -962,7 +962,7 @@ fn spawn_local_change_producer(
                 }
             }
         }
-    }))
+    });
 }
 
 fn mcp_registry_hash_key(config: &SyncServerConfig) -> [u8; 32] {
