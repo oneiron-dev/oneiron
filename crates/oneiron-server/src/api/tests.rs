@@ -120,6 +120,7 @@ const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "SurfaceInteractionKindPayload",
     "SurfaceCounterpartyPayload",
     "SurfaceEventAckResponse",
+    "SurfaceEventRejectionResponse",
     "SurfaceEventStatusResponse",
     "SurfaceEventHandoffStatePayload",
     "CoreRunTreeEvent",
@@ -10024,7 +10025,13 @@ async fn v1_core_surface_event_submit_acks_with_202_and_is_queryable() {
     assert_eq!(snapshot["attempt_ref"], Value::from(attempt_ref.as_str()));
     assert_eq!(snapshot["state"], Value::from("queued"));
     assert_eq!(snapshot["attempt_count"], Value::from(0));
-    assert!(snapshot.get("last_error").is_none());
+    // Nullable-required, mirroring the engine envelope: a client never has to
+    // tell "no error" apart from "field absent from this build".
+    assert_eq!(
+        snapshot.get("last_error"),
+        Some(&Value::Null),
+        "last_error is present and null while the row has no error"
+    );
     assert!(snapshot["created_at"].as_u64().is_some());
 }
 
@@ -10119,7 +10126,7 @@ async fn v1_core_surface_event_rejects_unroutable_identity_without_queueing() {
     seed_surface_identity(&server, 0x1259_0030, "surface-known@example.com");
     let body = surface_event_body("surface-unknown@example.com", "provider-reject-1");
 
-    let (status, error) = core_json(
+    let (status, receipt) = core_json(
         server.clone(),
         "POST",
         "/v1/core/surface-events",
@@ -10127,14 +10134,41 @@ async fn v1_core_surface_event_rejects_unroutable_identity_without_queueing() {
         Some(&body),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&error, "BAD_REQUEST");
-    assert!(
-        error_envelope(&error)["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("unknown_receiving_identity")),
-        "rejection must carry the stable engine reason: {error:?}"
+
+    // The body is the pinned route receipt, not an error envelope carrying a
+    // stringified reason: an adapter has to tell a wrong address from an
+    // unbound identity from one that stopped accepting inbound, and act
+    // differently on each.
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        receipt["rejection_reason"],
+        Value::from("unknown_receiving_identity")
     );
+    assert_eq!(receipt["outcome"], Value::from("rejected"));
+    assert_eq!(
+        receipt["receipt_kind"],
+        Value::from("inbound_surface_event_route")
+    );
+    assert_eq!(receipt["schema_version"], Value::from(2));
+    assert_eq!(receipt["event_id"], Value::from("provider-reject-1"));
+    assert_eq!(receipt["channel"], Value::from("email"));
+    assert_eq!(
+        receipt["receiving_address_or_handle"],
+        Value::from("surface-unknown@example.com")
+    );
+    assert_eq!(
+        receipt["counterparty"],
+        json!({ "state": "unknown", "counterparty_key": "email:sender@example.com" })
+    );
+    assert_eq!(receipt["foreign_inbound"], Value::from(true));
+    assert_eq!(receipt["claims_not_instructions"], Value::from(true));
+    assert_eq!(receipt["identity_retiring"], Value::from(false));
+    // An address that resolves to nothing stamps neither identity nor agent,
+    // and no error envelope is wrapped around any of it.
+    assert!(receipt.get("receiving_identity_ref").is_none());
+    assert!(receipt.get("agent_ref").is_none());
+    assert!(receipt.get("error").is_none(), "{receipt:?}");
+    assert!(receipt.get("surface_event").is_none(), "{receipt:?}");
 
     // Nothing was queued, so the correlation id has no status resource.
     let (status, error) = core_json(
@@ -10147,6 +10181,56 @@ async fn v1_core_surface_event_rejects_unroutable_identity_without_queueing() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_error_envelope(&error, "NOT_FOUND");
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+
+    // A resolved but vault-bound identity. Routing knows exactly which record
+    // refused and why, and the receipt carries both — the previous flattened
+    // envelope collapsed this onto the same body as an unknown address.
+    let identity_ref = seeded_test_entity_id(0x1259_0080);
+    let address = "surface-vault-bound@example.com";
+    let mut identity = oneiron::ChannelIdentity::requested(
+        "email",
+        address,
+        oneiron::ChannelIdentityShape::DedicatedAddress,
+        oneiron::ChannelIdentityBinding::vault(7),
+        1_782_357_000,
+    );
+    identity.state = oneiron::ChannelIdentityState::Active;
+    identity.pending_fulfillment = None;
+    server
+        .vault
+        .create_channel_identity(&identity_ref, &identity)
+        .expect("seed vault-bound identity");
+
+    let (status, receipt) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&surface_event_body(address, "provider-reject-2")),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        receipt["rejection_reason"],
+        Value::from("non_agent_bound_identity")
+    );
+    assert_eq!(
+        receipt["receiving_identity_ref"],
+        Value::from(identity_ref.to_hex())
+    );
+    assert!(
+        receipt.get("agent_ref").is_none(),
+        "a vault-bound identity stamps no agent: {receipt:?}"
+    );
 }
 
 #[tokio::test]

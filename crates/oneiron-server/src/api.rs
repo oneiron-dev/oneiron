@@ -228,6 +228,7 @@ const API_LEVEL: &str = "v1";
         SurfaceInteractionKindPayload,
         SurfaceCounterpartyPayload,
         SurfaceEventAckResponse,
+        SurfaceEventRejectionResponse,
         SurfaceEventStatusResponse,
         SurfaceEventHandoffStatePayload,
         CoreTextField,

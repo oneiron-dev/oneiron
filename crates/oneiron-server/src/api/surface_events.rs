@@ -18,7 +18,9 @@ use axum::extract::Path;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::response::Json;
+use axum::response::Response;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -315,6 +317,121 @@ impl From<oneiron::SurfaceEventAck> for SurfaceEventAckResponse {
     }
 }
 
+/// Typed route rejection: identity routing refused the event before it reached
+/// the queue.
+///
+/// This mirrors the engine's `InboundSurfaceRouteReceipt` field for field,
+/// minus the `surface_event` an accepted route carries — a rejection never
+/// stamps one. Adapters read `rejection_reason` to tell a wrong address from an
+/// unbound identity from one that has stopped accepting inbound, which a
+/// flattened error message cannot express.
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(example = json!({
+    "schema_version": 2,
+    "receipt_kind": "inbound_surface_event_route",
+    "event_id": "slack:Ev024BE7LH",
+    "outcome": "rejected",
+    "channel": "slack",
+    "receiving_address_or_handle": "T024BE7LH/agent",
+    "counterparty": { "state": "unknown", "counterparty_key": "slack:U024BE7LH" },
+    "foreign_inbound": true,
+    "claims_not_instructions": true,
+    "identity_retiring": false,
+    "rejection_reason": "unknown_receiving_identity"
+}))]
+pub(crate) struct SurfaceEventRejectionResponse {
+    /// Inbound SurfaceEvent schema version this receipt was cut under.
+    #[schema(example = 2)]
+    schema_version: u64,
+    /// Stable receipt family label.
+    #[schema(example = "inbound_surface_event_route")]
+    receipt_kind: String,
+    /// Provider-native event id the submission carried.
+    #[schema(example = "slack:Ev024BE7LH")]
+    event_id: String,
+    /// Routing outcome. Always `rejected` on this body.
+    #[schema(value_type = String, example = "rejected")]
+    outcome: oneiron::InboundSurfaceRouteOutcome,
+    /// Raw provider channel key the submission was addressed on.
+    #[schema(example = "slack")]
+    channel: String,
+    /// Address or handle the provider delivered the event to.
+    #[schema(example = "T024BE7LH/agent")]
+    receiving_address_or_handle: String,
+    /// Provider-native workspace/team stamp, when the submission carried one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "T024BE7LH")]
+    workspace_ref: Option<String>,
+    /// ChannelIdentity the address resolved to, when it resolved at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    receiving_identity_ref: Option<String>,
+    /// Agent the identity is bound to, when it is agent-bound.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    agent_ref: Option<String>,
+    /// Counterparty identity as submitted.
+    #[schema(value_type = SurfaceCounterpartyPayload)]
+    counterparty: oneiron::SurfaceCounterpartyStamp,
+    /// Foreign/provider-authored inbound.
+    #[schema(example = true)]
+    foreign_inbound: bool,
+    /// Foreign inbound is claims, not executable owner instructions.
+    #[schema(example = true)]
+    claims_not_instructions: bool,
+    /// Quarantined/released identities still route; this stays `false` on a
+    /// rejection.
+    #[schema(example = false)]
+    identity_retiring: bool,
+    /// Stable engine reason: `unknown_receiving_identity`,
+    /// `non_agent_bound_identity`, `inactive_receiving_identity`, or
+    /// `tombstoned_receiving_identity`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = String, example = "unknown_receiving_identity")]
+    rejection_reason: Option<oneiron::InboundSurfaceRejectionReason>,
+}
+
+impl From<oneiron::InboundSurfaceRouteReceipt> for SurfaceEventRejectionResponse {
+    fn from(receipt: oneiron::InboundSurfaceRouteReceipt) -> Self {
+        Self {
+            schema_version: receipt.schema_version,
+            receipt_kind: receipt.receipt_kind,
+            event_id: receipt.event_id,
+            outcome: receipt.outcome,
+            channel: receipt.channel,
+            receiving_address_or_handle: receipt.receiving_address_or_handle,
+            workspace_ref: receipt.workspace_ref,
+            receiving_identity_ref: receipt.receiving_identity_ref,
+            agent_ref: receipt.agent_ref,
+            counterparty: receipt.counterparty,
+            foreign_inbound: receipt.foreign_inbound,
+            claims_not_instructions: receipt.claims_not_instructions,
+            identity_retiring: receipt.identity_retiring,
+            rejection_reason: receipt.rejection_reason,
+        }
+    }
+}
+
+/// What `POST /v1/core/surface-events` decided.
+///
+/// Both arms are engine verdicts rather than transport failures, so each keeps
+/// its own typed body: `202` with the durable ack, `422` with the route receipt.
+pub(crate) enum SurfaceEventSubmitOutcome {
+    Accepted(SurfaceEventAckResponse),
+    Rejected(SurfaceEventRejectionResponse),
+}
+
+impl IntoResponse for SurfaceEventSubmitOutcome {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Accepted(ack) => (StatusCode::ACCEPTED, Json(ack)).into_response(),
+            Self::Rejected(receipt) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, Json(receipt)).into_response()
+            }
+        }
+    }
+}
+
 /// Durable snapshot of one admitted event's handoff.
 #[derive(Debug, Serialize, ToSchema)]
 #[schema(example = json!({
@@ -322,6 +439,7 @@ impl From<oneiron::SurfaceEventAck> for SurfaceEventAckResponse {
     "attempt_ref": "0123456789abcdef0123456789abcdef",
     "state": "queued",
     "attempt_count": 0,
+    "last_error": null,
     "created_at": 1782357600_u64,
     "updated_at": 1782357600_u64
 }))]
@@ -337,9 +455,12 @@ pub(crate) struct SurfaceEventStatusResponse {
     /// How many times a worker has leased this attempt.
     #[schema(example = 0)]
     attempt_count: u32,
-    /// Failure or retry reason recorded on the row, when there is one.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(example = "downstream refused")]
+    /// Failure or retry reason recorded on the row, `null` while there is none.
+    ///
+    /// Always present: the engine envelope this mirrors carries the field
+    /// nullable rather than absent, so a client never has to tell "no error"
+    /// apart from "field not in this build".
+    #[schema(required = true, example = "downstream refused")]
     last_error: Option<String>,
     /// Admission timestamp in Unix seconds.
     #[schema(example = 1782357600_u64)]
@@ -376,9 +497,10 @@ impl From<oneiron::SurfaceEventHandoffStatus> for SurfaceEventStatusResponse {
     request_body(content = SurfaceEventSubmitRequest, content_type = "application/json"),
     responses(
         (status = 202, description = "Event committed to the durable queue and acked before any dispatch. A correlation replay returns the original attempt ref with `replayed: true`.", body = SurfaceEventAckResponse, content_type = "application/json"),
-        (status = 400, description = "Malformed submission, or identity routing rejected the event without queueing.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 400, description = "Malformed submission body, or an input the engine refused to normalize.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 422, description = "Identity routing refused the event without queueing. The body is the typed route receipt, naming which of the four rejection reasons applied.", body = SurfaceEventRejectionResponse, content_type = "application/json"),
         (status = 500, description = "Admission failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -386,7 +508,7 @@ pub(crate) async fn submit_core_surface_event(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<SurfaceEventSubmitRequest>, JsonRejection>,
-) -> Result<(StatusCode, Json<SurfaceEventAckResponse>), EnvelopedApiError> {
+) -> Result<SurfaceEventSubmitOutcome, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let req = json_payload(payload)?;
 
@@ -398,12 +520,14 @@ pub(crate) async fn submit_core_surface_event(
             core_engine_error("surface event admission failed", error)
         })?;
 
-    match admission {
+    Ok(match admission {
         oneiron::SurfaceEventAdmission::Accepted(ack) => {
-            Ok((StatusCode::ACCEPTED, Json(ack.into())))
+            SurfaceEventSubmitOutcome::Accepted(ack.into())
         }
-        oneiron::SurfaceEventAdmission::Rejected(receipt) => Err(rejection_error(&receipt).into()),
-    }
+        oneiron::SurfaceEventAdmission::Rejected(receipt) => {
+            SurfaceEventSubmitOutcome::Rejected(receipt.into())
+        }
+    })
 }
 
 /// Read the durable handoff status for one correlation id.
@@ -445,20 +569,4 @@ pub(crate) async fn get_core_surface_event(
         .ok_or_else(|| ApiError::not_found("surface_event", Some(&correlation_id)))?;
 
     Ok(Json(status.into()))
-}
-
-/// Maps a typed route rejection onto the shared error envelope.
-///
-/// Identity routing rejections are the adapter's problem to fix — a wrong
-/// address, an unbound identity, an identity that is not accepting inbound —
-/// so they stay `BAD_REQUEST` and carry the engine's stable reason string
-/// rather than a new error code family.
-fn rejection_error(receipt: &oneiron::InboundSurfaceRouteReceipt) -> ApiError {
-    let reason = receipt
-        .rejection_reason_str()
-        .unwrap_or("unknown_receiving_identity");
-    ApiError::bad_request(
-        format!("inbound surface event was not routed: {reason}"),
-        Some("receiving_address_or_handle"),
-    )
 }

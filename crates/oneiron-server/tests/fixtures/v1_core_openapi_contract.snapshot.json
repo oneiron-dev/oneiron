@@ -3806,6 +3806,75 @@
         ],
         "type": "string"
       },
+      "SurfaceEventRejectionResponse": {
+        "properties": {
+          "agent_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel": {
+            "type": "string"
+          },
+          "claims_not_instructions": {
+            "type": "boolean"
+          },
+          "counterparty": {
+            "$ref": "#/components/schemas/SurfaceCounterpartyPayload"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "foreign_inbound": {
+            "type": "boolean"
+          },
+          "identity_retiring": {
+            "type": "boolean"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "receipt_kind": {
+            "type": "string"
+          },
+          "receiving_address_or_handle": {
+            "type": "string"
+          },
+          "receiving_identity_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rejection_reason": {
+            "type": "string"
+          },
+          "schema_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "workspace_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "receipt_kind",
+          "event_id",
+          "outcome",
+          "channel",
+          "receiving_address_or_handle",
+          "counterparty",
+          "foreign_inbound",
+          "claims_not_instructions",
+          "identity_retiring"
+        ],
+        "type": "object"
+      },
       "SurfaceEventSourcePayload": {
         "properties": {
           "app": {
@@ -3856,6 +3925,7 @@
           "attempt_ref",
           "state",
           "attempt_count",
+          "last_error",
           "created_at",
           "updated_at"
         ],
@@ -4899,7 +4969,7 @@
             }
           },
           "400": {
-            "description": "Malformed submission, or identity routing rejected the event without queueing.",
+            "description": "Malformed submission body, or an input the engine refused to normalize.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
@@ -4914,6 +4984,12 @@
             "description": "Core token lacks core:write.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "422": {
+            "description": "Identity routing refused the event without queueing. The body is the typed route receipt, naming which of the four rejection reasons applied.",
+            "schema": {
+              "$ref": "#/components/schemas/SurfaceEventRejectionResponse"
             }
           },
           "500": {
