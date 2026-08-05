@@ -100,6 +100,115 @@ into an idiomatic `_context` parameter rename (+1 / −2 lines). Gates after the
 -D warnings` ✓ · `cargo test -p oneiron --all-features --lib` → **3177 passed, 0
 failed, 24 ignored** ✓. Porcelain clean apart from pre-existing `WORKLOG-LANE-BOOT.md`.
 
+## Round-2 fix leg (5 findings, 5 bounded commits on top of `c288a9f`)
+
+Sol-max re-fire returned F1–F5; the K3 re-verdict revised CY-CLOSED →
+FIX-REQUIRED (3 real P1 + 1 real P2 + 1 doc-only P2). One commit per finding,
+each carrying only that finding's work. Gates green per commit
+(`cargo fmt --check` · `cargo clippy -p oneiron --all-targets --all-features --
+-D warnings` · `cargo test -p oneiron --all-features --lib`).
+
+| # | Commit | Finding |
+|---|---|---|
+| F1 | `ebc3079` | dead/missing production wiring at the attempts layer |
+| F2 | `9a38440` | unbound attribution evidence (`skill_attribution.rs:592`) |
+| F3 | `7d87d2c` | missing edit proposal (`skill_attribution.rs:435`) |
+| F4 | `b730199` | receipt-spine wording (P2, by-design — doc line only) |
+| F5 | `a8292b5` | ineffective defect-injection audit (`skill_attribution.rs:560`) |
+
+### F1 — surface trace (2 candidates, one chosen)
+
+`append_pack_manifest_fields` had no production caller: the field-set existed
+and nothing ever stamped it.
+
+- **(A) `receipt::persist_send_receipt`** — the durable connector-send
+  chokepoint. REJECTED: TASK-keyed, reached only by the connector-send lane,
+  holds no attempt handle (task→attempt needs an O(N) `AttemptQueue::list`
+  scan), and would leave `dreamer_runner` / `task_verb` / `agent_dispatch` /
+  `companion` unstamped — exactly the lanes attribution routes.
+- **(B) `AttemptQueue::complete` + `AttemptQueue::fail`** — CHOSEN. The two
+  doors every execute leaves through; stamping there needs zero call-site
+  edits, cannot be forgotten by a later lane, and runs in the transition's own
+  write txn (terminal-with-manifest-but-no-receipt is unreachable).
+
+Row lands in `vault_meta` under `attempt_receipt:v1:` keyed by the receipt id
+(`attempt:<hex>`), so a cited `receipt_ref` point-reads instead of scanning,
+and projects into the RS1 family via `collect_receipt_records` — no new
+receipt kind, no new store. Narrow by construction: an attempt whose pack
+loaded nothing mints no row. Cancellation (operator intervention, not an
+execute) deliberately does not stamp.
+
+**Remaining seam (deviation-board item):** the pack→manifest half —
+`append_manifest_entry` called by a real pack loader — cannot be wired in
+1737's packet because no skill-pack assembly path exists in the crate yet
+(SK-02 / ONE-1736 lands it). The chain from `append_manifest_entry` onward is
+now automatic; the loader end belongs to the lane that owns pack assembly.
+
+### F2 — evidence grounding
+
+`validate_evidence(vault, …)` now resolves `receipt_ref` on the pack-receipt
+ledger, requires the actor entity to exist, requires the skill entity to exist
+and be a SKILL record when named, and — when the resolved receipt carries a
+manifest — requires the skill to appear in it. A receipt predating the
+field-set carries no manifest and cannot answer membership: absent fact, not
+failed check, so it admits. Typed refusals reuse `Error::InvalidClaimBody`
+(`error.rs` is out of packet, and the taxonomy already fits).
+
+Consequence: fixtures can no longer hand-write receipt strings. Module tests
+and the oracle now run a real attempt under a real pack to its terminal door
+and cite what the close stamped.
+
+### F3 — minted proposals
+
+`pending_edit_proposals` was a filter over judgments, which made the oracle's
+proposal count a restatement of its verdict count (structurally unable to
+fail). Discovery now mints a typed `SkillEditProposal` in the projector's write
+txn under `skill_attribution:edit_proposal:v1:`, keyed by the SOURCE JUDGMENT
+SEQUENCE — so re-projection re-mints the same row rather than duplicating. The
+oracle's count assert is untouched (arming law) and is now backed by shape
+asserts: target skill, cited judgment sequence, carried-forward receipts.
+
+### F5 — audit made unspoofable
+
+Fixture ids were the answer key (`audit:skill_defect`, …); a string-matching
+judge would have scored 100% while judging nothing. Ids are now opaque
+(`audit:case:1..5`) with a mechanical guard test asserting no fixture id
+contains any verdict wire string. `AuditFixture.expected` became
+`Option<AttributionVerdict>`: the held-out set carries an unsettled case where
+abstention is the RIGHT answer and naming a verdict is WRONG. The rule tier
+still scores 5/5; `AlwaysDefect` now fails the opaque case; an all-abstain
+judge earns exactly the abstention fixture (0.2), so "nothing was checked is
+not everything was right" holds with a sharper edge than the old zero.
+
+`an_abstaining_judge_does_not_score_a_perfect_pass_rate` was re-shaped (its
+old assert was `pass_rate == 0`, impossible once abstention can be correct);
+the contract it guards is preserved and strengthened.
+
+### Mutation verification (every new behavioural test)
+
+| Mutation | Test that failed |
+|---|---|
+| drop the stamp call from `complete()` | `completing_an_attempt_under_a_pack_stamps_its_terminal_receipt` |
+| skip ledger resolution in `validate_evidence` | `fabricated_evidence_references_are_refused_at_the_door` |
+| skip manifest-membership check | `fabricated_evidence_references_are_refused_at_the_door` |
+| suppress proposal minting | oracle `sk04_discovery_outcome_mints_edit_proposal_not_claim` + 2 module tests |
+| re-introduce `audit:skill_defect` fixture id | `audit_fixture_ids_leak_no_verdict_signal` |
+| score abstention as never-correct | `labelling_judges_fail_the_opaque_unsettled_case` (+3) |
+
+All mutations restored; final tree is the unmutated code.
+
+### Final gates
+
+`cargo fmt --check` ✓ · `cargo clippy -p oneiron --all-targets --all-features
+-- -D warnings` ✓ · `cargo nextest run -p oneiron --all-features` →
+**3453 tests run, 3453 passed, 98 skipped** (baseline 3442, +11: 4 pack-receipt
+wiring, 3 evidence grounding, 2 edit-proposal, 2 audit-spoof).
+
+Flake noted (charged to no lane): `embed::tests::partial_remote_completion_is_
+logged_when_local_batch_fails` failed once under the full `--lib` run and
+passed alone and on the immediate re-run — global-tracing-subscriber
+contention class, untouched by this packet.
+
 ## Notes for the stack
 
 - **1738** reads `attribution_judgments(vault)` and folds the `SkillDefect` rows into the Beta
@@ -109,6 +218,11 @@ failed, 24 ignored** ✓. Porcelain clean apart from pre-existing `WORKLOG-LANE-
   Its oracle work includes finishing `sk04_attribution_routes_defect_to_skill_and_lapse_to_actor`:
   the ARM seam sits directly below live routing asserts, so only the claim writes are missing.
 - **ED-03 (1759)** extends this module; `run_attribution_audit_with_judge` is already generic over
-  the fixture set and the judge so the harness needs no reshaping for amendment evidence.
+  the fixture set and the judge so the harness needs no reshaping for amendment evidence. Its
+  `AuditFixture.expected` is `Option<Verdict>` after F5 — amendment fixtures get the same
+  honest-abstention arm for free.
+- **1738/1739 evidence door:** `record_attribution_evidence` now REFUSES ungrounded rows (F2).
+  Any layer feeding it must cite a receipt the attempt's terminal actually stamped
+  (`attempt_pack_receipt_id`), not a synthesized string.
 - The LLM tier is a `trait AttributionJudge` seam, not a client. A host implementation stamps
   `attribution_call_purpose()` on its `llm.rs` call; the projector takes `&dyn AttributionJudge`.
