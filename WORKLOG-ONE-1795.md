@@ -262,3 +262,136 @@ Verdict: **no edit warranted.** Read the full production diff
   blueprint-faithful, costless.
 - No fixture, test assertion, or public API touched. No gate re-run needed
   (tree unchanged from the green full-suite run above).
+
+## FINDER-FIX (Sol-max round, adjudicated on `2eea280`)
+
+Three findings the chain verdict leg never received (script defect — the
+finder's output never reached it). Adjudicated here; all three REAL, all three
+fixed at the chokepoint with mutation-verified tests. DEV-1 (the `matches!`
+cancel guard) was a DIFFERENT site and was already closed by the impl leg.
+
+The shared root: **ONE-1795 turned one row per TASK into a retry CHAIN, and
+three surfaces still read the set as if the rows were peers.** F1 and F2 are
+the same defect at the write door and the read door.
+
+### F1 — `task-cancel-membership-toctou` (P1) → **REAL, fixed**
+
+`task_verb.rs:489` re-read only the SNAPSHOTTED attempt ids inside the write
+txn. Trace: `tasks.cancel` snapshots `[(A, Leased)]`; the connector executor's
+`retry` wins the writer lock and commits `A → Failed` plus a fresh
+`B{state: Scheduled, task_ref: same}`; the cancel's txn opens, re-reads `A`,
+sees `Failed`, finds nothing cancelable, and returns
+`effected: false, status: Some(Failed)` — the verb reports the task terminally
+failed, cancels nothing, and **B still runs and sends**. Same send-after-cancel
+class as DEV-1, one window later.
+
+Lane-introduced: before this ticket `retry` mutated the row in place, so
+membership could not change between snapshot and txn — only STATE could, which
+the existing P1-b re-read already covered. The deferred-work comment at the old
+`:484` named this exactly ("when multi-attempt-per-task ships, this in-txn
+re-read must re-enumerate the realizing SET"); this ticket is what ships it.
+
+Fix: a TASK target re-DERIVES its realizing set inside the write txn
+(`AttemptQueue::list_task_in_write_txn`, a sibling of the existing
+`get_in_write_txn`), reduced to chain heads. A Spawn target has no TASK
+backlink to re-derive membership from, so its single row keeps the by-id
+re-read — including the terminal-snapshot preservation arm, now unconditional
+inside that branch instead of re-testing `task_ref.is_none()`.
+
+Head reduction is load-bearing here, not decoration: without it the failed
+source survives as `terminal_status = Failed`, `preserved_terminal_status` keeps
+the TASK visible, `cancel_task_in_txn` never runs — and once F2 drops the
+superseded source from the board, the cancelled task renders as *queued*
+forever. With it, the cancel is honest: `effected: true`, `status: Cancelled`,
+TASK withdrawn, `B` cancelled, `A` still point-readable as `Failed`.
+
+Test `cancel_reaches_a_retry_minted_between_snapshot_and_write_txn`.
+**Mutation-verified**: reverting to the by-id re-read leaves the successor
+`Scheduled` (`left: Scheduled, right: Cancelled`) — the live send survives.
+
+### F2 — `retry-chain-head-reduction` (P1) → **REAL, fixed**
+
+`task_presence` flattened every chain node into `jobs`, and
+`fold_up_status`'s any-row precedence (Running > Failed > Scheduled > Queued >
+Done) then picked the worst row rather than the live one. A held retry folds up
+as `Failed` instead of `Scheduled`; worse, **a chain that ultimately SUCCEEDED
+still folds up as `Failed` forever**, because the terminal source outranks the
+`Done` head permanently.
+
+Fix at the chokepoint: only chain HEADS reach the board. One `continue` in the
+node loop of `task_presence`, keyed on the same `superseded_attempt_ids` rule
+F1 uses. This is the existing precedent, not a new axis — `JobPresence::
+from_run_tree_node` already drops `Cancelled` rows because "the axis has no
+token for withdrawn work"; a superseded try is withdrawn work whose successor
+owns the realization. The run tree keeps every try, nested under the one it
+replaces, as the forensic surface (`tasks.expand` is unchanged).
+
+`fold_up_status` itself is untouched: its precedence order is L0-ruled and
+correct for a set of PEERS. The defect was feeding it a chain.
+
+Test `board_reads_a_retry_chain_off_its_head_not_a_superseded_try` — 2-retry
+chain, head `Scheduled` → board `Scheduled` with `folded_job_count == 1`; head
+then completes → board `Done`. **Mutation-verified**: without the skip the board
+reads `Failed` (`left: Failed, right: Scheduled`).
+
+### F3 — `legacy-readiness-projection` (P2) → **REAL, fixed**
+
+`run_tree.rs:455` projected the bare enum. A version-2 row decodes as
+`Queued` with only `backoff_until`; `ready_at()` preserves that claim instant,
+so the claim loop defers it — but `flat_node` rendered `Queued`, which
+`context_board.rs:247` maps to `TaskBoardStatus::Queued` and the facade attempt
+view spells `queued`. The read surfaces said runnable-now while the queue
+refused to hand the row out.
+
+Not gold-plating on a dead path: this ticket deliberately kept version-2
+readability (`backoff_until` retained, two legacy-decode tests pinned), so those
+rows are a ratified design premise. And the asymmetry is lane-introduced —
+before this ticket every deferred row rendered `Queued` uniformly; after it, a
+new deferred row renders `Paused`/Scheduled while an identically-deferred legacy
+row still renders `Queued`.
+
+Fix: `run_tree_status(record)` derives the token from the readiness instant in
+either spelling instead of the bare enum. **No clock is introduced** — the
+projection stays pure and deterministic. It does not need one: a `Scheduled`
+row renders `Paused` whether or not its instant has passed, so the honest
+parallel is "carries a readiness instant at all", which is exactly
+`ready_at`'s own predicate. Blast radius is zero for live rows: `claim`
+(`lease_claimed_record`) and lease-timeout requeue (`cleanup_leases`) each clear
+BOTH spellings, so no row queued by this build carries an instant. The public
+`From<AttemptState> for RunTreeStatus` impl is unchanged.
+
+Test `legacy_backoff_row_projects_deferred_not_runnable_now` (planted version-2
+row with a future `backoff_until` → `Paused`, events still `[Created]` since it
+was not paused by an operator; a sibling with no instant stays `Queued`).
+**Mutation-verified**: dropping the arm yields `left: Queued, right: Paused`.
+
+### Scope note (fix-brief bound exceeded, deliberately)
+
+The brief bounded the diff to `task_verb.rs` + `run_tree.rs` + tests. F1's fix
+needed an in-write-txn enumeration of rows by `task_ref`; `AttemptQueue` had
+`get_in_write_txn` but no list sibling. The alternatives were both worse than a
+12-line additive method: hand-rolling LMDB iteration and `decode_record` from a
+verb module (punching through the queue's encapsulation and duplicating
+`list()`), or opening a nested `RoTxn` inside the write txn (correct only via a
+subtle appeal to LMDB's single-writer property — not something to bury in a
+cancel path). `list_task_in_write_txn` follows the module's established
+`_in_txn` family. **No PACKET_AMEND is owed**: `attempt_queue.rs` is already in
+`CLAIMS.md` for ONE-1795, so there is no collision surface — only the
+fix-brief's narrower bound is exceeded, flagged here.
+
+### Reasoned-rejects
+
+None. All three findings carried a reproducible trace and all three survived it.
+
+### Gates (per commit)
+
+| Gate | Result |
+|---|---|
+| `cargo fmt --all --check` | clean, both commits |
+| `cargo clippy -p oneiron --lib --all-features --all-targets -D warnings` | clean, both commits |
+| `cargo test -p oneiron --lib` — `attempt_queue` / `run_tree` / `task_verb` | 46 / 15 / 26 passed, 0 failed |
+| consumer suites (`context_board`, `outbound`, `companion`, `facade`, `inbox`, `agent_dispatch`, `dreamer_runner`) | 316 passed, 0 failed |
+| `cargo test -p oneiron --lib` (full, final tree) | **2762 passed, 0 failed, 24 ignored** (105s, parallel; no tracing flake this run) |
+
+No `Cargo.toml` / `Cargo.lock` change. Commits: `af37e17` (F3),
+`98cee36` (F1 + F2 — one shared chokepoint rule, so one commit).
