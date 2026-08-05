@@ -2424,3 +2424,414 @@ fn undo_of_ingested_merge_orders_after_it_in_the_fold() {
         EntityLifecycleState::Active
     );
 }
+
+// ─── ONE-1747 (MS-05): the proposal resolution door ─────────────────────────
+
+/// Parks a merge proposal of `losers` into `survivor` and returns its id.
+fn park_merge_proposal(
+    vault: &Vault,
+    losers: Vec<EntityId>,
+    survivor: EntityId,
+    at: u64,
+) -> EntityId {
+    let mut proposed = IdentityOpWrite::auto(ClaimSource::Inferred);
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    expect_parked(
+        vault
+            .apply_identity_topology_op(&merge_op(losers, survivor), &proposed, at)
+            .expect("proposed merge parks"),
+    )
+}
+
+/// The decider's write: ruling IS the act of deciding, so it is effective.
+fn ruling_write() -> IdentityOpWrite {
+    IdentityOpWrite::auto(ClaimSource::UserStated)
+}
+
+fn proposal_outcome_receipts(vault: &Vault) -> Vec<crate::receipt::ReceiptRecord> {
+    vault
+        .receipts(
+            crate::receipt::ReceiptQuery::new(10)
+                .with_kind(crate::receipt::ReceiptKind::ProposalOutcome),
+        )
+        .expect("query proposal-outcome receipts")
+}
+
+#[test]
+fn amend_then_approve_applies_the_amended_body_not_the_original() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x73);
+    let kept = put_person(&vault, 0x74);
+    let dropped = put_person(&vault, 0x75);
+
+    // Proposed: fold BOTH losers in. Amended: narrow to `kept` alone.
+    let proposal = park_merge_proposal(&vault, vec![kept, dropped], survivor, 200);
+    let narrowed = encode_identity_op_amendment(&merge_op(vec![kept], survivor))
+        .expect("encode narrowed amendment");
+    let (outcome, resolution) = vault
+        .resolve_identity_proposal(
+            &proposal,
+            ProposalRuling::AmendThenApprove(&narrowed),
+            &ruling_write(),
+            300,
+        )
+        .expect("amend then approve");
+    assert_eq!(outcome, ProposalOutcome::ApprovedAmended);
+
+    // The NARROWER merge landed: `kept` moved, `dropped` was never touched.
+    assert_eq!(
+        vault.entity_lifecycle_state(&kept).expect("kept state"),
+        EntityLifecycleState::Merged
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&dropped).expect("dropped state"),
+        EntityLifecycleState::Active,
+        "the amended-away subject must keep its topology untouched"
+    );
+
+    // The ledger records the APPLIED form, not the proposed one.
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let applied: Vec<IdentityTopologyOp> = vault
+        .identity_topology_events_in_txn(&rtxn)
+        .expect("events")
+        .into_iter()
+        .filter(|event| event.approval == ClaimApprovalStatus::Approved)
+        .filter_map(|event| match event.action {
+            IdentityTopologyAction::Apply(op) => Some(op),
+            _ => None,
+        })
+        .collect();
+    drop(rtxn);
+    // `evidence` is envelope data the stored action does not carry, so the
+    // fold view reconstructs it empty — the SUBJECT SET is the assertion.
+    assert_eq!(
+        applied.as_slice(),
+        [IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![kept],
+            survivor,
+            evidence: IdentityOpEvidence::default(),
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        })],
+        "the ledger must record the AMENDED form as the applied op"
+    );
+
+    // The receipt carries the amended bytes verbatim.
+    let record = vault
+        .identity_topology_event(&resolution)
+        .expect("read resolution")
+        .expect("resolution exists");
+    let StoredIdentityOpAction::ProposalResolution {
+        proposal: recorded,
+        amended_body,
+        ..
+    } = &record.action
+    else {
+        panic!("resolution row must carry a ProposalResolution action");
+    };
+    assert_eq!(recorded, &proposal);
+    assert_eq!(amended_body.as_deref(), Some(narrowed.as_slice()));
+}
+
+#[test]
+fn amendment_out_of_scope_is_rejected_and_writes_nothing() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x76);
+    let loser = put_person(&vault, 0x77);
+    let stranger = put_person(&vault, 0x78);
+
+    let proposal = park_merge_proposal(&vault, vec![loser], survivor, 200);
+    let events_before = event_count(&vault);
+
+    // (a) A DIFFERENT op kind: "approve this merge, amended" must never be a
+    // capability to apply a split instead.
+    let wrong_kind = encode_identity_op_amendment(&split_op(survivor, vec![loser]))
+        .expect("encode split amendment");
+    let error = vault
+        .resolve_identity_proposal(
+            &proposal,
+            ProposalRuling::AmendThenApprove(&wrong_kind),
+            &ruling_write(),
+            300,
+        )
+        .expect_err("a different op kind is out of scope");
+    assert!(
+        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        "expected out-of-scope rejection, got {error:?}"
+    );
+
+    // (b) A subject the proposal never named: an amendment narrows what the
+    // decider reviewed, it can never reach further.
+    let wider = encode_identity_op_amendment(&merge_op(vec![loser, stranger], survivor))
+        .expect("encode widened amendment");
+    let error = vault
+        .resolve_identity_proposal(
+            &proposal,
+            ProposalRuling::AmendThenApprove(&wider),
+            &ruling_write(),
+            300,
+        )
+        .expect_err("an unnamed subject is out of scope");
+    assert!(
+        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        "expected out-of-scope rejection, got {error:?}"
+    );
+
+    // (c) Bytes that are not an op body at all.
+    let error = vault
+        .resolve_identity_proposal(
+            &proposal,
+            ProposalRuling::AmendThenApprove(b"not-an-op-body"),
+            &ruling_write(),
+            300,
+        )
+        .expect_err("a malformed body is out of scope");
+    assert!(
+        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        "expected out-of-scope rejection, got {error:?}"
+    );
+
+    // Fail-closed: nothing applied, no receipt, and the park stays OPEN — so
+    // a good amendment still resolves it afterwards.
+    assert_eq!(event_count(&vault), events_before);
+    assert!(proposal_outcome_receipts(&vault).is_empty());
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Active
+    );
+    let (outcome, _) = vault
+        .resolve_identity_proposal(&proposal, ProposalRuling::Approve, &ruling_write(), 400)
+        .expect("the still-open park resolves");
+    assert_eq!(outcome, ProposalOutcome::ApprovedUntouched);
+}
+
+#[test]
+fn reject_leaves_zero_effects_and_retires_the_park() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x79);
+    let loser = put_person(&vault, 0x7A);
+
+    let proposal = park_merge_proposal(&vault, vec![loser], survivor, 200);
+    let (outcome, _) = vault
+        .resolve_identity_proposal(&proposal, ProposalRuling::Reject, &ruling_write(), 300)
+        .expect("reject resolves");
+    assert_eq!(outcome, ProposalOutcome::Rejected);
+
+    // Zero topology effects.
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser).expect("loser state"),
+        EntityLifecycleState::Active
+    );
+    assert_eq!(
+        vault
+            .targets(&loser, EdgeKind::MergedInto, None)
+            .expect("merged_into targets")
+            .len(),
+        0
+    );
+
+    // The park is RETIRED: a second ruling on it errors typed, whatever the
+    // ruling — a resolved proposal is spent, not re-decidable.
+    for ruling in [ProposalRuling::Approve, ProposalRuling::Reject] {
+        let error = vault
+            .resolve_identity_proposal(&proposal, ruling, &ruling_write(), 400)
+            .expect_err("a resolved proposal cannot be re-resolved");
+        assert_eq!(
+            expect_rejection(error),
+            IdentityTopologyRejection::ProposalAlreadyResolved {
+                proposal: *&proposal
+            }
+        );
+    }
+}
+
+#[test]
+fn resolution_rejects_non_proposals_and_ineffective_rulings() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x7B);
+    let loser = put_person(&vault, 0x7C);
+
+    // An AUTO-applied event is not a parked proposal a ruling can act on.
+    let (applied, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(
+                &merge_op(vec![loser], survivor),
+                &IdentityOpWrite::auto(ClaimSource::Inferred),
+                150,
+            )
+            .expect("auto merge applies"),
+    );
+    let error = vault
+        .resolve_identity_proposal(&applied, ProposalRuling::Approve, &ruling_write(), 300)
+        .expect_err("an applied event is not a proposal");
+    assert_eq!(
+        expect_rejection(error),
+        IdentityTopologyRejection::NotProposed { event: applied }
+    );
+
+    // An absent id is not found.
+    let error = vault
+        .resolve_identity_proposal(&id(0x7D), ProposalRuling::Approve, &ruling_write(), 300)
+        .expect_err("an absent proposal is not found");
+    assert!(matches!(error, Error::EntityNotFound), "got {error:?}");
+
+    // A ruling carried on a NON-effective consent axis is refused: deciding
+    // is itself an effective act, so a "proposed ruling" is incoherent.
+    // A fresh subject: `loser` is Merged by the apply above, so it can no
+    // longer be proposed.
+    let fresh_loser = put_person(&vault, 0x8C);
+    let proposal = park_merge_proposal(&vault, vec![fresh_loser], survivor, 200);
+    let mut parked_ruling = IdentityOpWrite::auto(ClaimSource::UserStated);
+    parked_ruling.approval = ClaimApprovalStatus::Proposed;
+    let error = vault
+        .resolve_identity_proposal(&proposal, ProposalRuling::Approve, &parked_ruling, 300)
+        .expect_err("a non-effective ruling is refused");
+    assert_eq!(
+        expect_rejection(error),
+        IdentityTopologyRejection::ProposalRulingNotEffective
+    );
+}
+
+#[test]
+fn outcome_receipt_stamps_ramp_scope_on_all_three_outcomes() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x7E);
+    let untouched_loser = put_person(&vault, 0x7F);
+    let amended_loser = put_person(&vault, 0x80);
+    let rejected_loser = put_person(&vault, 0x81);
+
+    let untouched = park_merge_proposal(&vault, vec![untouched_loser], survivor, 200);
+    vault
+        .resolve_identity_proposal(&untouched, ProposalRuling::Approve, &ruling_write(), 300)
+        .expect("approve");
+
+    let amended = park_merge_proposal(&vault, vec![amended_loser], survivor, 210);
+    let body = encode_identity_op_amendment(&merge_op(vec![amended_loser], survivor))
+        .expect("encode amendment");
+    vault
+        .resolve_identity_proposal(
+            &amended,
+            ProposalRuling::AmendThenApprove(&body),
+            &ruling_write(),
+            310,
+        )
+        .expect("amend then approve");
+
+    let rejected = park_merge_proposal(&vault, vec![rejected_loser], survivor, 220);
+    vault
+        .resolve_identity_proposal(&rejected, ProposalRuling::Reject, &ruling_write(), 320)
+        .expect("reject");
+
+    let receipts = proposal_outcome_receipts(&vault);
+    assert_eq!(receipts.len(), 3);
+    for receipt in &receipts {
+        // MS-06 (ONE-1748) rebuilds per-scope ramp stats from receipts ALONE:
+        // without the DEC-0006 scope tuple stamped here, that is unsatisfiable.
+        assert_eq!(receipt.fields.get("op_kind"), Some(&"merge".to_owned()));
+        assert_eq!(receipt.fields.get("target_class"), Some(&"PERSON".to_owned()));
+        assert!(receipt.fields.contains_key("actor"));
+        assert!(receipt.fields.contains_key("proposal_ref"));
+        // The reserved Δ slot is never written at this ticket.
+        assert_eq!(crate::receipt::proposal_outcome_delta(receipt), None);
+    }
+
+    // Exactly the three outcome states, and the amended body rides only the
+    // amended one.
+    let mut outcomes: Vec<&str> = receipts.iter().map(|r| r.outcome.as_str()).collect();
+    outcomes.sort_unstable();
+    assert_eq!(
+        outcomes,
+        ["approved_amended", "approved_untouched", "rejected"]
+    );
+    let carrying: Vec<&crate::receipt::ReceiptRecord> = receipts
+        .iter()
+        .filter(|r| crate::receipt::proposal_outcome_amended_body(r).is_some())
+        .collect();
+    assert_eq!(carrying.len(), 1);
+    assert_eq!(carrying[0].outcome, "approved_amended");
+    assert_eq!(
+        crate::receipt::proposal_outcome_amended_body(carrying[0]),
+        Some(body)
+    );
+}
+
+#[test]
+fn outcome_receipts_are_queryable_by_kind_and_outcome() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x82);
+    let approved_loser = put_person(&vault, 0x83);
+    let rejected_loser = put_person(&vault, 0x84);
+
+    let approved = park_merge_proposal(&vault, vec![approved_loser], survivor, 200);
+    vault
+        .resolve_identity_proposal(&approved, ProposalRuling::Approve, &ruling_write(), 300)
+        .expect("approve");
+    let rejected = park_merge_proposal(&vault, vec![rejected_loser], survivor, 210);
+    vault
+        .resolve_identity_proposal(&rejected, ProposalRuling::Reject, &ruling_write(), 310)
+        .expect("reject");
+
+    let mut query = crate::receipt::ReceiptQuery::new(10)
+        .with_kind(crate::receipt::ReceiptKind::ProposalOutcome);
+    query.outcome = Some("rejected".to_owned());
+    let filtered = vault.receipts(query).expect("filtered query");
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].outcome, "rejected");
+
+    // The two type-76 receipt kinds do not bleed into each other: a
+    // lifecycle-only query never returns resolution rows, and vice versa.
+    assert!(
+        identity_receipts(&vault)
+            .iter()
+            .all(|r| r.receipt_kind == crate::receipt::ReceiptKind::IdentityLifecycle),
+        "an identity-lifecycle query must not return proposal-outcome rows"
+    );
+    assert!(
+        proposal_outcome_receipts(&vault)
+            .iter()
+            .all(|r| r.receipt_kind == crate::receipt::ReceiptKind::ProposalOutcome),
+        "a proposal-outcome query must not return identity-lifecycle rows"
+    );
+}
+
+#[test]
+fn amendment_codec_round_trips_and_refuses_unarmed_kinds() {
+    // The codec carries the ACTION shape only: `evidence` is event-envelope
+    // data (the resolution's own, never the amendment's), so it decodes back
+    // empty by design. The subject set is what the scope check reads, and it
+    // round-trips exactly.
+    let merge = merge_op(vec![id(0x85), id(0x86)], id(0x87));
+    let encoded = encode_identity_op_amendment(&merge).expect("encode merge");
+    assert_eq!(
+        decode_identity_op_amendment(&encoded).expect("decode merge"),
+        IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![id(0x85), id(0x86)],
+            survivor: id(0x87),
+            evidence: IdentityOpEvidence::default(),
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        })
+    );
+
+    let split = split_op(id(0x88), vec![id(0x89), id(0x8A)]);
+    let encoded = encode_identity_op_amendment(&split).expect("encode split");
+    assert_eq!(
+        decode_identity_op_amendment(&encoded).expect("decode split"),
+        IdentityTopologyOp::Split(SplitOp {
+            entity: id(0x88),
+            heads: vec![id(0x89), id(0x8A)],
+            reassignment: ReassignmentMap::default(),
+            evidence: IdentityOpEvidence::default(),
+        })
+    );
+
+    // Only the two ops whose apply door is armed are amendable.
+    assert!(matches!(
+        encode_identity_op_amendment(&facet_op(id(0x8B))),
+        Err(Error::IdentityTopologyUnarmed(_))
+    ));
+
+    // Trailing bytes are refused: an amendment must not smuggle a
+    // non-canonical encoding past the scope check.
+    let mut trailing = encode_identity_op_amendment(&merge).expect("encode merge");
+    trailing.push(0x00);
+    assert!(decode_identity_op_amendment(&trailing).is_err());
+}
