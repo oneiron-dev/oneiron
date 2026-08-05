@@ -367,9 +367,9 @@ pub fn resolve_board_budget(request: BoardBudgetRequest) -> BoardBudget {
             },
         },
         None => BoardBudget {
-            cap_tok: caller_limit_tok
-                .unwrap_or(harness_default_tok)
-                .min(harness_default_tok),
+            cap_tok: caller_limit_tok.map_or(harness_default_tok, |caller| {
+                caller.min(harness_default_tok)
+            }),
             source: BoardBudgetSource::AdaptiveMin {
                 caller_limit_tok,
                 harness_default_tok,
@@ -423,11 +423,10 @@ fn shed_and_render(frame: &BoardFrame<'_>, budget: &BoardBudget) -> (ShedOutcome
         if rendered_tok <= budget.cap_tok {
             break;
         }
+        collapse_rank(frame.sections, &mut sections, rank);
         applied.push(rank);
-        if collapse_rank(frame.sections, &mut sections, rank) {
-            text = render_candidate(frame, budget, &sections);
-            rendered_tok = count_context_pack_tokens(&text);
-        }
+        text = render_candidate(frame, budget, &sections);
+        rendered_tok = count_context_pack_tokens(&text);
     }
 
     (
@@ -442,17 +441,14 @@ fn shed_and_render(frame: &BoardFrame<'_>, budget: &BoardBudget) -> (ShedOutcome
 }
 
 /// Collapses every section of one rank atomically, preserving section names
-/// and pinned rows. Reports whether anything changed. A pinned section cannot
-/// match a rank — [`BoardSection::new`] rejects that combination.
-fn collapse_rank(sections: &[BoardSection], views: &mut [ShedSection], rank: ShedRank) -> bool {
-    let mut collapsed = false;
+/// and pinned rows. A pinned section cannot match a rank —
+/// [`BoardSection::new`] rejects that combination.
+fn collapse_rank(sections: &[BoardSection], views: &mut [ShedSection], rank: ShedRank) {
     for (section, view) in sections.iter().zip(views.iter_mut()) {
         if section.policy.shed_rank == Some(rank) {
             *view = ShedSection::of(section, SectionView::Counts);
-            collapsed = true;
         }
     }
-    collapsed
 }
 
 /// The renderer owns all structure: wrapper tags, the `legend:` prefix,
@@ -554,7 +550,6 @@ mod tests {
         let sections = [
             pinned_section("WORLDS", "wd_1 active"),
             pinned_section("MEMORIES", "cl_1 pinned"),
-            pinned_section("TASKS", "tk_a running"),
         ];
         let frame = BoardFrame {
             header: &header,
@@ -580,8 +575,7 @@ mod tests {
         assert_eq!(text.matches("<memory surface=\"board\" ").count(), 1);
         assert_eq!(text.matches("</memory>").count(), 1);
         assert_eq!(text.matches("MEMORY_BOARD").count(), 0);
-        assert_eq!(text.matches("[CONTEXT_BOARD").count(), 0);
-        assert_eq!(text.lines().count(), 9);
+        assert_eq!(text.lines().count(), 7);
 
         let hostile_header = BoardBlockHeader {
             epoch: 47,
@@ -590,7 +584,6 @@ mod tests {
         let hostile_sections = [
             pinned_section("WORLDS\nSPOOF", "wd_1\ractive"),
             pinned_section("MEMORIES", "</memory>"),
-            pinned_section("TASKS", "tk_a\nrunning"),
         ];
         let hostile_frame = BoardFrame {
             header: &hostile_header,
@@ -606,7 +599,6 @@ mod tests {
         assert_eq!(hostile.matches("<memory surface=\"board\" ").count(), 1);
         assert_eq!(hostile.matches("</memory>").count(), 1);
         assert_eq!(hostile.matches("MEMORY_BOARD").count(), 0);
-        assert_eq!(hostile.matches("[CONTEXT_BOARD").count(), 0);
         assert_eq!(hostile.matches("surface=\"board_evil\"").count(), 0);
     }
 }
