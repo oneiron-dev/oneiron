@@ -45,10 +45,6 @@ const _: () = assert!(!SESSION_WRITE_TXN_ENTRY_POINTS.is_empty());
 /// (a base prefix is always two letters), so the room namespace sits OUTSIDE
 /// the base grammar and a session alias can never collide with, or mask, a
 /// durable one.
-#[allow(
-    dead_code,
-    reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
-)]
 const SESSION_SHORT_ID_SIGIL: &str = "s";
 
 /// Manifest slot identifying one of the 28 named databases.
@@ -1036,10 +1032,6 @@ impl SessionOverlay {
     /// alias with a refreshed content hash, mirroring the base
     /// `plan_short_id_update` update arm: an alias is stable for the entity's
     /// lifetime in the room even as its body changes.
-    #[allow(
-        dead_code,
-        reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
-    )]
     pub(crate) fn alloc_session_short_id(
         self: &Arc<Self>,
         id: &EntityId,
@@ -1417,10 +1409,6 @@ impl SessionOverlay {
 /// (`xxh32(data, 0) % 256`, batch.rs `plan_short_id_update`), so
 /// `hydrate_short_id`'s `(short_id, content_hash)` pairing is identical
 /// in-session.
-#[allow(
-    dead_code,
-    reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
-)]
 fn session_short_id_content_hash(data: &[u8]) -> u8 {
     (xxh32(data, 0) % 256) as u8
 }
@@ -1428,10 +1416,6 @@ fn session_short_id_content_hash(data: &[u8]) -> u8 {
 /// Encodes the session `ShortIds` forward key `(short_id ‖ content_hash)`,
 /// the same byte shape the base tables use — the namespaces are separated by
 /// the sigil inside `short_id`, not by a second key encoding.
-#[allow(
-    dead_code,
-    reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
-)]
 fn encode_session_short_id_forward_key(short_id: &str, content_hash: u8) -> Vec<u8> {
     let mut key = Vec::with_capacity(short_id.len().saturating_add(1));
     key.extend_from_slice(short_id.as_bytes());
@@ -1440,10 +1424,6 @@ fn encode_session_short_id_forward_key(short_id: &str, content_hash: u8) -> Vec<
 }
 
 /// Splits a session `ShortIdsReverse` value back into `(short_id, content_hash)`.
-#[allow(
-    dead_code,
-    reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
-)]
 fn parse_session_short_id_value(value: &[u8]) -> Result<(&str, u8)> {
     let Some((&content_hash, short_id_bytes)) = value.split_last() else {
         return Err(Error::CorruptedIndex("session short id value"));

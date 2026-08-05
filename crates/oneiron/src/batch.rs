@@ -1777,11 +1777,9 @@ pub(crate) type PromoteMemberOf<'a> = Option<&'a dyn Fn(&EntityId) -> bool>;
 /// moment the op is decoded — there is no preflight pass and no membership-epoch
 /// publication protocol to keep in sync. The state read here is the state this
 /// transaction applies against, which removes the TOCTOU class rather than
-/// racing it. `_wtxn` is taken purely as that structural pin: the guard cannot
-/// be hoisted out of the applying transaction without changing its signature.
+/// racing it.
 fn check_decode_point_taint_guard(
     store: &Store,
-    _wtxn: &RwTxn<'_>,
     op: &BatchOp,
     origin: BaseWriteOrigin,
     promote_member_of: PromoteMemberOf<'_>,
@@ -2011,7 +2009,7 @@ pub(crate) fn apply_ops_with_origin(
         // K4: the op-decode point, inside the applying transaction. Every arm
         // below decodes an op that may carry overlay ids, so this is where
         // membership is judged — before the arm can stage a byte.
-        check_decode_point_taint_guard(store, wtxn, &op, origin, promote_member_of)?;
+        check_decode_point_taint_guard(store, &op, origin, promote_member_of)?;
         match op {
             BatchOp::Put {
                 id,
