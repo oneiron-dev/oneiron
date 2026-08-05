@@ -169,33 +169,42 @@ ONE-1739's.
 - `cargo fmt -p oneiron -- --check` — clean on every touched file.
 - `cargo clippy -p oneiron --all-features --all-targets` — zero diagnostics on every touched
   file.
-- `cargo test -p oneiron --lib skill` — 106 passed.
+- `cargo test -p oneiron --lib skill` — 108 passed.
 - `cargo test -p oneiron --test skills_epic_oracle` — 12 passed, 4 ignored (ONE-1739's).
-- `cargo test -p oneiron --all-features` — green: **3462 lib passed, 0 failed, 17 ignored**,
-  plus 40 green test binaries.
+- `cargo test -p oneiron --all-features` — 40 test binaries green; lib **3462 passed, 17
+  ignored**, with the one pre-existing flake below as the only red ever seen (2 of 4 full runs).
+- `cargo test -p oneiron --lib` (default features) — 3043 passed, 0 failed.
 
-### One flake observed, quarantined not charged
-`attempt_queue::tests::attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields`
-failed once mid-run (its `TelemetryCapture` found no `attempt_queue_cleanup` span) and passed
-on every subsequent run: two full `--all-features` suites green end to end, plus five isolated
-re-runs of the test itself. `crates/oneiron/src/attempt_queue/` is untouched by this branch
-(zero lines in `git diff --stat origin/main`), and the test captures tracing spans through a
-`with_default` thread-local subscriber — a shape that races under the harness's thread reuse.
-Charged to no lane; noting it because it is in ONE-1795's (#589) freshly-landed territory and
-will re-appear on other lanes' verify legs.
+### Three pre-existing main defects, flagged not fixed
+None is in this packet; each is reachable without any of this branch's code.
 
-### Two pre-existing main defects, flagged not fixed
-Neither is in this packet, and both are reproducible on a clean `origin/main` checkout:
+1. **`attempt_queue::tests::attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields`
+   is FLAKY** (from #589, SPINE-COMM ONE-1795). It failed in 2 of 4 full `--all-features` runs
+   and — the decisive evidence — **reproduces with `--lib attempt_queue` alone** (56 passed / 1
+   failed), i.e. with none of this lane's tests, none of its code, and no cross-module
+   subscriber in play. `crates/oneiron/src/attempt_queue/` has zero lines in
+   `git diff --stat origin/main` for this branch.
 
-1. **fmt gate is RED on `crates/oneiron/src/surface_event/tests.rs:733`** (from #589,
-   SPINE-COMM ONE-1795) — a single over-long `assert_eq!` rustfmt wants wrapped. Deliberately
-   NOT reformatted here: `cargo fmt -p oneiron` would rewrite a file this lane does not own,
-   which is a packet violation for a whitespace fix. Whoever owns the next `surface_event`
-   touch (or a mech sweep) should take it. It will fail `scripts/verify.sh` stage `fmt` for
-   every lane until then.
-2. **clippy is RED on `crates/oneiron/src/secret_custody/tests.rs`** (from #566, SECRET-01
-   ONE-1919) — `field_reassign_with_default` at :156 and `items_after_statements` at :256,
-   both workspace-`deny`. Same reasoning: not this lane's file.
+   Mechanism, for whoever fixes it: `TelemetryCapture` is installed with
+   `tracing::subscriber::with_default`, which is THREAD-LOCAL, while `tracing`'s callsite
+   `Interest` cache is process-GLOBAL. Five other tests in the same file call
+   `cleanup_leases` with no subscriber installed; whichever thread first reaches the
+   `attempt_queue_cleanup` span callsite registers it against an empty dispatcher, the
+   `Interest::never()` verdict is cached for the process, and the capture test then finds no
+   span however correct its own subscriber is. It passes in isolation and whenever it happens
+   to win the race. The durable fix is to stop depending on registration order — a global
+   dispatcher installed once for the test binary, or a capture that does not rely on a
+   first-touch callsite — not a retry.
+
+2. **fmt gate is RED on `crates/oneiron/src/surface_event/tests.rs:733`** (also #589) — one
+   over-long `assert_eq!` rustfmt wants wrapped. Deliberately NOT reformatted here:
+   `cargo fmt -p oneiron` would rewrite a file this lane does not own, which is a packet
+   violation for a whitespace fix. It will fail `scripts/verify.sh` stage `fmt` for every lane
+   until someone who owns that file takes it.
+
+3. **clippy is RED on `crates/oneiron/src/secret_custody/tests.rs`** (from #566, SECRET-01
+   ONE-1919) — `field_reassign_with_default` at :156 and `items_after_statements` at :256, both
+   workspace-`deny`. Same reasoning: not this lane's file.
 
 ## Handoff to ONE-1739 (SK-06)
 `sk04_attribution_routes_defect_to_skill_and_lapse_to_actor` still asserts
