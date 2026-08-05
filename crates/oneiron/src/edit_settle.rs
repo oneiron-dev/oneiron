@@ -357,6 +357,9 @@ impl Vault {
         // and rolls back with nothing appended; a crash rolls the whole settle
         // back so a retry re-appends cleanly rather than skipping the re-anchor.
         let (version, reanchor, record) = self.with_write_txn(|wtxn| {
+            // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
+            // a revocation serialized before this commit makes it fail here.
+            self.authorize_settle_in_txn(wtxn, consent, actor)?;
             // Ledger acquisition BEFORE any side effect.
             if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
                 return Err(already_settled(&decode_settlement_record(&raw)?));
@@ -466,6 +469,9 @@ impl Vault {
         // commit together, so a discard never lands a durable ledger row for a
         // nonexistent artifact and a racing second settle is refused.
         self.with_write_txn(|wtxn| {
+            // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
+            // a revocation serialized before this commit makes it fail here.
+            self.authorize_settle_in_txn(wtxn, consent, actor)?;
             require_entity_type(
                 &self.store,
                 wtxn,
@@ -559,6 +565,42 @@ impl Vault {
             SettleConsent::OwnerConsent { .. } => Ok(()),
             SettleConsent::StandingGrant { brief_ref } => {
                 if self.settle_standing_grant_authorizes(actor, brief_ref)? {
+                    Ok(())
+                } else {
+                    Err(Error::SettleNotAuthorized(
+                        "no standing actor×artifact.settle×brief grant covers this settle",
+                    ))
+                }
+            }
+        }
+    }
+
+    /// The transaction-composable form of [`Vault::authorize_settle`], run
+    /// INSIDE the settle's write transaction.
+    ///
+    /// This closes the revocation TOCTOU: a `StandingGrant` resolution checked
+    /// on its own read transaction could observe a grant row a concurrent
+    /// `revoke_consent_grant` has not committed yet, then settle against it
+    /// AFTER the revoke lands. Reading the grant set on `wtxn` means the
+    /// revocation — serialized by the LMDB write lock — either committed
+    /// before this txn opened (the row reads Revoked and the settle refuses)
+    /// or commits only after this txn ends (its writes were authorized under
+    /// the still-live grant). No post-revoke settle can commit.
+    fn authorize_settle_in_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        consent: &SettleConsent,
+        actor: WriteActor,
+    ) -> Result<()> {
+        match consent {
+            SettleConsent::OwnerConsent { .. } => Ok(()),
+            SettleConsent::StandingGrant { brief_ref } => {
+                let required = settle_grant_bound(actor, brief_ref)?;
+                let covered = self
+                    .active_standing_consent_grants_in_txn(wtxn)?
+                    .iter()
+                    .any(|grant| grant.bound().contains(&required));
+                if covered {
                     Ok(())
                 } else {
                     Err(Error::SettleNotAuthorized(
