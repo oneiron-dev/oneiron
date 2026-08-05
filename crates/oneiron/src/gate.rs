@@ -120,7 +120,7 @@ pub(crate) const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 const GATE_METRIC_OUTCOME_COUNT: usize = 3;
-const GATE_METRIC_REASON_CLASS_COUNT: usize = 13;
+const GATE_METRIC_REASON_CLASS_COUNT: usize = 14;
 
 static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
     GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
@@ -344,6 +344,74 @@ pub(crate) struct GateEvaluatorInput {
     /// bound (owner writes, connectors, non-definition agent actors) —
     /// preserves pre-AGENT-2 behavior at every existing construction site.
     pub(crate) agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+    /// The DEC-0006 consent context, when the caller composed one. `None` =
+    /// this door has not been moved onto the unified consent path yet and
+    /// keeps its pre-DEC-0006 criticality behaviour.
+    pub(crate) consent: Option<ConsentGateContext>,
+}
+
+/// The DEC-0006 inputs the Gate needs to run the consent ladder.
+///
+/// The Gate does not compose these: `consent.rs` owns the evaluation, and this
+/// carries its verdict plus the reason the verdict was reached, so the receipt
+/// records WHY an op asked rather than only THAT it asked.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ConsentGateContext {
+    /// The consent evaluator's verdict for this operation.
+    pub(crate) decision: crate::consent::ConsentDecision,
+    /// Why the verdict was reached, when it was not Auto.
+    pub(crate) reason: Option<ConsentPendingReason>,
+}
+
+/// Stable pending-reason codes for the DEC-0006 consent ladder.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConsentPendingReason {
+    /// Irreversible in effect, with no approve-once receipt or covering grant.
+    IrreversibleEffect,
+    /// A standing grant exists but the candidate exceeds its bound.
+    BoundExceeded,
+    /// The closed catastrophe floor matched — the only always-gate.
+    CatastropheFloor,
+    /// Required write facts were malformed or absent (invariant 8 fallback).
+    WriteClassificationFailed,
+}
+
+impl ConsentPendingReason {
+    const fn reason_code(self) -> GateReasonCode {
+        match self {
+            Self::IrreversibleEffect => GateReasonCode::PendingConsentIrreversibleEffect,
+            Self::BoundExceeded => GateReasonCode::PendingConsentBoundExceeded,
+            Self::CatastropheFloor => GateReasonCode::PendingConsentCatastropheFloor,
+            Self::WriteClassificationFailed => {
+                GateReasonCode::PendingConsentWriteClassificationFailed
+            }
+        }
+    }
+}
+
+/// Translates a consent verdict into Gate pending reasons.
+///
+/// `Auto` contributes nothing (the op runs). `Ask` and `Hide` both hold the
+/// write — the difference between them is the SURFACE the host raises, which
+/// is the domain fail-safe (invariant 8) and is carried by the reason, not by
+/// a second Gate outcome.
+fn consent_ladder_reasons(consent: Option<&ConsentGateContext>) -> Vec<GateReasonCode> {
+    let Some(consent) = consent else {
+        return Vec::new();
+    };
+    match consent.decision {
+        crate::consent::ConsentDecision::Auto => Vec::new(),
+        crate::consent::ConsentDecision::Ask | crate::consent::ConsentDecision::Hide => {
+            vec![
+                consent
+                    .reason
+                    .unwrap_or(ConsentPendingReason::IrreversibleEffect)
+                    .reason_code(),
+            ]
+        }
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -421,6 +489,7 @@ impl ExternalEffectGateInput {
             policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
             provenance: self.provenance.clone(),
             agent_definition_ceiling,
+            consent: None,
             external_effect: Some(ExternalEffectGateContext {
                 verb: self.verb.clone(),
                 channel: self.channel.clone(),
@@ -490,6 +559,9 @@ pub(crate) enum GateMetricReasonClass {
     CounterpartyOptOut,
     EffectorBudget,
     CharterPolicy,
+    /// DEC-0006 consent ladder: catastrophe floor, irreversible effect, bound
+    /// exceeded, and write-classification failure all meter here.
+    Consent,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -510,6 +582,7 @@ impl GateMetricReasonClass {
             Self::CounterpartyOptOut => "counterparty_opt_out",
             Self::EffectorBudget => "effector_budget",
             Self::CharterPolicy => "charter_policy",
+            Self::Consent => "consent",
         }
     }
 
@@ -528,6 +601,7 @@ impl GateMetricReasonClass {
             Self::CounterpartyOptOut => 10,
             Self::EffectorBudget => 11,
             Self::CharterPolicy => 12,
+            Self::Consent => 13,
         }
     }
 
@@ -546,6 +620,7 @@ impl GateMetricReasonClass {
             Self::CounterpartyOptOut,
             Self::EffectorBudget,
             Self::CharterPolicy,
+            Self::Consent,
         ]
     }
 }
@@ -569,6 +644,20 @@ pub(crate) enum GateReasonCode {
     DenyConnectorKeySuspended,
     DenyCharterNeverList,
     PendingCharterDrift,
+    /// DEC-0006 invariant 1: the operation is irreversible in effect and no
+    /// approve-once receipt or covering standing grant authorizes it.
+    PendingConsentIrreversibleEffect,
+    /// DEC-0006 invariant 3: a standing grant exists but the candidate exceeds
+    /// its bound. Widening is its own owner decision, never a side effect of
+    /// reuse — so this is a fresh ask, not a silent auto.
+    PendingConsentBoundExceeded,
+    /// DEC-0006 invariant 7: the operation matched the closed catastrophe
+    /// floor. Gated at ANY trust level, non-rememberable.
+    PendingConsentCatastropheFloor,
+    /// DEC-0006 invariant 8: the engine-owned write facts were malformed or
+    /// absent, so no reversibility verdict could be produced. Writes fail safe
+    /// by asking.
+    PendingConsentWriteClassificationFailed,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -592,6 +681,12 @@ impl GateReasonCode {
             Self::DenyConnectorKeySuspended => "gate.deny.connector_key_suspended",
             Self::DenyCharterNeverList => "gate.deny.charter_never_list",
             Self::PendingCharterDrift => "gate.pending.charter_drift",
+            Self::PendingConsentIrreversibleEffect => "gate.pending.consent.irreversible_effect",
+            Self::PendingConsentBoundExceeded => "gate.pending.consent.bound_exceeded",
+            Self::PendingConsentCatastropheFloor => "gate.pending.consent.catastrophe_floor",
+            Self::PendingConsentWriteClassificationFailed => {
+                "gate.pending.consent.write_classification_failed"
+            }
         }
     }
 
@@ -618,6 +713,10 @@ impl GateReasonCode {
             Self::DenyCharterNeverList | Self::PendingCharterDrift => {
                 GateMetricReasonClass::CharterPolicy
             }
+            Self::PendingConsentIrreversibleEffect
+            | Self::PendingConsentBoundExceeded
+            | Self::PendingConsentCatastropheFloor
+            | Self::PendingConsentWriteClassificationFailed => GateMetricReasonClass::Consent,
         }
     }
 }
@@ -1220,9 +1319,18 @@ impl PolicyManifestResolution {
             pending.push(GateReasonCode::PendingSourceTrust);
         }
 
-        if input.criticality == PolicyCriticality::Critical {
+        // DEC-0006 write-side residual: `Critical` is a composed-effect SIGNAL,
+        // not an unconditional gate. It contributes to the consent ladder
+        // below (via `ConsentGateContext`), and the closed catastrophe set is
+        // the only always-gate (invariant 7). The legacy unconditional floor
+        // survives only where no consent context was composed, so a caller
+        // that has not yet been moved onto the DEC-0006 path keeps its
+        // pre-existing behaviour rather than silently losing a gate.
+        if input.criticality == PolicyCriticality::Critical && input.consent.is_none() {
             pending.push(GateReasonCode::PendingCriticalityFloor);
         }
+
+        pending.extend(consent_ladder_reasons(input.consent.as_ref()));
 
         match input.content_kind {
             GateContentKind::Claim | GateContentKind::EdgeProvenanceClaim => {}
@@ -3669,6 +3777,7 @@ fn claim_gate_input(
         provenance,
         external_effect: None,
         agent_definition_ceiling,
+        consent: None,
     }
 }
 

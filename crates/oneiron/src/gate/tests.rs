@@ -1715,6 +1715,7 @@ fn gate_evaluator_input(
         },
         external_effect: None,
         agent_definition_ceiling: None,
+        consent: None,
     }
 }
 

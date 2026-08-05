@@ -933,6 +933,91 @@ impl BundleApprovalScope {
     }
 }
 
+// ---------------------------------------------------------------------------
+// DEC-0006 invariant 9 arming — surface (a), the in-moment ask
+// ---------------------------------------------------------------------------
+
+/// Action id of the approve-once outcome — the DEFAULT of the confirm trio.
+pub const CONSENT_ACTION_APPROVE_ONCE: &str = "approve_once";
+/// Action id of the deny outcome.
+pub const CONSENT_ACTION_DECLINE: &str = "decline";
+/// Action id prefix of the approve-and-stop-asking outcome. The suffix names
+/// WHICH bound the owner is stamping ([`ConsentScopeEscalator::as_str`]), so a
+/// stop-asking tap is always bound to one row rather than a blanket "yes".
+pub const CONSENT_ACTION_ESCALATE_PREFIX: &str = "escalate_";
+/// Action id prefix of the BATCH form of the same ask — the ARCH-0072
+/// admission slate. It is surface (a) in batch form, not a third surface.
+pub const CONSENT_BUNDLE_ACTION_ID_PREFIX: &str = "approve_bundle_";
+/// Action id of the batch decline.
+pub const CONSENT_BUNDLE_ACTION_DECLINE: &str = "decline_bundle";
+
+/// The three outcomes DEC-0006 invariant 2 pins for EVERY manual confirm,
+/// including a scope-exceed escalation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentConfirmOutcome {
+    /// Approve once — the default.
+    ApproveOnce,
+    /// Approve and stop asking: the in-moment path into
+    /// `Vault::create_standing_grant`, bounded to one grant row under the same
+    /// owner stamp.
+    ApproveAndStopAsking,
+    /// Deny.
+    Deny,
+}
+
+impl ConsentConfirmOutcome {
+    /// The trio, in offer order — approve once is first because it is the
+    /// default. There is deliberately no fourth outcome and no duration
+    /// option: the registry replaces expiry-guessing (invariant 9).
+    #[must_use]
+    pub const fn trio() -> [Self; 3] {
+        [Self::ApproveOnce, Self::ApproveAndStopAsking, Self::Deny]
+    }
+
+    /// Which outcome an emitted ask action id maps to.
+    ///
+    /// The escalator ids are the approve-and-stop-asking outcome: each one
+    /// stamps ONE bound (contact / verb-class / channel), which is what makes
+    /// stop-asking an owner act on a row rather than an inference.
+    /// `escalate_just_once` is the escalator vocabulary's own restatement of
+    /// approve-once and maps there.
+    #[must_use]
+    pub fn from_action_id(action_id: &str) -> Option<Self> {
+        match action_id {
+            CONSENT_ACTION_APPROVE_ONCE => Some(Self::ApproveOnce),
+            CONSENT_ACTION_DECLINE | CONSENT_BUNDLE_ACTION_DECLINE => Some(Self::Deny),
+            _ => {
+                if let Some(scope) = action_id.strip_prefix(CONSENT_ACTION_ESCALATE_PREFIX) {
+                    return Some(if scope == ConsentScopeEscalator::JustOnce.as_str() {
+                        Self::ApproveOnce
+                    } else {
+                        Self::ApproveAndStopAsking
+                    });
+                }
+                // A bundle approve is the batch form of approve-and-stop-asking:
+                // one tap accepts the slate's drafted rows.
+                action_id
+                    .starts_with(CONSENT_BUNDLE_ACTION_ID_PREFIX)
+                    .then_some(Self::ApproveAndStopAsking)
+            }
+        }
+    }
+}
+
+/// Whether an emitted ask action id offers a duration/expiry choice.
+///
+/// Invariant 9 kills duration pickers everywhere the owner answers an ask; the
+/// one named exception is a mint-time field on the ARCH-0071 delegation
+/// record, which is not an ask option and never reaches this vocabulary.
+#[must_use]
+pub fn consent_action_id_offers_duration(action_id: &str) -> bool {
+    const DURATION_TOKENS: [&str; 6] = ["duration", "expire", "expiry", "ttl", "until", "days"];
+    DURATION_TOKENS
+        .iter()
+        .any(|token| action_id.contains(token))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsentSurface {
