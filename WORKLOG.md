@@ -43,16 +43,64 @@ Acceptance authority: DEC-0006 nine-invariant table (exact, not illustrative).
   MS-armed test.
 - `gate.rs` develops in parallel with ONE-1728/P4a per CLAIMS; rebase before push.
 
+## Later decisions (same segment)
+
+- **`ActorBound` name collision.** `crate::vault::ActorBound` (the engine-internal
+  write handle) already owns that name at the crate root, and `vault.rs` is NOT in
+  this lane's claims. `consent::ActorBound` is therefore deliberately NOT
+  re-exported from `lib.rs`; the pinned downstream import path is
+  `oneiron::consent::ActorBound`. Every other contract name IS re-exported. A
+  rename of either type would be a cross-lane change, so the module path is the
+  cheap correct answer. Noted in the `lib.rs` re-export block.
+- **`facade.rs` NOT touched — deliberately.** Blueprint line 27 requires that
+  `facade.rs` route actor-bound write verbs through the one Gate; it already does
+  (3 gate call sites). Editing a file contended with w4 S-AUTH3, L1-ENTITY E1/E2,
+  spine 1889, RET 208/1486/1487 and FED 1414 to add nothing would buy pure
+  serialization cost. **This drops `facade.rs` from the lane's effective packet.**
+- **`disclosure.rs` NOT touched — deliberately.** The `DisclosureScope` adapter
+  lives in `consent.rs` per the blueprint's adapter table, so the w4
+  S-DISC1/2/4-contended file needs no edit. Same reasoning as `facade.rs`.
+- **Each consent act mints its OWN `GateDecisionId`.** First implementation reused
+  `AuthenticatedOwner::decision_id` for every receipt; the ledger rejected the
+  second one (`gate decision id collision`) and 4 tests caught it. The
+  authentication's id now rides the grant row's owner stamp as provenance only.
+- **`PendingCriticalityFloor` survives as a variant.** UNCLAIMED `inbox.rs:593`
+  string-matches its `as_str()`. `Critical` now only mints it when NO consent
+  context was composed, so doors not yet on the DEC-0006 path keep their
+  pre-existing behaviour instead of silently losing a gate.
+- **`brief_ref` is used VERBATIM in the settle bound.** First implementation
+  re-prefixed it to `brief:{ref}`, minting a bound no grant could match; the
+  done-means test caught it.
+- **Confirm trio is asserted as an OUTCOME mapping.** genui emits
+  `approve_once` / `decline` / N bound-naming `escalate_*` ids, so "exactly three
+  outcomes" is `ConsentConfirmOutcome::from_action_id` covering every emitted id,
+  not a literal 3-string list. Each `escalate_*` id names ONE bound, which is what
+  makes approve-and-stop-asking an owner act on a row rather than an inference.
+
+## State: seg0 COMPLETE — cheap gate GREEN
+
+- `cargo fmt --all` clean · `cargo clippy --workspace --all-targets --all-features`
+  clean for this lane (only pre-existing `oneiron-seal` sha1 deprecation remains)
+  · `cargo test -p oneiron --all-features` = **3169 passed, 0 failed** plus all
+  integration binaries green.
+- Files touched (all inside Claims): `consent.rs` (new) · `consent/tests.rs` (new)
+  · `lib.rs` · `error.rs` · `gate.rs` · `gate/tests.rs` · `genui.rs` ·
+  `edit_settle.rs` · `edit_settle/tests.rs` · `receipt.rs` ·
+  `tests/merge_split_oracle.rs`. `Cargo.lock` untouched.
+
 ## Next-step INTENT
 
-1. `consent.rs` — types, bound normalization/containment, catastrophe floor,
-   classifier, evaluator, Vault doors, registry projection, adapters. [in flight]
-2. `consent/tests.rs` — the nine named invariant tests + adapter tests.
-3. `error.rs` additive variants + `lib.rs` mod/re-exports.
-4. `gate.rs` write-side residual: new pending reason codes; `Critical` stops
-   minting an unconditional `PendingCriticalityFloor` and becomes a composed-effect
-   signal. Watch: `inbox.rs:` (UNCLAIMED) string-matches
-   `GateReasonCode::PendingCriticalityFloor.as_str()` — the VARIANT must survive.
-5. Arming: `genui.rs` action ids, `edit_settle.rs::settle_standing_grant_authorizes`,
-   `merge_split_oracle.rs`, `receipt.rs` lens compat projection, `disclosure.rs`
-   adapter seam.
+1. **Rebase on post-1728 `gate.rs`** before any push (CLAIMS §gate.rs seam) and
+   re-run the cheap gate. The `GateEvaluatorInput.consent` field and the
+   `GateMetricReasonClass::Consent` arm are the likely conflict points.
+2. Confirm the w4 same-file carve-outs at dispatch WITH THE DIFF CITED for
+   `gate.rs`/`gate/tests.rs` (E-A + E-B), `genui.rs`/tests (S-DISC3/4),
+   `edit_settle.rs`/tests + `receipt.rs` (E-F), `receipt/tests.rs` (E-A AND E-F),
+   `error.rs` (S-AUTH1/S-AUTH4/S-DISC1/S-DISC2/E-L). All this lane's hunks are
+   additive and function-level disjoint. `facade.rs` and `disclosure.rs` carve-outs
+   are MOOT — not touched.
+3. Verify the MS ONE-1747 ordering clause on `receipt.rs` before opening the PR;
+   this lane's receipt touch is one additive re-export method
+   (`consent_registry_lens`).
+4. SECURITY-CORE RIDER: owner/cross-vendor review is a merge condition. A green
+   implement/simplify/finder/verdict stack does NOT authorize merge.
