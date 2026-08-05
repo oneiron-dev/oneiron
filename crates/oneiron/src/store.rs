@@ -2301,21 +2301,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &GateDecisionRecord,
     ) -> Result<()> {
-        // Decode accepts the redacted skeleton (ONE-1637); APPEND never mints
-        // one. Redaction is an in-place rewrite owned by the erase coupling.
-        if record.version != GATE_DECISION_LEDGER_VERSION || record.redacted_at.is_some() {
-            return Err(Error::InvariantViolation("gate decision born redacted"));
-        }
-        vet_gate_decision_record(record)?;
-        let key = gate_decision_key(record.decision_id);
-        if self.vault_meta.get(wtxn, &key)?.is_some() {
-            return Err(Error::InvariantViolation("gate decision id collision"));
-        }
-        let value = encode_gate_decision(record)?;
-        self.vault_meta.put(wtxn, &key, &value)?;
-        self.put_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
-        self.put_gate_decision_claim_index_in_txn(wtxn, record)?;
-        Ok(())
+        append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
     pub(crate) fn delete_gate_decision_in_txn(
@@ -2921,19 +2907,10 @@ impl Store {
         Ok(())
     }
 
-    fn put_gate_decision_grant_ref_index_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        record: &GateDecisionRecord,
-    ) -> Result<()> {
-        let Some(grant_ref) = record.grant_ref.as_deref() else {
-            return Ok(());
-        };
-        self.put_gate_decision_grant_ref_index_row_in_txn(wtxn, grant_ref, record.decision_id)
-    }
-
     /// Parts-based form, so a streaming backfill can write the row without
-    /// holding the decoded record it came from.
+    /// holding the decoded record it came from. The append path builds the
+    /// same row inline in [`append_gate_decision_row_in_txn`], which is
+    /// target-parameterized and so cannot route through a `Store` method.
     fn put_gate_decision_grant_ref_index_row_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -2959,22 +2936,6 @@ impl Store {
         self.vault_meta.delete(
             wtxn,
             &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
-        )?;
-        Ok(())
-    }
-
-    fn put_gate_decision_claim_index_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        record: &GateDecisionRecord,
-    ) -> Result<()> {
-        let Some(claim_id) = record.claim_id.as_ref() else {
-            return Ok(());
-        };
-        self.vault_meta.put(
-            wtxn,
-            &gate_decision_claim_index_key(claim_id, record.decision_id),
-            b"",
         )?;
         Ok(())
     }
@@ -4280,6 +4241,53 @@ fn apply_retrieval_blend_weight_update(
         (next[3] / sum) as f32,
     )
     .normalized()
+}
+
+/// Appends one WRITE-PATH gate decision plus its two index rows, addressed by
+/// write target (ONE-1728 K5).
+///
+/// TIER SEPARATION IS THE POINT. Write-path decisions are receipts ABOUT the
+/// content they judged, so a decision on session content stages into the
+/// overlay and evaporates with the transcript it describes. The EGRESS tier is
+/// categorically different — those decisions and REDACTION_AUDIT are floor
+/// survivors and keep crossing to base through
+/// [`crate::off_record::FloorWrites`], never through here.
+///
+/// The key/encode functions and both index side writes are shared verbatim, so
+/// a session decision is byte-identical to the base row it would have been —
+/// which is what makes promote a replay rather than a re-derivation.
+fn append_gate_decision_row_in_txn(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    record: &GateDecisionRecord,
+) -> Result<()> {
+    // Decode accepts the redacted skeleton (ONE-1637); APPEND never mints
+    // one. Redaction is an in-place rewrite owned by the erase coupling.
+    if record.version != GATE_DECISION_LEDGER_VERSION || record.redacted_at.is_some() {
+        return Err(Error::InvariantViolation("gate decision born redacted"));
+    }
+    vet_gate_decision_record(record)?;
+    let key = gate_decision_key(record.decision_id);
+    if store.vault_meta().get(wtxn, &key)?.is_some() {
+        return Err(Error::InvariantViolation("gate decision id collision"));
+    }
+    let value = encode_gate_decision(record)?;
+    store.vault_meta().put(wtxn, &key, &value)?;
+    if let Some(grant_ref) = record.grant_ref.as_deref() {
+        store.vault_meta().put(
+            wtxn,
+            &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
+            b"1",
+        )?;
+    }
+    if let Some(claim_id) = record.claim_id.as_ref() {
+        store.vault_meta().put(
+            wtxn,
+            &gate_decision_claim_index_key(claim_id, record.decision_id),
+            b"",
+        )?;
+    }
+    Ok(())
 }
 
 fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
@@ -5741,14 +5749,14 @@ fn persist_model_id_if_missing(
 }
 
 pub(crate) fn ensure_model_id_for_vector_write(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     requested: Option<&str>,
 ) -> Result<()> {
     let requested = requested.ok_or_else(|| {
         Error::InvalidConfig(ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL.to_owned())
     })?;
-    match store.hnsw_meta.get(&*wtxn, MODEL_ID_KEY)? {
+    match store.hnsw_meta().get(&*wtxn, MODEL_ID_KEY)? {
         Some(raw) => {
             let stored = parse_utf8_bytes(&raw)?;
             if stored != requested {
@@ -5760,9 +5768,9 @@ pub(crate) fn ensure_model_id_for_vector_write(
         }
         None => {
             if has_persisted_vector_or_hnsw_data(
-                &store.hnsw_meta,
-                &store.vectors,
-                &store.hnsw_neighbors,
+                store.hnsw_meta(),
+                store.vectors(),
+                store.hnsw_neighbors(),
                 &*wtxn,
             )? {
                 return Err(Error::InvalidConfig(
@@ -5770,7 +5778,7 @@ pub(crate) fn ensure_model_id_for_vector_write(
                 ));
             }
             store
-                .hnsw_meta
+                .hnsw_meta()
                 .put(wtxn, MODEL_ID_KEY, requested.as_bytes())?;
         }
     }

@@ -183,6 +183,22 @@ pub(super) struct OffRecordSessionEntryState {
     pub(super) receipt_log: Option<SessionLocalReceiptLog>,
     pub(super) overlay_closed: bool,
     pub(super) gone: bool,
+    /// The room's conversation shell, allocated on the first witness and
+    /// reused for every later turn so a session reads as ONE conversation.
+    /// In-memory only: it evaporates with the process, like the room.
+    pub(super) overlay_shell: Option<EntityId>,
+    /// Whether the overlay shell's own `Put` has been staged. Allocating the
+    /// id and staging its row are separate moments — the id is minted before
+    /// the write transaction opens — so a second witness must not re-put the
+    /// shell it already created.
+    pub(super) overlay_shell_staged: bool,
+    /// The BASE conversation shell used while on record (K10). A fresh
+    /// conversation allocated on the first post-flip witness and reused until
+    /// flip-back. It is deliberately NOT the overlay shell: reusing that id
+    /// would write a base row whose conversation is an overlay member — the
+    /// taint the K4 guard exists to reject — and would link on-record turns to
+    /// a room that is supposed to be invisible from base.
+    pub(super) continuation_shell: Option<EntityId>,
 }
 
 impl Default for OffRecordSessionRegistry {
@@ -237,6 +253,9 @@ impl OffRecordSessionRegistry {
                 receipt_log: Some(SessionLocalReceiptLog::off_record(session_ref)),
                 overlay_closed: false,
                 gone: false,
+                overlay_shell: None,
+                overlay_shell_staged: false,
+                continuation_shell: None,
             }),
             published_record: ArcSwapOption::from(Some(Arc::new(record))),
         });
@@ -562,6 +581,60 @@ impl OffRecordSession<'_> {
             OffRecordMode::OnRecord => RouteTarget::Base,
         };
         SessionWriteRoute::mint(&self.entry.overlay, target)
+    }
+
+    /// The room's conversation shell, allocated on first use.
+    ///
+    /// One shell per room, so an in-session reader sees one conversation
+    /// rather than a turn-per-conversation shred. The id lives only on the
+    /// in-memory record — no durable session row — so it evaporates with the
+    /// process exactly as the room does.
+    pub(crate) fn overlay_conversation_shell(&self) -> Result<EntityId> {
+        let mut state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            });
+        }
+        Ok(*state.overlay_shell.get_or_insert_with(EntityId::now))
+    }
+
+    /// Claims the right to STAGE the overlay shell's `Put`, exactly once per
+    /// room. Returns `true` to the first caller and `false` to every later
+    /// one, so a second witness reuses the shell instead of overwriting it.
+    pub(crate) fn claim_overlay_conversation_shell(&self) -> Result<bool> {
+        let mut state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            });
+        }
+        Ok(!std::mem::replace(&mut state.overlay_shell_staged, true))
+    }
+
+    /// The base conversation shell this session witnesses under while ON
+    /// RECORD (K10), allocated on the first post-flip witness and reused until
+    /// flip-back.
+    ///
+    /// Deliberately distinct from the overlay shell: witnessing an on-record
+    /// turn under the overlay conversation id would write a BASE row
+    /// referencing an overlay member — precisely the taint K4 rejects — and
+    /// would make the private room reachable from base by following the edge.
+    /// The two mode's transcripts stay separate conversations, which is what
+    /// "pre-flip turns remain base-invisible" means structurally.
+    pub(crate) fn on_record_continuation_shell(&self) -> Result<EntityId> {
+        let mut state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            });
+        }
+        if state.record.mode != OffRecordMode::OnRecord {
+            return Err(Error::InvariantViolation(
+                "the on-record continuation shell is only reachable while on record",
+            ));
+        }
+        Ok(*state.continuation_shell.get_or_insert_with(EntityId::now))
     }
 
     pub fn flip_on_record(&self) -> Result<()> {

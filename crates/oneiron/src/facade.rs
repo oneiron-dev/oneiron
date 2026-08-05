@@ -64,10 +64,11 @@ use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{
     ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 use crate::serialize::{SerializeConfig, serialize_pack};
+use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarget};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{
     ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor, WriteEnvelope, WriteProvenance,
@@ -1580,6 +1581,207 @@ impl MemoryFacade<'_> {
         }
         Ok(WitnessReceipt {
             turn_short_id: self.short_ref_or_hex(&turn_id)?,
+            message_short_ids,
+            receipt_ref: format!("witness:{}", turn_id.to_hex()),
+        })
+    }
+
+    /// Witnesses one turn INTO a session (ARCH-0052 §7, ONE-1728).
+    ///
+    /// Runs the base witness program — conversation shell, TURN put, MESSAGE
+    /// puts with `PartOf`/`BelongsTo`/`AuthoredBy` edges, BM25 `content` text
+    /// ops — plus a session-only SUMMARY put and its `DerivedFrom` edge when
+    /// `summary` is `Some`. While the route resolves to `Overlay` every row
+    /// stages into the session overlay and evaporates at close; after a flip
+    /// to `OnRecord` the same program runs through the ordinary base apply
+    /// under the session's on-record continuation shell.
+    ///
+    /// The receipt carries SESSION-LOCAL short ids: in-room aliases are
+    /// temporary presentation handles, and canonical ids are allocated at
+    /// promote (ONE-1730).
+    ///
+    /// # Why the summary is session-only
+    ///
+    /// A summary of an off-record turn is derived FROM content that does not
+    /// exist in base. Materializing it through the base door would publish the
+    /// substance of the room while the room still claims to be private — the
+    /// exact leak the vault exists to prevent. It rides the overlay with the
+    /// turn it summarizes and promotes with it or not at all.
+    pub fn witness_into_session(
+        &self,
+        session: &crate::off_record::OffRecordSession<'_>,
+        turn: &WitnessTurn,
+        summary: Option<&str>,
+    ) -> FacadeResult<WitnessReceipt> {
+        if turn.messages.is_empty() {
+            return Err(FacadeError::bad_request("witness turn carries no messages"));
+        }
+        let route = session.write_route()?;
+        if route.target() == RouteTarget::Base {
+            // Post-flip: the room is on record, so the witness takes the
+            // ordinary base apply under the continuation shell. It never
+            // reuses the overlay conversation id, so K4 sees no overlay refs
+            // and K7 does not fire (the shell is not an overlay member).
+            let continuation = session.on_record_continuation_shell()?;
+            let mut base_turn = turn.clone();
+            base_turn.conversation_ref = continuation.to_hex();
+            return self.witness(&base_turn);
+        }
+
+        let occurred = TimeRange {
+            start: turn.occurred_at,
+            end: turn.occurred_at,
+        };
+        let learned_at = turn.occurred_at;
+        let overlay = session.overlay();
+        let conversation_id = session.overlay_conversation_shell()?;
+        let turn_id = EntityId::now();
+        let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
+
+        let mut entries = Vec::new();
+        let scope = JournalScope::new(conversation_id, turn_id);
+        // Every entry carries the witness's own `occurred`/`learned_at` — never
+        // `unix_seconds_now()` — because promote replays these stamps and a
+        // restamped row would land in the wrong month window (ARCH-0052 D4).
+        let entry = |role: JournalRole, op: BatchOp| JournalEntry {
+            scope,
+            role,
+            learned_at,
+            occurred,
+            op,
+        };
+        let put = |id: &EntityId, entity_type: u8, data: &[u8]| BatchOp::Put {
+            id: *id,
+            entity_type,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        };
+        let edge = |src: &EntityId, kind: EdgeKind, tgt: &EntityId| BatchOp::Edge {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight: 1.0,
+            vad: crate::affect::Vad::NEUTRAL,
+        };
+
+        if session.claim_overlay_conversation_shell()? {
+            entries.push(entry(
+                JournalRole::ConversationShell,
+                put(&conversation_id, ENTITY_TYPE_CONVERSATION, &container_body),
+            ));
+        }
+        entries.push(entry(
+            JournalRole::TurnPut,
+            put(&turn_id, ENTITY_TYPE_TURN, &container_body),
+        ));
+
+        let mut message_ids = Vec::with_capacity(turn.messages.len());
+        for message in &turn.messages {
+            let id = id_from_optional_hex(message.id.as_deref())?;
+            let body = encode_witness_message_body(message)?;
+            message_ids.push(id);
+            entries.push(entry(
+                JournalRole::MessagePartOf,
+                put(&id, ENTITY_TYPE_MESSAGE, &body),
+            ));
+            entries.push(entry(
+                JournalRole::MessagePartOf,
+                edge(&id, EdgeKind::PartOf, &turn_id),
+            ));
+            entries.push(entry(
+                JournalRole::AttributionEdge,
+                edge(&id, EdgeKind::BelongsTo, &conversation_id),
+            ));
+            if message.author != WitnessAuthor::System {
+                entries.push(entry(
+                    JournalRole::AttributionEdge,
+                    edge(&id, EdgeKind::AuthoredBy, &self.actor),
+                ));
+            }
+            if !message.content.is_empty() {
+                entries.push(entry(
+                    JournalRole::TurnOwnedArtifact,
+                    BatchOp::Text {
+                        id,
+                        fields: vec![("content".to_owned(), message.content.clone())],
+                    },
+                ));
+            }
+        }
+
+        let summary_id = match summary {
+            Some(text) => {
+                let id = EntityId::now();
+                let body = encode_rmpv(&Value::Map(vec![(
+                    Value::from("content"),
+                    Value::from(text),
+                )]))?;
+                entries.push(entry(
+                    JournalRole::SummaryDerivedFrom,
+                    put(&id, ENTITY_TYPE_SUMMARY, &body),
+                ));
+                entries.push(entry(
+                    JournalRole::SummaryDerivedFrom,
+                    edge(&id, EdgeKind::DerivedFrom, &turn_id),
+                ));
+                if !text.is_empty() {
+                    entries.push(entry(
+                        JournalRole::TurnOwnedArtifact,
+                        BatchOp::Text {
+                            id,
+                            fields: vec![("content".to_owned(), text.to_owned())],
+                        },
+                    ));
+                }
+                Some(id)
+            }
+            None => None,
+        };
+
+        // The overlay segment and the base txn commit together: the segment
+        // guard applies staged rows only after `wtxn.commit()` returns, so a
+        // failure anywhere in staging leaves the room byte-unchanged.
+        let alias_ids: Vec<EntityId> = std::iter::once(turn_id)
+            .chain(message_ids.iter().copied())
+            .chain(summary_id)
+            .collect();
+        let (segment, short_refs) = self.vault.try_with_write_txn(
+            |wtxn| -> FacadeResult<(crate::session_overlay::TxnSegmentGuard, Vec<(String, u8)>)> {
+                verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+                let segment = overlay.install_txn_segment()?;
+                let view = session.read_view()?;
+                crate::batch::apply_ops_session(
+                    &view,
+                    &route,
+                    &self.vault.config,
+                    &self.vault.analyzer,
+                    wtxn,
+                    entries,
+                )?;
+                let mut short_refs = Vec::with_capacity(alias_ids.len());
+                for id in &alias_ids {
+                    short_refs.push(overlay.alloc_session_short_id(id, id.as_bytes())?);
+                }
+                Ok((segment, short_refs))
+            },
+        )?;
+        segment.commit()?;
+
+        let mut short_refs = short_refs.into_iter();
+        let turn_short_id = session_short_ref_string(&short_refs.next().ok_or(
+            Error::InvariantViolation("session witness allocated no turn alias"),
+        )?);
+        let message_short_ids = short_refs
+            .by_ref()
+            .take(message_ids.len())
+            .map(|alias| session_short_ref_string(&alias))
+            .collect();
+        Ok(WitnessReceipt {
+            turn_short_id,
             message_short_ids,
             receipt_ref: format!("witness:{}", turn_id.to_hex()),
         })
@@ -3364,6 +3566,16 @@ impl MemoryFacade<'_> {
             .max_by_key(|record| record.decision_id.to_hex());
         Ok(latest.map(|record| format!("gate:{}", record.decision_id.to_hex())))
     }
+}
+
+/// Renders a session-local alias in the same `short_id:content_hash` shape the
+/// base resolver produces, so a client formats one kind of ref.
+///
+/// The alias itself is what keeps the namespaces apart: session ids carry the
+/// `s` sigil, which is not a legal base prefix, so an in-room ref can neither
+/// shadow a durable entity nor resolve at a base door.
+fn session_short_ref_string((short_id, content_hash): &(String, u8)) -> String {
+    format!("{short_id}:{content_hash:02x}")
 }
 
 fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> FacadeError {

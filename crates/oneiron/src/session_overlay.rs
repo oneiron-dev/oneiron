@@ -243,6 +243,13 @@ pub(crate) enum JournalRole {
 /// replays into the correct month window (ARCH-0052 D4).
 #[derive(Clone)]
 pub(crate) struct JournalEntry {
+    /// Read by ONE-1730's `plan_promotion` to cut ONE turn's closure out of
+    /// the journal — the whole reason the scope is recorded at staging time
+    /// rather than reconstructed from index keys later.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730 selects a closure by scope; ONE-1728 stages it and the oracle covers it now"
+    )]
     pub(crate) scope: JournalScope,
     pub(crate) role: JournalRole,
     pub(crate) learned_at: u64,
@@ -314,13 +321,28 @@ pub(crate) struct JournalScope {
     turn: EntityId,
 }
 
-#[allow(
-    dead_code,
-    reason = "typed journal scope construction is consumed by ONE-1730 promotion; ONE-1726 oracle covers it now"
-)]
 impl JournalScope {
     pub(crate) const fn new(conversation: EntityId, turn: EntityId) -> Self {
         Self { conversation, turn }
+    }
+
+    /// The turn this op belongs to. ONE-1730 promotes ONE turn at a time, so
+    /// this is how the closure is cut out of the journal.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730's plan_promotion selects a closure by turn; ONE-1728 stages the scope it reads"
+    )]
+    pub(crate) const fn turn(&self) -> EntityId {
+        self.turn
+    }
+
+    /// The conversation shell owning this op.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730 promotes the turn's shell alongside the turn"
+    )]
+    pub(crate) const fn conversation(&self) -> EntityId {
+        self.conversation
     }
 }
 
