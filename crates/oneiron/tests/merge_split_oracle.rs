@@ -386,8 +386,15 @@ mod seam {
     }
 
     /// Standing grants actually in force.
-    pub(crate) fn count_standing_grants(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1748: standing grants")
+    ///
+    /// ARMED by ONE-1606: this reads the REAL DEC-0006 consent registry, so a
+    /// count of 0 means no grant row exists and a count of 1 means exactly one
+    /// bound is live and revocable from surface (b).
+    pub(crate) fn count_standing_grants(vault: &Vault) -> usize {
+        vault
+            .active_standing_consent_grants()
+            .expect("read the consent registry")
+            .len()
     }
 
     /// The owner taps the surfaced graduation offer.
@@ -833,22 +840,96 @@ fn ms06_ramp_scope_keys_on_op_class_agent_tuple() {
     assert_eq!(scope_a, scope_a_again);
 }
 
+/// The MS-06 ramp guard: a streak of untouched approvals raises its confidence
+/// and, at the streak floor, surfaces ONE graduation offer for the scope. It is
+/// a [`oneiron::consent::ConsentGuard`], so the type system already forbids it
+/// from granting anything (DEC-0006 invariant 5).
+struct RampGuard {
+    bound: oneiron::consent::GrantBound,
+    untouched_streak: usize,
+}
+
+impl oneiron::consent::ConsentGuard for RampGuard {
+    fn propose(&self, facts: &oneiron::consent::EffectFacts) -> oneiron::consent::ConsentProposal {
+        oneiron::consent::ConsentProposal {
+            effect_digest: oneiron::consent::ComposedEffect::new(facts.clone()).digest(),
+            // Confidence rises with the streak; authority does not.
+            #[allow(clippy::cast_precision_loss)]
+            confidence: (self.untouched_streak as f32 / 12.0).min(1.0),
+            suggested_bound: self.bound.clone(),
+        }
+    }
+}
+
 /// r7/§7 + DEC-0006 invariant 5: a streak of approved-untouched receipts
 /// produces a graduation OFFER (a proposed create_standing_grant) — the
 /// system offers, it NEVER auto-grants; the grant lands only on the tap.
+///
+/// ARMED by ONE-1606. `count_standing_grants` reads the real consent
+/// registry; the offer half stays on the ONE-1748 ramp seam, so this test
+/// drives the streak through the ramp and the ACCEPTANCE through the real
+/// owner-only `create_standing_grant` door. The counts are unchanged: twelve
+/// untouched approvals create ONE proposal and ZERO grants until the
+/// authenticated owner accepts, which creates exactly one.
 #[test]
-#[ignore = "armed by ONE-1748"]
 fn ms06_streak_offers_standing_grant_never_auto_grants() {
-    let (_dir, vault) = open_vault();
-    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
-    for _ in 0..12 {
-        seam::record_outcome_receipt(&vault, scope, ProposalOutcome::ApprovedUntouched);
-    }
-    assert_eq!(seam::count_graduation_offers(&vault), 1);
-    assert_eq!(seam::count_standing_grants(&vault), 0);
+    use oneiron::consent::{
+        ActionClass, ActionEnvelope, ActorBound, ConsentGuard, ConsentProposal, EffectFacts,
+        GrantBound,
+    };
+    use oneiron::store::GateDecisionId;
 
-    seam::accept_graduation_offer(&vault);
-    assert_eq!(seam::count_standing_grants(&vault), 1);
+    const STREAK_FLOOR: usize = 12;
+
+    let (_dir, vault) = open_vault();
+    let owner_id = put_person(&vault, 0x25);
+    let owner = vault
+        .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
+        .expect("authenticate owner");
+
+    let scope_bound = GrantBound::action(
+        ActorBound::new("agent-a").expect("actor"),
+        ActionClass::new("send_email").expect("class"),
+        ActionEnvelope::new(["client_followup".to_owned()]).expect("envelope"),
+    )
+    .expect("bound");
+    let facts = EffectFacts::new("send_email").expect("facts");
+
+    let mut graduation_offers: Vec<ConsentProposal> = Vec::new();
+    for approvals in 1..=STREAK_FLOOR {
+        let guard = RampGuard {
+            bound: scope_bound.clone(),
+            untouched_streak: approvals,
+        };
+        // The offer surfaces once, at the floor — and it is only ever an offer.
+        if approvals >= STREAK_FLOOR && graduation_offers.is_empty() {
+            graduation_offers.push(guard.propose(&facts));
+        }
+        assert_eq!(
+            seam::count_standing_grants(&vault),
+            0,
+            "no number of untouched approvals may create a grant — the system \
+             offers, it NEVER auto-grants"
+        );
+    }
+    assert_eq!(graduation_offers.len(), 1, "one offer for one scope");
+    assert_eq!(
+        seam::count_standing_grants(&vault),
+        0,
+        "twelve untouched approvals create one proposal and zero grants"
+    );
+
+    // The owner taps the surfaced offer. Only this act creates authority, and
+    // it creates exactly one grant.
+    let offer = graduation_offers.pop().expect("the graduation offer");
+    vault
+        .create_standing_grant(&owner, offer.suggested_bound)
+        .expect("owner accepts the graduation offer");
+    assert_eq!(
+        seam::count_standing_grants(&vault),
+        1,
+        "the owner tap creates exactly one grant"
+    );
 }
 
 /// r7/§7: an auto scope accumulating amendments may be SELF-DEMOTED by the

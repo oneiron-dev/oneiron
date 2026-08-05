@@ -904,6 +904,23 @@ impl Vault {
     ) -> Result<StandingOutboundGrantsLens> {
         standing_outbound_grants_lens(self, query)
     }
+
+    /// DEC-0006 surface (b): the unified consent registry, projected here so
+    /// review and one-tap revoke reach it through the receipt family like
+    /// every other lens.
+    ///
+    /// This is a re-export of [`Vault::consent_registry`], not a second
+    /// registry — invariant 9 allows exactly two human surfaces, so a lens
+    /// that recomputed its own view would BE the forbidden third one.
+    /// [`Vault::standing_outbound_grants_lens`] above is likewise a
+    /// COMPATIBILITY projection over the outbound grant family, kept for its
+    /// existing callers rather than promoted to a separate consent surface.
+    pub fn consent_registry_lens(
+        &self,
+        query: crate::consent::ConsentRegistryQuery,
+    ) -> Result<crate::consent::ConsentRegistry> {
+        self.consent_registry(query)
+    }
 }
 
 /// Persists the outbound pipeline receipt as the sole durable record of a
