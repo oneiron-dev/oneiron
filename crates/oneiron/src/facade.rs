@@ -1708,12 +1708,6 @@ impl MemoryFacade<'_> {
             vad: crate::affect::Vad::NEUTRAL,
         };
 
-        if session.claim_overlay_conversation_shell()? {
-            entries.push(entry(
-                JournalRole::ConversationShell,
-                put(&conversation_id, ENTITY_TYPE_CONVERSATION, &container_body),
-            ));
-        }
         entries.push(entry(
             JournalRole::TurnPut,
             put(&turn_id, ENTITY_TYPE_TURN, &container_body),
@@ -1782,6 +1776,24 @@ impl MemoryFacade<'_> {
             None => None,
         };
 
+        // The room's one shell-staging claim is taken HERE — after every
+        // fallible step above (caller-controlled message ids and bodies) and
+        // released if the transaction below fails. Taking it earlier burned it
+        // on a witness that never staged the shell row, leaving later witnesses
+        // to hang `PartOf`/`BelongsTo` edges off a conversation id with no
+        // entity row. The shell `Put` leads the journal, so promote replays the
+        // shell before anything referring to it.
+        let shell_reservation = session.reserve_overlay_conversation_shell()?;
+        if shell_reservation.is_some() {
+            entries.insert(
+                0,
+                entry(
+                    JournalRole::ConversationShell,
+                    put(&conversation_id, ENTITY_TYPE_CONVERSATION, &container_body),
+                ),
+            );
+        }
+
         // The overlay segment and the base txn commit together: the segment
         // guard applies staged rows only after `wtxn.commit()` returns, so a
         // failure anywhere in staging leaves the room byte-unchanged.
@@ -1829,6 +1841,10 @@ impl MemoryFacade<'_> {
             },
         )?;
         segment.commit()?;
+        // The shell row is in the room now, so the claim is spent for good.
+        if let Some(reservation) = shell_reservation {
+            reservation.commit();
+        }
 
         let mut short_refs = short_refs.into_iter();
         let turn_short_id = session_short_ref_string(&short_refs.next().ok_or(

@@ -5861,3 +5861,135 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
         "the room's overlay conversation shell must never become a base row"
     );
 }
+
+/// R4: a FAILED session witness must not burn the room's one-shot shell claim.
+///
+/// The claim was consumed before the caller-controlled fallible work (message
+/// id parsing, body encoding) and before the write transaction, with no
+/// rollback. A first witness carrying a malformed message id therefore returned
+/// `Err` having staged nothing — yet the room was marked shell-staged, so the
+/// NEXT witness hung its `PartOf`/`BelongsTo` edges off a conversation id with
+/// no entity row: a dangling journal that promote (ONE-1730) would replay.
+#[test]
+fn a_failed_session_witness_does_not_burn_the_room_shell_claim() {
+    let (_dir, vault) = open_vault();
+    let (session, actor) = session_witness_fixture(&vault, "sess-witness-shell-claim", 0x58);
+    let facade = facade_for(&vault, actor);
+
+    let mut malformed = witness_message(0, WitnessAuthor::User, "never lands");
+    malformed.id = Some("zz".to_owned());
+    let refused = facade
+        .witness_into_session(
+            &session,
+            &WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![malformed],
+                occurred_at: 970,
+            },
+            None,
+        )
+        .expect_err("a malformed message id refuses the witness");
+    assert_eq!(refused.code, FACADE_CODE_BAD_REQUEST);
+
+    facade
+        .witness_into_session(
+            &session,
+            &WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![witness_message(0, WitnessAuthor::User, "lands for real")],
+                occurred_at: 971,
+            },
+            None,
+        )
+        .expect("the next witness succeeds");
+
+    let shell = session.overlay_conversation_shell().expect("room shell");
+    let view = session.read_view().expect("read view");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        view.entities
+            .get(&rtxn, shell.as_bytes())
+            .expect("shell lookup")
+            .is_some(),
+        "the room's conversation shell row exists, so no edge dangles"
+    );
+    assert_eq!(
+        view.type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_CONVERSATION])
+            .expect("type scan")
+            .count(),
+        1,
+        "the claim stays one-shot: exactly ONE shell row per room"
+    );
+    drop(rtxn);
+    drop(view);
+
+    session.close().expect("close session");
+}
+
+/// R4, the other half: a witness that fails INSIDE the write transaction
+/// RELEASES the shell claim.
+///
+/// Deferring the claim past the caller-controlled parsing is not enough — the
+/// transaction itself is fallible (actor binding, overlay budget). This room's
+/// byte budget admits a small turn and refuses an oversized one, so the first
+/// witness dies after the claim is taken and after the shell `Put` is staged,
+/// with the segment discarded. Only a released claim lets the next witness
+/// stage the shell row the room's edges point at.
+#[test]
+fn an_in_transaction_failure_releases_the_room_shell_claim() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x59);
+    let facade = facade_for(&vault, actor);
+    let session = vault
+        .off_record_session_vault()
+        .enter_with_budget(
+            "sess-witness-shell-rollback",
+            crate::off_record::OffRecordBackendClass::Local,
+            64 * 1024,
+        )
+        .expect("enter session");
+
+    let turn = |content: String, at: u64| WitnessTurn {
+        conversation_ref: String::new(),
+        turn_ref: None,
+        messages: vec![witness_message(0, WitnessAuthor::User, &content)],
+        occurred_at: at,
+    };
+    let refused = facade
+        .witness_into_session(&session, &turn("x".repeat(256 * 1024), 980), None)
+        .expect_err("a turn larger than the whole room budget is refused");
+    assert!(
+        refused.message.contains("off-record overlay is full"),
+        "the refusal is the overlay-budget family, got {refused:?}"
+    );
+
+    facade
+        .witness_into_session(&session, &turn("small enough".to_owned(), 981), None)
+        .expect("the next witness succeeds");
+
+    let shell = session.overlay_conversation_shell().expect("room shell");
+    let view = session.read_view().expect("read view");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        view.entities
+            .get(&rtxn, shell.as_bytes())
+            .expect("shell lookup")
+            .is_some(),
+        "the released claim let the next witness stage the shell row"
+    );
+    assert_eq!(
+        view.type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_CONVERSATION])
+            .expect("type scan")
+            .count(),
+        1,
+        "still one-shot: exactly ONE shell row per room"
+    );
+    drop(rtxn);
+    drop(view);
+
+    session.close().expect("close session");
+}

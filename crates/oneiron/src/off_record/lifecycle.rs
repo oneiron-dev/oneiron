@@ -488,6 +488,40 @@ pub struct OffRecordSessionVault<'vault> {
     vault: &'vault Vault,
 }
 
+/// The room's one shell-staging claim, held while the staging attempt runs.
+///
+/// [`OffRecordSession::reserve_overlay_conversation_shell`] mints it;
+/// [`Self::commit`] keeps the claim consumed once the shell row is durable in
+/// the room. Dropping it any other way returns the claim, so a failed staging
+/// attempt cannot leave the room believing a row exists that was never written.
+#[must_use = "an uncommitted reservation releases the room's shell claim on drop"]
+pub(crate) struct OverlayShellReservation {
+    entry: Arc<OffRecordSessionEntry>,
+    committed: bool,
+}
+
+impl OverlayShellReservation {
+    /// Consumes the claim for good: the shell's `Put` is staged and committed.
+    pub(crate) fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for OverlayShellReservation {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        // Best-effort by necessity — `Drop` has no error channel. A poisoned
+        // state mutex leaves the claim consumed, which is the safe direction:
+        // every session accessor already fails closed on that mutex, so the
+        // room is unusable rather than silently dangling.
+        if let Ok(mut state) = self.entry.state.lock() {
+            state.overlay_shell_staged = false;
+        }
+    }
+}
+
 /// Live session handle. Its borrow of the owning [`Vault`] makes it
 /// impossible for safe Rust to retain a session across `StoreOwner::drop`.
 pub struct OffRecordSession<'vault> {
@@ -599,17 +633,42 @@ impl OffRecordSession<'_> {
         Ok(*state.overlay_shell.get_or_insert_with(EntityId::now))
     }
 
-    /// Claims the right to STAGE the overlay shell's `Put`, exactly once per
-    /// room. Returns `true` to the first caller and `false` to every later
-    /// one, so a second witness reuses the shell instead of overwriting it.
-    pub(crate) fn claim_overlay_conversation_shell(&self) -> Result<bool> {
+    /// Reserves the right to STAGE the overlay shell's `Put`, exactly once per
+    /// room: `Some` to the first caller, `None` to every later one, so a second
+    /// witness reuses the shell instead of overwriting it.
+    ///
+    /// The reservation is RELEASED on drop unless
+    /// [`OverlayShellReservation::commit`] runs. A plain one-shot flag was
+    /// consumed before the witness's fallible work, so a FAILED first witness
+    /// (malformed message id, refused actor binding, exhausted overlay budget)
+    /// left the room marked shell-staged with nothing staged; every later
+    /// witness then staged `PartOf`/`BelongsTo` edges against a conversation id
+    /// that had no entity row — a dangling journal promote would replay
+    /// (ONE-1730).
+    ///
+    /// One window remains, and it is narrower than the reservation: a SECOND
+    /// witness that reads `None` while the first is still in flight and commits
+    /// before the first fails leaves the shell row unstaged until a third
+    /// witness takes the released reservation. Closing that too would mean
+    /// holding the session state lock across the write transaction, which
+    /// `tag_turn_off_record` already does in the opposite order (state ->
+    /// writer) — the deadlock this seam refuses to build.
+    pub(crate) fn reserve_overlay_conversation_shell(
+        &self,
+    ) -> Result<Option<OverlayShellReservation>> {
         let mut state = session_entry_state(&self.entry)?;
         if state.record.closing || state.gone {
             return Err(Error::OffRecordSessionClosing {
                 session_ref: self.session_ref.clone(),
             });
         }
-        Ok(!std::mem::replace(&mut state.overlay_shell_staged, true))
+        if std::mem::replace(&mut state.overlay_shell_staged, true) {
+            return Ok(None);
+        }
+        Ok(Some(OverlayShellReservation {
+            entry: self.entry.clone(),
+            committed: false,
+        }))
     }
 
     /// The base conversation shell this session witnesses under while ON
