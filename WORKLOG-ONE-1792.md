@@ -96,3 +96,37 @@ emitting spans pollute each other's captures. Evidence it is not this lane's:
   a 9th positional argument (clippy `too_many_arguments`). The blueprint only
   required that `project_event` pass its `event_id` through; it does.
 - Canon rider deferred to the orchestrator (see Scope).
+
+## K3 simplify pass (post-impl, pre-screen)
+
+Scope exercised: whitespace/blank-line rebalance, stale-comment sweep,
+dead-code scan over the new surface. Result: **no edit warranted** —
+nothing material landed; no SIMPLIFY commit.
+
+- Blank-line balance: zero runs of 3+ blank lines in `comm.rs` /
+  `comm/tests.rs`; `cargo fmt -p oneiron` is a no-op on the working tree.
+- Line-width: both files are within the repo's effective ~100-column norm
+  (only >100-col lines are two pre-existing duplicated "L0 sweep-8 ruling"
+  comments at `comm/tests.rs:536,723`, both above the lane's diff base —
+  not this lane's to churn; codebase carries ~90 similar unpinned test
+  comments).
+- Stale comments: none found — no comment contradicts the code it sits on;
+  no TODO/FIXME introduced or removed by this lane.
+- Semantic sweep (performed to look for dead material, not to change it):
+  every new symbol (`ProjectedCommEvent`, `PartyLookup`, both `put_*` claim
+  writers, party-scan/lookup/repair set, `reconcile_comm_party_twins`) has
+  ≥2 call sites or one load-bearing one; the three new constants
+  (`KEY_PARTY_KEY`, `PARTY_KEY_TWIN_RATIONALE`,
+  `PROJECTED_COMM_CLAIM_ID_DOMAIN`) are each multiply referenced. All
+  candidate merges (three call sites of `put_projected_comm_claim_in_txn`,
+  the Predicate-RefOr-argument pairs in `projected_comm_conflict_key`)
+  rejected — each would trade two flat branches for an allocation or a
+  tuple of separated fields, neither smaller nor clearer. Destructure at
+  `apply_projector_rule_in_txn` entry is deliberate, not decorative:
+  `rule` `Copy`-out lets the later `Err(rule)` path name the failed rule.
+- Doc comments are dense but each carries load-bearing semantics
+  (replay-as-no-op, fail-closed on collision, shell staleness); trimming
+  would cut meaning, not fat.
+- Helpers `clear_party_index` / `point_party_index` / `mint_comm_person` /
+  `count_person_rows` / `count_identity_topology_events`: all used ≥2 test
+  bodies except `count_identity_topology_events` (used 4×).
