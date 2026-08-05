@@ -164,6 +164,15 @@ stashing the diff and diffing the warning list, so this segment adds no lint
 debt. `bm25::` 61/61 and `hnsw::` 37/37 green (the byte-identical-base gate for
 the parameterization); `session_overlay::` 17/17 green.
 
+`cargo test -p oneiron --all-features`: **3159 passed / 0 failed** (plus all
+integration targets green). The first run of this gate hit
+`attempt_queue::tests::attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields`
+— ONE of the three tracing-subscriber tests named in the seg-0 BASE-RED note.
+Flake guard applied: it passes in isolation, this segment's code diff has ZERO
+hits for `attempt_queue`/`tracing`/`subscriber` (the only grep hit in the whole
+diff is this worklog's own prose), and the re-run is fully green. Pre-existing
+parallel-load class, charged to no lane — unchanged from seg 0.
+
 ## Seg-2 decisions
 
 - **D9 — the write target is an ACCESSOR BUNDLE, not a branch, and the trait is
