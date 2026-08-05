@@ -478,7 +478,13 @@ pub struct SecretCustodyRecord {
     pub device_only: bool,
     /// The secret value bytes (plaintext under the DEK plane; redacted in
     /// `Debug`; never serialized into logs/receipts/claims/CRDT).
-    pub value_bytes: Vec<u8>,
+    ///
+    /// `pub(crate)`, not `pub`: a value read must go through the bound door
+    /// [`Vault::get_secret_value_in_txn`] (which enforces the effector binding)
+    /// rather than reaching the field directly on a decoded record. Within the
+    /// crate the codec and doors move the bytes; out-of-crate there is no raw
+    /// accessor at all — the value never crosses the crate boundary unbound.
+    pub(crate) value_bytes: Vec<u8>,
     /// Lifecycle status.
     pub status: SecretCustodyStatus,
     /// Unix seconds at registration.
@@ -490,8 +496,10 @@ pub struct SecretCustodyRecord {
     /// Effector bindings on this record.
     pub bindings: Vec<SecretBinding>,
     /// The manifest path this entry was registered from (empty when
-    /// registered outside a manifest flow).
-    pub manifest_ref: String,
+    /// registered outside a manifest flow). Read via [`Self::manifest_ref`];
+    /// `pub(crate)` keeps the struct's serde/codec construction inside the
+    /// crate while exposing only a read-only reference outward.
+    pub(crate) manifest_ref: String,
     /// Declared secret paths copied from the manifest entry (SECRET-03).
     pub declared_paths: Vec<String>,
     /// The resolved vault floor at register time (audit).
@@ -562,6 +570,15 @@ impl SecretCustodyRecord {
     #[must_use]
     pub fn binding_for(&self, effector: &str) -> Option<&SecretBinding> {
         self.bindings.iter().find(|b| b.effector == effector)
+    }
+
+    /// The manifest path this entry was registered from — the read-only,
+    /// binding-door-safe view of `manifest_ref` for out-of-crate consumers
+    /// (SECRET-03 snapshot exclusion reads it from the record's body decode).
+    /// Empty when the record was registered outside a manifest flow.
+    #[must_use]
+    pub fn manifest_ref(&self) -> &str {
+        &self.manifest_ref
     }
 }
 

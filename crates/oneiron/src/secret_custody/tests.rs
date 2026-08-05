@@ -231,6 +231,55 @@ fn raw_put_doors_reject_secret_custody_byte() {
 }
 
 #[test]
+fn value_read_goes_through_get_secret_value_in_txn_door() {
+    // FIX2 BINDING-DOOR regression: the decode output carries the value, but
+    // the ONLY read path for an external effector is the bound door. This test
+    // pins both halves at the crate boundary:
+    //   * `get_secret_value_in_txn` enforces the effector binding (typed deny
+    //     on an unbound effector; returns the bytes on a bound one);
+    //   * the record fields `value_bytes` / `manifest_ref` are `pub(crate)`,
+    //     so no out-of-crate caller can bypass the door by decoding a record
+    //     and reading the field (that bypass is a *compile* error outside the
+    //     crate — the privacy boundary, asserted by the field attributes).
+    let (_tmp, vault) = temp_vault();
+    let rec = record(
+        "door-only-key",
+        CustodyClass::CrossVault,
+        b"hunter2",
+        vec![binding("door:receive-pack", CustodyTier::T0Doored)],
+    );
+    let id = vault.register_secret(rec).expect("register");
+
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    // Unbound effector is denied through the door.
+    let err = vault
+        .get_secret_value_in_txn(&wtxn, &id, "connector:evil")
+        .expect_err("unbound effector must be denied at the door");
+    assert!(
+        matches!(err, Error::SecretBindingDenied { .. }),
+        "got {err:?}"
+    );
+    // Bound effector reads the value — this is the sanctioned plaintext path.
+    let value = vault
+        .get_secret_value_in_txn(&wtxn, &id, "door:receive-pack")
+        .expect("bound read")
+        .expect("value present");
+    assert_eq!(value, b"hunter2");
+    wtxn.abort();
+
+    // A generic `Vault::get` returns the *body bytes*, not a decoded record;
+    // decoding it yields a SecretCustodyRecord but its value field is
+    // crate-private — so the only value a caller can produce out-of-crate is
+    // the re-encoded body, never the raw field. Pin that the door path above
+    // (not a field read) is what returned the plaintext.
+    let raw_body = vault.get(&id).expect("get body").expect("body present");
+    let decoded = decode_secret_custody_body(&raw_body).expect("decode body");
+    // Read-only accessor is the binding-door-safe surface for manifest_ref.
+    assert_eq!(decoded.manifest_ref(), "secrets.toml");
+    // (Out-of-crate, `decoded.value_bytes` is a compile error by `pub(crate)`.)
+}
+
+#[test]
 fn value_read_requires_binding() {
     let (_tmp, vault) = temp_vault();
     let rec = record(
