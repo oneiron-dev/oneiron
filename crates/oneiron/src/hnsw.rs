@@ -9,8 +9,8 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
 use crate::pipeline::ScoredEntity;
-use crate::store::Store;
 use crate::store::VECTOR_VERSION_KEY;
+use crate::store::{ManifestDbs, Store};
 
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
@@ -85,8 +85,8 @@ pub(crate) enum LinkDiscipline {
     Legacy,
 }
 
-fn read_link_discipline(store: &Store, txn: &RoTxn<'_>) -> Result<LinkDiscipline> {
-    match store.hnsw_meta.get(txn, SYMMETRIC_LINKS_KEY)? {
+fn read_link_discipline(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<LinkDiscipline> {
+    match store.hnsw_meta().get(txn, SYMMETRIC_LINKS_KEY)? {
         None => Ok(LinkDiscipline::Legacy),
         Some(raw) if *raw == [SYMMETRIC_LINKS_ENABLED] => Ok(LinkDiscipline::Symmetric),
         Some(_) => Err(Error::CorruptedIndex(ERR_SYMMETRIC_MARKER_BYTES)),
@@ -96,15 +96,18 @@ fn read_link_discipline(store: &Store, txn: &RoTxn<'_>) -> Result<LinkDiscipline
 /// Stamps the vault as maintaining the symmetric-link invariant. Called when
 /// a graph is created from empty (fresh vaults) and when a full rebuild
 /// rewrites every row symmetrically (the one-time migration path).
-pub(crate) fn mark_symmetric_links(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+pub(crate) fn mark_symmetric_links(store: &impl ManifestDbs, wtxn: &mut RwTxn<'_>) -> Result<()> {
     store
-        .hnsw_meta
+        .hnsw_meta()
         .put(wtxn, SYMMETRIC_LINKS_KEY, &[SYMMETRIC_LINKS_ENABLED])?;
     Ok(())
 }
 
-pub(crate) fn read_refresh_fallback_rebuilds(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta.get(txn, REFRESH_FALLBACK_REBUILDS_KEY)? else {
+pub(crate) fn read_refresh_fallback_rebuilds(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+) -> Result<u64> {
+    let Some(raw) = store.hnsw_meta().get(txn, REFRESH_FALLBACK_REBUILDS_KEY)? else {
         return Ok(0);
     };
     let bytes: [u8; 8] = raw
@@ -114,18 +117,24 @@ pub(crate) fn read_refresh_fallback_rebuilds(store: &Store, txn: &RoTxn<'_>) -> 
     Ok(u64::from_le_bytes(bytes))
 }
 
-fn increment_refresh_fallback_rebuilds(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+fn increment_refresh_fallback_rebuilds(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<()> {
     let next = read_refresh_fallback_rebuilds(store, &*wtxn)?
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("hnsw refresh fallback counter"))?;
     store
-        .hnsw_meta
+        .hnsw_meta()
         .put(wtxn, REFRESH_FALLBACK_REBUILDS_KEY, &next.to_le_bytes())?;
     Ok(())
 }
 
-pub(crate) fn read_legacy_snapshot_rebuilds(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta.get(txn, LEGACY_REBUILDS_KEY)? else {
+pub(crate) fn read_legacy_snapshot_rebuilds(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+) -> Result<u64> {
+    let Some(raw) = store.hnsw_meta().get(txn, LEGACY_REBUILDS_KEY)? else {
         return Ok(0);
     };
     let bytes: [u8; 8] = raw
@@ -135,12 +144,15 @@ pub(crate) fn read_legacy_snapshot_rebuilds(store: &Store, txn: &RoTxn<'_>) -> R
     Ok(u64::from_le_bytes(bytes))
 }
 
-fn increment_legacy_snapshot_rebuilds(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+fn increment_legacy_snapshot_rebuilds(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<()> {
     let next = read_legacy_snapshot_rebuilds(store, &*wtxn)?
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("hnsw legacy rebuild counter"))?;
     store
-        .hnsw_meta
+        .hnsw_meta()
         .put(wtxn, LEGACY_REBUILDS_KEY, &next.to_le_bytes())?;
     Ok(())
 }
@@ -172,11 +184,11 @@ fn decode_exception_holders(raw: &[u8]) -> Result<Vec<EntityId>> {
 /// Holders whose single one-way link points at `target` (`holder -> target`
 /// without the reverse). Empty when no exception record exists.
 fn read_one_way_exception_holders(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     target: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    match store.hnsw_meta.get(txn, &one_way_exception_key(target))? {
+    match store.hnsw_meta().get(txn, &one_way_exception_key(target))? {
         Some(raw) => decode_exception_holders(&raw),
         None => Ok(Vec::new()),
     }
@@ -185,7 +197,7 @@ fn read_one_way_exception_holders(
 /// Records that `holder` keeps a one-way link to `target` (orphan protection).
 /// Idempotent: a holder already present is not duplicated.
 fn record_one_way_exception(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     target: &EntityId,
     holder: &EntityId,
@@ -202,7 +214,7 @@ fn record_one_way_exception(
         bytes.extend_from_slice(holder.as_bytes());
     }
     store
-        .hnsw_meta
+        .hnsw_meta()
         .put(wtxn, &one_way_exception_key(target), &bytes)?;
     *ops += 1;
     Ok(())
@@ -213,7 +225,7 @@ fn record_one_way_exception(
 /// of a symmetric delete that the deleted node's own forward list cannot reach
 /// (the holders are, by definition, NOT in it). Bounded by the holder count.
 fn purge_one_way_exceptions_for_target(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     ops: &mut u64,
@@ -227,7 +239,7 @@ fn purge_one_way_exceptions_for_target(
     // (e.g. it later became bidirectional and was pruned), so a stale holder is
     // harmless.
     scrub_backlinks_in_place(store, wtxn, id, &holders, ops)?;
-    store.hnsw_meta.delete(wtxn, &one_way_exception_key(id))?;
+    store.hnsw_meta().delete(wtxn, &one_way_exception_key(id))?;
     *ops += 1;
     Ok(())
 }
@@ -237,16 +249,16 @@ fn purge_one_way_exceptions_for_target(
 /// the symmetric paths re-derive them from the rebuilt rows. Only the
 /// `ONE_WAY_EXCEPTION_PREFIX` keyspace is touched — unrelated `hnsw_meta` rows
 /// (graph/model/schema markers) are preserved.
-fn clear_one_way_exceptions(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+fn clear_one_way_exceptions(store: &impl ManifestDbs, wtxn: &mut RwTxn<'_>) -> Result<()> {
     let mut stale_keys: Vec<Vec<u8>> = Vec::new();
-    for entry in store.hnsw_meta.iter(wtxn)? {
+    for entry in store.hnsw_meta().iter(wtxn)? {
         let (key, _) = entry?;
         if key.starts_with(ONE_WAY_EXCEPTION_PREFIX) {
             stale_keys.push(key.to_vec());
         }
     }
     for key in stale_keys {
-        store.hnsw_meta.delete(wtxn, &key)?;
+        store.hnsw_meta().delete(wtxn, &key)?;
     }
     Ok(())
 }
@@ -255,7 +267,7 @@ fn clear_one_way_exceptions(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
 /// graph: every link `node -> neighbor` whose neighbor row does not point back
 /// is a tracked orphan-protection exception keyed by `neighbor`.
 fn rebuild_one_way_exception_index(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     neighbors: &[(EntityId, Vec<EntityId>)],
 ) -> Result<()> {
@@ -281,7 +293,7 @@ fn rebuild_one_way_exception_index(
             bytes.extend_from_slice(holder.as_bytes());
         }
         store
-            .hnsw_meta
+            .hnsw_meta()
             .put(wtxn, &one_way_exception_key(&target), &bytes)?;
     }
     Ok(())
@@ -371,7 +383,7 @@ pub(crate) fn hnsw_insert_probed(
 /// end-of-transaction snapshot rebuild re-derives the whole graph from the
 /// `vectors` DB, so per-op mutations would be dead writes (ONE-324 AC11).
 pub(crate) fn hnsw_insert_batched(
-    store: &Store,
+    store: &impl ManifestDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -405,7 +417,7 @@ pub(crate) fn run_pending_legacy_rebuild(
 }
 
 fn hnsw_insert_inner(
-    store: &Store,
+    store: &impl ManifestDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -414,7 +426,7 @@ fn hnsw_insert_inner(
 ) -> Result<InsertOutcome> {
     let discipline = read_link_discipline(store, &*wtxn)?;
     *ops += 1;
-    if store.hnsw_neighbors.get(&*wtxn, id.as_bytes())?.is_some() {
+    if store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some() {
         *ops += 1;
         let count = read_count(store, &*wtxn)?;
         if count == 0 {
@@ -435,13 +447,17 @@ fn hnsw_insert_inner(
     *ops += 1;
     if count == 0 {
         if read_entry_point(store, &*wtxn)?.is_some()
-            || store.hnsw_neighbors.first(&*wtxn)?.is_some()
+            || store.hnsw_neighbors().first(&*wtxn)?.is_some()
         {
             return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
         }
-        store.hnsw_meta.put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
-        store.hnsw_meta.put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
-        store.hnsw_neighbors.put(wtxn, id.as_bytes(), &[])?;
+        store
+            .hnsw_meta()
+            .put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
+        store
+            .hnsw_meta()
+            .put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
+        store.hnsw_neighbors().put(wtxn, id.as_bytes(), &[])?;
         // A graph created from empty is symmetric by construction and every
         // subsequent write in this module preserves the invariant.
         mark_symmetric_links(store, wtxn)?;
@@ -483,7 +499,9 @@ fn hnsw_insert_inner(
     count = count
         .checked_add(1)
         .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
-    store.hnsw_meta.put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+    store
+        .hnsw_meta()
+        .put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
 
     Ok(InsertOutcome::Applied)
 }
@@ -492,7 +510,7 @@ fn hnsw_insert_inner(
 /// removing the reverse direction, leaving one-way edges. Preserved verbatim
 /// for vaults that have not run the symmetry migration.
 fn attach_backlinks_legacy(
-    store: &Store,
+    store: &impl ManifestDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -530,7 +548,7 @@ fn attach_backlinks_legacy(
 /// victim whose list would become empty keeps its link one-way (orphan
 /// protection), so no prune ever disconnects a node's outgoing side.
 fn attach_backlinks_symmetric(
-    store: &Store,
+    store: &impl ManifestDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -576,14 +594,14 @@ fn attach_backlinks_symmetric(
 /// `from → victim` direction. Orphan protection: when `victim`'s list is
 /// exactly `[from]`, the link is kept one-way instead of emptying the list.
 fn detach_reverse_link(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     from: &EntityId,
     victim: &EntityId,
     ops: &mut u64,
 ) -> Result<()> {
     *ops += 1;
-    let Some(raw) = store.hnsw_neighbors.get(&*wtxn, victim.as_bytes())? else {
+    let Some(raw) = store.hnsw_neighbors().get(&*wtxn, victim.as_bytes())? else {
         return Ok(());
     };
     let list = decode_neighbors(&raw, false)?;
@@ -612,7 +630,7 @@ fn detach_reverse_link(
 /// `vectors` or `hnsw_neighbors` happens on this path.
 #[allow(clippy::too_many_arguments)]
 fn hnsw_refresh_localized(
-    store: &Store,
+    store: &impl ManifestDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -628,7 +646,7 @@ fn hnsw_refresh_localized(
     let mut orphaned: Vec<EntityId> = Vec::new();
     for neighbor_id in &old_neighbors {
         *ops += 1;
-        let Some(raw) = store.hnsw_neighbors.get(&*wtxn, neighbor_id.as_bytes())? else {
+        let Some(raw) = store.hnsw_neighbors().get(&*wtxn, neighbor_id.as_bytes())? else {
             continue;
         };
         let list = decode_neighbors(&raw, false)?;
@@ -644,19 +662,21 @@ fn hnsw_refresh_localized(
         write_neighbors(store, wtxn, neighbor_id, &filtered)?;
         *ops += 1;
     }
-    store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
+    store.hnsw_neighbors().delete(wtxn, id.as_bytes())?;
     *ops += 1;
 
     if count == 1 {
         // Sole node: trivially re-anchor at the new position.
         write_neighbors(store, wtxn, id, &[])?;
-        store.hnsw_meta.put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
+        store
+            .hnsw_meta()
+            .put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
         return Ok(());
     }
 
     if entry_point == *id {
         let (replacement_key, _) = store
-            .hnsw_neighbors
+            .hnsw_neighbors()
             .first(&*wtxn)?
             .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
         entry_point =
@@ -665,7 +685,7 @@ fn hnsw_refresh_localized(
                 other => other,
             })?;
         store
-            .hnsw_meta
+            .hnsw_meta()
             .put(wtxn, ENTRY_POINT_KEY, entry_point.as_bytes())?;
         *ops += 2;
     }
@@ -701,7 +721,7 @@ fn hnsw_refresh_localized(
     //    that the re-insert did not already reconnect.
     for orphan in orphaned {
         *ops += 1;
-        let Some(raw) = store.hnsw_neighbors.get(&*wtxn, orphan.as_bytes())? else {
+        let Some(raw) = store.hnsw_neighbors().get(&*wtxn, orphan.as_bytes())? else {
             continue;
         };
         if !decode_neighbors(&raw, false)?.is_empty() {
@@ -744,7 +764,7 @@ fn hnsw_refresh_localized(
 /// rare path stays measured; the symmetric marker is already set and the
 /// rebuilt graph upholds it.
 fn hnsw_symmetric_fallback_rebuild(
-    store: &Store,
+    store: &impl ManifestDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {
@@ -761,7 +781,7 @@ fn hnsw_symmetric_fallback_rebuild(
 }
 
 pub(crate) fn build_hnsw_graph_from_snapshot(
-    store: &Store,
+    store: &impl ManifestDbs,
     config: &VaultConfig,
     rtxn: &RoTxn<'_>,
     vector_ids: &[EntityId],
@@ -848,16 +868,16 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
 }
 
 pub(crate) fn write_rebuilt_hnsw(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     rebuilt: &RebuiltHnswGraph,
     discipline: LinkDiscipline,
 ) -> Result<()> {
-    store.hnsw_neighbors.clear(wtxn)?;
+    store.hnsw_neighbors().clear(wtxn)?;
     // Rebuild owns only the live graph shape. Preserve unrelated metadata such as
     // graph/version markers, persisted model ids, and schema/config keys.
-    store.hnsw_meta.delete(wtxn, COUNT_KEY)?;
-    store.hnsw_meta.delete(wtxn, ENTRY_POINT_KEY)?;
+    store.hnsw_meta().delete(wtxn, COUNT_KEY)?;
+    store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
     // The old one-way exception records describe the replaced graph; drop them
     // (only the `ow1:` keyspace, never unrelated metadata) and re-derive them
     // from the rebuilt rows for symmetric graphs below.
@@ -865,11 +885,11 @@ pub(crate) fn write_rebuilt_hnsw(
 
     if let Some(entry_point) = rebuilt.entry_point {
         store
-            .hnsw_meta
+            .hnsw_meta()
             .put(wtxn, ENTRY_POINT_KEY, entry_point.as_bytes())?;
     }
     store
-        .hnsw_meta
+        .hnsw_meta()
         .put(wtxn, COUNT_KEY, &rebuilt.count.to_le_bytes())?;
 
     for (id, neighbors) in &rebuilt.neighbors {
@@ -883,8 +903,8 @@ pub(crate) fn write_rebuilt_hnsw(
     Ok(())
 }
 
-pub(crate) fn read_vector_version(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta.get(txn, VECTOR_VERSION_KEY)? else {
+pub(crate) fn read_vector_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
+    let Some(raw) = store.hnsw_meta().get(txn, VECTOR_VERSION_KEY)? else {
         return Ok(0);
     };
 
@@ -909,13 +929,16 @@ pub(crate) fn has_population(hnsw_meta: &OverlayDb, txn: &RoTxn<'_>) -> Result<b
     Ok(hnsw_meta.get(txn, ENTRY_POINT_KEY)?.is_some())
 }
 
-pub(crate) fn increment_vector_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<u64> {
+pub(crate) fn increment_vector_version(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<u64> {
     let current = read_vector_version(store, &*wtxn)?;
     let next = current
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("vector version"))?;
     store
-        .hnsw_meta
+        .hnsw_meta()
         .put(wtxn, VECTOR_VERSION_KEY, &next.to_le_bytes())?;
     Ok(next)
 }
@@ -938,7 +961,7 @@ pub(crate) fn increment_vector_version(store: &Store, wtxn: &mut RwTxn<'_>) -> R
 /// rises with `ef_search`; a beam covering the whole reachable corpus
 /// recovers brute-force parity.
 pub(crate) fn hnsw_search(
-    store: &Store,
+    store: &impl ManifestDbs,
     config: &VaultConfig,
     rtxn: &RoTxn<'_>,
     query_vector: &[f32],
@@ -962,7 +985,7 @@ pub(crate) fn hnsw_search(
     let count = read_count(store, rtxn)?;
     let entry_point = read_entry_point(store, rtxn)?;
     if count == 0 {
-        if entry_point.is_some() || store.hnsw_neighbors.first(rtxn)?.is_some() {
+        if entry_point.is_some() || store.hnsw_neighbors().first(rtxn)?.is_some() {
             return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
         }
         return Ok(Vec::new());
@@ -1026,7 +1049,11 @@ pub(crate) fn hnsw_search(
 ///
 /// Search still keeps defensive existence checks because vectors/entities can
 /// become partially inconsistent for reasons outside HNSW bookkeeping.
-pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+pub(crate) fn hnsw_deindex(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
     hnsw_deindex_probed(store, wtxn, id, &mut 0)
 }
 
@@ -1035,13 +1062,13 @@ pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
 /// so tests can pin that symmetric-graph deletes never iterate the full
 /// `hnsw_neighbors` DB (ONE-325 AC1).
 pub(crate) fn hnsw_deindex_probed(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     ops: &mut u64,
 ) -> Result<()> {
     *ops += 1;
-    let own_neighbors = match store.hnsw_neighbors.get(&*wtxn, id.as_bytes())? {
+    let own_neighbors = match store.hnsw_neighbors().get(&*wtxn, id.as_bytes())? {
         Some(raw) => decode_neighbors(&raw, false)?,
         None => return Ok(()),
     };
@@ -1061,7 +1088,7 @@ pub(crate) fn hnsw_deindex_probed(
     let new_count = count
         .checked_sub(1)
         .ok_or(Error::CorruptedIndex(ERR_COUNT_UNDERFLOW))?;
-    store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
+    store.hnsw_neighbors().delete(wtxn, id.as_bytes())?;
     *ops += 1;
     scrub_backlinks_in_place(store, wtxn, id, &backlink_targets, ops)?;
     if discipline == LinkDiscipline::Symmetric {
@@ -1074,11 +1101,11 @@ pub(crate) fn hnsw_deindex_probed(
     }
 
     store
-        .hnsw_meta
+        .hnsw_meta()
         .put(wtxn, COUNT_KEY, &new_count.to_le_bytes())?;
 
     if new_count == 0 {
-        store.hnsw_meta.delete(wtxn, ENTRY_POINT_KEY)?;
+        store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
         return Ok(());
     }
 
@@ -1086,7 +1113,7 @@ pub(crate) fn hnsw_deindex_probed(
         read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
     if entry_point == *id {
         let (replacement_key, _) = store
-            .hnsw_neighbors
+            .hnsw_neighbors()
             .first(&*wtxn)?
             .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
         let replacement =
@@ -1095,7 +1122,7 @@ pub(crate) fn hnsw_deindex_probed(
                 other => other,
             })?;
         store
-            .hnsw_meta
+            .hnsw_meta()
             .put(wtxn, ENTRY_POINT_KEY, replacement.as_bytes())?;
     }
 
@@ -1138,7 +1165,7 @@ fn score_prefix(vector: &[f32], score_dims: usize) -> Result<&[f32]> {
 }
 
 fn beam_search(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     query_vector: &[f32],
     entry_point: EntityId,
@@ -1169,7 +1196,7 @@ fn beam_search(
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
-    let graph_nodes = usize::try_from(store.hnsw_neighbors.len(txn)?).unwrap_or(0);
+    let graph_nodes = usize::try_from(store.hnsw_neighbors().len(txn)?).unwrap_or(0);
     // Reserve extra headroom so the visited set can absorb frontier growth
     // without immediately rehashing.
     let mut visited: HashSet<EntityId> =
@@ -1178,7 +1205,7 @@ fn beam_search(
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
 
-    if !check_existence || store.entities.get(txn, entry_point.as_bytes())?.is_some() {
+    if !check_existence || store.entities().get(txn, entry_point.as_bytes())?.is_some() {
         results.push(entry);
     }
 
@@ -1201,7 +1228,7 @@ fn beam_search(
             }
 
             *ops += 1;
-            if check_existence && store.entities.get(txn, neighbor_id.as_bytes())?.is_none() {
+            if check_existence && store.entities().get(txn, neighbor_id.as_bytes())?.is_none() {
                 continue;
             }
 
@@ -1239,7 +1266,7 @@ fn beam_search(
 }
 
 fn beam_search_snapshot(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
     query_id: &EntityId,
@@ -1338,10 +1365,10 @@ fn rebuild_hnsw_from_current_snapshot(
     write_rebuilt_hnsw(store, wtxn, &rebuilt, LinkDiscipline::Legacy)
 }
 
-fn collect_vector_ids(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
-    let capacity = usize::try_from(store.vectors.len(txn)?).unwrap_or(0);
+fn collect_vector_ids(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
+    let capacity = usize::try_from(store.vectors().len(txn)?).unwrap_or(0);
     let mut vector_ids = Vec::with_capacity(capacity);
-    for entry in store.vectors.iter(txn)? {
+    for entry in store.vectors().iter(txn)? {
         let (key, _) = entry?;
         vector_ids.push(
             parse_entity_id(&key, ERR_VECTOR_KEY_BYTES).map_err(|e| match e {
@@ -1679,8 +1706,8 @@ fn reachable_from_entry_probed(
     visited
 }
 
-fn read_count(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta.get(txn, COUNT_KEY)? else {
+fn read_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
+    let Some(raw) = store.hnsw_meta().get(txn, COUNT_KEY)? else {
         return Ok(0);
     };
 
@@ -1691,12 +1718,12 @@ fn read_count(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
     Ok(u64::from_le_bytes(bytes))
 }
 
-pub(crate) fn hnsw_entity_count(store: &Store, txn: &RoTxn<'_>) -> Result<usize> {
+pub(crate) fn hnsw_entity_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<usize> {
     usize::try_from(read_count(store, txn)?).map_err(|_| Error::IndexOverflow("hnsw entity count"))
 }
 
-fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> {
-    let Some(raw) = store.hnsw_meta.get(txn, ENTRY_POINT_KEY)? else {
+fn read_entry_point(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Option<EntityId>> {
+    let Some(raw) = store.hnsw_meta().get(txn, ENTRY_POINT_KEY)? else {
         return Ok(None);
     };
 
@@ -1730,16 +1757,24 @@ fn decode_neighbors(raw: &[u8], lenient: bool) -> Result<Vec<EntityId>> {
     Ok(neighbors)
 }
 
-fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
-    let Some(raw) = store.hnsw_neighbors.get(txn, id.as_bytes())? else {
+fn load_neighbors(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let Some(raw) = store.hnsw_neighbors().get(txn, id.as_bytes())? else {
         return Ok(Vec::new());
     };
 
     decode_neighbors(&raw, false)
 }
 
-fn load_neighbors_lenient(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
-    let Some(raw) = store.hnsw_neighbors.get(txn, id.as_bytes())? else {
+fn load_neighbors_lenient(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let Some(raw) = store.hnsw_neighbors().get(txn, id.as_bytes())? else {
         return Ok(Vec::new());
     };
 
@@ -1747,7 +1782,7 @@ fn load_neighbors_lenient(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Resu
 }
 
 fn write_neighbors(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     neighbors: &[EntityId],
@@ -1757,12 +1792,16 @@ fn write_neighbors(
         bytes.extend_from_slice(neighbor.as_bytes());
     }
 
-    store.hnsw_neighbors.put(wtxn, id.as_bytes(), &bytes)?;
+    store.hnsw_neighbors().put(wtxn, id.as_bytes(), &bytes)?;
     Ok(())
 }
 
-fn load_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<f32>>> {
-    let Some(raw) = store.vectors.get(txn, id.as_bytes())? else {
+fn load_vector(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<f32>>> {
+    let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
         return Ok(None);
     };
 
@@ -1772,26 +1811,30 @@ fn load_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<V
 }
 
 fn load_vector_into<'a>(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     scratch: &'a mut Vec<f32>,
 ) -> Result<Option<&'a [f32]>> {
-    let Some(raw) = store.vectors.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
         return Ok(None);
     };
 
     decode_vector_into(&raw, scratch).map(Some)
 }
 
-fn load_required_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<f32>> {
+fn load_required_vector(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<f32>> {
     load_vector(store, txn, id)?.ok_or(Error::InvariantViolation(
         "validated rebuild vector disappeared within the same read snapshot",
     ))
 }
 
 fn prune_neighbors_for_node(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     node_id: &EntityId,
     neighbors: &[EntityId],
@@ -1839,13 +1882,13 @@ fn prune_neighbors_for_node(
 /// Legacy-only delete-time full scan. Symmetric-marker vaults never call
 /// this: their backlinks are exactly the node's own forward neighbor list.
 fn collect_backlink_targets(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     ops: &mut u64,
 ) -> Result<Vec<EntityId>> {
     let mut targets = Vec::new();
-    for entry in store.hnsw_neighbors.iter(txn)? {
+    for entry in store.hnsw_neighbors().iter(txn)? {
         *ops += 1;
         let (key, raw) = entry?;
         let node_id = parse_entity_id(&key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
@@ -1865,7 +1908,7 @@ fn collect_backlink_targets(
 }
 
 fn scrub_backlinks_in_place(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     targets: &[EntityId],
@@ -1873,14 +1916,14 @@ fn scrub_backlinks_in_place(
 ) -> Result<()> {
     for node_id in targets {
         *ops += 1;
-        let Some(raw) = store.hnsw_neighbors.get(&*wtxn, node_id.as_bytes())? else {
+        let Some(raw) = store.hnsw_neighbors().get(&*wtxn, node_id.as_bytes())? else {
             continue;
         };
         let Some(scrubbed) = scrub_neighbor_bytes(&raw, id)? else {
             continue;
         };
         store
-            .hnsw_neighbors
+            .hnsw_neighbors()
             .put(wtxn, node_id.as_bytes(), &scrubbed)?;
         *ops += 1;
     }

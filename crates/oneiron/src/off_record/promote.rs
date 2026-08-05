@@ -1,17 +1,91 @@
 //! Explicit promotion from an off-record session into the durable vault.
+//!
+//! This module also HOLDS [`FloorWrites`] — the sole overlay -> base durable
+//! writer surface (ARCH-0052 D6). Every durable crossing an off-record session
+//! is allowed to make goes through one of its operations; a source audit that
+//! finds an overlay -> base write anywhere else is a defect.
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::genui::ConsentActorIdentity;
+use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+use crate::store::{GateDecisionRecord, Store};
 
 use super::lifecycle::{
-    FloorWrites, OFF_RECORD_CLOSED_FENCE_VALUE, live_session_entry, off_record_fence_key,
-    session_entry_state, vet_off_record_session_ref,
+    OFF_RECORD_CLOSED_FENCE_VALUE, live_session_entry, off_record_fence_key, session_entry_state,
+    vet_off_record_session_ref,
 };
+
+mod floor_writes_seal {
+    pub(super) struct Seal;
+}
+
+/// The ONLY overlay -> base durable writer surface (ARCH-0052 D6).
+///
+/// Construction is `pub(crate) fn new` and nothing else: the module-private
+/// `_seal` field forbids a struct literal outside this module, there is no
+/// `pub` constructor, and the borrowed `store` never escapes — so no caller
+/// can reach raw base access through this type. `gate.rs` and `deletion.rs`
+/// hold the crate-visible call sites, which reach it through the stable
+/// `crate::off_record::FloorWrites` re-export.
+pub(crate) struct FloorWrites<'store> {
+    store: &'store Store,
+    _seal: floor_writes_seal::Seal,
+}
+
+impl<'store> FloorWrites<'store> {
+    /// Sole constructor.
+    pub(crate) fn new(store: &'store Store) -> Self {
+        Self {
+            store,
+            _seal: floor_writes_seal::Seal,
+        }
+    }
+
+    /// Floor operation 1/3 (K1): append one evaluated EGRESS gate decision.
+    ///
+    /// Egress decisions are floor survivors and never conflate with the
+    /// write-path decisions for session content, which stay overlay-local and
+    /// evaporate with the transcript they describe.
+    pub(crate) fn append_egress_gate_decision(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<()> {
+        self.store.append_gate_decision_in_txn(wtxn, record)
+    }
+
+    /// Floor operation 2/3 (K1): append one REDACTION_AUDIT entity and its
+    /// exact ordinary entity-index footprint.
+    pub(crate) fn append_redaction_audit(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        receipt_id: &EntityId,
+        learned_at: u64,
+        body: &[u8],
+    ) -> Result<()> {
+        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+        payload.extend_from_slice(&crate::deletion::receipt_envelope_header(learned_at));
+        payload.extend_from_slice(body);
+        self.store
+            .entities
+            .put(wtxn, receipt_id.as_bytes(), &payload)?;
+
+        let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, receipt_id);
+        self.store.type_index.put(wtxn, &type_key, &[])?;
+        let temporal_key = Store::encode_temporal_key(learned_at, receipt_id);
+        self.store
+            .temporal_occurred_start
+            .put(wtxn, &temporal_key, &[])?;
+        self.store.temporal_learned.put(wtxn, &temporal_key, &[])?;
+        Ok(())
+    }
+}
 
 const OFF_RECORD_PROMOTE_KEY_PREFIX: &[u8] = b"offrecord_promote:v0:";
 const OFF_RECORD_PROMOTE_RECEIPT_VERSION: u8 = 0;
@@ -63,6 +137,12 @@ fn decode_off_record_promote(bytes: &[u8]) -> Result<OffRecordPromoteReceipt> {
 impl FloorWrites<'_> {
     /// Floor operation 3/3: commit one explicit promotion receipt while
     /// lifting the legacy fence for the promoted entity.
+    ///
+    /// This is the FENCE-ERA promote crossing, kept functional through P4a so
+    /// [`Vault::promote_off_record_turn`] keeps working against pre-existing
+    /// fenced turns. **ONE-1730 REPLACES it with `promote`** (typed-journal
+    /// replay in one transaction) rather than adding a fourth operation; its
+    /// durable writes must stay here, never inlined into the `Vault` method.
     pub(crate) fn commit_promote(
         &self,
         wtxn: &mut RwTxn<'_>,
