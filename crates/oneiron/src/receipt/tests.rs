@@ -1779,3 +1779,82 @@ fn the_pack_receipt_ledger_resolves_only_ids_it_stamped() -> Result<()> {
     );
     Ok(())
 }
+
+/// Pack receipt rows persist for the life of the vault — unlike the attempt
+/// events they project from, which drain — so an uncapped family scan degrades
+/// monotonically with attempt history and is attacker-growable. The scan is
+/// therefore bounded, the bound keeps the NEWEST rows (the family query is
+/// newest-first by contract), and a bound that fires SAYS SO rather than
+/// answering from a silent prefix.
+#[test]
+fn the_pack_receipt_scan_stops_at_the_family_cap_and_signals_it() -> Result<()> {
+    // A big-endian index in the leading id bytes: fixed-width lowercase hex
+    // sorts lexicographically by index, so ledger key order reproduces the
+    // mint order a real UUIDv7 attempt id carries.
+    fn flood_receipt_id(index: u32) -> String {
+        let mut bytes = [0_u8; 16];
+        bytes[..4].copy_from_slice(&index.to_be_bytes());
+        let id = AttemptId::from_bytes(&bytes).expect("16 bytes is a well-formed attempt id");
+        attempt_pack_receipt_id(&id)
+    }
+
+    let dir = tempfile::tempdir()?;
+    let mut config = embedding_test_config();
+    // A cap-sized ledger outgrows the 16 MiB default test map.
+    config.map_size = 256 * 1024 * 1024;
+    let vault = Vault::open(dir.path(), config)?;
+
+    let cap = u32::try_from(MAX_RECEIPT_QUERY_SCAN).expect("the scan cap fits in u32");
+    let oldest = flood_receipt_id(0);
+    let newest = flood_receipt_id(cap);
+
+    // Exactly ONE row past the cap: the smallest ledger that must truncate.
+    let mut receipt = projected_receipt("", ReceiptKind::Outbound, 0, "completed", None, None, &[]);
+    vault.with_write_txn(|wtxn| {
+        for index in 0..=cap {
+            receipt.receipt_id = flood_receipt_id(index);
+            receipt.occurred_at = u64::from(index);
+            put_attempt_pack_receipt_for_test(&vault.store, wtxn, &receipt)?;
+        }
+        Ok(())
+    })?;
+
+    reset_attempt_pack_scan_capped();
+    let scanned = attempt_pack_receipts(&vault)?;
+
+    assert_eq!(
+        scanned.len(),
+        MAX_RECEIPT_QUERY_SCAN,
+        "the scan terminates at the family work cap instead of walking the ledger"
+    );
+    assert_eq!(
+        attempt_pack_scan_capped(),
+        1,
+        "a truncated scan raises the cap signal exactly once"
+    );
+    assert!(
+        scanned.iter().any(|receipt| receipt.receipt_id == newest),
+        "the cap keeps the newest row"
+    );
+    assert!(
+        !scanned.iter().any(|receipt| receipt.receipt_id == oldest),
+        "the row the cap discards is the oldest one, never the newest"
+    );
+
+    let public = vault.receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(
+        attempt_pack_scan_capped(),
+        2,
+        "the public query door is bounded by the same cap"
+    );
+    assert_eq!(
+        public.len(),
+        1,
+        "the public door still honours the caller's limit"
+    );
+    assert_eq!(
+        public[0].receipt_id, newest,
+        "newest-first answers from the capped set, not from its oldest edge"
+    );
+    Ok(())
+}
