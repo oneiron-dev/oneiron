@@ -81,6 +81,65 @@ projector, no materialized index, no DB manifest entry, no `store.rs` touch, no 
 schema or status transition change, no sync-admission special case, no subtree/ancestors
 change, no docs-contract edit, no `Cargo.lock`.
 
+### Cheap gate — GREEN (segment 0 close)
+
+Machine was contended (3 sibling lanes cycling cargo); ran at `-j 4` per the
+serial-cargo law, backing off between attempts. Log: `/tmp/l1924-seg0-test.log`.
+
+- `cargo check -p oneiron --all-features --all-targets` — clean. This is the
+  real exhaustive-match proof: `--all-targets` compiles every test module, so
+  any uncovered `match kind` arm would have failed here. None did beyond the
+  two already handled (rulings 1–2).
+- `cargo fmt --all -- --check` — clean.
+- `cargo clippy -p oneiron --all-features --all-targets` — zero warnings
+  (forced a real 24.8s run after a 0.24s cached no-op; the cached result was
+  not trusted as evidence).
+- `cargo test -p oneiron --all-features` — `3153 passed; 0 failed` on the lib
+  target plus 34 green integration binaries; zero `FAILED`/`panicked` lines.
+  The four ONE-1924 tests are confirmed PRESENT and `ok` in the log, not merely
+  implied by the exit code:
+  `facade::tests::edge_kind_names_round_trip_including_blocked_by`,
+  `tests::blocked_by_mint_preserves_edge_byte_frontier`,
+  `tests::blocked_by_matches_structural_non_traversed_contract_row`,
+  `sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time`.
+
+### Exhaustive-match sweep (done before the gate, confirmed by it)
+
+Swept every `EdgeKind` match in the workspace. Only two are exhaustive over the
+enum beyond the claimed files: `code_run.rs:1719` (ruling 2, handled) and
+`edge.rs::edge_value_layout_for_kind` (claimed). Everything else is either
+string-keyed (`identity_topology.rs:983` matches an event-kind `&str`;
+`code_run.rs:1034` likewise), catch-all'd (`edge.rs::validate_public_edge_kind`
+`_ => Ok(())` — ruling 5), or a literal array (`ppr/tests.rs:318` — ruling 3).
+`crates/oneiron-server/**` has no exhaustive `EdgeKind` match at all.
+
+### Packet + done-means verification (mechanical)
+
+- `git diff --name-only e9d9e9a..HEAD` = 8 source files + this worklog. Zero
+  hits against `store.rs` / `gate.rs` / `off_record/` / `sync/window.rs` /
+  `sync/bridge.rs` / `embed.rs` / `hnsw.rs` / `distance.rs` / `authority.rs` /
+  `Cargo.lock` / any `Cargo.toml`. `store.rs` untouched = done-means satisfied
+  directly, and no DB manifest entry exists to add.
+- Grepped the added lines for `readiness|blocked_status|is_blocked|
+  blocked_count|projection|DB_NAME|db_manifest`: only doc-comment prose hits,
+  no code surface. No counter, no `blocked` stored status, no projector.
+- Docs contract untouched: `oneiron-contracts.ts:423` still reads u8 23 /
+  structural / 12 B / `pprWeight: null` / `lambda: null`, and no row was added
+  or duplicated. NOTE for the reviewer: line 424 carries a `blocks` u8-24
+  complement row minted into canon 2026-08-05 — it is NOT this ticket's scope
+  and was deliberately left unminted in the engine.
+
+### Segment status
+
+Blueprint done-means: ALL MET. Implementation complete, cheap gate green,
+committed. Two PACKET_AMEND items for the board (both additive one-liners,
+neither claimed by another lane — see rulings 1 and 2): `context_pack.rs`
+walk-gate arm, `code_run.rs` structural-reject arm.
+
 ### NEXT INTENT
 
-Cheap gate: `cargo test -p oneiron --all-features -j 6`, then fmt+clippy, then commit.
+Nothing left for impl. Hand off to K3 simplify → Sol finder (max) → K3 verdict.
+Simplify note: the diff is deliberately thin — additive enum arms plus tests;
+there is little to delete. Do NOT "simplify" the pinned test tables into loops
+over `EdgeKind`; their whole value is being hand-written contract literals that
+fail on drift. ONE-1375 (layer 2) rebases on this branch next.
