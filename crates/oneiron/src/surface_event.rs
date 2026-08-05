@@ -255,6 +255,11 @@ impl InboundSurfaceEventInput {
         let event_id = event_id.into();
         let channel = channel.into();
         let source = SurfaceEventSource {
+            // A key outside the ruled nine has no source app, and this
+            // constructor stays infallible for the provider adapters that
+            // consume it. The placeholder never reaches a durable envelope:
+            // routing refuses to stamp an event whose channel key does not map
+            // (see `routed_receipt`).
             app: SurfaceSourceApp::from_channel_key(&channel).unwrap_or(SurfaceSourceApp::Web),
             user_ref: counterparty.default_user_ref(),
         };
@@ -749,7 +754,15 @@ fn admit_surface_event_once(
         EnqueueAttempt {
             kind: SURFACE_EVENT_ATTEMPT_KIND.to_owned(),
             payload,
-            dedupe_key: Some(event.correlation_id.clone()),
+            // One derivation keys both queue indexes. A raw provider id is
+            // unbounded, the queue's dedupe cap is 512 bytes, and a length
+            // rejection here would contradict the ruling that admission never
+            // refuses an event merely for a long provider id. The bounded run
+            // id is deterministic and equals the correlation id for every id
+            // the raw key could have carried, so replay still lands on this
+            // row; the public id stays verbatim on the envelope, the ack, and
+            // the status snapshot.
+            dedupe_key: Some(run_id.clone()),
             run_id: Some(run_id),
             now,
         },
@@ -891,20 +904,20 @@ fn route_inbound_surface_event(
     };
 
     match identity.state {
-        ChannelIdentityState::Active | ChannelIdentityState::Rotating => Ok(routed_receipt(
+        ChannelIdentityState::Active | ChannelIdentityState::Rotating => routed_receipt(
             input,
             identity_ref,
             agent_ref,
             false,
             claims_not_instructions,
-        )),
-        ChannelIdentityState::Released | ChannelIdentityState::Quarantine => Ok(routed_receipt(
+        ),
+        ChannelIdentityState::Released | ChannelIdentityState::Quarantine => routed_receipt(
             input,
             identity_ref,
             agent_ref,
             true,
             claims_not_instructions,
-        )),
+        ),
         ChannelIdentityState::Tombstone => Ok(rejected_receipt(
             input,
             Some(identity_ref),
@@ -926,13 +939,31 @@ fn route_inbound_surface_event(
     }
 }
 
+/// Builds the routed receipt, or refuses the event whose channel key the
+/// closed source enum cannot name.
+///
+/// Stamping is the point of no return: `source.app` is durable, and
+/// [`InboundSurfaceEventInput::new`] derives `Web` for any key it cannot map.
+/// Since [`ChannelIdentity`](crate::channel_identity::ChannelIdentity) admits
+/// any nonempty channel string, an identity assigned an unruled key is
+/// reachable — and would be branded with a plausible, wrong source app forever.
+/// The raw key stays authoritative for identity assignment; only the closed
+/// projection is refused, which is an adapter defect, not an open extension
+/// point (OF-247 R4).
 fn routed_receipt(
     input: InboundSurfaceEventInput,
     identity_ref: EntityId,
     agent_ref: EntityId,
     identity_retiring: bool,
     claims_not_instructions: bool,
-) -> InboundSurfaceRouteReceipt {
+) -> Result<InboundSurfaceRouteReceipt> {
+    if SurfaceSourceApp::from_channel_key(&input.channel).is_none() {
+        return Err(Error::InvalidConfig(format!(
+            "surface event channel has no ruled source app: {}",
+            input.channel
+        )));
+    }
+
     let surface_event = SurfaceEvent {
         schema_version: SURFACE_EVENT_SCHEMA_VERSION,
         event_id: input.event_id.clone(),
@@ -952,7 +983,7 @@ fn routed_receipt(
         identity_retiring,
     };
 
-    InboundSurfaceRouteReceipt {
+    Ok(InboundSurfaceRouteReceipt {
         schema_version: SURFACE_EVENT_SCHEMA_VERSION,
         receipt_kind: INBOUND_SURFACE_RECEIPT_KIND.to_owned(),
         event_id: input.event_id,
@@ -968,7 +999,7 @@ fn routed_receipt(
         identity_retiring,
         rejection_reason: None,
         surface_event: Some(surface_event),
-    }
+    })
 }
 
 fn rejected_receipt(
@@ -1000,15 +1031,18 @@ fn rejected_receipt(
 
 /// Longest provider correlation id carried into the queue verbatim.
 ///
-/// The attempt queue caps `run_id` at 128 bytes. A provider id at or under
-/// that cap is its own run id; anything longer folds to a `sha256:` digest so
-/// admission never rejects an event merely for a long provider id.
+/// The attempt queue caps `run_id` at 128 bytes (and `dedupe_key` at 512). A
+/// provider id at or under this cap is its own key; anything longer folds to a
+/// `sha256:` digest so admission never rejects an event merely for a long
+/// provider id.
 const MAX_VERBATIM_CORRELATION_RUN_ID_BYTES: usize = 128;
 
-/// Derives the bounded queue run id for a public correlation id.
+/// Derives the bounded queue key for a public correlation id.
 ///
-/// Deterministic in both directions of a replay: the same provider id always
-/// yields the same run id, and the public correlation id is never rewritten.
+/// Keys both the durable run index and the queue's dedupe index, so a replay
+/// resolves to one row through either. Deterministic in both directions of a
+/// replay: the same provider id always yields the same key, and the public
+/// correlation id is never rewritten.
 #[must_use]
 pub fn surface_event_run_id(correlation_id: &str) -> String {
     if correlation_id.len() <= MAX_VERBATIM_CORRELATION_RUN_ID_BYTES {

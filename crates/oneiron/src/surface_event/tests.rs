@@ -808,7 +808,8 @@ fn long_provider_correlation_id_is_admitted_under_a_digested_run_id() -> Result<
     let expected_run_id = surface_event_run_id(&correlation_id);
     assert!(expected_run_id.starts_with("sha256:"));
     assert_eq!(row.run_id.as_deref(), Some(expected_run_id.as_str()));
-    assert_eq!(row.dedupe_key.as_deref(), Some(correlation_id.as_str()));
+    // Both queue indexes are keyed by the one bounded derivation.
+    assert_eq!(row.dedupe_key.as_deref(), Some(expected_run_id.as_str()));
 
     // Replay derives the same attempt rather than rejecting on length.
     let replayed = accepted(submit(1_800_005_100)?);
@@ -820,6 +821,118 @@ fn long_provider_correlation_id_is_admitted_under_a_digested_run_id() -> Result<
         .surface_event_handoff_status(&correlation_id)?
         .expect("long correlation ids stay queryable by their public id");
     assert_eq!(status.attempt_ref, ack.attempt_ref);
+    Ok(())
+}
+
+#[test]
+fn correlation_id_beyond_the_dedupe_cap_is_admitted_and_replays_once() -> Result<()> {
+    let (_dir, vault, _) = admitting_vault("oversize@example.com", 0x27, 0x67);
+    // Past the queue's 512-byte dedupe-key cap. Keying dedupe on the raw
+    // provider id rejected this outright, contradicting the ruling that a long
+    // provider id is admitted under a derived key.
+    let correlation_id = format!("provider-{}", "q".repeat(600));
+    assert!(correlation_id.len() > 512);
+    let submit = |now| {
+        vault.enqueue_inbound_surface_event(
+            input(
+                "oversize@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id.clone()),
+            now,
+        )
+    };
+
+    let ack = accepted(submit(1_800_010_000)?);
+    assert_eq!(ack.correlation_id, correlation_id);
+    assert!(!ack.replayed);
+    assert_eq!(ack.state, SurfaceEventHandoffState::Queued);
+
+    // One bounded derivation keys both the run index and the dedupe index.
+    let row = sole_attempt(&vault);
+    let expected_key = surface_event_run_id(&correlation_id);
+    assert!(expected_key.starts_with("sha256:"));
+    assert!(expected_key.len() <= 128);
+    assert_eq!(row.run_id.as_deref(), Some(expected_key.as_str()));
+    assert_eq!(row.dedupe_key.as_deref(), Some(expected_key.as_str()));
+
+    // The raw provider id survives verbatim on the durable envelope and on the
+    // downstream idempotency key.
+    let decoded = decode_surface_event_attempt_payload(&row.payload)?;
+    assert_eq!(decoded.event.correlation_id, correlation_id);
+    assert_eq!(decoded.dispatch_idempotency_key, correlation_id);
+
+    // A duplicate submission observes exactly one admission.
+    let replayed = accepted(submit(1_800_010_100)?);
+    assert!(replayed.replayed);
+    assert_eq!(replayed.attempt_ref, ack.attempt_ref);
+    assert_eq!(surface_event_attempt_rows(&vault), 1);
+
+    let status = vault
+        .surface_event_handoff_status(&correlation_id)?
+        .expect("oversized correlation ids stay queryable by their public id");
+    assert_eq!(status.attempt_ref, ack.attempt_ref);
+    Ok(())
+}
+
+#[test]
+fn unruled_channel_key_is_refused_before_a_source_app_is_stamped() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let identity_ref = entity(0x26);
+    let agent_ref = entity(0x66);
+    // ChannelIdentity admits any nonempty channel string, so an ACTIVE identity
+    // on a key outside the ruled nine is a reachable shape.
+    let mut unruled = ChannelIdentity::requested(
+        "carrier-pigeon",
+        "coop@example.com",
+        ChannelIdentityShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(agent_ref),
+        1_800_000_000,
+    );
+    unruled.state = ChannelIdentityState::Active;
+    unruled.pending_fulfillment = None;
+    vault.create_channel_identity(&identity_ref, &unruled)?;
+
+    let inbound = InboundSurfaceEventInput::new(
+        "evt-pigeon-1",
+        "carrier-pigeon",
+        "coop@example.com",
+        SurfaceCounterpartyStamp::unknown("pigeon:sender:1"),
+        1_800_009_000,
+        true,
+    );
+    // The derived stamp would have been a plausible lie, durably.
+    assert_eq!(inbound.source.app, SurfaceSourceApp::Web);
+
+    let error = vault
+        .route_inbound_surface_event(inbound.clone())
+        .expect_err("an unruled channel key must never stamp a source app");
+    assert!(
+        error.to_string().contains("carrier-pigeon"),
+        "rejection must name the offending channel key: {error}"
+    );
+
+    // Admission fails the same way, and queues nothing.
+    let error = vault
+        .enqueue_inbound_surface_event(inbound.clone(), 1_800_009_100)
+        .expect_err("admission inherits the routing refusal");
+    assert!(error.to_string().contains("carrier-pigeon"), "{error}");
+    assert_eq!(surface_event_attempt_rows(&vault), 0);
+
+    // An explicit source override buys nothing: the closed enum has no variant
+    // that could honestly name this channel.
+    assert!(
+        vault
+            .enqueue_inbound_surface_event(
+                inbound.with_source(SurfaceEventSource::new(
+                    SurfaceSourceApp::Web,
+                    "pigeon:sender:1",
+                )),
+                1_800_009_200,
+            )
+            .is_err()
+    );
+    assert_eq!(surface_event_attempt_rows(&vault), 0);
     Ok(())
 }
 
