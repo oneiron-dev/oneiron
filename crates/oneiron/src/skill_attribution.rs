@@ -499,21 +499,28 @@ fn edit_proposal_for(judgment: &AttributionJudgment) -> Option<SkillEditProposal
 // Defect-injection audit (Blind Curator guard)
 // ---------------------------------------------------------------------------
 
-/// One held-out audit case: evidence whose correct verdict is already known.
+/// One held-out audit case: evidence whose correct answer is already known.
+///
+/// `expected: None` means ABSTENTION is the honest answer — the routing facts
+/// do not settle the case, so a judge that names a verdict anyway is WRONG,
+/// not merely unlucky. Without this arm the audit could only reward labelling,
+/// which is the exact bias it exists to catch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditFixture {
     pub evidence: OutcomeEvidence,
-    pub expected: AttributionVerdict,
+    pub expected: Option<AttributionVerdict>,
 }
 
 /// Aggregate result of one audit pass.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AttributionAuditReport {
     pub total: usize,
-    /// Cases the judge got right.
+    /// Cases the judge answered correctly — including the cases where the
+    /// correct answer was to abstain.
     pub passed: usize,
-    /// Cases the judge abstained on. Counted against the pass-rate — a judge
-    /// that abstains on everything must not score 100%.
+    /// Cases the judge abstained on, right or wrong. A judge that abstains on
+    /// everything earns only the fixtures whose honest answer is abstention,
+    /// so it can never score 100%.
     pub abstained: usize,
     pub at: u64,
 }
@@ -571,10 +578,12 @@ pub fn run_attribution_audit_with_judge(
     let mut passed = 0;
     let mut abstained = 0;
     for fixture in fixtures {
-        match judge.judge(&fixture.evidence)? {
-            Some(verdict) if verdict == fixture.expected => passed += 1,
-            Some(_) => {}
-            None => abstained += 1,
+        let answer = judge.judge(&fixture.evidence)?;
+        if answer.is_none() {
+            abstained += 1;
+        }
+        if answer == fixture.expected {
+            passed += 1;
         }
     }
     let report = AttributionAuditReport {
@@ -609,7 +618,17 @@ pub fn attribution_audit_reports(vault: &Vault) -> Result<Vec<AttributionAuditRe
     Ok(out)
 }
 
-/// The held-out set: one case per verdict plus the two abstention shapes.
+/// The held-out set: one case per verdict, plus one whose honest answer is
+/// ABSTENTION (the routing facts are unsettled).
+///
+/// The case ids are OPAQUE (`audit:case:N`) and carry no verdict wire string.
+/// A fixture id like `audit:skill_defect` would let a judge score 100% by
+/// reading the label instead of reasoning over the facts — which is precisely
+/// the false-pass bias this audit exists to expose, so the audit must not
+/// leak the answer key into its own inputs.
+///
+/// These ids are never resolved against the receipt ledger: fixtures go
+/// straight to the judge, never through [`record_attribution_evidence`].
 ///
 /// Subject ids are minted fresh per call. They are never written to the vault —
 /// the routing table reasons over the outcome and the two routing facts, so the
@@ -619,27 +638,34 @@ pub fn attribution_audit_reports(vault: &Vault) -> Result<Vec<AttributionAuditRe
 pub fn held_out_audit_fixtures() -> Vec<AuditFixture> {
     let actor = EntityId::now();
     let skill = EntityId::now();
-    let failed = |followed: bool, covered: bool, receipt: &str| {
-        OutcomeEvidence::new(receipt, actor, AttemptOutcome::Failed, 1)
+    let failed = |case: &str| OutcomeEvidence::new(case, actor, AttemptOutcome::Failed, 1);
+    let routed = |case: &str, followed: bool, covered: bool| {
+        failed(case)
             .with_skill(skill)
             .with_routing_facts(followed, covered)
     };
     vec![
         AuditFixture {
-            evidence: failed(true, true, "audit:skill_defect"),
-            expected: AttributionVerdict::SkillDefect,
+            evidence: routed("audit:case:1", true, true),
+            expected: Some(AttributionVerdict::SkillDefect),
         },
         AuditFixture {
-            evidence: failed(false, true, "audit:execution_lapse"),
-            expected: AttributionVerdict::ExecutionLapse,
+            evidence: routed("audit:case:2", false, true),
+            expected: Some(AttributionVerdict::ExecutionLapse),
         },
         AuditFixture {
-            evidence: failed(false, false, "audit:execution_lapse.uncovered"),
-            expected: AttributionVerdict::ExecutionLapse,
+            evidence: routed("audit:case:3", false, false),
+            expected: Some(AttributionVerdict::ExecutionLapse),
         },
         AuditFixture {
-            evidence: failed(true, false, "audit:discovery"),
-            expected: AttributionVerdict::Discovery,
+            evidence: routed("audit:case:4", true, false),
+            expected: Some(AttributionVerdict::Discovery),
+        },
+        // The routing facts are unsettled, so the honest answer is to abstain.
+        // A judge that names a verdict here is wrong, not unlucky.
+        AuditFixture {
+            evidence: failed("audit:case:5").with_skill(skill),
+            expected: None,
         },
     ]
 }

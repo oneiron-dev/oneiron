@@ -551,18 +551,27 @@ fn the_llm_tier_rides_the_existing_call_purpose_surface() {
     );
 }
 
+/// A judge that never abstains: the false-pass bias, in its simplest form.
+struct AlwaysDefect;
+impl AttributionJudge for AlwaysDefect {
+    fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
+        Ok(Some(AttributionVerdict::SkillDefect))
+    }
+}
+
+/// A judge that never answers: the opposite failure, and equally detectable.
+struct AlwaysAbstain;
+impl AttributionJudge for AlwaysAbstain {
+    fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
+        Ok(None)
+    }
+}
+
 /// A judge that always answers `SkillDefect` passes the defect fixtures and
 /// fails the rest — the receipted pass-rate MOVES, so a false-pass-biased
 /// judge is visible in an aggregate metric.
 #[test]
 fn a_broken_judge_moves_the_receipted_pass_rate() -> Result<()> {
-    struct AlwaysDefect;
-    impl AttributionJudge for AlwaysDefect {
-        fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-            Ok(Some(AttributionVerdict::SkillDefect))
-        }
-    }
-
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let fixtures = held_out_audit_fixtures();
 
@@ -592,25 +601,118 @@ fn a_broken_judge_moves_the_receipted_pass_rate() -> Result<()> {
     Ok(())
 }
 
-/// A judge that abstains on everything must not score a perfect pass-rate:
-/// "nothing was checked" is not "everything was right".
+/// A judge that abstains on everything earns ONLY the case whose honest answer
+/// is abstention: "nothing was checked" is not "everything was right".
 #[test]
 fn an_abstaining_judge_does_not_score_a_perfect_pass_rate() -> Result<()> {
-    struct AlwaysAbstain;
-    impl AttributionJudge for AlwaysAbstain {
-        fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-            Ok(None)
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let fixtures = held_out_audit_fixtures();
+    let abstention_cases = fixtures
+        .iter()
+        .filter(|fixture| fixture.expected.is_none())
+        .count();
+    let report = run_attribution_audit_with_judge(&vault, &fixtures, &AlwaysAbstain, 30)?;
+
+    assert_eq!(report.abstained, report.total, "it abstained on every case");
+    assert_eq!(
+        report.passed, abstention_cases,
+        "it earns the unsettled case and nothing else"
+    );
+    assert!(
+        report.pass_rate() < 1.0,
+        "blanket abstention never scores a perfect rate: {}",
+        report.pass_rate()
+    );
+    Ok(())
+}
+
+/// The 100%-by-label guard. Fixture ids are OPAQUE, so a judge that reads the
+/// receipt id instead of reasoning over the routing facts learns nothing: it
+/// cannot reach the honest tier's rate. With verdict-bearing ids
+/// (`audit:skill_defect`, …) this judge scored a perfect 100% while judging
+/// nothing at all.
+#[test]
+fn audit_fixture_ids_leak_no_verdict_signal() -> Result<()> {
+    /// Answers purely from the receipt id — the cheating strategy the audit
+    /// must not reward.
+    struct ReceiptRefSniffingJudge;
+    impl AttributionJudge for ReceiptRefSniffingJudge {
+        fn judge(&self, evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
+            Ok([
+                AttributionVerdict::SkillDefect,
+                AttributionVerdict::ExecutionLapse,
+                AttributionVerdict::Discovery,
+            ]
+            .into_iter()
+            .find(|verdict| evidence.receipt_ref.contains(verdict.as_str())))
         }
     }
 
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let report =
-        run_attribution_audit_with_judge(&vault, &held_out_audit_fixtures(), &AlwaysAbstain, 30)?;
+    let fixtures = held_out_audit_fixtures();
 
-    assert_eq!(report.abstained, report.total);
+    // Mechanical guard: re-introducing an answer-bearing fixture id fails HERE,
+    // before anyone has to notice a suspiciously perfect score.
+    for fixture in &fixtures {
+        for verdict in [
+            AttributionVerdict::SkillDefect,
+            AttributionVerdict::ExecutionLapse,
+            AttributionVerdict::Discovery,
+        ] {
+            assert!(
+                !fixture.evidence.receipt_ref.contains(verdict.as_str()),
+                "fixture id {:?} leaks the answer {:?}",
+                fixture.evidence.receipt_ref,
+                verdict.as_str()
+            );
+        }
+    }
+
+    let honest = run_attribution_audit_with_judge(&vault, &fixtures, &RuleAttributionJudge, 40)?;
+    let sniffer =
+        run_attribution_audit_with_judge(&vault, &fixtures, &ReceiptRefSniffingJudge, 41)?;
+
     assert!(
-        report.pass_rate() < f32::EPSILON,
-        "abstention scores zero, not one"
+        (honest.pass_rate() - 1.0).abs() < f32::EPSILON,
+        "the honest tier still passes its own set"
+    );
+    assert!(
+        sniffer.pass_rate() < honest.pass_rate(),
+        "reading the label must not match reasoning over the facts: {} vs {}",
+        sniffer.pass_rate(),
+        honest.pass_rate()
+    );
+    Ok(())
+}
+
+/// The opaque case is where a LABELLING judge — one that always names a
+/// verdict — is caught: it cannot abstain, so it gets the unsettled case
+/// wrong however plausible its label is.
+#[test]
+fn labelling_judges_fail_the_opaque_unsettled_case() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let fixtures = held_out_audit_fixtures();
+    let unsettled: Vec<AuditFixture> = fixtures
+        .iter()
+        .filter(|fixture| fixture.expected.is_none())
+        .cloned()
+        .collect();
+    assert!(
+        !unsettled.is_empty(),
+        "the held-out set carries at least one honest-abstention case"
+    );
+
+    let labelled = run_attribution_audit_with_judge(&vault, &unsettled, &AlwaysDefect, 50)?;
+    let honest = run_attribution_audit_with_judge(&vault, &unsettled, &RuleAttributionJudge, 51)?;
+
+    assert_eq!(
+        labelled.passed, 0,
+        "naming a verdict on unsettled facts is wrong, not unlucky"
+    );
+    assert_eq!(
+        honest.passed,
+        unsettled.len(),
+        "abstaining on unsettled facts is the correct answer, and it scores"
     );
     Ok(())
 }
