@@ -407,10 +407,15 @@ fn decode_floor_keys(body: &[u8]) -> Option<SecretCustodyFloor> {
 // Bindings, status, record, metadata
 // ---------------------------------------------------------------------------
 
+/// The scope verb a binding must declare before the value door will hand over
+/// plaintext. Scopes are otherwise free-form: they name what a binding is FOR,
+/// and only this one is load-bearing at a door.
+pub const SECRET_SCOPE_READ: &str = "read";
+
 /// A binding scoping which effector may use a secret ref, at what tier
 /// ceiling. The binding check scopes usage, drives tier admission, and
-/// stamps receipts. No binding for `(secret_ref, effector)` ⇒
-/// [`Error::SecretBindingDenied`].
+/// stamps receipts. No binding covering `(secret_ref, effector)` with the
+/// required scope ⇒ [`Error::SecretBindingDenied`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretBinding {
     /// The effector, e.g. `"connector:gmail"`, `"door:receive-pack"`.
@@ -419,6 +424,20 @@ pub struct SecretBinding {
     pub tier_ceiling: CustodyTier,
     /// Declared scopes the binding covers.
     pub scopes: Vec<String>,
+}
+
+impl SecretBinding {
+    /// Whether this binding carries the [`SECRET_SCOPE_READ`] grant the value
+    /// door requires.
+    ///
+    /// An EMPTY scope list is NOT a wildcard. Reading it as one is how a
+    /// declared-but-unenforced field becomes a hole: every binding written
+    /// before scopes meant anything would silently grant plaintext reads. A
+    /// binding that declares no scope grants no read.
+    #[must_use]
+    pub fn grants_read(&self) -> bool {
+        self.scopes.iter().any(|s| s == SECRET_SCOPE_READ)
+    }
 }
 
 /// Lifecycle status of a custody record. Only `Active` records are usable;
@@ -1139,8 +1158,11 @@ impl Vault {
     }
 
     /// Door/lease paths only (SECRET-02). Reads the raw value bytes for a
-    /// record within a write txn, requiring a binding covering `effector`:
-    /// no binding for `(secret_ref, effector)` ⇒ [`Error::SecretBindingDenied`].
+    /// record within a write txn, requiring a binding that covers `effector`
+    /// AND declares the [`SECRET_SCOPE_READ`] grant: anything else ⇒
+    /// [`Error::SecretBindingDenied`]. Naming the effector is not by itself a
+    /// read grant — the binding's declared scope is what admits plaintext, and
+    /// an empty scope list is no grant at all.
     /// The value never escapes into claims/CRDT/export/receipts/logs; this
     /// door is the narrowest possible read and exists so SECRET-02's door /
     /// lease machinery is the single value-read call-site. Declared now so
@@ -1158,7 +1180,10 @@ impl Vault {
         if rec.status != SecretCustodyStatus::Active {
             return Err(Error::SecretCustodyNotActive { name: rec.name });
         }
-        if rec.binding_for(effector).is_none() {
+        if !rec
+            .binding_for(effector)
+            .is_some_and(SecretBinding::grants_read)
+        {
             return Err(Error::SecretBindingDenied {
                 effector: effector.to_owned(),
                 secret_ref: rec.name,

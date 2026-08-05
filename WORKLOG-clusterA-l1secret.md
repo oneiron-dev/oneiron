@@ -163,6 +163,45 @@ reads through the unsealed reader, with a comment saying why).
 
 ---
 
+## C4 — P2 binding scope declared but never enforced
+
+**Trace (confirmed).** `get_secret_value_in_txn` gated on
+`rec.binding_for(effector).is_none()`, and `binding_for` matches the effector
+STRING only:
+
+```rust
+self.bindings.iter().find(|b| b.effector == effector)
+```
+
+`binding.scopes` was written at register time, round-tripped by the codec, and
+read by NO door. A binding declared for rotation only — or one with an empty
+scope list — handed over raw plaintext to anything that named the effector.
+
+**Fix.** `SecretBinding::grants_read()` (checking the new `SECRET_SCOPE_READ`
+constant), required at the value door: a matched binding without the read grant
+gets the same typed `SecretBindingDenied` an unbound effector gets. Naming the
+effector is not the grant; the declared scope is.
+
+The two-branch phrasing in the finding ("non-empty must contain read; empty =
+no grant") collapses to one predicate — an empty set contains no read scope —
+so that is how it is written. The doc says plainly that an empty scope list is
+NOT a wildcard, because reading it as one is exactly how a declared-but-unread
+field becomes a hole.
+
+`binding_for` itself is unchanged: it is also the tier-admission lookup, and
+the read requirement belongs at the read door, not in the lookup.
+
+**Test (mutation-verified).**
+`secret_custody::tests::value_read_requires_a_read_scope_on_the_matched_binding`
+registers one record with three bindings — no scopes, `["rotate"]`, and
+`["rotate", "read"]` — and asserts deny, deny, read. Mutation: restoring the
+old `binding_for(effector).is_none()` gate fails it on the first arm.
+
+Files: `crates/oneiron/src/secret_custody.rs`,
+`crates/oneiron/src/secret_custody/tests.rs`.
+
+---
+
 ## Banked (legitimate maximalism / out-of-packet), one per row
 
 | # | Item | Why banked |

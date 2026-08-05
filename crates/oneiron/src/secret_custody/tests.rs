@@ -531,6 +531,53 @@ fn value_read_requires_binding() {
 }
 
 #[test]
+fn value_read_requires_a_read_scope_on_the_matched_binding() {
+    // C4 BINDING-SCOPE: `binding_for` matches the effector STRING only, and no
+    // door read `binding.scopes` — so a binding declared for, say, rotation
+    // ("rotate"), or one with no scope at all, handed over raw plaintext to
+    // anything that named the effector. The scope is the grant; an empty scope
+    // list is not a wildcard.
+    let (_tmp, vault) = temp_vault();
+    let scoped = |effector: &str, scopes: Vec<&str>| SecretBinding {
+        effector: effector.to_owned(),
+        tier_ceiling: CustodyTier::T0Doored,
+        scopes: scopes.into_iter().map(str::to_owned).collect(),
+    };
+    let rec = record(
+        "scoped-key",
+        CustodyClass::CrossVault,
+        b"hunter2",
+        vec![
+            scoped("door:no-scopes", vec![]),
+            scoped("door:rotate-only", vec!["rotate"]),
+            scoped("door:reader", vec!["rotate", "read"]),
+        ],
+    );
+    let id = vault.register_secret(rec).expect("register");
+    let wtxn = vault.store.env.write_txn().expect("write txn");
+
+    // Matched effector, no read grant → the same typed deny an unbound
+    // effector gets. Naming the effector is not the grant.
+    for effector in ["door:no-scopes", "door:rotate-only"] {
+        let err = vault
+            .get_secret_value_in_txn(&wtxn, &id, effector)
+            .expect_err("a binding without a read scope must be denied");
+        assert!(
+            matches!(err, Error::SecretBindingDenied { .. }),
+            "{effector}: got {err:?}"
+        );
+    }
+
+    // A binding that declares `read` alongside other scopes still reads.
+    let value = vault
+        .get_secret_value_in_txn(&wtxn, &id, "door:reader")
+        .expect("read-scoped binding reads")
+        .expect("value present");
+    assert_eq!(value, b"hunter2");
+    wtxn.abort();
+}
+
+#[test]
 fn device_only_round_trips_on_portable() {
     let mut rec = record("portable-pin", CustodyClass::CustodyPortable, b"v", vec![]);
     rec.device_only = true;
