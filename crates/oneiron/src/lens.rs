@@ -62,6 +62,8 @@ const MAX_LENS_TEXT_BYTES: usize = 16 * 1024;
 const MAX_LENS_TREE_DEPTH: usize = 64;
 const MAX_LENS_NODE_COUNT: usize = 4096;
 const MAX_LENS_COLLECTION_ITEMS: usize = 4096;
+/// Fraction of one slider step a value may sit off the grid before it is rejected.
+const SLIDER_STEP_TOLERANCE: f64 = 1e-6;
 
 macro_rules! lens_token_type {
     ($name:ident, $context:literal) => {
@@ -1057,13 +1059,18 @@ impl GeneratedUiValidatedAction {
     }
 }
 
-/// Data handed to the next agent turn. It is not a tool call and is never auto-forwarded.
+/// Data handed to the next agent turn. It is not a tool call and is never
+/// auto-forwarded. It is an engine-to-agent output and has no `Deserialize`, so no
+/// client can submit one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GeneratedUiAgentCallback {
     pub action_name: SelfUiActionId,
     pub resolved_params: Vec<LensApprovedActionArg>,
     pub source_card_id: LensRenderId,
     pub source_element_id: LensAtomId,
+    /// Read reach the acting principal selected, carried as context only. Populate it
+    /// through [`LensRenderFrame::with_selected_context`], which re-proves every handle.
+    pub selected_context: Vec<LensReadHandle>,
 }
 
 /// One addressable element of a card, in either the authored tree or the lowered
@@ -1146,16 +1153,29 @@ fn validate_generated_ui_interactivity(
         }
     }
 
+    validate_generated_ui_state_bindings(elements, state)
+}
+
+/// Prove every `$bind` descriptor against a `$state` snapshot. This runs at card
+/// assembly *and* after every accepted patch, so the domain a control declares for
+/// itself is the same domain a client patch has to land inside.
+fn validate_generated_ui_state_bindings(
+    elements: &[LensElementRef<'_>],
+    state: &GeneratedUiStateSnapshot,
+) -> Result<()> {
     for element in elements {
         validate_lens_collection_len(
             "generated-ui $bind descriptors",
             element.state_bindings.len(),
         )?;
-        if !element.state_bindings.is_empty() && !matches!(element.atom, LensAtom::SelfUi(_)) {
+        if element.state_bindings.is_empty() {
+            continue;
+        }
+        let LensAtom::SelfUi(control) = element.atom else {
             return Err(Error::InvalidConfig(
                 "generated-ui $bind descriptors are only valid on self.ui controls".to_string(),
             ));
-        }
+        };
         let mut bound_properties = HashSet::with_capacity(element.state_bindings.len());
         for binding in element.state_bindings {
             if !bound_properties.insert(binding.property) {
@@ -1175,6 +1195,7 @@ fn validate_generated_ui_interactivity(
                     value.type_name()
                 )));
             }
+            control.accepts_bound_value(binding.property, value)?;
         }
     }
 
@@ -2694,6 +2715,92 @@ impl LensHostBackingRef {
     }
 }
 
+/// Client-authored atom selection. It names *what was pointed at* and nothing else:
+/// no entity id, body text, screenshot, write token, authority, or query string is
+/// expressible here. The engine looks the node up in the exact render it emitted and
+/// takes the target from its own backing table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LensAtomSelectionRequest {
+    pub card_id: LensRenderId,
+    pub atom_id: LensAtomId,
+    pub handle: LensHandleName,
+}
+
+/// The read reach a selection may carry: [`LensHandleRole`] minus
+/// [`LensHandleRole::ActionTarget`]. An action-target binding is reach for the action
+/// backchannel, so it can never be laundered into a selection handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LensReadReach {
+    ClaimSet,
+    EntitySet,
+    Timeline,
+    QueryResult,
+}
+
+impl TryFrom<LensHandleRole> for LensReadReach {
+    type Error = Error;
+
+    fn try_from(role: LensHandleRole) -> Result<Self> {
+        match role {
+            LensHandleRole::ClaimSet => Ok(Self::ClaimSet),
+            LensHandleRole::EntitySet => Ok(Self::EntitySet),
+            LensHandleRole::Timeline => Ok(Self::Timeline),
+            LensHandleRole::QueryResult => Ok(Self::QueryResult),
+            LensHandleRole::ActionTarget => Err(Error::InvalidConfig(
+                "lens action-target bindings are not selectable read reach".to_string(),
+            )),
+        }
+    }
+}
+
+/// Engine-issued read reach over one selected atom. Serialize-only, with no public
+/// constructor: the only way to hold one is to have passed
+/// [`LensRenderFrame::select_atom`]. It carries an opaque backing token plus locator
+/// metadata — never body text, screenshot bytes, a raw URL, authority, or a write
+/// chokepoint — and has no conversion into [`LensApprovedAction`],
+/// [`LensHostMediatedWrite`], or [`LensGateWriteChokepoint`]. Selection is not approval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensReadHandle {
+    render_id: LensRenderId,
+    atom_id: LensAtomId,
+    reach: LensReadReach,
+    target_kind: LensBackingTargetKind,
+    /// A locator the acting principal already resolves under `ScopedRead`, so
+    /// disclosing it widens nothing. The stored body it locates is never disclosed.
+    short_ref: String,
+    backing_token: LensBackingRefToken,
+}
+
+impl LensReadHandle {
+    #[must_use]
+    pub fn render_id(&self) -> &LensRenderId {
+        &self.render_id
+    }
+
+    #[must_use]
+    pub fn atom_id(&self) -> &LensAtomId {
+        &self.atom_id
+    }
+
+    #[must_use]
+    pub fn reach(&self) -> LensReadReach {
+        self.reach
+    }
+
+    #[must_use]
+    pub fn target_kind(&self) -> LensBackingTargetKind {
+        self.target_kind
+    }
+
+    #[must_use]
+    pub fn short_ref(&self) -> &str {
+        &self.short_ref
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LensRenderFrame {
     render_id: LensRenderId,
@@ -2781,6 +2888,143 @@ impl LensRenderFrame {
         Ok(backing_ref.clone())
     }
 
+    /// Turn a client atom selection into engine-issued read reach.
+    ///
+    /// The request names no target. The node is looked up in the exact render this
+    /// frame emitted, the named handle must be one that node itself advertised, and the
+    /// returned token is copied off this frame's host backing row — never synthesized
+    /// from client data. The target is re-hydrated under the acting principal's
+    /// selected read key before any handle is issued.
+    pub fn select_atom(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        request: &LensAtomSelectionRequest,
+    ) -> Result<LensReadHandle> {
+        self.ensure_scoped_read_actor(scoped_read)?;
+        self.ensure_render_is_ours(render)?;
+        if request.card_id != render.card_id {
+            return Err(Error::InvalidConfig(
+                "lens atom selection must name the card it was rendered from".to_string(),
+            ));
+        }
+
+        let role = Self::declared_binding_role(render, &request.atom_id, &request.handle)?;
+        let reach = LensReadReach::try_from(role)?;
+        let row = self
+            .backing_refs
+            .iter()
+            .find(|backing_ref| backing_ref.handle == request.handle)
+            .ok_or_else(|| {
+                Error::InvalidConfig(
+                    "lens selection handle was not host-bound for this render".to_string(),
+                )
+            })?;
+        if row.role != role {
+            return Err(Error::InvalidConfig(
+                "lens selection handle role must match its host backing row".to_string(),
+            ));
+        }
+
+        let resolved = self.resolve_backing_ref_token(scoped_read, &row.token)?;
+        Ok(LensReadHandle {
+            render_id: self.render_id.clone(),
+            atom_id: request.atom_id.clone(),
+            reach,
+            target_kind: resolved.target.kind(),
+            short_ref: resolved.target.short_ref(),
+            backing_token: resolved.token,
+        })
+    }
+
+    /// Re-resolve an issued read handle at use time.
+    ///
+    /// Every proof `select_atom` demanded is repeated against the *current* render and
+    /// the *current* scope: a switched principal, a target that stopped hydrating, and
+    /// a render revision that no longer advertises the binding at the same role all
+    /// fail here rather than letting an old handle widen what it reaches.
+    pub fn resolve_read_handle(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        handle: &LensReadHandle,
+    ) -> Result<LensHostBackingRef> {
+        self.ensure_scoped_read_actor(scoped_read)?;
+        self.ensure_render_is_ours(render)?;
+        let resolved = self.resolve_backing_ref_token(scoped_read, &handle.backing_token)?;
+        // The host row names the handle; the client's copy never gets a vote. Reach is
+        // fixed by that row, so re-proving the role covers the whole read-reach claim.
+        let role = Self::declared_binding_role(render, &handle.atom_id, &resolved.handle)?;
+        if role != resolved.role {
+            return Err(Error::InvalidConfig(
+                "lens read handle role must still match its host backing row".to_string(),
+            ));
+        }
+        Ok(resolved)
+    }
+
+    /// Carry proven selections into a model-round-trip callback as *context*.
+    ///
+    /// Every handle is re-resolved through this frame before it is attached, so a
+    /// callback can never carry reach that selection no longer proves. Context is not
+    /// approval: the callback still names no gated verb, and a later mutation resolves
+    /// its own action target through the action backchannel.
+    pub fn with_selected_context(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        callback: GeneratedUiAgentCallback,
+        selected: Vec<LensReadHandle>,
+    ) -> Result<GeneratedUiAgentCallback> {
+        validate_lens_collection_len("lens selected read context", selected.len())?;
+        if callback.source_card_id != self.render_id {
+            return Err(Error::InvalidConfig(
+                "lens selected context must ride a callback from this render frame".to_string(),
+            ));
+        }
+        for handle in &selected {
+            self.resolve_read_handle(scoped_read, render, handle)?;
+        }
+        Ok(GeneratedUiAgentCallback {
+            selected_context: selected,
+            ..callback
+        })
+    }
+
+    /// The role a render node itself advertised for one handle name. A node must
+    /// declare the handle exactly once: a duplicated binding is ambiguous about which
+    /// reach was offered, so it resolves to nothing.
+    fn declared_binding_role(
+        render: &GeneratedUiRender,
+        atom_id: &LensAtomId,
+        handle: &LensHandleName,
+    ) -> Result<LensHandleRole> {
+        let node = render
+            .nodes
+            .iter()
+            .find(|node| &node.id == atom_id)
+            .ok_or_else(|| {
+                Error::InvalidConfig(
+                    "lens atom selection must name an element of this render".to_string(),
+                )
+            })?;
+        let mut declared = node
+            .bindings
+            .iter()
+            .filter(|binding| &binding.name == handle);
+        let binding = declared.next().ok_or_else(|| {
+            Error::InvalidConfig(
+                "lens atom selection must name a handle the element advertised".to_string(),
+            )
+        })?;
+        if declared.next().is_some() {
+            return Err(Error::InvalidConfig(
+                "lens atom bindings must declare each handle at most once".to_string(),
+            ));
+        }
+        Ok(binding.role)
+    }
+
     pub fn approve_action(
         &self,
         scoped_read: &ScopedRead<'_>,
@@ -2825,11 +3069,7 @@ impl LensRenderFrame {
                 "lens action emitter must be this render frame's acting principal".to_string(),
             ));
         }
-        if render.card_id != self.render_id {
-            return Err(Error::InvalidConfig(
-                "generated-ui render must belong to this render frame".to_string(),
-            ));
-        }
+        self.ensure_render_is_ours(render)?;
         if event.card_id != render.card_id {
             return Err(Error::InvalidConfig(
                 "generated-ui action event card_id must match the render".to_string(),
@@ -2887,6 +3127,13 @@ impl LensRenderFrame {
             ));
         }
         let next_state = apply_generated_ui_state_patch(&render.state, state, &event.patch)?;
+        // Types alone do not describe a control's domain: the resulting snapshot has to
+        // satisfy every `$bind` on the card, so a patch cannot select an option this
+        // control never offered or move a slider off its declared grid.
+        validate_generated_ui_state_bindings(
+            &LensElementRef::collect_flat(&render.nodes),
+            &next_state,
+        )?;
 
         let emitter = self.principal.clone();
         Ok(match declaration.tier {
@@ -2909,6 +3156,7 @@ impl LensRenderFrame {
                         resolved_params: approved.args,
                         source_card_id: render.card_id.clone(),
                         source_element_id: event.element_id.clone(),
+                        selected_context: Vec::new(),
                     },
                 }
             }
@@ -2936,6 +3184,15 @@ impl LensRenderFrame {
         }
         Self::ensure_target_readable(scoped_read, &backing_ref.target)?;
         Ok(backing_ref)
+    }
+
+    fn ensure_render_is_ours(&self, render: &GeneratedUiRender) -> Result<()> {
+        if render.card_id == self.render_id {
+            return Ok(());
+        }
+        Err(Error::InvalidConfig(
+            "generated-ui render must belong to this render frame".to_string(),
+        ))
     }
 
     fn ensure_scoped_read_actor(&self, scoped_read: &ScopedRead<'_>) -> Result<()> {
@@ -3892,12 +4149,28 @@ impl SliderControl {
                 "self.ui slider step must be positive".to_string(),
             ));
         }
-        if self.value.get() < self.min.get() || self.value.get() > self.max.get() {
+        if !self.admits(self.value.get()) {
             return Err(Error::InvalidConfig(
-                "self.ui slider value must be within min and max".to_string(),
+                "self.ui slider value must be within min and max and land on the step grid"
+                    .to_string(),
             ));
         }
         self.action.validate()
+    }
+
+    /// Whether a number is one this slider can actually hold: inside the declared range
+    /// and on the declared step grid. The grid residual is measured against a millionth
+    /// of one step so decimal steps such as `0.1` survive binary rounding.
+    ///
+    /// Only meaningful once `validate` has established `min <= max` and `step > 0`.
+    fn admits(&self, value: f64) -> bool {
+        if value < self.min.get() || value > self.max.get() {
+            return false;
+        }
+        let step = self.step.get();
+        let offset = value - self.min.get();
+        let steps = offset / step;
+        steps.is_finite() && (offset - steps.round() * step).abs() <= step * SLIDER_STEP_TOLERANCE
     }
 }
 
@@ -4335,6 +4608,45 @@ impl SelfUiControl {
             Self::Select(control) => &control.action,
             Self::Slider(control) => &control.action,
             Self::TextInput(control) => &control.action,
+        }
+    }
+
+    /// The value domain a `$bind` may drive on *this* control. Type agreement is not
+    /// enough: a bound token has to name one of the control's own options, and a bound
+    /// slider value has to satisfy the same range and step rule the slider declares for
+    /// itself. Every other control property is fully described by its type.
+    fn accepts_bound_value(
+        &self,
+        property: SelfUiBindableProperty,
+        value: &SelfUiStateValue,
+    ) -> Result<()> {
+        match (self, property, value) {
+            (
+                Self::Select(SelectControl { options, .. })
+                | Self::Segmented(SegmentedControl { options, .. }),
+                SelfUiBindableProperty::Selected,
+                SelfUiStateValue::Token(token),
+            ) => {
+                validate_selected_option("generated-ui $bind selected value", options, Some(token))
+            }
+            (
+                Self::Slider(slider),
+                SelfUiBindableProperty::Value,
+                SelfUiStateValue::Number(number),
+            ) => {
+                if slider.admits(number.get()) {
+                    Ok(())
+                } else {
+                    Err(Error::InvalidConfig(
+                        "generated-ui $bind must keep a slider value inside its declared min, max, and step"
+                            .to_string(),
+                    ))
+                }
+            }
+            (Self::Slider(_), SelfUiBindableProperty::Value, _) => Err(Error::InvalidConfig(
+                "generated-ui $bind must drive a slider value with a number".to_string(),
+            )),
+            _ => Ok(()),
         }
     }
 
