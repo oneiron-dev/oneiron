@@ -193,6 +193,13 @@ pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
 };
+pub use crate::calendar::{
+    BusyInterval, BusyUnion, CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER,
+    CalendarAdmissionRequest, CalendarBodyScreener, CalendarEventView, CalendarInboundBody,
+    CalendarRangeDto, CalendarReadRequest, CalendarScreenVerdict, CalendarSearchRequest,
+    CalendarSel, MAX_CALENDAR_SEARCH_LIMIT, Screened, freebusy, freebusy_scoped, read_event,
+    read_event_scoped, screen_then_claim, search_events, search_events_scoped,
+};
 pub use crate::channel_identity::{
     CHANNEL_IDENTITY_BODY_KEYS, CHANNEL_IDENTITY_CLAIM_PREDICATES,
     CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, CHANNEL_IDENTITY_SCHEMA_VERSION, ChannelIdentity,
@@ -486,6 +493,8 @@ pub use crate::extraction_eval::{
 };
 pub use crate::facade::{
     AdmitImportedClaimInput, BRIDGE_OUTBOUND_ATTEMPT_KIND, BlobArtifactInput, BlobVersionView,
+    CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB, CalendarFreebusyDto,
+    CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
     ClaimInput, ClaimListFilter, ClaimView, CommitReceipt, CompanionRecordInput,
     ConsolidationAttemptInput, DeleteReceipt, DreamerAttemptRef, DreamerAttemptView, Effort,
     EntityRefReceipt, EntityView, FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN,
