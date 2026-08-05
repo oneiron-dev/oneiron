@@ -197,3 +197,135 @@ campaign` 16/16, `--test campaign_claim_gate_oracle` 3/3, `claims.rs` clippy-
 and fmt-clean. The repo-wide clippy still carries the pre-existing
 `secret_custody.rs:625` dead-code error and `lib.rs` fmt drift from the base —
 both charged to no lane, untouched here.
+
+## FINDER-FIX (wf_d6d4bee5-af4, Sol-max finder)
+
+Two findings, both real. Diff is `campaign/claims.rs` + `campaign/claims/tests.rs`
++ this worklog; no `Cargo.toml`, no `Cargo.lock`, no third file.
+
+### F1 (P1, `crm-stage-atomicity`) — the stage CAS is now txn-composable
+
+`supersede_crm_stage` opened its OWN write txn (`vault.try_with_write_txn`), so a
+caller that must put a new stage head AND supersede the prior head could not
+compose both into one txn. Two projectors planning from head A could then leave
+B and C both `Active` — a torn two-head state that the in-txn head check was
+written to prevent but, from outside, could not.
+
+**Replaced, not wrapped.** `supersede_crm_stage` had no non-test caller
+(`rg` across `crates/`: only `claims/tests.rs`), so the self-txn form is deleted
+rather than kept as a second door — two doors where one is atomic and one is not
+is the defect with a nicer name. The door is now:
+
+```rust
+pub fn supersede_crm_stage_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    new_claim_id: &EntityId,
+    expected_current_head_id: Option<&EntityId>,
+    now: u64,
+) -> Result<()>
+```
+
+matching the `*_in_txn` shape `claim.rs` already exposes for the primitives it
+composes (`Vault::put_claim_in_txn` :2022, `Vault::supersede_claim_in_txn`
+:2597). Predicate, PERSON subject, campaign scope, and the current-head check
+all still run before the first write of the call — and now a rejection aborts
+the CALLER's txn, so the replacement head the caller already wrote rolls back
+with it.
+
+**`Option` head, i.e. the no-head CAS arm.** Required by the blueprint:
+`ONE-1775.md` line 7 makes the projector route replacement-write + prior-head
+supersession through this helper atomically, and line 257's
+`StageProjectorInput.previous_stage_claim_ref` is `Option<EntityId>` — the first
+stage of a campaign has no predecessor. `None` therefore compares against the
+ABSENCE of a head: a writer that also thinks it is first is rejected
+(`"crm.stage first head is not the only head"`) instead of quietly becoming a
+second live head. Without this arm the opening stage would have to bypass the
+helper entirely, which is the same hole one layer up.
+
+Typed errors stay `Error::InvalidClaimBody(&'static str)` with a distinct static
+reason per rejection — the module's existing taxonomy. A new `Error` variant was
+NOT minted: `error.rs` is outside this lane's packet, and the reason strings are
+already what the tests match on.
+
+`live_crm_stage_heads_in_txn` folded its caller's `retain` into itself as
+`other_live_crm_stage_heads_in_txn(.., replacement)` — one pass, no post-filter,
+and the "a head is never its own competition" rule now lives at the read.
+
+**Test (mutation-verified).** `crm_stage_requires_exact_evidence_and_scoped_supersession`
+now drives the composed path: `put_claim_in_txn` + `supersede_crm_stage_in_txn`
+inside ONE `try_with_write_txn`. Three new arms:
+
+1. *Atomicity.* A rejected CAS inside the composed txn (`torn` vs a head scoped
+   to a different campaign) must leave `get_claim(&torn) == None` and exactly one
+   live head. **Mutation check:** splitting that txn (`put_claim` standalone,
+   then a separate-txn CAS) makes `torn` commit as a live second `crm.stage` head
+   on the same `(person, campaign)` and the assertion fails — run and observed,
+   then reverted. That failure IS F1.
+2. *First head.* `None` succeeds for a PERSON with no stage head, and a second
+   `None` writer is rejected with its put rolled back.
+3. A `live_stage_heads` oracle reads the head set through a committed txn, so
+   "exactly one live head" is asserted against storage, not against a return
+   value.
+
+### F2 (P2, `claim-codec-seam`) — typed encoders
+
+`CampaignMemberValue` and `CrmStageValue` were decode-only, so ONE-1773's
+membership writer and ONE-1775's stage projector would have had to re-spell this
+module's private MessagePack key literals and the canonical-hex entity-reference
+rule — which `ONE-1773.md:354-407` and `ONE-1775.md:202-257` explicitly forbid
+them from doing.
+
+Added `encode_campaign_member_value` and `encode_crm_stage_value` (plus the
+private `encode_member_state` / `encode_member_channel` /
+`encode_member_derivation` and an `entity_ref_value` helper that is the write
+counterpart of `parse_entity_ref`). Naming follows the module's `decode_*_value`
+idiom and `affect::coping::coping_outcome_value`'s `-> Value` shape.
+
+Both are **deliberately infallible**. Shape law — a paused row needs a wake
+condition, a membership needs a channel, a stage needs evidence — is enforced
+once, at the write door, by `validate_campaign_pack_claim_structure`. An encoder
+that re-checked it would be a second authority that can drift from the first;
+the chokepoint stays singular and the encoded value is validated where every
+other value is.
+
+No serde derive was added to `CrmStageValue` — `EntityId` has no serde impl and
+`entity_id.rs` is a CA non-claim (deviation 1 above, already banked).
+
+Round-trip test `campaign_pack_encoders_round_trip_through_their_decoders`
+asserts both directions, which is stronger than identity alone:
+
+- `encode(decode(literal)) == literal` against the hand-written fixtures, so the
+  encoder is pinned to the exact wire map (key set AND order) rather than merely
+  agreeing with the decoder — a matched pair of codec bugs still fails.
+- `decode(encode(v)) == v` across every variant arm: all four member states
+  including all three paused wake shapes, derivation present and absent, all
+  seven `StageEvidenceClass` values crossed with both `EvidenceBasis` values.
+- Every encoded value is additionally pushed `through_chokepoint`, proving a
+  ONE-1773/1775 writer's output survives the same write-door validator its claim
+  will actually meet.
+
+The existing `crm_stage_wire_tokens_match_serde` drift guard is untouched and
+still green.
+
+### FINDER-FIX gate
+
+| Gate | Result |
+|---|---|
+| `rustfmt --edition 2024 --check` on both touched files | clean |
+| `cargo clippy -p oneiron --lib --all-features -- -D warnings -A dead-code` | **zero diagnostics** |
+| `cargo clippy -p oneiron --all-targets --all-features` | zero diagnostics in `campaign/claims*` |
+| `cargo test -p oneiron --all-features --lib campaign` | **17 passed / 0 failed** |
+| `cargo test -p oneiron --all-features --test campaign_claim_gate_oracle` | 3 passed / 0 failed |
+| `cargo test -p oneiron --all-features --lib claim::` | 34 passed / 0 failed |
+| mutation-verify (split the composed txn) | torn-state assertion **FAILS** as required, then reverted |
+
+**Pre-existing base defects, charged to no lane (verified by stashing this diff
+and re-running clippy at `95b0c7c` — identical output):** two clippy `-D` errors
+in `crates/oneiron/src/secret_custody/tests.rs`
+(`field_reassign_with_default` :156, `items_after_statements` :256) plus
+`unused_mut` at :397 and :436, and the already-recorded dead-code
+`secret_custody.rs:625`. `secret_custody.rs` is L1-SECRET's file and a CA
+non-claim; untouched. The `lib.rs` fmt drift also still stands at base — a
+`cargo fmt -p oneiron` run reformatted it as a side effect and was reverted, so
+the packet holds at two source files.

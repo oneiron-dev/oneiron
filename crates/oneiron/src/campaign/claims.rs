@@ -524,6 +524,81 @@ pub(crate) fn validate_campaign_pack_claim_structure(body: &ClaimBody) -> Result
     }
 }
 
+/// Encodes a [`CampaignMemberValue`] into the exact wire map
+/// [`decode_campaign_member_value`] accepts.
+///
+/// The CA-owned write half of the codec. ONE-1773's saved-query writer composes
+/// its membership value from the typed struct through this door instead of
+/// re-spelling this module's private MessagePack key literals — a second
+/// spelling of one schema is drift with a delay fuse.
+///
+/// Deliberately infallible. Shape law (a paused row needs a wake condition, a
+/// membership needs at least one channel) is enforced once, at the write door,
+/// by [`validate_campaign_pack_claim_structure`]; re-checking it here would be
+/// a second authority that can disagree with the first.
+#[must_use]
+pub fn encode_campaign_member_value(value: &CampaignMemberValue) -> Value {
+    let mut entries = vec![
+        (Value::from(KEY_CAMPAIGN), entity_ref_value(&value.campaign)),
+        (Value::from(KEY_STATE), encode_member_state(value.state)),
+        (
+            Value::from(KEY_CHANNELS),
+            Value::Array(value.channels.iter().map(encode_member_channel).collect()),
+        ),
+    ];
+    if let Some(derivation) = &value.derivation {
+        entries.push((
+            Value::from(KEY_DERIVATION),
+            encode_member_derivation(derivation),
+        ));
+    }
+    Value::Map(entries)
+}
+
+fn encode_member_state(state: CampaignMemberState) -> Value {
+    let mut entries = vec![(Value::from(KEY_KIND), Value::from(state.as_str()))];
+    if let CampaignMemberState::Paused { until, new_trigger } = state {
+        if let Some(until) = until {
+            entries.push((Value::from(KEY_UNTIL), Value::from(until)));
+        }
+        if let Some(new_trigger) = new_trigger {
+            entries.push((Value::from(KEY_NEW_TRIGGER), Value::from(new_trigger)));
+        }
+    }
+    Value::Map(entries)
+}
+
+fn encode_member_channel(channel: &CampaignMemberChannel) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_CHANNEL),
+            Value::from(channel.channel.as_str()),
+        ),
+        (
+            Value::from(KEY_BASIS_EVIDENCE),
+            entity_ref_value(&channel.basis_evidence),
+        ),
+        (
+            Value::from(KEY_SENDER_REF),
+            entity_ref_value(&channel.sender_ref),
+        ),
+    ])
+}
+
+fn encode_member_derivation(derivation: &CampaignMemberDerivation) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_SOURCE_QUERY),
+            entity_ref_value(&derivation.source_query),
+        ),
+        (
+            Value::from(KEY_EVIDENCE_HASH),
+            Value::Binary(derivation.evidence_hash.to_vec()),
+        ),
+        (Value::from(KEY_EPOCH), Value::from(derivation.epoch)),
+    ])
+}
+
 /// Decodes a `campaign.member` value.
 pub(crate) fn decode_campaign_member_value(value: &Value) -> Result<CampaignMemberValue> {
     let entries = value_map(value)?;
@@ -645,6 +720,39 @@ pub(crate) fn decode_crm_fit_value(value: &Value) -> Result<CrmFitValue> {
     })
 }
 
+/// Encodes a [`CrmStageValue`] into the exact wire map
+/// [`decode_crm_stage_value`] accepts.
+///
+/// The CA-owned write half of the codec, and the only way ONE-1775's stage
+/// projector builds a `crm.stage` value: `CrmStageValue` is not serde-derived
+/// ([`EntityId`] has no serde impl), so without this door a stage writer would
+/// have to re-spell this module's private key literals and the canonical-hex
+/// entity-reference rule.
+///
+/// Deliberately infallible, for the same reason as
+/// [`encode_campaign_member_value`]: the non-empty-evidence law lives at the
+/// write door, not in a second place that can drift from it.
+#[must_use]
+pub fn encode_crm_stage_value(value: &CrmStageValue) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_CAMPAIGN_REF),
+            entity_ref_value(&value.campaign_ref),
+        ),
+        (Value::from(KEY_STAGE), Value::from(value.stage.0.as_str())),
+        (
+            Value::from(KEY_EVIDENCE_CLASS),
+            Value::from(value.evidence_class.as_str()),
+        ),
+        (
+            Value::from(KEY_EVIDENCE_REFS),
+            Value::Array(value.evidence_refs.iter().map(entity_ref_value).collect()),
+        ),
+        (Value::from(KEY_BASIS), Value::from(value.basis.as_str())),
+        (Value::from(KEY_RECORDED_AT), Value::from(value.recorded_at)),
+    ])
+}
+
 /// Decodes a `crm.stage` value.
 pub(crate) fn decode_crm_stage_value(value: &Value) -> Result<CrmStageValue> {
     let entries = value_map(value)?;
@@ -751,46 +859,76 @@ pub fn resolve_crm_fit(icp_scope: &EntityId, claims: &[CrmFitValue]) -> Option<C
         })
 }
 
-/// Supersedes the current `crm.stage` head with an already-written replacement.
+/// Compare-and-swaps the `crm.stage` head INSIDE the caller's write txn.
 ///
-/// Both claims are re-read, matched on predicate, PERSON subject, and campaign
-/// scope, and `expected_current_head_id` is confirmed to be the ONLY other
-/// live head for that `(subject, campaign_ref)` — all inside the write txn that
-/// performs the supersession, so a concurrent stage write cannot slip between
-/// the check and the swap. Every rejection happens before the first write, so a
-/// failed supersession leaves nothing behind.
+/// This is THE stage-transition door: it takes the caller's `wtxn` rather than
+/// opening its own, so the projector that writes the replacement head and the
+/// supersession of the prior head are ONE atomic unit. A self-transaction
+/// variant would force a writer to put the new head in one txn and supersede in
+/// another, and two projectors planning from the same head could then leave two
+/// live heads behind — the exact torn state the head check exists to prevent.
+///
+/// `expected_current_head_id` is the compare half of the CAS:
+///
+/// * `Some(id)` — `id` must be the ONLY other live head for this
+///   `(subject, campaign_ref)`, and both claims must agree on predicate, PERSON
+///   subject, and campaign scope. It is then superseded.
+/// * `None` — the FIRST stage head for this `(subject, campaign_ref)`. The
+///   compare is against the ABSENCE of a head, so a head another writer already
+///   landed loses instead of silently becoming a second live head. There is
+///   nothing to supersede, so the call only validates.
+///
+/// Every rejection happens before the first write of this call, and a rejection
+/// aborts the caller's whole txn — so the replacement head the caller wrote
+/// rolls back with it.
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] when either id is not a live `crm.stage` claim,
-/// when subject or campaign scope disagree, or when the expected head is not
-/// the current one. Supersession errors propagate unchanged from
+/// [`Error::InvalidClaimBody`] with a distinct static reason per rejection:
+/// either id is not a live `crm.stage` claim, subject or campaign scope
+/// disagree, the expected head is not the current one, or a `None` (first-head)
+/// CAS found a head already live. Supersession errors propagate unchanged from
 /// [`Vault::supersede_claim`].
-pub fn supersede_crm_stage(
+pub fn supersede_crm_stage_in_txn(
     vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
     new_claim_id: &EntityId,
-    expected_current_head_id: &EntityId,
+    expected_current_head_id: Option<&EntityId>,
     now: u64,
 ) -> Result<()> {
-    vault.try_with_write_txn(|wtxn| {
-        let (new_subject, new_value) =
-            read_crm_stage_claim_in_txn(&vault.store, wtxn, new_claim_id)?;
-        let (old_subject, old_value) =
-            read_crm_stage_claim_in_txn(&vault.store, wtxn, expected_current_head_id)?;
-        if new_subject != old_subject {
-            return Err(invalid_claim("crm.stage supersession subject mismatch"));
+    let (new_subject, new_value) = read_crm_stage_claim_in_txn(&vault.store, wtxn, new_claim_id)?;
+    let Some(expected_current_head_id) = expected_current_head_id else {
+        let heads = other_live_crm_stage_heads_in_txn(
+            &vault.store,
+            wtxn,
+            new_subject,
+            &new_value.campaign_ref,
+            new_claim_id,
+        )?;
+        if !heads.is_empty() {
+            return Err(invalid_claim("crm.stage first head is not the only head"));
         }
-        if new_value.campaign_ref != old_value.campaign_ref {
-            return Err(invalid_claim("crm.stage supersession campaign mismatch"));
-        }
-        let mut heads =
-            live_crm_stage_heads_in_txn(&vault.store, wtxn, new_subject, &new_value.campaign_ref)?;
-        heads.retain(|id| id != new_claim_id);
-        if heads.as_slice() != [*expected_current_head_id] {
-            return Err(invalid_claim("crm.stage expected head is not current"));
-        }
-        vault.supersede_claim_in_txn(wtxn, new_claim_id, expected_current_head_id, now)
-    })
+        return Ok(());
+    };
+    let (old_subject, old_value) =
+        read_crm_stage_claim_in_txn(&vault.store, wtxn, expected_current_head_id)?;
+    if new_subject != old_subject {
+        return Err(invalid_claim("crm.stage supersession subject mismatch"));
+    }
+    if new_value.campaign_ref != old_value.campaign_ref {
+        return Err(invalid_claim("crm.stage supersession campaign mismatch"));
+    }
+    let heads = other_live_crm_stage_heads_in_txn(
+        &vault.store,
+        wtxn,
+        new_subject,
+        &new_value.campaign_ref,
+        new_claim_id,
+    )?;
+    if heads.as_slice() != [*expected_current_head_id] {
+        return Err(invalid_claim("crm.stage expected head is not current"));
+    }
+    vault.supersede_claim_in_txn(wtxn, new_claim_id, expected_current_head_id, now)
 }
 
 /// Reads one live `crm.stage` claim, returning its subject and decoded value.
@@ -813,15 +951,21 @@ fn read_crm_stage_claim_in_txn(
     Ok((subject, decode_crm_stage_value(&body.value)?))
 }
 
-/// Live `crm.stage` claim ids on `subject` scoped to `campaign_ref`.
-fn live_crm_stage_heads_in_txn(
+/// Live `crm.stage` claim ids on `subject` scoped to `campaign_ref`, excluding
+/// `replacement` — the head the caller already wrote into this same txn, which
+/// is never its own competition.
+fn other_live_crm_stage_heads_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: EntityId,
     campaign_ref: &EntityId,
+    replacement: &EntityId,
 ) -> Result<Vec<EntityId>> {
     let mut heads = Vec::new();
     for id in subject_claim_ids_in_txn(store, txn, &subject)? {
+        if id == *replacement {
+            continue;
+        }
         let Some(body) = claim_body_in_txn(store, txn, &id)? else {
             continue;
         };
@@ -1072,6 +1216,12 @@ fn required_u64(entries: &[(Value, Value)], key: &str) -> Result<u64> {
 
 fn required_entity_ref(entries: &[(Value, Value)], key: &str) -> Result<EntityId> {
     parse_entity_ref(required_string(entries, key)?)
+}
+
+/// The write counterpart of [`parse_entity_ref`]: canonical hex, the one wire
+/// form an identity has.
+fn entity_ref_value(id: &EntityId) -> Value {
+    Value::from(id.to_hex())
 }
 
 fn parse_entity_ref(hex: &str) -> Result<EntityId> {

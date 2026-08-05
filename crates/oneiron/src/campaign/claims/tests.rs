@@ -542,6 +542,7 @@ fn crm_stage_requires_exact_evidence_and_scoped_supersession() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let person = subject();
     let other_person = entity(0x65);
+    let fresh_person = entity(0x6B);
     let occurred = TimeRange { start: 1, end: 1 };
     vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, 1, b"campaign person")?;
     vault.put_entity(
@@ -550,6 +551,13 @@ fn crm_stage_requires_exact_evidence_and_scoped_supersession() -> Result<()> {
         occurred,
         1,
         b"other person",
+    )?;
+    vault.put_entity(
+        &fresh_person,
+        ENTITY_TYPE_PERSON,
+        occurred,
+        1,
+        b"fresh person",
     )?;
 
     let head = entity(0x66);
@@ -562,12 +570,6 @@ fn crm_stage_requires_exact_evidence_and_scoped_supersession() -> Result<()> {
         &body(PREDICATE_CRM_STAGE, canonical_stage()),
         occurred,
         1,
-    )?;
-    vault.put_claim(
-        &replacement,
-        &body(PREDICATE_CRM_STAGE, stage_value(CAMPAIGN_SEED, "meeting")),
-        occurred,
-        2,
     )?;
     vault.put_claim(
         &wrong_campaign,
@@ -590,19 +592,13 @@ fn crm_stage_requires_exact_evidence_and_scoped_supersession() -> Result<()> {
 
     // Predicate, subject, and campaign-scope mismatches all fail closed.
     assert_matches!(
-        supersede_crm_stage(&vault, &unrelated_predicate, &head, 10),
+        cas_stage_head(&vault, &unrelated_predicate, Some(&head)),
         Err(Error::InvalidClaimBody("claim is not crm.stage"))
     );
     assert_matches!(
-        supersede_crm_stage(&vault, &wrong_subject, &head, 10),
+        cas_stage_head(&vault, &wrong_subject, Some(&head)),
         Err(Error::InvalidClaimBody(
             "crm.stage supersession subject mismatch"
-        ))
-    );
-    assert_matches!(
-        supersede_crm_stage(&vault, &replacement, &wrong_campaign, 10),
-        Err(Error::InvalidClaimBody(
-            "crm.stage supersession campaign mismatch"
         ))
     );
     // Nothing was written by any rejection: the head is still live.
@@ -611,23 +607,202 @@ fn crm_stage_requires_exact_evidence_and_scoped_supersession() -> Result<()> {
         ClaimLifecycleStatus::Active
     );
 
-    supersede_crm_stage(&vault, &replacement, &head, 10)?;
+    // ATOMICITY. The replacement head is PUT and the prior head superseded in
+    // ONE caller-owned txn, so the two either land together or not at all.
+    // A rejected CAS rolls the put back with it — split the txn (put in its own
+    // write txn, supersede in another) and `torn` survives as a second live
+    // head, failing the assertion below.
+    let torn = entity(0x6C);
+    assert_matches!(
+        vault.try_with_write_txn(|wtxn| {
+            vault.put_claim_in_txn(
+                wtxn,
+                &torn,
+                &body(PREDICATE_CRM_STAGE, stage_value(CAMPAIGN_SEED, "won")),
+                occurred,
+                2,
+            )?;
+            // `wrong_campaign` is a live stage head on the same PERSON scoped
+            // to a DIFFERENT campaign, so this CAS names a non-current head.
+            supersede_crm_stage_in_txn(&vault, wtxn, &torn, Some(&wrong_campaign), 10)
+        }),
+        Err(Error::InvalidClaimBody(
+            "crm.stage supersession campaign mismatch"
+        ))
+    );
+    assert_eq!(vault.get_claim(&torn)?, None);
+    assert_eq!(live_stage_heads(&vault, person, CAMPAIGN_SEED)?, vec![head]);
+
+    // The composed happy path: put + supersede, one txn, one surviving head.
+    vault.try_with_write_txn(|wtxn| {
+        vault.put_claim_in_txn(
+            wtxn,
+            &replacement,
+            &body(PREDICATE_CRM_STAGE, stage_value(CAMPAIGN_SEED, "meeting")),
+            occurred,
+            2,
+        )?;
+        supersede_crm_stage_in_txn(&vault, wtxn, &replacement, Some(&head), 10)
+    })?;
     assert_eq!(
         vault.get_claim(&head)?.expect("head claim").lifecycle,
         ClaimLifecycleStatus::Superseded
     );
     assert_eq!(
-        vault
-            .get_claim(&replacement)?
-            .expect("replacement claim")
-            .lifecycle,
-        ClaimLifecycleStatus::Active
+        live_stage_heads(&vault, person, CAMPAIGN_SEED)?,
+        vec![replacement]
     );
     // Replaying the same supersession fails: the old head is no longer current.
     assert_matches!(
-        supersede_crm_stage(&vault, &replacement, &head, 11),
+        cas_stage_head(&vault, &replacement, Some(&head)),
         Err(Error::InvalidClaimBody("crm.stage claim is not live"))
     );
+
+    // FIRST HEAD. `None` compares against the ABSENCE of a head, so the opening
+    // stage of a campaign needs no invented sentinel predecessor...
+    let first = entity(0x6D);
+    let second = entity(0x6E);
+    let mut first_body = body(PREDICATE_CRM_STAGE, stage_value(CAMPAIGN_SEED, "replied"));
+    first_body.subject = ClaimSubject::Entity(fresh_person);
+    vault.try_with_write_txn(|wtxn| {
+        vault.put_claim_in_txn(wtxn, &first, &first_body, occurred, 2)?;
+        supersede_crm_stage_in_txn(&vault, wtxn, &first, None, 10)
+    })?;
+    assert_eq!(
+        live_stage_heads(&vault, fresh_person, CAMPAIGN_SEED)?,
+        vec![first]
+    );
+    // ...and a second writer that also thinks it is first loses instead of
+    // quietly becoming a competing live head.
+    let mut second_body = body(PREDICATE_CRM_STAGE, stage_value(CAMPAIGN_SEED, "meeting"));
+    second_body.subject = ClaimSubject::Entity(fresh_person);
+    assert_matches!(
+        vault.try_with_write_txn(|wtxn| {
+            vault.put_claim_in_txn(wtxn, &second, &second_body, occurred, 2)?;
+            supersede_crm_stage_in_txn(&vault, wtxn, &second, None, 11)
+        }),
+        Err(Error::InvalidClaimBody(
+            "crm.stage first head is not the only head"
+        ))
+    );
+    assert_eq!(vault.get_claim(&second)?, None);
+    assert_eq!(
+        live_stage_heads(&vault, fresh_person, CAMPAIGN_SEED)?,
+        vec![first]
+    );
+    Ok(())
+}
+
+/// Runs a stage CAS whose replacement head is ALREADY committed, in a txn of
+/// its own. Only for the rejection arms, which write nothing.
+fn cas_stage_head(
+    vault: &Vault,
+    new_claim_id: &EntityId,
+    expected_current_head_id: Option<&EntityId>,
+) -> Result<()> {
+    vault.try_with_write_txn(|wtxn| {
+        supersede_crm_stage_in_txn(vault, wtxn, new_claim_id, expected_current_head_id, 10)
+    })
+}
+
+/// Live `crm.stage` heads for `(subject, campaign)`, read through a committed
+/// txn — the torn-state oracle.
+///
+/// The exclusion argument is `subject` itself, which excludes nothing: a
+/// PERSON's own id is never one of the CLAIM ids hanging off its `claim_of`
+/// edges.
+fn live_stage_heads(vault: &Vault, subject: EntityId, campaign_seed: u8) -> Result<Vec<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    other_live_crm_stage_heads_in_txn(
+        &vault.store,
+        &rtxn,
+        subject,
+        &entity(campaign_seed),
+        &subject,
+    )
+}
+
+#[test]
+fn campaign_pack_encoders_round_trip_through_their_decoders() -> Result<()> {
+    // The encoder is pinned to the hand-written wire literal, not merely to the
+    // decoder: a matched pair of codec bugs would still fail here.
+    assert_eq!(
+        encode_campaign_member_value(&decode_campaign_member_value(&canonical_member())?),
+        canonical_member()
+    );
+    assert_eq!(
+        encode_crm_stage_value(&decode_crm_stage_value(&canonical_stage())?),
+        canonical_stage()
+    );
+
+    // Identity over every optional/variant arm, and every encoded value is
+    // accepted by the same write door a ONE-1773/1775 writer goes through.
+    let states = [
+        CampaignMemberState::Enrolled,
+        CampaignMemberState::Exited,
+        CampaignMemberState::Suppressed,
+        CampaignMemberState::Paused {
+            until: Some(1_754_400_000),
+            new_trigger: None,
+        },
+        CampaignMemberState::Paused {
+            until: None,
+            new_trigger: Some(true),
+        },
+        CampaignMemberState::Paused {
+            until: Some(1_754_400_000),
+            new_trigger: Some(false),
+        },
+    ];
+    let derivations = [
+        None,
+        Some(CampaignMemberDerivation {
+            source_query: entity(REF_SEED),
+            evidence_hash: [0xAB; 32],
+            epoch: 7,
+        }),
+    ];
+    for state in states {
+        for derivation in &derivations {
+            let derivation = derivation.clone();
+            let member = CampaignMemberValue {
+                campaign: entity(CAMPAIGN_SEED),
+                state,
+                channels: vec![
+                    CampaignMemberChannel {
+                        channel: "email".to_owned(),
+                        basis_evidence: entity(REF_SEED),
+                        sender_ref: entity(CAMPAIGN_SEED),
+                    },
+                    CampaignMemberChannel {
+                        channel: "sms".to_owned(),
+                        basis_evidence: entity(REF_SEED),
+                        sender_ref: entity(REF_SEED),
+                    },
+                ],
+                derivation,
+            };
+            let encoded = encode_campaign_member_value(&member);
+            assert_eq!(decode_campaign_member_value(&encoded)?, member);
+            through_chokepoint(&body(PREDICATE_CAMPAIGN_MEMBER, encoded))?;
+        }
+    }
+
+    for class in StageEvidenceClass::ALL {
+        for basis in [EvidenceBasis::Machine, EvidenceBasis::OwnerAttested] {
+            let stage = CrmStageValue {
+                campaign_ref: entity(OTHER_CAMPAIGN_SEED),
+                stage: StageKey("proposal_sent".to_owned()),
+                evidence_class: class,
+                evidence_refs: vec![entity(REF_SEED), entity(CAMPAIGN_SEED)],
+                basis,
+                recorded_at: 1_754_400_001,
+            };
+            let encoded = encode_crm_stage_value(&stage);
+            assert_eq!(decode_crm_stage_value(&encoded)?, stage);
+            through_chokepoint(&body(PREDICATE_CRM_STAGE, encoded))?;
+        }
+    }
     Ok(())
 }
 
