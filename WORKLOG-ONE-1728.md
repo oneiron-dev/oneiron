@@ -52,12 +52,13 @@ generalized · K5 `append_gate_decision_row_in_txn` · facade
 `witness_into_session` + the room/continuation shell pair · `JournalScope`
 accessors. 6 new tests; see D12–D15.
 
-**SEG 4+ (remaining)** — pipeline `run_for_pack` registration routing ·
+**SEG 4 (done — FINAL)** — pipeline `run_for_pack` registration routing ·
 store.rs session-side retrieval-run/finalize/delete variants +
 `OffRecordSession::vault_meta_put`/`vault_meta_get` · ppr reader
 generalization · `SessionVault::search_text` · claim.rs ScopedRead ·
-context_pack.rs · K8 receipt-verb deletion + the pre-close census ·
-oracle arming (7 stubs + seam helpers).
+K8 receipt-verb deletion + the pre-close census (had already landed in seg 3;
+verified by repo grep) · oracle arming (7 stubs + seam helpers). ONE-1728 is
+COMPLETE.
 
 ## Decisions
 
@@ -300,6 +301,134 @@ FAILS, as it must; (b) deleting the `route.revalidate()?` call from
 not evidence that the apply entry CALLS it, and the facade tests never mint a
 route across a flip. A guard with no test that fails when it is deleted is not
 a guarded invariant.
+
+**SEG 4 (done: 4bcc0e6, 8c855d7, fe55281, b1831e7 + this commit) — FINAL.**
+The retrieval half of §7: bm25/ppr reader generalization · store.rs
+extract-parameterized retrieval-run writers + `impl SessionStoreView` ·
+pipeline `run_for_pack` registration routing + the base-only embed-enqueue
+guard · `OffRecordSession::{search_text, vault_meta_put, vault_meta_get}` ·
+claim.rs ScopedRead session composition · all seven P4a oracle stubs armed +
+their seam · the `tests/session_overlay_spec.rs` public-API acceptance spec.
+See D16–D20.
+
+## Seg-4 decisions
+
+- **D16 — the retrieval-run writers extract to target-parameterized FREE
+  FUNCTIONS, exactly the K5 shape from seg 3.** `&self` methods cannot be
+  target-parameterized, so `record_retrieval_run_with_visibility`,
+  `delete_retrieval_run`, `finalize_context_pack_retrieval_run`, and the
+  `retrieval_runs` READER each become `stage_*`/`read_*` free functions over
+  `&impl ManifestDbs`, with the `Store` method reduced to "open a txn, call
+  it, commit". Byte-identical base behavior is then not a claim under test but
+  a consequence — the base path IS the extracted body. The session siblings on
+  `impl SessionStoreView` take the caller's `wtxn` rather than opening their
+  own, because a session write must commit in the same transaction its overlay
+  segment stages into.
+- **D17 — the pipeline gets a `session_view` FIELD, not a session entry
+  point.** The blueprint scopes 1728's pipeline.rs delta to the registration
+  site; RETRIEVAL-API owns the rest of `run_for_pack`. An additive
+  `Option<&SessionStoreView>` on the builder, read at exactly one place (the
+  registration match) plus the one-line `run_with_pending_vectors` enqueue
+  guard, is the smallest edit that satisfies K10 without touching the
+  function's interior. Canonical callers pass `None` and are behaviorally
+  unchanged — asserted by the rollup arm of the new spec, not just by reading.
+- **D18 — session `search_text` SHARES the canonical body rather than
+  reimplementing it.** `Vault::search_text_with_profile_and_telemetry` split
+  into `search_text_scored(target, ...)` + `vault_search_retrieval_run_record`,
+  and both the canonical and session paths call them. The tempting alternative
+  — a session-local copy of the scoring-plus-telemetry sequence — would have
+  been ~30 lines that must be kept in sync with a path nobody edits with the
+  room in mind. Sharing makes "scoring is identical in-room" a type fact; only
+  the TARGET and where the run row lands differ.
+- **D19 — ScopedRead composes through ONE accessor chokepoint.** The type had
+  two `self.vault.store.entities.get(...)` sites; both now go through
+  `fn entities()`, which answers with the session view when the read was
+  opened in-session and base otherwise. Threading a target through each call
+  site would have left the next added read defaulting to base silently. Policy
+  and admission predicates are untouched: the union widens what is VISIBLE,
+  never what is permitted.
+- **D20 — the P4a seam surfaces that survive with no lib-target caller are
+  ANNOTATED with their consuming ticket, not deleted.** The lane is
+  deletion-shy by law and these are the pinned downstream contracts
+  (`vault_meta_put`/`vault_meta_get` → 1730; `in_session`/`scoped_read_in_session`
+  → 1729; the finalize/delete/read session siblings → 1729+1730). Each carries
+  an `#[allow(dead_code, reason = ...)]` naming who consumes it. The genuinely
+  unclaimed ones are on the delete-list below rather than removed in-lane.
+
+## THE SEG-4 BUG (found by arming, not by inspection)
+
+`witness_into_session` built ONE `SessionStoreView` for the whole `BatchOp`
+program. A view FREEZES its overlay snapshot at construction, which is
+invisible for independent row writes but wrong for every read-modify-write
+accumulator: BM25's `total_docs`. A turn carrying two indexed documents (a
+message and its summary) had both `index_text` calls read the same pre-turn
+count and both write `before + 1`, leaving 2 postings under a doc count of 1.
+The next in-room search then failed closed with
+`CorruptedIndex("posting list length exceeds total_docs")`.
+
+Three things are worth recording. (a) It was invisible to every seg-3 test,
+because seg 3 never READ the room back through a scoring path — it only
+asserted rows existed. (b) The oracle found it on the first arming run, which
+is the whole argument for the oracle existing. (c) The fix is one line of
+structure — each entry applies against a freshly taken, segment-aware view
+(`SessionOverlay::snapshot` already returns the active segment's preview) —
+and atomicity is untouched: still one base txn, one overlay segment, one
+commit. `overlay_read_your_writes_inside_txn_segment` is the regression pin.
+
+## Cheap gate — seg 4
+
+`cargo fmt --check` clean · `cargo clippy --all-targets --all-features
+-- -D warnings` CLEAN (zero warnings, not merely zero errors) ·
+`cargo clippy --all-targets --features sync` has exactly ONE warning,
+`put_replicated is never used`, which is **PRE-EXISTING** — verified by
+checking out the seg-3 tip `e699bc6` and reproducing it there. Charged to no
+lane.
+
+`cargo test -p oneiron --all-features`: **3172 lib passed / 0 failed** plus
+every integration target green (incl. the 3 new `session_overlay_spec` arms
+and 18/18 `branch_store_oracle`, of which all seven ONE-1728 stubs are now
+armed and passing).
+
+Flake guard applied once: the first full run hit
+`attempt_queue::tests::attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields`
+— one of the three tracing-subscriber tests named in the seg-0 BASE-RED note.
+It passes in isolation and `git diff e699bc6 -- crates/oneiron/src/attempt_queue*`
+is EMPTY, so this segment cannot be its cause. Re-run fully green.
+Pre-existing parallel-load class, unchanged since seg 0.
+
+## Post-merge DELETE-LIST (not this lane — deletion-shy by law)
+
+Per the seg-4 brief: surfaces that did not find a consumer are banked here
+rather than cut in-lane.
+
+1. `store.rs` `RetrievalRunId::from_bytes` — no P4a path reconstructs a run id
+   from raw bytes. Cut unless ONE-1730's promote replay claims it.
+2. `store.rs` `manifest_dbs!` accessors with no write-target-parameterized
+   caller after P4a: `ppr_cache_deps`, `sync_state`, `sync_queue`,
+   `attempt_records`, `attempt_ready`, `attempt_dedupe`. **Do not cut these
+   individually without re-reading D9** — the trait is macro-generated from
+   ONE list precisely so it cannot drift from `Store`/`SessionStoreView`, so
+   removing a name from the list is only correct if that database is genuinely
+   never addressed by target. Six of the original seven predicted survivors
+   remain; `ppr_cache` was consumed by seg 4's ppr reader generalization, which
+   is the seg-3 prediction landing exactly as written.
+
+## Seg-4 census (brief item (b)): does anything bypass the overlay?
+
+- **K10 `SessionWriteRoute::revalidate` does NOT re-read the vault.** It
+  compares its recorded `mode_generation` against `SessionOverlay::mode_generation`,
+  read under the overlay's own lifecycle mutex. There is no vault or store
+  access on that path, so there is no bypass to close.
+- **Session retrieval entries hold no direct base reads.** Every
+  `self.vault.store.*` in `off_record/lifecycle.rs`'s session surface is either
+  `session_view(...)` (constructing the composed view), `env.read_txn()`
+  (the transaction the view reads in), or the deliberate `RouteTarget::Base`
+  arm, which is on-record by definition.
+- **embed.rs / sync/window.rs are structurally unreachable from a room.** The
+  session path never calls `enqueue_pending_embedding_jobs` (K6 is a
+  `debug_assert!` tripwire, not a filter — a filter would absorb the routing
+  bug it exists to surface), and the window scrubber operates on base fence
+  rows that session content never enters.
 
 ## Next-step INTENT
 
