@@ -202,9 +202,82 @@ Files: `crates/oneiron/src/secret_custody.rs`,
 
 ---
 
+## C5 — P1 malformed floor fails OPEN to the default T2 band
+
+**Trace (confirmed).** `decode_floor_keys`' `tier_at` collapsed
+`MapValue::Missing` and `MapValue::Duplicate` to the same `None`, and a
+`Present` row whose value would not parse as a tier grade also became `None`:
+
+```rust
+MapValue::Present(v) => as_u64(v).and_then(|n| CustodyTier::from_u8(...)),
+MapValue::Missing | MapValue::Duplicate => None,
+```
+
+`None` means "leave the default", and the defaults are the PERMISSIVE band
+(`portable`/`device_bound` = `T0..T2`). So a manifest that intended to pin
+portable to `T0` but wrote the row wrong resolved to the wide default, and
+`register_secret` then admitted the T2 bindings the floor existed to forbid.
+`rotation_max_age_secs` and `env_bindings` failed open the same way (a
+present-but-wrong-typed row silently became `None` / was skipped).
+
+**Fix.** Absent stays default — that is what "declares no floor" means.
+PRESENT-but-unreadable is an ERROR: wrong MessagePack type, tier grade outside
+`0..=2`, or DUPLICATED (the intended value is ambiguous, so there is no
+declared value to honour). `decode_floor_keys` returns `Result<Option<_>>` and
+`SecretCustodyFloor::resolve` propagates. `Ok(None)` now means only "this body
+is not a MessagePack map" — the POLICY_MANIFEST body schema belongs to
+`crate::gate`, and a body this module cannot open carries no floor rows.
+
+The direction is the whole point: a floor may only ever narrow, so silently
+reverting a declared narrowing is the one failure mode this type exists to
+prevent.
+
+**Tests (all three mutation-verified together).** New `put_policy_manifest`
+fixture writes a real POLICY_MANIFEST row (store put + type-index row) the way
+the engine seeder does, so the floor resolves over exactly the bodies it does
+in production.
+* `malformed_floor_row_errors_instead_of_defaulting_open` — `portable.max`
+  written as the string `"0"`; `resolve` errors, and `register_secret` refuses
+  a portable-T2 binding instead of admitting it against the widened default
+  (name left free).
+* `duplicated_floor_row_errors_because_the_intended_value_is_ambiguous` — two
+  `cross_vault.max` rows; `resolve` errors rather than picking one.
+* `absent_floor_rows_still_take_the_defaults` — the CONTROL: a present,
+  readable manifest declaring no custody rows resolves to the defaults and
+  still admits a portable T2 binding. Absence is not malformation.
+
+Mutation: restoring the old collapse-to-`None` fails the first two and leaves
+the control green — exactly the asymmetry the fix is about.
+
+Files: `crates/oneiron/src/secret_custody.rs`,
+`crates/oneiron/src/secret_custody/tests.rs`.
+
+---
+
+## Final gates
+
+* `cargo fmt --check` — clean.
+* `cargo clippy -p oneiron --all-targets --all-features` — zero errors; the
+  only warnings are the pre-existing `calendar/claims.rs` dead-code block (B1).
+  No warning in any file this lane touched. NOT green under `-D warnings`, and
+  could not have been on this tree: see B1.
+* `cargo test -p oneiron --all-features --no-fail-fast` — **3598 passed**
+  across all binaries; the only failures are the three pre-existing calendar
+  tests (B2), verified red on clean `42cb5e6`. Lib count went 3290 → 3297
+  (+7 new regression tests, one per fix plus C5's two extra arms and control).
+* Flake note: one run of the loaded full suite also reported
+  `batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once`.
+  It is green in the run before and after, and 3/3 in isolation. The test
+  compares `unix_seconds_now()` captured before the fold against the fold's own
+  observation clock, so it is wall-clock-boundary sensitive under load. Nothing
+  in this lane touches the authority fold. Banked as B3, not attributed here.
+
+---
+
 ## Banked (legitimate maximalism / out-of-packet), one per row
 
 | # | Item | Why banked |
 |---|---|---|
 | B1 | `crates/oneiron/src/calendar/claims.rs` carries ~53 `never used` dead-code warnings on clean `42cb5e6`, so `cargo clippy -- -D warnings` cannot be green on this tree for ANY lane. | Pre-existing, another lane's packet, charged to no lane. Needs its own mechanical cleanup lane. |
+| B3 | `batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once` is wall-clock-boundary sensitive: it asserts `migrated >= unix_seconds_now()` captured before the fold, so a loaded parallel run can cross a second boundary. Observed failing once in a loaded full run, green immediately before/after and 3/3 in isolation. | Pre-existing test-design flake in another lane's file; nothing in this lane touches the authority fold. Wants a monotone/injected clock rather than a re-run. |
 | B2 | Three tests fail on clean `42cb5e6`: `calendar::claims::tests::calendar_claim_validator_rejects_malformed_shapes`, `calendar::claims::tests::calendar_claims_require_event_subjects`, `claim::tests::write_door_validates_calendar_claim_structure`. VERIFIED by stashing this lane's work, checking out `42cb5e6`, and running the three by name — all three FAIL there. Same root as B1: `validate_calendar_claim_structure` is `never used`, i.e. the calendar write door lost its wiring on main. | Pre-existing red on the merged tree, charged to no lane. It IS a real defect on main and should get a ticket, but fixing it here would be an unrelated packet. |

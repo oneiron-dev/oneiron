@@ -178,6 +178,137 @@ fn resolve_on_empty_vault_returns_defaults() {
     assert_eq!(floor, SecretCustodyFloor::default());
 }
 
+/// Writes a POLICY_MANIFEST row carrying `rows` as its body, the way the
+/// engine seeder does (store-level put + type-index row) — the custody floor
+/// resolves over exactly these bodies.
+fn put_policy_manifest(vault: &Vault, seed: u8, rows: Vec<(Value, Value)>) {
+    use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(rows)).expect("encode manifest body");
+    let id = EntityId::from_bytes([seed; ENTITY_ID_LEN]).expect("manifest id");
+    let learned_at = 2_u64;
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+    for _ in 0..3 {
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+    }
+    payload.extend_from_slice(&data);
+
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    vault
+        .store
+        .entities
+        .put(&mut wtxn, id.as_bytes(), &payload)
+        .expect("put manifest");
+    let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+    vault
+        .store
+        .type_index
+        .put(&mut wtxn, &type_key, &[])
+        .expect("type index row");
+    wtxn.commit().expect("commit manifest");
+}
+
+#[test]
+fn malformed_floor_row_errors_instead_of_defaulting_open() {
+    // C5 MALFORMED-FLOOR: `decode_floor_keys` mapped a present-but-unreadable
+    // row to None, so `resolve()` handed back the PERMISSIVE default band and
+    // `register_secret` admitted bindings the floor was written to forbid.
+    // A floor may only narrow; silently reverting a declared narrowing is the
+    // one direction it must never fail.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest(
+        &vault,
+        0x6D,
+        vec![(
+            // Intent: pin portable to the door-only tier. Written wrong — a
+            // string where the integer tier grade belongs.
+            Value::from(floor_keys::PORTABLE_MAX),
+            Value::from("0"),
+        )],
+    );
+
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let err = SecretCustodyFloor::resolve(&vault.store, &rtxn)
+        .expect_err("a present-but-malformed floor row must not default open");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    drop(rtxn);
+
+    // The door that consumes the floor refuses too, instead of admitting a T2
+    // binding against the silently-widened default.
+    let rec = record(
+        "portable-t2",
+        CustodyClass::CustodyPortable,
+        b"v",
+        vec![binding("connector:gmail", CustodyTier::T2LocalRegistered)],
+    );
+    let err = vault
+        .register_secret(rec)
+        .expect_err("registration must not proceed on an unreadable floor");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    assert_eq!(
+        vault.resolve_secret_ref("portable-t2").expect("resolve"),
+        None
+    );
+}
+
+#[test]
+fn duplicated_floor_row_errors_because_the_intended_value_is_ambiguous() {
+    // Two rows for one floor key: neither can be called the declared value, so
+    // the floor is unreadable rather than "whichever we happened to see".
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest(
+        &vault,
+        0x6E,
+        vec![
+            (Value::from(floor_keys::CROSS_VAULT_MAX), Value::from(0_u64)),
+            (Value::from(floor_keys::CROSS_VAULT_MAX), Value::from(2_u64)),
+        ],
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let err = SecretCustodyFloor::resolve(&vault.store, &rtxn)
+        .expect_err("a duplicated floor row must not resolve");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn absent_floor_rows_still_take_the_defaults() {
+    // The control for the two tests above: a manifest is PRESENT and readable
+    // but declares no custody floor. Absence is not malformation — it means
+    // "this pack narrows nothing", and the defaults stand.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest(
+        &vault,
+        0x6F,
+        vec![(Value::from("some.other.policy.key"), Value::from(1_u64))],
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let floor = SecretCustodyFloor::resolve(&vault.store, &rtxn).expect("resolve");
+    assert_eq!(floor, SecretCustodyFloor::default());
+    drop(rtxn);
+
+    // And a portable T2 binding still registers under those defaults.
+    let rec = record(
+        "portable-default",
+        CustodyClass::CustodyPortable,
+        b"v",
+        vec![binding("connector:gmail", CustodyTier::T2LocalRegistered)],
+    );
+    vault
+        .register_secret(rec)
+        .expect("default floor still admits a portable T2 binding");
+}
+
 #[test]
 fn register_then_resolve_and_metadata() {
     let (_tmp, vault) = temp_vault();

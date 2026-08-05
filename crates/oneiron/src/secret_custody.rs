@@ -316,9 +316,9 @@ impl SecretCustodyFloor {
     }
 
     /// Resolves the floor from every POLICY_MANIFEST body in the vault.
-    /// Most-restrictive wins per field. Malformed or unexpected floor rows
-    /// are ignored (a floor that cannot be parsed simply does not narrow);
-    /// the floor's job is to narrow, never to widen past the defaults.
+    /// Most-restrictive wins per field. An ABSENT floor row takes the default
+    /// — that is what "no floor declared" means. A row that is PRESENT but
+    /// unreadable is an ERROR: see [`decode_floor_keys`].
     pub fn resolve(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Self> {
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 
@@ -340,7 +340,7 @@ impl SecretCustodyFloor {
             if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
                 continue;
             }
-            if let Some(partial) = decode_floor_keys(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+            if let Some(partial) = decode_floor_keys(&raw[ENTITY_METADATA_HEADER_LEN..])? {
                 floor.merge(partial);
             }
         }
@@ -349,58 +349,80 @@ impl SecretCustodyFloor {
 }
 
 /// Decodes the `secret.custody.*` rows out of one POLICY_MANIFEST body into a
-/// partial floor (absent rows leave the defaults). Two packs with conflicting
-/// rows resolve most-restrictive per field via [`SecretCustodyFloor::merge`].
-fn decode_floor_keys(body: &[u8]) -> Option<SecretCustodyFloor> {
+/// partial floor. Two packs with conflicting rows resolve most-restrictive per
+/// field via [`SecretCustodyFloor::merge`].
+///
+/// ABSENT rows leave the defaults — that is what "this pack declares no floor
+/// for that field" means. A row that is PRESENT but unreadable (wrong
+/// MessagePack type, tier grade outside `0..=2`, or DUPLICATED so the intended
+/// value is ambiguous) is an ERROR, not a default. Defaulting it would widen
+/// the vault's posture back to the permissive `T0..T2` band — a floor may only
+/// ever narrow, so silently reverting a declared narrowing is the one failure
+/// direction this type exists to prevent. `Ok(None)` means only that this body
+/// is not a MessagePack map: the POLICY_MANIFEST body schema belongs to
+/// [`crate::gate`], and a body this module cannot open carries no floor rows
+/// for it to read.
+fn decode_floor_keys(body: &[u8]) -> Result<Option<SecretCustodyFloor>> {
     use std::io::Cursor;
 
     let mut cursor = Cursor::new(body);
-    let value = rmpv::decode::read_value(&mut cursor).ok()?;
-    let Value::Map(entries) = value else {
-        return None;
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return Ok(None);
     };
 
-    let tier_at = |key: &str| -> Option<CustodyTier> {
+    let tier_at = |key: &'static str| -> Result<Option<CustodyTier>> {
         match single_map_value(&entries, key) {
-            MapValue::Present(v) => {
-                as_u64(v).and_then(|n| CustodyTier::from_u8(u8::try_from(n).ok()?))
-            }
-            MapValue::Missing | MapValue::Duplicate => None,
+            MapValue::Missing => Ok(None),
+            MapValue::Present(v) => as_u64(v)
+                .and_then(|n| CustodyTier::from_u8(u8::try_from(n).ok()?))
+                .map(Some)
+                .ok_or_else(|| invalid_body(key)),
+            MapValue::Duplicate => Err(invalid_body(key)),
         }
     };
 
     let mut floor = SecretCustodyFloor::default();
-    if let Some(t) = tier_at(floor_keys::PORTABLE_MIN) {
+    if let Some(t) = tier_at(floor_keys::PORTABLE_MIN)? {
         floor.portable.min = t;
     }
-    if let Some(t) = tier_at(floor_keys::PORTABLE_MAX) {
+    if let Some(t) = tier_at(floor_keys::PORTABLE_MAX)? {
         floor.portable.max = t;
     }
-    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MIN) {
+    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MIN)? {
         floor.device_bound.min = t;
     }
-    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MAX) {
+    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MAX)? {
         floor.device_bound.max = t;
     }
-    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MIN) {
+    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MIN)? {
         floor.cross_vault.min = t;
     }
-    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MAX) {
+    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MAX)? {
         floor.cross_vault.max = t;
     }
-    if let MapValue::Present(v) = single_map_value(&entries, floor_keys::ROTATION_MAX_AGE_SECS) {
-        floor.rotation_max_age_secs = as_u64(v);
+    match single_map_value(&entries, floor_keys::ROTATION_MAX_AGE_SECS) {
+        MapValue::Missing => {}
+        MapValue::Present(v) => {
+            floor.rotation_max_age_secs =
+                Some(as_u64(v).ok_or(invalid_body(floor_keys::ROTATION_MAX_AGE_SECS))?);
+        }
+        MapValue::Duplicate => return Err(invalid_body(floor_keys::ROTATION_MAX_AGE_SECS)),
     }
-    if let MapValue::Present(Value::Map(rows)) =
-        single_map_value(&entries, floor_keys::ENV_BINDINGS)
-    {
-        for (k, v) in rows {
-            if let (Some(k), Some(v)) = (k.as_str(), v.as_str()) {
+    match single_map_value(&entries, floor_keys::ENV_BINDINGS) {
+        MapValue::Missing => {}
+        MapValue::Present(Value::Map(rows)) => {
+            for (k, v) in rows {
+                let (Some(k), Some(v)) = (k.as_str(), v.as_str()) else {
+                    return Err(invalid_body(floor_keys::ENV_BINDINGS));
+                };
                 floor.env_bindings.insert(k.to_owned(), v.to_owned());
             }
         }
+        MapValue::Present(_) | MapValue::Duplicate => {
+            return Err(invalid_body(floor_keys::ENV_BINDINGS));
+        }
     }
-    Some(floor)
+    Ok(Some(floor))
 }
 
 // ---------------------------------------------------------------------------
