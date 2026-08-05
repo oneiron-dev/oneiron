@@ -41,8 +41,16 @@ ON `ingest.rs` is 1810-ONLY. Must NOT touch: `session_lifecycle.rs`, `facade.rs`
       `IngestSourceConfig.adapter_skill`, `NormalizedIngestNote`,
       `NormalizedIngestBatch.note_fallback`, 6 new document-shaped error variants,
       2-entry registry, lib.rs re-exports, fixture, 13 new tests
-- [x] Gate: `cargo test -p oneiron --lib ingest` → 36 passed, 0 failed
-- [ ] Gate: `cargo test -p oneiron --all-features` (running, background b5ukb5rwi)
+- [x] Gate: `cargo test -p oneiron --lib ingest` → 38 passed, 0 failed
+- [x] Gate: `cargo check -p oneiron --all-features --all-targets` → clean
+- [x] Gate: `cargo clippy -p oneiron --all-features --all-targets` → zero warnings
+- [x] Gate: `cargo test -p oneiron --all-features --lib` → **3164 passed, 0 failed**
+      (split into two runs to fit the harness timeout: 2774 with sync/hnsw skipped,
+      then 390 sync+hnsw. A first single-shot run was SIGTERM'd by the harness
+      timeout at 600s while other lanes held the cargo lock — zero test failures in
+      its output, external kill, not a red.)
+- [x] Gate: `cargo test -p oneiron --all-features --tests` → **3450 passed, 0 failed**
+- [x] Gate: `cargo fmt -p oneiron --check` → clean (rustfmt applied to 2 files, retested)
 
 ## Design decisions worth flagging at screen
 

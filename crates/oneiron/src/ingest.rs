@@ -546,9 +546,9 @@ impl IngestSource for MeetingTranscriptSource {
             }
 
             for word_ref in document_array(turn, &format!("turns[{index}].source_word_ids"))? {
-                let word_ref = word_ref
-                    .as_str()
-                    .ok_or_else(|| document_field_error(&format!("turns[{index}].source_word_ids")))?;
+                let word_ref = word_ref.as_str().ok_or_else(|| {
+                    document_field_error(&format!("turns[{index}].source_word_ids"))
+                })?;
                 if !word_ids.contains(word_ref) {
                     return Err(IngestError::UnknownWordReference {
                         source_id: MEETING_TRANSCRIPT_SOURCE_ID,
@@ -625,7 +625,9 @@ fn note_fallback(
         .ok_or_else(|| document_field_error("note_fallback"))?;
 
     let title = normalize_space(document_string(note, "note_fallback.title")?);
-    let text = document_string(note, "note_fallback.body")?.trim().to_owned();
+    let text = document_string(note, "note_fallback.body")?
+        .trim()
+        .to_owned();
     if title.is_empty() || text.is_empty() {
         return Err(document_field_error("note_fallback"));
     }

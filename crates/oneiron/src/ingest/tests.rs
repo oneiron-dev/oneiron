@@ -645,7 +645,10 @@ fn meeting_transcript_rejects_an_empty_recording_id() {
     let err = INGEST_SOURCE_REGISTRY
         .normalize(
             MEETING_TRANSCRIPT_SOURCE_ID,
-            &meeting_transcript_json(&[("\"recording_id\": \"sha256:rec\"", "\"recording_id\": \" \"")]),
+            &meeting_transcript_json(&[(
+                "\"recording_id\": \"sha256:rec\"",
+                "\"recording_id\": \" \"",
+            )]),
         )
         .expect_err("blank recording id must fail");
 
