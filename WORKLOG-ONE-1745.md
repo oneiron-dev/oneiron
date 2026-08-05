@@ -335,3 +335,193 @@ identity_topology (calendar + secret_custody base-red remain, charged to no
 lane) · identity_topology:: 58/58 · merge_split_oracle 14 passed / 0 failed / 9
 ignored · receipt 36/36 · scoped nextest union 211/211 incl. the O(N²) canary
 `identity_topology_receipt_scan_caps_visited_rows`. NOT PUSHED.
+
+## FINDER-FIX (Opus, 2026-08-06) — 5 Sol-max findings adjudicated
+
+The Sol-max finder returned 5 findings the chain verdict leg never adjudicated
+(script defect: finder output never reached it). Adjudicated one by one against
+the branch tip `53e7aa8f`. **4 REAL and fixed at the chokepoint; 1 was a REAL
+CONTRACT defect whose proposed BEHAVIOUR change is reasoned-rejected with
+derivation.** Every code fix is mutation-verified: the guard was reverted and
+the owning test watched go RED, then restored — each mutation failed ONLY its
+own test (61 passed / 1 failed, five times over).
+
+### F1 — REAL (P1, `sync-order-divergence`). Fixed.
+
+The trace holds. `reconcile_identity_topology_for_materialized_entities_in_txn`
+decided relevance from `op.participants()` + actor. A split's participants are
+`entity + heads`; the reassignment map's CLAIM ids are deliberately NOT
+participants (a participant must exist and be `Active` at the door, and r2 lets
+a decision name an item this vault does not hold). So:
+
+- claim-before-event → the reconcile at event ingest sees the claim, records the row;
+- event-before-claim → the arriving claim wakes nothing, and
+  `claims_assigned_to(head)` stays empty until an unrelated full reconciliation.
+
+Two peers, same ledger, different projection — divergence by delivery order
+alone. It is not sync-only: the LOCAL apply door has the identical shape when a
+map names a claim written later, which is what the new test exercises.
+
+**Fix (chokepoint):** new `IdentityTopologyOp::deferred_reassignment_items()`
+sitting beside `participants()` — the ids that are not participants but whose
+materialization changes what a replay records — and the reconcile relevance test
+now reads `participants ∪ deferred`. Split only, deliberately: a facet
+assignment's witness is its canonical `facet_of` edge, which replicates as an
+ordinary edge and is derived by no reconcile pass, so a facet trigger would
+re-run a door that has nothing to record.
+
+`participants()` itself was NOT widened — it also feeds the fan-out bound, the
+door's existence/`Active` validation, and the amendment-scope pin, all three of
+which would then demand that a mapped claim already exist.
+
+**Test:** `a_mapped_claim_arriving_after_its_split_still_gets_its_row` runs BOTH
+orderings and asserts the projections are equal. It also pins the honest reading
+of the stamp: the late-claim event stays at `applied 0/0` because that is what
+the DOOR recorded, while the reconcile-derived index carries the row.
+Mutation: reverting to participants-only → that test alone FAILS.
+
+### F2 — REAL (P1, `reassignment-origin-integrity`). Fixed.
+
+`resolve_reassignment_in_txn` accepted any stored entity whose type is CLAIM. It
+never received `origin`, so nothing checked that a mapped claim was the split /
+facet entity's. `evaluate_transition` validates the map's TARGETS
+(`UnknownHead` / `UnknownFacet` / cross-shape), never its ITEMS' provenance —
+and the map replicates verbatim on a peer's event. A map naming entity B's claim
+therefore filed B's claim under A's head (split arm) or stamped B's claim
+`FacetOf` a mask A owns (facet arm), which both query surfaces then report as
+fact.
+
+**Fix (chokepoint):** `origin` is threaded into the resolver — the ONE place both
+doors (apply and reconcile) resolve rows — and a row survives only if the claim
+carries a canonical `claim_of` edge to `origin`, as a point lookup on
+`edges_out`. Membership is read exactly the way this family's own reader reads
+it (`claims_remaining_on_origin` → `claims_for_subject` → inbound `claim_of`),
+so there is one derivation, not two.
+
+Deliberately NOT the merge-closure reading (a claim inherited by `origin`
+through a merge). That reading would have to move BOTH readers together or the
+family would disagree with itself; it is a strictly-widening change and stays
+available. Noted in the resolver doc.
+
+**Drop, not `Err`** — and that is a ruling, not a shortcut. The same resolver
+runs on the replicated reconcile path, where a typed error would let a planted
+body abort the whole reconcile (the ONE-1604-D1 revocation-suppression shape
+this file already fails soft against elsewhere). Dropping is also the ratified
+posture for the sibling case — a row naming an item this vault holds no CLAIM
+for records nothing — and it inherits that case's visible witness: the
+declared-vs-applied gap the receipt projects. No row written, no stamp staged,
+contamination closed.
+
+**Test:** `reassignment_records_only_claims_the_origin_owns` covers both arms —
+the split does not file the stranger's claim and the event reads
+`declared (2,0)` vs `applied (1,0)`; the facet mints no cross-identity
+`facet_of` stamp. Mutation: dropping the membership check → that test alone FAILS
+(oracle stays green — every oracle fixture maps claims of its own origin).
+
+### F3 — REAL DEFECT, but in the CONTRACT, not the code. Doc fixed; the proposed behaviour change is REASONED-REJECTED.
+
+The finding is right that the file contradicted itself: `ReassignmentMap.entries`
+said "items absent from the map are residue" while `ambiguous_residue_claims`
+says the opposite in as many words ("a claim the map never named is simply not
+part of the decision, while a residue row is a recorded judgment that the claim
+could not be attributed"). One of the two had to go.
+
+**The code's reading is the correct one, on three independent grounds:**
+
+1. r2 asks for unattributable residue to be *explicitly marked* and queryable.
+   Deriving residue as `claims_on_origin MINUS explicitly-mapped` deletes the
+   word EXPLICIT: a claim nobody looked at becomes indistinguishable from one a
+   decision examined and could not attribute. That is the judgment r2 exists to
+   record.
+2. Unmapped claims are ALREADY queryable, by the reader built for them:
+   `claims_remaining_on_origin` = everything subject-bound to the origin minus
+   what a split routed away. `ambiguous_residue_claims` is a SUBSET of it. The
+   two readers are not redundant; collapsing them destroys information and
+   builds no new query.
+3. It would unbind the applied residue COUNT from the map the event stores — the
+   count would include claims the decision never named, so `applied ≤ declared`
+   (the F5 invariant, which the receipt's declared-vs-applied gap depends on)
+   could no longer be stated at all.
+
+**Fix applied:** the `ReassignmentMap.entries` doc now states the distinction
+and names the reader for each half, so "one derivation, one reader" is written
+down where the next reader will look. No behaviour change; no test change (the
+behaviour was already pinned by
+`split_map_application_records_assignment_without_rewriting_subjects` and the
+oracle's `ms03_reassignment_residue_stays_ambiguous_on_original`).
+
+### F4 — REAL (P2, `replicated-impossible-facet-proposal`). Fixed.
+
+Confirmed at both doors. The local door refuses `Proposed` on a facet op
+(`IdentityTopologyUnarmed("facet proposal")`, ruling 4 above) because a parked
+facet mints nothing yet must name its masks, and `proposal_scope_target` returns
+`Unarmed` for a facet — so a park that DID get written could never be ruled on.
+The stateless replicated validator rejected only `Rejected`: a well-shaped
+`Facet` body with `approval: Proposed` passed `evaluate_transition` and was
+admitted, persisting exactly the unresolvable orphan the local path calls
+corruption.
+
+**Fix (same rule, both doors):**
+`validate_identity_topology_event_stateless` now rejects a non-effective facet
+body. To keep the two doors from drifting, the consent predicate was lifted to
+ONE free fn `is_effective_approval(approval)`; `IdentityOpWrite::is_effective`
+now calls it. Both facet checks (fan-out bound, propose lane) live in one
+`if let IdentityTopologyOp::Facet(..)` arm.
+
+**Test:** `a_parked_facet_event_is_refused_at_the_replicated_door_too` — with an
+`Auto` control so the rejection is provably the consent axis and nothing else,
+plus the local door's answer for the same shape, asserting the two agree.
+Mutation: deleting the propose-lane check → that test alone FAILS.
+
+### F5 — REAL (P2, `applied-count-invariant`). Fixed.
+
+`decode_applied_counts` accepted any `u64`, nothing compared them with the map or
+the consent status, and `receipt.rs` projects them verbatim as an audit field. A
+peer could state a park that applied rows, or an effective event whose applied
+count exceeds its own map's arity.
+
+**Fix (stateless admission, the one path every admitting door runs).** Two
+bounds, both derivable from the record ALONE — no vault, so the check belongs
+exactly here:
+
+- a non-effective event applied nothing: `applied_assigned == applied_residue == 0`;
+- `applied_assigned ≤ declared_assigned` AND `applied_residue ≤ declared_residue`.
+
+The per-class bound is exact, not a heuristic: the resolver only ever DROPS a
+row (bad item shape, not a stored CLAIM, not the origin's — F2), and
+`ReassignmentContext::resolve` maps `Residue → None` and every other target to
+`Some`, so a surviving row never changes class. Item uniqueness is already
+enforced by `DuplicateReassignmentItem`, so no row is counted twice.
+
+**Test:** `applied_counts_are_bounded_by_the_map_and_the_consent_axis` — exact
+and under-applied admitted, over-applied rejected in EITHER class in either
+direction, park-with-counts rejected, park-at-zero admitted. Mutation: each half
+deleted separately → that test alone FAILS, both times.
+
+### Diff + gates
+
+Files: `crates/oneiron/src/identity_topology.rs` ·
+`crates/oneiron/src/identity_topology/tests.rs`. `receipt.rs` and
+`tests/merge_split_oracle.rs` were in scope and NOT touched — F5 is fixed at
+admission, so the projector stays the pure record read the blueprint pinned, and
+no oracle assert needed arming or weakening. No `Cargo.toml` / `Cargo.lock`.
+
+- `cargo fmt --all -- --check` — clean.
+- `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` — the
+  only files reporting are `calendar/claims.rs` and `secret_custody.rs`,
+  **both BASE-RED and charged to no lane** (neither is in this lane's diff;
+  `git diff 485ec14 --name-only` still lists seven paths, none of them).
+- `--lib identity_topology::` — **62 passed / 0 failed** (58 before, +4).
+- `--lib identity_redirect::` 16/16 · `--lib receipt::` 36/36 (incl. the O(N²)
+  canary) · `--lib sync::` 333/333.
+- `--test merge_split_oracle` — 14 passed / 0 failed / 9 ignored, unchanged.
+- `--test sync_bridge` 24 · `sync_convergence_props` 20 ·
+  `sync_delete_propagation` 7 · `sync_byzantine_lww` 9 · `receipt_context` 4 ·
+  `gate_regression` 3 — all green.
+- FULL `--lib --no-fail-fast` — **3386 passed / 3 failed / 17 ignored**. The 3
+  are the SAME base-red calendar-claim trio this worklog already documented
+  (`calendar_claim_validator_rejects_malformed_shapes`,
+  `calendar_claims_require_event_subjects`,
+  `write_door_validates_calendar_claim_structure`), root-caused above to
+  `calendar/claims.rs`'s validator family being dead code on main.
+- NOT PUSHED — workers never push.

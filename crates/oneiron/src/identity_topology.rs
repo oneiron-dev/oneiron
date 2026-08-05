@@ -330,7 +330,16 @@ pub enum ReassignmentTarget {
 /// stated; MS-01 validates targets and records — application arms there.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReassignmentMap {
-    /// Per-item assignments; items absent from the map are residue.
+    /// Per-item assignments. An item the map does not name is NOT residue —
+    /// it is outside the decision entirely: it stays on the origin and reads
+    /// back through [`Vault::claims_remaining_on_origin`] (everything
+    /// subject-bound to the origin minus what a split routed away).
+    /// [`ReassignmentTarget::Residue`] is the stronger, r2-mandated
+    /// statement — the decision LOOKED at the item and could not attribute
+    /// it — and only those rows answer [`Vault::ambiguous_residue_claims`],
+    /// a subset of what remains. Collapsing the two would erase the
+    /// "unattributable" judgment AND unbind the applied residue count from
+    /// the map the event stores.
     pub entries: Vec<ReassignmentEntry>,
 }
 
@@ -548,6 +557,37 @@ impl IdentityTopologyOp {
             }
             Self::Facet(op) => vec![op.entity],
             Self::AssertDistinct(op) => vec![op.a, op.b],
+        }
+    }
+
+    /// Ids that are NOT participants but whose later materialization changes
+    /// what a reconcile replay of this op records (ONE-1745).
+    ///
+    /// A reassignment row records only when this vault already holds the
+    /// CLAIM it names — that is deliberate (r2 lets a decision name an item
+    /// a peer does not have), which is exactly why a mapped claim can arrive
+    /// AFTER the event that maps it. Split rows are re-derived from the fold
+    /// at the reconcile door, so the arriving claim has to wake that door or
+    /// the projection diverges by delivery order alone: claim-before-event
+    /// records the row, event-before-claim never does.
+    ///
+    /// Split only. A facet assignment's witness is its canonical `facet_of`
+    /// edge, which replicates as an ordinary edge and is derived by no
+    /// reconcile pass — there is nothing here for a trigger to re-run.
+    /// A map item is never a participant: participants must exist and be
+    /// `Active` at the door, and a map item must not.
+    pub(crate) fn deferred_reassignment_items(&self) -> Vec<EntityId> {
+        match self {
+            Self::Split(op) => op
+                .reassignment
+                .entries
+                .iter()
+                .filter_map(|entry| match entry.item {
+                    ClaimSubject::Entity(item) => Some(item),
+                    ClaimSubject::Edge { .. } => None,
+                })
+                .collect(),
+            Self::Merge(_) | Self::Facet(_) | Self::AssertDistinct(_) => Vec::new(),
         }
     }
 }
@@ -1843,6 +1883,33 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
         ));
     }
     validate_resolution_scope_stateless(record)?;
+    let effective = is_effective_approval(record.approval);
+
+    // ONE-1745: the applied counts are an AUDIT record of what a door
+    // recorded, and the receipt projects them verbatim — so they are BOUNDED
+    // here, on the one path every admitting door runs, rather than trusted
+    // from the wire. Two bounds, both derivable from the record alone:
+    // a parked event applied nothing, and an applied row can only ever be a
+    // SUBSET of the map's own declaration in its own class (a row naming an
+    // item this vault holds no claim for records nothing, and the resolver
+    // never reclassifies a row between assigned and residue).
+    if let (Some(applied), Some(map)) = (
+        record.action.applied_reassignment_stats(),
+        record.action.reassignment_map(),
+    ) {
+        if !effective && (applied.assigned != 0 || applied.residue != 0) {
+            return Err(Error::InvalidIdentityTopologyEventBody(
+                "parked identity topology event declares applied reassignment rows",
+            ));
+        }
+        let (declared_assigned, declared_residue) = map.assigned_and_residue_counts();
+        if applied.assigned as u64 > declared_assigned || applied.residue as u64 > declared_residue
+        {
+            return Err(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event applied counts exceed its reassignment map",
+            ));
+        }
+    }
 
     let IdentityTopologyAction::Apply(op) = record.action.to_fold_action() else {
         return Ok(());
@@ -1852,15 +1919,28 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
             "identity topology event has too many participants",
         ));
     }
-    // A facet op names ONE participant however many masks it mints, so the
-    // participant bound above does not reach its fan-out. Bound it here, on
-    // the same stateless path every admitting door runs.
-    if let IdentityTopologyOp::Facet(facet) = &op
-        && facet.facets.len() > MAX_IDENTITY_TOPOLOGY_EVENT_FACETS
-    {
-        return Err(Error::InvalidIdentityTopologyEventBody(
-            "identity topology event mints too many facets",
-        ));
+    if let IdentityTopologyOp::Facet(facet) = &op {
+        // A facet op names ONE participant however many masks it mints, so
+        // the participant bound above does not reach its fan-out. Bound it
+        // here, on the same stateless path every admitting door runs.
+        if facet.facets.len() > MAX_IDENTITY_TOPOLOGY_EVENT_FACETS {
+            return Err(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event mints too many facets",
+            ));
+        }
+        // A facet op has NO propose lane, and the SAME rule has to hold at
+        // both doors. The local door refuses to record a park
+        // ([`Vault::apply_identity_topology_op_in_txn`]) because a parked
+        // facet mints nothing yet must name its masks, and
+        // [`proposal_scope_target`] has no scope target for a facet — so a
+        // park that DID get written could never be ruled on. Admitting one
+        // from a peer would persist exactly the unresolvable orphan the
+        // local path calls corruption.
+        if !effective {
+            return Err(Error::InvalidIdentityTopologyEventBody(
+                "facet identity topology decisions have no propose lane",
+            ));
+        }
     }
     evaluate_transition(&BTreeMap::new(), &op).map_err(|_| {
         Error::InvalidIdentityTopologyEventBody(
@@ -2156,11 +2236,22 @@ impl IdentityOpWrite {
     }
 
     const fn is_effective(&self) -> bool {
-        matches!(
-            self.approval,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        )
+        is_effective_approval(self.approval)
     }
+}
+
+/// The consent axis the fold APPLIES (r3): `Auto`/`Approved` carry topology
+/// effects, `Proposed` parks with none, `Rejected` is the no-op.
+///
+/// One derivation, two readers: the local apply door reaches it through
+/// [`IdentityOpWrite::is_effective`], and the stateless replicated-body
+/// admission reads it off the stored record — so a rule keyed on "did this
+/// event apply anything?" cannot drift between the two doors.
+const fn is_effective_approval(approval: ClaimApprovalStatus) -> bool {
+    matches!(
+        approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    )
 }
 
 /// Receipt of one identity-topology door call.
@@ -2559,19 +2650,35 @@ fn decode_reassignment_row(row: &[u8]) -> Result<Option<EntityId>> {
 /// Resolves a decision's reassignment map into the concrete rows a vault can
 /// record: `(claim, Some(destination))` or `(claim, None)` for residue.
 ///
-/// Two filters, both deliberate:
+/// Three filters, all deliberate:
 /// - only an [`ClaimSubject::Entity`] item that names a STORED CLAIM row
 ///   resolves. An edge item is a later surface (the map vocabulary admits
 ///   one, r2, but moving an edge is not claim assignment), and an item this
 ///   vault holds nothing for records nothing.
+/// - the claim must be ONE OF `origin`'s. A `ReassignmentEntry` is "where an
+///   item OF the split/facet entity goes", but nothing upstream enforces
+///   that: [`evaluate_transition`] checks the map's TARGETS, never its
+///   items' provenance, and the map replicates verbatim on a peer's event.
+///   Without this filter a split of `A` files an unrelated `B`'s claim under
+///   `A`'s head, and a facet of `A` stamps `B`'s claim `FacetOf` a mask `A`
+///   owns — cross-identity contamination the two query surfaces would then
+///   report as fact. Membership is read the way this family's own reader
+///   reads it ([`Vault::claims_remaining_on_origin`] → `claims_for_subject`):
+///   the canonical `claim_of` edge, as a point lookup. A closure reading
+///   (a claim inherited through a merge into `origin`) would have to move
+///   BOTH readers together, so it stays one derivation.
 /// - the destination comes from `targets`, so a row can only ever route
 ///   where the op itself said it could.
 ///
-/// The gap between what the map DECLARED and what this returns is exactly
-/// what [`ReassignmentStats`] reports and the receipt projects.
+/// A dropped row is not an error on either door: the replicated door must
+/// not let a planted body abort a reconcile, and the local door already
+/// treats an unresolvable row this way. The gap between what the map
+/// DECLARED and what this returns is exactly what [`ReassignmentStats`]
+/// reports and the receipt projects.
 fn resolve_reassignment_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
+    origin: &EntityId,
     map: &ReassignmentMap,
     targets: ReassignmentContext<'_>,
 ) -> Result<Vec<(EntityId, Option<EntityId>)>> {
@@ -2582,6 +2689,16 @@ fn resolve_reassignment_in_txn(
         };
         if identity_topology_entity_type_for_store_in_txn(store, rtxn, &claim)?
             != Some(ENTITY_TYPE_CLAIM)
+        {
+            continue;
+        }
+        if store
+            .edges_out
+            .get(
+                rtxn,
+                &Store::encode_edge_key(&claim, EdgeKind::ClaimOf, origin),
+            )?
+            .is_none()
         {
             continue;
         }
@@ -2685,7 +2802,7 @@ pub(crate) fn apply_reassignment_in_txn(
     stamps: &mut Vec<BatchOp>,
     now: u64,
 ) -> Result<ReassignmentStats> {
-    let rows = resolve_reassignment_in_txn(store, &*wtxn, map, targets)?;
+    let rows = resolve_reassignment_in_txn(store, &*wtxn, origin, map, targets)?;
     let assigned = rows.iter().filter(|(_, target)| target.is_some()).count();
     let stats = ReassignmentStats {
         assigned,
@@ -2758,6 +2875,7 @@ fn maintain_split_reassignment_projection_in_txn(
         let rows = resolve_reassignment_in_txn(
             store,
             &*wtxn,
+            origin,
             reassignment,
             ReassignmentContext::Heads(heads),
         )?;
@@ -3054,10 +3172,18 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
     let events = identity_topology_events_for_store_in_txn(store, &*wtxn)?;
     for event in events {
         let action_relevant = match &event.action {
-            IdentityTopologyAction::Apply(op) => op
-                .participants()
-                .iter()
-                .any(|participant| materialized.contains(participant)),
+            // The trigger set is WIDER than the participants: a claim the
+            // op's reassignment map names is not a participant, but its
+            // arrival is what lets the reconcile door finally record its
+            // row ([`IdentityTopologyOp::deferred_reassignment_items`]).
+            IdentityTopologyAction::Apply(op) => {
+                let participants = op.participants();
+                let deferred = op.deferred_reassignment_items();
+                participants
+                    .iter()
+                    .chain(deferred.iter())
+                    .any(|id| materialized.contains(id))
+            }
             // Type-76 targets are engine-authored and their replicated ingest
             // door performs the full reconciliation after the seq join. Do
             // not duplicate that pass from the generic put hook. A

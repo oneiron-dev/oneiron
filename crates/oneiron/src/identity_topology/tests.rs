@@ -3900,3 +3900,322 @@ fn zero_applied_counts_stay_off_the_wire() {
         })
     );
 }
+
+/// The projection may not depend on DELIVERY ORDER.
+///
+/// A map row records only when this vault holds the CLAIM it names, which is
+/// deliberate (r2 lets a decision name an item a peer does not have) — and it
+/// is exactly why a mapped claim can arrive AFTER the event that maps it. The
+/// claim is not a participant of the op, so nothing woke the reconcile door
+/// when it landed and its row was never born; the peer that received the
+/// claim first recorded it. Same ledger, two projections.
+///
+/// The stamped APPLIED counts stay honest either way: they are what the DOOR
+/// recorded, so the late-claim event stays at 0/0 while the reconcile-derived
+/// index carries the row.
+#[test]
+fn a_mapped_claim_arriving_after_its_split_still_gets_its_row() {
+    let projection = |claim_first: bool| -> (Vec<EntityId>, (u64, u64)) {
+        let (_dir, vault) = open_vault();
+        let original = put_person(&vault, 0x61);
+        let head = put_person(&vault, 0x62);
+        let claim = id(0x71);
+        if claim_first {
+            write_note_claim(&vault, claim, original);
+        }
+        let (event, _) = expect_applied(
+            vault
+                .apply_identity_topology_op(
+                    &split_op_with_map(
+                        original,
+                        vec![head],
+                        vec![ReassignmentEntry {
+                            item: ClaimSubject::Entity(claim),
+                            target: ReassignmentTarget::Head(head),
+                        }],
+                    ),
+                    &IdentityOpWrite::auto(ClaimSource::Inferred),
+                    200,
+                )
+                .expect("apply split with map"),
+        );
+        if !claim_first {
+            assert!(
+                vault.claims_assigned_to(&head).expect("head").is_empty(),
+                "there is no claim to record yet"
+            );
+            write_note_claim(&vault, claim, original);
+        }
+        let StoredIdentityOpAction::Split {
+            applied_assigned,
+            applied_residue,
+            ..
+        } = vault
+            .identity_topology_event(&event)
+            .expect("read split event")
+            .expect("split event exists")
+            .action
+        else {
+            panic!("expected a split action");
+        };
+        (
+            vault.claims_assigned_to(&head).expect("head"),
+            (applied_assigned, applied_residue),
+        )
+    };
+
+    let (claim_first_rows, claim_first_counts) = projection(true);
+    let (event_first_rows, event_first_counts) = projection(false);
+    assert_eq!(claim_first_rows, vec![id(0x71)]);
+    assert_eq!(claim_first_counts, (1, 0));
+    assert_eq!(
+        event_first_rows, claim_first_rows,
+        "two peers that saw the same event and the same claim agree, whatever order they arrived in"
+    );
+    assert_eq!(
+        event_first_counts,
+        (0, 0),
+        "the stamp records what the DOOR did, not what the index later derived"
+    );
+}
+
+/// A `ReassignmentEntry` is "where an item OF the split/facet entity goes",
+/// and nothing upstream enforces the "of": the transition table checks the
+/// map's TARGETS, never its items' provenance, and a peer's map replicates
+/// verbatim. So the resolver is the door — otherwise a split of A files an
+/// unrelated B's claim under A's head, and a facet of A stamps B's claim
+/// `FacetOf` a mask A owns.
+#[test]
+fn reassignment_records_only_claims_the_origin_owns() {
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x61);
+    let stranger = put_person(&vault, 0x62);
+    let head = put_person(&vault, 0x63);
+    let mine = write_note_claim(&vault, id(0x71), original);
+    let theirs = write_note_claim(&vault, id(0x72), stranger);
+
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(
+                &split_op_with_map(
+                    original,
+                    vec![head],
+                    vec![mine, theirs]
+                        .into_iter()
+                        .map(|item| ReassignmentEntry {
+                            item: ClaimSubject::Entity(item),
+                            target: ReassignmentTarget::Head(head),
+                        })
+                        .collect(),
+                ),
+                &IdentityOpWrite::auto(ClaimSource::Inferred),
+                200,
+            )
+            .expect("apply split naming a foreign claim"),
+    );
+    assert_eq!(
+        vault.claims_assigned_to(&head).expect("head"),
+        vec![mine],
+        "the stranger's claim is not the origin's to route"
+    );
+    assert!(
+        vault
+            .ambiguous_residue_claims(&stranger)
+            .expect("stranger residue")
+            .is_empty()
+    );
+    // Dropped, not fatal — the same posture as a row naming an item this
+    // vault holds no claim for, with the same visible declared-vs-applied gap.
+    let StoredIdentityOpAction::Split {
+        reassignment,
+        applied_assigned,
+        applied_residue,
+        ..
+    } = vault
+        .identity_topology_event(&event)
+        .expect("read split event")
+        .expect("split event exists")
+        .action
+    else {
+        panic!("expected a split action");
+    };
+    assert_eq!(reassignment.assigned_and_residue_counts(), (2, 0));
+    assert_eq!((applied_assigned, applied_residue), (1, 0));
+
+    // The FACET arm shares the resolver, so it inherits the same rule: no
+    // cross-identity `facet_of` stamp is ever minted.
+    let base = put_person(&vault, 0x64);
+    let ours = write_note_claim(&vault, id(0x73), base);
+    let masks = seam_apply_facet(&vault, base, &["work", "home"], &[(theirs, 0), (ours, 1)]);
+    assert!(
+        vault
+            .claims_assigned_to(&masks[0])
+            .expect("mask a")
+            .is_empty(),
+        "a mask of the base never scopes another entity's claim"
+    );
+    assert_eq!(
+        vault.claims_assigned_to(&masks[1]).expect("mask b"),
+        vec![ours]
+    );
+}
+
+/// A facet op has no propose lane, and the rule has to hold at BOTH doors:
+/// the local door refuses to record a park (a parked facet mints nothing yet
+/// must name its masks, and the resolution door has no scope target for one),
+/// so a stateless door that admits the same body from a peer persists exactly
+/// the unresolvable orphan the local path calls corruption.
+#[test]
+fn a_parked_facet_event_is_refused_at_the_replicated_door_too() {
+    let record = |approval| StoredIdentityOpEvent {
+        seq: 7,
+        at: 100,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Facet {
+            entity: id(0x61),
+            facets: vec![id(0x62)],
+            reassignment: ReassignmentMap::default(),
+            applied_assigned: 0,
+            applied_residue: 0,
+        },
+    };
+
+    // Control: the effective form is admitted, so the rejection below is the
+    // consent axis and nothing else.
+    let effective = record(ClaimApprovalStatus::Auto);
+    let bytes = encode_identity_topology_event_body(&effective).expect("encode effective facet");
+    assert_eq!(
+        decode_identity_topology_event_body(&bytes).expect("decode effective facet"),
+        effective
+    );
+
+    let err = decode_identity_topology_event_body(
+        &encode_identity_topology_event_body(&record(ClaimApprovalStatus::Proposed))
+            .expect("encode parked facet"),
+    )
+    .expect_err("a parked facet is unresolvable, so it is never stored");
+    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+
+    // The local door's answer, for the same body shape.
+    let (_dir, vault) = open_vault();
+    let base = put_person(&vault, 0x61);
+    let err = vault
+        .apply_identity_topology_op(
+            &facet_op(base),
+            &IdentityOpWrite {
+                approval: ClaimApprovalStatus::Proposed,
+                ..IdentityOpWrite::auto(ClaimSource::Inferred)
+            },
+            200,
+        )
+        .expect_err("the local door refuses a parked facet");
+    assert!(matches!(
+        err,
+        Error::IdentityTopologyUnarmed("facet proposal")
+    ));
+}
+
+/// The applied counts are an AUDIT record the receipt projects verbatim, so
+/// the wire may not state one the record itself contradicts: a park applied
+/// nothing, and an applied row is always a SUBSET of the map's declaration in
+/// its own class (the resolver drops rows, it never reclassifies them).
+#[test]
+fn applied_counts_are_bounded_by_the_map_and_the_consent_axis() {
+    let record = |approval, entries: Vec<ReassignmentEntry>, applied_assigned, applied_residue| {
+        StoredIdentityOpEvent {
+            seq: 9,
+            at: 100,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval,
+            confidence: 1.0,
+            evidence: None,
+            action: StoredIdentityOpAction::Split {
+                entity: id(0x61),
+                heads: vec![id(0x62)],
+                reassignment: ReassignmentMap { entries },
+                applied_assigned,
+                applied_residue,
+            },
+        }
+    };
+    let assign = vec![ReassignmentEntry {
+        item: ClaimSubject::Entity(id(0x71)),
+        target: ReassignmentTarget::Head(id(0x62)),
+    }];
+    let residue = vec![ReassignmentEntry {
+        item: ClaimSubject::Entity(id(0x71)),
+        target: ReassignmentTarget::Residue,
+    }];
+    let admits = |record: &StoredIdentityOpEvent| {
+        decode_identity_topology_event_body(
+            &encode_identity_topology_event_body(record).expect("encode"),
+        )
+        .is_ok()
+    };
+
+    // Exact and under-applied are both legal — a row naming an item this
+    // vault holds no claim for records nothing.
+    assert!(admits(&record(
+        ClaimApprovalStatus::Auto,
+        assign.clone(),
+        1,
+        0
+    )));
+    assert!(admits(&record(
+        ClaimApprovalStatus::Auto,
+        assign.clone(),
+        0,
+        0
+    )));
+    assert!(admits(&record(
+        ClaimApprovalStatus::Auto,
+        residue.clone(),
+        0,
+        1
+    )));
+
+    let err = decode_identity_topology_event_body(
+        &encode_identity_topology_event_body(&record(
+            ClaimApprovalStatus::Auto,
+            assign.clone(),
+            2,
+            0,
+        ))
+        .expect("encode over-applied"),
+    )
+    .expect_err("a one-row map cannot have applied two");
+    assert!(matches!(err, Error::InvalidIdentityTopologyEventBody(_)));
+
+    // Over-applied in EITHER class, in either direction.
+    assert!(!admits(&record(
+        ClaimApprovalStatus::Auto,
+        assign.clone(),
+        1,
+        1
+    )));
+    assert!(!admits(&record(
+        ClaimApprovalStatus::Auto,
+        residue.clone(),
+        1,
+        1
+    )));
+
+    // A park applied nothing, whatever its map declares.
+    assert!(admits(&record(
+        ClaimApprovalStatus::Proposed,
+        assign.clone(),
+        0,
+        0
+    )));
+    assert!(!admits(&record(
+        ClaimApprovalStatus::Proposed,
+        assign,
+        1,
+        0
+    )));
+}
