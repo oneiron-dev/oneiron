@@ -1355,6 +1355,11 @@ pub struct Store {
 )]
 pub(crate) struct SessionStoreView<'store> {
     _owner: &'store StoreOwner,
+    /// The overlay every accessor above stages into. Held so a staging site
+    /// inside a base write transaction can install its segment (see
+    /// [`SessionStoreView::install_txn_segment`]) without the caller having to
+    /// carry the session handle alongside the view.
+    overlay: Arc<crate::session_overlay::SessionOverlay>,
     pub(crate) entities: OverlayDb,
     pub(crate) edges_out: OverlayDb,
     pub(crate) edges_in: OverlayDb,
@@ -1405,6 +1410,19 @@ pub(crate) struct SessionStoreView<'store> {
               siblings get theirs from ONE-1729's session context-pack runs and ONE-1730's promote"
 )]
 impl SessionStoreView<'_> {
+    /// Installs a write segment on the overlay this view stages into.
+    ///
+    /// Every session write needs an active segment on the calling thread —
+    /// `SessionOverlay::stage_mutation` refuses without one — and the segment
+    /// permit is acquired AFTER the base writer (`session_overlay`'s documented
+    /// base -> segment order; the reverse is the ABBA path). A view therefore
+    /// cannot install its segment at construction: the staging site installs it
+    /// inside its own write transaction and commits the returned guard after
+    /// the base commit returns.
+    pub(crate) fn install_txn_segment(&self) -> Result<crate::session_overlay::TxnSegmentGuard> {
+        self.overlay.install_txn_segment()
+    }
+
     /// Session sibling of `Store::record_retrieval_run`.
     pub(crate) fn record_retrieval_run_in_txn(
         &self,
@@ -1602,6 +1620,7 @@ impl Store {
             |base, keyspace| OverlayDb::composed(base, overlay.clone(), snapshot.clone(), keyspace);
         Ok(SessionStoreView {
             _owner: &self.owner,
+            overlay: overlay.clone(),
             entities: db(self.core.raw.entities, OverlayKeyspace::Entities),
             edges_out: db(self.core.raw.edges_out, OverlayKeyspace::EdgesOut),
             edges_in: db(self.core.raw.edges_in, OverlayKeyspace::EdgesIn),

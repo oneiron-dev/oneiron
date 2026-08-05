@@ -2054,13 +2054,27 @@ impl<'a> PipelineBuilder<'a> {
         // fork-index side writes cannot drift between targets.
         let provisional = telemetry_action == RetrievalAction::ContextPack;
         let write_result = match self.session_view {
-            Some(view) => self.vault.try_with_write_txn(|wtxn| {
-                if provisional {
-                    view.record_context_pack_provisional_retrieval_run_in_txn(wtxn, &run_record)
-                } else {
-                    view.record_retrieval_run_in_txn(wtxn, &run_record)
-                }
-            }),
+            // A session run STAGES its row, which requires an active overlay
+            // txn segment. The segment is installed INSIDE the base writer
+            // (base -> segment permit, the order the witness takes and the
+            // only one that cannot deadlock) and committed after the base txn
+            // returns, because the guard applies staged rows only once the
+            // base commit has succeeded.
+            Some(view) => self
+                .vault
+                .with_write_txn(|wtxn| {
+                    let segment = view.install_txn_segment()?;
+                    if provisional {
+                        view.record_context_pack_provisional_retrieval_run_in_txn(
+                            wtxn,
+                            &run_record,
+                        )?;
+                    } else {
+                        view.record_retrieval_run_in_txn(wtxn, &run_record)?;
+                    }
+                    Ok(segment)
+                })
+                .and_then(crate::session_overlay::TxnSegmentGuard::commit),
             None if provisional => self
                 .vault
                 .store

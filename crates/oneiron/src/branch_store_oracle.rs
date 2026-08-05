@@ -1023,9 +1023,16 @@ mod seam {
             let Some(body) = read.get(&id)? else {
                 continue;
             };
-            let Ok(body) = crate::claim::decode_claim_body(&body, true) else {
-                continue;
-            };
+            // `ScopedRead::get` has ALREADY decoded this body under the same
+            // permissive flag to answer the policy question (`claim.rs`'
+            // `is_claim_raw_readable_with_policy_in`), and propagates the
+            // failure — so on this codebase the decode below cannot fail and
+            // the `continue` that stood here was unreachable. It is still the
+            // wrong shape: the count is EVIDENCE, compared for EQUALITY
+            // across the base and session halves of the R10 reader family, so
+            // a census that silently drops a row it cannot read reports an
+            // agreement it never observed. All-or-error, never partial.
+            let body = crate::claim::decode_claim_body(&body, true)?;
             if body.subject == crate::claim::ClaimSubject::Entity(*subject) {
                 count += 1;
             }
@@ -1621,6 +1628,67 @@ fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
     assert_eq!(vault.get(&summary)?, None);
 
     session.close()?;
+    Ok(())
+}
+
+/// Writes a CLAIM entity row plus its type-index row straight into base.
+///
+/// Bypassing every write door is the point: after the session door learned to
+/// validate claim bodies (S1), a raw plant is the only way left to put a body
+/// in the store that the validators would have refused — which is exactly the
+/// state the census below has to be honest about.
+fn plant_raw_claim_row(vault: &Vault, id: &EntityId, body: &[u8]) -> Result<()> {
+    let mut raw = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + body.len());
+    raw.push(crate::registry::ENTITY_TYPE_CLAIM);
+    raw.extend_from_slice(&1_u64.to_be_bytes()); // occurred.start
+    raw.extend_from_slice(&1_u64.to_be_bytes()); // occurred.end
+    raw.extend_from_slice(&1_u64.to_be_bytes()); // learned_at
+    raw.extend_from_slice(body);
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
+        let type_key = crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, id);
+        vault.store.type_index.put(wtxn, &type_key, &[])?;
+        Ok(())
+    })
+}
+
+/// The ScopedRead census SURFACES a claim body it cannot decode; it never
+/// quietly lowers the count.
+///
+/// The count is EVIDENCE — the base and session halves of the R10 reader
+/// family are compared for EQUALITY — so a silently partial count is worse
+/// than no count at all: two halves that both drop the same unreadable row
+/// report an agreement neither of them observed. `Err` is the only honest
+/// answer to "how many claims are visible" when one of the rows cannot be
+/// read at all.
+#[test]
+fn scoped_read_claim_census_surfaces_an_undecodable_body() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let subject = seed_base_turn(&vault, 10);
+
+    // Positive control FIRST: the census really does read bodies, so the
+    // refusal below cannot pass vacuously on an empty enumeration.
+    let legal = crate::claim::encode_claim_body(&crate::claim::ClaimBody::new(
+        "dream.symbol",
+        crate::claim::ClaimSubject::Entity(subject),
+        rmpv::Value::from("a blue door"),
+        0.9,
+        crate::claim::ClaimApprovalStatus::Auto,
+        crate::claim::ClaimLifecycleStatus::Active,
+    ))?;
+    plant_raw_claim_row(&vault, &EntityId::now(), &legal)?;
+    assert_eq!(
+        seam::base_scoped_read_visible_claim_count(&vault, &subject)?,
+        1,
+        "the census must count a legal planted claim"
+    );
+
+    // A row whose header and type byte are both perfectly well formed and
+    // whose BODY is not MessagePack at all.
+    plant_raw_claim_row(&vault, &EntityId::now(), b"not a claim body")?;
+    let refused = seam::base_scoped_read_visible_claim_count(&vault, &subject)
+        .expect_err("an undecodable claim body must surface, never lower the count");
+    assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidClaimBody);
     Ok(())
 }
 
