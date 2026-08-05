@@ -493,6 +493,21 @@ impl PendingEmbeddingReconciler {
     }
 }
 
+/// Enqueues background embed jobs for ids that still carry a `pe:` marker.
+///
+/// **Session content never arrives here (ARCH-0052 K6, ONE-1728).** The rule is
+/// encoded as ROUTING, not as a filter in this function: the session write path
+/// does not call this verb and writes no `pe:` marker at all — session content
+/// embeds inline through the configured embedder at witness time (vector and
+/// HNSW rows staged into the overlay), or has no vectors until promote. The
+/// generalization is that session flows create ZERO background-job rows
+/// (`attempt_records` / `attempt_ready` / `attempt_dedupe`) referencing overlay
+/// content, so a job can never outlive the room it names.
+///
+/// The `debug_assert!` below is the dev-time tripwire proving the routing held,
+/// not a production filter — a filter here would silently absorb a routing bug
+/// instead of surfacing it. The base-only `PendingEmbeddingReconciler` needs no
+/// equivalent: it reads base rows session content never enters.
 #[cfg(feature = "sync")]
 pub(crate) fn enqueue_pending_embedding_jobs(
     vault: &crate::Vault,
@@ -502,6 +517,15 @@ pub(crate) fn enqueue_pending_embedding_jobs(
     if ids.is_empty() {
         return Ok(());
     }
+    debug_assert!(
+        !ids.iter().any(|id| vault
+            .store
+            .off_record_sessions
+            .contains_entity(id)
+            .unwrap_or(false)),
+        "K6: a live-overlay id reached the embed job queue; session content \
+         embeds inline and must never enqueue a background job"
+    );
     vault.with_write_txn(|wtxn| {
         for id in ids {
             if vault

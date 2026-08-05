@@ -32,10 +32,20 @@
 //! approved; `Rejected` is the consent no-op. The propose lane is an
 //! explicit caller choice, never an engine-imposed gate. Undo is a
 //! counter-event over the ledger, never a rewrite (r1); claim subjects are
-//! never eagerly rewritten (r6) — read-time canonicalization through the
-//! redirect projection is ONE-1744. Reassignment-map application and FACET
-//! minting arm in ONE-1745; `entity.distinct_from` claim storage arms in
-//! ONE-1746.
+//! never eagerly rewritten (r6) — read-time canonicalization runs through
+//! the redirect projection in [`crate::identity_redirect`] (ONE-1744).
+//! Reassignment-map application and FACET minting arm in ONE-1745;
+//! `entity.distinct_from` claim storage arms in ONE-1746.
+//!
+//! Zero-head split (r2 "gone", ONE-1744): `split(entity, heads: [])` is a
+//! legal deliberate retire-without-successor. It shells the original like
+//! any split but writes NO `split_into` edge, so it is the one topology arm
+//! the canonical edges structurally cannot witness — the type-76 ledger is
+//! its sole witness. Everything that derives shell truth from edges
+//! therefore consults the ledger for this arm too:
+//! [`zero_head_split_shells_in_txn`] is that witness, and both the
+//! lifecycle read and the redirect projection route through it. D11's
+//! "edges are canonical" holds unchanged for every edge-ful op.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,7 +56,10 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, is_structural_kind};
+use crate::registry::{
+    ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, entity_type_registry_entry,
+    is_structural_kind,
+};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -122,6 +135,12 @@ const BODY_KEY_ENTITY: &str = "entity";
 const BODY_KEY_HEADS: &str = "heads";
 const BODY_KEY_MAP: &str = "map";
 const BODY_KEY_TARGET: &str = "target";
+const BODY_KEY_PROPOSAL: &str = "proposal";
+const BODY_KEY_OUTCOME: &str = "outcome";
+const BODY_KEY_SCOPE_OP_KIND: &str = "sc_op";
+const BODY_KEY_SCOPE_TARGET_CLASS: &str = "sc_cls";
+const BODY_KEY_SCOPE_ACTOR: &str = "sc_actor";
+const BODY_KEY_AMENDED: &str = "amended";
 
 const MAP_KEY_ITEM: &str = "item";
 const MAP_KEY_HEAD: &str = "head";
@@ -130,6 +149,16 @@ const MAP_KEY_FACET: &str = "facet";
 const EVENT_KIND_MERGE: &str = "merge";
 const EVENT_KIND_SPLIT: &str = "split";
 const EVENT_KIND_UNDO: &str = "undo";
+/// Wire kind of the ARCH-0055 r7 proposal-resolution event (ONE-1747). The
+/// resolution event IS the retirement of the park: the projector finds a
+/// proposal already resolved by this row, so a second ruling is refused.
+const EVENT_KIND_PROPOSAL_RESOLUTION: &str = "proposal_resolution";
+
+/// Ramp-scope actor stamped when the resolved proposal bound no deciding
+/// actor. The DEC-0006 tuple is total — an unattributed proposer is its own
+/// scope, never an absent field (MS-06 rebuilds per-scope stats from
+/// receipts ALONE, so a missing component would silently merge scopes).
+pub const PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED: &str = "unattributed";
 
 const PLAN_READ_THROUGH: &str = "read_through";
 
@@ -349,10 +378,12 @@ pub struct MergeOp {
 pub struct SplitOp {
     /// The conflated original; becomes a `Split` redirect-to-set shell.
     pub entity: EntityId,
-    /// Head entities the original resolves to. MS-01 requires ≥1 head —
-    /// the r2 zero-head ("gone") form has no readable witness until the
-    /// redirect projection lands (ONE-1744 lifts
-    /// [`IdentityTopologyRejection::EmptyHeads`]).
+    /// Head entities the original resolves to. EMPTY is legal (ONE-1744
+    /// lifted the MS-01 `EmptyHeads` guard): the r2 zero-head ("gone") form
+    /// is a deliberate retire-without-successor, shelling the original with
+    /// no successor to redirect to. It writes no `split_into` edge, so the
+    /// type-76 ledger is its only witness, and it resolves to the EMPTY set
+    /// through [`Vault::resolve_entity`].
     pub heads: Vec<EntityId>,
     /// Evidence-guided item map; recorded canonically on the event,
     /// application arms in ONE-1745.
@@ -434,6 +465,91 @@ pub fn distinct_pair_key(a: EntityId, b: EntityId) -> (EntityId, EntityId) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
+// ─── Proposal resolution (ARCH-0055 r7) ─────────────────────────────────────
+
+/// The ruling a decider applies to a parked `Proposed` identity-topology
+/// event (ARCH-0055 r7 outcome vocabulary).
+///
+/// `AmendThenApprove` carries the amended op body as encoded bytes — the
+/// form the decider actually approved, which is what gets applied and what
+/// the outcome receipt preserves verbatim. The amendment NARROWS what the
+/// owner reviewed: it can never become a different op kind nor reach an
+/// entity the proposal did not name
+/// ([`Error::IdentityProposalAmendmentOutOfScope`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalRuling<'a> {
+    /// Apply exactly as proposed.
+    Approve,
+    /// Apply the amended body instead of the proposed one.
+    AmendThenApprove(&'a [u8]),
+    /// Retire the park with zero topology effects.
+    Reject,
+}
+
+/// Resolved-proposal outcome — exactly three states (r7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProposalOutcome {
+    /// Approved as proposed; the proposed op applied unchanged.
+    ApprovedUntouched,
+    /// Approved after amendment; the AMENDED op applied.
+    ApprovedAmended,
+    /// Rejected; nothing applied, the park retired.
+    Rejected,
+}
+
+impl ProposalOutcome {
+    /// The pinned wire/receipt string for this outcome.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ApprovedUntouched => "approved_untouched",
+            Self::ApprovedAmended => "approved_amended",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    /// Parses a pinned outcome string.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "approved_untouched" => Some(Self::ApprovedUntouched),
+            "approved_amended" => Some(Self::ApprovedAmended),
+            "rejected" => Some(Self::Rejected),
+            _ => None,
+        }
+    }
+
+    /// Whether the ruling applied an op (either form).
+    #[must_use]
+    pub const fn is_approved(self) -> bool {
+        matches!(self, Self::ApprovedUntouched | Self::ApprovedAmended)
+    }
+}
+
+/// The DEC-0006 consent-ramp scope tuple stamped on a proposal-outcome
+/// receipt: (op kind × target class × actor).
+///
+/// Stamped from the RESOLVED proposal at resolution time, not dereferenced
+/// later: MS-06 (ONE-1748) rebuilds per-scope ramp statistics from receipts
+/// ALONE, so a receipt that required a ledger join to name its own scope
+/// could not satisfy that contract. Stamping also records the scope AS
+/// RULED — a later topology change cannot retroactively re-key history.
+///
+/// `actor` is the PROPOSING actor (whose autonomy the ramp measures), which
+/// is a different question from who ruled — the decider lands on the
+/// resolution event's own actor field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposalScope {
+    /// The proposed op's wire kind (`merge` / `split`).
+    pub op_kind: &'static str,
+    /// Registry kind name of the op's primary target entity (the merge
+    /// survivor / the split original), e.g. `"PERSON"`.
+    pub target_class: String,
+    /// The proposing actor's entity ref in hex, or
+    /// [`PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED`] when the proposal bound none.
+    pub actor: String,
+}
+
 // ─── Transition table ───────────────────────────────────────────────────────
 
 /// Deterministic per-op rejection reason — the
@@ -445,10 +561,6 @@ pub fn distinct_pair_key(a: EntityId, b: EntityId) -> (EntityId, EntityId) {
 pub enum IdentityTopologyRejection {
     /// merge names zero sources.
     EmptySources,
-    /// split names zero heads. MS-01 only: the r2 zero-head ("gone") form
-    /// arms with the redirect projection (ONE-1744), the only surface able
-    /// to express an empty resolution set.
-    EmptyHeads,
     /// facet names zero facet specs.
     EmptyFacets,
     /// An op names one entity on both sides (survivor among sources, the
@@ -512,11 +624,47 @@ pub enum IdentityTopologyRejection {
         /// The named event.
         event: EntityId,
     },
-    /// undo names an event kind that cannot be undone (a counter-event, or
-    /// an op family whose apply path is not armed yet).
+    /// undo names an event kind that cannot be undone (a counter-event, a
+    /// proposal resolution, or an op family whose apply path is not armed
+    /// yet).
     NotUndoable {
         /// The named event.
         event: EntityId,
+    },
+    /// A ruling names an event that is not a parked `Proposed` op (r7): an
+    /// already-effective event, a counter-event, or another resolution.
+    /// Only a park can be resolved.
+    NotProposed {
+        /// The named event.
+        event: EntityId,
+    },
+    /// A ruling names a proposal a resolution event already retired (r7).
+    /// The park retires exactly once — a second ruling would record two
+    /// contradictory decisions about one review.
+    ProposalAlreadyResolved {
+        /// The already-resolved proposal.
+        proposal: EntityId,
+    },
+    /// A ruling was submitted under a non-effective consent axis
+    /// (`Proposed` / `Rejected`). A ruling IS the act of deciding: parking
+    /// it would leave the proposal open behind a row claiming to resolve
+    /// it, and the consent no-op has no outcome to report.
+    ProposalRulingNotEffective,
+    /// An amended body left the reviewed proposal's scope: a different op
+    /// kind, or a subject the proposal never named. An amendment NARROWS
+    /// what the owner reviewed — it is never an op-substitution capability.
+    AmendmentOutOfScope {
+        /// Which scope bound the amendment broke.
+        reason: &'static str,
+    },
+    /// A resolution event lies about what it rules: the park it retires is
+    /// not `Proposed`, or its stamped ramp scope is not the tuple the
+    /// proposal's own row derives. Local rulings can never produce either
+    /// (the door derives both at ruling time); they are how a MALFORMED
+    /// replicated resolution row reads.
+    ResolutionRuleMismatch {
+        /// Which rule the row broke.
+        reason: &'static str,
     },
 }
 
@@ -573,9 +721,11 @@ pub fn evaluate_transition(
             Ok(transitions)
         }
         IdentityTopologyOp::Split(split) => {
-            if split.heads.is_empty() {
-                return Err(IdentityTopologyRejection::EmptyHeads);
-            }
+            // ONE-1744 lifted the zero-head guard: `heads: []` is the r2
+            // "gone" form — a deliberate retire-without-successor. It shells
+            // the original like any split, writes NO `split_into` edge (there
+            // is no head to point at), and resolves to the empty set through
+            // the redirect projection.
             let mut seen = BTreeSet::new();
             for head in &split.heads {
                 if !seen.insert(*head) {
@@ -660,6 +810,16 @@ pub enum IdentityTopologyAction {
         /// The ledger event being reverted.
         target: EntityId,
     },
+    /// Resolution of a parked `Proposed` event (r7, ONE-1747). Carries ZERO
+    /// lifecycle effects of its own: an approving ruling applies the op as
+    /// its own ordinary event, which the fold already folds. The fold
+    /// tracks resolutions solely to answer "is this proposal still open?".
+    ResolveProposal {
+        /// The resolved proposal event.
+        proposal: EntityId,
+        /// The recorded outcome.
+        outcome: ProposalOutcome,
+    },
 }
 
 /// One identity-topology ledger event, ready for folding.
@@ -686,6 +846,11 @@ pub struct IdentityTopologyFold {
     /// For each entity in a shell state, the event that put it there — the
     /// undo-currency witness.
     pub current_event: BTreeMap<EntityId, EntityId>,
+    /// Resolved `Proposed` events keyed by proposal, with the r7 outcome the
+    /// ruling recorded (ONE-1747) — the "is this park still open?" witness.
+    /// First resolution wins: a resolution naming an already-resolved
+    /// proposal is a fold rejection, never a silent overwrite.
+    pub resolved_proposals: BTreeMap<EntityId, ProposalOutcome>,
     /// Per-event rejections, in fold order.
     pub rejections: Vec<(EntityId, IdentityTopologyRejection)>,
 }
@@ -739,6 +904,22 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
                         fold.rejections.push((event.event_id, rejection));
                         undo_events.insert(event.event_id);
                     }
+                }
+            }
+            // A resolution carries no lifecycle effect of its own (the
+            // approved op rides its own event). It only retires the park —
+            // first resolution in `(seq, event_id)` order wins, so a
+            // duplicate is a deterministic rejection on every replica.
+            IdentityTopologyAction::ResolveProposal { proposal, outcome } => {
+                if fold.resolved_proposals.contains_key(proposal) {
+                    fold.rejections.push((
+                        event.event_id,
+                        IdentityTopologyRejection::ProposalAlreadyResolved {
+                            proposal: *proposal,
+                        },
+                    ));
+                } else {
+                    fold.resolved_proposals.insert(*proposal, *outcome);
                 }
             }
         }
@@ -806,6 +987,24 @@ pub enum StoredIdentityOpAction {
         /// The reverted ledger event.
         target: EntityId,
     },
+    /// The r7 resolution of a parked `Proposed` event (ONE-1747). Appending
+    /// this row IS the retirement of the park: a proposal carrying one is
+    /// already resolved and refuses a second ruling. The resolution itself
+    /// moves no lifecycle state — on an approving ruling the APPLIED op is
+    /// recorded as its own ordinary event, and this row records the
+    /// decision about it.
+    ProposalResolution {
+        /// The resolved type-76 `Proposed` event.
+        proposal: EntityId,
+        /// Which of the three r7 states the ruling produced.
+        outcome: ProposalOutcome,
+        /// The DEC-0006 ramp scope, stamped from the resolved proposal.
+        scope: ProposalScope,
+        /// The encoded amended op body, present ONLY on
+        /// [`ProposalOutcome::ApprovedAmended`] — preserved verbatim as the
+        /// producer artifact ED-01 (ONE-1757) diffs against the proposal.
+        amended_body: Option<Vec<u8>>,
+    },
 }
 
 impl StoredIdentityOpAction {
@@ -816,6 +1015,7 @@ impl StoredIdentityOpAction {
             Self::Merge { .. } => EVENT_KIND_MERGE,
             Self::Split { .. } => EVENT_KIND_SPLIT,
             Self::Undo { .. } => EVENT_KIND_UNDO,
+            Self::ProposalResolution { .. } => EVENT_KIND_PROPOSAL_RESOLUTION,
         }
     }
 
@@ -844,6 +1044,12 @@ impl StoredIdentityOpAction {
                 evidence: IdentityOpEvidence::default(),
             })),
             Self::Undo { target } => IdentityTopologyAction::Undo { target: *target },
+            Self::ProposalResolution {
+                proposal, outcome, ..
+            } => IdentityTopologyAction::ResolveProposal {
+                proposal: *proposal,
+                outcome: *outcome,
+            },
         }
     }
 }
@@ -918,28 +1124,7 @@ impl StoredIdentityOpEvent {
                 ]),
             ));
         }
-        match &self.action {
-            StoredIdentityOpAction::Merge { sources, survivor } => {
-                entries.push((Value::from(BODY_KEY_SOURCES), ids_value(sources)));
-                entries.push((Value::from(BODY_KEY_SURVIVOR), id_value(survivor)));
-                entries.push((Value::from(BODY_KEY_PLAN), Value::from(PLAN_READ_THROUGH)));
-            }
-            StoredIdentityOpAction::Split {
-                entity,
-                heads,
-                reassignment,
-            } => {
-                entries.push((Value::from(BODY_KEY_ENTITY), id_value(entity)));
-                entries.push((Value::from(BODY_KEY_HEADS), ids_value(heads)));
-                entries.push((
-                    Value::from(BODY_KEY_MAP),
-                    encode_reassignment_map(reassignment),
-                ));
-            }
-            StoredIdentityOpAction::Undo { target } => {
-                entries.push((Value::from(BODY_KEY_TARGET), id_value(target)));
-            }
-        }
+        encode_action_entries(&self.action, &mut entries);
         Value::Map(entries)
     }
 
@@ -980,43 +1165,6 @@ impl StoredIdentityOpEvent {
             None => None,
             Some(value) => Some(decode_evidence(value)?),
         };
-        let action = match kind {
-            EVENT_KIND_MERGE => {
-                let plan = decode_str_field(map, BODY_KEY_PLAN, "identity topology event plan")?;
-                if plan != PLAN_READ_THROUGH {
-                    return Err(Error::InvalidIdentityTopologyEventBody(
-                        "identity topology event plan is unknown",
-                    ));
-                }
-                StoredIdentityOpAction::Merge {
-                    sources: decode_ids_field(
-                        map,
-                        BODY_KEY_SOURCES,
-                        "identity topology event sources",
-                    )?,
-                    survivor: decode_id_field(
-                        map,
-                        BODY_KEY_SURVIVOR,
-                        "identity topology event survivor",
-                    )?,
-                }
-            }
-            EVENT_KIND_SPLIT => StoredIdentityOpAction::Split {
-                entity: decode_id_field(map, BODY_KEY_ENTITY, "identity topology event entity")?,
-                heads: decode_ids_field(map, BODY_KEY_HEADS, "identity topology event heads")?,
-                reassignment: decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(
-                    Error::InvalidIdentityTopologyEventBody("identity topology event map"),
-                )?)?,
-            },
-            EVENT_KIND_UNDO => StoredIdentityOpAction::Undo {
-                target: decode_id_field(map, BODY_KEY_TARGET, "identity topology event target")?,
-            },
-            _ => {
-                return Err(Error::InvalidIdentityTopologyEventBody(
-                    "identity topology event kind is unknown",
-                ));
-            }
-        };
         Ok(Self {
             seq,
             at,
@@ -1025,9 +1173,359 @@ impl StoredIdentityOpEvent {
             approval,
             confidence,
             evidence,
-            action,
+            action: decode_action(kind, map)?,
         })
     }
+}
+
+/// Appends one action's pinned wire entries. Shared by the ledger event
+/// body and the amendment codec so an amended op can only ever carry a
+/// shape the ledger itself stores — ONE encoder, no second dialect.
+fn encode_action_entries(action: &StoredIdentityOpAction, entries: &mut Vec<(Value, Value)>) {
+    match action {
+        StoredIdentityOpAction::Merge { sources, survivor } => {
+            entries.push((Value::from(BODY_KEY_SOURCES), ids_value(sources)));
+            entries.push((Value::from(BODY_KEY_SURVIVOR), id_value(survivor)));
+            entries.push((Value::from(BODY_KEY_PLAN), Value::from(PLAN_READ_THROUGH)));
+        }
+        StoredIdentityOpAction::Split {
+            entity,
+            heads,
+            reassignment,
+        } => {
+            entries.push((Value::from(BODY_KEY_ENTITY), id_value(entity)));
+            entries.push((Value::from(BODY_KEY_HEADS), ids_value(heads)));
+            entries.push((
+                Value::from(BODY_KEY_MAP),
+                encode_reassignment_map(reassignment),
+            ));
+        }
+        StoredIdentityOpAction::Undo { target } => {
+            entries.push((Value::from(BODY_KEY_TARGET), id_value(target)));
+        }
+        StoredIdentityOpAction::ProposalResolution {
+            proposal,
+            outcome,
+            scope,
+            amended_body,
+        } => {
+            entries.push((Value::from(BODY_KEY_PROPOSAL), id_value(proposal)));
+            entries.push((Value::from(BODY_KEY_OUTCOME), Value::from(outcome.as_str())));
+            entries.push((
+                Value::from(BODY_KEY_SCOPE_OP_KIND),
+                Value::from(scope.op_kind),
+            ));
+            entries.push((
+                Value::from(BODY_KEY_SCOPE_TARGET_CLASS),
+                Value::from(scope.target_class.as_str()),
+            ));
+            entries.push((
+                Value::from(BODY_KEY_SCOPE_ACTOR),
+                Value::from(scope.actor.as_str()),
+            ));
+            if let Some(amended_body) = amended_body {
+                entries.push((
+                    Value::from(BODY_KEY_AMENDED),
+                    Value::Binary(amended_body.clone()),
+                ));
+            }
+        }
+    }
+}
+
+/// Decodes one action from its wire entries — the [`encode_action_entries`]
+/// inverse, shared by the ledger event body and the amendment codec.
+fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<StoredIdentityOpAction> {
+    match kind {
+        EVENT_KIND_MERGE => {
+            let plan = decode_str_field(map, BODY_KEY_PLAN, "identity topology event plan")?;
+            if plan != PLAN_READ_THROUGH {
+                return Err(Error::InvalidIdentityTopologyEventBody(
+                    "identity topology event plan is unknown",
+                ));
+            }
+            Ok(StoredIdentityOpAction::Merge {
+                sources: decode_ids_field(
+                    map,
+                    BODY_KEY_SOURCES,
+                    "identity topology event sources",
+                )?,
+                survivor: decode_id_field(
+                    map,
+                    BODY_KEY_SURVIVOR,
+                    "identity topology event survivor",
+                )?,
+            })
+        }
+        EVENT_KIND_SPLIT => Ok(StoredIdentityOpAction::Split {
+            entity: decode_id_field(map, BODY_KEY_ENTITY, "identity topology event entity")?,
+            heads: decode_ids_field(map, BODY_KEY_HEADS, "identity topology event heads")?,
+            reassignment: decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(
+                Error::InvalidIdentityTopologyEventBody("identity topology event map"),
+            )?)?,
+        }),
+        EVENT_KIND_UNDO => Ok(StoredIdentityOpAction::Undo {
+            target: decode_id_field(map, BODY_KEY_TARGET, "identity topology event target")?,
+        }),
+        EVENT_KIND_PROPOSAL_RESOLUTION => {
+            const RESOLUTION_CONTEXT: &str = "identity topology proposal resolution";
+            let outcome = ProposalOutcome::parse(decode_str_field(
+                map,
+                BODY_KEY_OUTCOME,
+                "identity topology event outcome",
+            )?)
+            .ok_or(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event outcome",
+            ))?;
+            let amended_body = match map_field(map, BODY_KEY_AMENDED) {
+                None => None,
+                Some(value) => Some(
+                    value
+                        .as_slice()
+                        .ok_or(Error::InvalidIdentityTopologyEventBody(RESOLUTION_CONTEXT))?
+                        .to_vec(),
+                ),
+            };
+            // The amended body is present EXACTLY on the amended outcome:
+            // bytes under any other outcome would contradict the receipt
+            // contract (payload iff `approved_amended`), and an amended
+            // outcome without them would lose the producer artifact ED-01
+            // reads.
+            if amended_body.is_some() != (outcome == ProposalOutcome::ApprovedAmended) {
+                return Err(Error::InvalidIdentityTopologyEventBody(
+                    "identity topology proposal resolution amended body must accompany \
+                     exactly the amended outcome",
+                ));
+            }
+            Ok(StoredIdentityOpAction::ProposalResolution {
+                proposal: decode_id_field(map, BODY_KEY_PROPOSAL, RESOLUTION_CONTEXT)?,
+                outcome,
+                scope: ProposalScope {
+                    op_kind: decode_amendable_kind(decode_str_field(
+                        map,
+                        BODY_KEY_SCOPE_OP_KIND,
+                        RESOLUTION_CONTEXT,
+                    )?)?,
+                    target_class: decode_str_field(
+                        map,
+                        BODY_KEY_SCOPE_TARGET_CLASS,
+                        RESOLUTION_CONTEXT,
+                    )?
+                    .to_owned(),
+                    actor: decode_str_field(map, BODY_KEY_SCOPE_ACTOR, RESOLUTION_CONTEXT)?
+                        .to_owned(),
+                },
+                amended_body,
+            })
+        }
+        _ => Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event kind is unknown",
+        )),
+    }
+}
+
+/// The op's primary target — the entity whose registry class names the
+/// ramp scope: the merge SURVIVOR (what the merged records become) and the
+/// split ORIGINAL (what is being divided).
+fn proposal_scope_target(op: &IdentityTopologyOp) -> Result<EntityId> {
+    match op {
+        IdentityTopologyOp::Merge(merge) => Ok(merge.survivor),
+        IdentityTopologyOp::Split(split) => Ok(split.entity),
+        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
+            Err(Error::IdentityTopologyUnarmed("resolution of this op kind"))
+        }
+    }
+}
+
+/// The amendment-scope pin (ARCH-0055 r7): an amendment ADJUSTS the
+/// reviewed decision, it never becomes a different one.
+///
+/// Two bounds, both necessary. Same op KIND: approving a merge must not
+/// silently apply a split. Subject SUBSET: the amendment may drop or narrow
+/// subjects the decider saw, never reach an entity the proposal never named
+/// — otherwise "approve this merge, amended" would be a capability to merge
+/// anything at all.
+///
+/// On a SPLIT the subject walk is not the whole reach: the reassignment map
+/// also picks routes. A row's `Head` TARGET is where an item flows, and an
+/// EDGE item is replayed by moving the edge itself — so both endpoints and
+/// every head target stay bounded to the proposal's named set, and an
+/// amendment may narrow the map but never route through an entity the
+/// decider never saw. Bare claim items are not routes ([`reassignment_entry_in_scope`]).
+fn assert_amendment_in_scope(
+    proposed: &IdentityTopologyOp,
+    amended: &IdentityTopologyOp,
+) -> Result<()> {
+    if std::mem::discriminant(proposed) != std::mem::discriminant(amended) {
+        return Err(Error::IdentityProposalAmendmentOutOfScope(
+            "amended body is a different op kind",
+        ));
+    }
+    let proposed_subjects: BTreeSet<EntityId> = proposed.participants().into_iter().collect();
+    let in_scope = |entity: &EntityId| proposed_subjects.contains(entity);
+    if !amended.participants().iter().all(in_scope) {
+        return Err(Error::IdentityProposalAmendmentOutOfScope(
+            "amended body names a subject outside the proposal",
+        ));
+    }
+    if let IdentityTopologyOp::Split(split) = amended
+        && split
+            .reassignment
+            .entries
+            .iter()
+            .any(|entry| !reassignment_entry_in_scope(entry, &proposed_subjects))
+    {
+        return Err(Error::IdentityProposalAmendmentOutOfScope(
+            "amended split map references an entity outside the proposal",
+        ));
+    }
+    Ok(())
+}
+
+/// Every entity one map row might ROUTE TO is bounded to the proposal's
+/// participant set: `Head` targets, and either side of an edge ITEM —
+/// ONE-1745 replays reassignments by moving the edge, so an edge endpoint
+/// outside the named set is an out-of-scope route. Row items naming a bare
+/// claim (an `Entity` subject) are not routes: a split's map moves claims
+/// freely across the split's own heads whether or not the proposal named
+/// each one, which is how the verdict itself reviews them. Facet targets
+/// are op-internal indices and residue names nothing, so neither reaches
+/// an entity the proposal did not.
+fn reassignment_entry_in_scope(
+    entry: &ReassignmentEntry,
+    proposed_subjects: &BTreeSet<EntityId>,
+) -> bool {
+    let item_in_scope = match &entry.item {
+        ClaimSubject::Entity(_) => true,
+        ClaimSubject::Edge { source, target, .. } => {
+            proposed_subjects.contains(source) && proposed_subjects.contains(target)
+        }
+    };
+    let target_in_scope = match &entry.target {
+        ReassignmentTarget::Head(head) => proposed_subjects.contains(head),
+        ReassignmentTarget::Facet { .. } | ReassignmentTarget::Residue => true,
+    };
+    item_in_scope && target_in_scope
+}
+
+/// The scope tuple one proposal row derives: op kind, registry class of the
+/// op's primary target, and the PROPOSAL's actor ref. Pure so the wire
+/// check below and the vault stamp share ONE derivation.
+fn proposal_scope_of(record: &StoredIdentityOpEvent, target_class: &str) -> ProposalScope {
+    ProposalScope {
+        op_kind: record.action.kind_str(),
+        target_class: target_class.to_owned(),
+        actor: record.actor.map_or_else(
+            || PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED.to_owned(),
+            |actor| actor.entity_ref().to_hex(),
+        ),
+    }
+}
+
+/// Stateless wire-legality of a resolution row's stamped ramp scope: the
+/// tuple's op kind must be THE PROPOSAL'S recorded action kind, never an
+/// amendable kind claimed about a non-op row (a resolution of an undo row,
+/// say). Needs no store, so it rides the stateless decode path every
+/// admission — local door and sync replay alike — passes through.
+fn validate_resolution_scope_stateless(record: &StoredIdentityOpEvent) -> Result<()> {
+    let StoredIdentityOpAction::ProposalResolution { scope, .. } = &record.action else {
+        return Ok(());
+    };
+    let proposal_is_op = matches!(scope.op_kind, EVENT_KIND_MERGE | EVENT_KIND_SPLIT);
+    if !proposal_is_op {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology proposal resolution scope names a non-op kind",
+        ));
+    }
+    Ok(())
+}
+
+/// The AMENDABLE op kinds: only the two ops whose apply door is armed and
+/// whose subject set is expressible on the wire. A resolution's scope
+/// `op_kind` is one of these by construction (a proposal of an unarmed kind
+/// never reaches the ledger), so a stored value outside the set is
+/// malformed.
+fn decode_amendable_kind(value: &str) -> Result<&'static str> {
+    match value {
+        EVENT_KIND_MERGE => Ok(EVENT_KIND_MERGE),
+        EVENT_KIND_SPLIT => Ok(EVENT_KIND_SPLIT),
+        _ => Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology proposal scope op kind is unknown",
+        )),
+    }
+}
+
+/// Encodes an amended op body: the SAME pinned MessagePack action shape the
+/// ledger stores, minus the event envelope (seq/at/actor/consent are the
+/// resolution's own, never the amendment's).
+///
+/// One codec, two directions — a decider builds the amended body with this
+/// and [`decode_identity_op_amendment`] parses it back at the door, so an
+/// amendment can never carry a shape the ledger cannot store.
+pub fn encode_identity_op_amendment(op: &IdentityTopologyOp) -> Result<Vec<u8>> {
+    let action = match op {
+        IdentityTopologyOp::Merge(merge) => StoredIdentityOpAction::Merge {
+            sources: merge.sources.clone(),
+            survivor: merge.survivor,
+        },
+        IdentityTopologyOp::Split(split) => StoredIdentityOpAction::Split {
+            entity: split.entity,
+            heads: split.heads.clone(),
+            reassignment: split.reassignment.canonicalized(),
+        },
+        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
+            return Err(Error::IdentityTopologyUnarmed("amendment of this op kind"));
+        }
+    };
+    let mut entries = vec![(Value::from(BODY_KEY_KIND), Value::from(action.kind_str()))];
+    encode_action_entries(&action, &mut entries);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries)).map_err(|_| {
+        Error::InvalidIdentityTopologyEventBody("identity topology amendment encode failed")
+    })?;
+    Ok(data)
+}
+
+/// Decodes an amended op body, fail-closed and canonical: the bytes must
+/// re-encode identically, so a decider cannot smuggle a non-canonical
+/// encoding past the scope check and have the ledger store different bytes
+/// than were validated.
+pub fn decode_identity_op_amendment(data: &[u8]) -> Result<IdentityTopologyOp> {
+    const AMENDMENT_CONTEXT: &str = "identity topology amendment";
+    if data.len() > MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology amendment exceeds the size limit",
+        ));
+    }
+    let mut cursor = data;
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::InvalidIdentityTopologyEventBody(AMENDMENT_CONTEXT))?;
+    if !cursor.is_empty() {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology amendment carries trailing bytes",
+        ));
+    }
+    let map = value
+        .as_map()
+        .ok_or(Error::InvalidIdentityTopologyEventBody(AMENDMENT_CONTEXT))?;
+    let kind = decode_str_field(map, BODY_KEY_KIND, AMENDMENT_CONTEXT)?;
+    let action = decode_action(kind, map)?;
+    let op = match action.to_fold_action() {
+        IdentityTopologyAction::Apply(op) => op,
+        // undo / resolution rows are not ops a proposal can name, so they
+        // are not amendable shapes either.
+        IdentityTopologyAction::Undo { .. } | IdentityTopologyAction::ResolveProposal { .. } => {
+            return Err(Error::InvalidIdentityTopologyEventBody(
+                "identity topology amendment is not an op",
+            ));
+        }
+    };
+    if encode_identity_op_amendment(&op)? != data {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology amendment is not canonical",
+        ));
+    }
+    Ok(op)
 }
 
 /// Encodes a type-76 record body to its pinned MessagePack bytes.
@@ -1088,6 +1586,7 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
             "rejected identity topology decisions are not stored",
         ));
     }
+    validate_resolution_scope_stateless(record)?;
 
     let IdentityTopologyAction::Apply(op) = record.action.to_fold_action() else {
         return Ok(());
@@ -1548,6 +2047,10 @@ fn fold_effective_identity_topology_events_for_store_in_txn(
                 identity_topology_entity_type_for_store_in_txn(store, rtxn, target)?
                     .is_some_and(|kind| kind == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
             }
+            IdentityTopologyAction::ResolveProposal { proposal, .. } => {
+                identity_topology_entity_type_for_store_in_txn(store, rtxn, proposal)?
+                    .is_some_and(|kind| kind == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+            }
         };
         let record = identity_topology_event_for_store_in_txn(store, rtxn, &event.event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
@@ -1596,7 +2099,82 @@ fn desired_shell_edges_for_store_entity_in_txn(
     })
 }
 
-fn identity_topology_shell_peers_for_store_in_txn(
+/// Entities the ledger currently holds in a ZERO-HEAD split shell — the one
+/// topology arm that leaves no `split_into` edge, so the type-76 log is its
+/// only witness (ONE-1744). Everything that would otherwise read shell truth
+/// from the edges alone consults this for that arm: the lifecycle read and
+/// the redirect projection both do.
+///
+/// Derived from the EFFECTIVE fold, so an undone or superseded zero-head
+/// split correctly drops out of the set.
+/// Conservative "a zero-head split has been recorded in this vault" marker.
+///
+/// The witness fold below is O(event family), and the apply door needs the
+/// answer for every participant of every op — which would make a run of N
+/// topology ops O(N²). Zero-head splits are RARE, so this marker buys the
+/// common case back: absent means none has ever been recorded, and the fold
+/// is skipped entirely.
+///
+/// It is set, never cleared: an undone or evicted zero-head split leaves it
+/// standing. That direction is the safe one — a stale-SET marker costs one
+/// fold that returns the empty set, while a stale-CLEAR marker would hide a
+/// live shell. Correctness never depends on it, only cost.
+pub(crate) const IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY: &[u8] =
+    b"m:identity_topology_zero_head_seen";
+
+/// Records that a zero-head split exists, arming the witness fold.
+pub(crate) fn note_zero_head_split_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
+    if store
+        .vault_meta
+        .get(&*wtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    store
+        .vault_meta
+        .put(wtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY, &[1])?;
+    Ok(())
+}
+
+/// [`zero_head_split_shells_for_store_in_txn`] behind the marker: skips the
+/// fold outright on a vault that has never recorded a zero-head split.
+pub(crate) fn zero_head_split_shells_if_any_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    if store
+        .vault_meta
+        .get(rtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY)?
+        .is_none()
+    {
+        return Ok(BTreeSet::new());
+    }
+    zero_head_split_shells_for_store_in_txn(store, rtxn)
+}
+
+pub(crate) fn zero_head_split_shells_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let effective = fold_effective_identity_topology_events_for_store_in_txn(store, rtxn)?;
+    let fold = fold_identity_topology_log(&effective);
+    let mut shells = BTreeSet::new();
+    for (entity, event_id) in &fold.current_event {
+        if fold.states.get(entity) != Some(&EntityLifecycleState::Split) {
+            continue;
+        }
+        let record = identity_topology_event_for_store_in_txn(store, rtxn, event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        if matches!(&record.action, StoredIdentityOpAction::Split { heads, .. } if heads.is_empty())
+        {
+            shells.insert(*entity);
+        }
+    }
+    Ok(shells)
+}
+
+pub(crate) fn identity_topology_shell_peers_for_store_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     entity: &EntityId,
@@ -1617,7 +2195,10 @@ fn identity_topology_shell_peers_for_store_in_txn(
 /// Every entity the SURVIVING type-76 apply family names as a shell-edge
 /// source. This is the reconciler's touched set: the ids whose
 /// `merged_into` / `split_into` rows the current ledger can still speak for.
-fn surviving_shell_edge_sources_for_store_in_txn(
+/// It is also the redirect projection's rebuild candidate set (ONE-1744) —
+/// the same derivation, since an entity with no topology event has no
+/// redirect row either.
+pub(crate) fn shell_edge_sources_for_store_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<BTreeSet<EntityId>> {
@@ -1631,10 +2212,14 @@ fn surviving_shell_edge_sources_for_store_in_txn(
             IdentityTopologyAction::Apply(IdentityTopologyOp::Split(split)) => {
                 touched.insert(split.entity);
             }
+            // Neither a counter-event nor a resolution names a shell-edge
+            // source of its own: the undo's sources come from the event it
+            // reverts, and an approved op is applied as its own event.
             IdentityTopologyAction::Apply(
                 IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_),
             )
-            | IdentityTopologyAction::Undo { .. } => {}
+            | IdentityTopologyAction::Undo { .. }
+            | IdentityTopologyAction::ResolveProposal { .. } => {}
         }
     }
     Ok(touched)
@@ -1649,7 +2234,7 @@ fn reconcile_identity_topology_edges_for_store_in_txn(
 ) -> Result<()> {
     #[cfg(test)]
     test_hooks::note_full_reconciliation();
-    let touched = surviving_shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
+    let touched = shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
     reconcile_shell_edges_for_sources_in_txn(
         store,
         config,
@@ -1697,7 +2282,7 @@ pub(crate) fn reconcile_shell_edges_after_eviction_in_txn(
     if evicted_sources.is_empty() {
         return Ok(());
     }
-    let mut sources = surviving_shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
+    let mut sources = shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
     sources.extend(evicted_sources.iter().copied());
     reconcile_shell_edges_for_sources_in_txn(
         store,
@@ -1715,7 +2300,7 @@ pub(crate) fn reconcile_shell_edges_after_eviction_in_txn(
 ///
 /// Callers own the derivation of `sources`, and the two derivations are NOT
 /// interchangeable. Append-only batches use the surviving-family set
-/// ([`surviving_shell_edge_sources_for_store_in_txn`]); an eviction batch
+/// ([`shell_edge_sources_for_store_in_txn`]); an eviction batch
 /// must use the union in
 /// [`reconcile_shell_edges_after_eviction_in_txn`], because a removed row is
 /// no longer enumerable AND its removal replays the whole fold.
@@ -1793,18 +2378,34 @@ fn reconcile_shell_edges_for_sources_in_txn(
             }
         }
     }
-    if ops.is_empty() {
-        return Ok(());
+    if !ops.is_empty() {
+        apply_ops(
+            store,
+            config,
+            analyzer,
+            wtxn,
+            ops,
+            text_index_trusted,
+            false,
+            true,
+        )?;
     }
-    apply_ops(
+    // ONE-1744 redirect maintenance runs for EVERY reconciled source, past
+    // the no-edge-ops case on purpose: a zero-head split moves no edge at
+    // all, so an empty op list is exactly the shape whose redirect row would
+    // otherwise never be written. This is the chokepoint BOTH reconcile
+    // paths share (sync ingest and ONE-1604-D1 post-eviction unwind), so
+    // hooking it covers both without duplicating the hook.
+    // The reconcile path pays the UNGATED fold: it is the sync-ingest door,
+    // so it must DISCOVER a replicated zero-head split (and arm the marker)
+    // on a vault that has never recorded one locally. It already folds for
+    // its own edge derivation, so this costs nothing extra.
+    let zero_head_shells = zero_head_split_shells_for_store_in_txn(store, &*wtxn)?;
+    crate::identity_redirect::maintain_redirect_projection_in_txn(
         store,
-        config,
-        analyzer,
         wtxn,
-        ops,
-        text_index_trusted,
-        false,
-        true,
+        sources,
+        &zero_head_shells,
     )
 }
 
@@ -1855,7 +2456,12 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
     Ok(Some(match action {
         StoredIdentityOpAction::Merge { sources, .. } => sources.into_iter().collect(),
         StoredIdentityOpAction::Split { entity, .. } => BTreeSet::from([entity]),
-        StoredIdentityOpAction::Undo { .. } => BTreeSet::new(),
+        // A resolution shells nothing of its own: an approving ruling's
+        // effects ride the applied op's OWN event, which induces its own
+        // sources when evicted.
+        StoredIdentityOpAction::Undo { .. } | StoredIdentityOpAction::ProposalResolution { .. } => {
+            BTreeSet::new()
+        }
     }))
 }
 
@@ -1883,8 +2489,10 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
                 .any(|participant| materialized.contains(participant)),
             // Type-76 targets are engine-authored and their replicated ingest
             // door performs the full reconciliation after the seq join. Do
-            // not duplicate that pass from the generic put hook.
-            IdentityTopologyAction::Undo { .. } => false,
+            // not duplicate that pass from the generic put hook. A
+            // resolution moves no shell edge at all.
+            IdentityTopologyAction::Undo { .. }
+            | IdentityTopologyAction::ResolveProposal { .. } => false,
         };
         let record = identity_topology_event_for_store_in_txn(store, &*wtxn, &event.event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
@@ -1905,10 +2513,21 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
 }
 
 impl Vault {
+    /// Entities the ledger currently holds in a zero-head split shell — see
+    /// [`zero_head_split_shells_for_store_in_txn`].
+    pub(crate) fn zero_head_split_shells_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+    ) -> Result<BTreeSet<EntityId>> {
+        zero_head_split_shells_if_any_for_store_in_txn(&self.store, rtxn)
+    }
+
     /// Current lifecycle state of `id`, read from its canonical redirect
-    /// edges (D11: the edge is the sole state witness; the ledger fold and
-    /// the apply path keep them in lockstep). An id with no shell edge —
-    /// including one never written — is `Active`.
+    /// edges (D11: the edge is the state witness for every op that leaves
+    /// one; the ledger fold and the apply path keep them in lockstep). An id
+    /// with no shell edge is `Active` — EXCEPT the zero-head split, which
+    /// shells its entity while writing no edge at all, so the ledger is
+    /// consulted for exactly that arm (ONE-1744).
     pub fn entity_lifecycle_state(&self, id: &EntityId) -> Result<EntityLifecycleState> {
         let rtxn = self.store.env.read_txn()?;
         self.entity_lifecycle_state_in_txn(&rtxn, id)
@@ -1923,6 +2542,20 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
+    ) -> Result<EntityLifecycleState> {
+        self.entity_lifecycle_state_with_zero_head_shells_in_txn(rtxn, id, None)
+    }
+
+    /// [`Vault::entity_lifecycle_state_in_txn`] with a caller-supplied
+    /// zero-head-shell witness. A caller resolving several ids against one
+    /// txn folds the (rare, quota-bounded) event family ONCE and passes the
+    /// set here; `None` folds it on demand, and only when the edges leave
+    /// the question open.
+    pub(crate) fn entity_lifecycle_state_with_zero_head_shells_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        zero_head_shells: Option<&BTreeSet<EntityId>>,
     ) -> Result<EntityLifecycleState> {
         let merged = self.filtered_edge_peers(
             rtxn,
@@ -1941,7 +2574,22 @@ impl Vault {
             "identity topology",
         )?;
         match (merged.len(), split.is_empty()) {
-            (0, true) => Ok(EntityLifecycleState::Active),
+            // No shell edge: live, UNLESS the ledger holds a zero-head split
+            // over this id. Without this the retired entity would read back
+            // `Active` and the apply door would admit an op the fold then
+            // rejects `NotActive` — ledger and edge truth diverging, which is
+            // the wedge the reconciler exists to prevent.
+            (0, true) => {
+                let is_zero_head_shell = match zero_head_shells {
+                    Some(shells) => shells.contains(id),
+                    None => self.zero_head_split_shells_in_txn(rtxn)?.contains(id),
+                };
+                if is_zero_head_shell {
+                    Ok(EntityLifecycleState::Split)
+                } else {
+                    Ok(EntityLifecycleState::Active)
+                }
+            }
             (1, true) => Ok(EntityLifecycleState::Merged),
             (0, false) => Ok(EntityLifecycleState::Split),
             _ => Err(Error::CorruptedIndex("identity topology shell")),
@@ -1997,11 +2645,19 @@ impl Vault {
                 return Err(Error::IdentityTopologyRejected(rejection));
             }
         }
+        // Folded ONCE for the whole op: the zero-head-shell witness is the
+        // same for every participant, and folding per participant would pay
+        // the family scan N times.
+        let zero_head_shells = self.zero_head_split_shells_in_txn(&*wtxn)?;
         let mut states = BTreeMap::new();
         for participant in &participants {
             states.insert(
                 *participant,
-                self.entity_lifecycle_state_in_txn(&*wtxn, participant)?,
+                self.entity_lifecycle_state_with_zero_head_shells_in_txn(
+                    &*wtxn,
+                    participant,
+                    Some(&zero_head_shells),
+                )?,
             );
         }
         let transitions =
@@ -2116,7 +2772,12 @@ impl Vault {
             .identity_topology_event_in_txn(&*wtxn, event)?
             .ok_or(Error::EntityNotFound)?;
         let (shelled, removed_edges) = match &record.action {
-            StoredIdentityOpAction::Undo { .. } => {
+            // A counter-event is not undoable (r1: re-apply, don't unwind).
+            // A resolution is not undoable either — a ruling is retracted by
+            // ruling again on a fresh proposal, never by erasing the record
+            // that a review happened.
+            StoredIdentityOpAction::Undo { .. }
+            | StoredIdentityOpAction::ProposalResolution { .. } => {
                 return Err(Error::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
                 ));
@@ -2166,6 +2827,281 @@ impl Vault {
             edges,
             transitions,
         )
+    }
+
+    /// Resolves a parked `Proposed` identity-topology event (ARCH-0055 r7):
+    /// applies the proposed op (`Approve`), applies an AMENDED form of it
+    /// (`AmendThenApprove`), or retires the park with zero topology effects
+    /// (`Reject`). All three paths append exactly ONE proposal-resolution
+    /// event in the same write txn, which is both the retirement of the park
+    /// and the substrate the `ProposalOutcome` receipt projects from.
+    ///
+    /// An approving ruling applies through the ordinary
+    /// [`Vault::apply_identity_topology_op`] machinery under
+    /// `ClaimApprovalStatus::Approved`, so the applied op lands as its own
+    /// ordinary ledger event with its own effects — the resolution row
+    /// records the DECISION, never a second copy of the effect. The park
+    /// itself is never rewritten (r1).
+    ///
+    /// An amendment may only NARROW what the decider reviewed: the amended
+    /// body must decode to the same op kind and name a subset of the
+    /// proposal's subjects, else
+    /// [`Error::IdentityProposalAmendmentOutOfScope`] and nothing is
+    /// written. This is the pin that keeps amendment from being an
+    /// op-substitution capability.
+    ///
+    /// `write` carries the RULER's consent axes (which must be effective —
+    /// a ruling is the act of deciding, so it cannot itself be parked);
+    /// the ramp scope stamped on the receipt describes the PROPOSER.
+    ///
+    /// Returns the recorded outcome and the resolution event's id, which is
+    /// also the receipt handle.
+    pub fn resolve_identity_proposal(
+        &self,
+        proposal: &EntityId,
+        ruling: ProposalRuling<'_>,
+        write: &IdentityOpWrite,
+        now: u64,
+    ) -> Result<(ProposalOutcome, EntityId)> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let resolved =
+            self.resolve_identity_proposal_in_txn(&mut wtxn, proposal, ruling, write, now)?;
+        wtxn.commit()?;
+        Ok(resolved)
+    }
+
+    /// Transaction-composable [`Vault::resolve_identity_proposal`].
+    pub(crate) fn resolve_identity_proposal_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        proposal: &EntityId,
+        ruling: ProposalRuling<'_>,
+        write: &IdentityOpWrite,
+        now: u64,
+    ) -> Result<(ProposalOutcome, EntityId)> {
+        if !write.is_effective() {
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::ProposalRulingNotEffective,
+            ));
+        }
+        self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
+
+        let record = self
+            .identity_topology_event_in_txn(&*wtxn, proposal)?
+            .ok_or(Error::EntityNotFound)?;
+        // The resolution rule, shared with replicated admission: the park
+        // is still open, the fold has not retired it, and the ruling's own
+        // axis is effective. The replicated replay of the row this door is
+        // about to write re-derives exactly these cells from the ledger.
+        let proposed_op = self.validate_identity_proposal_resolution_in_txn(
+            &*wtxn,
+            proposal,
+            &record,
+            write.approval,
+            None,
+        )?;
+
+        // Validate the amendment BEFORE anything is written: an out-of-scope
+        // body must leave the park open and untouched.
+        let amended = match ruling {
+            ProposalRuling::AmendThenApprove(body) => {
+                let amended_op = decode_identity_op_amendment(body).map_err(|_| {
+                    Error::IdentityProposalAmendmentOutOfScope("amended body is malformed")
+                })?;
+                assert_amendment_in_scope(&proposed_op, &amended_op)?;
+                Some((amended_op, body.to_vec()))
+            }
+            ProposalRuling::Approve | ProposalRuling::Reject => None,
+        };
+
+        let scope = self.proposal_scope_in_txn(&*wtxn, &record, &proposed_op)?;
+        let proposer_evidence = record.evidence.as_ref();
+        let (outcome, amended_body) = match (&ruling, amended) {
+            (ProposalRuling::Reject, _) => (ProposalOutcome::Rejected, None),
+            (ProposalRuling::Approve, _) => {
+                self.apply_resolved_identity_op_in_txn(
+                    wtxn,
+                    &proposed_op,
+                    proposer_evidence,
+                    write,
+                    now,
+                )?;
+                (ProposalOutcome::ApprovedUntouched, None)
+            }
+            (ProposalRuling::AmendThenApprove(_), Some((amended_op, body))) => {
+                self.apply_resolved_identity_op_in_txn(
+                    wtxn,
+                    &amended_op,
+                    proposer_evidence,
+                    write,
+                    now,
+                )?;
+                (ProposalOutcome::ApprovedAmended, Some(body))
+            }
+            // `amended` is Some exactly when the ruling is AmendThenApprove.
+            (ProposalRuling::AmendThenApprove(_), None) => {
+                return Err(Error::InvariantViolation(
+                    "identity proposal amendment decode state",
+                ));
+            }
+        };
+
+        let event = self.write_identity_event_in_txn(
+            wtxn,
+            write,
+            now,
+            StoredIdentityOpAction::ProposalResolution {
+                proposal: *proposal,
+                outcome,
+                scope,
+                amended_body,
+            },
+            None,
+            Vec::new(),
+            Vec::new(),
+        )?;
+        let IdentityOpOutcome::Applied {
+            event: event_id, ..
+        } = event
+        else {
+            // The effective-consent check at the top of this door makes the
+            // parked/no-op shapes unreachable.
+            return Err(Error::InvariantViolation(
+                "identity proposal resolution must be effective",
+            ));
+        };
+        Ok((outcome, event_id))
+    }
+
+    /// Applies the op a ruling approved, under `Approved` consent — the
+    /// decider's ruling IS the approval, whatever axis the original
+    /// proposal carried. The proposal row's evidence rides along: the
+    /// stored-action codec reconstructs an op without it
+    /// (`to_fold_action` carries no envelope data), and an approved ruling
+    /// must not silently sever the decision from the refs and rationale
+    /// that motivated it.
+    fn apply_resolved_identity_op_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        op: &IdentityTopologyOp,
+        proposer_evidence: Option<&IdentityOpEvidence>,
+        write: &IdentityOpWrite,
+        now: u64,
+    ) -> Result<()> {
+        let applied_write = IdentityOpWrite {
+            approval: ClaimApprovalStatus::Approved,
+            ..*write
+        };
+        let op = match (proposer_evidence, op) {
+            (Some(evidence), IdentityTopologyOp::Merge(merge)) => {
+                IdentityTopologyOp::Merge(MergeOp {
+                    evidence: evidence.clone(),
+                    ..merge.clone()
+                })
+            }
+            (Some(evidence), IdentityTopologyOp::Split(split)) => {
+                IdentityTopologyOp::Split(SplitOp {
+                    evidence: evidence.clone(),
+                    ..split.clone()
+                })
+            }
+            _ => op.clone(),
+        };
+        self.apply_identity_topology_op_in_txn(wtxn, &op, &applied_write, now)?;
+        Ok(())
+    }
+
+    /// Stamps the DEC-0006 ramp scope of a resolved proposal: the op kind,
+    /// the registry class name of the op's primary target, and the
+    /// PROPOSING actor.
+    fn proposal_scope_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        record: &StoredIdentityOpEvent,
+        op: &IdentityTopologyOp,
+    ) -> Result<ProposalScope> {
+        let target = proposal_scope_target(op)?;
+        let target_class = self
+            .get_entity_type_in_txn(rtxn, &target)?
+            .and_then(entity_type_registry_entry)
+            .ok_or(Error::EntityNotFound)?
+            .kind;
+        Ok(proposal_scope_of(record, target_class))
+    }
+
+    /// THE proposal-resolution rule, run by BOTH doors a resolution row can
+    /// enter through — the local [`Vault::resolve_identity_proposal_in_txn`]
+    /// ruling and replicated type-76 admission. One validator, never two
+    /// drifting copies: the local door enforces exactly what a remote peer's
+    /// replay of the same row must later re-derive.
+    ///
+    /// All four cells, evaluated in ONE read against the store:
+    /// the named park EXISTS and is still `Proposed` (an op row, never an
+    /// undo or a resolution); the fold has not already retired it; the
+    /// RULING's consent axis is effective — `ruling_approval` is the
+    /// resolution's own axis (`write.approval` at the local door,
+    /// `record.approval` on the wire), because deciding is itself an
+    /// effective act and a resolution authored under a parked or consent-
+    /// rejected axis is no ruling at all; and the stamped ramp scope is
+    /// DERIVED from the proposal's own row, so a row cannot carry a scope
+    /// it was never ruled under. Returns the decoded proposed op (the door
+    /// applies it; replicated admission only checks, never applies).
+    fn validate_identity_proposal_resolution_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        proposal: &EntityId,
+        proposal_record: &StoredIdentityOpEvent,
+        ruling_approval: ClaimApprovalStatus,
+        stamped: Option<&ProposalScope>,
+    ) -> Result<IdentityTopologyOp> {
+        if !matches!(
+            ruling_approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) {
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::ProposalRulingNotEffective,
+            ));
+        }
+        if proposal_record.approval != ClaimApprovalStatus::Proposed {
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::NotProposed { event: *proposal },
+            ));
+        }
+        let IdentityTopologyAction::Apply(proposed_op) = proposal_record.action.to_fold_action()
+        else {
+            // Undo and resolution rows are never `Proposed`-parked ops a
+            // ruling can act on; the approval check above already excludes
+            // them, so this is defence at the type seam.
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::NotProposed { event: *proposal },
+            ));
+        };
+        // The fold a fresh resolution is judged against EXCLUDES the row
+        // being admitted — a replicated event validates against history
+        // alone, and the local door runs this before its own row exists.
+        let fold =
+            fold_identity_topology_log(&self.fold_effective_identity_topology_events_in_txn(rtxn)?);
+        if fold.resolved_proposals.contains_key(proposal) {
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::ProposalAlreadyResolved {
+                    proposal: *proposal,
+                },
+            ));
+        }
+        if let Some(stamped) = stamped {
+            let derived = self.proposal_scope_in_txn(rtxn, proposal_record, &proposed_op)?;
+            if stamped.op_kind != derived.op_kind
+                || stamped.target_class != derived.target_class
+                || stamped.actor != derived.actor
+            {
+                return Err(Error::IdentityTopologyRejected(
+                    IdentityTopologyRejection::ResolutionRuleMismatch {
+                        reason: "stamped ramp scope is not the proposal's derived tuple",
+                    },
+                ));
+            }
+        }
+        Ok(proposed_op)
     }
 
     /// Reads one type-76 ledger event record. `Ok(None)` when the id is
@@ -2293,6 +3229,10 @@ impl Vault {
                     return Err(Error::IdentityTopologyRejected(rejection));
                 }
             }
+            // An undo inherits the participant validity of the event it
+            // names; a resolution must instead satisfy the SAME door rule
+            // the local `resolve_identity_proposal` enforced — replayed
+            // verbatim, never a lighter replay-side pass.
             IdentityTopologyAction::Undo { target } => {
                 let Some(entity_type) = self.get_entity_type_in_txn(rtxn, &target)? else {
                     return Ok(());
@@ -2310,6 +3250,46 @@ impl Vault {
                     return Err(Error::IdentityTopologyRejected(rejection));
                 }
             }
+            IdentityTopologyAction::ResolveProposal { proposal, .. } => {
+                let StoredIdentityOpAction::ProposalResolution {
+                    scope,
+                    amended_body,
+                    ..
+                } = &record.action
+                else {
+                    return Err(Error::InvariantViolation(
+                        "replicated resolution row desugars to ResolveProposal",
+                    ));
+                };
+                let Some(entity_type) = self.get_entity_type_in_txn(rtxn, &proposal)? else {
+                    return Ok(());
+                };
+                if entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+                    return Err(Error::InvalidEntityType(entity_type));
+                }
+                let proposal_record = self
+                    .identity_topology_event_in_txn(rtxn, &proposal)?
+                    .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+                // Exactly the local door's rule, replayed: the ruling axis
+                // is this row's own consent (`record.approval`), the stamp
+                // must match the tuple the proposal row derives, and an
+                // amended body must stay inside review.
+                let proposed_op = self.validate_identity_proposal_resolution_in_txn(
+                    rtxn,
+                    &proposal,
+                    &proposal_record,
+                    record.approval,
+                    Some(scope),
+                )?;
+                if let Some(amended_body) = amended_body {
+                    let amended_op = decode_identity_op_amendment(amended_body).map_err(|_| {
+                        Error::InvalidIdentityTopologyEventBody(
+                            "identity topology proposal resolution amended body",
+                        )
+                    })?;
+                    assert_amendment_in_scope(&proposed_op, &amended_op)?;
+                }
+            }
         }
         Ok(())
     }
@@ -2319,7 +3299,9 @@ impl Vault {
     /// with an available invalid participant (or an undo naming an
     /// available non-event) is excluded from the effective fold. Missing
     /// references remain deferred and are reconsidered on materialization.
-    fn fold_effective_identity_topology_events_in_txn(
+    /// `pub(crate)`: the receipt projection folds the same projection to
+    /// suppress fold-rejected duplicate rulings.
+    pub(crate) fn fold_effective_identity_topology_events_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<Vec<IdentityTopologyEvent>> {
@@ -2333,6 +3315,9 @@ impl Vault {
                 ),
                 IdentityTopologyAction::Undo { target } => self
                     .get_entity_type_in_txn(rtxn, target)?
+                    .is_some_and(|entity_type| entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT),
+                IdentityTopologyAction::ResolveProposal { proposal, .. } => self
+                    .get_entity_type_in_txn(rtxn, proposal)?
                     .is_some_and(|entity_type| entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT),
             };
             let actor_complete = match self.identity_topology_event_in_txn(rtxn, &event.event_id)? {
@@ -2587,6 +3572,29 @@ impl Vault {
             true,
         )?;
         if write.is_effective() {
+            // ONE-1744 redirect maintenance, AFTER the edges land: the
+            // projection derives each row from the post-op shell edges (plus
+            // the ledger for the zero-head arm), so running it before
+            // `apply_ops` would project the topology this event replaces.
+            // A parked event moves no topology and maintains nothing.
+            let touched: BTreeSet<EntityId> =
+                transitions.iter().map(|(entity, _)| *entity).collect();
+            // The zero-head witness comes from the ACTION, not a fold: this
+            // door already knows whether the op it just wrote is a zero-head
+            // split, and folding the event family here would make a run of N
+            // topology ops O(N²).
+            let zero_head_shells: BTreeSet<EntityId> = match &record.action {
+                StoredIdentityOpAction::Split { entity, heads, .. } if heads.is_empty() => {
+                    BTreeSet::from([*entity])
+                }
+                _ => BTreeSet::new(),
+            };
+            crate::identity_redirect::maintain_redirect_projection_in_txn(
+                &self.store,
+                wtxn,
+                &touched,
+                &zero_head_shells,
+            )?;
             Ok(IdentityOpOutcome::Applied {
                 event: event_id,
                 transitions,
