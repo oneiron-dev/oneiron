@@ -7,10 +7,12 @@
 //! meeting link, and external MCP/SDK DTOs drop even the internal `source`.
 //!
 //! Interval algebra: the engine's [`TimeRange`] is inclusive on both ends, and
-//! a `BusyInterval` is half-open `[start_utc, end_utc)`. The conversion happens
-//! once, in [`half_open`], and is checked: an inclusive end of `u64::MAX` has
-//! no half-open representation and fails typed rather than wrapping to an empty
-//! interval.
+//! a `BusyInterval` is half-open `[start_utc, end_utc)`. All clipping happens
+//! in the inclusive domain, and the conversion happens once, in [`half_open`],
+//! on the clipped result — so an occurrence that runs to `u64::MAX` still
+//! projects normally against any window that ends earlier, and the checked
+//! conversion fails typed only when the interval actually emitted has no
+//! half-open representation.
 //!
 //! Recurrence is a deferred leg. ONE-1785 (CAL-03) lands after this ticket, so
 //! on the 1791 baseline the union covers non-recurring busy occurrences only;
@@ -73,23 +75,29 @@ fn freebusy_in(
     // the union in the meantime, so only structural validation runs here.
     validate_selectors(calendars)?;
 
-    let bounds = half_open(ordered(range))?;
+    let bounds = ordered(range);
     let mut intervals = Vec::new();
     visit_calendar_events(read, |row| {
         if !row.facts.blocks_time() || row.facts.is_cancelled() {
             return Ok(());
         }
+        // An EVENT that stores no occurrence is undated, not epoch-anchored; it
+        // occupies no availability at all.
+        let Some(occurrence) = row.occurred else {
+            return Ok(());
+        };
         // CAL-03's `expand_window` slots in here once ONE-1785 merges: a series
         // master contributes one interval per expanded occurrence inside
         // `bounds`, and its typed CalendarError propagates unchanged.
-        let occurrence = half_open(row.occurred)?;
-        if let Some(clipped) = clip(occurrence, bounds) {
-            intervals.push(BusyInterval {
-                start_utc: clipped.0,
-                end_utc: clipped.1,
-                source: row.id,
-            });
-        }
+        let Some(clipped) = clip(occurrence, bounds) else {
+            return Ok(());
+        };
+        let (start_utc, end_utc) = half_open(clipped)?;
+        intervals.push(BusyInterval {
+            start_utc,
+            end_utc,
+            source: row.id,
+        });
         Ok(())
     })?;
 
@@ -127,10 +135,17 @@ fn normalize_busy(mut intervals: Vec<BusyInterval>) -> BusyUnion {
     union
 }
 
-/// Checked inclusive → half-open conversion.
+/// Checked inclusive → half-open conversion of an already-clipped interval.
+///
+/// Clipping first is load-bearing, not stylistic: an occurrence whose inclusive
+/// end is `u64::MAX` has no half-open successor, but its intersection with an
+/// ordinary query window almost always does. Converting before clipping fails
+/// the *whole* query on one open-ended EVENT — even one the window never
+/// touches — so the overflow is raised only when the interval that would
+/// actually be emitted is unrepresentable.
 fn half_open(range: TimeRange) -> Result<(u64, u64)> {
     let end = range.end.checked_add(1).ok_or(Error::ArithmeticOverflow(
-        "calendar freebusy inclusive range end has no half-open successor",
+        "calendar freebusy interval ends at the last representable second",
     ))?;
     Ok((range.start, end))
 }
@@ -148,20 +163,23 @@ const fn ordered(range: TimeRange) -> TimeRange {
     }
 }
 
-/// Clips a half-open interval to half-open bounds, dropping empty results.
-const fn clip(interval: (u64, u64), bounds: (u64, u64)) -> Option<(u64, u64)> {
-    let start = if interval.0 > bounds.0 {
-        interval.0
+/// Intersects two inclusive intervals, dropping a disjoint result.
+///
+/// Inclusive on both ends, so a one-second overlap (`start == end`) survives;
+/// the half-open conversion happens after, on the clipped result only.
+const fn clip(interval: TimeRange, bounds: TimeRange) -> Option<TimeRange> {
+    let start = if interval.start > bounds.start {
+        interval.start
     } else {
-        bounds.0
+        bounds.start
     };
-    let end = if interval.1 < bounds.1 {
-        interval.1
+    let end = if interval.end < bounds.end {
+        interval.end
     } else {
-        bounds.1
+        bounds.end
     };
-    if start < end {
-        Some((start, end))
+    if start <= end {
+        Some(TimeRange { start, end })
     } else {
         None
     }
@@ -222,12 +240,60 @@ mod tests {
         let clipped = freebusy(&vault, &[], window(120, 149)).expect("freebusy");
         assert_eq!((clipped[0].start_utc, clipped[0].end_utc), (120, 150));
 
+        // An unbounded window is not itself an overflow. Nothing that clips out
+        // of it needs a successor for `u64::MAX`, so the conversion never runs
+        // on the window — only on the interval actually emitted.
+        let unbounded = freebusy(&vault, &[], window(0, u64::MAX)).expect("freebusy");
+        assert_eq!((unbounded[0].start_utc, unbounded[0].end_utc), (100, 200));
+    }
+
+    #[test]
+    fn freebusy_clips_before_the_half_open_conversion() {
+        let (_dir, vault) = open_calendar_vault();
+        // Admitted, busy, and open-ended: this occurrence's inclusive end has
+        // no half-open successor, but it is wholly disjoint from the window.
+        CalendarEventFixture::new(0x65, "Open ended", 200, u64::MAX).store(&vault);
+
+        assert!(
+            freebusy(&vault, &[], window(0, 100))
+                .expect("a disjoint occurrence cannot fail the whole query")
+                .is_empty()
+        );
+
+        // Overlapping an open-ended occurrence clips to a representable
+        // interval instead of overflowing: `[0, u64::MAX]` ∩ `[0, 100]` is
+        // `[0, 100]`, which is `[0, 101)` half-open.
+        CalendarEventFixture::new(0x66, "From epoch", 0, u64::MAX).store(&vault);
+        let clipped = freebusy(&vault, &[], window(0, 100)).expect("freebusy");
+        assert_eq!(clipped.len(), 1);
+        assert_eq!((clipped[0].start_utc, clipped[0].end_utc), (0, 101));
+
+        // The typed overflow survives exactly where it is real: the clipped
+        // interval itself ends at the last representable second.
         assert!(
             matches!(
                 freebusy(&vault, &[], window(0, u64::MAX)),
                 Err(Error::ArithmeticOverflow(_))
             ),
             "an unrepresentable half-open end fails typed, never as an empty union"
+        );
+    }
+
+    #[test]
+    fn freebusy_excludes_events_with_no_stored_occurrence() {
+        let (_dir, vault) = open_calendar_vault();
+        CalendarEventFixture::new(0x67, "Undated", 0, 0).store(&vault);
+        CalendarEventFixture::new(0x68, "Dated", 500, 599).store(&vault);
+
+        let union = freebusy(&vault, &[], window(0, 1_000)).expect("freebusy");
+        assert_eq!(union.len(), 1, "an undated EVENT bills no availability");
+        assert_eq!((union[0].start_utc, union[0].end_utc), (500, 600));
+
+        assert!(
+            freebusy(&vault, &[], window(0, 0))
+                .expect("freebusy")
+                .is_empty(),
+            "an undated EVENT does not occupy Unix second zero"
         );
     }
 
