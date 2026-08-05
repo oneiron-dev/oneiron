@@ -36,7 +36,8 @@ use crate::registry::{
     ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
     ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
-use crate::store::Store;
+use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
+use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
@@ -1725,6 +1726,196 @@ pub(crate) fn apply_ops(
     )
 }
 
+/// Why a base write transaction is allowed to touch the ids it touches
+/// (ARCH-0052 D2, ONE-1728 K4). Exactly two arms: there is no grant type and
+/// no test-mintable capability anywhere in this design.
+///
+/// * [`Self::Ordinary`] — every ordinary base write. An op referencing a live
+///   session overlay's member is rejected at the decode point.
+/// * [`Self::PromoteReplay`] — the promote transaction replaying one session's
+///   own closure into base (ONE-1730). It exempts ONLY the ids of the session
+///   whose promote this transaction is; every other live session's ids still
+///   reject.
+///
+/// The exemption set is not carried on this type. It rides beside the origin
+/// as the per-call `promote_member_of` channel on [`apply_ops_with_origin`],
+/// whose closed form is supplied by the promote call site out of the session
+/// identity already present in its own parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BaseWriteOrigin {
+    Ordinary,
+    #[allow(
+        dead_code,
+        reason = "ONE-1730's promote transaction is the only legal constructor; \
+                  the P4a guard defines its semantics and the oracle covers them"
+    )]
+    PromoteReplay,
+}
+
+/// Session-membership exemption channel carried beside a [`BaseWriteOrigin`].
+///
+/// Option contract (pinned by ONE-1728, bound by ONE-1730): `None` iff the
+/// origin is [`BaseWriteOrigin::Ordinary`]; `Some` iff it is
+/// [`BaseWriteOrigin::PromoteReplay`], in which case the predicate answers
+/// "is this id a member of the session whose promote this transaction is".
+/// Because the `Ordinary` wrapper passes `None` by construction, no state
+/// inside the transaction can exempt another session's ids.
+pub(crate) type PromoteMemberOf<'a> = Option<&'a dyn Fn(&EntityId) -> bool>;
+
+/// The K4 taint guard, run at the decode point of ONE op inside the applying
+/// write transaction (ARCH-0052 D2, ONE-1728).
+///
+/// **Enumeration IS the decode point.** The overlay-id-bearing op list is not a
+/// separate table that could drift: it is this function's own exhaustive match
+/// over [`BatchOp`], so a new id-bearing variant fails to compile until it names
+/// its refs here. Raw base CLAIM puts hide their subject/world refs inside an
+/// opaque body, so they decode through the same landed decoder their apply path
+/// uses ([`crate::claim::validate_claim_body_and_decode`]) and an undecodable
+/// body fails closed.
+///
+/// Membership is read from live registry state INSIDE the transaction, at the
+/// moment the op is decoded — there is no preflight pass and no membership-epoch
+/// publication protocol to keep in sync. The state read here is the state this
+/// transaction applies against, which removes the TOCTOU class rather than
+/// racing it.
+fn check_decode_point_taint_guard(
+    store: &Store,
+    op: &BatchOp,
+    origin: BaseWriteOrigin,
+    promote_member_of: PromoteMemberOf<'_>,
+) -> Result<()> {
+    // Decode-point membership probe. With zero live overlay entities no id in
+    // this op can be a member, so the guard is a no-op and a raw CLAIM body is
+    // never decoded twice on the canonical path. This is the same live read the
+    // per-id checks below make — read here, inside the applying transaction, at
+    // the decode point — not a hoisted preflight: it answers "could any id be
+    // tainted right now", and the transaction applies against exactly this
+    // state.
+    if !store.off_record_sessions.has_overlay_entities()? {
+        return Ok(());
+    }
+    let tainted = |id: &EntityId| Error::OffRecordTaintedBaseWrite {
+        entity_ref: id.to_hex(),
+    };
+    let check = |id: &EntityId| -> Result<()> {
+        if !store.off_record_sessions.contains_entity(id)? {
+            return Ok(());
+        }
+        // `PromoteReplay` exempts ONLY the session whose promote this
+        // transaction is. The predicate is minted by the promote call site out
+        // of the session identity in its own parameters, so it has no way to
+        // answer `true` for another live session's ids — and `Ordinary` carries
+        // no predicate at all.
+        if promote_member_of.is_some_and(|member_of| member_of(id)) {
+            debug_assert_eq!(origin, BaseWriteOrigin::PromoteReplay);
+            return Ok(());
+        }
+        Err(tainted(id))
+    };
+
+    match op {
+        BatchOp::Put {
+            id,
+            entity_type,
+            data,
+            allow_reserved_predicate,
+            ..
+        } => {
+            // The MATERIALIZED id is deliberately not judged here: it reaches
+            // `off_record::guard_off_record_entity_put` inside `apply_put`, the
+            // landed entity-materialization chokepoint, which rejects the same
+            // condition (live-overlay membership) with the settled typed
+            // `OffRecordFencedTurnWriteRejected` — and covers durable fence
+            // state K4 knows nothing about, so it is strictly stronger on this
+            // ref. Minting a second error identity for one condition would be a
+            // regression, not a hardening: `sync/window.rs` and
+            // `sync/quarantine.rs` classify on that typed identity to
+            // quarantine-and-continue a replicated window, and an unrecognized
+            // reason there fails the window closed. K4 owns the refs the entity
+            // door structurally cannot see — the ones below, which materialize
+            // nothing and so never reach it.
+            if *entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                let Ok(body) =
+                    crate::claim::validate_claim_body_and_decode(data, *allow_reserved_predicate)
+                else {
+                    // Undecodable body: its refs cannot be enumerated, so
+                    // membership cannot be disproved. FAIL CLOSED with the
+                    // taint error rather than letting an opaque body through to
+                    // be judged later. (`apply_put` would reject it too, with
+                    // `InvalidClaimBody`; reaching that verdict would mean
+                    // deciding an undecodable body is untainted, which is the
+                    // open-by-default shape the guard exists to forbid.)
+                    return Err(tainted(id));
+                };
+                check_claim_body_refs(&body, &check)?;
+            }
+        }
+        BatchOp::ClaimCandidate {
+            candidate,
+            envelope,
+            ..
+        } => {
+            // The candidate's own `id` materializes through `apply_put` and is
+            // judged by the entity door there, for the reason above. Its
+            // world/subject/actor refs do not materialize, so they are K4's.
+            if let Some(world) = candidate.world() {
+                check(&world)?;
+            }
+            check_claim_subject_refs(candidate.subject(), &check)?;
+            check(&envelope.actor().entity_ref())?;
+        }
+        BatchOp::ReconcileLexicalQueryHints { source, keep } => {
+            check(source)?;
+            for id in keep {
+                check(id)?;
+            }
+        }
+        BatchOp::Vector { id, .. }
+        | BatchOp::Text { id, .. }
+        | BatchOp::Phonetic { id, .. }
+        | BatchOp::Delete { id } => check(id)?,
+        BatchOp::Edge { src, tgt, .. }
+        | BatchOp::PublicEdgeWithCreatedAt { src, tgt, .. }
+        | BatchOp::EdgeWithCreatedAt { src, tgt, .. }
+        | BatchOp::SetEdgeWeight { src, tgt, .. }
+        | BatchOp::SetEdgeVad { src, tgt, .. }
+        | BatchOp::DeleteEdge { src, tgt, .. } => {
+            check(src)?;
+            check(tgt)?;
+        }
+    }
+    Ok(())
+}
+
+/// Entity refs a decoded CLAIM body carries: its subject and its world scope.
+fn check_claim_body_refs(
+    body: &crate::claim::ClaimBody,
+    check: &impl Fn(&EntityId) -> Result<()>,
+) -> Result<()> {
+    check_claim_subject_refs(body.subject, check)?;
+    if let Some(world) = body.world {
+        check(&world)?;
+    }
+    Ok(())
+}
+
+/// Entity refs a [`crate::claim::ClaimSubject`] carries: the entity itself, or
+/// BOTH endpoints of an edge subject.
+fn check_claim_subject_refs(
+    subject: crate::claim::ClaimSubject,
+    check: &impl Fn(&EntityId) -> Result<()>,
+) -> Result<()> {
+    match subject {
+        crate::claim::ClaimSubject::Entity(id) => check(&id),
+        crate::claim::ClaimSubject::Edge { source, target, .. } => {
+            check(&source)?;
+            check(&target)
+        }
+    }
+}
+
+/// Applies a batch under [`BaseWriteOrigin::Ordinary`] — the shape every
+/// existing caller uses, unchanged.
 pub(crate) fn apply_ops_with_gate_mode(
     store: &Store,
     config: &crate::config::VaultConfig,
@@ -1734,6 +1925,46 @@ pub(crate) fn apply_ops_with_gate_mode(
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
 ) -> Result<()> {
+    apply_ops_with_origin(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        gate_mode,
+        BaseWriteOrigin::Ordinary,
+        None,
+    )
+}
+
+/// Applies a batch under an explicit [`BaseWriteOrigin`].
+///
+/// The K4 taint guard runs INSIDE this transaction, at the point where each op
+/// is decoded — there is no preflight pass and no membership-epoch publication
+/// protocol. The membership state the guard reads inside the applying `wtxn`
+/// is the state the transaction applies against, which removes the TOCTOU
+/// class outright.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "batch write plumbing keeps gate persistence modes and the write origin explicit at call sites"
+)]
+pub(crate) fn apply_ops_with_origin(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    gate_mode: ApplyOpsGateMode,
+    origin: BaseWriteOrigin,
+    promote_member_of: PromoteMemberOf<'_>,
+) -> Result<()> {
+    debug_assert_eq!(
+        promote_member_of.is_some(),
+        origin == BaseWriteOrigin::PromoteReplay,
+        "the promote-membership channel is Some iff the origin is PromoteReplay"
+    );
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
@@ -1775,6 +2006,10 @@ pub(crate) fn apply_ops_with_gate_mode(
     let companion_retired_histories = companion_retired_histories_in_batch(&ops)?;
 
     for (op_index, op) in ops.into_iter().enumerate() {
+        // K4: the op-decode point, inside the applying transaction. Every arm
+        // below decodes an op that may carry overlay ids, so this is where
+        // membership is judged — before the arm can stage a byte.
+        check_decode_point_taint_guard(store, &op, origin, promote_member_of)?;
         match op {
             BatchOp::Put {
                 id,
@@ -2185,6 +2420,161 @@ pub(crate) fn apply_ops_with_gate_mode(
         crate::hnsw::increment_vector_version(store, wtxn)?;
     }
 
+    Ok(())
+}
+
+/// The session apply entry (ONE-1728 K4/K11): stages one witness program into
+/// the session overlay and NEVER enters the base apply.
+///
+/// # Why this is a sibling of `apply_ops_with_origin`, not a mode flag on it
+///
+/// The base apply's body is base-shaped in ways a session has no answer for:
+/// it publishes gate decisions to the durable ledger, enqueues `pe:` embed
+/// jobs, reconciles the identity-topology fold across the whole ledger, and
+/// schedules legacy HNSW rebuilds off the base `vectors` DB. Threading a
+/// target through it would put a live `if session { skip }` in front of each —
+/// four chances for a later edit to leak a room into base. Here the leak is
+/// structurally impossible instead: this function has no access to a `Store`,
+/// so there is no base row it *could* write.
+///
+/// What it shares with base is exactly what must not drift — the row STAGING
+/// (`stage_entity_body_row`, `stage_entity_index_rows`, `stage_edge_rows`,
+/// `stage_vector_row`, `index_text`, `hnsw_insert_batched`) — reached through
+/// the same [`ManifestDbs`] accessors base uses. That is what makes promote a
+/// replay of bytes rather than a re-derivation of them.
+///
+/// # What the session path deliberately does NOT do
+///
+/// * **No `pe:` markers or embed jobs** (K6): session content embeds inline at
+///   witness time or has no vectors until promote. No overlay `pe:` keyspace
+///   exists, so this is skip, not redirect.
+/// * **No base entity door** (`guard_off_record_entity_put`): that guard
+///   REJECTS live-overlay membership, so running it here would refuse the
+///   room's own witness writes. The separation is structural — the session
+///   path never enters the base apply — not an added exemption.
+/// * **No graph/vector version bump**: those counters gate the BASE PPR and
+///   HNSW caches. A room's writes must not invalidate the base's caches, and
+///   the session's own reads compose over the snapshot, not the cache.
+/// * **No legacy HNSW rebuild**: `hnsw_insert_batched` takes `&impl
+///   ManifestDbs` while the rebuild arm takes `&Store`, so a session target
+///   cannot reach a rebuild — it does not typecheck.
+///
+/// Every op is journaled with its [`JournalRole`] and the witnessing write's
+/// own `occurred`/`learned_at`, because the typed journal is promote's ONLY
+/// legal closure source (ARCH-0052 D4); ownership must never be inferable from
+/// index keys.
+///
+/// [`JournalRole`]: crate::session_overlay::JournalRole
+/// # The op list IS the journal
+///
+/// This entry takes [`JournalEntry`] values, not bare [`BatchOp`]s: staging a
+/// row and journaling it are one act, so an op cannot reach the overlay
+/// without its role tag and preserved timestamps. A `Vec<BatchOp>` parameter
+/// would have made "tag every op" a discipline someone can forget; this makes
+/// it a thing you cannot express.
+pub(crate) fn apply_ops_session(
+    view: &crate::store::SessionStoreView<'_>,
+    route: &SessionWriteRoute,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    entries: Vec<JournalEntry>,
+) -> Result<()> {
+    // A route minted before the most recent mode publication names a mode
+    // epoch that no longer authorizes overlay writes. Refuse BEFORE staging a
+    // byte, so a flip landing mid-call cannot leave half a turn in a room the
+    // caller no longer believes it is in. `batch.rs` never reads route fields;
+    // the route revalidates itself.
+    route.revalidate()?;
+    if route.target() != RouteTarget::Overlay {
+        return Err(Error::InvariantViolation(
+            "session apply needs an Overlay route; a Base route witnesses through the ordinary apply",
+        ));
+    }
+    let overlay = route.overlay();
+
+    for entry in entries {
+        match &entry.op {
+            BatchOp::Put {
+                id,
+                entity_type,
+                data,
+                ..
+            } => {
+                // Same registry discipline as base: a room is not a place
+                // where unknown or engine-authored type bytes become writable.
+                // Promote replays these rows into base, so a byte that would
+                // be rejected there is rejected here.
+                crate::registry::validate_public_entity_type(*entity_type)?;
+                // The ENTRY's stamps, not the op's: they are the witnessing
+                // write's own and are what promote replays into the right
+                // month window (ARCH-0052 D4).
+                stage_entity_body_row(
+                    view,
+                    wtxn,
+                    id,
+                    *entity_type,
+                    entry.occurred,
+                    entry.learned_at,
+                    data,
+                )?;
+                stage_entity_index_rows(
+                    view,
+                    wtxn,
+                    id,
+                    *entity_type,
+                    entry.occurred,
+                    entry.learned_at,
+                )?;
+            }
+            BatchOp::Edge {
+                src,
+                kind,
+                tgt,
+                weight,
+                vad,
+            } => {
+                validate_edge_weight(*weight)?;
+                if let Some((component, value)) = vad.invalid_component() {
+                    return Err(Error::InvalidVad { component, value });
+                }
+                // `created_at` is the witness's `learned_at`, never
+                // `unix_seconds_now()` — a promoted edge must carry the time
+                // the turn happened, not the time it was promoted.
+                let value = encode_edge_value(*kind, *weight, entry.learned_at, *vad, None)?;
+                stage_edge_rows(view, wtxn, src, *kind, tgt, &value)?;
+            }
+            BatchOp::Text { id, fields } => {
+                crate::bm25::index_text(view, wtxn, analyzer, id, fields)?;
+            }
+            BatchOp::Vector { id, vector, .. } => {
+                stage_vector_row(view, config, wtxn, id, vector)?;
+                // `pending_rebuild` can only come back false: the legacy arm
+                // that would set it needs a base `&Store` this call does not
+                // have. Passing a local sink states that and keeps the shared
+                // staging body byte-identical with base.
+                let mut pending_rebuild = false;
+                crate::hnsw::hnsw_insert_batched(
+                    view,
+                    config,
+                    wtxn,
+                    id,
+                    vector,
+                    &mut pending_rebuild,
+                )?;
+                debug_assert!(
+                    !pending_rebuild,
+                    "a session target cannot schedule a base graph rebuild"
+                );
+            }
+            _ => {
+                return Err(Error::InvariantViolation(
+                    "session witness stages only put, edge, text, and vector ops",
+                ));
+            }
+        }
+        overlay.stage_journal_entry(entry)?;
+    }
     Ok(())
 }
 
@@ -3188,14 +3578,7 @@ fn apply_put(
         }
     }
 
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(entity_type);
-    payload.extend_from_slice(&occurred.start.to_be_bytes());
-    payload.extend_from_slice(&occurred.end.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(data);
-
-    store.entities.put(wtxn, id.as_bytes(), &payload)?;
+    stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     if let Some(record) = new_skill_record.as_ref() {
         crate::skill_hub::maintain_skill_content_hash_index_for_put(
             store,
@@ -3220,31 +3603,7 @@ fn apply_put(
         }
     }
 
-    let type_key = Store::encode_type_key(entity_type, &id);
-    store.type_index.put(wtxn, &type_key, &[])?;
-
-    let occurred_start_key = Store::encode_temporal_key(occurred.start, &id);
-    store
-        .temporal_occurred_start
-        .put(wtxn, &occurred_start_key, &[])?;
-
-    if occurred.start != occurred.end {
-        let occurred_end_key = Store::encode_temporal_key(occurred.end, &id);
-        store
-            .temporal_occurred_end
-            .put(wtxn, &occurred_end_key, &[])?;
-    }
-
-    let learned_key = Store::encode_temporal_key(learned_at, &id);
-    store.temporal_learned.put(wtxn, &learned_key, &[])?;
-
-    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
-        let long_interval_key = Store::encode_temporal_key(occurred.end, &id);
-        let occurred_start_value = occurred.start.to_be_bytes();
-        store
-            .temporal_long_intervals
-            .put(wtxn, &long_interval_key, &occurred_start_value)?;
-    }
+    stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;
@@ -3278,6 +3637,96 @@ fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
+}
+
+/// Stages one entity's body row: the ARCH-0019 metadata header followed by the
+/// caller's body bytes (ONE-1728 K11).
+///
+/// Target-parameterized, so a session witness writes the SAME header layout
+/// into the overlay that base writes durably — promote replays the row without
+/// re-encoding it.
+fn stage_entity_body_row(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    occurred: TimeRange,
+    learned_at: u64,
+    data: &[u8],
+) -> Result<()> {
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+    payload.push(entity_type);
+    payload.extend_from_slice(&occurred.start.to_be_bytes());
+    payload.extend_from_slice(&occurred.end.to_be_bytes());
+    payload.extend_from_slice(&learned_at.to_be_bytes());
+    payload.extend_from_slice(data);
+    store.entities().put(wtxn, id.as_bytes(), &payload)?;
+    Ok(())
+}
+
+/// Stages the type and temporal index rows every materialized entity carries
+/// (ONE-1728 K11). Target-parameterized alongside [`stage_entity_body_row`]:
+/// the session's type/temporal readers compose over these overlay rows, so an
+/// in-room enumeration or time-range walk sees the turn it just witnessed.
+///
+/// `occurred`/`learned_at` are the WITNESSING write's own stamps — never
+/// restamped here — so a promoted row lands in the month window it belongs to
+/// (ARCH-0052 D4).
+fn stage_entity_index_rows(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    let type_key = Store::encode_type_key(entity_type, id);
+    store.type_index().put(wtxn, &type_key, &[])?;
+
+    let occurred_start_key = Store::encode_temporal_key(occurred.start, id);
+    store
+        .temporal_occurred_start()
+        .put(wtxn, &occurred_start_key, &[])?;
+
+    if occurred.start != occurred.end {
+        let occurred_end_key = Store::encode_temporal_key(occurred.end, id);
+        store
+            .temporal_occurred_end()
+            .put(wtxn, &occurred_end_key, &[])?;
+    }
+
+    let learned_key = Store::encode_temporal_key(learned_at, id);
+    store.temporal_learned().put(wtxn, &learned_key, &[])?;
+
+    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
+        let long_interval_key = Store::encode_temporal_key(occurred.end, id);
+        let occurred_start_value = occurred.start.to_be_bytes();
+        store
+            .temporal_long_intervals()
+            .put(wtxn, &long_interval_key, &occurred_start_value)?;
+    }
+    Ok(())
+}
+
+/// Stages one edge's paired `edges_out`/`edges_in` rows (ONE-1728 K11).
+///
+/// PAIRED-WRITE INVARIANT: both directions carry byte-identical value bytes.
+/// Extracted from [`apply_edge_with_created_at`] so the session path cannot
+/// drift from it — a caller that wrote only one direction would leave the
+/// overlay's edge readers asymmetric and promote a half-edge.
+fn stage_edge_rows(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+    value: &[u8],
+) -> Result<()> {
+    let key_out = Store::encode_edge_key(src, kind, tgt);
+    let key_in = Store::encode_edge_key(tgt, kind, src);
+    store.edges_out().put(wtxn, &key_out, value)?;
+    store.edges_in().put(wtxn, &key_in, value)?;
+    Ok(())
 }
 
 pub(crate) struct ReplicatedAuthorityLogValidation {
@@ -3646,6 +4095,28 @@ fn apply_vector(
             cleared_pending_embedding: false,
         });
     }
+    stage_vector_row(store, config, wtxn, &id, vector)?;
+    let cleared_pending_embedding = match pending_embedding_token {
+        Some(token) => store.clear_pending_embedding_if_token_matches(wtxn, &id, token)?,
+        None => false,
+    };
+    Ok(AppliedVector {
+        wrote_vector: true,
+        cleared_pending_embedding,
+    })
+}
+
+/// Validates one vector against the vault's embedding contract and stages its
+/// row (ONE-1728 K11). Target-parameterized so a session witness stages the
+/// identical bytes into the overlay: the `pe:` bookkeeping around it is
+/// base-only (K6) and stays in [`apply_vector`].
+fn stage_vector_row(
+    store: &impl ManifestDbs,
+    config: &crate::config::VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    vector: &[f32],
+) -> Result<()> {
     crate::store::ensure_model_id_for_vector_write(store, wtxn, config.embedding_model.as_deref())?;
     if vector.len() != config.dimensions {
         return Err(Error::DimensionMismatch {
@@ -3661,15 +4132,8 @@ fn apply_vector(
     for v in vector {
         bytes.extend_from_slice(&v.to_le_bytes());
     }
-    store.vectors.put(wtxn, id.as_bytes(), &bytes)?;
-    let cleared_pending_embedding = match pending_embedding_token {
-        Some(token) => store.clear_pending_embedding_if_token_matches(wtxn, &id, token)?,
-        None => false,
-    };
-    Ok(AppliedVector {
-        wrote_vector: true,
-        cleared_pending_embedding,
-    })
+    store.vectors().put(wtxn, id.as_bytes(), &bytes)?;
+    Ok(())
 }
 
 /// Reads an entity's registry type byte. `None` means no entity row exists —
@@ -4053,15 +4517,8 @@ fn apply_edge_with_created_at(
     }
     validate_task_checkin_child_of_edge(store, &*wtxn, &src, kind, &tgt)?;
 
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    let key_in = Store::encode_edge_key(&tgt, kind, &src);
     let value = encode_edge_value(kind, weight, created_at, vad, provenance)?;
-    // Paired-write invariant: edge value bytes are identical in `edges_out`
-    // and `edges_in`; callers that alter edge payload layout must keep both
-    // directions in lock-step.
-    store.edges_out.put(wtxn, &key_out, &value)?;
-    store.edges_in.put(wtxn, &key_in, &value)?;
-    Ok(())
+    stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)
 }
 
 fn validate_child_of_batch(
@@ -4430,13 +4887,18 @@ fn apply_delete_edge(
     Ok(deleted_out)
 }
 
+/// Stages one entity's phonetic postings and its forward code row.
+///
+/// Pure-accessor body, so ONE-1728 K11 parameterizes it by write target by
+/// signature alone: a session witness stages the identical postings into the
+/// overlay and the base path is byte-identical because it is the same code.
 fn apply_phonetic(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     codes: &[String],
 ) -> Result<()> {
-    let mut forward_codes = match store.phonetic_forward.get(wtxn, id.as_bytes())? {
+    let mut forward_codes = match store.phonetic_forward().get(wtxn, id.as_bytes())? {
         Some(raw) => match decode_phonetic_forward_codes(&raw) {
             Ok(codes) => codes,
             Err(Error::CorruptedIndex(_)) => Vec::new(),
@@ -4453,7 +4915,7 @@ fn apply_phonetic(
             continue;
         }
 
-        let existing = store.phonetic_index.get(wtxn, code.as_bytes())?;
+        let existing = store.phonetic_index().get(wtxn, code.as_bytes())?;
         let mut posting =
             existing.map_or_else(|| Vec::with_capacity(ENTITY_ID_LEN), |bytes| bytes.to_vec());
         if !posting.len().is_multiple_of(ENTITY_ID_LEN) {
@@ -4472,7 +4934,9 @@ fn apply_phonetic(
         }
 
         posting.extend_from_slice(id.as_bytes());
-        store.phonetic_index.put(wtxn, code.as_bytes(), &posting)?;
+        store
+            .phonetic_index()
+            .put(wtxn, code.as_bytes(), &posting)?;
 
         if !forward_codes.iter().any(|known| known == code) {
             forward_codes.push(code.clone());
@@ -4484,7 +4948,9 @@ fn apply_phonetic(
         forward_codes.sort();
         forward_codes.dedup();
         let encoded = encode_phonetic_forward_codes(&forward_codes);
-        store.phonetic_forward.put(wtxn, id.as_bytes(), &encoded)?;
+        store
+            .phonetic_forward()
+            .put(wtxn, id.as_bytes(), &encoded)?;
     }
 
     Ok(())
@@ -4505,7 +4971,7 @@ enum ShortIdPlan {
 }
 
 fn plan_short_id_update(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RwTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -4514,7 +4980,7 @@ fn plan_short_id_update(
 ) -> Result<ShortIdPlan> {
     let content_hash = (xxh32(data, 0) % 256) as u8;
 
-    if let Some(existing) = store.short_ids_reverse.get(txn, id.as_bytes())? {
+    if let Some(existing) = store.short_ids_reverse().get(txn, id.as_bytes())? {
         let (short_id, old_content_hash) = parse_short_id_value(&existing)?;
         return Ok(ShortIdPlan::UpdateExisting {
             short_id: short_id.to_owned(),
@@ -4528,7 +4994,7 @@ fn plan_short_id_update(
     // rows inside `short_ids` — that table holds only the ARCH-0019 row n3
     // mapping `(short_id, content_hash)` -> `entity_id`.
     let counter_key = crate::store::short_id_counter_key(entity_type);
-    let current = match store.vault_meta.get(txn, &counter_key)? {
+    let current = match store.vault_meta().get(txn, &counter_key)? {
         Some(raw) => {
             let buf: [u8; SHORT_ID_COUNTER_LEN] = raw
                 .as_ref()
@@ -4552,7 +5018,7 @@ fn plan_short_id_update(
 }
 
 fn apply_short_id_plan(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     plan: ShortIdPlan,
@@ -4567,7 +5033,7 @@ fn apply_short_id_plan(
                 // The content hash is part of the forward KEY, so a content
                 // update must remove the stale forward row before rewriting.
                 let old_forward_key = encode_short_id_forward_key(&short_id, old_content_hash);
-                store.short_ids.delete(wtxn, &old_forward_key)?;
+                store.short_ids().delete(wtxn, &old_forward_key)?;
             }
             write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
@@ -4578,7 +5044,7 @@ fn apply_short_id_plan(
             content_hash,
         } => {
             store
-                .vault_meta
+                .vault_meta()
                 .put(wtxn, &counter_key, &next_counter.to_le_bytes())?;
             write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
@@ -4587,8 +5053,12 @@ fn apply_short_id_plan(
     Ok(())
 }
 
-fn delete_short_id_rows_for_id(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-    let forward_key = match store.short_ids_reverse.get(wtxn, id.as_bytes())? {
+fn delete_short_id_rows_for_id(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let forward_key = match store.short_ids_reverse().get(wtxn, id.as_bytes())? {
         Some(value) => {
             let (short_id, content_hash) = parse_short_id_value(&value)?;
             Some(encode_short_id_forward_key(short_id, content_hash))
@@ -4596,8 +5066,8 @@ fn delete_short_id_rows_for_id(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityI
         None => None,
     };
     if let Some(forward_key) = forward_key {
-        store.short_ids.delete(wtxn, &forward_key)?;
-        store.short_ids_reverse.delete(wtxn, id.as_bytes())?;
+        store.short_ids().delete(wtxn, &forward_key)?;
+        store.short_ids_reverse().delete(wtxn, id.as_bytes())?;
     }
     Ok(())
 }
@@ -4607,16 +5077,16 @@ fn delete_short_id_rows_for_id(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityI
 /// entity id; row n4 `short_ids_reverse`: key entity id -> value
 /// `(short_id bytes ‖ content_hash u8)` (same bytes as the forward key).
 fn write_short_id_rows(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     short_id: &str,
     content_hash: u8,
 ) -> Result<()> {
     let forward_key = encode_short_id_forward_key(short_id, content_hash);
-    store.short_ids.put(wtxn, &forward_key, id.as_bytes())?;
+    store.short_ids().put(wtxn, &forward_key, id.as_bytes())?;
     store
-        .short_ids_reverse
+        .short_ids_reverse()
         .put(wtxn, id.as_bytes(), &forward_key)?;
     Ok(())
 }

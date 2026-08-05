@@ -67,6 +67,58 @@ fn bundle_card() -> Result<BundleApproveCard> {
     )
 }
 
+fn authenticated_person(
+    vault: &crate::Vault,
+    seed: u8,
+    principal_ref: &str,
+) -> crate::consent::AuthenticatedOwner {
+    let actor = crate::test_util::entity(seed);
+    vault
+        .put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            principal_ref.as_bytes(),
+        )
+        .expect("seed authenticated person");
+    vault
+        .authenticate_owner(
+            actor,
+            principal_ref,
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("authenticate person")
+}
+
+fn owner_context() -> (
+    tempfile::TempDir,
+    crate::Vault,
+    crate::consent::AuthenticatedOwner,
+) {
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let owner = authenticated_person(&vault, 0x71, "owner");
+    (dir, vault, owner)
+}
+
+fn evaluate_ask_action(
+    card: &ConsentAskCard,
+    request: &ConsentActionRequest,
+) -> Result<ConsentActionEvaluation> {
+    let (_dir, _vault, owner) = owner_context();
+    card.evaluate_action(request, &owner)
+}
+
+fn evaluate_bundle_action(
+    card: &BundleApproveCard,
+    request: &ConsentActionRequest,
+) -> Result<ConsentActionEvaluation> {
+    let (_dir, _vault, owner) = owner_context();
+    card.evaluate_action(request, &owner)
+}
+
 #[test]
 fn rcpt3_components_render_for_all_three_adapters() -> Result<()> {
     let components = vec![
@@ -96,7 +148,7 @@ fn rcpt3_components_render_for_all_three_adapters() -> Result<()> {
 }
 
 #[test]
-fn non_principal_shared_slack_approve_is_noop_receipted() -> Result<()> {
+fn non_principal_shared_slack_approve_is_refused_at_the_door() -> Result<()> {
     let card = ask_card()?;
     let request = ConsentActionRequest::new(
         "ask-1",
@@ -109,23 +161,12 @@ fn non_principal_shared_slack_approve_is_noop_receipted() -> Result<()> {
         100,
     )?;
 
-    let evaluation = card.evaluate_action(&request)?;
-    assert_eq!(evaluation.decision, ConsentActionDecision::NoopNonPrincipal);
-    assert!(evaluation.grant_mint_intent.is_none());
-    assert_eq!(evaluation.receipt.outcome, "no_op_non_principal");
-    assert_eq!(evaluation.receipt.actor.as_deref(), Some("coworker"));
-    assert_eq!(evaluation.receipt.on_behalf_of.as_deref(), Some("owner"));
     assert_eq!(
-        evaluation.receipt.fields.get("surface").map(String::as_str),
-        Some("shared_slack")
+        evaluate_ask_action(&card, &request)
+            .expect_err("self-attested coworker must not reach evaluation")
+            .kind(),
+        crate::error::ErrorKind::ConsentUnauthenticatedActor
     );
-    assert!(
-        evaluation
-            .receipt
-            .policy_trace
-            .contains(&"principal_auth:actor_mismatch".to_owned())
-    );
-
     Ok(())
 }
 
@@ -143,7 +184,7 @@ fn escalator_selection_emits_grant_mint_intent() -> Result<()> {
         101,
     )?;
 
-    let evaluation = card.evaluate_action(&request)?;
+    let evaluation = evaluate_ask_action(&card, &request)?;
     assert_eq!(evaluation.decision, ConsentActionDecision::GrantMintIntent);
     let intent = evaluation
         .grant_mint_intent
@@ -173,7 +214,7 @@ fn beneficiary_cannot_confirm_always_this_verb_class() -> Result<()> {
         102,
     )?;
 
-    let evaluation = card.evaluate_action(&request)?;
+    let evaluation = evaluate_ask_action(&card, &request)?;
     assert_eq!(
         evaluation.decision,
         ConsentActionDecision::NoopBeneficiaryConfirm
@@ -208,7 +249,7 @@ fn beneficiary_cannot_confirm_always_this_channel() -> Result<()> {
         103,
     )?;
 
-    let evaluation = card.evaluate_action(&request)?;
+    let evaluation = evaluate_ask_action(&card, &request)?;
     assert_eq!(
         evaluation.decision,
         ConsentActionDecision::NoopBeneficiaryConfirm
@@ -243,7 +284,7 @@ fn non_beneficiary_can_confirm_widening_scope() -> Result<()> {
         104,
     )?;
 
-    let evaluation = card.evaluate_action(&request)?;
+    let evaluation = evaluate_ask_action(&card, &request)?;
     assert_eq!(evaluation.decision, ConsentActionDecision::GrantMintIntent);
     assert_eq!(
         evaluation
@@ -272,7 +313,7 @@ fn bundle_scope_choice_emits_rcpt4_consumable_intent() -> Result<()> {
         102,
     )?;
 
-    let evaluation = card.evaluate_action(&request)?;
+    let evaluation = evaluate_bundle_action(&card, &request)?;
     let intent = evaluation
         .grant_mint_intent
         .expect("bundle grant mint intent emitted");
@@ -319,7 +360,7 @@ fn forged_typed_action_mismatch_is_rejected_before_grant_mint() -> Result<()> {
     )?;
 
     assert!(matches!(
-        card.evaluate_action(&request),
+        evaluate_ask_action(&card, &request),
         Err(Error::InvalidConfig(message))
             if message.contains("payload does not match declared typed action")
     ));
@@ -329,25 +370,28 @@ fn forged_typed_action_mismatch_is_rejected_before_grant_mint() -> Result<()> {
 
 #[test]
 fn blank_principal_never_authenticates() {
+    let (_dir, _vault, owner) = owner_context();
     assert!(
         !ConsentActorIdentity::SurfaceActor {
             actor_ref: String::new(),
         }
-        .authenticates_principal("")
+        .authenticates_owner("", &owner)
     );
     assert!(
         !ConsentActorIdentity::VoicePath {
             speaker_ref: String::new(),
             owner_voice_print_verified: true,
         }
-        .authenticates_principal("")
+        .authenticates_owner("", &owner)
     );
 }
 
 #[test]
-fn voice_path_requires_enrolled_owner_voice_print() -> Result<()> {
+fn voice_path_uses_store_authentication_not_the_request_boolean() -> Result<()> {
     let card = ask_card()?;
-    let unverified = ConsentActionRequest::new(
+    let (_dir, vault, owner) = owner_context();
+    let attacker = authenticated_person(&vault, 0x72, "attacker");
+    let request = ConsentActionRequest::new(
         "ask-1",
         "approve_once",
         ConsentActionKind::Approve,
@@ -358,27 +402,18 @@ fn voice_path_requires_enrolled_owner_voice_print() -> Result<()> {
         ConsentSurface::Voice,
         103,
     )?;
-    assert_eq!(
-        card.evaluate_action(&unverified)?.decision,
-        ConsentActionDecision::NoopNonPrincipal
-    );
 
-    let verified = ConsentActionRequest::new(
-        "ask-1",
-        "approve_once",
-        ConsentActionKind::Approve,
-        ConsentActorIdentity::VoicePath {
-            speaker_ref: "owner".to_owned(),
-            owner_voice_print_verified: true,
-        },
-        ConsentSurface::Voice,
-        104,
-    )?;
     assert_eq!(
-        card.evaluate_action(&verified)?.decision,
-        ConsentActionDecision::ApprovedOnce
+        card.evaluate_action(&request, &attacker)
+            .expect_err("caller voice claim must not authenticate another principal")
+            .kind(),
+        crate::error::ErrorKind::ConsentUnauthenticatedActor
     );
-
+    assert_eq!(
+        card.evaluate_action(&request, &owner)?.decision,
+        ConsentActionDecision::ApprovedOnce,
+        "the host-authenticated owner handle is authority, not the request boolean"
+    );
     Ok(())
 }
 
@@ -393,4 +428,68 @@ fn atom_kit_buttons_use_safe_self_ui_action_ids() -> Result<()> {
 
     assert!(crate::lens::SelfUiOptionValue::new("just_once").is_ok());
     Ok(())
+}
+
+/// TARGET B pin: identical caller text is refused under the wrong authenticated
+/// principal and succeeds only under the FIX2 store-resolved owner handle.
+#[test]
+fn principal_self_attestation_is_refused_and_store_authenticated_actor_succeeds() -> Result<()> {
+    let card = ask_card()?;
+    let (_dir, vault, owner) = owner_context();
+    let attacker = authenticated_person(&vault, 0x72, "attacker");
+    let request = ConsentActionRequest::new(
+        "ask-1",
+        "approve_once",
+        ConsentActionKind::Approve,
+        ConsentActorIdentity::SurfaceActor {
+            actor_ref: "owner".to_owned(),
+        },
+        ConsentSurface::EiriConversation,
+        104,
+    )?;
+
+    assert_eq!(
+        card.evaluate_action(&request, &attacker)
+            .expect_err("self-attested owner text must not authenticate")
+            .kind(),
+        crate::error::ErrorKind::ConsentUnauthenticatedActor
+    );
+    assert_eq!(
+        card.evaluate_action(&request, &owner)?.decision,
+        ConsentActionDecision::ApprovedOnce,
+        "the same actor text succeeds only with the store-authenticated owner"
+    );
+    Ok(())
+}
+
+/// FIX-9 stays pinned at the deserializer door: actor identity is a tagged
+/// variant, never an untagged free-text claim.
+#[test]
+fn consent_actor_identity_pin_is_not_a_free_text_claim() {
+    let untagged = serde_json::json!({
+        "component_id": "ask-1",
+        "action_id": "approve_once",
+        "action": "approve",
+        "actor": { "actor_ref": "owner" },
+        "surface": "eiri_conversation",
+        "occurred_at": 104
+    });
+    assert!(serde_json::from_value::<ConsentActionRequest>(untagged).is_err());
+
+    let tagged = serde_json::json!({
+        "component_id": "ask-1",
+        "action_id": "approve_once",
+        "action": "approve",
+        "actor": { "identity": "surface_actor", "actor_ref": "owner" },
+        "surface": "eiri_conversation",
+        "occurred_at": 104
+    });
+    assert!(matches!(
+        serde_json::from_value::<ConsentActionRequest>(tagged)
+            .expect("tagged surface actor request"),
+        ConsentActionRequest {
+            actor: ConsentActorIdentity::SurfaceActor { actor_ref },
+            ..
+        } if actor_ref == "owner"
+    ));
 }

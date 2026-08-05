@@ -12,11 +12,14 @@ pub mod authority;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
+pub mod calendar;
+pub mod campaign;
 pub mod channel_identity;
 pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod claim;
+pub mod cluster;
 pub mod code_artifact;
 pub mod code_revision;
 pub mod code_run;
@@ -27,6 +30,7 @@ pub mod comm;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
+pub mod consent;
 pub mod context_board;
 pub mod context_pack;
 pub mod counterparty_contact;
@@ -89,6 +93,8 @@ pub mod registry;
 pub mod repo_mutation;
 pub mod rerank;
 pub mod run_tree;
+pub mod secret_custody;
+pub mod secret_manifest;
 pub mod serialize;
 pub mod session_lifecycle;
 pub(crate) mod session_overlay;
@@ -233,6 +239,10 @@ pub use crate::claim::{
     ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
     RESERVED_PREDICATE_NAMESPACE, SessionClaimBundle, SessionClaimBundleClaim, predicate_root,
 };
+pub use crate::cluster::{
+    CLUSTER_COHESION_THRESHOLD, CLUSTER_ID_DOMAIN, ClaimCohort, ClusterAssignments, ClusterClaim,
+    ClusterOptions, ClusterPartitionKey, CohortId, cluster_claims,
+};
 pub use crate::code_artifact::{
     CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,
     CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES, CodeArtifactBody, CodeArtifactClass,
@@ -318,6 +328,28 @@ pub use crate::connector_key::{
     EffectorBudgetReservePolicy, EffectorBudgetRowRead, EffectorBudgetWindow,
     PendingConnectorCharter, compile_connector_charter, decode_connector_key_body,
     encode_connector_key_body,
+};
+// DEC-0006 unified consent-mode. `consent::ActorBound` is deliberately NOT
+// re-exported here: `crate::vault::ActorBound` (the engine-internal write
+// handle) already owns that name at the crate root, and `vault.rs` is outside
+// this contract's claim. The pinned downstream import path for the consent
+// subject type is therefore `oneiron::consent::ActorBound`; every other name
+// in the contract is re-exported below.
+pub use crate::consent::{
+    ActionClass, ActionEnvelope, ActionGrant, AudienceBound, AuthenticatedOwner,
+    BULK_BLAST_RADIUS_FLOOR, BoundClass, BoundEnvelope, BoundSubject, CATASTROPHE_FLOOR_V1,
+    CATASTROPHE_FLOOR_VERSION, CONSENT_CONTENT_KIND, CONSENT_GRANT_BODY_KEYS,
+    CONSENT_GRANT_SCHEMA_VERSION, CONSENT_REASON_APPROVE_ONCE, CONSENT_REASON_DENIED,
+    CONSENT_REASON_REVOKED, CONSENT_REASON_STANDING_CREATED, CONSENT_REASON_STANDING_USED,
+    CONSENT_REVOKE_COMMAND, CatastropheClass, ComposedEffect, ConsentDecision, ConsentDomain,
+    ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp,
+    ConsentProposal, ConsentReceipt, ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow,
+    ConsentRevokeAction, DisclosureClass, DisclosureEnvelope, DisclosureGrant, EffectDigest,
+    EffectFacts, GrantBound, MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
+    ReversibilityClass, StandingConsentGrant, UndoFidelity, access_grant_projection_is_active,
+    action_grant_from_standing_outbound_grant, bound_catastrophe_class, decode_consent_grant_row,
+    disclosure_grant_from_access_grant, disclosure_grant_from_disclosure_scope,
+    encode_consent_grant_row,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
@@ -534,9 +566,11 @@ pub use crate::identity_topology::{
     AssertDistinctOp, EntityLifecycleState, FacetOp, FacetSpec, IdentityOpEvidence,
     IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyEvent,
     IdentityTopologyFold, IdentityTopologyOp, IdentityTopologyRejection, MergeOp,
-    PREDICATE_ENTITY_DISTINCT_FROM, ReassignmentEntry, ReassignmentMap, ReassignmentTarget,
-    SplitOp, StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan, distinct_pair_key,
-    evaluate_transition, fold_identity_topology_log, merge_lifecycle_states,
+    PREDICATE_ENTITY_DISTINCT_FROM, PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED, ProposalOutcome,
+    ProposalRuling, ProposalScope, ReassignmentEntry, ReassignmentMap, ReassignmentTarget, SplitOp,
+    StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan, decode_identity_op_amendment,
+    distinct_pair_key, encode_identity_op_amendment, evaluate_transition,
+    fold_identity_topology_log, merge_lifecycle_states,
 };
 pub use crate::inbox::{
     INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,
@@ -545,10 +579,11 @@ pub use crate::inbox::{
     InboxSubCluster,
 };
 pub use crate::ingest::{
-    INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
-    IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry,
-    IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
-    KNOWN_INGEST_HARNESS_CONFIG, NormalizedIngestBatch, NormalizedIngestClaim,
+    INGEST_SOURCE_REGISTRY, IngestAdapterSkillRef, IngestError, IngestHarnessConfig, IngestResult,
+    IngestSource, IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration,
+    IngestSourceRegistry, IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
+    KNOWN_INGEST_HARNESS_CONFIG, MEETING_TRANSCRIPT_SCHEMA_V1, MEETING_TRANSCRIPT_SOURCE_ID,
+    MeetingTranscriptSource, NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestNote,
     NormalizedIngestRecord,
 };
 pub use crate::interlocutor::{
@@ -718,6 +753,7 @@ pub use crate::receipt::{
     append_pack_manifest_fields, attempt_pack_receipt, attempt_pack_receipt_id,
     eiri_memory_board_state_ref, outbound_intent_receipt, project_receipts_by_brief,
     project_receipts_by_counterparty, project_receipts_by_grant,
+    proposal_outcome_amended_body, proposal_outcome_delta,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
@@ -802,8 +838,14 @@ pub use crate::store::{
 };
 pub use crate::surface_event::{
     INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
-    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
-    SurfaceCounterpartyStamp, SurfaceEvent,
+    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_ATTEMPT_KIND,
+    SURFACE_EVENT_SCHEMA_VERSION, SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAck,
+    SurfaceEventAction, SurfaceEventAdmission, SurfaceEventAttemptPayload, SurfaceEventAttemptRef,
+    SurfaceEventDispatchDisposition, SurfaceEventDispatchRequest, SurfaceEventDispatchRoute,
+    SurfaceEventDispatcher, SurfaceEventHandoffState, SurfaceEventHandoffStatus,
+    SurfaceEventSource, SurfaceEventWorkerOutcome, SurfaceInteractionKind, SurfaceSourceApp,
+    decode_surface_event_attempt_payload, encode_surface_event_attempt_payload,
+    surface_event_run_id,
 };
 pub use crate::task_verb::{
     DEFAULT_TASK_CANCEL_MODE, TASKS_VERBS, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt,
