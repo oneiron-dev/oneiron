@@ -183,6 +183,15 @@ pub enum ErrorKind {
     InvalidCommRecordBody,
     InvalidDisclosureScope,
     DisclosureClampViolation,
+    InvalidConsentBound,
+    InvalidConsentGrantRow,
+    InvalidConsentEffectFacts,
+    ConsentOwnerNotAuthenticated,
+    ConsentUnauthenticatedActor,
+    ConsentCatastropheNotRememberable,
+    ConsentGrantNotFound,
+    ConsentGrantRevoked,
+    ConsentApproveOnceSpent,
     InvalidTaskBody,
     CorruptedIndex,
     ContextPackValidation,
@@ -943,6 +952,49 @@ pub enum Error {
     /// pack build FAILS rather than leaks (OF-365 fail-closed sweep).
     #[error("disclosure clamp violation: {0}")]
     DisclosureClampViolation(&'static str),
+    /// A DEC-0006 consent bound failed normalization: an empty/oversized ref,
+    /// an empty envelope, or — the load-bearing case — a triple that crosses
+    /// the disclosure and action domains (invariant 4). Nothing was written.
+    #[error("invalid consent bound: {0}")]
+    InvalidConsentBound(&'static str),
+    /// A persisted standing consent-grant row failed pinned structural
+    /// validation. Nothing was written.
+    #[error("invalid consent grant row: {0}")]
+    InvalidConsentGrantRow(&'static str),
+    /// The engine-owned write facts required to classify a composed effect
+    /// were malformed or absent, so no reversibility verdict can be produced.
+    /// The caller takes the invariant-8 domain fail-safe.
+    #[error("invalid consent effect facts: {0}")]
+    InvalidConsentEffectFacts(&'static str),
+    /// A consent minting door was reached without an authenticated owner.
+    /// Standing grants are created ONLY by the authenticated owner — never
+    /// inferred from a preference, a claim, a transcript line, or a guard
+    /// hunch (DEC-0006 invariant 2). Nothing was written.
+    #[error("consent owner not authenticated: {0}")]
+    ConsentOwnerNotAuthenticated(&'static str),
+    /// A GenUI consent action reached evaluation without a store-authenticated
+    /// owner handle bound to both the card principal and the claimed actor.
+    /// Caller-deserialized actor text and voice booleans are never authority.
+    #[error("consent actor is not authenticated: {0}")]
+    ConsentUnauthenticatedActor(&'static str),
+    /// A standing-grant mint named a catastrophe-floor class. The closed floor
+    /// is non-rememberable at ANY trust level (DEC-0006 invariant 7): the
+    /// owner may approve the op in the moment, but never make it automatic.
+    /// Nothing was written.
+    #[error("catastrophe floor is non-rememberable: {0}")]
+    ConsentCatastropheNotRememberable(&'static str),
+    /// A consent registry operation named a grant row that does not exist.
+    #[error("consent grant not found")]
+    ConsentGrantNotFound,
+    /// A standing grant was used after revocation. Revocation is immediate.
+    #[error("consent grant is revoked")]
+    ConsentGrantRevoked,
+    /// An approve-once digest was replayed: either the owner tried to mint a
+    /// second approve-once over it, or the evaluator matched a receipt whose
+    /// effect already ran. Approve-once authorizes this op, NOW, exactly once
+    /// (DEC-0006 invariant 2). Nothing was written.
+    #[error("approve-once digest already spent: {0}")]
+    ConsentApproveOnceSpent(&'static str),
     /// A TASK record failed pinned role-field validation. Nothing was written.
     #[error("invalid TASK body: {0}")]
     InvalidTaskBody(&'static str),
@@ -1614,6 +1666,17 @@ impl Error {
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDisclosureScope(_) => ErrorKind::InvalidDisclosureScope,
+            Self::InvalidConsentBound(_) => ErrorKind::InvalidConsentBound,
+            Self::InvalidConsentGrantRow(_) => ErrorKind::InvalidConsentGrantRow,
+            Self::InvalidConsentEffectFacts(_) => ErrorKind::InvalidConsentEffectFacts,
+            Self::ConsentOwnerNotAuthenticated(_) => ErrorKind::ConsentOwnerNotAuthenticated,
+            Self::ConsentUnauthenticatedActor(_) => ErrorKind::ConsentUnauthenticatedActor,
+            Self::ConsentCatastropheNotRememberable(_) => {
+                ErrorKind::ConsentCatastropheNotRememberable
+            }
+            Self::ConsentGrantNotFound => ErrorKind::ConsentGrantNotFound,
+            Self::ConsentGrantRevoked => ErrorKind::ConsentGrantRevoked,
+            Self::ConsentApproveOnceSpent(_) => ErrorKind::ConsentApproveOnceSpent,
             Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
