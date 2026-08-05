@@ -868,16 +868,6 @@ impl GeneratedUiStateSnapshot {
     pub fn get(&self, key: &SelfUiStateKey) -> Option<&SelfUiStateValue> {
         self.values.get(key)
     }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
 }
 
 impl FromIterator<(SelfUiStateKey, SelfUiStateValue)> for GeneratedUiStateSnapshot {
@@ -931,14 +921,6 @@ impl GeneratedUiStatePatch {
     pub fn path(&self) -> &str {
         match self {
             Self::Add { path, .. } | Self::Replace { path, .. } | Self::Remove { path } => path,
-        }
-    }
-
-    #[must_use]
-    pub fn value(&self) -> Option<&SelfUiStateValue> {
-        match self {
-            Self::Add { value, .. } | Self::Replace { value, .. } => Some(value),
-            Self::Remove { .. } => None,
         }
     }
 }
