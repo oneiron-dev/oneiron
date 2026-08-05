@@ -40,11 +40,12 @@ mod common;
 use common::entity as test_id;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    BusyInterval, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,
-    CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest,
-    CalendarSel, ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
-    ClaimSubject, EdgeActorClass, EntityId, FACADE_CODE_BAD_REQUEST, MemoryFacade, TimeRange,
-    Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    BusyInterval, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
+    CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
+    CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel, ClaimApprovalStatus,
+    ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
+    FACADE_CODE_BAD_REQUEST, MemoryFacade, TimeRange, Vault, VaultConfig, WriteActor,
+    WriteEnvelope, WriteProvenance,
 };
 use rmpv::Value;
 
@@ -403,6 +404,46 @@ fn calendar_surface_rejects_invalid_ranges_with_the_typed_facade_error() {
 }
 
 #[test]
+fn calendar_invite_draft_is_cal_04s_verb_and_typed_five_field_payload() {
+    let input = CalendarInviteSurfaceInput {
+        method: CalendarInviteSurfaceMethod::Request,
+        uid: "uid-one-1791".to_owned(),
+        sequence: 3,
+        ics_blob_ref: "blob:one-1791".to_owned(),
+        recipient: "guest@example.test".to_owned(),
+    };
+
+    // CAL-04 (ONE-1786) branches its dispatch chokepoint on
+    // `draft.verb == CALENDAR_INVITE_VERB` ("calendar.invite") before it
+    // exact-decodes the payload. A shorter local verb leaves that branch dead
+    // on arrival: the invite would schedule as a generic draft and never reach
+    // the iMIP codec.
+    assert_eq!(CALENDAR_INVITE_OUTBOUND_VERB, "calendar.invite");
+
+    let draft = input.outbound_draft();
+    assert_eq!(draft.verb, CALENDAR_INVITE_OUTBOUND_VERB);
+    assert_eq!(draft.channel, CALENDAR_INVITE_OUTBOUND_CHANNEL);
+    assert_eq!(draft.target, input.recipient);
+    assert_eq!(
+        draft.content_ref.as_deref(),
+        Some(input.ics_blob_ref.as_str())
+    );
+
+    // The other three fields stay typed on the payload CAL-04 decodes: exactly
+    // C7's five keys, in order, with the uppercase iMIP method and a numeric
+    // sequence — never re-parsed out of the derived idempotency/trigger keys.
+    let wire = serde_json::to_value(&input).expect("invite payload serializes");
+    let payload = wire.as_object().expect("invite payload object");
+    assert_eq!(
+        payload.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["method", "uid", "sequence", "ics_blob_ref", "recipient"]
+    );
+    assert_eq!(payload["method"], serde_json::json!("REQUEST"));
+    assert_eq!(payload["uid"], serde_json::json!("uid-one-1791"));
+    assert_eq!(payload["sequence"], serde_json::json!(3));
+}
+
+#[test]
 fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
     let (_dir, vault) = temp_vault();
     let (_actor, facade) = actor_facade(&vault);
@@ -424,6 +465,14 @@ fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
     assert!(
         error.message.contains("unsupported outbound capability"),
         "invite must fail at the outbound capability preflight; got {error}"
+    );
+    // The preflight echoes the verb it could not resolve, so this also proves
+    // CAL-04's pinned verb — not a local shorthand — is what reaches the door.
+    // Spelled literally on purpose: asserting against the constant would pass
+    // for whatever the constant happens to say.
+    assert!(
+        error.message.contains("\"calendar.invite\""),
+        "the pinned calendar.invite verb must reach the outbound door; got {error}"
     );
 
     // Nothing was scheduled: no receipt exists for this actor.

@@ -928,7 +928,14 @@ pub struct OutboundIntentReceipt {
 /// returns the ordinary unsupported-capability error for this pair.
 pub const CALENDAR_INVITE_OUTBOUND_CHANNEL: &str = "calendar";
 /// Outbound verb the calendar invite surface schedules.
-pub const CALENDAR_INVITE_OUTBOUND_VERB: &str = "invite";
+///
+/// This string is the seam with CAL-04 (ONE-1786), which registers
+/// `calendar.invite` in `COMMON_OUTBOUND_VERB_KINDS` and branches its dispatch
+/// chokepoint on `draft.verb == CALENDAR_INVITE_VERB`. A shorter local spelling
+/// would leave that branch dead on arrival — the invite would schedule as a
+/// generic draft and never reach the iMIP payload codec — so the value is
+/// pinned to CAL-04's, not to this module's vocabulary.
+pub const CALENDAR_INVITE_OUTBOUND_VERB: &str = "calendar.invite";
 
 /// iMIP method the invite surface accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -967,6 +974,11 @@ impl CalendarInviteSurfaceMethod {
 /// Closed on purpose: an [`OutboundDraftInput`] here would let a caller choose
 /// its own channel, verb, and trigger, which is precisely the bypass the
 /// invite-through-the-gate rule exists to prevent.
+///
+/// This type *is* the payload CAL-04 (ONE-1786) exact-decodes — five typed
+/// fields, uppercase iMIP method, closed to unknown keys. It stays typed all
+/// the way to [`Self::outbound_draft`]; nothing here re-parses a key back into
+/// a method, uid, or sequence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarInviteSurfaceInput {
@@ -1000,6 +1012,40 @@ impl CalendarInviteSurfaceInput {
     #[must_use]
     pub fn trigger_ref(&self) -> String {
         format!("calendar.invite:{}:{}", self.uid, self.sequence)
+    }
+
+    /// The generic outbound draft this invite schedules.
+    ///
+    /// One named site for the whole invite→draft encoding, so the seam CAL-04
+    /// (ONE-1786) picks up is testable before its half exists. What is pinned
+    /// here: the verb is CAL-04's `calendar.invite`, the channel is the
+    /// `calendar` connector, and `recipient`/`ics_blob_ref` ride the typed
+    /// `target`/`content_ref` fields.
+    ///
+    /// KNOWN HOLE (CAL-04's, not fixable from CAL-09): `method`, `uid`, and
+    /// `sequence` have no typed home on [`OutboundDraftInput`] or
+    /// `OutboundIntentDraft` on this baseline, so they reach the chokepoint
+    /// only inside the derived idempotency/trigger strings. Adding the typed
+    /// payload channel means editing `outbound.rs`, which CAL-04 owns and this
+    /// ticket must not touch. When ONE-1786 lands it, this function is the one
+    /// site that fills it — the public surface above does not change.
+    #[must_use]
+    pub fn outbound_draft(&self) -> OutboundDraftInput {
+        OutboundDraftInput {
+            verb: CALENDAR_INVITE_OUTBOUND_VERB.to_owned(),
+            channel: CALENDAR_INVITE_OUTBOUND_CHANNEL.to_owned(),
+            target: self.recipient.clone(),
+            on_behalf_of: None,
+            content_ref: Some(self.ics_blob_ref.clone()),
+            idempotency_key: Some(self.idempotency_key()),
+            dedupe_key: None,
+            // This surface carries no session, so it uses the queue trigger
+            // class rather than fabricating an originating-session ref.
+            trigger: "gap_queue".to_owned(),
+            trigger_ref: self.trigger_ref(),
+            job_ref: None,
+            occurred_at: None,
+        }
     }
 
     fn validate(&self) -> FacadeResult<()> {
@@ -3045,28 +3091,14 @@ impl MemoryFacade<'_> {
     /// constructs the generic draft internally, so no caller can hand-roll a
     /// draft that bypasses the invite contract. Delivery is never performed
     /// here — [`Self::schedule_outbound`] is the only path, and until CAL-04
-    /// (ONE-1786) registers the `calendar`/`invite` capability the existing
-    /// unsupported-capability error is returned unchanged.
+    /// (ONE-1786) registers the `calendar`/`calendar.invite` capability the
+    /// existing unsupported-capability error is returned unchanged.
     pub fn calendar_invite(
         &self,
         input: &CalendarInviteSurfaceInput,
     ) -> FacadeResult<OutboundIntentReceipt> {
         input.validate()?;
-        self.schedule_outbound(&OutboundDraftInput {
-            verb: CALENDAR_INVITE_OUTBOUND_VERB.to_owned(),
-            channel: CALENDAR_INVITE_OUTBOUND_CHANNEL.to_owned(),
-            target: input.recipient.clone(),
-            on_behalf_of: None,
-            content_ref: Some(input.ics_blob_ref.clone()),
-            idempotency_key: Some(input.idempotency_key()),
-            dedupe_key: None,
-            // This surface carries no session, so it uses the queue trigger
-            // class rather than fabricating an originating-session ref.
-            trigger: "gap_queue".to_owned(),
-            trigger_ref: input.trigger_ref(),
-            job_ref: None,
-            occurred_at: None,
-        })
+        self.schedule_outbound(&input.outbound_draft())
     }
 
     // ── internals ───────────────────────────────────────────────────────
