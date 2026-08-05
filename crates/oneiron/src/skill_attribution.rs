@@ -159,9 +159,11 @@ impl AttemptOutcome {
 
 /// One attributable outcome, as recorded by the caller that observed it.
 ///
-/// The `receipt_ref` is the RS1 receipt id (a string on the landed spine, not
-/// an entity id) whose pack manifest names `skill`; every judgment cites it, so
-/// a verdict is always traceable back to the record that produced it.
+/// The `receipt_ref` is the id of the terminal PACK RECEIPT the attempt's
+/// close stamped ([`crate::receipt::attempt_pack_receipt_id`]) — a string on
+/// the landed spine, not an entity id. [`record_attribution_evidence`]
+/// resolves it, and the `skill` must appear in that receipt's manifest, so a
+/// verdict is always traceable back to the record that produced it.
 ///
 /// The two `Option<bool>` facts are the routing inputs. `None` means the
 /// evidence did not settle that fact — the rule tier then ABSTAINS rather than
@@ -329,7 +331,7 @@ fn verdict_subject(verdict: AttributionVerdict, evidence: &OutcomeEvidence) -> O
 /// be captured on the hot path and routed in a later pass (the ARCH-0035
 /// posture, and the reason a re-run can be replayed against a fixed judge).
 pub fn record_attribution_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Result<u64> {
-    validate_evidence(evidence)?;
+    validate_evidence(vault, evidence)?;
     vault.with_write_txn(|wtxn| {
         let sequence = next_evidence_sequence_in_txn(vault, wtxn)?;
         let encoded = encode_value(&encode_evidence(evidence, sequence))?;
@@ -589,11 +591,56 @@ pub fn held_out_audit_fixtures() -> Vec<AuditFixture> {
 // Storage
 // ---------------------------------------------------------------------------
 
-fn validate_evidence(evidence: &OutcomeEvidence) -> Result<()> {
+/// Grounds one evidence row against the vault before it is recorded.
+///
+/// A verdict is only as good as its inputs. Evidence naming an actor that does
+/// not exist, a skill that does not exist, or a receipt nobody stamped is a
+/// FABRICATION: routing it would mint a judgment whose citation resolves to
+/// nothing, and the layers above (ONE-1738's posterior, ONE-1739's `actor.*`
+/// rows) would inherit it as fact. Every reference is resolved here, at the
+/// door, so the projector downstream can trust what it reads.
+fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Result<()> {
     if evidence.receipt_ref.is_empty() {
         return Err(invalid("attribution evidence must cite a receipt"));
     }
+    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, &evidence.receipt_ref)? else {
+        return Err(invalid("attribution evidence cites an unstamped receipt"));
+    };
+    if vault.get_raw(&evidence.actor)?.is_none() {
+        return Err(invalid("attribution evidence names an unknown actor"));
+    }
+    let Some(skill) = evidence.skill else {
+        return Ok(());
+    };
+    let Some(record) = vault.get_skill_record(&skill)? else {
+        return Err(invalid("attribution evidence names an unknown skill"));
+    };
+    // The receipt's manifest is what the pack ACTUALLY loaded. A skill the
+    // attempt never loaded cannot have caused its outcome, so admitting the
+    // pair would be attribution by assertion. A receipt stamped before the
+    // field-set existed carries no manifest and cannot answer the question —
+    // that is an absent fact, not a failed check.
+    let Some(manifest) = receipt.pack_manifest_skills() else {
+        return Ok(());
+    };
+    if !manifest
+        .iter()
+        .any(|entry| manifest_entry_names_skill(entry, &record.skill_id))
+    {
+        return Err(invalid(
+            "attribution evidence names a skill absent from the receipt manifest",
+        ));
+    }
     Ok(())
+}
+
+/// A manifest wire form is `reference@version` and the reference of a SKILL
+/// row is its `skill_id`. Split from the RIGHT: the version suffix is the
+/// last `@`, so a skill id containing one still resolves.
+fn manifest_entry_names_skill(wire_form: &str, skill_id: &str) -> bool {
+    wire_form
+        .rsplit_once('@')
+        .is_some_and(|(reference, _)| reference == skill_id)
 }
 
 fn sequenced_key(prefix: &[u8], sequence: u64) -> Vec<u8> {

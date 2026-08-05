@@ -1,5 +1,100 @@
 use super::*;
+use crate::attempt_queue::{
+    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
+    ManifestEntry, ManifestKind,
+};
+use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::receipt::attempt_pack_receipt_id;
+use crate::registry::ENTITY_TYPE_PERSON;
+use crate::skill::{SkillLifecycle, SkillRecord};
+use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
+
+const FIXTURE_SKILL_ID: &str = "attribution.fixture.skill";
+
+fn at(ts: u64) -> TimeRange {
+    TimeRange { start: ts, end: ts }
+}
+
+/// The vault-resident actor an evidence row names. Evidence about an actor the
+/// vault has never seen is a fabrication, so every test grounds one.
+fn put_actor(vault: &Vault, id: EntityId) -> Result<EntityId> {
+    vault.put_entity(&id, ENTITY_TYPE_PERSON, at(1), 1, b"attribution fixture")?;
+    Ok(id)
+}
+
+/// The vault-resident SKILL an evidence row names, under `skill_id` so the
+/// receipt manifest's `reference@version` rows can be matched against it.
+fn put_skill(vault: &Vault, id: EntityId, skill_id: &str) -> Result<EntityId> {
+    let record = SkillRecord::new(
+        skill_id,
+        "attribution fixture skill",
+        "1.0.0",
+        ClaimApprovalStatus::Approved,
+        SkillLifecycle::Candidate,
+        ClaimSource::Imported,
+        0.9,
+        false,
+        true,
+        Vec::new(),
+        Value::Map(vec![(
+            Value::from("source"),
+            Value::from("attribution-fixture"),
+        )]),
+    );
+    vault.put_skill_record(&id, &record, at(10), 11)?;
+    Ok(id)
+}
+
+/// Runs one attempt whose pack loaded `skill_id` to its terminal door and
+/// returns the receipt id that close STAMPED. Evidence cites these, never a
+/// hand-written string: the ledger is the authority.
+fn stamped_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
+    let queue = AttemptQueue::new(vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "attribution.fixture".to_owned(),
+        payload: Vec::new(),
+        dedupe_key: None,
+        run_id: None,
+        now: 10,
+    })?
+    else {
+        panic!("a fresh dedupe-free enqueue is never Existing");
+    };
+    queue.append_manifest_entry(
+        attempt.id,
+        ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
+    )?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "fixture-worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("the enqueued attempt is claimable");
+    };
+    assert_eq!(leased.id, attempt.id, "one attempt in flight per fixture");
+    queue.complete(CompleteAttempt {
+        id: attempt.id,
+        lease_owner: "fixture-worker".to_owned(),
+        attempt_count: leased.attempt_count,
+        now: 13,
+    })?;
+    Ok(attempt_pack_receipt_id(&attempt.id))
+}
+
+/// One grounded stage: an actor, a skill, and a receipt whose manifest names
+/// that skill — the shape every admitted evidence row has.
+struct Grounded {
+    actor: EntityId,
+    skill: EntityId,
+}
+
+fn ground(vault: &Vault, actor_seed: u8, skill_seed: u8) -> Result<Grounded> {
+    Ok(Grounded {
+        actor: put_actor(vault, entity(actor_seed))?,
+        skill: put_skill(vault, entity(skill_seed), FIXTURE_SKILL_ID)?,
+    })
+}
 
 fn evidence(
     receipt: &str,
@@ -21,13 +116,14 @@ fn evidence(
 #[test]
 fn defect_routes_to_the_skill_and_lapse_routes_to_the_actor() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let actor = entity(0x21);
-    let skill = entity(0x22);
+    let Grounded { actor, skill } = ground(&vault, 0x21, 0x22)?;
+    let defect_receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    let lapse_receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
 
     record_attribution_evidence(
         &vault,
         &evidence(
-            "receipt:defect",
+            &defect_receipt,
             actor,
             skill,
             AttemptOutcome::Failed,
@@ -38,7 +134,7 @@ fn defect_routes_to_the_skill_and_lapse_routes_to_the_actor() -> Result<()> {
     record_attribution_evidence(
         &vault,
         &evidence(
-            "receipt:lapse",
+            &lapse_receipt,
             actor,
             skill,
             AttemptOutcome::Failed,
@@ -84,19 +180,12 @@ fn defect_routes_to_the_skill_and_lapse_routes_to_the_actor() -> Result<()> {
 #[test]
 fn discovery_routes_to_an_edit_proposal_not_a_claim() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let actor = entity(0x23);
-    let skill = entity(0x24);
+    let Grounded { actor, skill } = ground(&vault, 0x23, 0x24)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
 
     record_attribution_evidence(
         &vault,
-        &evidence(
-            "receipt:discovery",
-            actor,
-            skill,
-            AttemptOutcome::Failed,
-            true,
-            false,
-        ),
+        &evidence(&receipt, actor, skill, AttemptOutcome::Failed, true, false),
     )?;
     let judgments = run_attribution_projector(&vault, 0)?;
 
@@ -125,21 +214,20 @@ fn discovery_routes_to_an_edit_proposal_not_a_claim() -> Result<()> {
 #[test]
 fn every_judgment_cites_its_receipt() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x25, 0x26)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
     record_attribution_evidence(
         &vault,
-        &evidence(
-            "receipt:cited",
-            entity(0x25),
-            entity(0x26),
-            AttemptOutcome::Failed,
-            true,
-            true,
-        ),
+        &evidence(&receipt, actor, skill, AttemptOutcome::Failed, true, true),
     )?;
 
     let judgments = run_attribution_projector(&vault, 0)?;
 
-    assert_eq!(judgments[0].evidence_receipts, vec!["receipt:cited"]);
+    assert_eq!(judgments[0].evidence_receipts, vec![receipt.clone()]);
+    assert!(
+        crate::receipt::attempt_pack_receipt(&vault, &receipt)?.is_some(),
+        "the cited receipt resolves on the ledger: the citation is not a string"
+    );
     Ok(())
 }
 
@@ -148,16 +236,11 @@ fn every_judgment_cites_its_receipt() -> Result<()> {
 #[test]
 fn a_second_pass_from_the_cursor_routes_nothing_new() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x27, 0x28)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
     record_attribution_evidence(
         &vault,
-        &evidence(
-            "receipt:first",
-            entity(0x27),
-            entity(0x28),
-            AttemptOutcome::Failed,
-            true,
-            true,
-        ),
+        &evidence(&receipt, actor, skill, AttemptOutcome::Failed, true, true),
     )?;
 
     assert_eq!(run_attribution_projector(&vault, 0)?.len(), 1);
@@ -180,14 +263,16 @@ fn a_second_pass_from_the_cursor_routes_nothing_new() -> Result<()> {
 #[test]
 fn abstained_evidence_still_advances_the_cursor() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x29, 0x2A)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
     // A SUCCEEDED attempt abstains: this projector routes blame, and crediting
     // a win is the reliability posterior's job (ONE-1738).
     record_attribution_evidence(
         &vault,
         &evidence(
-            "receipt:won",
-            entity(0x29),
-            entity(0x2A),
+            &receipt,
+            actor,
+            skill,
             AttemptOutcome::Succeeded,
             true,
             true,
@@ -208,9 +293,10 @@ fn abstained_evidence_still_advances_the_cursor() -> Result<()> {
 #[test]
 fn unsettled_routing_facts_abstain() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x2B, 0x2C)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
     let ambiguous =
-        OutcomeEvidence::new("receipt:ambiguous", entity(0x2B), AttemptOutcome::Failed, 5)
-            .with_skill(entity(0x2C));
+        OutcomeEvidence::new(receipt, actor, AttemptOutcome::Failed, 5).with_skill(skill);
     record_attribution_evidence(&vault, &ambiguous)?;
 
     assert_eq!(run_attribution_projector(&vault, 0)?.len(), 0);
@@ -223,14 +309,9 @@ fn unsettled_routing_facts_abstain() -> Result<()> {
 #[test]
 fn skill_lane_evidence_without_a_skill_abstains() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let mut orphan = evidence(
-        "receipt:orphan",
-        entity(0x2D),
-        entity(0x2E),
-        AttemptOutcome::Failed,
-        true,
-        true,
-    );
+    let Grounded { actor, skill } = ground(&vault, 0x2D, 0x2E)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    let mut orphan = evidence(&receipt, actor, skill, AttemptOutcome::Failed, true, true);
     orphan.skill = None;
     record_attribution_evidence(&vault, &orphan)?;
 
@@ -247,12 +328,131 @@ fn skill_lane_evidence_without_a_skill_abstains() -> Result<()> {
 #[test]
 fn persisted_judgments_round_trip() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let actor = entity(0x2F);
-    let skill = entity(0x30);
+    let Grounded { actor, skill } = ground(&vault, 0x2F, 0x30)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    record_attribution_evidence(
+        &vault,
+        &evidence(&receipt, actor, skill, AttemptOutcome::Failed, true, true),
+    )?;
+    let minted = run_attribution_projector(&vault, 0)?;
+
+    assert_eq!(attribution_judgments(&vault)?, minted);
+    Ok(())
+}
+
+// ─── Evidence grounding (ONE-1737 F2) ──────────────────────────────────
+
+/// Every reference on an evidence row is resolved at the door. A string that
+/// looks like a receipt, an actor nobody minted, a skill nobody minted, and a
+/// skill the attempt never loaded are all FABRICATIONS — each one is a typed
+/// refusal, and none of them reaches the evidence store.
+#[test]
+fn fabricated_evidence_references_are_refused_at_the_door() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x31, 0x32)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    let unloaded_skill = put_skill(&vault, entity(0x33), "attribution.fixture.other")?;
+
+    let cases: [(OutcomeEvidence, &str); 4] = [
+        (
+            evidence(
+                "attempt:00000000000000000000000000000000",
+                actor,
+                skill,
+                AttemptOutcome::Failed,
+                true,
+                true,
+            ),
+            "attribution evidence cites an unstamped receipt",
+        ),
+        (
+            evidence(
+                &receipt,
+                entity(0x34),
+                skill,
+                AttemptOutcome::Failed,
+                true,
+                true,
+            ),
+            "attribution evidence names an unknown actor",
+        ),
+        (
+            evidence(
+                &receipt,
+                actor,
+                entity(0x35),
+                AttemptOutcome::Failed,
+                true,
+                true,
+            ),
+            "attribution evidence names an unknown skill",
+        ),
+        (
+            evidence(
+                &receipt,
+                actor,
+                unloaded_skill,
+                AttemptOutcome::Failed,
+                true,
+                true,
+            ),
+            "attribution evidence names a skill absent from the receipt manifest",
+        ),
+    ];
+
+    for (fabricated, expected) in cases {
+        let error = record_attribution_evidence(&vault, &fabricated)
+            .expect_err("a fabricated reference is refused");
+        assert!(
+            matches!(error, Error::InvalidClaimBody(reason) if reason == expected),
+            "expected {expected}, got {error:?}"
+        );
+    }
+    assert_eq!(
+        run_attribution_projector(&vault, 0)?.len(),
+        0,
+        "nothing fabricated reached the evidence store"
+    );
+    Ok(())
+}
+
+/// The admitting case: an actor the vault knows, a skill the vault knows, and
+/// a receipt whose manifest actually names that skill.
+#[test]
+fn grounded_evidence_naming_a_loaded_skill_is_admitted() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x36, 0x37)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+
+    let sequence = record_attribution_evidence(
+        &vault,
+        &evidence(&receipt, actor, skill, AttemptOutcome::Failed, true, true),
+    )?;
+
+    assert_eq!(sequence, 1);
+    let judgments = run_attribution_projector(&vault, 0)?;
+    assert_eq!(judgments.len(), 1);
+    assert_eq!(judgments[0].evidence_receipts, vec![receipt]);
+    Ok(())
+}
+
+/// A receipt stamped before the manifest field-set existed cannot answer
+/// "was this skill loaded" — an absent fact is not a failed check, so the
+/// membership rule does not manufacture a refusal from it.
+#[test]
+fn a_receipt_without_a_manifest_field_does_not_gate_membership() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x38, 0x39)?;
+    let receipt_ref = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    let mut stripped = crate::receipt::attempt_pack_receipt(&vault, &receipt_ref)?
+        .expect("the terminal stamped a receipt");
+    stripped.fields.clear();
+    crate::receipt::overwrite_attempt_pack_receipt_for_test(&vault, &stripped)?;
+
     record_attribution_evidence(
         &vault,
         &evidence(
-            "receipt:stored",
+            &receipt_ref,
             actor,
             skill,
             AttemptOutcome::Failed,
@@ -260,9 +460,8 @@ fn persisted_judgments_round_trip() -> Result<()> {
             true,
         ),
     )?;
-    let minted = run_attribution_projector(&vault, 0)?;
 
-    assert_eq!(attribution_judgments(&vault)?, minted);
+    assert_eq!(run_attribution_projector(&vault, 0)?.len(), 1);
     Ok(())
 }
 

@@ -106,6 +106,41 @@ fn put_actor(vault: &Vault, id: &EntityId) -> Result<()> {
     vault.put_entity(id, ENTITY_TYPE_PERSON, t(1), 1, b"oracle actor fixture")
 }
 
+/// Runs one attempt whose pack loaded `skill_id` to its terminal door and
+/// returns the receipt id that close STAMPED. Attribution evidence cites these
+/// — a hand-written receipt string is refused at the evidence door.
+fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
+    let queue = AttemptQueue::new(vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "oracle.attempt".to_owned(),
+        payload: Vec::new(),
+        dedupe_key: None,
+        run_id: None,
+        now: 10,
+    })?
+    else {
+        panic!("a fresh dedupe-free enqueue is never Existing");
+    };
+    queue.append_manifest_entry(
+        attempt.id,
+        ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
+    )?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "oracle-worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("the enqueued attempt is claimable");
+    };
+    queue.complete(CompleteAttempt {
+        id: attempt.id,
+        lease_owner: "oracle-worker".to_owned(),
+        attempt_count: leased.attempt_count,
+        now: 13,
+    })?;
+    Ok(attempt_pack_receipt_id(&attempt.id))
+}
+
 /// All claim rows on `subject` with `predicate`, split (active, superseded).
 fn claim_rows(
     vault: &Vault,
@@ -901,8 +936,10 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
             .with_skill(skill_entity)
             .with_routing_facts(followed_skill, true)
     };
-    record_attribution_evidence(&vault, &failed("receipt:oracle.defect", true))?;
-    record_attribution_evidence(&vault, &failed("receipt:oracle.lapse", false))?;
+    let defect_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
+    let lapse_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
+    record_attribution_evidence(&vault, &failed(&defect_receipt, true))?;
+    record_attribution_evidence(&vault, &failed(&lapse_receipt, false))?;
     let judgments = run_attribution_projector(&vault, 0)?;
     assert_eq!(judgments.len(), 2, "both failures routed");
     assert_eq!(judgments[0].verdict, AttributionVerdict::SkillDefect);
@@ -960,16 +997,12 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     // ARMED (ONE-1737): the projector runs over an outcome the routing table
     // judges DISCOVERY — the attempt failed, the actor DID follow the skill,
     // and the skill did NOT cover the failing step (missing content).
+    let discovery_receipt = stamped_pack_receipt(&vault, "oracle.skill.discovery")?;
     record_attribution_evidence(
         &vault,
-        &OutcomeEvidence::new(
-            "receipt:oracle.discovery",
-            actor_entity,
-            AttemptOutcome::Failed,
-            20,
-        )
-        .with_skill(skill_entity)
-        .with_routing_facts(true, false),
+        &OutcomeEvidence::new(discovery_receipt, actor_entity, AttemptOutcome::Failed, 20)
+            .with_skill(skill_entity)
+            .with_routing_facts(true, false),
     )?;
     let judgments = run_attribution_projector(&vault, 0)?;
     let projected = judgments.len() == 1

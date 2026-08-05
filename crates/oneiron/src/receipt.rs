@@ -647,6 +647,28 @@ pub fn attempt_pack_receipt(vault: &Vault, receipt_id: &str) -> Result<Option<Re
     decode_attempt_pack_receipt(&raw).map(Some)
 }
 
+/// Overwrites one row of the pack receipt ledger.
+///
+/// Test-only by construction: production stamps exactly once, at the terminal
+/// transition, and never rewrites. Tests use it to synthesize rows the current
+/// stamper cannot produce (a receipt predating the manifest field-set).
+#[cfg(test)]
+pub(crate) fn overwrite_attempt_pack_receipt_for_test(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+) -> Result<()> {
+    let encoded = rmp_serde::to_vec_named(receipt)
+        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(
+            wtxn,
+            &attempt_pack_receipt_key(&receipt.receipt_id),
+            &encoded,
+        )?;
+        Ok(())
+    })
+}
+
 fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut receipts = Vec::new();
