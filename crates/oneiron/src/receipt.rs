@@ -2548,12 +2548,42 @@ fn identity_topology_receipt(
             entity,
             heads,
             reassignment,
+            applied_assigned,
+            applied_residue,
         } => {
             let (assigned, residue) = reassignment.assigned_and_residue_counts();
             fields.insert("entity".to_owned(), entity.to_hex());
             fields.insert("head_count".to_owned(), heads.len().to_string());
             fields.insert("assigned".to_owned(), assigned.to_string());
             fields.insert("residue".to_owned(), residue.to_string());
+            // DECLARED above, APPLIED here (ONE-1745). The pair is the whole
+            // point: a gap means the decision named items this vault holds no
+            // claim for, and the projector stays pure — it reads the stored
+            // record alone, never a vault or a txn.
+            fields.insert(
+                "applied_assigned".to_owned(),
+                applied_assigned.to_string(),
+            );
+            fields.insert("applied_residue".to_owned(), applied_residue.to_string());
+            Some(format!("entity:{}", entity.to_hex()))
+        }
+        StoredIdentityOpAction::Facet {
+            entity,
+            facets,
+            reassignment,
+            applied_assigned,
+            applied_residue,
+        } => {
+            let (assigned, residue) = reassignment.assigned_and_residue_counts();
+            fields.insert("entity".to_owned(), entity.to_hex());
+            fields.insert("facet_count".to_owned(), facets.len().to_string());
+            fields.insert("assigned".to_owned(), assigned.to_string());
+            fields.insert("residue".to_owned(), residue.to_string());
+            fields.insert(
+                "applied_assigned".to_owned(),
+                applied_assigned.to_string(),
+            );
+            fields.insert("applied_residue".to_owned(), applied_residue.to_string());
             Some(format!("entity:{}", entity.to_hex()))
         }
         StoredIdentityOpAction::Undo { target } => {

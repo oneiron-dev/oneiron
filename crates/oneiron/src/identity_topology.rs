@@ -57,8 +57,8 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, entity_type_registry_entry,
-    is_structural_kind,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+    entity_type_registry_entry, is_structural_kind,
 };
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -119,6 +119,13 @@ const IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT: u64 =
 pub(crate) const MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS: usize = 256;
 
+/// Masks one facet op may mint (ONE-1745). A facet op names exactly ONE
+/// pre-existing entity, so the participant bound above does not reach its
+/// fan-out — minting is the op's own effect. Bounded by the same number for
+/// the same reason: one op's write batch stays fixed-size.
+pub(crate) const MAX_IDENTITY_TOPOLOGY_EVENT_FACETS: usize =
+    MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS;
+
 const BODY_KEY_KIND: &str = "kind";
 const BODY_KEY_SEQ: &str = "seq";
 const BODY_KEY_AT: &str = "at";
@@ -141,6 +148,16 @@ const BODY_KEY_SCOPE_OP_KIND: &str = "sc_op";
 const BODY_KEY_SCOPE_TARGET_CLASS: &str = "sc_cls";
 const BODY_KEY_SCOPE_ACTOR: &str = "sc_actor";
 const BODY_KEY_AMENDED: &str = "amended";
+/// Minted FACET entity ids of a facet event, in the op's spec order.
+const BODY_KEY_FACETS: &str = "facets";
+/// Map rows the apply door actually recorded, and rows it left as ambiguous
+/// residue. DECLARED counts live in the map itself
+/// ([`ReassignmentMap::assigned_and_residue_counts`]); these two are what
+/// application produced, so the receipt can show the gap without a vault.
+/// Omitted from the wire when zero, which keeps parked events and amendment
+/// bodies byte-identical to their pre-ONE-1745 encoding.
+const BODY_KEY_APPLIED_ASSIGNED: &str = "asg";
+const BODY_KEY_APPLIED_RESIDUE: &str = "res";
 
 const MAP_KEY_ITEM: &str = "item";
 const MAP_KEY_HEAD: &str = "head";
@@ -148,6 +165,9 @@ const MAP_KEY_FACET: &str = "facet";
 
 const EVENT_KIND_MERGE: &str = "merge";
 const EVENT_KIND_SPLIT: &str = "split";
+/// Wire kind of the ARCH-0055 r5 facet event (ONE-1745). Pinned string, in
+/// the same reservation family as the other three kinds.
+const EVENT_KIND_FACET: &str = "facet";
 const EVENT_KIND_UNDO: &str = "undo";
 /// Wire kind of the ARCH-0055 r7 proposal-resolution event (ONE-1747). The
 /// resolution event IS the retirement of the park: the projector finds a
@@ -350,6 +370,81 @@ fn reassignment_target_rank(target: &ReassignmentTarget) -> (u8, Vec<u8>) {
         ReassignmentTarget::Residue => (2, Vec::new()),
     }
 }
+
+/// What [`apply_reassignment_in_txn`] recorded for one op (ARCH-0055 r2).
+///
+/// APPLIED counts, not declared ones: a map row naming an item this vault
+/// holds no CLAIM for records nothing, so `assigned + residue` may be below
+/// [`ReassignmentMap::assigned_and_residue_counts`]. The receipt projects
+/// both, and the gap is the visible witness that a decision named something
+/// the vault does not have.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReassignmentStats {
+    /// Rows recorded against a concrete head or facet.
+    pub assigned: usize,
+    /// Rows recorded as explicit ambiguous residue on the origin.
+    pub residue: usize,
+}
+
+/// The concrete destinations one op's reassignment rows resolve against —
+/// the split's heads, or the facet op's freshly minted masks in spec order.
+///
+/// [`evaluate_transition`] has already refused the cross-shaped rows (a
+/// facet target on a split, a head target on a facet, an out-of-range facet
+/// index, a head the op does not name), so resolution here is total.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ReassignmentContext<'a> {
+    /// Split heads: a [`ReassignmentTarget::Head`] row resolves to itself.
+    Heads(&'a [EntityId]),
+    /// Minted masks: a [`ReassignmentTarget::Facet`] row resolves by index.
+    Facets(&'a [EntityId]),
+}
+
+impl ReassignmentContext<'_> {
+    /// The entity one map row routes to, or `None` for ambiguous residue.
+    ///
+    /// A row whose target shape is foreign to the context is corruption,
+    /// never caller error: the transition table rejects those shapes before
+    /// any door reaches this code.
+    fn resolve(self, target: &ReassignmentTarget) -> Result<Option<EntityId>> {
+        let resolved = match (self, target) {
+            (Self::Heads(heads), ReassignmentTarget::Head(head)) => {
+                heads.iter().copied().find(|candidate| candidate == head)
+            }
+            (Self::Facets(facets), ReassignmentTarget::Facet { index }) => {
+                facets.get(*index as usize).copied()
+            }
+            (_, ReassignmentTarget::Residue) => return Ok(None),
+            _ => None,
+        };
+        resolved.map(Some).ok_or(Error::InvariantViolation(
+            "identity topology reassignment target is not in the op's context",
+        ))
+    }
+}
+
+/// `vault_meta` key prefix of the SPLIT assignment index, keyed by ORIGIN:
+/// prefix ++ origin(16) ++ event(16) ++ claim(16). The value is a
+/// [`REASSIGNMENT_ROW_VERSION`]-tagged head id, or the bare version byte for
+/// explicit ambiguous residue.
+///
+/// Keyed by event, not just by origin, so a row is owned by exactly the
+/// ledger event that stated it: undo deletes its own rows and can never
+/// clobber another event's.
+///
+/// This const lives with the family rather than in `store.rs` for the reason
+/// [`IDENTITY_TOPOLOGY_SEQ_KEY`] does — the family that owns the keyspace
+/// owns its key shape, and `vault_meta` readers ignore unknown prefixes.
+pub(crate) const REASSIGNMENT_ORIGIN_META_PREFIX: &[u8] = b"reassign:v1:o:";
+
+/// `vault_meta` key prefix of the same index INVERTED by destination:
+/// prefix ++ head(16) ++ event(16) ++ claim(16), value = the bare version
+/// byte. [`Vault::claims_assigned_to`] is a prefix scan over this half; the
+/// origin half alone would force a whole-table scan per query.
+pub(crate) const REASSIGNMENT_TARGET_META_PREFIX: &[u8] = b"reassign:v1:t:";
+
+/// Only accepted assignment-row version byte.
+const REASSIGNMENT_ROW_VERSION: u8 = 1;
 
 /// Spec for one FACET entity a facet op mints (type-13, ARCH-0022). Minting
 /// arms in ONE-1745; the vocabulary is declared here so producers and the
@@ -981,6 +1076,27 @@ pub enum StoredIdentityOpAction {
         heads: Vec<EntityId>,
         /// Canonically ordered reassignment map.
         reassignment: ReassignmentMap,
+        /// Map rows the apply door recorded against a head (ONE-1745).
+        applied_assigned: u64,
+        /// Map rows it recorded as explicit ambiguous residue.
+        applied_residue: u64,
+    },
+    /// A facet event and the masks it minted (ARCH-0022 type-13, ONE-1745).
+    /// Every stored facet event is an APPLIED one: the propose lane is not
+    /// armed for this kind (see [`Vault::apply_identity_topology_op`]), so
+    /// `facets` is never empty and always names live FACET entities.
+    Facet {
+        /// The entity whose masks were partitioned; stays `Active` (r6).
+        entity: EntityId,
+        /// Minted FACET entity ids, in the op's spec order — the order every
+        /// [`ReassignmentTarget::Facet`] index addresses.
+        facets: Vec<EntityId>,
+        /// Canonically ordered scoping map.
+        reassignment: ReassignmentMap,
+        /// Map rows the apply door scoped to a mask.
+        applied_assigned: u64,
+        /// Map rows it left unscoped.
+        applied_residue: u64,
     },
     /// A counter-event reverting `target`.
     Undo {
@@ -1014,6 +1130,7 @@ impl StoredIdentityOpAction {
         match self {
             Self::Merge { .. } => EVENT_KIND_MERGE,
             Self::Split { .. } => EVENT_KIND_SPLIT,
+            Self::Facet { .. } => EVENT_KIND_FACET,
             Self::Undo { .. } => EVENT_KIND_UNDO,
             Self::ProposalResolution { .. } => EVENT_KIND_PROPOSAL_RESOLUTION,
         }
@@ -1022,6 +1139,12 @@ impl StoredIdentityOpAction {
     /// Reconstructs the fold-grade action. Evidence and survivorship plan
     /// do not participate in transition evaluation; the split map rides
     /// along verbatim.
+    ///
+    /// Facet SPEC LABELS are reconstructed as placeholders, for the same
+    /// reason evidence is: the transition table reads only the mask COUNT
+    /// (`facets.is_empty()` and the index bound), never a label. The labels
+    /// themselves are runtime data on the minted FACET entity bodies, which
+    /// is where a reader wanting them looks.
     #[must_use]
     pub fn to_fold_action(&self) -> IdentityTopologyAction {
         match self {
@@ -1037,9 +1160,26 @@ impl StoredIdentityOpAction {
                 entity,
                 heads,
                 reassignment,
+                ..
             } => IdentityTopologyAction::Apply(IdentityTopologyOp::Split(SplitOp {
                 entity: *entity,
                 heads: heads.clone(),
+                reassignment: reassignment.clone(),
+                evidence: IdentityOpEvidence::default(),
+            })),
+            Self::Facet {
+                entity,
+                facets,
+                reassignment,
+                ..
+            } => IdentityTopologyAction::Apply(IdentityTopologyOp::Facet(FacetOp {
+                entity: *entity,
+                facets: facets
+                    .iter()
+                    .map(|_| FacetSpec {
+                        label: String::new(),
+                    })
+                    .collect(),
                 reassignment: reassignment.clone(),
                 evidence: IdentityOpEvidence::default(),
             })),
@@ -1192,6 +1332,8 @@ fn encode_action_entries(action: &StoredIdentityOpAction, entries: &mut Vec<(Val
             entity,
             heads,
             reassignment,
+            applied_assigned,
+            applied_residue,
         } => {
             entries.push((Value::from(BODY_KEY_ENTITY), id_value(entity)));
             entries.push((Value::from(BODY_KEY_HEADS), ids_value(heads)));
@@ -1199,6 +1341,22 @@ fn encode_action_entries(action: &StoredIdentityOpAction, entries: &mut Vec<(Val
                 Value::from(BODY_KEY_MAP),
                 encode_reassignment_map(reassignment),
             ));
+            encode_applied_counts(*applied_assigned, *applied_residue, entries);
+        }
+        StoredIdentityOpAction::Facet {
+            entity,
+            facets,
+            reassignment,
+            applied_assigned,
+            applied_residue,
+        } => {
+            entries.push((Value::from(BODY_KEY_ENTITY), id_value(entity)));
+            entries.push((Value::from(BODY_KEY_FACETS), ids_value(facets)));
+            entries.push((
+                Value::from(BODY_KEY_MAP),
+                encode_reassignment_map(reassignment),
+            ));
+            encode_applied_counts(*applied_assigned, *applied_residue, entries);
         }
         StoredIdentityOpAction::Undo { target } => {
             entries.push((Value::from(BODY_KEY_TARGET), id_value(target)));
@@ -1233,6 +1391,40 @@ fn encode_action_entries(action: &StoredIdentityOpAction, entries: &mut Vec<(Val
     }
 }
 
+/// Appends the ONE-1745 applied-count entries, OMITTING zeros.
+///
+/// The omission is load-bearing, not cosmetic: [`decode_identity_op_amendment`]
+/// and the replicated-body door both demand a byte-exact re-encode, so an
+/// event carrying no applied rows — a parked split, an amendment body — must
+/// encode to exactly the bytes those shapes encoded to before this ticket.
+fn encode_applied_counts(assigned: u64, residue: u64, entries: &mut Vec<(Value, Value)>) {
+    if assigned != 0 {
+        entries.push((
+            Value::from(BODY_KEY_APPLIED_ASSIGNED),
+            Value::from(assigned),
+        ));
+    }
+    if residue != 0 {
+        entries.push((Value::from(BODY_KEY_APPLIED_RESIDUE), Value::from(residue)));
+    }
+}
+
+/// The [`encode_applied_counts`] inverse: an absent key is zero, a present
+/// key must be a `u64` (a malformed one is a body rejection, never a
+/// silently-zeroed count).
+fn decode_applied_counts(map: &[(Value, Value)]) -> Result<(u64, u64)> {
+    let count = |key: &'static str| match map_field(map, key) {
+        None => Ok(0),
+        Some(value) => value.as_u64().ok_or(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event applied count",
+        )),
+    };
+    Ok((
+        count(BODY_KEY_APPLIED_ASSIGNED)?,
+        count(BODY_KEY_APPLIED_RESIDUE)?,
+    ))
+}
+
 /// Decodes one action from its wire entries — the [`encode_action_entries`]
 /// inverse, shared by the ledger event body and the amendment codec.
 fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<StoredIdentityOpAction> {
@@ -1257,13 +1449,30 @@ fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<StoredIdentityOpA
                 )?,
             })
         }
-        EVENT_KIND_SPLIT => Ok(StoredIdentityOpAction::Split {
-            entity: decode_id_field(map, BODY_KEY_ENTITY, "identity topology event entity")?,
-            heads: decode_ids_field(map, BODY_KEY_HEADS, "identity topology event heads")?,
-            reassignment: decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(
-                Error::InvalidIdentityTopologyEventBody("identity topology event map"),
-            )?)?,
-        }),
+        EVENT_KIND_SPLIT => {
+            let (applied_assigned, applied_residue) = decode_applied_counts(map)?;
+            Ok(StoredIdentityOpAction::Split {
+                entity: decode_id_field(map, BODY_KEY_ENTITY, "identity topology event entity")?,
+                heads: decode_ids_field(map, BODY_KEY_HEADS, "identity topology event heads")?,
+                reassignment: decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(
+                    Error::InvalidIdentityTopologyEventBody("identity topology event map"),
+                )?)?,
+                applied_assigned,
+                applied_residue,
+            })
+        }
+        EVENT_KIND_FACET => {
+            let (applied_assigned, applied_residue) = decode_applied_counts(map)?;
+            Ok(StoredIdentityOpAction::Facet {
+                entity: decode_id_field(map, BODY_KEY_ENTITY, "identity topology event entity")?,
+                facets: decode_ids_field(map, BODY_KEY_FACETS, "identity topology event facets")?,
+                reassignment: decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(
+                    Error::InvalidIdentityTopologyEventBody("identity topology event map"),
+                )?)?,
+                applied_assigned,
+                applied_residue,
+            })
+        }
         EVENT_KIND_UNDO => Ok(StoredIdentityOpAction::Undo {
             target: decode_id_field(map, BODY_KEY_TARGET, "identity topology event target")?,
         }),
@@ -1472,7 +1681,14 @@ pub fn encode_identity_op_amendment(op: &IdentityTopologyOp) -> Result<Vec<u8>> 
             entity: split.entity,
             heads: split.heads.clone(),
             reassignment: split.reassignment.canonicalized(),
+            // An amendment is a PROPOSED body, not an applied record: it has
+            // recorded nothing yet, and the counts it carries would be the
+            // decider's claim about an application that has not happened.
+            applied_assigned: 0,
+            applied_residue: 0,
         },
+        // A facet op has no propose lane (see `apply_identity_topology_op`),
+        // so it has no park to amend either.
         IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
             return Err(Error::IdentityTopologyUnarmed("amendment of this op kind"));
         }
@@ -1594,6 +1810,16 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
     if op.participants().len() > MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS {
         return Err(Error::InvalidIdentityTopologyEventBody(
             "identity topology event has too many participants",
+        ));
+    }
+    // A facet op names ONE participant however many masks it mints, so the
+    // participant bound above does not reach its fan-out. Bound it here, on
+    // the same stateless path every admitting door runs.
+    if let IdentityTopologyOp::Facet(facet) = &op
+        && facet.facets.len() > MAX_IDENTITY_TOPOLOGY_EVENT_FACETS
+    {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology event mints too many facets",
         ));
     }
     evaluate_transition(&BTreeMap::new(), &op).map_err(|_| {
@@ -1924,7 +2150,7 @@ enum IdentityTopologyParticipantValidation {
     Invalid(IdentityTopologyRejection),
 }
 
-fn shell_edge_weight(kind: EdgeKind) -> Result<f32> {
+fn topology_edge_weight(kind: EdgeKind) -> Result<f32> {
     kind.default_weight().ok_or(Error::InvariantViolation(
         "identity topology edge missing default weight",
     ))
@@ -2225,6 +2451,298 @@ pub(crate) fn shell_edge_sources_for_store_in_txn(
     Ok(touched)
 }
 
+// ─── Reassignment projection (ONE-1745) ─────────────────────────────────────
+
+/// The `vault_meta` key of one origin-side assignment row.
+fn reassignment_origin_key(origin: &EntityId, event: &EntityId, claim: &EntityId) -> Vec<u8> {
+    reassignment_key(REASSIGNMENT_ORIGIN_META_PREFIX, origin, event, claim)
+}
+
+/// The `vault_meta` key of one destination-side assignment row.
+fn reassignment_target_key(target: &EntityId, event: &EntityId, claim: &EntityId) -> Vec<u8> {
+    reassignment_key(REASSIGNMENT_TARGET_META_PREFIX, target, event, claim)
+}
+
+fn reassignment_key(
+    prefix: &[u8],
+    anchor: &EntityId,
+    event: &EntityId,
+    claim: &EntityId,
+) -> Vec<u8> {
+    let mut key = Vec::with_capacity(prefix.len() + ENTITY_ID_LEN * 3);
+    key.extend_from_slice(prefix);
+    key.extend_from_slice(anchor.as_bytes());
+    key.extend_from_slice(event.as_bytes());
+    key.extend_from_slice(claim.as_bytes());
+    key
+}
+
+/// Splits a stored assignment key back into `(event, claim)`. Both halves are
+/// fixed-width tails, so this is exact for either prefix.
+fn decode_reassignment_key(prefix: &[u8], key: &[u8]) -> Result<(EntityId, EntityId)> {
+    let corrupt = || Error::CorruptedIndex("identity reassignment key");
+    let tail = key.get(prefix.len() + ENTITY_ID_LEN..).ok_or_else(corrupt)?;
+    let (event, claim) = tail.split_at_checked(ENTITY_ID_LEN).ok_or_else(corrupt)?;
+    let id = |bytes: &[u8]| {
+        let bytes: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| corrupt())?;
+        EntityId::from_bytes(bytes).map_err(|_| corrupt())
+    };
+    Ok((id(event)?, id(claim)?))
+}
+
+/// Encodes an assignment row: a bare version byte is explicit ambiguous
+/// residue, a version byte plus a head id is an assignment.
+fn encode_reassignment_row(target: Option<&EntityId>) -> Vec<u8> {
+    let mut row = vec![REASSIGNMENT_ROW_VERSION];
+    if let Some(target) = target {
+        row.extend_from_slice(target.as_bytes());
+    }
+    row
+}
+
+/// Decodes an assignment row, fail-closed on any shape the encoder cannot
+/// produce.
+fn decode_reassignment_row(row: &[u8]) -> Result<Option<EntityId>> {
+    let corrupt = || Error::CorruptedIndex("identity reassignment row");
+    let [REASSIGNMENT_ROW_VERSION, target @ ..] = row else {
+        return Err(corrupt());
+    };
+    if target.is_empty() {
+        return Ok(None);
+    }
+    let bytes: [u8; ENTITY_ID_LEN] = target.try_into().map_err(|_| corrupt())?;
+    EntityId::from_bytes(bytes).map(Some).map_err(|_| corrupt())
+}
+
+/// Resolves a decision's reassignment map into the concrete rows a vault can
+/// record: `(claim, Some(destination))` or `(claim, None)` for residue.
+///
+/// Two filters, both deliberate:
+/// - only an [`ClaimSubject::Entity`] item that names a STORED CLAIM row
+///   resolves. An edge item is a later surface (the map vocabulary admits
+///   one, r2, but moving an edge is not claim assignment), and an item this
+///   vault holds nothing for records nothing.
+/// - the destination comes from `targets`, so a row can only ever route
+///   where the op itself said it could.
+///
+/// The gap between what the map DECLARED and what this returns is exactly
+/// what [`ReassignmentStats`] reports and the receipt projects.
+fn resolve_reassignment_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    map: &ReassignmentMap,
+    targets: ReassignmentContext<'_>,
+) -> Result<Vec<(EntityId, Option<EntityId>)>> {
+    let mut rows = Vec::with_capacity(map.entries.len());
+    for entry in &map.entries {
+        let ClaimSubject::Entity(claim) = entry.item else {
+            continue;
+        };
+        if identity_topology_entity_type_for_store_in_txn(store, rtxn, &claim)?
+            != Some(ENTITY_TYPE_CLAIM)
+        {
+            continue;
+        }
+        rows.push((claim, targets.resolve(&entry.target)?));
+    }
+    Ok(rows)
+}
+
+/// Writes `rows` as `event`'s assignment rows for `origin`, both directions.
+fn write_reassignment_rows_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    event: &EntityId,
+    origin: &EntityId,
+    rows: &[(EntityId, Option<EntityId>)],
+) -> Result<()> {
+    for (claim, target) in rows {
+        store.vault_meta.put(
+            wtxn,
+            &reassignment_origin_key(origin, event, claim),
+            &encode_reassignment_row(target.as_ref()),
+        )?;
+        if let Some(target) = target {
+            store.vault_meta.put(
+                wtxn,
+                &reassignment_target_key(target, event, claim),
+                &[REASSIGNMENT_ROW_VERSION],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Deletes every assignment row filed under `origin`, both directions.
+///
+/// `event` narrows the sweep to ONE ledger event's rows (the undo door, which
+/// must not touch a sibling event's); `None` clears the origin outright (the
+/// reconcile door, which re-derives the whole set from the fold).
+fn clear_reassignment_rows_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: &EntityId,
+    event: Option<&EntityId>,
+) -> Result<()> {
+    let mut prefix = Vec::with_capacity(REASSIGNMENT_ORIGIN_META_PREFIX.len() + ENTITY_ID_LEN * 2);
+    prefix.extend_from_slice(REASSIGNMENT_ORIGIN_META_PREFIX);
+    prefix.extend_from_slice(origin.as_bytes());
+    if let Some(event) = event {
+        prefix.extend_from_slice(event.as_bytes());
+    }
+    let mut stale: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
+    for row in store.vault_meta.prefix_iter(&*wtxn, &prefix)? {
+        let (key, value) = row?;
+        let (event, claim) = decode_reassignment_key(REASSIGNMENT_ORIGIN_META_PREFIX, &key)?;
+        let twin = decode_reassignment_row(value.as_ref())?
+            .map(|target| reassignment_target_key(&target, &event, &claim));
+        stale.push((key.to_vec(), twin));
+    }
+    for (key, twin) in stale {
+        store.vault_meta.delete(wtxn, &key)?;
+        if let Some(twin) = twin {
+            store.vault_meta.delete(wtxn, &twin)?;
+        }
+    }
+    Ok(())
+}
+
+/// Shared by `SplitOp` and `FacetOp` apply (ARCH-0055 r2/r5) — the ticket's
+/// point is that ONE mechanism records both, never a per-op copy.
+///
+/// Records where each mapped claim went WITHOUT rewriting a single claim
+/// subject (r6): the stored subject stays the id the writer stated, forever,
+/// and assignment is a separate engine-authored record over it. Residue rows
+/// are recorded as explicit ambiguous residue on the origin — never
+/// force-assigned to a head the decision did not name.
+///
+/// The two arms differ only in WHERE the record lives, because they have
+/// different canonical witnesses:
+/// - a SPLIT assignment has none — no edge, no subject change — so the
+///   `vault_meta` index IS the record, keyed by the event that stated it.
+/// - a FACET assignment already has one: the canonical `facet_of` stamp
+///   ([`EdgeKind::FacetOf`], ONE-1645's write-time type table), which the
+///   local query filter and the federation selector both already read. A
+///   second projection of it would be a stale twin, so the stamps are staged
+///   into `stamps` and no index row is written.
+///
+/// `stamps` is applied by the caller's [`apply_ops`] batch AFTER the minted
+/// FACET rows land in the same batch — a `facet_of` edge whose target has no
+/// entity row fails closed at that table.
+pub(crate) fn apply_reassignment_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    event: &EntityId,
+    origin: &EntityId,
+    map: &ReassignmentMap,
+    targets: ReassignmentContext<'_>,
+    stamps: &mut Vec<BatchOp>,
+    now: u64,
+) -> Result<ReassignmentStats> {
+    let rows = resolve_reassignment_in_txn(store, &*wtxn, map, targets)?;
+    let assigned = rows.iter().filter(|(_, target)| target.is_some()).count();
+    let stats = ReassignmentStats {
+        assigned,
+        residue: rows.len() - assigned,
+    };
+    match targets {
+        ReassignmentContext::Heads(_) => {
+            write_reassignment_rows_in_txn(store, wtxn, event, origin, &rows)?;
+        }
+        ReassignmentContext::Facets(_) => {
+            let weight = topology_edge_weight(EdgeKind::FacetOf)?;
+            for (claim, target) in rows {
+                let Some(facet) = target else {
+                    continue;
+                };
+                stamps.push(BatchOp::EdgeWithCreatedAt {
+                    src: claim,
+                    kind: EdgeKind::FacetOf,
+                    tgt: facet,
+                    weight,
+                    created_at: now,
+                    vad: crate::affect::Vad::NEUTRAL,
+                    provenance: None,
+                });
+            }
+        }
+    }
+    Ok(stats)
+}
+
+/// Re-derives the split assignment rows of exactly `sources` from the ledger
+/// fold — the reconcile-door half of the projection, the twin of
+/// [`crate::identity_redirect::maintain_redirect_projection_in_txn`].
+///
+/// The apply and undo doors maintain their own rows directly (they hold the
+/// event and its map, so they need no fold — the ONE-1744 O(N²) lesson). This
+/// path exists for the doors that DON'T: sync ingest of a replicated split,
+/// and the ONE-1604-D1 post-eviction unwind, both of which change which
+/// events are in force without ever running the apply door.
+///
+/// Memoryless by construction: every source is cleared and re-derived from
+/// whichever split event the fold currently has in force, so an undone,
+/// superseded, or evicted split loses its rows without anyone tracking that
+/// it had them.
+fn maintain_split_reassignment_projection_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    sources: &BTreeSet<EntityId>,
+    fold: &IdentityTopologyFold,
+) -> Result<()> {
+    for origin in sources {
+        clear_reassignment_rows_in_txn(store, wtxn, origin, None)?;
+        if fold.states.get(origin) != Some(&EntityLifecycleState::Split) {
+            continue;
+        }
+        let Some(event) = fold.current_event.get(origin) else {
+            continue;
+        };
+        let Some(record) = identity_topology_event_for_store_in_txn(store, &*wtxn, event)? else {
+            continue;
+        };
+        let StoredIdentityOpAction::Split {
+            heads,
+            reassignment,
+            ..
+        } = &record.action
+        else {
+            continue;
+        };
+        let rows = resolve_reassignment_in_txn(
+            store,
+            &*wtxn,
+            reassignment,
+            ReassignmentContext::Heads(heads),
+        )?;
+        write_reassignment_rows_in_txn(store, wtxn, event, origin, &rows)?;
+    }
+    Ok(())
+}
+
+/// Claim ids filed under one assignment-index prefix scan, deduplicated and
+/// in ascending id order.
+fn reassignment_claims_for_prefix_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    index_prefix: &[u8],
+    anchor: &EntityId,
+    keep: impl Fn(Option<EntityId>) -> bool,
+) -> Result<BTreeSet<EntityId>> {
+    let mut prefix = Vec::with_capacity(index_prefix.len() + ENTITY_ID_LEN);
+    prefix.extend_from_slice(index_prefix);
+    prefix.extend_from_slice(anchor.as_bytes());
+    let mut claims = BTreeSet::new();
+    for row in store.vault_meta.prefix_iter(rtxn, &prefix)? {
+        let (key, value) = row?;
+        if !keep(decode_reassignment_row(value.as_ref())?) {
+            continue;
+        }
+        claims.insert(decode_reassignment_key(index_prefix, &key)?.1);
+    }
+    Ok(claims)
+}
+
 fn reconcile_identity_topology_edges_for_store_in_txn(
     store: &Store,
     config: &crate::config::VaultConfig,
@@ -2345,7 +2863,7 @@ fn reconcile_shell_edges_for_sources_in_txn(
                 {
                     continue;
                 }
-                let weight = shell_edge_weight(kind)?;
+                let weight = topology_edge_weight(kind)?;
                 let canonical = crate::edge::encode_edge_value(
                     kind,
                     weight,
@@ -2406,7 +2924,12 @@ fn reconcile_shell_edges_for_sources_in_txn(
         wtxn,
         sources,
         &zero_head_shells,
-    )
+    )?;
+    // ONE-1745 assignment maintenance rides the same chokepoint and the same
+    // already-computed fold: a replicated split arrives here with its map and
+    // never touches the apply door, so this is where its assignment rows are
+    // born (and where an evicted or superseded split's rows die).
+    maintain_split_reassignment_projection_in_txn(store, wtxn, sources, &fold)
 }
 
 /// The shell-edge SOURCES a stored type-76 record induces — the entities
@@ -2458,10 +2981,12 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
         StoredIdentityOpAction::Split { entity, .. } => BTreeSet::from([entity]),
         // A resolution shells nothing of its own: an approving ruling's
         // effects ride the applied op's OWN event, which induces its own
-        // sources when evicted.
-        StoredIdentityOpAction::Undo { .. } | StoredIdentityOpAction::ProposalResolution { .. } => {
-            BTreeSet::new()
-        }
+        // sources when evicted. Nor does a facet op — it leaves its base
+        // `Active` (r6), so it induces no `merged_into`/`split_into` row for
+        // this reconciler to own.
+        StoredIdentityOpAction::Undo { .. }
+        | StoredIdentityOpAction::Facet { .. }
+        | StoredIdentityOpAction::ProposalResolution { .. } => BTreeSet::new(),
     }))
 }
 
@@ -2663,17 +3188,21 @@ impl Vault {
         let transitions =
             evaluate_transition(&states, op).map_err(Error::IdentityTopologyRejected)?;
 
+        // Minted in the arm rather than at the write chokepoint: the
+        // reassignment index files each row under the event that stated it,
+        // so the event's identity has to exist before its effects do.
+        let event_id = EntityId::now();
         match op {
             IdentityTopologyOp::Merge(merge) => {
                 let action = StoredIdentityOpAction::Merge {
                     sources: merge.sources.clone(),
                     survivor: merge.survivor,
                 };
-                let mut edges = Vec::new();
+                let mut effects = Vec::new();
                 if write.is_effective() {
-                    let weight = shell_edge_weight(EdgeKind::MergedInto)?;
+                    let weight = topology_edge_weight(EdgeKind::MergedInto)?;
                     for source in &merge.sources {
-                        edges.push(BatchOp::EdgeWithCreatedAt {
+                        effects.push(BatchOp::EdgeWithCreatedAt {
                             src: *source,
                             kind: EdgeKind::MergedInto,
                             tgt: merge.survivor,
@@ -2686,25 +3215,22 @@ impl Vault {
                 }
                 self.write_identity_event_in_txn(
                     wtxn,
+                    event_id,
                     write,
                     now,
                     action,
                     Some(merge.evidence.clone()),
-                    edges,
+                    effects,
                     transitions,
                 )
             }
             IdentityTopologyOp::Split(split) => {
-                let action = StoredIdentityOpAction::Split {
-                    entity: split.entity,
-                    heads: split.heads.clone(),
-                    reassignment: split.reassignment.canonicalized(),
-                };
-                let mut edges = Vec::new();
+                let mut effects = Vec::new();
+                let mut stats = ReassignmentStats::default();
                 if write.is_effective() {
-                    let weight = shell_edge_weight(EdgeKind::SplitInto)?;
+                    let weight = topology_edge_weight(EdgeKind::SplitInto)?;
                     for head in &split.heads {
-                        edges.push(BatchOp::EdgeWithCreatedAt {
+                        effects.push(BatchOp::EdgeWithCreatedAt {
                             src: split.entity,
                             kind: EdgeKind::SplitInto,
                             tgt: *head,
@@ -2714,22 +3240,130 @@ impl Vault {
                             provenance: None,
                         });
                     }
+                    stats = apply_reassignment_in_txn(
+                        &self.store,
+                        wtxn,
+                        &event_id,
+                        &split.entity,
+                        &split.reassignment,
+                        ReassignmentContext::Heads(&split.heads),
+                        &mut effects,
+                        now,
+                    )?;
                 }
+                let action = StoredIdentityOpAction::Split {
+                    entity: split.entity,
+                    heads: split.heads.clone(),
+                    reassignment: split.reassignment.canonicalized(),
+                    applied_assigned: stats.assigned as u64,
+                    applied_residue: stats.residue as u64,
+                };
                 self.write_identity_event_in_txn(
                     wtxn,
+                    event_id,
                     write,
                     now,
                     action,
                     Some(split.evidence.clone()),
-                    edges,
+                    effects,
                     transitions,
                 )
             }
-            IdentityTopologyOp::Facet(_) => Err(Error::IdentityTopologyUnarmed("facet minting")),
+            IdentityTopologyOp::Facet(facet) => {
+                // The propose lane is not armed for this kind: a parked facet
+                // event would have to name masks it never minted, and the
+                // resolution door has no scope target for it
+                // ([`proposal_scope_target`]) — so the park could never be
+                // ruled on. Refusing to record it is the honest answer;
+                // recording an unresolvable one is the ledger corruption this
+                // door exists to prevent.
+                if !write.is_effective() {
+                    return Err(Error::IdentityTopologyUnarmed("facet proposal"));
+                }
+                if facet.facets.len() > MAX_IDENTITY_TOPOLOGY_EVENT_FACETS {
+                    return Err(Error::InvalidIdentityTopologyEventBody(
+                        "identity topology event mints too many facets",
+                    ));
+                }
+                let (minted, mut effects) = self.mint_facets_in_txn(facet, now)?;
+                let stats = apply_reassignment_in_txn(
+                    &self.store,
+                    wtxn,
+                    &event_id,
+                    &facet.entity,
+                    &facet.reassignment,
+                    ReassignmentContext::Facets(&minted),
+                    &mut effects,
+                    now,
+                )?;
+                let action = StoredIdentityOpAction::Facet {
+                    entity: facet.entity,
+                    facets: minted,
+                    reassignment: facet.reassignment.canonicalized(),
+                    applied_assigned: stats.assigned as u64,
+                    applied_residue: stats.residue as u64,
+                };
+                self.write_identity_event_in_txn(
+                    wtxn,
+                    event_id,
+                    write,
+                    now,
+                    action,
+                    Some(facet.evidence.clone()),
+                    effects,
+                    transitions,
+                )
+            }
             IdentityTopologyOp::AssertDistinct(_) => {
                 Err(Error::IdentityTopologyUnarmed("distinct_from assertion"))
             }
         }
+    }
+
+    /// Mints one ARCH-0022 FACET (type-13) entity per spec and wires each to
+    /// its base with a `has_facet` edge, returning the minted ids in SPEC
+    /// ORDER — the order every [`ReassignmentTarget::Facet`] index addresses,
+    /// and the order the ledger event stores.
+    ///
+    /// Mints nothing but FACET ids (r6): the base entity is untouched, the
+    /// op's only new rows are the masks themselves. The label is the FACET
+    /// body — runtime data, stored where a reader of that entity finds it,
+    /// never on the ledger event.
+    fn mint_facets_in_txn(
+        &self,
+        facet: &FacetOp,
+        now: u64,
+    ) -> Result<(Vec<EntityId>, Vec<BatchOp>)> {
+        let weight = topology_edge_weight(EdgeKind::HasFacet)?;
+        let mut minted = Vec::with_capacity(facet.facets.len());
+        let mut ops = Vec::with_capacity(facet.facets.len() * 2);
+        for spec in &facet.facets {
+            let id = EntityId::now();
+            minted.push(id);
+            ops.push(BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_FACET,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                data: spec.label.as_bytes().to_vec(),
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            });
+            ops.push(BatchOp::EdgeWithCreatedAt {
+                src: facet.entity,
+                kind: EdgeKind::HasFacet,
+                tgt: id,
+                weight,
+                created_at: now,
+                vad: crate::affect::Vad::NEUTRAL,
+                provenance: None,
+            });
+        }
+        Ok((minted, ops))
     }
 
     /// Undoes one applied merge/split event: appends the counter-event to
@@ -2782,6 +3416,23 @@ impl Vault {
                     IdentityTopologyRejection::NotUndoable { event: *event },
                 ));
             }
+            // A FACET event is not undoable either, and the fold's own undo
+            // rule ([`evaluate_fold_undo`]) already says so — the door only
+            // repeats it. A facet op moves NO lifecycle state (r6: the base
+            // stays `Active`), so this family's undo currency test — "is this
+            // event still the topology writer for the entities it shelled?" —
+            // has nothing to test, and every facet event would be undoable
+            // forever, repeatedly. Reversing one is also not an edge
+            // retraction but an ENTITY retraction: the minted masks are live
+            // ARCH-0022 entities that other records may already reference, and
+            // deleting entities is ARCH-0038's door, not this one. Retiring a
+            // mask is a split of that FACET, which this family already
+            // expresses.
+            StoredIdentityOpAction::Facet { .. } => {
+                return Err(Error::IdentityTopologyRejected(
+                    IdentityTopologyRejection::NotUndoable { event: *event },
+                ));
+            }
             StoredIdentityOpAction::Merge { sources, survivor } => (
                 sources.clone(),
                 sources
@@ -2808,10 +3459,18 @@ impl Vault {
             }
         }
 
-        let mut edges = Vec::new();
+        let mut effects = Vec::new();
         if write.is_effective() {
             for (src, kind, tgt) in removed_edges {
-                edges.push(BatchOp::DeleteEdge { src, kind, tgt });
+                effects.push(BatchOp::DeleteEdge { src, kind, tgt });
+            }
+            // ONE-1745: the reverted event's assignment rows go with its shell
+            // edges — same lifecycle, same door. Scoped to THIS event's rows,
+            // so a sibling event's assignments on the same origin survive.
+            // Derived from the stored rows rather than re-resolved from the
+            // map, so a claim deleted since the apply cannot strand a row.
+            if let StoredIdentityOpAction::Split { entity, .. } = &record.action {
+                clear_reassignment_rows_in_txn(&self.store, wtxn, entity, Some(event))?;
             }
         }
         let transitions = shelled
@@ -2820,11 +3479,12 @@ impl Vault {
             .collect();
         self.write_identity_event_in_txn(
             wtxn,
+            EntityId::now(),
             write,
             now,
             StoredIdentityOpAction::Undo { target: *event },
             None,
-            edges,
+            effects,
             transitions,
         )
     }
@@ -2948,6 +3608,7 @@ impl Vault {
 
         let event = self.write_identity_event_in_txn(
             wtxn,
+            EntityId::now(),
             write,
             now,
             StoredIdentityOpAction::ProposalResolution {
@@ -3111,6 +3772,107 @@ impl Vault {
     pub fn identity_topology_event(&self, id: &EntityId) -> Result<Option<StoredIdentityOpEvent>> {
         let rtxn = self.store.env.read_txn()?;
         self.identity_topology_event_in_txn(&rtxn, id)
+    }
+
+    /// CLAIM ids a topology decision assigned to `target` (ARCH-0055 r2/r5),
+    /// ascending and deduplicated.
+    ///
+    /// TWO witnesses, because the two arms record assignment differently and
+    /// a target is at most one of them, so the union is exact:
+    /// - a SPLIT HEAD reads the reassignment index — a split assignment has
+    ///   no structural witness at all (no edge moves, and r6 forbids
+    ///   rewriting the claim's subject), so the engine-authored index IS the
+    ///   record;
+    /// - a FACET reads its canonical `facet_of` stamps, the same rows the
+    ///   local query filter and the federation selector already honor.
+    ///
+    /// This is a READ over records ABOUT the claims. The claims themselves
+    /// are untouched: every returned claim still carries the subject its
+    /// writer stated, which is what keeps an unmerge possible (r6).
+    pub fn claims_assigned_to(&self, target: &EntityId) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        // The destination half of the index carries no payload — the key is
+        // the whole row — so every scanned row is kept.
+        let mut claims = reassignment_claims_for_prefix_in_txn(
+            &self.store,
+            &rtxn,
+            REASSIGNMENT_TARGET_META_PREFIX,
+            target,
+            |_| true,
+        )?;
+        claims.extend(self.filtered_edge_peers(
+            &rtxn,
+            &self.store.edges_in,
+            target,
+            EdgeKind::FacetOf,
+            Some(ENTITY_TYPE_CLAIM),
+            "facet scoped claims",
+        )?);
+        Ok(claims.into_iter().collect())
+    }
+
+    /// CLAIM ids a split left on `origin` as EXPLICIT ambiguous residue
+    /// (r2): the decision looked at them and declined to attribute them, so
+    /// they stay where they are and stay countable as unresolved.
+    ///
+    /// Distinct from "unmapped": a claim the map never named is simply not
+    /// part of the decision, while a residue row is a recorded judgment that
+    /// the claim could not be attributed. Never force-assigned to a head.
+    pub fn ambiguous_residue_claims(&self, origin: &EntityId) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let assigned = self.assigned_away_from_in_txn(&rtxn, origin)?;
+        let residue = reassignment_claims_for_prefix_in_txn(
+            &self.store,
+            &rtxn,
+            REASSIGNMENT_ORIGIN_META_PREFIX,
+            origin,
+            |target| target.is_none(),
+        )?;
+        Ok(residue
+            .into_iter()
+            .filter(|claim| !assigned.contains(claim))
+            .collect())
+    }
+
+    /// CLAIM ids that still read as `origin`'s after its splits: everything
+    /// subject-bound to it MINUS everything a split assigned to a head.
+    ///
+    /// The subtraction is why this is not [`Vault::claims_for_subject`]: a
+    /// fully-mapped split assigns every claim away and leaves ZERO here,
+    /// while the claims' stored subjects still all say `origin` (r6). The
+    /// subject is provenance; the assignment is the current reading.
+    pub fn claims_remaining_on_origin(&self, origin: &EntityId) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let assigned = self.assigned_away_from_in_txn(&rtxn, origin)?;
+        Ok(self
+            .claims_for_subject_in_txn(&rtxn, origin)?
+            .into_iter()
+            .filter(|claim| !assigned.contains(claim))
+            .collect())
+    }
+
+    /// The claims some split routed AWAY from `origin` to a head.
+    fn assigned_away_from_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        origin: &EntityId,
+    ) -> Result<BTreeSet<EntityId>> {
+        reassignment_claims_for_prefix_in_txn(
+            &self.store,
+            rtxn,
+            REASSIGNMENT_ORIGIN_META_PREFIX,
+            origin,
+            |target| target.is_some(),
+        )
+    }
+
+    /// The ARCH-0022 FACET (type-13) masks minted for `base`, read from the
+    /// canonical `has_facet` edges the facet op wired.
+    ///
+    /// Masks are LIVE entities, not shells: `resolve_entity` of a facet is
+    /// the facet itself, and no redirect row is minted for one.
+    pub fn facets_of(&self, base: &EntityId) -> Result<Vec<EntityId>> {
+        self.targets(base, EdgeKind::HasFacet, Some(ENTITY_TYPE_FACET))
     }
 
     /// Transaction-composable [`Vault::identity_topology_event`].
@@ -3518,23 +4280,28 @@ impl Vault {
         )
     }
 
-    /// Stamps `seq`, writes the type-76 event record plus the staged edge
-    /// ops atomically, and shapes the outcome from the consent axis.
+    /// Stamps `seq`, writes the type-76 event record under the caller's
+    /// `event_id` plus the staged effect ops atomically, and shapes the
+    /// outcome from the consent axis.
+    ///
+    /// The id is the CALLER's because an op's effects may have to be filed
+    /// under it before the record exists — the ONE-1745 assignment index
+    /// keys every row by the event that stated it.
     #[expect(
         clippy::too_many_arguments,
-        reason = "single internal chokepoint for the door's event+edges commit"
+        reason = "single internal chokepoint for the door's event+effects commit"
     )]
     fn write_identity_event_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
+        event_id: EntityId,
         write: &IdentityOpWrite,
         now: u64,
         action: StoredIdentityOpAction,
         evidence: Option<IdentityOpEvidence>,
-        edges: Vec<BatchOp>,
+        effects: Vec<BatchOp>,
         transitions: Vec<(EntityId, EntityLifecycleState)>,
     ) -> Result<IdentityOpOutcome> {
-        let event_id = EntityId::now();
         let seq = self.next_identity_topology_seq_in_txn(wtxn)?;
         let record = StoredIdentityOpEvent {
             seq,
@@ -3559,7 +4326,10 @@ impl Vault {
             allow_reserved_predicate: false,
             hub_sync_imported: false,
         }];
-        ops.extend(edges);
+        // Order matters inside the batch: a facet op's minted FACET rows
+        // precede the `facet_of` stamps that point at them, and ONE-1645's
+        // write-time table fails closed on a stamp whose endpoint has no row.
+        ops.extend(effects);
         apply_ops(
             &self.store,
             &self.config,

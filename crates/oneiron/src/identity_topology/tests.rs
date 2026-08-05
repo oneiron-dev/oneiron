@@ -565,6 +565,8 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
             entity: a,
             heads: vec![b, c],
             reassignment: unsorted.clone(),
+            applied_assigned: 0,
+            applied_residue: 0,
         },
     };
     let decoded =
@@ -1377,6 +1379,12 @@ fn split_apply_records_canonical_map_and_undo_restores() {
             entity: original,
             heads: vec![head_a, head_b],
             reassignment: map.canonicalized(),
+            // DECLARED 1 + 1, APPLIED 0 + 0 (ONE-1745): the map's items are
+            // bare fixture ids, and this vault holds no CLAIM row for either,
+            // so the door recorded neither. Exactly the gap the two count
+            // families exist to make visible.
+            applied_assigned: 0,
+            applied_residue: 0,
         }
     );
 
@@ -1387,6 +1395,14 @@ fn split_apply_records_canonical_map_and_undo_restores() {
     assert_eq!(receipts[0].fields.get("head_count"), Some(&"2".to_owned()));
     assert_eq!(receipts[0].fields.get("assigned"), Some(&"1".to_owned()));
     assert_eq!(receipts[0].fields.get("residue"), Some(&"1".to_owned()));
+    assert_eq!(
+        receipts[0].fields.get("applied_assigned"),
+        Some(&"0".to_owned())
+    );
+    assert_eq!(
+        receipts[0].fields.get("applied_residue"),
+        Some(&"0".to_owned())
+    );
 
     // ONE-1744 lifted the zero-head guard: the r2 "gone" form now APPLIES,
     // shelling the entity with no successor and no `split_into` edge.
@@ -1426,15 +1442,21 @@ fn split_apply_records_canonical_map_and_undo_restores() {
     );
 }
 
+/// CONTRACT INVERTED BY ONE-1745 (arming, not deletion): the facet door is
+/// armed now, so the cell that read "validates, then refuses" reads
+/// "validates, then MINTS". Every pre-existing assert is kept — the
+/// shell-base rejection, the self-distinct rejection, the still-unarmed
+/// `assert_distinct` door, and the untouched lifecycle of the base — and the
+/// facet half now asserts the effect instead of its absence.
 #[test]
-fn facet_and_assert_distinct_doors_validate_then_stay_unarmed() {
+fn facet_door_mints_and_assert_distinct_stays_unarmed() {
     let (_dir, vault) = open_vault();
     let base = put_person(&vault, 0x61);
     let other = put_person(&vault, 0x62);
     let survivor = put_person(&vault, 0x63);
     let write = IdentityOpWrite::auto(ClaimSource::Inferred);
 
-    // Shell base: the transition table fires before the unarmed door.
+    // Shell base: the transition table fires before the apply door.
     vault
         .apply_identity_topology_op(&merge_op(vec![base], survivor), &write, 200)
         .expect("apply merge");
@@ -1456,17 +1478,66 @@ fn facet_and_assert_distinct_doors_validate_then_stay_unarmed() {
         IdentityTopologyRejection::SelfReference { entity: other }
     );
 
-    // Valid ops hit the honest unarmed door and write NOTHING.
     assert_eq!(event_count(&vault), 1);
+    let (event, transitions) = expect_applied(
+        vault
+            .apply_identity_topology_op(&facet_op(other), &write, 300)
+            .expect("facet apply is armed"),
+    );
+    // r6: a facet op moves NO lifecycle state — the base stays Active and
+    // the op's only new ids are the masks themselves.
+    assert!(transitions.is_empty());
+    assert_eq!(event_count(&vault), 2);
+    let masks = vault.facets_of(&other).expect("facets of");
+    assert_eq!(masks.len(), 1);
+    assert_eq!(
+        vault
+            .identity_topology_event(&event)
+            .expect("read facet event")
+            .expect("facet event exists")
+            .action,
+        StoredIdentityOpAction::Facet {
+            entity: other,
+            facets: masks.clone(),
+            reassignment: ReassignmentMap::default(),
+            applied_assigned: 0,
+            applied_residue: 0,
+        }
+    );
+    // The mask is a live type-13 entity carrying the spec's label as its
+    // body — the label is runtime data on the entity, never on the ledger.
+    assert_eq!(
+        vault
+            .read_entity_header(&masks[0])
+            .expect("read mask header")
+            .expect("mask exists")
+            .entity_type,
+        crate::registry::ENTITY_TYPE_FACET
+    );
+    assert_eq!(
+        vault.get(&masks[0]).expect("read mask body"),
+        Some(b"fixture-mask".to_vec())
+    );
+
+    // The propose lane is NOT armed for this kind: a park would name masks it
+    // never minted, and the resolution door has no scope target for it.
     let err = vault
-        .apply_identity_topology_op(&facet_op(other), &write, 300)
-        .expect_err("facet apply is unarmed");
+        .apply_identity_topology_op(
+            &facet_op(other),
+            &IdentityOpWrite {
+                approval: ClaimApprovalStatus::Proposed,
+                ..write
+            },
+            300,
+        )
+        .expect_err("facet proposals are unarmed");
     assert!(matches!(err, Error::IdentityTopologyUnarmed(_)));
+
     let err = vault
         .apply_identity_topology_op(&distinct_op(other, survivor), &write, 300)
         .expect_err("assert_distinct apply is unarmed");
     assert!(matches!(err, Error::IdentityTopologyUnarmed(_)));
-    assert_eq!(event_count(&vault), 1);
+    assert_eq!(event_count(&vault), 2);
     assert_eq!(
         vault.entity_lifecycle_state(&other).expect("other state"),
         EntityLifecycleState::Active
@@ -1648,6 +1719,8 @@ fn partial_multi_head_split_authorizes_no_shell_until_complete() {
                 entity: original,
                 heads: vec![present_head, missing_head],
                 reassignment: ReassignmentMap::default(),
+                applied_assigned: 0,
+                applied_residue: 0,
             },
         },
     );
@@ -1932,6 +2005,8 @@ fn reassignment_map_wire_rejects_unsorted_and_duplicate_rows() {
                     },
                 ],
             },
+            applied_assigned: 0,
+            applied_residue: 0,
         },
     };
 
@@ -1991,6 +2066,8 @@ fn type_76_decoder_rejects_noncanonical_map_fields() {
                     target: ReassignmentTarget::Head(id(0x62)),
                 }],
             },
+            applied_assigned: 0,
+            applied_residue: 0,
         },
     };
     let canonical = encode_identity_topology_event_body(&record).expect("encode canonical body");
