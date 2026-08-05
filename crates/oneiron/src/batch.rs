@@ -1725,6 +1725,185 @@ pub(crate) fn apply_ops(
     )
 }
 
+/// Why a base write transaction is allowed to touch the ids it touches
+/// (ARCH-0052 D2, ONE-1728 K4). Exactly two arms: there is no grant type and
+/// no test-mintable capability anywhere in this design.
+///
+/// * [`Self::Ordinary`] — every ordinary base write. An op referencing a live
+///   session overlay's member is rejected at the decode point.
+/// * [`Self::PromoteReplay`] — the promote transaction replaying one session's
+///   own closure into base (ONE-1730). It exempts ONLY the ids of the session
+///   whose promote this transaction is; every other live session's ids still
+///   reject.
+///
+/// The exemption set is not carried on this type. It rides beside the origin
+/// as the per-call `promote_member_of` channel on [`apply_ops_with_origin`],
+/// whose closed form is supplied by the promote call site out of the session
+/// identity already present in its own parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BaseWriteOrigin {
+    Ordinary,
+    #[allow(
+        dead_code,
+        reason = "ONE-1730's promote transaction is the only legal constructor; \
+                  the P4a guard defines its semantics and the oracle covers them"
+    )]
+    PromoteReplay,
+}
+
+/// Session-membership exemption channel carried beside a [`BaseWriteOrigin`].
+///
+/// Option contract (pinned by ONE-1728, bound by ONE-1730): `None` iff the
+/// origin is [`BaseWriteOrigin::Ordinary`]; `Some` iff it is
+/// [`BaseWriteOrigin::PromoteReplay`], in which case the predicate answers
+/// "is this id a member of the session whose promote this transaction is".
+/// Because the `Ordinary` wrapper passes `None` by construction, no state
+/// inside the transaction can exempt another session's ids.
+pub(crate) type PromoteMemberOf<'a> = Option<&'a dyn Fn(&EntityId) -> bool>;
+
+/// The K4 taint guard, run at the decode point of ONE op inside the applying
+/// write transaction (ARCH-0052 D2, ONE-1728).
+///
+/// **Enumeration IS the decode point.** The overlay-id-bearing op list is not a
+/// separate table that could drift: it is this function's own exhaustive match
+/// over [`BatchOp`], so a new id-bearing variant fails to compile until it names
+/// its refs here. Raw base CLAIM puts hide their subject/world refs inside an
+/// opaque body, so they decode through the same landed decoder their apply path
+/// uses ([`crate::claim::validate_claim_body_and_decode`]) and an undecodable
+/// body fails closed.
+///
+/// Membership is read from live registry state INSIDE the transaction, at the
+/// moment the op is decoded — there is no preflight pass and no membership-epoch
+/// publication protocol to keep in sync. The state read here is the state this
+/// transaction applies against, which removes the TOCTOU class rather than
+/// racing it. `_wtxn` is taken purely as that structural pin: the guard cannot
+/// be hoisted out of the applying transaction without changing its signature.
+fn check_decode_point_taint_guard(
+    store: &Store,
+    _wtxn: &RwTxn<'_>,
+    op: &BatchOp,
+    origin: BaseWriteOrigin,
+    promote_member_of: PromoteMemberOf<'_>,
+) -> Result<()> {
+    // Decode-point membership probe. With zero live overlay entities no id in
+    // this op can be a member, so the guard is a no-op and a raw CLAIM body is
+    // never decoded twice on the canonical path. This is the same live read the
+    // per-id checks below make — read here, inside the applying transaction, at
+    // the decode point — not a hoisted preflight: it answers "could any id be
+    // tainted right now", and the transaction applies against exactly this
+    // state.
+    if !store.off_record_sessions.has_overlay_entities()? {
+        return Ok(());
+    }
+    let tainted = |id: &EntityId| Error::OffRecordTaintedBaseWrite {
+        entity_ref: id.to_hex(),
+    };
+    let check = |id: &EntityId| -> Result<()> {
+        if !store.off_record_sessions.contains_entity(id)? {
+            return Ok(());
+        }
+        // `PromoteReplay` exempts ONLY the session whose promote this
+        // transaction is. The predicate is minted by the promote call site out
+        // of the session identity in its own parameters, so it has no way to
+        // answer `true` for another live session's ids — and `Ordinary` carries
+        // no predicate at all.
+        if promote_member_of.is_some_and(|member_of| member_of(id)) {
+            debug_assert_eq!(origin, BaseWriteOrigin::PromoteReplay);
+            return Ok(());
+        }
+        Err(tainted(id))
+    };
+
+    match op {
+        BatchOp::Put {
+            id,
+            entity_type,
+            data,
+            allow_reserved_predicate,
+            ..
+        } => {
+            check(id)?;
+            if *entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                let Ok(body) =
+                    crate::claim::validate_claim_body_and_decode(data, *allow_reserved_predicate)
+                else {
+                    // Undecodable body: its refs cannot be enumerated, so
+                    // membership cannot be disproved. FAIL CLOSED with the
+                    // taint error rather than letting an opaque body through to
+                    // be judged later. (`apply_put` would reject it too, with
+                    // `InvalidClaimBody`; reaching that verdict would mean
+                    // deciding an undecodable body is untainted, which is the
+                    // open-by-default shape the guard exists to forbid.)
+                    return Err(tainted(id));
+                };
+                check_claim_body_refs(&body, &check)?;
+            }
+        }
+        BatchOp::ClaimCandidate {
+            id,
+            candidate,
+            envelope,
+            ..
+        } => {
+            check(id)?;
+            if let Some(world) = candidate.world() {
+                check(&world)?;
+            }
+            check_claim_subject_refs(candidate.subject(), &check)?;
+            check(&envelope.actor().entity_ref())?;
+        }
+        BatchOp::ReconcileLexicalQueryHints { source, keep } => {
+            check(source)?;
+            for id in keep {
+                check(id)?;
+            }
+        }
+        BatchOp::Vector { id, .. }
+        | BatchOp::Text { id, .. }
+        | BatchOp::Phonetic { id, .. }
+        | BatchOp::Delete { id } => check(id)?,
+        BatchOp::Edge { src, tgt, .. }
+        | BatchOp::PublicEdgeWithCreatedAt { src, tgt, .. }
+        | BatchOp::EdgeWithCreatedAt { src, tgt, .. }
+        | BatchOp::SetEdgeWeight { src, tgt, .. }
+        | BatchOp::SetEdgeVad { src, tgt, .. }
+        | BatchOp::DeleteEdge { src, tgt, .. } => {
+            check(src)?;
+            check(tgt)?;
+        }
+    }
+    Ok(())
+}
+
+/// Entity refs a decoded CLAIM body carries: its subject and its world scope.
+fn check_claim_body_refs(
+    body: &crate::claim::ClaimBody,
+    check: &impl Fn(&EntityId) -> Result<()>,
+) -> Result<()> {
+    check_claim_subject_refs(body.subject, check)?;
+    if let Some(world) = body.world {
+        check(&world)?;
+    }
+    Ok(())
+}
+
+/// Entity refs a [`crate::claim::ClaimSubject`] carries: the entity itself, or
+/// BOTH endpoints of an edge subject.
+fn check_claim_subject_refs(
+    subject: crate::claim::ClaimSubject,
+    check: &impl Fn(&EntityId) -> Result<()>,
+) -> Result<()> {
+    match subject {
+        crate::claim::ClaimSubject::Entity(id) => check(&id),
+        crate::claim::ClaimSubject::Edge { source, target, .. } => {
+            check(&source)?;
+            check(&target)
+        }
+    }
+}
+
+/// Applies a batch under [`BaseWriteOrigin::Ordinary`] — the shape every
+/// existing caller uses, unchanged.
 pub(crate) fn apply_ops_with_gate_mode(
     store: &Store,
     config: &crate::config::VaultConfig,
@@ -1734,6 +1913,46 @@ pub(crate) fn apply_ops_with_gate_mode(
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
 ) -> Result<()> {
+    apply_ops_with_origin(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        gate_mode,
+        BaseWriteOrigin::Ordinary,
+        None,
+    )
+}
+
+/// Applies a batch under an explicit [`BaseWriteOrigin`].
+///
+/// The K4 taint guard runs INSIDE this transaction, at the point where each op
+/// is decoded — there is no preflight pass and no membership-epoch publication
+/// protocol. The membership state the guard reads inside the applying `wtxn`
+/// is the state the transaction applies against, which removes the TOCTOU
+/// class outright.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "batch write plumbing keeps gate persistence modes and the write origin explicit at call sites"
+)]
+pub(crate) fn apply_ops_with_origin(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    gate_mode: ApplyOpsGateMode,
+    origin: BaseWriteOrigin,
+    promote_member_of: PromoteMemberOf<'_>,
+) -> Result<()> {
+    debug_assert_eq!(
+        promote_member_of.is_some(),
+        origin == BaseWriteOrigin::PromoteReplay,
+        "the promote-membership channel is Some iff the origin is PromoteReplay"
+    );
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
@@ -1775,6 +1994,10 @@ pub(crate) fn apply_ops_with_gate_mode(
     let companion_retired_histories = companion_retired_histories_in_batch(&ops)?;
 
     for (op_index, op) in ops.into_iter().enumerate() {
+        // K4: the op-decode point, inside the applying transaction. Every arm
+        // below decodes an op that may carry overlay ids, so this is where
+        // membership is judged — before the arm can stage a byte.
+        check_decode_point_taint_guard(store, wtxn, &op, origin, promote_member_of)?;
         match op {
             BatchOp::Put {
                 id,
