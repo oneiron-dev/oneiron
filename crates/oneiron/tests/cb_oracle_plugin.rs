@@ -127,10 +127,10 @@ mod cb_x {
     }
 
     /// ONE-1706 fixture: 5 sections (4 core + 1 admitted); fuzz the renderer
-    /// with claim values containing board delimiters (`[/CONTEXT_BOARD]`,
-    /// fake section headers, control bytes, verb-like lines such as
-    /// "tasks.cancel tk_x") and a benign twin value; snapshot typed state
-    /// before/after each render.
+    /// with claim values containing board delimiters (the canonical
+    /// `</memory>` close, fake section headers, control bytes, verb-like
+    /// lines such as "tasks.cancel tk_x") and a benign twin value; snapshot
+    /// typed state before/after each render.
     fn arm_renderer_fuzz_coverage() -> RendererFuzzCoverage {
         unimplemented!("armed by ONE-1706: renderer fuzz over ALL sections")
     }
