@@ -185,3 +185,24 @@ depth-budget node) — mechanical, no assertion touched.
   Additive one-liner when a consumer lands.
 - ONE-1438 is layer 2 on this same `lens.rs`/`lens/tests.rs` stack and must rebase
   on this branch.
+
+## Simplify pass (K3)
+
+Two passes over the impl diff, deletion-biased, no structure added, no test or
+public-API change:
+
+- 86117f2 dropped `GeneratedUiStateSnapshot::len/is_empty` and
+  `GeneratedUiStatePatch::value` — zero callers, nothing `values()`/a direct match
+  does not already serve.
+- Follow-up pass dropped `GeneratedUiStateSnapshot::new` — the last constructor
+  with zero callers anywhere (tests build via `default()` and the `FromIterator`
+  collect; production builds via deserialization). Every other item on the new
+  types has a live caller or is blueprint-pinned (`interactive`,
+  `with_interactivity`, `CardLifecycle::new`, `ValidatedAction::emitter`
+  consumed by a test assertion, `FromIterator` consumed by test collects).
+  No further edit warranted.
+
+Gates after the pass: `cargo check -p oneiron --all-features --lib` clean;
+clippy clean for this diff (the pre-existing `identity_topology/tests.rs:4203`
+redundant-clone on the base is unchanged); `cargo test -p oneiron --all-features
+--lib lens::tests` green (43 passed, 0 failed).

@@ -855,11 +855,6 @@ pub struct GeneratedUiStateSnapshot {
 
 impl GeneratedUiStateSnapshot {
     #[must_use]
-    pub fn new(values: BTreeMap<SelfUiStateKey, SelfUiStateValue>) -> Self {
-        Self { values }
-    }
-
-    #[must_use]
     pub fn values(&self) -> &BTreeMap<SelfUiStateKey, SelfUiStateValue> {
         &self.values
     }
