@@ -45,3 +45,25 @@ NEXT: finish idiom exploration (error.rs taxonomy + sync packing filter), then w
 - Gates: `cargo check -p oneiron --all-features` clean; `cargo test -p oneiron` lib = **2757 passed / 0 failed / 24 ignored**; lane `secret_` filter = 39 passed. Committed as one commit (unsigned, no attribution) on `w5/l1-secret/main`.
 
 INTENT for next segment (if any): docs-repo satellite PR adds the authority row to `oneiron-docs/site/src/data/oneiron-contracts.ts` (entityTypes row for SECRET_CUSTODY, byte 86) — separate same-day PR, not this worktree. Await orchestrator verdict on the byte-86 first-come outcome vs ONE-1377 before ONE-1920.
+
+## SIMPLIFY SEGMENT 0 OUTCOME (RELAY-ONE-1919-simplify-seg0) — DONE
+
+Single-pass inline cleanup completed without the usual four-agent fan-out (the `/simplify` skill reported Agent unavailable). The same pass covered all four required angles:
+
+- **Reuse:** kept MessagePack/index helpers module-local because the matching `gate.rs`/`claim.rs` helpers are private and those files are outside this packet; aligned the local implementations with the established exact-key and `EntityId`-length idioms instead of adding a shared abstraction.
+- **Simplification:** removed unused manifest line-number plumbing, manual scratch defaults, an unused derive, a trivial boolean wrapper, a redundant closure argument, and the single-use stored-record decode layer.
+- **Efficiency:** removed three `String` clones from diverging error paths; ownership now moves only on branches that return.
+- **Altitude:** used `ENTITY_ID_LEN` for exact type-index key parsing and removed a stale comment that claimed register-time floor recomputation not performed by this ticket. No call-site special case or new layer was added.
+
+### Simplifiable-confess verdicts (2/2)
+
+1. **Small TOML-subset parser instead of a `toml` dependency — KEEP, simplified internally.** `Cargo.toml` is outside ONE-1919's dependency reservations, and the declared fixture surface is intentionally narrow. The pass deleted parser bookkeeping without widening the grammar or adding a dependency.
+2. **`#[cfg_attr(not(test), allow(dead_code))]` on `get_secret_value_in_txn` — KEEP.** SECRET-02 consumes this ratified crate-private keystone signature. Removing the door would break the next stacked ticket; adding a wrapper would be speculative structure.
+
+No other simplifiable-confess appears in this worklog. Public API signatures, test assertions, test fixtures, registry byte 86, and the ONE-1865 interim sync guard are unchanged. Final vet result: **no issues found** (the pre-existing untracked `WORKLOG-LANE-BOOT.md` remains untouched and unstaged).
+
+- Final gates: `cargo check -p oneiron --all-features --locked -j 6` **GREEN**; `cargo clippy -p oneiron --all-features --locked -j 6 -- -D warnings` **GREEN**.
+- Simplify delta: **+84 / -132** across `secret_custody.rs` and `secret_manifest.rs` (net **-48** lines).
+- Surviving ONE-1919 ticket diff, excluding worklogs: **+1875 / -3 across 11 files**.
+
+NEXT: hand the simplified ONE-1919 base layer to the cross-model check; docs-repo satellite and byte-86 race handling remain orchestrator-owned.

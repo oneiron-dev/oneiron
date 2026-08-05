@@ -21,9 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::secret_custody::{
-    CustodyClass, CustodyTier, SecretBinding, SecretCustodyFloor,
-};
+use crate::secret_custody::{CustodyClass, CustodyTier, SecretBinding, SecretCustodyFloor};
 
 /// The repo-side secret manifest: a schema-versioned list of declared
 /// entries.
@@ -65,41 +63,37 @@ pub const SECRET_MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     // Scratch shape during parse: class stays Option so a missing `class`
     // key is a typed error at finish, not a silent default.
+    #[derive(Default)]
     struct ScratchEntry {
         name: String,
         class: Option<CustodyClass>,
         declared_paths: Vec<String>,
         bindings: Vec<ScratchBinding>,
     }
+    #[derive(Default)]
     struct ScratchBinding {
         effector: String,
         tier_ceiling: Option<CustodyTier>,
         scopes: Vec<String>,
     }
-
-    let mut schema_version: Option<u16> = None;
-    let mut secrets: Vec<ScratchEntry> = Vec::new();
     // Parser position: which table the next bare `key = value` row binds to.
-    #[derive(PartialEq)]
     enum Scope {
         Root,
         Secrets,
         Binding,
     }
+
+    let mut schema_version = None;
+    let mut secrets = Vec::new();
     let mut scope = Scope::Root;
 
-    for (line_no, raw) in text.lines().enumerate() {
+    for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         if line == "[[secrets]]" {
-            secrets.push(ScratchEntry {
-                name: String::new(),
-                class: None,
-                declared_paths: Vec::new(),
-                bindings: Vec::new(),
-            });
+            secrets.push(ScratchEntry::default());
             scope = Scope::Secrets;
             continue;
         }
@@ -109,17 +103,13 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                     "[[secrets.bindings]] before any [[secrets]]",
                 ));
             };
-            entry.bindings.push(ScratchBinding {
-                effector: String::new(),
-                tier_ceiling: None,
-                scopes: Vec::new(),
-            });
+            entry.bindings.push(ScratchBinding::default());
             scope = Scope::Binding;
             continue;
         }
 
         let Some((key, value)) = line.split_once('=') else {
-            return Err(invalid_manifest_line(line_no, "expected `key = value`"));
+            return Err(invalid_manifest("expected `key = value`"));
         };
         let key = key.trim();
         let value = value.trim();
@@ -127,39 +117,39 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
         match scope {
             Scope::Root => {
                 if key == "schema_version" {
-                    schema_version = Some(parse_u16(value, line_no)?);
+                    schema_version = Some(parse_u16(value)?);
                 }
             }
             Scope::Secrets => {
                 let Some(entry) = secrets.last_mut() else {
-                    return Err(invalid_manifest_line(line_no, "row before any [[secrets]]"));
+                    return Err(invalid_manifest("row before any [[secrets]]"));
                 };
                 match key {
-                    "name" => entry.name = parse_string(value, line_no)?,
+                    "name" => entry.name = parse_string(value)?,
                     "class" => {
                         // CustodyClass is canon-wire kebab-case in the manifest text.
-                        let class_str = parse_string(value, line_no)?;
+                        let class_str = parse_string(value)?;
                         entry.class = Some(CustodyClass::parse(&class_str).ok_or(
                             Error::InvalidSecretCustodyBody("unknown custody class in manifest"),
                         )?);
                     }
-                    "declared_paths" => entry.declared_paths = parse_string_array(value, line_no)?,
+                    "declared_paths" => entry.declared_paths = parse_string_array(value)?,
                     _ => {}
                 }
             }
             Scope::Binding => {
                 let Some(binding) = secrets.last_mut().and_then(|e| e.bindings.last_mut()) else {
-                    return Err(invalid_manifest_line(line_no, "row before any binding"));
+                    return Err(invalid_manifest("row before any binding"));
                 };
                 match key {
-                    "effector" => binding.effector = parse_string(value, line_no)?,
+                    "effector" => binding.effector = parse_string(value)?,
                     "tier_ceiling" => {
-                        let n = parse_u8(value, line_no)?;
+                        let n = parse_u8(value)?;
                         binding.tier_ceiling = Some(CustodyTier::from_u8(n).ok_or(
                             Error::InvalidSecretCustodyBody("unknown tier_ceiling in manifest"),
                         )?);
                     }
-                    "scopes" => binding.scopes = parse_string_array(value, line_no)?,
+                    "scopes" => binding.scopes = parse_string_array(value)?,
                     _ => {}
                 }
             }
@@ -177,18 +167,18 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     let secrets = secrets
         .into_iter()
         .map(|entry| {
-            let class = entry
-                .class
-                .ok_or(Error::InvalidSecretCustodyBody("manifest entry missing class"))?;
+            let class = entry.class.ok_or(Error::InvalidSecretCustodyBody(
+                "manifest entry missing class",
+            ))?;
             let bindings = entry
                 .bindings
                 .into_iter()
                 .map(|b| {
                     Ok(SecretBinding {
                         effector: b.effector,
-                        tier_ceiling: b.tier_ceiling.ok_or(
-                            Error::InvalidSecretCustodyBody("manifest binding missing tier_ceiling"),
-                        )?,
+                        tier_ceiling: b.tier_ceiling.ok_or(Error::InvalidSecretCustodyBody(
+                            "manifest binding missing tier_ceiling",
+                        ))?,
                         scopes: b.scopes,
                     })
                 })
@@ -207,50 +197,39 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     })
 }
 
-fn invalid_manifest_line(line_no: usize, msg: &'static str) -> Error {
-    let _ = line_no;
+fn invalid_manifest(msg: &'static str) -> Error {
     Error::InvalidSecretCustodyBody(msg)
 }
 
-fn parse_string(value: &str, line_no: usize) -> Result<String> {
-    let value = value.trim();
+fn parse_string(value: &str) -> Result<String> {
     let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
-        return Err(invalid_manifest_line(line_no, "expected a double-quoted string"));
+        return Err(invalid_manifest("expected a double-quoted string"));
     };
     Ok(inner.to_owned())
 }
 
-fn parse_u16(value: &str, line_no: usize) -> Result<u16> {
+fn parse_u16(value: &str) -> Result<u16> {
     value
-        .trim()
         .parse::<u16>()
-        .map_err(|_| invalid_manifest_line(line_no, "expected an unsigned integer"))
+        .map_err(|_| invalid_manifest("expected an unsigned integer"))
 }
 
-fn parse_u8(value: &str, line_no: usize) -> Result<u8> {
+fn parse_u8(value: &str) -> Result<u8> {
     value
-        .trim()
         .parse::<u8>()
-        .map_err(|_| invalid_manifest_line(line_no, "expected an unsigned tier"))
+        .map_err(|_| invalid_manifest("expected an unsigned tier"))
 }
 
-fn parse_string_array(value: &str, line_no: usize) -> Result<Vec<String>> {
-    let Some(inner) = value
-        .trim()
-        .strip_prefix('[')
-        .and_then(|v| v.strip_suffix(']'))
-    else {
-        return Err(invalid_manifest_line(line_no, "expected an array of strings"));
+fn parse_string_array(value: &str) -> Result<Vec<String>> {
+    let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+        return Err(invalid_manifest("expected an array of strings"));
     };
-    let mut out = Vec::new();
-    for item in inner.split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        out.push(parse_string(item, line_no)?);
-    }
-    Ok(out)
+    inner
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(parse_string)
+        .collect()
 }
 
 /// Validates a manifest against a resolved vault floor. Narrow-only: every

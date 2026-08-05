@@ -58,7 +58,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
-use crate::entity_id::EntityId;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::store::Store;
@@ -236,17 +236,16 @@ enum MapValue<'a> {
 }
 
 fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
-    let mut found = MapValue::Missing;
+    let mut found = None;
     for (key, value) in entries {
         if key.as_str() == Some(needle) {
-            if matches!(found, MapValue::Missing) {
-                found = MapValue::Present(value);
-            } else {
+            if found.is_some() {
                 return MapValue::Duplicate;
             }
+            found = Some(value);
         }
     }
-    found
+    found.map_or(MapValue::Missing, MapValue::Present)
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
@@ -264,10 +263,6 @@ fn as_u64(value: &Value) -> Option<u64> {
     } else {
         None
     }
-}
-
-fn as_bool(value: &Value) -> Option<bool> {
-    value.as_bool()
 }
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
@@ -365,42 +360,43 @@ fn decode_floor_keys(body: &[u8]) -> Option<SecretCustodyFloor> {
         return None;
     };
 
-    let tier_at = |entries: &[(Value, Value)], key: &str| -> Option<CustodyTier> {
-        match single_map_value(entries, key) {
-            MapValue::Present(v) => as_u64(v).and_then(|n| CustodyTier::from_u8(u8::try_from(n).ok()?)),
+    let tier_at = |key: &str| -> Option<CustodyTier> {
+        match single_map_value(&entries, key) {
+            MapValue::Present(v) => {
+                as_u64(v).and_then(|n| CustodyTier::from_u8(u8::try_from(n).ok()?))
+            }
             MapValue::Missing | MapValue::Duplicate => None,
         }
     };
 
     let mut floor = SecretCustodyFloor::default();
-    if let Some(t) = tier_at(&entries, floor_keys::PORTABLE_MIN) {
+    if let Some(t) = tier_at(floor_keys::PORTABLE_MIN) {
         floor.portable.min = t;
     }
-    if let Some(t) = tier_at(&entries, floor_keys::PORTABLE_MAX) {
+    if let Some(t) = tier_at(floor_keys::PORTABLE_MAX) {
         floor.portable.max = t;
     }
-    if let Some(t) = tier_at(&entries, floor_keys::DEVICE_BOUND_MIN) {
+    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MIN) {
         floor.device_bound.min = t;
     }
-    if let Some(t) = tier_at(&entries, floor_keys::DEVICE_BOUND_MAX) {
+    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MAX) {
         floor.device_bound.max = t;
     }
-    if let Some(t) = tier_at(&entries, floor_keys::CROSS_VAULT_MIN) {
+    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MIN) {
         floor.cross_vault.min = t;
     }
-    if let Some(t) = tier_at(&entries, floor_keys::CROSS_VAULT_MAX) {
+    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MAX) {
         floor.cross_vault.max = t;
     }
     if let MapValue::Present(v) = single_map_value(&entries, floor_keys::ROTATION_MAX_AGE_SECS) {
         floor.rotation_max_age_secs = as_u64(v);
     }
-    if let MapValue::Present(Value::Map(rows)) = single_map_value(&entries, floor_keys::ENV_BINDINGS)
+    if let MapValue::Present(Value::Map(rows)) =
+        single_map_value(&entries, floor_keys::ENV_BINDINGS)
     {
         for (k, v) in rows {
             if let (Some(k), Some(v)) = (k.as_str(), v.as_str()) {
-                floor
-                    .env_bindings
-                    .insert(k.to_owned(), v.to_owned());
+                floor.env_bindings.insert(k.to_owned(), v.to_owned());
             }
         }
     }
@@ -511,7 +507,10 @@ impl fmt::Debug for SecretCustodyRecord {
             .field("name", &self.name)
             .field("class", &self.class)
             .field("device_only", &self.device_only)
-            .field("value_bytes", &format_args!("<redacted {} bytes>", self.value_bytes.len()))
+            .field(
+                "value_bytes",
+                &format_args!("<redacted {} bytes>", self.value_bytes.len()),
+            )
             .field("status", &self.status)
             .field("registered_at", &self.registered_at)
             .field("rotated_at", &self.rotated_at)
@@ -600,14 +599,8 @@ fn invalid_body(reason: &'static str) -> Error {
 
 fn tier_band_to_value(band: &TierBand) -> Value {
     Value::Map(vec![
-        (
-            Value::from("min"),
-            Value::from(u64::from(band.min.as_u8())),
-        ),
-        (
-            Value::from("max"),
-            Value::from(u64::from(band.max.as_u8())),
-        ),
+        (Value::from("min"), Value::from(u64::from(band.min.as_u8()))),
+        (Value::from("max"), Value::from(u64::from(band.max.as_u8()))),
     ])
 }
 
@@ -670,9 +663,7 @@ fn floor_from_value(value: &Value) -> Result<SecretCustodyFloor> {
     )?;
     let rotation_max_age_secs = match required_value(entries, "rotation_max_age_secs") {
         Some(Value::Nil) | None => None,
-        Some(v) => Some(
-            as_u64(v).ok_or(invalid_body("floor rotation_max_age_secs"))?,
-        ),
+        Some(v) => Some(as_u64(v).ok_or(invalid_body("floor rotation_max_age_secs"))?),
     };
     let mut env_bindings = BTreeMap::new();
     if let Some(Value::Map(rows)) = required_value(entries, "env_bindings") {
@@ -849,7 +840,7 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
         .and_then(CustodyClass::parse)
         .ok_or(invalid_body("class"))?;
     let device_only = required_value(&entries, SECRET_CUSTODY_BODY_KEYS[3])
-        .and_then(as_bool)
+        .and_then(Value::as_bool)
         .ok_or(invalid_body("device_only"))?;
     let value_bytes = match required_value(&entries, SECRET_CUSTODY_BODY_KEYS[4]) {
         Some(Value::Binary(b)) => b.clone(),
@@ -940,29 +931,13 @@ fn name_index_key(name: &str) -> Vec<u8> {
 /// Returns `None` when the key does not carry a well-formed id for
 /// `entity_type`.
 fn type_index_entity_id(key: &[u8], entity_type: u8) -> Option<EntityId> {
-    if key.first().copied() != Some(entity_type) {
+    if key.len() != ENTITY_ID_LEN + 1 || key[0] != entity_type {
         return None;
     }
-    let id_bytes: [u8; 16] = key.get(key.len().checked_sub(16)?..)?.try_into().ok()?;
-    EntityId::from_bytes(id_bytes).ok()
+    EntityId::from_bytes(key[1..].try_into().ok()?).ok()
 }
 
-/// Decodes a raw stored row (header + body) into a custody record, rejecting
-/// rows whose header is not `ENTITY_TYPE_SECRET_CUSTODY`.
-fn decode_stored_record(raw: &[u8]) -> Result<Option<SecretCustodyRecord>> {
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return Err(Error::CorruptedIndex("secret custody entity header"));
-    };
-    if header.entity_type != ENTITY_TYPE_SECRET_CUSTODY {
-        return Err(Error::CorruptedIndex("secret custody entity type"));
-    }
-    Ok(Some(decode_secret_custody_body(
-        &raw[ENTITY_METADATA_HEADER_LEN..],
-    )?))
-}
-
-/// Reads and decodes a custody record inside a txn. Generic over the txn
-/// borrow so the read doors work under both `RoTxn` and `RwTxn`.
+/// Reads and decodes a custody record under either a read or write txn.
 fn read_secret_custody_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -971,7 +946,13 @@ fn read_secret_custody_in_txn(
     let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
         return Ok(None);
     };
-    decode_stored_record(&raw)
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Err(Error::CorruptedIndex("secret custody entity header"));
+    };
+    if header.entity_type != ENTITY_TYPE_SECRET_CUSTODY {
+        return Err(Error::CorruptedIndex("secret custody entity type"));
+    }
+    decode_secret_custody_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
 }
 
 // ---------------------------------------------------------------------------
@@ -995,10 +976,6 @@ impl Vault {
         if rec.schema_version != SECRET_CUSTODY_SCHEMA_VERSION {
             return Err(invalid_body("unsupported secret custody schema version"));
         }
-        // Recompute of the floor at register time so the snapshot is the live
-        // floor, not a caller-asserted one. A record narrower than the floor
-        // is legal (narrow-only); a wider binding ceiling fails earlier at
-        // validate_secret_manifest, and here at admission.
         let data = encode_secret_custody_body(&rec)?;
         let id = EntityId::now();
 
@@ -1011,13 +988,11 @@ impl Vault {
                 .map_err(|_| Error::CorruptedIndex("secret name index id"))?;
             let existing_id = EntityId::from_bytes(id_bytes)
                 .map_err(|_| Error::CorruptedIndex("secret name index id"))?;
-            // A live name (non-revoked existing record) denies; a revoked
-            // name frees for re-registration under the new id.
-            match read_secret_custody_in_txn(&self.store, &wtxn, &existing_id)? {
-                Some(existing) if existing.status != SecretCustodyStatus::Revoked => {
-                    return Err(Error::SecretNameInUse { name: rec.name.clone() });
-                }
-                Some(_) | None => {}
+            // A live name denies; a revoked or missing record frees the index.
+            if read_secret_custody_in_txn(&self.store, &wtxn, &existing_id)?
+                .is_some_and(|existing| existing.status != SecretCustodyStatus::Revoked)
+            {
+                return Err(Error::SecretNameInUse { name: rec.name });
             }
         }
 
@@ -1092,14 +1067,12 @@ impl Vault {
             return Ok(None);
         };
         if rec.status != SecretCustodyStatus::Active {
-            return Err(Error::SecretCustodyNotActive {
-                name: rec.name.clone(),
-            });
+            return Err(Error::SecretCustodyNotActive { name: rec.name });
         }
         if rec.binding_for(effector).is_none() {
             return Err(Error::SecretBindingDenied {
                 effector: effector.to_owned(),
-                secret_ref: rec.name.clone(),
+                secret_ref: rec.name,
             });
         }
         Ok(Some(rec.value_bytes))
