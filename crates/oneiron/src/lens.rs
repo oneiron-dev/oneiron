@@ -1176,7 +1176,10 @@ fn validate_generated_ui_interactivity(
     }
 
     for element in elements {
-        validate_lens_collection_len("generated-ui $bind descriptors", element.state_bindings.len())?;
+        validate_lens_collection_len(
+            "generated-ui $bind descriptors",
+            element.state_bindings.len(),
+        )?;
         if !element.state_bindings.is_empty() && !matches!(element.atom, LensAtom::SelfUi(_)) {
             return Err(Error::InvalidConfig(
                 "generated-ui $bind descriptors are only valid on self.ui controls".to_string(),
@@ -1300,32 +1303,43 @@ impl GeneratedUiCard {
     }
 
     pub fn new(card_id: LensRenderId, tree: GeneratedLens) -> Result<Self> {
+        Self::interactive(
+            card_id,
+            tree,
+            Vec::new(),
+            GeneratedUiStateSnapshot::default(),
+        )
+    }
+
+    /// Assemble a card with its engine-authored action manifest and initial `$state`.
+    /// The manifest and every `$bind` descriptor are proved against the authored tree
+    /// here, before any render is emitted. A tree carrying `$bind` must be built this
+    /// way: its bindings are only meaningful alongside the `$state` they address.
+    pub fn interactive(
+        card_id: LensRenderId,
+        tree: GeneratedLens,
+        actions: Vec<GeneratedUiActionDeclaration>,
+        state: GeneratedUiStateSnapshot,
+    ) -> Result<Self> {
         let card = Self {
             protocol_version: GENERATED_UI_WIRE_VERSION,
             catalog: GeneratedUiCatalog::LensAtomKit,
             card_id,
             tree,
-            actions: Vec::new(),
-            state: GeneratedUiStateSnapshot::default(),
+            actions,
+            state,
         };
         card.validate()?;
         Ok(card)
     }
 
-    /// Attach the engine-authored action manifest and initial `$state` to a card. The
-    /// manifest is proved against the authored tree here, before any render is emitted.
+    /// Attach a manifest and `$state` to an already-valid card.
     pub fn with_interactivity(
         self,
         actions: Vec<GeneratedUiActionDeclaration>,
         state: GeneratedUiStateSnapshot,
     ) -> Result<Self> {
-        let card = Self {
-            actions,
-            state,
-            ..self
-        };
-        card.validate()?;
-        Ok(card)
+        Self::interactive(self.card_id, self.tree, actions, state)
     }
 
     pub fn render(&self) -> Result<GeneratedUiRender> {
@@ -1878,7 +1892,11 @@ pub struct GeneratedUiNode {
     pub fallback_text: LensText,
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
     pub bindings: Vec<LensHandleRef>,
-    #[serde(rename = "$bind", default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(
+        rename = "$bind",
+        default,
+        deserialize_with = "deserialize_limited_vec"
+    )]
     pub state_bindings: Vec<SelfUiBinding>,
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
     pub child_refs: Vec<LensAtomId>,
@@ -2289,7 +2307,14 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
 
         deserializer.deserialize_struct(
             "LensNode",
-            &["id", "atom", "fallbackText", "bindings", "$bind", "children"],
+            &[
+                "id",
+                "atom",
+                "fallbackText",
+                "bindings",
+                "$bind",
+                "children",
+            ],
             LensNodeVisitor { depth: self.depth },
         )
     }
