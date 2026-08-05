@@ -39,9 +39,11 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/v1/usage/tenants/{tenant_id}/rollup",
 ];
 
-// ONE-1214 and ONE-1265 expose canonical v1 API routes while skills-pack docs
-// remain on a separate docs lane.
+// ONE-1214, ONE-1265, and ONE-1259 expose canonical v1 API routes while
+// skills-pack docs remain on a separate docs lane.
 const API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
+    "/v1/core/surface-events",
+    "/v1/core/surface-events/{correlation_id}",
     "/v1/core/batch",
     "/v1/core/batch/shortId/hydrate",
     "/v1/core/query",
@@ -87,6 +89,11 @@ const NESTED_ROUTE_PREFIXES: &[(&str, &str)] = &[
     ),
     ("/turns/{turn_id}", "/v1/core/turns/{turn_id}"),
     ("/turns/annotate", "/v1/core/turns/annotate"),
+    ("/surface-events", "/v1/core/surface-events"),
+    (
+        "/surface-events/{correlation_id}",
+        "/v1/core/surface-events/{correlation_id}",
+    ),
     ("/access-grants", "/v1/companion/access-grants"),
     (
         "/access-grants/{grant_id}/revoke",
