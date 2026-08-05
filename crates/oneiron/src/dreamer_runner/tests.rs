@@ -2575,3 +2575,163 @@ fn injected_turn_never_reaches_extraction_input() {
     );
     assert!(extraction_input.iter().all(|text| !text.contains("Zoe")));
 }
+
+// ---------------------------------------------------------------------------
+// ONE-1400 — clustering adapter authority boundary
+// ---------------------------------------------------------------------------
+
+/// Snapshot of every durable surface the clustering adapter is forbidden to
+/// touch: raw vault bytes, attempt rows (records/ready/dedupe), claim and
+/// topology rows (both live in `entities` / `vault_meta`), and the LMDB file
+/// size. Compared before and after a `propose_claim_cohorts` call.
+#[derive(Debug, PartialEq, Eq)]
+struct VaultWriteSurfaces {
+    data_file_len: u64,
+    entities: Vec<(Vec<u8>, Vec<u8>)>,
+    vault_meta: Vec<(Vec<u8>, Vec<u8>)>,
+    attempt_records: Vec<(Vec<u8>, Vec<u8>)>,
+    attempt_ready: Vec<(Vec<u8>, Vec<u8>)>,
+    attempt_dedupe: Vec<(Vec<u8>, Vec<u8>)>,
+    type_index: Vec<(Vec<u8>, Vec<u8>)>,
+    edges_out: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+fn dump_db(
+    db: &crate::overlay_db::OverlayDb,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let mut rows = Vec::new();
+    for row in db.iter(rtxn)? {
+        let (key, value) = row?;
+        rows.push((key.into_owned(), value.into_owned()));
+    }
+    Ok(rows)
+}
+
+fn vault_write_surfaces(dir: &std::path::Path, vault: &Vault) -> Result<VaultWriteSurfaces> {
+    let data_file_len = std::fs::metadata(dir.join("data.mdb"))?.len();
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(VaultWriteSurfaces {
+        data_file_len,
+        entities: dump_db(&vault.store.entities, &rtxn)?,
+        vault_meta: dump_db(&vault.store.vault_meta, &rtxn)?,
+        attempt_records: dump_db(&vault.store.attempt_records, &rtxn)?,
+        attempt_ready: dump_db(&vault.store.attempt_ready, &rtxn)?,
+        attempt_dedupe: dump_db(&vault.store.attempt_dedupe, &rtxn)?,
+        type_index: dump_db(&vault.store.type_index, &rtxn)?,
+        edges_out: dump_db(&vault.store.edges_out, &rtxn)?,
+    })
+}
+
+fn cluster_fixture_claims() -> Vec<crate::cluster::ClusterClaim> {
+    let subject = crate::test_util::entity(0x70);
+    // Two near-parallel vectors (cluster together) plus one orthogonal
+    // (singleton) — enough that the adapter returns real, non-trivial data.
+    [
+        (0x01_u8, vec![1.0_f32, 0.0, 0.0, 0.0]),
+        (0x02, vec![0.995, 0.0998, 0.0, 0.0]),
+        (0x03, vec![0.0, 1.0, 0.0, 0.0]),
+    ]
+    .into_iter()
+    .map(|(seed, embedding)| crate::cluster::ClusterClaim {
+        claim_id: crate::test_util::entity(seed),
+        subject: ClaimSubject::Entity(subject),
+        predicate: "person.name".to_owned(),
+        world: None,
+        facet: None,
+        embedding,
+    })
+    .collect()
+}
+
+#[test]
+fn propose_claim_cohorts_returns_assignments() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+
+    let assignments = runner.propose_claim_cohorts(
+        &cluster_fixture_claims(),
+        crate::cluster::ClusterOptions::default(),
+    )?;
+
+    // The adapter is a pass-through: same result the module returns directly.
+    assert_eq!(
+        assignments,
+        crate::cluster::cluster_claims(
+            &cluster_fixture_claims(),
+            crate::cluster::ClusterOptions::default()
+        )?
+    );
+    assert_eq!(assignments.cohorts.len(), 2);
+    assert_eq!(
+        assignments.cohorts[0].member_ids,
+        vec![
+            crate::test_util::entity(0x01),
+            crate::test_util::entity(0x02)
+        ]
+    );
+    assert_eq!(
+        assignments.cohorts[1].member_ids,
+        vec![crate::test_util::entity(0x03)]
+    );
+
+    // Typed errors propagate through the adapter rather than panicking.
+    let bad = vec![crate::cluster::ClusterClaim {
+        embedding: vec![f32::NAN, 0.0, 0.0, 0.0],
+        ..cluster_fixture_claims()[0].clone()
+    }];
+    assert!(matches!(
+        runner
+            .propose_claim_cohorts(&bad, crate::cluster::ClusterOptions::default())
+            .expect_err("non-finite component"),
+        Error::InvalidVector { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn dreamer_decides_not_tool() -> Result<()> {
+    let (dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+
+    // Seed real state first, so the comparison is against a populated vault
+    // rather than an empty one: an attempt row, and a claim/topology-bearing
+    // entity row.
+    enqueue_attempt(&runner, "cluster-boundary", 10)?;
+    let claim_id = EntityId::now();
+    vault.put_entity(
+        &claim_id,
+        ENTITY_TYPE_TASK,
+        occurred(10),
+        10,
+        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+    )?;
+
+    let before = vault_write_surfaces(dir.path(), &vault)?;
+
+    // Call the tool repeatedly, including with inputs that fail validation —
+    // neither the success nor the failure path may write.
+    let claims = cluster_fixture_claims();
+    for _ in 0..3 {
+        let assignments =
+            runner.propose_claim_cohorts(&claims, crate::cluster::ClusterOptions::default())?;
+        assert!(!assignments.cohorts.is_empty());
+    }
+    assert!(
+        runner
+            .propose_claim_cohorts(
+                &claims,
+                crate::cluster::ClusterOptions {
+                    cohesion_threshold: 2.0,
+                },
+            )
+            .is_err()
+    );
+
+    let after = vault_write_surfaces(dir.path(), &vault)?;
+    assert_eq!(
+        before, after,
+        "clustering must not change vault bytes, attempt rows, claims, or topology rows"
+    );
+    Ok(())
+}

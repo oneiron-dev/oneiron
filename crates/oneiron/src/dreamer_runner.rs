@@ -2174,6 +2174,23 @@ impl<'a> DreamerRunnerStore<'a> {
         self.latest_durable_milestone(attempt_id)
             .map(|milestone| milestone.map(DreamerAttemptProgressSnapshot::from_milestone))
     }
+
+    /// Pure proposal step. This method performs no LMDB write and enqueues no
+    /// attempt.
+    ///
+    /// It hands already-decoded claim descriptors to [`crate::cluster`] and
+    /// returns the cohort assignments unchanged. A cohort is an OBSERVATION —
+    /// "these claims look like they are about the same thing" — not an
+    /// instruction. The Dreamer alone decides whether to merge, split,
+    /// accumulate, or escalate, and this adapter deliberately offers no verb
+    /// for any of those.
+    pub fn propose_claim_cohorts(
+        &self,
+        claims: &[crate::cluster::ClusterClaim],
+        options: crate::cluster::ClusterOptions,
+    ) -> Result<crate::cluster::ClusterAssignments> {
+        crate::cluster::cluster_claims(claims, options)
+    }
 }
 
 /// Encodes a Dreamer attempt payload in canonical MessagePack field order.
