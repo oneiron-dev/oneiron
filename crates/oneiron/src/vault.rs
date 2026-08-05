@@ -461,13 +461,13 @@ impl Vault {
         // can never delete a concurrently-created live turn. A later sole opener
         // (or the peer itself, on its next clean open) recovers the orphans
         // instead. The empty closed-fence markers never block export.
+        // ONE-1728 (K8) deleted the companion context-receipt sweep: a session's
+        // retrieval-run receipts no longer reach a durable row at all — they are
+        // written into the session's own overlay `VaultMeta` keyspace, so a
+        // crash evaporates them with the rest of the room and leaves nothing for
+        // an open-time sweep to recover.
         if sole_opener {
             vault.sweep_orphaned_off_record_fences()?;
-            // Companion recovery leg: evaporate orphaned off-record context
-            // receipts (retrieval runs whose result_ids are activated-memory
-            // ids) whose in-process registration was lost to a crash. Runs
-            // under the same sole-ownership + still-exclusive open lock.
-            vault.sweep_orphaned_off_record_receipts()?;
         }
         // Recovery is complete: downgrade the exclusive open lock to SHARED (a
         // no-op for a non-sole opener) so concurrent shared openers — parked on
@@ -723,6 +723,11 @@ impl Vault {
     }
 
     /// Retrieves an entity blob by ID.
+    ///
+    /// SECRET_CUSTODY (byte 77) is denied: the custody body carries the secret
+    /// value in the clear, and the ONLY sanctioned value read is the bound door
+    /// [`Vault::get_secret_value_in_txn`]. The value-less projection is
+    /// [`Vault::get_secret_metadata`].
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
         let value = self.store.entities.get(&rtxn, id.as_bytes())?;
@@ -730,8 +735,11 @@ impl Vault {
             return Ok(None);
         };
 
-        if EntityMetadataHeader::parse(&bytes).is_none() {
+        let Some(header) = EntityMetadataHeader::parse(&bytes) else {
             return Err(Error::CorruptedIndex("entity header"));
+        };
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
         }
 
         Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
@@ -1117,25 +1125,71 @@ impl Vault {
         limit: usize,
         profile: &crate::config::Bm25RankProfile,
     ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
+        let results = self.search_text_scored(&self.store, query, limit, profile)?;
+        let run_id = self.record_vault_search_retrieval_run(
+            RetrievalSignal::Text,
+            results.started_at,
+            results.started,
+            &results.scores,
+            limit,
+        );
+        Ok(RetrievalWithTelemetry {
+            value: results.scores,
+            run_id,
+        })
+    }
+
+    /// Scores one BM25 search against `target` and returns the scores plus the
+    /// timing the telemetry row needs.
+    ///
+    /// `target` is `&Store` on the canonical path and a `SessionStoreView` on
+    /// the session path (ONE-1728 §7), so an in-room search scores over
+    /// overlay ∪ base through the SAME body — the two cannot drift in
+    /// scoring, and canonical output stays byte-identical.
+    pub(crate) fn search_text_scored(
+        &self,
+        target: &impl crate::store::ManifestDbs,
+        query: &str,
+        limit: usize,
+        profile: &crate::config::Bm25RankProfile,
+    ) -> Result<TimedSearch> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
         let started_at = unix_seconds_now();
         let started = Instant::now();
-        let results = {
+        let scores = {
             let rtxn = self.store.env.read_txn()?;
-            bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)?
+            bm25::search_text(target, &rtxn, &self.analyzer, &config, query, limit)?
         };
-        let run_id = self.record_vault_search_retrieval_run(
-            RetrievalSignal::Text,
+        Ok(TimedSearch {
+            scores,
             started_at,
             started,
-            &results,
-            limit,
-        );
-        Ok(RetrievalWithTelemetry {
-            value: results,
-            run_id,
         })
+    }
+
+    /// Builds the `VaultSearch` telemetry row for one search.
+    ///
+    /// Shared with the session path so an in-room search's row carries the
+    /// identical shape; only where it LANDS differs (K10).
+    pub(crate) fn vault_search_retrieval_run_record(
+        signal: RetrievalSignal,
+        started_at: u64,
+        started: Instant,
+        results: &[ScoredEntity],
+        limit: usize,
+    ) -> RetrievalRunRecord {
+        RetrievalRunRecord::new(
+            RetrievalRunId::now(),
+            RetrievalAction::VaultSearch,
+            started_at,
+            started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            vec![signal],
+            vault_search_score_breakdown(signal, results),
+            results.len(),
+            0,
+            (limit > 0 && results.is_empty()).then(|| "NoData".to_owned()),
+        )
     }
 
     fn record_vault_search_retrieval_run(
@@ -1146,19 +1200,9 @@ impl Vault {
         results: &[ScoredEntity],
         limit: usize,
     ) -> Option<RetrievalRunId> {
-        let score_breakdown = vault_search_score_breakdown(signal, results);
-        let run_id = RetrievalRunId::now();
-        let record = RetrievalRunRecord::new(
-            run_id,
-            RetrievalAction::VaultSearch,
-            started_at,
-            started.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            vec![signal],
-            score_breakdown,
-            results.len(),
-            0,
-            (limit > 0 && results.is_empty()).then(|| "NoData".to_owned()),
-        );
+        let record =
+            Self::vault_search_retrieval_run_record(signal, started_at, started, results, limit);
+        let run_id = record.run_id;
         if let Err(error) = self.store.record_retrieval_run(&record) {
             tracing::warn!(
                 ?error,
@@ -1529,8 +1573,31 @@ impl Vault {
 
     /// Returns the raw entity blob (header + data) for an entity.
     ///
-    /// Unlike `get()` which strips the header, this returns the full LMDB value.
+    /// Unlike `get()` which strips the header, this returns the full LMDB
+    /// value. SECRET_CUSTODY (byte 77) is denied for the same reason `get()`
+    /// denies it: the body carries the secret value in the clear.
     pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let Some(bytes) = self.get_raw_unsealed(id)? else {
+            return Ok(None);
+        };
+        if EntityMetadataHeader::parse(&bytes)
+            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+        {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
+        Ok(Some(bytes))
+    }
+
+    /// Raw entity bytes WITHOUT the custody seal.
+    ///
+    /// Crate-internal, for the passes whose whole job is to read the type byte
+    /// and then refuse, skip, or scrub a custody row (`sync::window`'s mirror,
+    /// scrub and rematerialization passes). Sealing this reader would make
+    /// those passes fail closed on the very row they exist to remove, and
+    /// would turn one custody carrier into a wedged window. `get_raw_in` is
+    /// unsealed for the same reason. Everything outside those passes uses the
+    /// sealed public [`Vault::get_raw`].
+    pub(crate) fn get_raw_unsealed(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
         self.get_raw_in(&rtxn, id)
     }
@@ -2191,6 +2258,13 @@ fn scan_edges(
         edges.push(parse_edge_record(&key, &value)?);
     }
     Ok(edges)
+}
+
+/// One scored search plus the timing its telemetry row is built from.
+pub(crate) struct TimedSearch {
+    pub(crate) scores: Vec<ScoredEntity>,
+    pub(crate) started_at: u64,
+    pub(crate) started: Instant,
 }
 
 fn vault_search_score_breakdown(

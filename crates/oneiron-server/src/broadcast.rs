@@ -8,6 +8,8 @@
 
 use tokio::sync::broadcast;
 
+use crate::api::ReactiveChange;
+use crate::protocol::{SyncMessage, parse_message, window_sub_tags};
 use crate::server::BroadcastPayload;
 
 /// A subscriber handle for a single WebSocket connection.
@@ -81,6 +83,71 @@ pub(crate) enum BroadcastError {
     Lagged(u64),
     /// Too many lag events (>= 3 consecutive) — disconnect and force full reconnection.
     TooManyLags,
+}
+
+/// Subscriber that turns broadcast frames into persistent-change notices for
+/// the in-process reactive local reads (ONE-1437, `api::reactive`) — which is
+/// also its only caller, so it inherits that module's dead-code posture in the
+/// non-test build.
+///
+/// Unlike [`BroadcastSubscriber`], which stays exactly as it is for WebSocket
+/// forwarding, lag here surfaces as [`ReactiveChange::InvalidateAll`] so the
+/// query re-reads coarsely instead of escalating to a disconnect: staleness is
+/// a data-freshness problem, not a connection fault.
+pub(crate) struct ReactiveChangeSubscriber {
+    /// Receiver end of the broadcast channel.
+    rx: broadcast::Receiver<BroadcastPayload>,
+}
+
+impl ReactiveChangeSubscriber {
+    /// Subscribes to every future frame on `tx`.
+    pub(crate) fn new(tx: &broadcast::Sender<BroadcastPayload>) -> Self {
+        Self { rx: tx.subscribe() }
+    }
+
+    /// Waits for the next persistent-change notice.
+    ///
+    /// Non-persistent frames are skipped inside the loop and never surface;
+    /// the sender connection id is deliberately discarded — a writer's own
+    /// device must still refresh its LMDB-derived view. Returns `None` once
+    /// the channel is closed: terminal, but the caller's retained snapshot
+    /// stays valid.
+    pub(crate) async fn recv(&mut self) -> Option<ReactiveChange> {
+        loop {
+            match self.rx.recv().await {
+                Ok((_, data)) => {
+                    if let Some(change) = persistent_change(&data) {
+                        return Some(change);
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    tracing::warn!(missed, "reactive change subscriber lagged");
+                    return Some(ReactiveChange::InvalidateAll { missed });
+                }
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
+}
+
+/// Classifies one encoded frame as a persistent-store invalidation, or `None`.
+///
+/// Exactly two frame shapes can change what an LMDB read returns: a root-doc
+/// update, and a WindowSync carrying the `UPDATE` sub-tag. Everything else —
+/// ephemeral state, root version vectors, lease frames, WindowSync VV and
+/// selector requests, malformed frames, unknown tags, and any future app-tier
+/// frame this server does not parse — is negotiation or presence traffic that
+/// must never trigger a re-query.
+fn persistent_change(data: &[u8]) -> Option<ReactiveChange> {
+    match parse_message(data) {
+        Ok(SyncMessage::RootUpdate(_)) => Some(ReactiveChange::Root),
+        Ok(SyncMessage::WindowSync {
+            window_key,
+            sub_tag,
+            ..
+        }) if sub_tag == window_sub_tags::UPDATE => Some(ReactiveChange::Window { window_key }),
+        Ok(_) | Err(_) => None,
+    }
 }
 
 /// Broadcasts an encoded message to all subscribers.

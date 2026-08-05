@@ -1,0 +1,33 @@
+# SECRET-01 (ONE-1919) valid manifest fixture: every entry narrows inside the
+# default vault floor (portable/device-bound T0..T2, cross-vault T0..T0).
+schema_version = 1
+
+[[secrets]]
+name = "gmail-api-key"
+class = "custody-portable"
+declared_paths = [".secrets/gmail.key"]
+
+[[secrets.bindings]]
+effector = "connector:gmail"
+tier_ceiling = 2
+scopes = ["read", "send"]
+
+[[secrets]]
+name = "device-pin"
+class = "custody-device-bound"
+declared_paths = [".secrets/device.pin"]
+
+[[secrets.bindings]]
+effector = "connector:calendar"
+tier_ceiling = 1
+scopes = ["read"]
+
+[[secrets]]
+name = "door-key"
+class = "cross-vault"
+declared_paths = [".secrets/door.key"]
+
+[[secrets.bindings]]
+effector = "door:receive-pack"
+tier_ceiling = 0
+scopes = ["receive"]

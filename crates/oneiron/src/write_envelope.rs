@@ -244,6 +244,15 @@ impl ClaimCandidate {
         self.subject
     }
 
+    /// The candidate's optional world scope, as an entity ref.
+    ///
+    /// ONE-1728 (K4): the batch decode point enumerates every overlay-id-bearing
+    /// ref on a `BatchOp::ClaimCandidate`, and the world scope is one of them.
+    /// The field is otherwise consumed only inside `into_claim_body`.
+    pub(crate) const fn world(&self) -> Option<EntityId> {
+        self.world
+    }
+
     pub(crate) fn value_str(&self) -> Option<&str> {
         self.value.as_str()
     }

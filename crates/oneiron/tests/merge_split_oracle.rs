@@ -17,9 +17,10 @@
 //! public API.
 
 use oneiron::{
-    ClaimSource, ClaimSubject, EntityId, HnswConfig, IdentityOpEvidence, IdentityOpOutcome,
-    IdentityOpWrite, IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan,
-    Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, FacetOp, FacetSpec, HnswConfig,
+    IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+    ProposalOutcome, ProposalRuling, ReassignmentMap, ReceiptKind, ReceiptQuery, SplitOp,
+    StoredIdentityOpAction, SurvivorshipPlan, Vault, VaultConfig,
 };
 
 fn test_config() -> VaultConfig {
@@ -102,129 +103,321 @@ fn real_split(vault: &Vault, entity: EntityId, heads: Vec<EntityId>, now: u64) -
     event
 }
 
-/// Proposal ruling a human (or the propose lane) applies to a parked
-/// identity-topology proposal (ARCH-0055 r7 outcome vocabulary).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProposalRuling<'a> {
-    /// Approve exactly as proposed.
-    Approve,
-    /// Amend with the given delta payload, then approve.
-    AmendThenApprove(&'a [u8]),
-    /// Reject.
-    Reject,
+// `ProposalRuling` / `ProposalOutcome` were local stand-ins here until
+// ONE-1747 built them; they are now the REAL `oneiron::` types, imported
+// above. The vocabularies are identical (r7: exactly three outcome states),
+// so every assert below binds unchanged — the stand-ins are simply gone.
+
+/// Fixture clocks: a proposal is parked, then ruled strictly later.
+const PROPOSAL_AT: u64 = 200;
+const RULING_AT: u64 = 300;
+
+/// The merge op the ONE-1747 fixtures propose: `sources` folded into
+/// `survivor`.
+fn merge_op(sources: Vec<EntityId>, survivor: EntityId) -> IdentityTopologyOp {
+    IdentityTopologyOp::Merge(MergeOp {
+        sources,
+        survivor,
+        evidence: IdentityOpEvidence {
+            refs: Vec::new(),
+            rationale: "oracle fixture merge proposal".to_owned(),
+        },
+        survivorship_plan: SurvivorshipPlan::ReadThrough,
+    })
 }
 
-/// Resolved-proposal outcome states (r7: exactly three).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProposalOutcome {
-    ApprovedUntouched,
-    ApprovedAmended,
-    Rejected,
+/// An amended merge body for a proposal parked by
+/// [`seam::submit_merge_proposal`], as raw op bytes.
+///
+/// FIXTURE ADAPTATION (arming, not weakening): the parked contracts were
+/// authored against placeholder byte strings, before ONE-1747 ruled that an
+/// amendment may only NARROW what the decider reviewed — same op kind, and a
+/// subject subset of the proposal's. Arbitrary bytes are precisely what that
+/// pin must reject, so the fixtures become REAL encoded amended bodies. The
+/// asserts are untouched: the payload still round-trips byte-exact (which is
+/// what "opaque slot, not a shaped struct" means — the engine stores the
+/// decider's bytes verbatim and never reshapes them) and the reserved-Δ
+/// negative is unchanged.
+fn amendment_body(sources: Vec<EntityId>, survivor: EntityId) -> Vec<u8> {
+    oneiron::encode_identity_op_amendment(&merge_op(sources, survivor)).expect("encode amendment")
+}
+
+/// A split's reassignment map from `(claim, head)` pairs — `None` is the
+/// explicit residue row (r2), not an absent one.
+fn reassignment_map(assignments: &[(EntityId, Option<EntityId>)]) -> ReassignmentMap {
+    ReassignmentMap {
+        entries: assignments
+            .iter()
+            .map(|(claim, head)| oneiron::ReassignmentEntry {
+                item: ClaimSubject::Entity(*claim),
+                target: head.map_or(oneiron::ReassignmentTarget::Residue, |head| {
+                    oneiron::ReassignmentTarget::Head(head)
+                }),
+            })
+            .collect(),
+    }
+}
+
+/// A facet op's scoping map from `(claim, facet index)` pairs.
+fn facet_reassignment_map(assignments: &[(EntityId, u32)]) -> ReassignmentMap {
+    ReassignmentMap {
+        entries: assignments
+            .iter()
+            .map(|(claim, index)| oneiron::ReassignmentEntry {
+                item: ClaimSubject::Entity(*claim),
+                target: oneiron::ReassignmentTarget::Facet { index: *index },
+            })
+            .collect(),
+    }
+}
+
+/// The propose lane's write: `Proposed` parks with zero topology effects.
+fn proposed_write() -> IdentityOpWrite {
+    IdentityOpWrite {
+        approval: ClaimApprovalStatus::Proposed,
+        ..IdentityOpWrite::auto(ClaimSource::Inferred)
+    }
+}
+
+/// The decider's write: a ruling is the act of deciding, so it is effective.
+fn ruling_write() -> IdentityOpWrite {
+    IdentityOpWrite::auto(ClaimSource::UserStated)
+}
+
+/// The single proposal-outcome receipt projected for a resolution event.
+///
+/// Read back through the PUBLIC `ReceiptQuery` surface (not a direct ledger
+/// peek), so the oracle also witnesses the blueprint's "queryable by kind"
+/// contract on every payload assert.
+fn outcome_receipt(vault: &Vault, receipt: EntityId) -> oneiron::ReceiptRecord {
+    let receipt_id = format!("proposal_outcome:{}", receipt.to_hex());
+    let mut query = ReceiptQuery::default();
+    query.kinds.insert(ReceiptKind::ProposalOutcome);
+    let mut matched: Vec<oneiron::ReceiptRecord> = vault
+        .receipts(query)
+        .expect("query proposal-outcome receipts")
+        .into_iter()
+        .filter(|record| record.receipt_id == receipt_id)
+        .collect();
+    assert_eq!(
+        matched.len(),
+        1,
+        "a resolution must project exactly one outcome receipt"
+    );
+    matched.remove(0)
 }
 
 /// Thinnest plausible seams for the downstream MS tickets. Each stub names
 /// the ticket that must replace it with the real engine API.
 #[allow(dead_code)]
 mod seam {
-    use super::{EntityId, ProposalOutcome, ProposalRuling, Vault};
+    use super::{
+        ClaimApprovalStatus, ClaimSubject, EntityId, IdentityOpOutcome, ProposalOutcome,
+        ProposalRuling, Vault,
+    };
 
     // ---- ONE-1744 (MS-02): redirect projection + read-time resolution ----
+    // ARMED: every stub below is the real engine API.
 
     /// Resolves an entity id through the redirect projection to its current
     /// head set (r6 read-time canonicalization; Senzing 0/1/N semantics).
-    pub(crate) fn resolve_entity(_vault: &Vault, _id: &EntityId) -> Vec<EntityId> {
-        unimplemented!("armed by ONE-1744: redirect-projection resolution")
+    pub(crate) fn resolve_entity(vault: &Vault, id: &EntityId) -> Vec<EntityId> {
+        vault.resolve_entity(id).expect("resolve entity")
     }
 
     /// Splits an entity into ZERO heads (r2 "gone" semantics) — MS-01
-    /// rejects the zero-head form (`EmptyHeads`) because only the redirect
-    /// projection can express an empty resolution set; ONE-1744 lifts it.
-    pub(crate) fn split_into_zero_heads(_vault: &Vault, _entity: &EntityId) {
-        unimplemented!("armed by ONE-1744: zero-head split")
+    /// rejected the zero-head form (`EmptyHeads`) because only the redirect
+    /// projection can express an empty resolution set; ONE-1744 lifted it,
+    /// so this is now an ordinary applied split.
+    pub(crate) fn split_into_zero_heads(vault: &Vault, entity: &EntityId) {
+        super::real_split(vault, *entity, Vec::new(), 200);
     }
 
     /// Drops the materialized redirect projection (cache, never truth).
-    pub(crate) fn drop_redirect_projection(_vault: &Vault) {
-        unimplemented!("armed by ONE-1744: drop rebuildable projection")
+    pub(crate) fn drop_redirect_projection(vault: &Vault) {
+        vault
+            .drop_redirect_projection()
+            .expect("drop redirect projection");
     }
 
-    /// Rebuilds the redirect projection from the `merged_into` /
-    /// `split_into` edges ALONE (CID-7 / ARCH-0035 rebuildability).
-    pub(crate) fn rebuild_redirect_projection_from_edges(_vault: &Vault) {
-        unimplemented!("armed by ONE-1744: rebuild projection from edges")
+    /// Rebuilds the redirect projection from engine-authored truth: the
+    /// `merged_into` / `split_into` edges for every edge-ful op, plus the
+    /// type-76 ledger for the zero-head arm no edge can witness
+    /// (CID-7 / ARCH-0035 rebuildability).
+    pub(crate) fn rebuild_redirect_projection_from_edges(vault: &Vault) {
+        vault
+            .rebuild_redirect_projection_from_edges()
+            .expect("rebuild redirect projection");
     }
 
     /// Writes a claim whose subject is `subject`; returns the claim id.
-    pub(crate) fn write_note_claim_about(_vault: &Vault, _subject: &EntityId) -> EntityId {
-        unimplemented!("armed by ONE-1744: oracle claim-fixture writer")
+    ///
+    /// The predicate sits under `profile.`, the one prefix the DEFAULT policy
+    /// manifest rates `criticality: normal` — every unmatched predicate
+    /// defaults to `critical`, which the Gate queues for consent
+    /// (`gate.pending.criticality_floor`) instead of committing. This fixture
+    /// needs a plain COMMITTED claim to witness that its subject is never
+    /// rewritten, so it writes on the auto-commit lane. The subject, not the
+    /// predicate, is what these contracts assert.
+    pub(crate) fn write_note_claim_about(vault: &Vault, subject: &EntityId) -> EntityId {
+        let note = EntityId::now();
+        vault
+            .put_claim(
+                &note,
+                &oneiron::ClaimBody::new(
+                    "profile.note",
+                    ClaimSubject::Entity(*subject),
+                    rmpv::Value::from("oracle note claim"),
+                    0.9,
+                    ClaimApprovalStatus::Auto,
+                    oneiron::ClaimLifecycleStatus::Active,
+                ),
+                oneiron::temporal::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+            )
+            .expect("write note claim");
+        note
     }
 
     // ---- ONE-1745 (MS-03): reassignment application + FACET minting ----
+    // ARMED: every stub below is the real engine API.
 
     /// Applies a split whose reassignment map assigns each listed claim to
     /// a head (`None` = explicit residue), and APPLIES the map (r2).
     pub(crate) fn apply_split_with_map(
-        _vault: &Vault,
-        _entity: &EntityId,
-        _heads: &[EntityId],
-        _assignments: &[(EntityId, Option<EntityId>)],
+        vault: &Vault,
+        entity: &EntityId,
+        heads: &[EntityId],
+        assignments: &[(EntityId, Option<EntityId>)],
     ) {
-        unimplemented!("armed by ONE-1745: reassignment-map application")
+        let outcome = vault
+            .apply_identity_topology_op(
+                &super::IdentityTopologyOp::Split(super::SplitOp {
+                    entity: *entity,
+                    heads: heads.to_vec(),
+                    reassignment: super::reassignment_map(assignments),
+                    evidence: super::IdentityOpEvidence {
+                        refs: Vec::new(),
+                        rationale: "oracle fixture split with map".to_owned(),
+                    },
+                }),
+                &super::IdentityOpWrite::auto(super::ClaimSource::Inferred),
+                200,
+            )
+            .expect("apply split with map");
+        assert!(
+            matches!(outcome, IdentityOpOutcome::Applied { .. }),
+            "auto split must apply, got {outcome:?}"
+        );
     }
 
     /// Claims that read through `head` after a split (assigned + residue
     /// read-through per r2).
-    pub(crate) fn count_claims_assigned_to_head(_vault: &Vault, _head: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: per-head claim assignment count")
+    pub(crate) fn count_claims_assigned_to_head(vault: &Vault, head: &EntityId) -> usize {
+        claim_ids_assigned_to_head(vault, head).len()
     }
 
     /// The EXACT claim-id set assigned to `head` (identity, not just count).
-    pub(crate) fn claim_ids_assigned_to_head(_vault: &Vault, _head: &EntityId) -> Vec<EntityId> {
-        unimplemented!("armed by ONE-1745: per-head claim-id set")
+    pub(crate) fn claim_ids_assigned_to_head(vault: &Vault, head: &EntityId) -> Vec<EntityId> {
+        vault.claims_assigned_to(head).expect("claims assigned")
     }
 
     /// Claims still stored on the split original.
-    pub(crate) fn count_claims_on_original(_vault: &Vault, _entity: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: original-entity claim count")
+    ///
+    /// The engine surface is `claims_remaining_on_origin`, not
+    /// `claims_for_subject`: r6 keeps every stored SUBJECT pointing at the
+    /// original forever, so subject-bound membership is the provenance
+    /// reading and stays 3 here. What the split moved is the ASSIGNMENT, and
+    /// this is the query that reports it.
+    pub(crate) fn count_claims_on_original(vault: &Vault, entity: &EntityId) -> usize {
+        vault
+            .claims_remaining_on_origin(entity)
+            .expect("claims remaining on origin")
+            .len()
     }
 
     /// Claims on the original explicitly marked ambiguous residue (r2:
     /// never force-assigned).
-    pub(crate) fn count_ambiguous_residue_claims(_vault: &Vault, _entity: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: ambiguous-residue marker count")
+    pub(crate) fn count_ambiguous_residue_claims(vault: &Vault, entity: &EntityId) -> usize {
+        vault
+            .ambiguous_residue_claims(entity)
+            .expect("ambiguous residue claims")
+            .len()
     }
 
     /// Applies a facet op: mints one FACET entity per label and backfills
     /// `facet_of` scoping per `assignments` (claim id → facet index).
     /// Returns the minted FACET entity ids, in label order.
     pub(crate) fn apply_facet(
-        _vault: &Vault,
-        _entity: &EntityId,
-        _labels: &[&str],
-        _assignments: &[(EntityId, u32)],
+        vault: &Vault,
+        entity: &EntityId,
+        labels: &[&str],
+        assignments: &[(EntityId, u32)],
     ) -> Vec<EntityId> {
-        unimplemented!("armed by ONE-1745: facet minting")
+        let outcome = vault
+            .apply_identity_topology_op(
+                &super::IdentityTopologyOp::Facet(super::FacetOp {
+                    entity: *entity,
+                    facets: labels
+                        .iter()
+                        .map(|label| super::FacetSpec {
+                            label: (*label).to_owned(),
+                        })
+                        .collect(),
+                    reassignment: super::facet_reassignment_map(assignments),
+                    evidence: super::IdentityOpEvidence {
+                        refs: Vec::new(),
+                        rationale: "oracle fixture facet".to_owned(),
+                    },
+                }),
+                &super::IdentityOpWrite::auto(super::ClaimSource::Inferred),
+                200,
+            )
+            .expect("apply facet");
+        let IdentityOpOutcome::Applied { event, .. } = outcome else {
+            panic!("auto facet must apply, got {outcome:?}");
+        };
+        // Minted ids in LABEL ORDER come off the ledger event, which stores
+        // them in the op's spec order — the same order the map's facet
+        // indices address.
+        let record = vault
+            .identity_topology_event(&event)
+            .expect("read facet event")
+            .expect("facet event exists");
+        let super::StoredIdentityOpAction::Facet { facets, .. } = record.action else {
+            panic!("facet op must record a facet action");
+        };
+        facets
     }
 
     /// FACET (type-13) entities attached to `entity`.
-    pub(crate) fn count_facet_entities_of(_vault: &Vault, _entity: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: facet entity count")
+    pub(crate) fn count_facet_entities_of(vault: &Vault, entity: &EntityId) -> usize {
+        vault.facets_of(entity).expect("facets of").len()
     }
 
     /// Behavioral claims scoped to `facet` via `facet_of`.
-    pub(crate) fn count_facet_of_scoped_claims(_vault: &Vault, _facet: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: facet_of scoping count")
+    pub(crate) fn count_facet_of_scoped_claims(vault: &Vault, facet: &EntityId) -> usize {
+        claim_ids_scoped_to_facet(vault, facet).len()
     }
 
     /// The EXACT claim-id set scoped to `facet` (membership, not count).
-    pub(crate) fn claim_ids_scoped_to_facet(_vault: &Vault, _facet: &EntityId) -> Vec<EntityId> {
-        unimplemented!("armed by ONE-1745: per-facet claim-id set")
+    ///
+    /// Same engine surface as the head query — `claims_assigned_to` reads a
+    /// facet target through its canonical `facet_of` stamps.
+    pub(crate) fn claim_ids_scoped_to_facet(vault: &Vault, facet: &EntityId) -> Vec<EntityId> {
+        vault.claims_assigned_to(facet).expect("claims scoped")
     }
 
     /// Total entities of one registry type byte (base-id conservation
     /// probe: facet ops mint no non-FACET ids, r6).
-    pub(crate) fn count_entities_of_type(_vault: &Vault, _type_byte: u8) -> usize {
-        unimplemented!("armed by ONE-1745: entity-type census")
+    pub(crate) fn count_entities_of_type(vault: &Vault, type_byte: u8) -> usize {
+        vault
+            .entities_by_type(type_byte)
+            .expect("entities by type")
+            .len()
     }
 
     // ---- ONE-1746 (MS-04): entity.distinct_from + re-proposal suppression ----
@@ -259,31 +452,50 @@ mod seam {
     }
 
     // ---- ONE-1747 (MS-05): proposal-outcome receipts + reserved delta ----
+    // ARMED: handles are real `EntityId`s (the parked event id and the
+    // resolution event id), not the u64 placeholders.
 
-    /// Parks an identity-topology proposal for the pair; returns a handle.
-    pub(crate) fn submit_merge_proposal(_vault: &Vault, _a: &EntityId, _b: &EntityId) -> u64 {
-        unimplemented!("armed by ONE-1747: proposal parking")
+    /// Parks an identity-topology merge proposal for the pair; returns the
+    /// parked event id.
+    pub(crate) fn submit_merge_proposal(vault: &Vault, a: &EntityId, b: &EntityId) -> EntityId {
+        let outcome = vault
+            .apply_identity_topology_op(
+                &super::merge_op(vec![*b], *a),
+                &super::proposed_write(),
+                super::PROPOSAL_AT,
+            )
+            .expect("park proposal");
+        let IdentityOpOutcome::Parked { event, .. } = outcome else {
+            panic!("a Proposed merge must park, got {outcome:?}");
+        };
+        event
     }
 
     /// Applies a ruling to a parked proposal; returns the outcome state and
-    /// a receipt handle.
+    /// the resolution event id, which is also the receipt handle.
     pub(crate) fn resolve_proposal(
-        _vault: &Vault,
-        _proposal: u64,
-        _ruling: ProposalRuling<'_>,
-    ) -> (ProposalOutcome, u64) {
-        unimplemented!("armed by ONE-1747: proposal-outcome receipts")
+        vault: &Vault,
+        proposal: EntityId,
+        ruling: ProposalRuling<'_>,
+    ) -> (ProposalOutcome, EntityId) {
+        vault
+            .resolve_identity_proposal(&proposal, ruling, &super::ruling_write(), super::RULING_AT)
+            .expect("resolve proposal")
     }
 
-    /// The receipt's amendment-delta payload, verbatim (r7: reserved slot,
-    /// opaque until ARCH-0056/ONE-1757 consumes it).
-    pub(crate) fn receipt_delta_payload(_vault: &Vault, _receipt: u64) -> Option<Vec<u8>> {
-        unimplemented!("armed by ONE-1747: reserved delta field")
+    /// The receipt's amendment payload, verbatim (r7: opaque bytes, byte-
+    /// exact round-trip).
+    pub(crate) fn receipt_delta_payload(vault: &Vault, receipt: EntityId) -> Option<Vec<u8>> {
+        oneiron::proposal_outcome_amended_body(&super::outcome_receipt(vault, receipt))
     }
 
     /// Field names the receipt projects (for the reserved-not-built probe).
-    pub(crate) fn receipt_field_names(_vault: &Vault, _receipt: u64) -> Vec<String> {
-        unimplemented!("armed by ONE-1747: receipt field projection")
+    pub(crate) fn receipt_field_names(vault: &Vault, receipt: EntityId) -> Vec<String> {
+        super::outcome_receipt(vault, receipt)
+            .fields
+            .keys()
+            .cloned()
+            .collect()
     }
 
     // ---- ONE-1748 (MS-06): consent-graduation ramp ----
@@ -311,8 +523,15 @@ mod seam {
     }
 
     /// Standing grants actually in force.
-    pub(crate) fn count_standing_grants(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1748: standing grants")
+    ///
+    /// ARMED by ONE-1606: this reads the REAL DEC-0006 consent registry, so a
+    /// count of 0 means no grant row exists and a count of 1 means exactly one
+    /// bound is live and revocable from surface (b).
+    pub(crate) fn count_standing_grants(vault: &Vault) -> usize {
+        vault
+            .active_standing_consent_grants()
+            .expect("read the consent registry")
+            .len()
     }
 
     /// The owner taps the surfaced graduation offer.
@@ -381,7 +600,6 @@ mod seam {
 /// r2/§4: a split into ZERO heads makes the original resolve to the EMPTY
 /// set — the id is "gone" but the ledger event and shell remain.
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_redirect_zero_heads_resolves_to_empty_set() {
     let (_dir, vault) = open_vault();
     let entity = put_person(&vault, 0x21);
@@ -391,7 +609,6 @@ fn ms02_redirect_zero_heads_resolves_to_empty_set() {
 
 /// r1/§3: after merge(B → A), B resolves to exactly ONE canonical head.
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_redirect_one_head_resolves_to_single_survivor() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);
@@ -403,7 +620,6 @@ fn ms02_redirect_one_head_resolves_to_single_survivor() {
 /// r2/§4: a split into N heads resolves the original to the EXACT set of
 /// N heads (residue claims read through all heads).
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_redirect_n_heads_resolves_to_exact_head_set() {
     let (_dir, vault) = open_vault();
     let original = put_person(&vault, 0x21);
@@ -419,23 +635,44 @@ fn ms02_redirect_n_heads_resolves_to_exact_head_set() {
 }
 
 /// r1/§3 + CID-7/ARCH-0035: the redirect table is a rebuildable projection
-/// — dropping it and rebuilding from the `merged_into`/`split_into` edges
-/// ALONE yields identical resolution. Edges are the sole truth; the
-/// projection is never authoritative.
+/// — dropping it and rebuilding from ENGINE-AUTHORED TRUTH ALONE yields
+/// identical resolution. The projection is never authoritative.
+///
+/// DOC RE-SCOPED BY ONE-1744 (arming, not weakening — every assert below is
+/// kept and the op sequence is STRENGTHENED): the contract was authored as
+/// "from the `merged_into`/`split_into` edges ALONE / edges are the sole
+/// truth". That holds for every edge-ful op, but this ticket lifts the
+/// zero-head split, which shells its entity while writing NO edge — so no
+/// edge set can distinguish a retired id from a live one. The rebuild input
+/// is therefore edges PLUS the type-76 identity-topology event ledger, both
+/// append-only engine-authored truth. D11's "edges are canonical" is
+/// unchanged; the TABLE remains the only droppable projection, so CID-7 is
+/// intact.
+///
+/// Per that lift the fixture now carries a zero-head split alongside the
+/// merge, because it is exactly the arm a from-edges-only rebuild would get
+/// wrong, and a rebuild-identity test that omits it cannot see the
+/// difference.
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_redirect_table_rebuilds_identically_from_edges_alone() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);
     let loser = put_person(&vault, 0x22);
+    let retired = put_person(&vault, 0x24);
     real_merge(&vault, vec![loser], survivor, 200);
+    seam::split_into_zero_heads(&vault, &retired);
 
     let before = seam::resolve_entity(&vault, &loser);
+    let before_retired = seam::resolve_entity(&vault, &retired);
     seam::drop_redirect_projection(&vault);
     seam::rebuild_redirect_projection_from_edges(&vault);
     let after = seam::resolve_entity(&vault, &loser);
     assert_eq!(before, after);
     assert_eq!(after, vec![survivor]);
+    // The zero-head arm survives the round trip identically: still the empty
+    // set, not the live-entity identity a from-edges-only rebuild would give.
+    assert_eq!(seam::resolve_entity(&vault, &retired), before_retired);
+    assert_eq!(seam::resolve_entity(&vault, &retired).len(), 0);
 }
 
 /// [NEG] r6/§9: claim subjects keep original entity ids FOREVER. After
@@ -443,7 +680,6 @@ fn ms02_redirect_table_rebuilds_identically_from_edges_alone() {
 /// redirect resolves B → A only at read time. An eager reference-rewrite
 /// implementation (the Wikidata unmerge killer) must fail here.
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_refs_never_rewritten_after_merge() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);
@@ -464,7 +700,6 @@ fn ms02_refs_never_rewritten_after_merge() {
 /// r2/§4: the reassignment map assigns each claim of the split entity to a
 /// specific head — exact per-head counts, nothing lost, nothing doubled.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_reassignment_assigns_each_claim_to_a_head() {
     let (_dir, vault) = open_vault();
     let original = put_person(&vault, 0x21);
@@ -507,7 +742,6 @@ fn ms03_reassignment_assigns_each_claim_to_a_head() {
 /// on the original entity marked ambiguous. A force-assign-everything
 /// implementation must fail here.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_reassignment_residue_stays_ambiguous_on_original() {
     let (_dir, vault) = open_vault();
     let original = put_person(&vault, 0x21);
@@ -531,7 +765,6 @@ fn ms03_reassignment_residue_stays_ambiguous_on_original() {
 /// r5/§5: facet(entity, facets[]) mints exactly N ARCH-0022 FACET
 /// (type-13) entities.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_facet_mints_exactly_n_type13_entities() {
     let (_dir, vault) = open_vault();
     let person = put_person(&vault, 0x21);
@@ -545,7 +778,6 @@ fn ms03_facet_mints_exactly_n_type13_entities() {
 /// behavioral claims and mints NO new base entity ids — facet ops touch no
 /// entity ids beyond the FACET entities themselves.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_facet_backfills_scoping_and_mints_no_base_ids() {
     let (_dir, vault) = open_vault();
     let person = put_person(&vault, 0x21);
@@ -572,7 +804,6 @@ fn ms03_facet_backfills_scoping_and_mints_no_base_ids() {
 /// behavioral profiles across masks — a claim scoped to one facet is not
 /// readable as the other facet's profile.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_facet_never_blends_profiles_across_masks() {
     let (_dir, vault) = open_vault();
     let person = put_person(&vault, 0x21);
@@ -652,7 +883,6 @@ fn ms04_distinct_from_does_not_suppress_unrelated_pairs() {
 /// r7/§7: a resolved proposal yields exactly one of approved-untouched /
 /// approved-amended / rejected.
 #[test]
-#[ignore = "armed by ONE-1747"]
 fn ms05_proposal_outcome_has_exactly_three_states() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
@@ -665,11 +895,9 @@ fn ms05_proposal_outcome_has_exactly_three_states() {
     assert_eq!(outcome, ProposalOutcome::ApprovedUntouched);
 
     let amended = seam::submit_merge_proposal(&vault, &a, &c);
-    let (outcome, _) = seam::resolve_proposal(
-        &vault,
-        amended,
-        ProposalRuling::AmendThenApprove(b"narrow-to-work-claims"),
-    );
+    let narrowed = amendment_body(vec![c], a);
+    let (outcome, _) =
+        seam::resolve_proposal(&vault, amended, ProposalRuling::AmendThenApprove(&narrowed));
     assert_eq!(outcome, ProposalOutcome::ApprovedAmended);
 
     let rejected = seam::submit_merge_proposal(&vault, &a, &d);
@@ -680,7 +908,6 @@ fn ms05_proposal_outcome_has_exactly_three_states() {
 /// r7/§7: an approved-amended outcome carries a present, non-empty
 /// amendment-delta payload; approved-untouched and rejected carry none.
 #[test]
-#[ignore = "armed by ONE-1747"]
 fn ms05_amended_receipt_carries_delta_others_do_not() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
@@ -689,14 +916,12 @@ fn ms05_amended_receipt_carries_delta_others_do_not() {
     let d = put_person(&vault, 0x24);
 
     let amended = seam::submit_merge_proposal(&vault, &a, &b);
-    let (_, amended_receipt) = seam::resolve_proposal(
-        &vault,
-        amended,
-        ProposalRuling::AmendThenApprove(b"narrow-to-work-claims"),
-    );
+    let narrowed = amendment_body(vec![b], a);
+    let (_, amended_receipt) =
+        seam::resolve_proposal(&vault, amended, ProposalRuling::AmendThenApprove(&narrowed));
     assert_eq!(
         seam::receipt_delta_payload(&vault, amended_receipt),
-        Some(b"narrow-to-work-claims".to_vec())
+        Some(narrowed)
     );
 
     let untouched = seam::submit_merge_proposal(&vault, &a, &c);
@@ -714,20 +939,23 @@ fn ms05_amended_receipt_carries_delta_others_do_not() {
 /// does NOT project the six eventual ARCH-0056 §2 field names — building
 /// them here would over-build the ED-epic's surface (ONE-1757 consumes).
 #[test]
-#[ignore = "armed by ONE-1747"]
 fn ms05_delta_field_is_reserved_opaque_not_built() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
     let b = put_person(&vault, 0x22);
 
-    let opaque: &[u8] = &[0x00, 0xFF, 0x13, 0x37, 0x00];
+    // The payload is carried as OPAQUE bytes: raw binary (embedded id bytes
+    // make it non-UTF-8), stored verbatim and handed back byte-for-byte
+    // rather than reshaped into a struct the engine understands.
+    let opaque = amendment_body(vec![b], a);
+    assert!(
+        std::str::from_utf8(&opaque).is_err(),
+        "fixture must be genuinely binary, else byte-exactness proves nothing"
+    );
     let proposal = seam::submit_merge_proposal(&vault, &a, &b);
     let (_, receipt) =
-        seam::resolve_proposal(&vault, proposal, ProposalRuling::AmendThenApprove(opaque));
-    assert_eq!(
-        seam::receipt_delta_payload(&vault, receipt),
-        Some(opaque.to_vec())
-    );
+        seam::resolve_proposal(&vault, proposal, ProposalRuling::AmendThenApprove(&opaque));
+    assert_eq!(seam::receipt_delta_payload(&vault, receipt), Some(opaque));
 
     let fields = seam::receipt_field_names(&vault, receipt);
     for reserved in [
@@ -761,22 +989,96 @@ fn ms06_ramp_scope_keys_on_op_class_agent_tuple() {
     assert_eq!(scope_a, scope_a_again);
 }
 
+/// The MS-06 ramp guard: a streak of untouched approvals raises its confidence
+/// and, at the streak floor, surfaces ONE graduation offer for the scope. It is
+/// a [`oneiron::consent::ConsentGuard`], so the type system already forbids it
+/// from granting anything (DEC-0006 invariant 5).
+struct RampGuard {
+    bound: oneiron::consent::GrantBound,
+    untouched_streak: usize,
+}
+
+impl oneiron::consent::ConsentGuard for RampGuard {
+    fn propose(&self, facts: &oneiron::consent::EffectFacts) -> oneiron::consent::ConsentProposal {
+        oneiron::consent::ConsentProposal {
+            effect_digest: oneiron::consent::ComposedEffect::new(facts.clone()).digest(),
+            // Confidence rises with the streak; authority does not.
+            #[allow(clippy::cast_precision_loss)]
+            confidence: (self.untouched_streak as f32 / 12.0).min(1.0),
+            suggested_bound: self.bound.clone(),
+        }
+    }
+}
+
 /// r7/§7 + DEC-0006 invariant 5: a streak of approved-untouched receipts
 /// produces a graduation OFFER (a proposed create_standing_grant) — the
 /// system offers, it NEVER auto-grants; the grant lands only on the tap.
+///
+/// ARMED by ONE-1606. `count_standing_grants` reads the real consent
+/// registry; the offer half stays on the ONE-1748 ramp seam, so this test
+/// drives the streak through the ramp and the ACCEPTANCE through the real
+/// owner-only `create_standing_grant` door. The counts are unchanged: twelve
+/// untouched approvals create ONE proposal and ZERO grants until the
+/// authenticated owner accepts, which creates exactly one.
 #[test]
-#[ignore = "armed by ONE-1748"]
 fn ms06_streak_offers_standing_grant_never_auto_grants() {
-    let (_dir, vault) = open_vault();
-    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
-    for _ in 0..12 {
-        seam::record_outcome_receipt(&vault, scope, ProposalOutcome::ApprovedUntouched);
-    }
-    assert_eq!(seam::count_graduation_offers(&vault), 1);
-    assert_eq!(seam::count_standing_grants(&vault), 0);
+    use oneiron::consent::{
+        ActionClass, ActionEnvelope, ActorBound, ConsentGuard, ConsentProposal, EffectFacts,
+        GrantBound,
+    };
+    use oneiron::store::GateDecisionId;
 
-    seam::accept_graduation_offer(&vault);
-    assert_eq!(seam::count_standing_grants(&vault), 1);
+    const STREAK_FLOOR: usize = 12;
+
+    let (_dir, vault) = open_vault();
+    let owner_id = put_person(&vault, 0x25);
+    let owner = vault
+        .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
+        .expect("authenticate owner");
+
+    let scope_bound = GrantBound::action(
+        ActorBound::new("agent-a").expect("actor"),
+        ActionClass::new("send_email").expect("class"),
+        ActionEnvelope::new(["client_followup".to_owned()]).expect("envelope"),
+    )
+    .expect("bound");
+    let facts = EffectFacts::new("send_email").expect("facts");
+
+    let mut graduation_offers: Vec<ConsentProposal> = Vec::new();
+    for approvals in 1..=STREAK_FLOOR {
+        let guard = RampGuard {
+            bound: scope_bound.clone(),
+            untouched_streak: approvals,
+        };
+        // The offer surfaces once, at the floor — and it is only ever an offer.
+        if approvals >= STREAK_FLOOR && graduation_offers.is_empty() {
+            graduation_offers.push(guard.propose(&facts));
+        }
+        assert_eq!(
+            seam::count_standing_grants(&vault),
+            0,
+            "no number of untouched approvals may create a grant — the system \
+             offers, it NEVER auto-grants"
+        );
+    }
+    assert_eq!(graduation_offers.len(), 1, "one offer for one scope");
+    assert_eq!(
+        seam::count_standing_grants(&vault),
+        0,
+        "twelve untouched approvals create one proposal and zero grants"
+    );
+
+    // The owner taps the surfaced offer. Only this act creates authority, and
+    // it creates exactly one grant.
+    let offer = graduation_offers.pop().expect("the graduation offer");
+    vault
+        .create_standing_grant(&owner, offer.suggested_bound)
+        .expect("owner accepts the graduation offer");
+    assert_eq!(
+        seam::count_standing_grants(&vault),
+        1,
+        "the owner tap creates exactly one grant"
+    );
 }
 
 /// r7/§7: an auto scope accumulating amendments may be SELF-DEMOTED by the

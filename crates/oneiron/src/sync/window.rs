@@ -31,7 +31,9 @@ use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::edge::decode_edge_value_for_kind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
-use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST};
+use crate::registry::{
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
+};
 use crate::store::Store;
 use loro::{CommitOptions, ExportMode, LoroDoc, LoroMap, Subscription, VersionVector};
 
@@ -711,6 +713,63 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
     })
 }
 
+/// Removes any SECRET_CUSTODY carrier resident in the window doc and returns
+/// whether one was found. ONE-1865 arm-pending seal: the type byte is sealed
+/// from the CRDT plane, so a custody body must never ship in an exported
+/// update. The write-side mirror (`reverse_rematerialize`) already refuses to
+/// insert one; this is the export-side backstop for a carrier that landed
+/// before the seal or arrived from a peer. Deleting the row does not erase its
+/// prior set-op bytes from ordinary Loro history, so any removal forces the
+/// window onto history-free snapshot transport (same rule as the fence scrub).
+///
+/// The BODY decides, never the key. A peer chooses its own map keys, so parsing
+/// the key first let a custody body filed under a non-canonical key skip the
+/// scrub entirely and ship in the export — the key is attacker-controlled, the
+/// type byte is not. A malformed key cannot name an entity to scrub by id, so
+/// that row is deleted by its raw key and quarantined as the protocol violation
+/// it is.
+fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
+    let entities_map = doc.get_map("entities");
+    let edges_map = doc.get_map("edges");
+    let mut custody_ids = HashSet::new();
+    let mut malformed_key_carriers: Vec<String> = Vec::new();
+    map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
+        let Some(blob) = maybe_blob else { return };
+        if !is_secret_custody_record(blob) {
+            return;
+        }
+        match EntityId::from_hex(raw_key) {
+            Ok(id) => {
+                custody_ids.insert(id);
+            }
+            Err(_) => malformed_key_carriers.push(raw_key.to_owned()),
+        }
+    });
+    let mut removed = false;
+    for raw_key in &malformed_key_carriers {
+        // Quarantine keeps hashed evidence (never the bytes); the delete is
+        // what stops the body from reaching an exported update.
+        quarantine::quarantine_rejected_op(
+            vault,
+            key.as_str(),
+            QuarantineContainer::Entities,
+            raw_key,
+            &crate::secret_custody::reject_secret_custody_byte(),
+            &map_get_bytes(&entities_map, raw_key).unwrap_or_default(),
+        )?;
+        map_delete(&entities_map, raw_key)?;
+        removed = true;
+    }
+    for id in &custody_ids {
+        removed |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
+    }
+    if removed {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+        require_history_free_window(vault, key)?;
+    }
+    Ok(removed)
+}
+
 /// Exports a full-window response without carrying pre-scrub operation bytes.
 /// The peer VV is still decoded first so malformed-VV requests never become a
 /// full-export fallback.
@@ -724,7 +783,8 @@ pub fn export_window_updates_since(
         context: "decode version vector",
         source,
     })?;
-    let scrubbed = scrub_off_record_fenced_carriers(vault, key, doc)?;
+    let scrubbed = scrub_off_record_fenced_carriers(vault, key, doc)?
+        | scrub_secret_custody_carriers(vault, key, doc)?;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -793,7 +853,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         let hex_id = id.to_hex();
 
         // Read entity from LMDB
-        let raw = match vault.get_raw(id)? {
+        let raw = match vault.get_raw_unsealed(id)? {
             Some(r) => r,
             None => {
                 // Stale marker — clear it
@@ -2045,7 +2105,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         if vault.is_turn_off_record_fenced(&id)? {
             continue;
         }
-        let Some(raw) = vault.get_raw(&id)? else {
+        let Some(raw) = vault.get_raw_unsealed(&id)? else {
             continue;
         };
         if reverse_remat_skip_policy_manifest_mirror(&raw) {
@@ -2111,11 +2171,29 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        let Some(raw) = vault.get_raw(id)? else {
+        let Some(raw) = vault.get_raw_unsealed(id)? else {
             continue;
         };
 
         if reverse_remat_skip_policy_manifest_mirror(&raw) {
+            continue;
+        }
+
+        // ONE-1865 arm-pending seal: never mirror a SECRET_CUSTODY row into the
+        // canonical window doc, and scrub any custody carrier that landed
+        // before this pass ran (fail-closed — a resident body is a disclosure,
+        // not a presence). Mirror the companion-local-only branch below: drop
+        // the entity carrier and every incident edge, never the tombstones.
+        if is_secret_custody_record(&raw) {
+            let mut removed = false;
+            if map_contains_binary(&entities_map, &hex_id) {
+                map_delete(&entities_map, &hex_id)?;
+                removed = true;
+            }
+            if delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
+                removed = true;
+            }
+            wrote_any |= removed;
             continue;
         }
 
@@ -2260,6 +2338,19 @@ fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
         .map(|record| record.export_classification == CompanionExportClassification::LocalOnly)
 }
 
+/// ONE-1865 arms the SECRET_CUSTODY replication dial; until then the type byte
+/// is sealed from every CRDT carrier. This is the canonical-doc mirror twin of
+/// the selector decision (`sync::selector::entity_selector_decision`): any path
+/// that copies a local row's bytes INTO the canonical window doc (reverse
+/// rematerialization) or OUT of it (the export scrub) screens the byte here so
+/// a custody body's `value_bytes` never lands in a doc payload. The custody
+/// module owns the rejection constructor; this is a pure type-byte read, so a
+/// malformed row simply does not skip (it is handled by the ordinary paths).
+fn is_secret_custody_record(raw: &[u8]) -> bool {
+    EntityMetadataHeader::parse(raw)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_SECRET_CUSTODY)
+}
+
 /// Quarantines every CRDT tombstone aliasing a locally available,
 /// delete-protected engine record. Returns `true` only when tombstone
 /// authority was denied, allowing the caller to preserve or restore the
@@ -2298,7 +2389,7 @@ fn quarantine_outbound_protected_tombstones(
 }
 
 fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<bool> {
-    let Some(raw) = vault.get_raw(id)? else {
+    let Some(raw) = vault.get_raw_unsealed(id)? else {
         return Ok(false);
     };
     skip_companion_register_sync_mirror(&raw)

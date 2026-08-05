@@ -46,6 +46,8 @@ const V1_CORE_OPENAPI_CONTRACT_OPERATIONS: &[(&str, &str)] = &[
         "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
         "get",
     ),
+    ("/v1/core/surface-events", "post"),
+    ("/v1/core/surface-events/{correlation_id}", "get"),
 ];
 const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "ApiError",
@@ -111,6 +113,17 @@ const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreMemoryVerbRequest",
     "CoreMemoryVerbResponse",
     "CoreQueryRequest",
+    "SurfaceEventSubmitRequest",
+    "SurfaceEventSourcePayload",
+    "SurfaceSourceAppPayload",
+    "SurfaceEventActionPayload",
+    "SurfaceInteractionKindPayload",
+    "SurfaceCounterpartyPayload",
+    "SurfaceEventAckResponse",
+    "SurfaceEventRejectionResponse",
+    "SurfaceEventRejectionReasonPayload",
+    "SurfaceEventStatusResponse",
+    "SurfaceEventHandoffStatePayload",
     "CoreRunTreeEvent",
     "CoreRunTreeEventKind",
     "CoreRunTreeFailure",
@@ -3384,6 +3397,8 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "/v1/core/outbound/capabilities",
         "/v1/core/outbound/capabilities/{connector}",
         "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
+        "/v1/core/surface-events",
+        "/v1/core/surface-events/{correlation_id}",
         "/v1/companion/access-grants",
         "/v1/companion/access-grants/{grant_id}/revoke",
         "/v1/companion/profiles/{persona_ref}",
@@ -3521,6 +3536,8 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
             "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
             "get",
         ),
+        ("/v1/core/surface-events", "post"),
+        ("/v1/core/surface-events/{correlation_id}", "get"),
         ("/v1/companion/access-grants", "post"),
         ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
         ("/v1/companion/profiles/{persona_ref}", "get"),
@@ -9928,4 +9945,1039 @@ async fn text_search_response_shape_still_deserializes() {
     let parsed: Value = serde_json::from_slice(&body).expect("deserialize response");
     assert_eq!(parsed["items"], Value::Array(Vec::new()));
     assert_eq!(parsed["meta"]["countMode"], Value::from("estimate"));
+}
+
+// ─── Surface events (ONE-1259) ───────────────────────────────────────────────
+
+/// Seeds an agent-bound, active email identity the surface-event routes can
+/// address, and returns the address plus its agent ref.
+fn seed_surface_identity(server: &SyncServer, counter: u128, address: &str) -> String {
+    let identity_ref = seeded_test_entity_id(counter);
+    let agent_ref = seeded_test_entity_id(counter + 1);
+    let mut identity = oneiron::ChannelIdentity::requested(
+        "email",
+        address,
+        oneiron::ChannelIdentityShape::DedicatedAddress,
+        oneiron::ChannelIdentityBinding::agent(agent_ref),
+        1_782_357_000,
+    );
+    identity.state = oneiron::ChannelIdentityState::Active;
+    identity.pending_fulfillment = None;
+    server
+        .vault
+        .create_channel_identity(&identity_ref, &identity)
+        .expect("seed channel identity");
+    agent_ref.to_hex()
+}
+
+fn surface_event_body(address: &str, correlation_id: &str) -> Value {
+    json!({
+        "event_id": correlation_id,
+        "channel": "email",
+        "receiving_address_or_handle": address,
+        "counterparty": {
+            "state": "unknown",
+            "counterparty_key": "email:sender@example.com"
+        },
+        "received_at": 1_782_357_600_u64,
+        "foreign_inbound": true
+    })
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_submit_acks_with_202_and_is_queryable() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let address = "surface-ack@example.com";
+    seed_surface_identity(&server, 0x1259_0001, address);
+    let body = surface_event_body(address, "provider-ack-1");
+
+    let (status, ack) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&body),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(ack["correlation_id"], Value::from("provider-ack-1"));
+    assert_eq!(ack["state"], Value::from("queued"));
+    assert_eq!(ack["replayed"], Value::from(false));
+    let attempt_ref = ack["attempt_ref"].as_str().expect("attempt ref").to_owned();
+    assert_eq!(attempt_ref.len(), 32);
+    assert!(
+        attempt_ref
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "attempt ref must be lowercase hex: {attempt_ref}"
+    );
+    let status_path = ack["status_path"].as_str().expect("status path").to_owned();
+    assert_eq!(status_path, "/v1/core/surface-events/provider-ack-1");
+
+    // The advertised status path is queryable immediately.
+    let (status, snapshot) =
+        core_json(server.clone(), "GET", &status_path, "core:read", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(snapshot["correlation_id"], Value::from("provider-ack-1"));
+    assert_eq!(snapshot["attempt_ref"], Value::from(attempt_ref.as_str()));
+    assert_eq!(snapshot["state"], Value::from("queued"));
+    assert_eq!(snapshot["attempt_count"], Value::from(0));
+    // Nullable-required, mirroring the engine envelope: a client never has to
+    // tell "no error" apart from "field absent from this build".
+    assert_eq!(
+        snapshot.get("last_error"),
+        Some(&Value::Null),
+        "last_error is present and null while the row has no error"
+    );
+    assert!(snapshot["created_at"].as_u64().is_some());
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_replay_returns_the_original_attempt() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let address = "surface-replay@example.com";
+    seed_surface_identity(&server, 0x1259_0010, address);
+    let body = surface_event_body(address, "provider-replay-1");
+
+    let (first_status, first) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&body),
+    )
+    .await;
+    assert_eq!(first_status, StatusCode::ACCEPTED);
+    assert_eq!(first["replayed"], Value::from(false));
+
+    // A resubmission under the same correlation id is admitted (202), not
+    // conflicted, and resolves to the same durable attempt.
+    let (second_status, second) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&body),
+    )
+    .await;
+    assert_eq!(second_status, StatusCode::ACCEPTED);
+    assert_eq!(second["replayed"], Value::from(true));
+    assert_eq!(second["attempt_ref"], first["attempt_ref"]);
+    assert_eq!(second["accepted_at"], first["accepted_at"]);
+
+    // The ack and the status snapshot describe one attempt, so the admission
+    // timestamp reads the same on both endpoints. (The engine test carries the
+    // clock-separated proof; there is no clock seam at this layer to inject.)
+    let (status_code, snapshot) = core_json(
+        server,
+        "GET",
+        "/v1/core/surface-events/provider-replay-1",
+        "core:read",
+        None,
+    )
+    .await;
+    assert_eq!(status_code, StatusCode::OK);
+    assert_eq!(snapshot["created_at"], first["accepted_at"]);
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_admits_interactions_and_long_correlation_ids() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let address = "surface-interaction@example.com";
+    seed_surface_identity(&server, 0x1259_0020, address);
+
+    let long_correlation_id = format!("provider-{}", "y".repeat(200));
+    let mut body = surface_event_body(address, &long_correlation_id);
+    body["source"] = json!({ "app": "telegram", "user_ref": "telegram:user:77" });
+    body["action"] =
+        json!({ "kind": "interaction", "interaction": "reaction", "target_ref": "msg-1" });
+    body["correlation_id"] = Value::from(long_correlation_id.as_str());
+
+    let (status, ack) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&body),
+    )
+    .await;
+
+    // The public correlation id survives verbatim even though the queue's run
+    // id folds to a digest.
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(
+        ack["correlation_id"],
+        Value::from(long_correlation_id.as_str())
+    );
+
+    let (status, snapshot) = core_json(
+        server.clone(),
+        "GET",
+        ack["status_path"].as_str().expect("status path"),
+        "core:read",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(snapshot["attempt_ref"], ack["attempt_ref"]);
+    assert_eq!(snapshot["state"], Value::from("queued"));
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_rejects_unroutable_identity_without_queueing() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    seed_surface_identity(&server, 0x1259_0030, "surface-known@example.com");
+    let body = surface_event_body("surface-unknown@example.com", "provider-reject-1");
+
+    let (status, receipt) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&body),
+    )
+    .await;
+
+    // The body is the pinned route receipt, not an error envelope carrying a
+    // stringified reason: an adapter has to tell a wrong address from an
+    // unbound identity from one that stopped accepting inbound, and act
+    // differently on each.
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        receipt["rejection_reason"],
+        Value::from("unknown_receiving_identity")
+    );
+    assert_eq!(receipt["outcome"], Value::from("rejected"));
+    assert_eq!(
+        receipt["receipt_kind"],
+        Value::from("inbound_surface_event_route")
+    );
+    assert_eq!(receipt["schema_version"], Value::from(2));
+    assert_eq!(receipt["event_id"], Value::from("provider-reject-1"));
+    assert_eq!(receipt["channel"], Value::from("email"));
+    assert_eq!(
+        receipt["receiving_address_or_handle"],
+        Value::from("surface-unknown@example.com")
+    );
+    assert_eq!(
+        receipt["counterparty"],
+        json!({ "state": "unknown", "counterparty_key": "email:sender@example.com" })
+    );
+    assert_eq!(receipt["foreign_inbound"], Value::from(true));
+    assert_eq!(receipt["claims_not_instructions"], Value::from(true));
+    assert_eq!(receipt["identity_retiring"], Value::from(false));
+    // An address that resolves to nothing stamps neither identity nor agent,
+    // and no error envelope is wrapped around any of it.
+    assert!(receipt.get("receiving_identity_ref").is_none());
+    assert!(receipt.get("agent_ref").is_none());
+    assert!(receipt.get("error").is_none(), "{receipt:?}");
+    assert!(receipt.get("surface_event").is_none(), "{receipt:?}");
+
+    // Nothing was queued, so the correlation id has no status resource.
+    let (status, error) = core_json(
+        server.clone(),
+        "GET",
+        "/v1/core/surface-events/provider-reject-1",
+        "core:read",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_error_envelope(&error, "NOT_FOUND");
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+
+    // A resolved but vault-bound identity. Routing knows exactly which record
+    // refused and why, and the receipt carries both — the previous flattened
+    // envelope collapsed this onto the same body as an unknown address.
+    let identity_ref = seeded_test_entity_id(0x1259_0080);
+    let address = "surface-vault-bound@example.com";
+    let mut identity = oneiron::ChannelIdentity::requested(
+        "email",
+        address,
+        oneiron::ChannelIdentityShape::DedicatedAddress,
+        oneiron::ChannelIdentityBinding::vault(7),
+        1_782_357_000,
+    );
+    identity.state = oneiron::ChannelIdentityState::Active;
+    identity.pending_fulfillment = None;
+    server
+        .vault
+        .create_channel_identity(&identity_ref, &identity)
+        .expect("seed vault-bound identity");
+
+    let (status, receipt) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&surface_event_body(address, "provider-reject-2")),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        receipt["rejection_reason"],
+        Value::from("non_agent_bound_identity")
+    );
+    assert_eq!(
+        receipt["receiving_identity_ref"],
+        Value::from(identity_ref.to_hex())
+    );
+    assert!(
+        receipt.get("agent_ref").is_none(),
+        "a vault-bound identity stamps no agent: {receipt:?}"
+    );
+}
+
+/// The schema publishes the closed engine set, spelling for spelling. The
+/// wire-payload enum exists only to give utoipa something to reference, so a
+/// rename on either side has to fail here rather than ship a schema naming
+/// values the engine never emits — the erasure to a bare `string` is exactly
+/// what left adapters reading the four spellings out of prose.
+#[test]
+fn v1_core_surface_event_rejection_reason_schema_is_the_closed_engine_set() {
+    use super::surface_events::SurfaceEventRejectionReasonPayload;
+
+    let engine = [
+        oneiron::InboundSurfaceRejectionReason::UnknownReceivingIdentity,
+        oneiron::InboundSurfaceRejectionReason::NonAgentBoundIdentity,
+        oneiron::InboundSurfaceRejectionReason::InactiveReceivingIdentity,
+        oneiron::InboundSurfaceRejectionReason::TombstonedReceivingIdentity,
+    ];
+
+    let spec = generated_spec();
+    let declared = openapi_component_schema(&spec, "SurfaceEventRejectionReasonPayload")["enum"]
+        .as_array()
+        .expect("rejection reason is a closed enum schema")
+        .clone();
+    assert_eq!(
+        declared,
+        engine
+            .iter()
+            .map(|reason| Value::from(reason.as_str()))
+            .collect::<Vec<_>>()
+    );
+
+    // And each mirrored variant serializes to the engine's stable string.
+    for reason in engine {
+        assert_eq!(
+            serde_json::to_value(SurfaceEventRejectionReasonPayload::from(reason))
+                .expect("serialize rejection reason"),
+            Value::from(reason.as_str())
+        );
+    }
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_unknown_correlation_id_is_typed_not_found() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+
+    let (status, error) = core_json(
+        server,
+        "GET",
+        "/v1/core/surface-events/never-admitted",
+        "core:read",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_error_envelope(&error, "NOT_FOUND");
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_routes_enforce_core_scopes() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let address = "surface-scope@example.com";
+    seed_surface_identity(&server, 0x1259_0040, address);
+    let body = surface_event_body(address, "provider-scope-1");
+
+    // Write route rejects a read-only token.
+    let (status, error) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:read",
+        Some(&body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_error_envelope(&error, "FORBIDDEN");
+
+    // Read route rejects a write-only token.
+    let (status, error) = core_json(
+        server.clone(),
+        "GET",
+        "/v1/core/surface-events/provider-scope-1",
+        "core:write",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_error_envelope(&error, "FORBIDDEN");
+
+    // Missing credentials are unauthorized on both.
+    let (status, error) = route_json(
+        server.clone(),
+        json_request("POST", "/v1/core/surface-events", body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_error_envelope(&error, "UNAUTHORIZED");
+
+    // The happy path still works with the right scope.
+    let (status, _) = core_json(
+        server,
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_submit_honors_the_idempotency_middleware() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let address = "surface-idem@example.com";
+    seed_surface_identity(&server, 0x1259_0050, address);
+    let body = surface_event_body(address, "provider-idem-1");
+
+    let submit = |idempotency_key: &str, body: Value| {
+        let server = server.clone();
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/core/surface-events")
+            .header(AUTHORIZATION, test_bearer("scope=core:write"))
+            .header("Idempotency-Key", idempotency_key)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request");
+        route_json(server, request)
+    };
+
+    // An Idempotency-Key equal to the correlation id replays through the
+    // middleware.
+    let (first_status, first) = submit("provider-idem-1", body.clone()).await;
+    assert_eq!(first_status, StatusCode::ACCEPTED);
+    assert_eq!(first["replayed"], Value::from(false));
+
+    let (replay_status, replay) = submit("provider-idem-1", body.clone()).await;
+    assert_eq!(replay_status, StatusCode::ACCEPTED);
+    assert_eq!(replay, first, "middleware replays the cached ack verbatim");
+
+    // Reusing the key with a different body is the middleware's conflict.
+    let mut other = body;
+    other["event_id"] = Value::from("provider-idem-other");
+    let (conflict_status, conflict) = submit("provider-idem-1", other).await;
+    assert_eq!(conflict_status, StatusCode::CONFLICT);
+    assert_error_envelope(&conflict, "IDEMPOTENCY_REPLAY_CONFLICT");
+}
+
+/// A 422 route rejection is a verdict about identity state, and identity state
+/// moves: an address still provisioning at first submission goes Active
+/// minutes later. The adapter's retry under its original key is exactly the
+/// one that should now be admitted, so the middleware must not have frozen the
+/// rejection for the whole 24h TTL.
+#[tokio::test]
+async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let identity_ref = seeded_test_entity_id(0x1259_0090);
+    let agent_ref = seeded_test_entity_id(0x1259_0091);
+    let address = "surface-provisioning@example.com";
+    server
+        .vault
+        .create_channel_identity(
+            &identity_ref,
+            &oneiron::ChannelIdentity::requested(
+                "email",
+                address,
+                oneiron::ChannelIdentityShape::DedicatedAddress,
+                oneiron::ChannelIdentityBinding::agent(agent_ref),
+                1_782_357_000,
+            ),
+        )
+        .expect("seed requested identity");
+
+    let body = surface_event_body(address, "provider-idem-retry-1");
+    let submit = || {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/core/surface-events")
+            .header(AUTHORIZATION, test_bearer("scope=core:write"))
+            .header("Idempotency-Key", "provider-idem-retry-1")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request");
+        route_json(server.clone(), request)
+    };
+
+    // The identity has not been fulfilled yet, so routing refuses to queue.
+    let (rejected_status, receipt) = submit().await;
+    assert_eq!(rejected_status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        receipt["rejection_reason"],
+        Value::from("inactive_receiving_identity")
+    );
+
+    // Provisioning completes.
+    server
+        .vault
+        .transition_channel_identity(
+            &identity_ref,
+            oneiron::ChannelIdentityState::PendingFulfillment,
+            Some(oneiron::ChannelIdentityFulfillment::Api),
+            1_782_357_100,
+            None,
+        )
+        .expect("pend fulfillment");
+    server
+        .vault
+        .transition_channel_identity(
+            &identity_ref,
+            oneiron::ChannelIdentityState::Active,
+            None,
+            1_782_357_200,
+            None,
+        )
+        .expect("activate identity");
+
+    // Same key, same body: admitted for real, not replayed as the stale 422.
+    let (accepted_status, ack) = submit().await;
+    assert_eq!(accepted_status, StatusCode::ACCEPTED);
+    assert_eq!(ack["replayed"], Value::from(false));
+    assert_eq!(ack["state"], Value::from("queued"));
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_durability_does_not_depend_on_the_middleware() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let address = "surface-durable@example.com";
+    seed_surface_identity(&server, 0x1259_0060, address);
+    let body = surface_event_body(address, "provider-durable-1");
+
+    // First submission carries an Idempotency-Key; the second carries none at
+    // all. Durable once-per-correlation still holds, so the middleware's TTL is
+    // never the thing keeping the handoff unique.
+    let (_, first) = route_json(
+        server.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/v1/core/surface-events")
+            .header(AUTHORIZATION, test_bearer("scope=core:write"))
+            .header("Idempotency-Key", "unrelated-http-key")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(first["replayed"], Value::from(false));
+
+    let (status, second) = core_json(
+        server,
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(second["replayed"], Value::from(true));
+    assert_eq!(second["attempt_ref"], first["attempt_ref"]);
+}
+
+#[tokio::test]
+async fn v1_core_surface_event_malformed_submissions_are_typed_bad_requests() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let address = "surface-malformed@example.com";
+    seed_surface_identity(&server, 0x1259_0070, address);
+
+    // Unknown source app: the enum is closed, so this never reaches the engine.
+    let mut unknown_app = surface_event_body(address, "provider-malformed-1");
+    unknown_app["source"] = json!({ "app": "carrier_pigeon", "user_ref": "pigeon:1" });
+    let (status, error) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&unknown_app),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&error, "BAD_REQUEST");
+
+    // Unknown interaction kind is likewise closed.
+    let mut unknown_interaction = surface_event_body(address, "provider-malformed-2");
+    unknown_interaction["action"] = json!({ "kind": "interaction", "interaction": "shrug" });
+    let (status, error) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&unknown_interaction),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&error, "BAD_REQUEST");
+
+    // A blank correlation id fails engine validation rather than queueing.
+    let mut blank_correlation = surface_event_body(address, "provider-malformed-3");
+    blank_correlation["correlation_id"] = Value::from("   ");
+    let (status, error) = core_json(
+        server,
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&blank_correlation),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&error, "BAD_REQUEST");
+}
+
+// ─── ONE-1437 · reactive local-first read ────────────────────────────────────
+
+/// A local query over one entity blob that also counts how many times it
+/// actually touched the vault. The count is what lets a fixture assert
+/// "exactly one re-query" instead of inferring it from the output value.
+struct ReactiveEntityProbe {
+    id: oneiron::EntityId,
+    dependencies: Vec<ReactiveDependency>,
+    reads: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ReactiveLocalQuery for ReactiveEntityProbe {
+    type Output = Option<Vec<u8>>;
+
+    fn dependencies(&self) -> &[ReactiveDependency] {
+        &self.dependencies
+    }
+
+    fn read(&self, vault: &oneiron::Vault) -> oneiron::Result<Self::Output> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        vault.get(&self.id)
+    }
+}
+
+fn reactive_probe(
+    id: oneiron::EntityId,
+    dependencies: Vec<ReactiveDependency>,
+) -> (ReactiveEntityProbe, Arc<std::sync::atomic::AtomicUsize>) {
+    let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    (
+        ReactiveEntityProbe {
+            id,
+            dependencies,
+            reads: Arc::clone(&reads),
+        },
+        reads,
+    )
+}
+
+fn reactive_reads(counter: &Arc<std::sync::atomic::AtomicUsize>) -> usize {
+    counter.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Seeds one turn body into the local vault at `learned_at`, which is also what
+/// decides the window the engine mirror will place it in.
+fn seed_reactive_turn(vault: &oneiron::Vault, id: &oneiron::EntityId, learned_at: u64) {
+    vault
+        .put_entity(
+            id,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"reactive local write",
+        )
+        .expect("seed reactive turn");
+}
+
+fn reactive_window_frame(window_key: &str, sub_tag: u8) -> Vec<u8> {
+    crate::protocol::encode_window_sync(window_key, sub_tag, b"payload")
+        .into_result()
+        .expect("window sync frame")
+}
+
+fn reactive_window_update_frame(window_key: &str) -> Vec<u8> {
+    reactive_window_frame(window_key, crate::protocol::window_sub_tags::UPDATE)
+}
+
+/// Every frame shape that reaches the broadcast channel yet must never re-run
+/// an LMDB query: presence/ephemeral state, sync negotiation, lease traffic,
+/// selector requests, malformed bytes, and tags this server does not know
+/// (which is how a future app-tier RPC/SUB frame will arrive here).
+fn reactive_nonpersistent_frames(window_key: &str) -> Vec<Vec<u8>> {
+    let mut root_version_vector = vec![crate::protocol::TAG_VERSION_VECTOR];
+    root_version_vector.extend_from_slice(b"encoded-vv");
+
+    vec![
+        crate::protocol::encode_ephemeral(b"presence")
+            .into_result()
+            .expect("ephemeral frame"),
+        root_version_vector,
+        oneiron::sync::transport::encode_lease_request(7, &[3u8; 32], &[5u8; 64]),
+        reactive_window_frame(window_key, crate::protocol::window_sub_tags::VV_REQUEST),
+        reactive_window_frame(window_key, crate::protocol::window_sub_tags::VV_RESPONSE),
+        reactive_window_frame(
+            window_key,
+            crate::protocol::window_sub_tags::SELECTOR_VV_REQUEST,
+        ),
+        Vec::new(),
+        vec![30, 1, 2, 3],
+    ]
+}
+
+/// The initial path is synchronous end to end: this fixture runs with no Tokio
+/// runtime at all, so an async constructor or a server round trip could not
+/// even compile-and-run here, let alone a `Loading` state.
+#[test]
+fn local_reactive_read_is_synchronous() {
+    let (_dir, server) = test_server();
+    let id = seeded_test_entity_id(0x1437_0001);
+    seed_reactive_turn(server.vault(), &id, 1_770_000_000);
+
+    let (probe, reads) = reactive_probe(id, vec![ReactiveDependency::AnyPersistent]);
+    let read = open_local_reactive_read(&server, probe).expect("open reactive read");
+
+    assert_eq!(reactive_reads(&reads), 1, "open reads exactly once");
+    assert!(
+        read.snapshot().is_some(),
+        "a cached read must be serveable immediately, with no socket and no network"
+    );
+    assert_eq!(read.revision(), 0);
+}
+
+/// A closed notice channel is terminal but harmless: the last snapshot stays
+/// readable, which is what "keeps working offline" means for this contract.
+#[tokio::test]
+async fn local_reactive_read_keeps_snapshot_when_channel_closes() {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let id = seeded_test_entity_id(0x1437_0002);
+    seed_reactive_turn(&vault, &id, 1_770_000_000);
+
+    let (tx, _rx) = tokio::sync::broadcast::channel::<crate::server::BroadcastPayload>(8);
+    let (probe, reads) = reactive_probe(id, vec![ReactiveDependency::AnyPersistent]);
+    let mut read = ReactiveLocalRead::open(Arc::clone(&vault), &tx, probe).expect("open");
+    drop(tx);
+
+    let err = read
+        .refresh_on_change()
+        .await
+        .expect_err("a closed channel ends the wait");
+    assert!(matches!(err, ReactiveReadError::ChannelClosed));
+    assert!(
+        read.snapshot().is_some(),
+        "the retained snapshot survives channel closure"
+    );
+    assert_eq!(reactive_reads(&reads), 1, "closure triggers no re-query");
+    assert_eq!(read.revision(), 0);
+}
+
+/// A matching persistent notice re-runs the query exactly once and bumps the
+/// revision — once for a window update, once for a root update.
+#[tokio::test]
+async fn local_reactive_read_refreshes_on_matching_sync() {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let learned_at = 1_770_000_000;
+    let window_key = oneiron::sync::WindowKey::from_timestamp(learned_at);
+
+    let window_id = seeded_test_entity_id(0x1437_0003);
+    let (window_probe, window_reads) = reactive_probe(
+        window_id,
+        vec![ReactiveDependency::Window(window_key.as_str().to_owned())],
+    );
+    let root_id = seeded_test_entity_id(0x1437_0004);
+    let (root_probe, root_reads) = reactive_probe(root_id, vec![ReactiveDependency::Root]);
+
+    let (tx, _rx) = tokio::sync::broadcast::channel::<crate::server::BroadcastPayload>(8);
+    let mut window_read = ReactiveLocalRead::open(Arc::clone(&vault), &tx, window_probe).unwrap();
+    let mut root_read = ReactiveLocalRead::open(Arc::clone(&vault), &tx, root_probe).unwrap();
+    assert!(window_read.snapshot().is_none());
+    assert!(root_read.snapshot().is_none());
+
+    seed_reactive_turn(&vault, &window_id, learned_at);
+    seed_reactive_turn(&vault, &root_id, learned_at);
+    crate::broadcast::broadcast(&tx, 0, reactive_window_update_frame(window_key.as_str()))
+        .expect("broadcast window update");
+    crate::broadcast::broadcast(&tx, 0, crate::protocol::encode_root_update(b"root-delta"))
+        .expect("broadcast root update");
+
+    assert!(
+        window_read
+            .refresh_on_change()
+            .await
+            .expect("window update refreshes")
+            .is_some()
+    );
+    assert_eq!(window_read.revision(), 1);
+    assert_eq!(reactive_reads(&window_reads), 2);
+
+    assert!(
+        root_read
+            .refresh_on_change()
+            .await
+            .expect("root update refreshes")
+            .is_some()
+    );
+    assert_eq!(root_read.revision(), 1);
+    assert_eq!(reactive_reads(&root_reads), 2);
+}
+
+/// Non-persistent frames are checked against the widest dependency set there
+/// is, so what rejects them is the frame class itself and not a narrow
+/// dependency that happened to miss.
+#[tokio::test]
+async fn local_reactive_read_ignores_nonpersistent_frames() {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let learned_at = 1_770_000_000;
+    let window_key = oneiron::sync::WindowKey::from_timestamp(learned_at);
+    let id = seeded_test_entity_id(0x1437_0005);
+
+    let (tx, _rx) = tokio::sync::broadcast::channel::<crate::server::BroadcastPayload>(32);
+    let (probe, reads) = reactive_probe(id, vec![ReactiveDependency::AnyPersistent]);
+    let mut read = ReactiveLocalRead::open(Arc::clone(&vault), &tx, probe).unwrap();
+
+    for frame in reactive_nonpersistent_frames(window_key.as_str()) {
+        crate::broadcast::broadcast(&tx, 0, frame).expect("broadcast non-persistent frame");
+    }
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            read.refresh_on_change()
+        )
+        .await
+        .is_err(),
+        "ephemeral, VV, lease, selector, malformed, and unknown frames must not wake a local read"
+    );
+    assert_eq!(
+        reactive_reads(&reads),
+        1,
+        "no re-query on negotiation noise"
+    );
+    assert_eq!(read.revision(), 0);
+
+    seed_reactive_turn(&vault, &id, learned_at);
+    crate::broadcast::broadcast(&tx, 0, reactive_window_update_frame(window_key.as_str()))
+        .expect("broadcast window update");
+    assert!(
+        read.refresh_on_change()
+            .await
+            .expect("a persistent frame still wakes the same read")
+            .is_some()
+    );
+    assert_eq!(read.revision(), 1);
+    assert_eq!(reactive_reads(&reads), 2);
+}
+
+#[tokio::test]
+async fn local_reactive_read_ignores_unrelated_window() {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let learned_at = 1_770_000_000;
+    let window_key = oneiron::sync::WindowKey::from_timestamp(learned_at);
+    let other_window = "2026-03";
+    assert_ne!(window_key.as_str(), other_window);
+    let id = seeded_test_entity_id(0x1437_0006);
+
+    let (tx, _rx) = tokio::sync::broadcast::channel::<crate::server::BroadcastPayload>(8);
+    let (probe, reads) = reactive_probe(
+        id,
+        vec![ReactiveDependency::Window(window_key.as_str().to_owned())],
+    );
+    let mut read = ReactiveLocalRead::open(Arc::clone(&vault), &tx, probe).unwrap();
+
+    crate::broadcast::broadcast(&tx, 0, reactive_window_update_frame(other_window))
+        .expect("broadcast unrelated window update");
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            read.refresh_on_change()
+        )
+        .await
+        .is_err(),
+        "an update to a window this query does not read must not re-run it"
+    );
+    assert_eq!(reactive_reads(&reads), 1);
+
+    seed_reactive_turn(&vault, &id, learned_at);
+    crate::broadcast::broadcast(&tx, 0, reactive_window_update_frame(window_key.as_str()))
+        .expect("broadcast matching window update");
+    assert!(read.refresh_on_change().await.expect("refresh").is_some());
+    assert_eq!(read.revision(), 1);
+    assert_eq!(reactive_reads(&reads), 2);
+}
+
+/// Dropped notices degrade to extra work, never to stale data: the only frames
+/// on this channel name a window the query does not read, so the refresh can
+/// only be explained by the lag escalation itself.
+#[tokio::test]
+async fn local_reactive_read_recovers_from_lag() {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let learned_at = 1_770_000_000;
+    let window_key = oneiron::sync::WindowKey::from_timestamp(learned_at);
+    let id = seeded_test_entity_id(0x1437_0007);
+
+    let (tx, _rx) = tokio::sync::broadcast::channel::<crate::server::BroadcastPayload>(2);
+    let (probe, reads) = reactive_probe(
+        id,
+        vec![ReactiveDependency::Window(window_key.as_str().to_owned())],
+    );
+    let mut read = ReactiveLocalRead::open(Arc::clone(&vault), &tx, probe).unwrap();
+    assert!(read.snapshot().is_none());
+
+    seed_reactive_turn(&vault, &id, learned_at);
+    for _ in 0..5 {
+        crate::broadcast::broadcast(&tx, 0, reactive_window_update_frame("2026-03"))
+            .expect("overflow the receiver");
+    }
+
+    assert!(
+        read.refresh_on_change()
+            .await
+            .expect("lag escalates to a coarse re-read")
+            .is_some(),
+        "a lagged receiver must produce a current snapshot, not a placeholder"
+    );
+    assert_eq!(read.revision(), 1);
+    assert_eq!(reactive_reads(&reads), 2);
+}
+
+/// Local/bridge frames (`conn_id = 0`) and frames from the consumer's own
+/// connection both reach the reactive subscriber — a writer's own device still
+/// has to refresh its LMDB-derived view — while `BroadcastSubscriber` keeps
+/// suppressing its own echo for WebSocket forwarding on the same channel.
+#[tokio::test]
+async fn local_reactive_read_observes_bridge_and_own_connection_origins() {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let learned_at = 1_770_000_000;
+    let window_key = oneiron::sync::WindowKey::from_timestamp(learned_at);
+    let id = seeded_test_entity_id(0x1437_0008);
+    seed_reactive_turn(&vault, &id, learned_at);
+
+    let (tx, _rx) = tokio::sync::broadcast::channel::<crate::server::BroadcastPayload>(8);
+    let (probe, reads) = reactive_probe(
+        id,
+        vec![ReactiveDependency::Window(window_key.as_str().to_owned())],
+    );
+    let mut read = ReactiveLocalRead::open(Arc::clone(&vault), &tx, probe).unwrap();
+    let mut websocket_subscriber = crate::broadcast::BroadcastSubscriber::new(7, &tx);
+
+    crate::broadcast::broadcast(&tx, 0, reactive_window_update_frame(window_key.as_str()))
+        .expect("bridge-origin frame");
+    read.refresh_on_change().await.expect("bridge origin wakes");
+    assert_eq!(read.revision(), 1);
+
+    crate::broadcast::broadcast(&tx, 7, reactive_window_update_frame(window_key.as_str()))
+        .expect("own-connection frame");
+    read.refresh_on_change()
+        .await
+        .expect("own-connection origin wakes");
+    assert_eq!(read.revision(), 2);
+    assert_eq!(reactive_reads(&reads), 3);
+
+    // The WebSocket path is untouched: connection 7 sees the bridge frame and
+    // skips its own echo, so it receives exactly one of the two.
+    assert!(
+        websocket_subscriber
+            .recv()
+            .await
+            .expect("subscriber alive")
+            .is_some()
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            websocket_subscriber.recv()
+        )
+        .await
+        .is_err(),
+        "echo suppression for WebSocket forwarding must be unchanged"
+    );
+}
+
+/// Production wiring, end to end: a real LMDB write, mirrored into the window
+/// by the engine's own LMDB→CRDT path, reaches a reactive read through
+/// Observer A and the server's broadcast producer. No encoded frame is injected
+/// anywhere in this fixture.
+#[tokio::test]
+async fn local_vault_write_reaches_reactive_read_through_engine_observer() {
+    let (_dir, server) = test_server();
+    let learned_at = 1_770_000_000;
+    let window_key = oneiron::sync::WindowKey::from_timestamp(learned_at);
+    let doc = server
+        .get_or_create_window(&window_key)
+        .await
+        .expect("open window");
+
+    let id = seeded_test_entity_id(0x1437_0009);
+    let (probe, reads) = reactive_probe(
+        id,
+        vec![ReactiveDependency::Window(window_key.as_str().to_owned())],
+    );
+    let mut read = open_local_reactive_read(&server, probe).expect("open reactive read");
+    assert!(read.snapshot().is_none());
+
+    seed_reactive_turn(server.vault(), &id, learned_at);
+    assert_eq!(
+        oneiron::sync::window::reverse_rematerialize(server.vault(), &doc, &window_key)
+            .expect("mirror local write into the window"),
+        1
+    );
+
+    let refreshed =
+        tokio::time::timeout(std::time::Duration::from_secs(5), read.refresh_on_change())
+            .await
+            .expect("observer notice reaches the reactive read")
+            .expect("refresh succeeds")
+            .is_some();
+    assert!(refreshed, "the reactive read serves the newly written body");
+    assert_eq!(read.revision(), 1);
+    assert_eq!(reactive_reads(&reads), 2);
 }

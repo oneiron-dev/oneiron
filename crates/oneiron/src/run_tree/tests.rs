@@ -591,6 +591,7 @@ fn dreamer_record(
         created_at,
         updated_at: created_at,
         events: Vec::new(),
+        manifest: Vec::new(),
     })
 }
 
@@ -619,6 +620,7 @@ fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -
         created_at,
         updated_at: created_at,
         events: Vec::new(),
+        manifest: Vec::new(),
     }
 }
 

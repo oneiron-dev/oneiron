@@ -1,0 +1,157 @@
+{
+  "schema": "oneiron.meeting_transcript.v1",
+  "recording": {
+    "recording_id": "sha256:9f2c4a1e7b3d5086c1f4a9e2b7d0c3f6a8e1b4d7c0f3a6e9b2d5c8f1a4e7b0d3",
+    "source_name": "quarterly-planning-sync.mp4",
+    "source_sha256": "9f2c4a1e7b3d5086c1f4a9e2b7d0c3f6a8e1b4d7c0f3a6e9b2d5c8f1a4e7b0d3",
+    "canonical_pcm_sha256": "2b7d0c3f6a8e1b4d7c0f3a6e9b2d5c8f1a4e7b0d39f2c4a1e7b3d5086c1f4a9e",
+    "capture_started_at": 1773532800,
+    "duration_ms": 214000,
+    "language_hint": null
+  },
+  "producer": {
+    "asr_model": "mlx-community/Qwen3-ASR-1.7B-8bit",
+    "aligner_model": "Qwen/Qwen3-ForcedAligner-0.6B",
+    "vad_model": "silero-vad-6",
+    "glossary_sha256": "c8f1a4e7b0d39f2c4a1e7b3d5086c1f4a9e2b7d0c3f6a8e1b4d7c0f3a6e9b2d5"
+  },
+  "packs": [
+    {
+      "pack_id": "pack-0001",
+      "speech_ms": 103400,
+      "audio_ms": 108200,
+      "oversize_no_boundary": false,
+      "source_spans": [
+        {
+          "source_start_ms": 2100,
+          "source_end_ms": 18400,
+          "pack_start_ms": 0,
+          "pack_end_ms": 16300
+        },
+        {
+          "source_start_ms": 21000,
+          "source_end_ms": 112900,
+          "pack_start_ms": 16300,
+          "pack_end_ms": 108200
+        }
+      ]
+    },
+    {
+      "pack_id": "pack-0002",
+      "speech_ms": 94100,
+      "audio_ms": 96500,
+      "oversize_no_boundary": false,
+      "source_spans": [
+        {
+          "source_start_ms": 117000,
+          "source_end_ms": 213500,
+          "pack_start_ms": 0,
+          "pack_end_ms": 96500
+        }
+      ]
+    }
+  ],
+  "words": [
+    {
+      "word_id": "word-000001",
+      "pack_id": "pack-0001",
+      "start_ms": 2240,
+      "end_ms": 2510,
+      "text": "Morning",
+      "confidence": 0.94,
+      "speaker_cluster": "spk-1",
+      "speaker_ref": "person:ada"
+    },
+    {
+      "word_id": "word-000002",
+      "pack_id": "pack-0001",
+      "start_ms": 2560,
+      "end_ms": 2980,
+      "text": "everyone",
+      "confidence": 0.91,
+      "speaker_cluster": "spk-1",
+      "speaker_ref": "person:ada"
+    },
+    {
+      "word_id": "word-000003",
+      "pack_id": "pack-0001",
+      "start_ms": 21400,
+      "end_ms": 21880,
+      "text": "Numbers",
+      "confidence": 0.88,
+      "speaker_cluster": "spk-2",
+      "speaker_ref": null
+    },
+    {
+      "word_id": "word-000004",
+      "pack_id": "pack-0002",
+      "start_ms": 117400,
+      "end_ms": 117960,
+      "text": "Agreed",
+      "confidence": 0.96,
+      "speaker_cluster": "spk-1",
+      "speaker_ref": "person:ada"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": "turn-0001",
+      "start_ms": 2240,
+      "end_ms": 2980,
+      "text": "Morning everyone.",
+      "source_word_ids": ["word-000001", "word-000002"],
+      "speaker_cluster": "spk-1",
+      "speaker_ref": "person:ada"
+    },
+    {
+      "turn_id": "turn-0002",
+      "start_ms": 21400,
+      "end_ms": 21880,
+      "text": "Numbers are up.",
+      "source_word_ids": ["word-000003"],
+      "speaker_cluster": "spk-2",
+      "speaker_ref": null
+    },
+    {
+      "turn_id": "turn-0003",
+      "start_ms": 117400,
+      "end_ms": 117960,
+      "text": "Agreed, let's ship it.",
+      "source_word_ids": ["word-000004"],
+      "speaker_cluster": "spk-1",
+      "speaker_ref": "person:ada"
+    }
+  ],
+  "cleanup": {
+    "status": "done",
+    "summary": "The team reviewed quarterly numbers and agreed to ship.",
+    "decisions": [
+      {
+        "text": "Ship the quarterly release",
+        "source_turn_ids": ["turn-0003"]
+      }
+    ],
+    "action_items": [
+      {
+        "owner": null,
+        "task": "Send the draft",
+        "due": null,
+        "source_turn_ids": ["turn-0002"]
+      }
+    ],
+    "open_questions": [],
+    "garbled_spans": [
+      {
+        "start_ms": 60000,
+        "end_ms": 60800,
+        "reason": "crosstalk"
+      }
+    ]
+  },
+  "note_fallback": {
+    "title": "Meeting transcript",
+    "body": "The team reviewed quarterly numbers and agreed to ship."
+  },
+  "diarization": null,
+  "identity": null
+}
