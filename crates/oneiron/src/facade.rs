@@ -1282,6 +1282,7 @@ fn edge_kind_from_str(value: &str) -> Option<EdgeKind> {
         "set_in" => EdgeKind::SetIn,
         "merged_into" => EdgeKind::MergedInto,
         "split_into" => EdgeKind::SplitInto,
+        "blocked_by" => EdgeKind::BlockedBy,
         _ => return None,
     };
     Some(kind)
@@ -3517,6 +3518,7 @@ const fn edge_kind_name(kind: EdgeKind) -> &'static str {
         EdgeKind::SetIn => "set_in",
         EdgeKind::MergedInto => "merged_into",
         EdgeKind::SplitInto => "split_into",
+        EdgeKind::BlockedBy => "blocked_by",
     }
 }
 
