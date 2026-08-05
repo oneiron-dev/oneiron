@@ -395,7 +395,7 @@ fn consent_bound_reuse_exceed_and_widen_are_distinct() {
         "an envelope naming a different selector is outside the grant"
     );
     let mismatched_op = ComposedEffect::new(irreversible_send_facts())
-        .with_action_requirement(mismatched.clone())
+        .with_action_requirement(mismatched)
         .expect("requirement");
     assert_eq!(
         evaluate_consent(&mismatched_op, None, &grants),

@@ -3937,6 +3937,10 @@ fn check_claim_source_trust(body: &ClaimBody, policy: &PolicyManifestResolution)
     )
 }
 
+// The claim-door assembler takes the full axis tuple one call site at a time
+// spells out; boxing the tail two `Option` knobs would hide the consent seam
+// this lane opened.
+#[allow(clippy::too_many_arguments)]
 fn claim_gate_input(
     body: &ClaimBody,
     policy: &PolicyManifestResolution,
