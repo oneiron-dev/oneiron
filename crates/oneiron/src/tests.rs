@@ -6597,6 +6597,13 @@ fn all_entity_type_prefixes() {
             TypeByteBand::Productivity,
         ),
         (
+            "SECRET_CUSTODY",
+            86,
+            Some("sc"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
+        (
             "REDACTION_AUDIT",
             120,
             None,
@@ -6874,7 +6881,7 @@ fn type_byte_band_allocation_matches_contract() {
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
     // with the same typed error.
-    for byte in [63_u8, 79, 86, 99, 100, 119, 125, 126, 127, 130, 255] {
+    for byte in [63_u8, 79, 87, 99, 100, 119, 125, 126, 127, 130, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -6942,7 +6949,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
         .expect_err("byte 100 is CRM, not companion");
     assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
 
-    vault.register_structural_kind(86, "pd", TypeByteBand::Productivity, "productivity-pack")?;
+    vault.register_structural_kind(87, "pd", TypeByteBand::Productivity, "productivity-pack")?;
     vault.register_structural_kind(100, "cm", TypeByteBand::Crm, "crm-pack")?;
 
     let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
@@ -7132,7 +7139,7 @@ fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
-    vault.register_structural_kind(86, "pd", TypeByteBand::Productivity, "productivity-pack")?;
+    vault.register_structural_kind(87, "pd", TypeByteBand::Productivity, "productivity-pack")?;
     vault.register_structural_kind(101, "cc", TypeByteBand::Crm, "crm-pack")?;
 
     let rows = vault.structural_kind_registrations();
