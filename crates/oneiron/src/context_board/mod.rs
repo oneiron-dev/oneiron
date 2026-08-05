@@ -12,9 +12,9 @@ pub use agents::{
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
     BoardFrameError, BoardLegend, BoardRender, BoardRenderMetadata, BoardSection, BudgetPolicyRef,
-    CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES,
-    PLUGIN_SECTION_BUDGET_POLICY_REF, SHED_ORDER, SectionPolicy, SectionView, ShedOutcome,
-    ShedRank, ShedSection, assemble_task_agent_sections, render_board_block, resolve_board_budget,
+    CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES, PLUGIN_SECTION_BUDGET_POLICY_REF,
+    SHED_ORDER, SectionPolicy, SectionView, ShedOutcome, ShedRank, ShedSection,
+    assemble_task_agent_sections, render_board_block, resolve_board_budget,
     section_policy_for_budget_ref, shed,
 };
 pub use tasks::{

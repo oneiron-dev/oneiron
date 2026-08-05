@@ -192,9 +192,7 @@ impl BoardSection {
             // An empty detail view has nothing to reduce; its count row is the
             // section's honest floor. Only a populated detail view can be
             // grown by collapsing, and that is what this rejects.
-            if !detail_rows.is_empty()
-                && rows_tok(&count_rows) > rows_tok(&detail_rows)
-            {
+            if !detail_rows.is_empty() && rows_tok(&count_rows) > rows_tok(&detail_rows) {
                 return Err(BoardFrameError::NonReducingCountFallback { section: name });
             }
         }
@@ -446,11 +444,7 @@ fn shed_and_render(frame: &BoardFrame<'_>, budget: &BoardBudget) -> (ShedOutcome
 /// Collapses every section of one rank atomically, preserving section names
 /// and pinned rows. Reports whether anything changed. A pinned section cannot
 /// match a rank — [`BoardSection::new`] rejects that combination.
-fn collapse_rank(
-    sections: &[BoardSection],
-    views: &mut [ShedSection],
-    rank: ShedRank,
-) -> bool {
+fn collapse_rank(sections: &[BoardSection], views: &mut [ShedSection], rank: ShedRank) -> bool {
     let mut collapsed = false;
     for (section, view) in sections.iter().zip(views.iter_mut()) {
         if section.policy.shed_rank == Some(rank) {
