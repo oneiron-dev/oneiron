@@ -9,10 +9,12 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::rc::Rc;
+use std::str;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use arc_swap::ArcSwap;
+use xxhash_rust::xxh32::xxh32;
 
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
@@ -35,6 +37,19 @@ pub(crate) const SESSION_WRITE_TXN_ENTRY_POINTS: &[&str] = &[
 ];
 
 const _: () = assert!(!SESSION_WRITE_TXN_ENTRY_POINTS.is_empty());
+
+/// Leading sigil of every session-local short id (ARCH-0052 §7).
+///
+/// Base short ids are `<two lowercase letters><decimal digits>`, which is
+/// exactly what the short-ref parsers accept. `s` is not a legal base prefix
+/// (a base prefix is always two letters), so the room namespace sits OUTSIDE
+/// the base grammar and a session alias can never collide with, or mask, a
+/// durable one.
+#[allow(
+    dead_code,
+    reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
+)]
+const SESSION_SHORT_ID_SIGIL: &str = "s";
 
 /// Manifest slot identifying one of the 28 named databases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -969,6 +984,98 @@ impl SessionOverlay {
         self.stage_mutation(mutation)
     }
 
+    /// Allocates this entity's session-local short id and content-hash byte
+    /// (ARCH-0052 §7).
+    ///
+    /// In-room short ids are TEMPORARY PRESENTATION ALIASES. Canonical ids are
+    /// allocated at promote (ONE-1730), so this counter draws from a
+    /// session-scoped namespace held entirely in the overlay `ShortIds` /
+    /// `ShortIdsReverse` keyspaces: the base `sid_counter:<type_byte>` rows and
+    /// the base short-id tables are never read and never written, and every
+    /// alias minted here evaporates at close.
+    ///
+    /// The alias is deliberately NOT format-compatible with a base short id.
+    /// A base alias is `<two lowercase letters><decimal digits>`, and both
+    /// short-ref parsers (`api/core.rs::parse_short_ref_parts`,
+    /// `mcp.rs::validate_short_ref_parts`) accept exactly that shape. Minting
+    /// session aliases in the same space would let a room alias collide with —
+    /// and, through the composed overlay ∪ base read, MASK — a real base
+    /// entity's alias for the length of the session. The `s` sigil puts the
+    /// room namespace outside the base grammar, so a session alias cannot be
+    /// mistaken for a durable one by any existing reader, and a caller that
+    /// leaks one to a base door gets a clean parse rejection rather than a
+    /// silent hit on the wrong entity.
+    ///
+    /// The content-hash byte uses the base scheme (`xxh32(data, 0) % 256`) so
+    /// `Vault::hydrate_short_id`'s `(short_id, content_hash)` pairing behaves
+    /// identically in-session.
+    ///
+    /// Re-allocating an id already aliased in this room returns the existing
+    /// alias with a refreshed content hash, mirroring the base
+    /// `plan_short_id_update` update arm: an alias is stable for the entity's
+    /// lifetime in the room even as its body changes.
+    #[allow(
+        dead_code,
+        reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
+    )]
+    pub(crate) fn alloc_session_short_id(
+        self: &Arc<Self>,
+        id: &EntityId,
+        data: &[u8],
+    ) -> Result<(String, u8)> {
+        let content_hash = session_short_id_content_hash(data);
+        let snapshot = self.snapshot()?;
+
+        // An id already aliased in this room keeps its alias; only the
+        // content-hash byte (part of the forward KEY) is refreshed, so the
+        // stale forward row is retired first.
+        if let SnapshotLookup::Present(existing) =
+            snapshot.lookup_single(OverlayKeyspace::ShortIdsReverse, id.as_bytes())
+        {
+            let (short_id, old_content_hash) = parse_session_short_id_value(&existing)?;
+            let short_id = short_id.to_owned();
+            if old_content_hash != content_hash {
+                self.delete_with_base_backing(
+                    OverlayKeyspace::ShortIds,
+                    &encode_session_short_id_forward_key(&short_id, old_content_hash),
+                    false,
+                )?;
+            }
+            self.put_session_short_id_rows(id, &short_id, content_hash)?;
+            return Ok((short_id, content_hash));
+        }
+
+        // The room counter is the live alias count, read from the same
+        // snapshot the allocation stages into: reverse rows are one-per-entity
+        // and never deleted mid-room, so the next ordinal cannot collide with
+        // an alias already minted in this segment.
+        let next = snapshot
+            .live_row_count(OverlayKeyspace::ShortIdsReverse, |_| true)
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("session short id counter"))?;
+        let short_id = format!("{SESSION_SHORT_ID_SIGIL}{next}");
+        self.put_session_short_id_rows(id, &short_id, content_hash)?;
+        Ok((short_id, content_hash))
+    }
+
+    /// Stages both session short-id rows, mirroring the base pair: forward
+    /// `(short_id ‖ content_hash)` -> entity id, reverse entity id -> the same
+    /// bytes as the forward key.
+    fn put_session_short_id_rows(
+        self: &Arc<Self>,
+        id: &EntityId,
+        short_id: &str,
+        content_hash: u8,
+    ) -> Result<()> {
+        let forward_key = encode_session_short_id_forward_key(short_id, content_hash);
+        self.put(OverlayKeyspace::ShortIds, &forward_key, id.as_bytes())?;
+        self.put(
+            OverlayKeyspace::ShortIdsReverse,
+            id.as_bytes(),
+            &forward_key,
+        )
+    }
+
     /// Stages one typed, role-tagged journal op into the active txn segment.
     ///
     /// The ONLY journal staging surface: every staged op carries its
@@ -1282,6 +1389,46 @@ impl SessionOverlay {
         }
         Ok(())
     }
+}
+
+/// Content-hash byte for a session short id — the base scheme
+/// (`xxh32(data, 0) % 256`, batch.rs `plan_short_id_update`), so
+/// `hydrate_short_id`'s `(short_id, content_hash)` pairing is identical
+/// in-session.
+#[allow(
+    dead_code,
+    reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
+)]
+fn session_short_id_content_hash(data: &[u8]) -> u8 {
+    (xxh32(data, 0) % 256) as u8
+}
+
+/// Encodes the session `ShortIds` forward key `(short_id ‖ content_hash)`,
+/// the same byte shape the base tables use — the namespaces are separated by
+/// the sigil inside `short_id`, not by a second key encoding.
+#[allow(
+    dead_code,
+    reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
+)]
+fn encode_session_short_id_forward_key(short_id: &str, content_hash: u8) -> Vec<u8> {
+    let mut key = Vec::with_capacity(short_id.len().saturating_add(1));
+    key.extend_from_slice(short_id.as_bytes());
+    key.push(content_hash);
+    key
+}
+
+/// Splits a session `ShortIdsReverse` value back into `(short_id, content_hash)`.
+#[allow(
+    dead_code,
+    reason = "ONE-1728 facade `witness_into_session` is the first lib-target consumer of the session short-id namespace; the module tests cover it now"
+)]
+fn parse_session_short_id_value(value: &[u8]) -> Result<(&str, u8)> {
+    let Some((&content_hash, short_id_bytes)) = value.split_last() else {
+        return Err(Error::CorruptedIndex("session short id value"));
+    };
+    let short_id = str::from_utf8(short_id_bytes)
+        .map_err(|_| Error::CorruptedIndex("session short id value"))?;
+    Ok((short_id, content_hash))
 }
 
 /// Advances the mode-publication counter. Overflow is a hard error rather than
@@ -2250,5 +2397,107 @@ mod tests {
             Err(other) => panic!("unexpected error: {other}"),
             Ok(()) => panic!("segment-less journal staging unexpectedly succeeded"),
         }
+    }
+
+    /// The namespace-separation contract. A session alias must not parse as a
+    /// base short id, or a room alias could collide with — and, through the
+    /// composed overlay ∪ base read, MASK — a real base entity's alias.
+    /// Mirrors `api/core.rs::parse_short_ref_parts` /
+    /// `mcp.rs::validate_short_ref_parts`: two lowercase letters then digits.
+    fn parses_as_base_short_id(short_id: &str) -> bool {
+        let bytes = short_id.as_bytes();
+        bytes.len() >= 3
+            && bytes[0].is_ascii_lowercase()
+            && bytes[1].is_ascii_lowercase()
+            && bytes[2..].iter().all(u8::is_ascii_digit)
+    }
+
+    #[test]
+    fn session_short_ids_are_unique_and_outside_the_base_namespace() -> Result<()> {
+        let overlay = SessionOverlay::new(4096);
+        let segment = overlay.install_txn_segment()?;
+
+        let mut seen = BTreeSet::new();
+        for index in 0_u8..5 {
+            let id = EntityId::now();
+            let (short_id, content_hash) = overlay.alloc_session_short_id(&id, &[index])?;
+
+            assert!(
+                !parses_as_base_short_id(&short_id),
+                "session alias {short_id} parses as a base short id"
+            );
+            assert!(
+                short_id.starts_with(SESSION_SHORT_ID_SIGIL),
+                "session alias {short_id} lacks the room sigil"
+            );
+            assert_eq!(content_hash, session_short_id_content_hash(&[index]));
+            assert!(
+                seen.insert(short_id.clone()),
+                "session alias {short_id} was allocated twice in one room"
+            );
+
+            // Both rows land, and the forward row resolves back to the entity.
+            let forward_key = encode_session_short_id_forward_key(&short_id, content_hash);
+            let snapshot = overlay.snapshot()?;
+            match snapshot.lookup_single(OverlayKeyspace::ShortIds, &forward_key) {
+                SnapshotLookup::Present(value) => assert_eq!(value, id.as_bytes()),
+                _ => panic!("forward session short-id row missing for {short_id}"),
+            }
+            match snapshot.lookup_single(OverlayKeyspace::ShortIdsReverse, id.as_bytes()) {
+                SnapshotLookup::Present(value) => assert_eq!(value, forward_key),
+                _ => panic!("reverse session short-id row missing for {short_id}"),
+            }
+        }
+
+        drop(segment);
+        Ok(())
+    }
+
+    /// Re-allocating keeps the alias stable and retires the stale forward row:
+    /// the content hash is part of the forward KEY, so a body change would
+    /// otherwise leave a second forward row resolving the same alias.
+    #[test]
+    fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()> {
+        let overlay = SessionOverlay::new(4096);
+        let segment = overlay.install_txn_segment()?;
+
+        let id = EntityId::now();
+        let (first, first_hash) = overlay.alloc_session_short_id(&id, b"body-one")?;
+        let (second, second_hash) = overlay.alloc_session_short_id(&id, b"body-two")?;
+
+        assert_eq!(first, second, "the room alias must be stable for an entity");
+        assert_ne!(
+            first_hash, second_hash,
+            "fixture bodies must hash differently for this test to mean anything"
+        );
+
+        let snapshot = overlay.snapshot()?;
+        // The stale row was overlay-only, so the delete REMOVES it outright
+        // rather than tombstoning it — no wasted budget byte. `Passthrough`
+        // then falls through to base, which by the sigil rule can never hold a
+        // session alias, so the alias genuinely resolves to nothing.
+        assert!(
+            matches!(
+                snapshot.lookup_single(
+                    OverlayKeyspace::ShortIds,
+                    &encode_session_short_id_forward_key(&first, first_hash),
+                ),
+                SnapshotLookup::Passthrough
+            ),
+            "the stale forward row survived a content change"
+        );
+        assert!(
+            matches!(
+                snapshot.lookup_single(
+                    OverlayKeyspace::ShortIds,
+                    &encode_session_short_id_forward_key(&second, second_hash),
+                ),
+                SnapshotLookup::Present(_)
+            ),
+            "the refreshed forward row is missing"
+        );
+
+        drop(segment);
+        Ok(())
     }
 }

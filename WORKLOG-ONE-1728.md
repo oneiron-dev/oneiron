@@ -38,10 +38,16 @@ to the Ordinary wrapper over `apply_ops_with_origin`) · facade K7 witness-door
 backstop + `owning_session_ref` + `FACADE_CODE_OFF_RECORD_SESSION_DOOR` ·
 embed.rs K6 pe: routing rule. 8 new tests; full suite green (3157/0).
 
-**SEG 2+ (remaining)** — `alloc_session_short_id` + session short-id namespace ·
+**SEG 2 (done: b8ab60e + this commit)** — the K11 write-target seam
+(`ManifestDbs`) · bm25 `index_text`/`deindex_text` + hnsw insert/deindex
+parameterized · batch.rs short-id family parameterized ·
+`SessionOverlay::alloc_session_short_id` + the session short-id namespace.
+4 new tests; see D9–D11.
+
+**SEG 3+ (remaining)** —
 `apply_ops_session` + op-loop write-target parameterization · store.rs
-extract-parameterized writers + `impl SessionStoreView` · bm25/ppr/hnsw
-parameterization · facade `witness_into_session` · pipeline `run_for_pack`
+session-side writer variants + `impl SessionStoreView` composed read accessors ·
+ppr reader generalization · facade `witness_into_session` · pipeline `run_for_pack`
 registration routing · gate.rs threading · claim.rs ScopedRead · context_pack.rs ·
 oracle arming (7 stubs + seam helpers).
 
@@ -148,11 +154,95 @@ oracle arming (7 stubs + seam helpers).
 rotating tracing-subscriber flake did not recur this run — it remains a
 pre-existing parallel-load class charged to no lane (see seg-0 note above).
 
+## Cheap gate — seg 2
+
+`cargo fmt` clean; `cargo clippy --all-targets --all-features` clean;
+`cargo clippy --all-targets --features sync` clean. Warning inventory is
+**identical to the pre-seg-2 baseline** (14 lib warnings, all pre-existing
+`dead_code` on seg-0/seg-1 surfaces awaiting their consuming step) — verified by
+stashing the diff and diffing the warning list, so this segment adds no lint
+debt. `bm25::` 61/61 and `hnsw::` 37/37 green (the byte-identical-base gate for
+the parameterization); `session_overlay::` 17/17 green.
+
+## Seg-2 decisions
+
+- **D9 — the write target is an ACCESSOR BUNDLE, not a branch, and the trait is
+  macro-generated from one list.** The blueprint calls for
+  "extract-parameterized writers … byte-identical base behavior … never
+  copy-paste of private formats". The landed substrate already made that nearly
+  free: `Store` and `SessionStoreView` carry the SAME 28 accessor names with the
+  same types (`OverlayDb`/`OverlayStrDb`), and `OverlayDb` already decides
+  base-vs-overlay INTERNALLY. So the parameter is just "which bundle of
+  accessors", and no writer needs a target branch at all — `store.rs`'s
+  `manifest_dbs!` macro emits `trait ManifestDbs` plus both impls from ONE list
+  of the manifest databases. Byte-identical base behavior is then not a claim to
+  be tested but a consequence: it is literally the same function body reaching
+  the same accessors. A database renamed in either struct and not in the trait
+  list fails to compile, so the seam cannot drift the way a hand-written
+  28-method trait would. Measured surface: bm25 and hnsw touch ONLY accessors on
+  `store` (verified by grep — zero `Store::` associated calls, zero non-DB field
+  reads), which is why they parameterize cleanly; batch.rs does NOT (it calls
+  `store.mark_pending_embedding`, `validate_entity_type`, `short_id_prefix`, …),
+  which is why its op loop needs the seg-3 treatment rather than a signature
+  swap.
+- **D10 — the hnsw legacy-rebuild arm stays base-only BY SIGNATURE, not by
+  convention.** The blueprint requires the overlay target to "never schedule or
+  run a base graph rebuild". Rather than guard that at runtime,
+  `hnsw_insert`/`hnsw_insert_probed`/`run_pending_legacy_rebuild`/
+  `rebuild_hnsw_from_current_snapshot` keep `store: &Store` while the
+  insert/deindex core takes `&impl ManifestDbs`. A session target therefore
+  cannot reach the rebuild path — it does not typecheck. This is the cheapest
+  possible enforcement of that law and needs no test to stay true.
+- **D11 — session short ids are minted OUTSIDE the base grammar (`s<n>`), not as
+  a parallel counter inside it.** The blueprint says the namespace is
+  session-scoped and that in-room ids are "temporary presentation aliases". The
+  hazard it does not name: base aliases are `<two lowercase letters><digits>`,
+  and BOTH short-ref parsers (`api/core.rs::parse_short_ref_parts`,
+  `mcp.rs::validate_short_ref_parts`) accept exactly that shape. A session alias
+  minted in the same space (e.g. `tu1`) would be indistinguishable from a
+  durable one and — because session reads compose overlay ∪ base — would MASK a
+  real base entity's alias for the life of the room. The `s` sigil is not a legal
+  base prefix (base prefixes are always two letters), so a room alias cannot
+  collide with or shadow a durable one, and a session alias that leaks to a base
+  door gets a clean parse rejection instead of a silent hit on the wrong entity.
+  A dedicated test asserts the alias never parses as a base short id. The
+  content-hash byte still uses the base scheme (`xxh32(data,0) % 256`) so
+  `hydrate_short_id`'s pairing behaves identically in-session. The room counter
+  is the live reverse-row count read from the same snapshot the allocation
+  stages into (reverse rows are one-per-entity and are never deleted mid-room),
+  so a second allocation in the same segment cannot reuse an ordinal. Base
+  `sid_counter:` rows and base short-id tables are neither read nor written.
+
 ## Next-step INTENT
 
 Seg 1 landed the three surfaces that had no dependency on the session apply
-entry: K4 (batch.rs), K7 (facade door), K6 (embed rule). Everything remaining is
-downstream of `apply_ops_session`, so seg 2 opens there:
+entry: K4 (batch.rs), K7 (facade door), K6 (embed rule). Seg 2 landed the
+write-target seam they all route through, plus the short-id namespace.
+
+**Seg 3 opens at `apply_ops_session`.** The seam is now in place, so the
+remaining work is threading it, not inventing it:
+
+1. `apply_ops_session(view, route, ...)` + op-loop write-target parameterization.
+   Unlike bm25/hnsw, batch.rs's op loop also calls `impl Store` METHODS
+   (`mark_pending_embedding`, `clear_pending_embedding`,
+   `has_current_pending_embedding_in_txn`, `validate_entity_type`,
+   `validate_public_entity_type`, `short_id_prefix`) and `store.off_record_sessions`
+   / `store.env` — none of which live on `ManifestDbs`. Those are the real seam
+   decisions for seg 3; the pure-accessor helpers (short-id family, already done)
+   parameterize by signature alone. `route.revalidate()` runs before staging;
+   batch.rs never reads a route field. The op-loop `mark_pending_embedding` call
+   SKIPS for the overlay target (K6: skip, not redirect).
+2. Then store.rs session-side writer variants + `impl SessionStoreView` composed
+   read accessors, and only then facade `witness_into_session` (which needs 1+2)
+   and the oracle arming (which needs all of it).
+
+Retained watch item (unchanged from seg 2): the door-partition question D5
+settled for K4 recurs for `apply_ops_session` — the session path must NOT re-run
+`guard_off_record_entity_put`, which rejects live-overlay membership and would
+refuse the session's own witness writes. The session path never enters the base
+apply, so this is a structural consequence of that separation, not an extra guard.
+
+Superseded seg-2 entry plan (kept for provenance):
 
 1. `SessionOverlay::alloc_session_short_id` + the session short-id namespace
    (overlay `ShortIds`/`ShortIdsReverse` only; base `sid_counter:` untouched).

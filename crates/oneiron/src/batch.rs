@@ -36,7 +36,7 @@ use crate::registry::{
     ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
     ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
@@ -4741,7 +4741,7 @@ enum ShortIdPlan {
 }
 
 fn plan_short_id_update(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RwTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -4750,7 +4750,7 @@ fn plan_short_id_update(
 ) -> Result<ShortIdPlan> {
     let content_hash = (xxh32(data, 0) % 256) as u8;
 
-    if let Some(existing) = store.short_ids_reverse.get(txn, id.as_bytes())? {
+    if let Some(existing) = store.short_ids_reverse().get(txn, id.as_bytes())? {
         let (short_id, old_content_hash) = parse_short_id_value(&existing)?;
         return Ok(ShortIdPlan::UpdateExisting {
             short_id: short_id.to_owned(),
@@ -4764,7 +4764,7 @@ fn plan_short_id_update(
     // rows inside `short_ids` — that table holds only the ARCH-0019 row n3
     // mapping `(short_id, content_hash)` -> `entity_id`.
     let counter_key = crate::store::short_id_counter_key(entity_type);
-    let current = match store.vault_meta.get(txn, &counter_key)? {
+    let current = match store.vault_meta().get(txn, &counter_key)? {
         Some(raw) => {
             let buf: [u8; SHORT_ID_COUNTER_LEN] = raw
                 .as_ref()
@@ -4788,7 +4788,7 @@ fn plan_short_id_update(
 }
 
 fn apply_short_id_plan(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     plan: ShortIdPlan,
@@ -4803,7 +4803,7 @@ fn apply_short_id_plan(
                 // The content hash is part of the forward KEY, so a content
                 // update must remove the stale forward row before rewriting.
                 let old_forward_key = encode_short_id_forward_key(&short_id, old_content_hash);
-                store.short_ids.delete(wtxn, &old_forward_key)?;
+                store.short_ids().delete(wtxn, &old_forward_key)?;
             }
             write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
@@ -4814,7 +4814,7 @@ fn apply_short_id_plan(
             content_hash,
         } => {
             store
-                .vault_meta
+                .vault_meta()
                 .put(wtxn, &counter_key, &next_counter.to_le_bytes())?;
             write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
@@ -4823,8 +4823,12 @@ fn apply_short_id_plan(
     Ok(())
 }
 
-fn delete_short_id_rows_for_id(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-    let forward_key = match store.short_ids_reverse.get(wtxn, id.as_bytes())? {
+fn delete_short_id_rows_for_id(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let forward_key = match store.short_ids_reverse().get(wtxn, id.as_bytes())? {
         Some(value) => {
             let (short_id, content_hash) = parse_short_id_value(&value)?;
             Some(encode_short_id_forward_key(short_id, content_hash))
@@ -4832,8 +4836,8 @@ fn delete_short_id_rows_for_id(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityI
         None => None,
     };
     if let Some(forward_key) = forward_key {
-        store.short_ids.delete(wtxn, &forward_key)?;
-        store.short_ids_reverse.delete(wtxn, id.as_bytes())?;
+        store.short_ids().delete(wtxn, &forward_key)?;
+        store.short_ids_reverse().delete(wtxn, id.as_bytes())?;
     }
     Ok(())
 }
@@ -4843,16 +4847,16 @@ fn delete_short_id_rows_for_id(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityI
 /// entity id; row n4 `short_ids_reverse`: key entity id -> value
 /// `(short_id bytes ‖ content_hash u8)` (same bytes as the forward key).
 fn write_short_id_rows(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     short_id: &str,
     content_hash: u8,
 ) -> Result<()> {
     let forward_key = encode_short_id_forward_key(short_id, content_hash);
-    store.short_ids.put(wtxn, &forward_key, id.as_bytes())?;
+    store.short_ids().put(wtxn, &forward_key, id.as_bytes())?;
     store
-        .short_ids_reverse
+        .short_ids_reverse()
         .put(wtxn, id.as_bytes(), &forward_key)?;
     Ok(())
 }
