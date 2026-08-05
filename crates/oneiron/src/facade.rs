@@ -86,6 +86,11 @@ pub const FACADE_CODE_INVALID_STATE: &str = "INVALID_STATE";
 pub const FACADE_CODE_INTERNAL: &str = "INTERNAL_SERVER_ERROR";
 /// `recall(Deep)` called without a budget lease (W4/C4 lease rule).
 pub const FACADE_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
+/// The canonical door was asked to witness into a conversation owned by a live
+/// off-record session (ARCH-0052 D2 backstop (a), ONE-1728 K7). Distinct from
+/// `FORBIDDEN`: the write was not refused on policy grounds — the room is only
+/// reachable through the session handle.
+pub const FACADE_CODE_OFF_RECORD_SESSION_DOOR: &str = "OFF_RECORD_SESSION_DOOR";
 
 /// The S6 `MemoryPack` schema version.
 pub const MEMORY_PACK_VERSION: u32 = 1;
@@ -178,6 +183,18 @@ impl From<Error> for FacadeError {
                 &[
                     "The gate refused this write; review pending consents via pending_writes.",
                     "Submit the claim as proposed or adjust the actor/scope.",
+                ],
+            ),
+            // K7 (ONE-1728): distinct from the FORBIDDEN gate family above —
+            // nothing was refused on policy grounds. The room is simply not
+            // reachable through this door, and the remedy is a different door,
+            // not a different actor or scope.
+            ErrorKind::OffRecordWitnessDoorRejected => Self::new(
+                FACADE_CODE_OFF_RECORD_SESSION_DOOR,
+                message,
+                &[
+                    "This conversation belongs to a live off-record session; witness it through the session handle.",
+                    "Close the session first if the turn belongs on the record.",
                 ],
             ),
             ErrorKind::ClaimAlreadyClosed
@@ -1432,6 +1449,28 @@ impl MemoryFacade<'_> {
         let learned_at = turn.occurred_at;
         let (conversation_id, conversation_is_new) =
             self.resolve_or_new_container(&turn.conversation_ref, ENTITY_TYPE_CONVERSATION)?;
+        // K7 witness-door ownership backstop (ARCH-0052 D2 backstop (a)). A
+        // conversation owned by a live session overlay is witnessed through the
+        // SESSION handle only; the canonical door refuses here, after container
+        // resolution and before any write. This lands IN ADDITION to the K4
+        // taint guard: the guard sees the ops, this sees the door.
+        //
+        // Reachable by 32-hex ref only. A non-hex ref to a session-local
+        // conversation fails base resolution with not-found before reaching
+        // this point, which is accepted: the refusal there is already correct
+        // (base cannot resolve a room it cannot see) and leaks strictly less.
+        if let Some(session_ref) = self
+            .vault
+            .store
+            .off_record_sessions
+            .owning_session_ref(&conversation_id)?
+        {
+            return Err(Error::OffRecordWitnessDoorRejected {
+                session_ref,
+                conversation_ref: conversation_id.to_hex(),
+            }
+            .into());
+        }
         let (turn_id, turn_is_new) = match &turn.turn_ref {
             Some(reference) => self.resolve_or_new_container(reference, ENTITY_TYPE_TURN)?,
             None => (EntityId::now(), true),

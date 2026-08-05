@@ -5329,3 +5329,108 @@ fn strip_authority_first_seen_state(vault: &crate::Vault) {
         })
         .expect("strip first-seen state");
 }
+
+// ── ONE-1728 K7 · witness-door ownership backstop (ARCH-0052 D2(a)) ──────
+
+/// The canonical witness door refuses a conversation owned by a live session
+/// overlay, before any write, with the typed refusal and its own facade code.
+/// This is the backstop the K4 taint guard cannot express: the ops of THIS
+/// witness name only fresh ids, so nothing in the batch is tainted — what is
+/// wrong is the door, not the payload.
+#[test]
+fn witness_door_rejects_a_conversation_owned_by_a_live_session() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x41);
+    let facade = facade_for(&vault, actor);
+    let conversation = EntityId::from_bytes([0x42; 16]).expect("conv id");
+
+    let session = vault
+        .off_record_session_vault()
+        .enter(
+            "sess-witness-door",
+            crate::off_record::OffRecordBackendClass::Local,
+        )
+        .expect("enter session");
+    let overlay = session.overlay();
+    let segment = overlay.install_txn_segment().expect("segment");
+    overlay
+        .put(
+            crate::session_overlay::OverlayKeyspace::Entities,
+            conversation.as_bytes(),
+            b"session-owned conversation shell",
+        )
+        .expect("stage overlay shell");
+    segment.commit().expect("commit segment");
+
+    let refused = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "door probe")],
+            occurred_at: 700,
+        })
+        .expect_err("the base door must refuse a session-owned conversation");
+    assert_eq!(refused.code, FACADE_CODE_OFF_RECORD_SESSION_DOOR);
+    assert!(
+        refused.message.contains("sess-witness-door"),
+        "the refusal names the owning session: {}",
+        refused.message
+    );
+
+    // The refusal happens before any write: no TURN, no MESSAGE, no shell.
+    let entity_rows = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        vault.store.entities.len(&rtxn).expect("entity count")
+    };
+    session.close().expect("close session");
+    assert_eq!(
+        {
+            let rtxn = vault.store.env.read_txn().expect("read txn");
+            vault.store.entities.len(&rtxn).expect("entity count")
+        },
+        entity_rows,
+        "a refused witness writes nothing"
+    );
+    assert_eq!(vault.get_raw(&conversation).expect("get raw"), None);
+}
+
+/// Ownership is what the door checks — not the mere existence of a live
+/// session. An unrelated conversation stays witnessable while a session is
+/// open, so the backstop cannot become a global write freeze.
+#[test]
+fn witness_door_admits_a_conversation_no_session_owns() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x43);
+    let facade = facade_for(&vault, actor);
+    let owned = EntityId::from_bytes([0x44; 16]).expect("owned conv id");
+    let free = EntityId::from_bytes([0x45; 16]).expect("free conv id");
+
+    let session = vault
+        .off_record_session_vault()
+        .enter(
+            "sess-witness-door-scope",
+            crate::off_record::OffRecordBackendClass::Local,
+        )
+        .expect("enter session");
+    let overlay = session.overlay();
+    let segment = overlay.install_txn_segment().expect("segment");
+    overlay
+        .put(
+            crate::session_overlay::OverlayKeyspace::Entities,
+            owned.as_bytes(),
+            b"session-owned conversation shell",
+        )
+        .expect("stage overlay shell");
+    segment.commit().expect("commit segment");
+
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: free.to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "ordinary turn")],
+            occurred_at: 800,
+        })
+        .expect("an unowned conversation stays witnessable");
+    assert!(vault.get_raw(&free).expect("get raw").is_some());
+    session.close().expect("close session");
+}

@@ -1822,7 +1822,19 @@ fn check_decode_point_taint_guard(
             allow_reserved_predicate,
             ..
         } => {
-            check(id)?;
+            // The MATERIALIZED id is deliberately not judged here: it reaches
+            // `off_record::guard_off_record_entity_put` inside `apply_put`, the
+            // landed entity-materialization chokepoint, which rejects the same
+            // condition (live-overlay membership) with the settled typed
+            // `OffRecordFencedTurnWriteRejected` — and covers durable fence
+            // state K4 knows nothing about, so it is strictly stronger on this
+            // ref. Minting a second error identity for one condition would be a
+            // regression, not a hardening: `sync/window.rs` and
+            // `sync/quarantine.rs` classify on that typed identity to
+            // quarantine-and-continue a replicated window, and an unrecognized
+            // reason there fails the window closed. K4 owns the refs the entity
+            // door structurally cannot see — the ones below, which materialize
+            // nothing and so never reach it.
             if *entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                 let Ok(body) =
                     crate::claim::validate_claim_body_and_decode(data, *allow_reserved_predicate)
@@ -1840,12 +1852,13 @@ fn check_decode_point_taint_guard(
             }
         }
         BatchOp::ClaimCandidate {
-            id,
             candidate,
             envelope,
             ..
         } => {
-            check(id)?;
+            // The candidate's own `id` materializes through `apply_put` and is
+            // judged by the entity door there, for the reason above. Its
+            // world/subject/actor refs do not materialize, so they are K4's.
             if let Some(world) = candidate.world() {
                 check(&world)?;
             }

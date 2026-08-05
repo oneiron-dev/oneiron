@@ -273,6 +273,27 @@ impl OffRecordSessionRegistry {
         Ok(false)
     }
 
+    /// The live session that owns `id` as an overlay member, if any (K7).
+    ///
+    /// Ownership is unique by construction: conversation shells are allocated
+    /// by the session that opens the room, so no id can be a member of two
+    /// live overlays. Should a race expose more than one live match anyway, the
+    /// first in registry iteration order wins — the door only needs to know
+    /// THAT the id is session-owned, and naming any live owner refuses it.
+    ///
+    /// [`Self::contains_entity`] answers the same membership question for the
+    /// fence probes, which need only a bool; the witness door reports the
+    /// owning session in its typed refusal, so it needs the ref.
+    pub(crate) fn owning_session_ref(&self, id: &EntityId) -> Result<Option<String>> {
+        let sessions = self.published.load();
+        for (session_ref, entry) in sessions.iter() {
+            if entry.published_record.load().is_some() && entry.overlay.contains_entity(id)? {
+                return Ok(Some(session_ref.clone()));
+            }
+        }
+        Ok(None)
+    }
+
     pub(crate) fn has_overlay_entities(&self) -> Result<bool> {
         let sessions = self.published.load();
         for entry in sessions.values() {
