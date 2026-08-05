@@ -985,7 +985,13 @@ impl AuthenticatedOwner {
         &self.principal_ref
     }
 
-    /// The Gate decision this authentication is bound to.
+    /// The Gate decision this AUTHENTICATION is bound to.
+    ///
+    /// This is the authentication's own decision, not the decision of any act
+    /// performed under it: each consent act mints its own [`GateDecisionId`]
+    /// (the ledger rejects a duplicate), and the authentication id rides the
+    /// grant row's owner stamp as provenance for WHICH authentication the
+    /// owner acted under.
     #[must_use]
     pub const fn decision_id(&self) -> GateDecisionId {
         self.decision_id
@@ -2205,7 +2211,7 @@ impl Vault {
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
         let receipt = ConsentReceipt::Approved {
-            decision_id: owner.decision_id,
+            decision_id: GateDecisionId::now(),
             grant: ConsentGrant::ApproveOnce(effect_digest),
         };
         let mut wtxn = self.store.env.write_txn()?;
@@ -2241,7 +2247,7 @@ impl Vault {
             created_at: crate::unix_seconds_now(),
         };
         let receipt = ConsentReceipt::Approved {
-            decision_id: owner.decision_id,
+            decision_id: GateDecisionId::now(),
             grant: ConsentGrant::Standing(grant),
         };
 
@@ -2265,7 +2271,7 @@ impl Vault {
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
         let receipt = ConsentReceipt::Denied {
-            decision_id: owner.decision_id,
+            decision_id: GateDecisionId::now(),
             effect_digest,
         };
         let mut wtxn = self.store.env.write_txn()?;
@@ -2292,7 +2298,7 @@ impl Vault {
         let data = encode_consent_grant_row(&row)?;
         self.store.vault_meta.put(&mut wtxn, &key, &data)?;
         let receipt = ConsentReceipt::Revoked {
-            decision_id: owner.decision_id,
+            decision_id: GateDecisionId::now(),
             grant_ref: grant_ref.to_owned(),
         };
         self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
