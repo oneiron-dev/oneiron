@@ -2612,22 +2612,33 @@ fn identity_topology_receipt(
             actor.actor_class().gate_actor_class().to_owned(),
         );
     }
+    // DECLARED vs APPLIED (ONE-1745), for every action that carries a
+    // reassignment map. The gap is the point: it means the decision named
+    // items this vault holds no claim for. Both halves read the STORED
+    // record alone, so the projector stays pure — no vault, no txn.
+    if let Some(map) = record.action.reassignment_map() {
+        let (assigned, residue) = map.assigned_and_residue_counts();
+        fields.insert("assigned".to_owned(), assigned.to_string());
+        fields.insert("residue".to_owned(), residue.to_string());
+    }
+    if let Some(applied) = record.action.applied_reassignment_stats() {
+        fields.insert("applied_assigned".to_owned(), applied.assigned.to_string());
+        fields.insert("applied_residue".to_owned(), applied.residue.to_string());
+    }
     let trigger_ref = match &record.action {
         StoredIdentityOpAction::Merge { sources, survivor } => {
             fields.insert("survivor".to_owned(), survivor.to_hex());
             fields.insert("source_count".to_owned(), sources.len().to_string());
             Some(format!("entity:{}", survivor.to_hex()))
         }
-        StoredIdentityOpAction::Split {
-            entity,
-            heads,
-            reassignment,
-        } => {
-            let (assigned, residue) = reassignment.assigned_and_residue_counts();
+        StoredIdentityOpAction::Split { entity, heads, .. } => {
             fields.insert("entity".to_owned(), entity.to_hex());
             fields.insert("head_count".to_owned(), heads.len().to_string());
-            fields.insert("assigned".to_owned(), assigned.to_string());
-            fields.insert("residue".to_owned(), residue.to_string());
+            Some(format!("entity:{}", entity.to_hex()))
+        }
+        StoredIdentityOpAction::Facet { entity, facets, .. } => {
+            fields.insert("entity".to_owned(), entity.to_hex());
+            fields.insert("facet_count".to_owned(), facets.len().to_string());
             Some(format!("entity:{}", entity.to_hex()))
         }
         StoredIdentityOpAction::Undo { target } => {

@@ -569,10 +569,10 @@ pub use crate::identity_topology::{
     IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyEvent,
     IdentityTopologyFold, IdentityTopologyOp, IdentityTopologyRejection, MergeOp,
     PREDICATE_ENTITY_DISTINCT_FROM, PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED, ProposalOutcome,
-    ProposalRuling, ProposalScope, ReassignmentEntry, ReassignmentMap, ReassignmentTarget, SplitOp,
-    StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan, decode_identity_op_amendment,
-    distinct_pair_key, encode_identity_op_amendment, evaluate_transition,
-    fold_identity_topology_log, merge_lifecycle_states,
+    ProposalRuling, ProposalScope, ReassignmentEntry, ReassignmentMap, ReassignmentStats,
+    ReassignmentTarget, SplitOp, StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan,
+    decode_identity_op_amendment, distinct_pair_key, encode_identity_op_amendment,
+    evaluate_transition, fold_identity_topology_log, merge_lifecycle_states,
 };
 pub use crate::inbox::{
     INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,
