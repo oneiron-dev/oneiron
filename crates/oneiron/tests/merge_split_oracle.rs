@@ -17,9 +17,10 @@
 //! public API.
 
 use oneiron::{
-    ClaimSource, ClaimSubject, EntityId, HnswConfig, IdentityOpEvidence, IdentityOpOutcome,
-    IdentityOpWrite, IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan,
-    Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, HnswConfig, IdentityOpEvidence,
+    IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp, ProposalOutcome,
+    ProposalRuling, ReassignmentMap, ReceiptKind, ReceiptQuery, SplitOp, SurvivorshipPlan, Vault,
+    VaultConfig,
 };
 
 fn test_config() -> VaultConfig {
@@ -102,31 +103,86 @@ fn real_split(vault: &Vault, entity: EntityId, heads: Vec<EntityId>, now: u64) -
     event
 }
 
-/// Proposal ruling a human (or the propose lane) applies to a parked
-/// identity-topology proposal (ARCH-0055 r7 outcome vocabulary).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProposalRuling<'a> {
-    /// Approve exactly as proposed.
-    Approve,
-    /// Amend with the given delta payload, then approve.
-    AmendThenApprove(&'a [u8]),
-    /// Reject.
-    Reject,
+// `ProposalRuling` / `ProposalOutcome` were local stand-ins here until
+// ONE-1747 built them; they are now the REAL `oneiron::` types, imported
+// above. The vocabularies are identical (r7: exactly three outcome states),
+// so every assert below binds unchanged — the stand-ins are simply gone.
+
+/// Fixture clocks: a proposal is parked, then ruled strictly later.
+const PROPOSAL_AT: u64 = 200;
+const RULING_AT: u64 = 300;
+
+/// The merge op the ONE-1747 fixtures propose: `sources` folded into
+/// `survivor`.
+fn merge_op(sources: Vec<EntityId>, survivor: EntityId) -> IdentityTopologyOp {
+    IdentityTopologyOp::Merge(MergeOp {
+        sources,
+        survivor,
+        evidence: IdentityOpEvidence {
+            refs: Vec::new(),
+            rationale: "oracle fixture merge proposal".to_owned(),
+        },
+        survivorship_plan: SurvivorshipPlan::ReadThrough,
+    })
 }
 
-/// Resolved-proposal outcome states (r7: exactly three).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProposalOutcome {
-    ApprovedUntouched,
-    ApprovedAmended,
-    Rejected,
+/// An amended merge body for a proposal parked by
+/// [`seam::submit_merge_proposal`], as raw op bytes.
+///
+/// FIXTURE ADAPTATION (arming, not weakening): the parked contracts were
+/// authored against placeholder byte strings, before ONE-1747 ruled that an
+/// amendment may only NARROW what the decider reviewed — same op kind, and a
+/// subject subset of the proposal's. Arbitrary bytes are precisely what that
+/// pin must reject, so the fixtures become REAL encoded amended bodies. The
+/// asserts are untouched: the payload still round-trips byte-exact (which is
+/// what "opaque slot, not a shaped struct" means — the engine stores the
+/// decider's bytes verbatim and never reshapes them) and the reserved-Δ
+/// negative is unchanged.
+fn amendment_body(sources: Vec<EntityId>, survivor: EntityId) -> Vec<u8> {
+    oneiron::encode_identity_op_amendment(&merge_op(sources, survivor)).expect("encode amendment")
+}
+
+/// The propose lane's write: `Proposed` parks with zero topology effects.
+fn proposed_write() -> IdentityOpWrite {
+    IdentityOpWrite {
+        approval: ClaimApprovalStatus::Proposed,
+        ..IdentityOpWrite::auto(ClaimSource::Inferred)
+    }
+}
+
+/// The decider's write: a ruling is the act of deciding, so it is effective.
+fn ruling_write() -> IdentityOpWrite {
+    IdentityOpWrite::auto(ClaimSource::UserStated)
+}
+
+/// The single proposal-outcome receipt projected for a resolution event.
+///
+/// Read back through the PUBLIC `ReceiptQuery` surface (not a direct ledger
+/// peek), so the oracle also witnesses the blueprint's "queryable by kind"
+/// contract on every payload assert.
+fn outcome_receipt(vault: &Vault, receipt: EntityId) -> oneiron::ReceiptRecord {
+    let receipt_id = format!("proposal_outcome:{}", receipt.to_hex());
+    let mut query = ReceiptQuery::default();
+    query.kinds.insert(ReceiptKind::ProposalOutcome);
+    let mut matched: Vec<oneiron::ReceiptRecord> = vault
+        .receipts(query)
+        .expect("query proposal-outcome receipts")
+        .into_iter()
+        .filter(|record| record.receipt_id == receipt_id)
+        .collect();
+    assert_eq!(
+        matched.len(),
+        1,
+        "a resolution must project exactly one outcome receipt"
+    );
+    matched.remove(0)
 }
 
 /// Thinnest plausible seams for the downstream MS tickets. Each stub names
 /// the ticket that must replace it with the real engine API.
 #[allow(dead_code)]
 mod seam {
-    use super::{EntityId, ProposalOutcome, ProposalRuling, Vault};
+    use super::{EntityId, IdentityOpOutcome, ProposalOutcome, ProposalRuling, Vault};
 
     // ---- ONE-1744 (MS-02): redirect projection + read-time resolution ----
 
@@ -259,31 +315,50 @@ mod seam {
     }
 
     // ---- ONE-1747 (MS-05): proposal-outcome receipts + reserved delta ----
+    // ARMED: handles are real `EntityId`s (the parked event id and the
+    // resolution event id), not the u64 placeholders.
 
-    /// Parks an identity-topology proposal for the pair; returns a handle.
-    pub(crate) fn submit_merge_proposal(_vault: &Vault, _a: &EntityId, _b: &EntityId) -> u64 {
-        unimplemented!("armed by ONE-1747: proposal parking")
+    /// Parks an identity-topology merge proposal for the pair; returns the
+    /// parked event id.
+    pub(crate) fn submit_merge_proposal(vault: &Vault, a: &EntityId, b: &EntityId) -> EntityId {
+        let outcome = vault
+            .apply_identity_topology_op(
+                &super::merge_op(vec![*b], *a),
+                &super::proposed_write(),
+                super::PROPOSAL_AT,
+            )
+            .expect("park proposal");
+        let IdentityOpOutcome::Parked { event, .. } = outcome else {
+            panic!("a Proposed merge must park, got {outcome:?}");
+        };
+        event
     }
 
     /// Applies a ruling to a parked proposal; returns the outcome state and
-    /// a receipt handle.
+    /// the resolution event id, which is also the receipt handle.
     pub(crate) fn resolve_proposal(
-        _vault: &Vault,
-        _proposal: u64,
-        _ruling: ProposalRuling<'_>,
-    ) -> (ProposalOutcome, u64) {
-        unimplemented!("armed by ONE-1747: proposal-outcome receipts")
+        vault: &Vault,
+        proposal: EntityId,
+        ruling: ProposalRuling<'_>,
+    ) -> (ProposalOutcome, EntityId) {
+        vault
+            .resolve_identity_proposal(&proposal, ruling, &super::ruling_write(), super::RULING_AT)
+            .expect("resolve proposal")
     }
 
-    /// The receipt's amendment-delta payload, verbatim (r7: reserved slot,
-    /// opaque until ARCH-0056/ONE-1757 consumes it).
-    pub(crate) fn receipt_delta_payload(_vault: &Vault, _receipt: u64) -> Option<Vec<u8>> {
-        unimplemented!("armed by ONE-1747: reserved delta field")
+    /// The receipt's amendment payload, verbatim (r7: opaque bytes, byte-
+    /// exact round-trip).
+    pub(crate) fn receipt_delta_payload(vault: &Vault, receipt: EntityId) -> Option<Vec<u8>> {
+        oneiron::proposal_outcome_amended_body(&super::outcome_receipt(vault, receipt))
     }
 
     /// Field names the receipt projects (for the reserved-not-built probe).
-    pub(crate) fn receipt_field_names(_vault: &Vault, _receipt: u64) -> Vec<String> {
-        unimplemented!("armed by ONE-1747: receipt field projection")
+    pub(crate) fn receipt_field_names(vault: &Vault, receipt: EntityId) -> Vec<String> {
+        super::outcome_receipt(vault, receipt)
+            .fields
+            .keys()
+            .cloned()
+            .collect()
     }
 
     // ---- ONE-1748 (MS-06): consent-graduation ramp ----
@@ -652,7 +727,6 @@ fn ms04_distinct_from_does_not_suppress_unrelated_pairs() {
 /// r7/§7: a resolved proposal yields exactly one of approved-untouched /
 /// approved-amended / rejected.
 #[test]
-#[ignore = "armed by ONE-1747"]
 fn ms05_proposal_outcome_has_exactly_three_states() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
@@ -665,11 +739,9 @@ fn ms05_proposal_outcome_has_exactly_three_states() {
     assert_eq!(outcome, ProposalOutcome::ApprovedUntouched);
 
     let amended = seam::submit_merge_proposal(&vault, &a, &c);
-    let (outcome, _) = seam::resolve_proposal(
-        &vault,
-        amended,
-        ProposalRuling::AmendThenApprove(b"narrow-to-work-claims"),
-    );
+    let narrowed = amendment_body(vec![c], a);
+    let (outcome, _) =
+        seam::resolve_proposal(&vault, amended, ProposalRuling::AmendThenApprove(&narrowed));
     assert_eq!(outcome, ProposalOutcome::ApprovedAmended);
 
     let rejected = seam::submit_merge_proposal(&vault, &a, &d);
@@ -680,7 +752,6 @@ fn ms05_proposal_outcome_has_exactly_three_states() {
 /// r7/§7: an approved-amended outcome carries a present, non-empty
 /// amendment-delta payload; approved-untouched and rejected carry none.
 #[test]
-#[ignore = "armed by ONE-1747"]
 fn ms05_amended_receipt_carries_delta_others_do_not() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
@@ -689,14 +760,12 @@ fn ms05_amended_receipt_carries_delta_others_do_not() {
     let d = put_person(&vault, 0x24);
 
     let amended = seam::submit_merge_proposal(&vault, &a, &b);
-    let (_, amended_receipt) = seam::resolve_proposal(
-        &vault,
-        amended,
-        ProposalRuling::AmendThenApprove(b"narrow-to-work-claims"),
-    );
+    let narrowed = amendment_body(vec![b], a);
+    let (_, amended_receipt) =
+        seam::resolve_proposal(&vault, amended, ProposalRuling::AmendThenApprove(&narrowed));
     assert_eq!(
         seam::receipt_delta_payload(&vault, amended_receipt),
-        Some(b"narrow-to-work-claims".to_vec())
+        Some(narrowed.clone())
     );
 
     let untouched = seam::submit_merge_proposal(&vault, &a, &c);
@@ -714,19 +783,25 @@ fn ms05_amended_receipt_carries_delta_others_do_not() {
 /// does NOT project the six eventual ARCH-0056 §2 field names — building
 /// them here would over-build the ED-epic's surface (ONE-1757 consumes).
 #[test]
-#[ignore = "armed by ONE-1747"]
 fn ms05_delta_field_is_reserved_opaque_not_built() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
     let b = put_person(&vault, 0x22);
 
-    let opaque: &[u8] = &[0x00, 0xFF, 0x13, 0x37, 0x00];
+    // The payload is carried as OPAQUE bytes: raw binary (embedded id bytes
+    // make it non-UTF-8), stored verbatim and handed back byte-for-byte
+    // rather than reshaped into a struct the engine understands.
+    let opaque = amendment_body(vec![b], a);
+    assert!(
+        std::str::from_utf8(&opaque).is_err(),
+        "fixture must be genuinely binary, else byte-exactness proves nothing"
+    );
     let proposal = seam::submit_merge_proposal(&vault, &a, &b);
     let (_, receipt) =
-        seam::resolve_proposal(&vault, proposal, ProposalRuling::AmendThenApprove(opaque));
+        seam::resolve_proposal(&vault, proposal, ProposalRuling::AmendThenApprove(&opaque));
     assert_eq!(
         seam::receipt_delta_payload(&vault, receipt),
-        Some(opaque.to_vec())
+        Some(opaque.clone())
     );
 
     let fields = seam::receipt_field_names(&vault, receipt);

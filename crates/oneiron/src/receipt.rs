@@ -97,6 +97,10 @@ const FIELD_PROPOSAL_REF: &str = "proposal_ref";
 const FIELD_OP_KIND: &str = "op_kind";
 const FIELD_TARGET_CLASS: &str = "target_class";
 const FIELD_SCOPE_ACTOR: &str = "actor";
+/// The resolution event's claim-source axis. Deliberately NOT `"source"`:
+/// that key is reserved as one of the six ARCH-0056 Δ field names this
+/// receipt must not project until ED-01 (ONE-1757) builds the Δ schema.
+const FIELD_CLAIM_SOURCE: &str = "claim_source";
 /// The amended op body verbatim (lower hex) — the PRODUCER artifact.
 const FIELD_AMENDED_BODY: &str = "amended_body";
 /// The RESERVED ARCH-0056 Δ slot. Minted here, filled by ED-01 (ONE-1757) —
@@ -2206,7 +2210,14 @@ fn proposal_outcome_receipt(
     fields.insert(FIELD_OP_KIND.to_owned(), scope.op_kind.to_owned());
     fields.insert(FIELD_TARGET_CLASS.to_owned(), scope.target_class.clone());
     fields.insert(FIELD_SCOPE_ACTOR.to_owned(), scope.actor.clone());
-    fields.insert("source".to_owned(), record.source.as_str().to_owned());
+    // NOT `source`: that key is one of the six ARCH-0056 Δ field names this
+    // receipt must not project until ED-01 (ONE-1757) builds the Δ schema.
+    // The claim-source axis is real and unrelated, so it keeps its own
+    // unambiguous key rather than squatting on the reserved one.
+    fields.insert(
+        FIELD_CLAIM_SOURCE.to_owned(),
+        record.source.as_str().to_owned(),
+    );
     fields.insert("seq".to_owned(), record.seq.to_string());
     if let Some(amended_body) = amended_body {
         fields.insert(FIELD_AMENDED_BODY.to_owned(), hex_lower(amended_body));
