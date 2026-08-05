@@ -2236,8 +2236,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
-        if let Some(catastrophe) = bound_catastrophe_class(&bound) {
-            let _ = catastrophe;
+        if bound_catastrophe_class(&bound).is_some() {
             return Err(Error::ConsentCatastropheNotRememberable(
                 "the catastrophe floor is non-rememberable; no standing grant may cover it",
             ));

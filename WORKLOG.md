@@ -88,6 +88,47 @@ Acceptance authority: DEC-0006 nine-invariant table (exact, not illustrative).
   `edit_settle.rs` · `edit_settle/tests.rs` · `receipt.rs` ·
   `tests/merge_split_oracle.rs`. `Cargo.lock` untouched.
 
+## SIMPLIFY pass (seg1) — verdict + delta
+
+Deletion-biased review of the full lane diff (4786+/43−), one pass, cheap gate
+re-green. The seg0 implementer already wrote lean: the pass is a **1-line net
+deletion**, and "kept" items below were individually re-checked against the
+deletion bias rather than left by default.
+
+- **DELETED** a dead `let _ = catastrophe;` binding inside the catastrophe
+  mint-reject in `create_standing_grant` — a leftover from a first draft that
+  named the binding; the arm discards the match. `consent.rs` 2603 → 2602.
+- **Kept: `ActorBound::new` + `with_actor_class`** (no `actor(&str, Option)` arg
+  collapse). A two-arg constructor reads class-optics as a permission expansion,
+  which is why the GET flavor + builder-with-tightener shape is the
+  deliberate, common one in this codebase's bound types.
+- **Kept: `ConsentGateContext::evaluate` + `consent_gate_reason_codes` wrappers**
+  in gate.rs. They are the pin that says the Gate composes `consent.rs`'s
+  evaluator ONCE, rather than each door re-implementing the ladder. That
+  docstring is the contract, not scaffolding.
+- **Kept: strict `validate_keys` + the `required_value` chain on the row codec.**
+  This is the persisted-MessagePack bodycontract — the one place the
+  envelope-discipline cost is load-bearing. Weakening it (e.g. `serde(default)`)
+  would admit crossed/mislabeled rows, which the invariant-8 fail-safe
+  explicitly guards against.
+- **Kept: `evaluate_consent`'s three-step ladder as-is.** Catastrophe →
+  approve-once/standing → reversibility is the DEC-0006 pin order; folding the
+  "uncovered+irreversible ≠ write hides" nuance any further collapses the
+  domain fail-safe back into a single verdict and re-opens invariant 8.
+- **Kept: `ActionEnvelope`'s 4 Option/bool fields.** Model, not speculative
+  generality: each (`selectors`, `target`, `budget`, `receipt_required`) has an
+  invariant-bearing containment rule; a presence check confirmed all four are
+  set or matched in the lane's own tests.
+- Checked the three wrapper-shaped items one-by-one (`ConsentEvaluation` →
+  reason-codes, `ConsentRegistryRow::from_row`, `append_consent_receipt_in_txn`
+  → `append_consent_gate_decision_in_txn`): all earn their layer as named
+  seams in the "projection, not a second ledger" contract, NOT "for safety"
+  scaffolding.
+- No test file, no public-API signature, no `GateDecisionRecord` field was
+  touched. `Cargo.lock` untouched.
+
+Net lane delta from this pass: **+0 / −1** (the dead binding). Cheap gate below.
+
 ## Next-step INTENT
 
 1. **Rebase on post-1728 `gate.rs`** before any push (CLAIMS §gate.rs seam) and
