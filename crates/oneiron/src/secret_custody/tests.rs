@@ -152,11 +152,13 @@ fn floor_defaults_match_canon() {
 #[test]
 fn floor_merge_is_most_restrictive_per_field() {
     let mut a = SecretCustodyFloor::default();
-    let mut b = SecretCustodyFloor::default();
-    b.portable = TierBand::only(CustodyTier::T0Doored); // narrower than a's T0..T2
-    b.rotation_max_age_secs = Some(86_400);
-    b.env_bindings
-        .insert("prod".to_owned(), "require-lease".to_owned());
+    let b = SecretCustodyFloor {
+        // narrower than a's T0..T2
+        portable: TierBand::only(CustodyTier::T0Doored),
+        rotation_max_age_secs: Some(86_400),
+        env_bindings: BTreeMap::from([("prod".to_owned(), "require-lease".to_owned())]),
+        ..SecretCustodyFloor::default()
+    };
     a.merge(b);
     assert_eq!(a.portable, TierBand::only(CustodyTier::T0Doored));
     assert_eq!(a.rotation_max_age_secs, Some(86_400));
@@ -244,6 +246,84 @@ fn raw_put_doors_reject_secret_custody_byte() {
     );
 }
 
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_put_door_rejects_secret_custody_byte() {
+    // C1 APPLY-TIME SEAL: the public raw doors reject byte 77 through the
+    // `Maintenance` classification, but the REPLICATED door opens both admit
+    // bands at once and its type gate listed only POLICY_MANIFEST /
+    // ACCESS_GRANT / OUTBOUND_GRANT — so a peer-authored custody body (with
+    // its plaintext `value_bytes`) reached `apply_put` and landed in LMDB.
+    // Both replicated entry points must now fail typed and store nothing.
+    use crate::temporal::TimeRange;
+
+    let (_tmp, vault) = temp_vault();
+    let rec = record(
+        "replicated",
+        CustodyClass::CustodyPortable,
+        b"hunter2",
+        vec![],
+    );
+    let body = encode_secret_custody_body(&rec).expect("encode");
+    let occurred = TimeRange { start: 1, end: 1 };
+
+    let batch_id = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(&batch_id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
+        .commit()
+        .expect_err("replicated custody put must be denied");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    assert!(
+        vault.get_raw(&batch_id).expect("raw read").is_none(),
+        "rejected replicated put must not leave a stored row"
+    );
+
+    let txn_id = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(&txn_id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
+                .apply(wtxn)
+        })
+        .expect_err("in-txn replicated custody put must be denied");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    assert!(
+        vault.get_raw(&txn_id).expect("raw read").is_none(),
+        "rejected in-txn replicated put must not leave a stored row"
+    );
+
+    // The refusal classifies as a REMOTE rejection so one poisoned custody row
+    // quarantines instead of wedging every other change in the window.
+    assert_eq!(
+        crate::sync::quarantine::remote_rejection_reason(&err).as_deref(),
+        Some("InvalidSecretCustodyBody"),
+    );
+}
+
+/// Decodes a custody body and re-encodes its MessagePack map minus one key.
+fn drop_key(bytes: &[u8], drop: &str) -> Vec<u8> {
+    let mut cursor = std::io::Cursor::new(bytes);
+    let value = rmpv::decode::read_value(&mut cursor).expect("decode");
+    let Value::Map(entries) = value else {
+        panic!("map")
+    };
+    let kept: Vec<(Value, Value)> = entries
+        .into_iter()
+        .filter(|(k, _)| k.as_str() != Some(drop))
+        .collect();
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &Value::Map(kept)).expect("encode");
+    out
+}
+
 #[test]
 fn decode_rejects_missing_required_body_keys() {
     // FIX5 BODY-SCHEMA: every key except rotated_at is required. Build a body
@@ -251,23 +331,6 @@ fn decode_rejects_missing_required_body_keys() {
     // the immediate body-schema reject.
     let rec = record("c", CustodyClass::CustodyPortable, b"v", vec![]);
     let full = encode_secret_custody_body(&rec).expect("encode");
-
-    // Decode the full body and re-encode the MessagePack map minus one key.
-    fn drop_key(bytes: &[u8], drop: &str) -> Vec<u8> {
-        use rmpv::Value;
-        let mut cursor = std::io::Cursor::new(bytes);
-        let value = rmpv::decode::read_value(&mut cursor).expect("decode");
-        let Value::Map(entries) = value else {
-            panic!("map")
-        };
-        let kept: Vec<(Value, Value)> = entries
-            .into_iter()
-            .filter(|(k, _)| k.as_str() != Some(drop))
-            .collect();
-        let mut out = Vec::new();
-        rmpv::encode::write_value(&mut out, &Value::Map(kept)).expect("encode");
-        out
-    }
 
     for key in [
         "bindings",
@@ -394,7 +457,7 @@ fn value_read_goes_through_get_secret_value_in_txn_door() {
     );
     let id = vault.register_secret(rec).expect("register");
 
-    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    let wtxn = vault.store.env.write_txn().expect("write txn");
     // Unbound effector is denied through the door.
     let err = vault
         .get_secret_value_in_txn(&wtxn, &id, "connector:evil")
@@ -433,7 +496,7 @@ fn value_read_requires_binding() {
         vec![binding("door:receive-pack", CustodyTier::T0Doored)],
     );
     let id = vault.register_secret(rec).expect("register");
-    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    let wtxn = vault.store.env.write_txn().expect("write txn");
     // No binding for this effector → typed deny.
     let err = vault
         .get_secret_value_in_txn(&wtxn, &id, "connector:other")

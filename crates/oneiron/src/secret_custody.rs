@@ -615,13 +615,24 @@ fn invalid_body(reason: &'static str) -> Error {
 }
 
 /// ONE-1865 arms the replication and export posture for SECRET_CUSTODY; until
-/// then the type byte is sealed from every CRDT plane. This is the ONE
-/// rejection constructor every door names, so a grep for the byte's rejection
-/// audits the whole seal: the sync selector ([`crate::sync::selector`]), the
-/// canonical-doc mirror paths ([`crate::sync::window`] reverse
-/// rematerialization and the export scrub), and the write walls
-/// (`batch::apply_put` / `batch::validate_public_raw_put` — the custody record
-/// writes ONLY through [`Vault::register_secret`]).
+/// then the type byte is sealed from the raw and CRDT planes. This is the ONE
+/// rejection constructor every REJECTING door names, so a grep for it audits
+/// the whole seal:
+///
+/// * the replicated write wall (`batch::apply_ops`' Put arm) — the CRDT replay
+///   door never materializes a peer-supplied custody body; the record writes
+///   ONLY through [`Vault::register_secret`]. Public raw puts are already
+///   refused one level up by the `Maintenance` classification
+///   (`MaintenanceKindNotWritable(77)`);
+/// * the generic read doors [`Vault::get`] and [`Vault::get_raw`], whose bytes
+///   would otherwise carry `value_bytes` in the clear — the ONLY sanctioned
+///   value read is [`Vault::get_secret_value_in_txn`];
+/// * the export scrub's malformed-key arm ([`crate::sync::window`]), which
+///   quarantines a custody carrier filed under a non-canonical peer key.
+///
+/// The two SILENT doors are deliberately not errors: the sync selector
+/// ([`crate::sync::selector`]) drops the byte from the export set, and reverse
+/// rematerialization skips-and-scrubs it. Neither has a caller to fail.
 pub(crate) fn reject_secret_custody_byte() -> Error {
     invalid_body("secret custody records are sealed from the raw/CRDT planes until ONE-1865")
 }

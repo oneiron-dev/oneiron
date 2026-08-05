@@ -2250,6 +2250,73 @@ fn forward_rematerialization_quarantines_forged_shell_and_continues_edge_pass() 
 }
 
 #[test]
+fn forward_remat_quarantines_replicated_secret_custody_carrier() -> Result<()> {
+    // C1 APPLY-TIME SEAL, end to end: a peer files a SECRET_CUSTODY body in
+    // the window doc. The generic `put_replicated` arm used to admit byte 77
+    // straight into LMDB (the replicated type gate named only POLICY_MANIFEST
+    // / ACCESS_GRANT / OUTBOUND_GRANT), materializing peer-authored plaintext
+    // `value_bytes`. It must now quarantine the row and continue the pass.
+    use crate::secret_custody::{
+        CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
+        SecretCustodyStatus, encode_secret_custody_body,
+    };
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let custody_id = EntityId::from_bytes([0x51; 16])?;
+    let ordinary_id = EntityId::from_bytes([0x52; 16])?;
+
+    let body = encode_secret_custody_body(&SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "peer-authored".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"peer-plaintext-value".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: learned_at,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: Vec::new(),
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    let custody_blob = make_entity_blob(ENTITY_TYPE_SECRET_CUSTODY, learned_at, &body);
+    let ordinary_blob = make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary turn body");
+
+    let doc = create_window_doc("remote", &window_key);
+    let entities = doc.get_map("entities");
+    map_insert_bytes(&entities, &custody_id.to_hex(), &custody_blob)?;
+    map_insert_bytes(&entities, &ordinary_id.to_hex(), &ordinary_blob)?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+
+    assert_eq!(count, 1, "the ordinary row still materializes");
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&vault.store.env.read_txn()?, custody_id.as_bytes())?
+            .is_none(),
+        "a replicated custody body must never reach LMDB"
+    );
+    assert!(
+        vault.get_raw(&ordinary_id)?.is_some(),
+        "one sealed custody row must not wedge the rest of the pass"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Entities);
+    assert_eq!(
+        quarantined[0].1.reason_code, "InvalidSecretCustodyBody",
+        "the custody seal must classify as a remote rejection, not a local failure"
+    );
+    Ok(())
+}
+
+#[test]
 fn forward_rematerialization_admits_byte_exact_mandated_shell_echo() -> Result<()> {
     use crate::identity_topology::{
         IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
