@@ -9,7 +9,14 @@ mod tasks;
 pub use agents::{
     AgentLane, AgentRow, AgentsSection, ChildAgentPresence, PeerPresence, render_agents_section,
 };
-pub use frame::{BoardBlockHeader, BoardSection, render_board_block};
+pub use frame::{
+    BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
+    BoardFrameError, BoardLegend, BoardRender, BoardRenderMetadata, BoardSection, BudgetPolicyRef,
+    CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES,
+    PLUGIN_SECTION_BUDGET_POLICY_REF, SHED_ORDER, SectionPolicy, SectionView, ShedOutcome,
+    ShedRank, ShedSection, assemble_task_agent_sections, render_board_block, resolve_board_budget,
+    section_policy_for_budget_ref, shed,
+};
 pub use tasks::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow, TasksSection, expand_task,
     failed_lane, fold_up_status, render_tasks_section,
