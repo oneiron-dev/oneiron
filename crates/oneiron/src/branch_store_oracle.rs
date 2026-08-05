@@ -252,12 +252,14 @@ mod seam {
                     break;
                 }
             }
-            let summary_id = summary_id.ok_or(Error::InvariantViolation(
-                "session witness staged no DerivedFrom summary",
-            ))?;
             drop(rtxn);
             drop(view);
-            Ok((turn_id, message_id, summary_id))
+            // SUMMARY materialization is SESSION-ONLY (blueprint §facade): a
+            // post-flip witness runs the base program, which has no SUMMARY
+            // put. Report the turn id in that slot rather than failing — the
+            // flip oracle asks "where did this land", not "was a summary
+            // made". Off-record callers still get a real, distinct summary id.
+            Ok((turn_id, message_id, summary_id.unwrap_or(turn_id)))
         }
 
         /// ONE-1728: session retrieval through the composed handle (records
@@ -1335,11 +1337,19 @@ fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
     );
 
     // ScopedRead family (ledger R10): a base-side scoped read surfaces zero
-    // claims for the room's subject.
+    // claims for the room's subject. The session side is asserted too — the
+    // sweep's contract is "canonical sees base only, session sees the union",
+    // and only checking the base half would also pass if the session handle
+    // were blind.
     assert_eq!(
         seam::base_scoped_read_visible_claim_count(&vault, &turn)?,
         0,
         "base ScopedRead must surface zero claims for session content"
+    );
+    assert_eq!(
+        session.session_scoped_read_visible_claim_count(&turn)?,
+        0,
+        "the room staged no claims, so its own ScopedRead surfaces none either"
     );
 
     // Telemetry: the base retrieval-run ledger gained EXACTLY the probe's
@@ -1351,6 +1361,22 @@ fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
         vault.store.retrieval_runs(100)?.len(),
         runs_before + 1,
         "base ledger delta must be exactly the base probe's own telemetry row"
+    );
+
+    // The union half: an IN-ROOM retrieval registers a row the room can read
+    // back, while the base ledger above stays flat. Both directions matter —
+    // "base gains nothing" alone would also hold if the row were dropped.
+    let room_runs_before = session.retrieval_run_count()?;
+    let _ = session.search_text("oraclesweepuniquetoken", 5)?;
+    assert_eq!(
+        session.retrieval_run_count()?,
+        room_runs_before + 1,
+        "a session retrieval registers exactly one overlay-local run row"
+    );
+    assert_eq!(
+        vault.store.retrieval_runs(100)?.len(),
+        runs_before + 1,
+        "and the base telemetry ledger gains NOTHING from the in-room run"
     );
 
     // The summary carrier is equally invisible (fence transitivity class).
@@ -1447,9 +1473,61 @@ fn off_record_turns_stay_unextractable_after_mode_flip() -> Result<()> {
     let mut session = seam::SessionVault::enter(&vault, "oracle-flip").expect("enter session");
     session.bind_actor()?;
     let (turn, _msg, _summary) = session.witness_turn("preflipsecret")?;
+
+    // A route minted while OFF record names the pre-flip mode epoch.
+    let stale_route = session.write_route()?;
+
     session.flip_on_record()?;
     assert_eq!(vault.get(&turn)?, None, "pre-flip turn stays out of base");
     assert_eq!(vault.search_text("preflipsecret", 10)?.len(), 0);
+
+    // K10: the pre-flip route is refused by its OWN revalidation, with the
+    // typed stale-route family — not silently honored against a mode the
+    // caller no longer believes it is in.
+    assert!(
+        matches!(
+            stale_route.revalidate(),
+            Err(crate::error::Error::OffRecordOverlayLeaseClosed { .. })
+        ),
+        "a route minted before the flip must be refused by revalidate"
+    );
+
+    // Post-flip witness lands in BASE under the continuation shell, carrying
+    // zero overlay references.
+    let base_entities_after_flip = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.entities.len(&rtxn)?
+    };
+    let (base_turn, _, _) = session.witness_turn("postflippublic")?;
+    assert!(
+        vault.get(&base_turn)?.is_some(),
+        "an on-record session witness lands in base"
+    );
+    assert!(
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            vault.store.entities.len(&rtxn)? > base_entities_after_flip
+        },
+        "the post-flip witness grew the base entity table"
+    );
+
+    // Flip BACK: new writes route to the overlay again, and the pre-flip
+    // turns are still base-invisible.
+    session.flip_off_record()?;
+    let (reflip_turn, _, _) = session.witness_turn("postflipbacksecret")?;
+    assert_eq!(
+        vault.get(&reflip_turn)?,
+        None,
+        "after flip-back, new writes route to the overlay again"
+    );
+    assert_eq!(
+        vault.get(&turn)?,
+        None,
+        "pre-flip turn is STILL out of base"
+    );
+    assert_eq!(vault.search_text("preflipsecret", 10)?.len(), 0);
+    assert_eq!(vault.search_text("postflipbacksecret", 10)?.len(), 0);
+
     session.close()?;
     Ok(())
 }

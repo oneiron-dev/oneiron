@@ -651,6 +651,11 @@ impl OffRecordSession<'_> {
     /// overlay, so a walk that built a view per step could see a torn union
     /// if a concurrent stage landed between them; scoring and registration
     /// therefore share this one.
+    #[allow(
+        dead_code,
+        reason = "ONE-1728 drives it from the branch-store oracle; the host-facing caller is \
+                  ONE-1729's session retrieval binding"
+    )]
     pub(crate) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<EntityId>> {
         let route = self.write_route()?;
         let view = self.read_view()?;
@@ -698,6 +703,10 @@ impl OffRecordSession<'_> {
     /// against a mode epoch that a concurrent flip has replaced is refused
     /// rather than landing in the wrong place. The base half runs inside this
     /// module's private vault access; no vault getter escapes.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730 inherits the route-carrying VaultMeta pair (pinned by the P4a blueprint)"
+    )]
     pub(crate) fn vault_meta_put(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let route = self.write_route()?;
         route.revalidate()?;
@@ -721,6 +730,10 @@ impl OffRecordSession<'_> {
     }
 
     /// Composed VaultMeta read over overlay ∪ base.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730 inherits the route-carrying VaultMeta pair (pinned by the P4a blueprint)"
+    )]
     pub(crate) fn vault_meta_get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;

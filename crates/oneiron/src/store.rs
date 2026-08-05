@@ -406,6 +406,11 @@ impl RetrievalRunId {
     }
 
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "no P4a path reconstructs a run id from raw bytes; on the ONE-1728 seg-4 \
+                  post-merge delete-list unless ONE-1730's promote replay claims it"
+    )]
     pub(crate) fn from_bytes(bytes: [u8; 16]) -> Self {
         Self { bytes }
     }
@@ -1393,6 +1398,12 @@ pub(crate) struct SessionStoreView<'store> {
 /// session write must commit in the same transaction its overlay segment is
 /// staged into — the segment guard applies staged rows only after the base
 /// commit returns.
+#[allow(
+    dead_code,
+    reason = "P4a lands the session telemetry seam whole; `record_retrieval_run_in_txn` has its \
+              lib-target caller in ONE-1728's session `search_text`, and the finalize/delete/read \
+              siblings get theirs from ONE-1729's session context-pack runs and ONE-1730's promote"
+)]
 impl SessionStoreView<'_> {
     /// Session sibling of `Store::record_retrieval_run`.
     pub(crate) fn record_retrieval_run_in_txn(
@@ -1476,7 +1487,10 @@ impl SessionStoreView<'_> {
         rtxn: &RoTxn<'_>,
         key: &[u8],
     ) -> Result<Option<Vec<u8>>> {
-        Ok(self.vault_meta.get(rtxn, key)?.map(|raw| raw.into_owned()))
+        Ok(self
+            .vault_meta
+            .get(rtxn, key)?
+            .map(std::borrow::Cow::into_owned))
     }
 }
 
@@ -1500,6 +1514,13 @@ macro_rules! manifest_dbs {
         /// literally the same code reaching the same accessors, not a copy that
         /// could drift. `OverlayDb` already decides base-vs-overlay internally,
         /// so no writer needs a target branch.
+        #[allow(
+            dead_code,
+            reason = "the trait is generated from ONE list so it cannot drift from the structs; \
+                      six accessors (ppr_cache_deps, sync_state, sync_queue, attempt_records, \
+                      attempt_ready, attempt_dedupe) have no write-target-parameterized caller \
+                      after P4a and are on the ONE-1728 seg-4 post-merge delete-list"
+        )]
         pub(crate) trait ManifestDbs {
             $(fn $name(&self) -> &$ty;)+
         }

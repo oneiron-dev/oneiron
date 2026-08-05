@@ -590,6 +590,11 @@ impl<'a> PipelineBuilder<'a> {
     /// Routes this run's retrieval-run registration into a live session's
     /// overlay (ONE-1728 K10). Additive: retrieval scoring, filters, and
     /// every base reader stay exactly as they were.
+    #[allow(
+        dead_code,
+        reason = "the registration site routes on this field today; its builder caller arrives \
+                  with ONE-1729's session context-pack runs (P4a pins the routing, not the entry)"
+    )]
     pub(crate) fn in_session(mut self, view: &'a crate::store::SessionStoreView<'a>) -> Self {
         self.session_view = Some(view);
         self

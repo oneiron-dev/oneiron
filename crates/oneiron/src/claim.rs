@@ -248,6 +248,11 @@ impl crate::vault::Vault {
     /// admission and policy gates, applied to the union the room can see.
     ///
     /// `Vault::scoped_read` on the canonical handle keeps seeing base only.
+    #[allow(
+        dead_code,
+        reason = "ONE-1728 arms it through the branch-store oracle's ScopedRead sweep; the \
+                  lib-target caller arrives with ONE-1729's session executor binding"
+    )]
     pub(crate) fn scoped_read_in_session<'a>(
         &'a self,
         actor_key: ScopedReadActorKey,
