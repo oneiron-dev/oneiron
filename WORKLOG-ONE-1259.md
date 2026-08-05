@@ -78,3 +78,44 @@ legitimate writer of that file may fold the two rows in.
   (consumed only); no MCP/gateway file, no `oneiron.skills.md`, no
   `api/openapi.rs`, no wave-4 surface. No production dispatcher or worker-loop
   wiring ships: `SurfaceEventDispatcher` is exercised only by a test fake.
+
+## SIMPLIFY (K3) — DONE
+
+**Verdict: the deviation is honest.** The `#[serde(rename = "imessage")]`
+/`"linkedin"` overrides are genuinely required, not a rationalization. Verified
+by compiling a serde probe (serde 1.0.229): `rename_all = "snake_case"` on
+`IMessage` yields `i_message` and on `LinkedIn` yields `linked_in`. Neither
+round-trips the pinned channel keys `imessage`/`linkedin` (the blueprint's own
+Shape section pins those keys and `from_channel_key` matches them), so the two
+explicit renames are the only way to satisfy both the closed enum and the key
+round-trip the blueprint demands. The departure is forced by the pin, not
+worked around it.
+
+**One factual correction landed.** Both the source doc comment and this
+worklog's note above overstate the mangling as `link_ed_in`; real serde emits
+`linked_in` (single underscore before the interior capital `I`). The rename
+*decision* is unaffected — both `i_message` and `linked_in` differ from the
+pinned keys — but the justification comment now states verified reality.
+
+- Edit: `crates/oneiron/src/surface_event.rs` doc comment on `SurfaceSourceApp`
+  corrected (`i_message` / `link_ed_in` → `i_message` / `linked_in`, plus a true
+  description of the rule). Comment-only; no assertion, no public-API change.
+- add/del: **+3 / -1** on the SIMPLIFY commit (`5d13250`).
+- Untouched on purpose: `SurfaceEventHandoffState::as_str()` has zero callers
+  (the `.state.as_str()` hits elsewhere are `AttemptState`/`ChannelIdentityState`,
+  a different type) — but it is exported public API mirroring the used
+  `InboundSurfaceRejectionReason::as_str`, so removal would be a public-API
+  change outside polish scope. Flagged, not deleted.
+
+**Cheap gates after the pass:**
+- `cargo fmt --check`: clean.
+- `cargo clippy -p oneiron --all-targets --all-features -- -D warnings`: clean.
+- `cargo test -p oneiron --all-features --lib surface_event`: 21/21 green.
+- Full `cargo test -p oneiron --all-features --lib`: 3164 passed, 1 failed —
+  `batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once`.
+  This is a **pre-existing timing flake charged to no lane**: the file is
+  outside this lane's claims, the assertion compares two `unix_seconds_now()`
+  reads that invert under full parallel load (`observed_before` 1785948168 vs
+  `migrated` 1785947831, a ~6-min straddle across the 320s suite), and it
+  **passes in isolation** (`--test-threads=1` + exact filter). Unrelated to
+  surface events and to this comment-only edit.
