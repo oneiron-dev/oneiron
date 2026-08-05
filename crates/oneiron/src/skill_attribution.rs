@@ -556,6 +556,9 @@ pub fn run_attribution_audit(vault: &Vault) -> Result<f32> {
 
 /// The generic audit harness: any fixture set, any judge.
 ///
+/// `receipted` here = persisted audit rows at the audited prefix, NOT RS1
+/// receipt rows (which are reified projections over the send ledger).
+///
 /// Deliberately not specialized to skill attribution — ED-03 reuses this shape
 /// for amendment evidence, so the harness stays generic over the evidence class
 /// by taking its fixtures as an argument.
