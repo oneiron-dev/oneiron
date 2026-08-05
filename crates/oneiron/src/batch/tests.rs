@@ -4922,3 +4922,127 @@ fn session_apply_refuses_a_route_minted_before_a_mode_flip() -> Result<()> {
     session.close()?;
     Ok(())
 }
+
+/// The session apply door validates CLAIM BODIES, not just the type byte.
+///
+/// `apply_ops_session` ran `validate_public_entity_type` and went straight to
+/// staging, so a malformed CLAIM body landed in the overlay, was journaled,
+/// and read back through the room's composed view. Promote replays that very
+/// op through `apply_put`, whose D18 arm rejects it — so the room showed its
+/// caller a claim that could never land, and the refusal arrived a whole
+/// session later attached to promote rather than to the write that was wrong.
+/// Fail-closed at promote is not enough: the wrongness has to be
+/// unrepresentable IN the room, not merely unpromotable out of it.
+///
+/// Both halves of the validator chain are covered, because either alone leaves
+/// a door open: a body the DECODER rejects, and well-formed bodies a family's
+/// STRUCTURAL arm rejects (wrong subject kind, wrong value shape).
+#[test]
+fn session_apply_validates_claim_bodies_before_staging() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-claim-body-door", OffRecordBackendClass::Local)?;
+
+    let encode = |predicate: &str, subject: ClaimSubject, value: Value| -> Result<Vec<u8>> {
+        crate::claim::encode_claim_body(&ClaimBody::new(
+            predicate,
+            subject,
+            value,
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        ))
+    };
+
+    let mut undecodable = encode(
+        "dream.symbol",
+        ClaimSubject::Entity(EntityId::now()),
+        Value::from("a blue door"),
+    )?;
+    undecodable.push(0x00);
+
+    let cases: [(&str, Vec<u8>); 3] = [
+        ("trailing bytes after the body map", undecodable),
+        (
+            "a calendar claim whose subject is an EDGE, not an entity",
+            encode(
+                crate::calendar::claims::PREDICATE_CALENDAR_TZ,
+                ClaimSubject::Edge {
+                    source: EntityId::now(),
+                    kind: EdgeKind::Mentions,
+                    target: EntityId::now(),
+                },
+                Value::from("Europe/Berlin"),
+            )?,
+        ),
+        (
+            "a calendar claim whose tz value is an integer, not a string",
+            encode(
+                crate::calendar::claims::PREDICATE_CALENDAR_TZ,
+                ClaimSubject::Entity(EntityId::now()),
+                Value::from(7),
+            )?,
+        ),
+    ];
+
+    for (case, data) in cases {
+        let claim_id = EntityId::now();
+        let occurred = TimeRange { start: 5, end: 5 };
+        let entry = crate::session_overlay::JournalEntry {
+            scope: crate::session_overlay::JournalScope::new(EntityId::now(), claim_id),
+            role: crate::session_overlay::JournalRole::TurnOwnedArtifact,
+            learned_at: 5,
+            occurred,
+            op: BatchOp::Put {
+                id: claim_id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred,
+                learned_at: 5,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            },
+        };
+
+        let route = session.write_route()?;
+        let overlay = session.overlay();
+        let mut wtxn = vault.store.env.write_txn()?;
+        let segment = overlay.install_txn_segment()?;
+        let view = session.read_view()?;
+        let refused = crate::batch::apply_ops_session(
+            &view,
+            &route,
+            &vault.config,
+            &vault.analyzer,
+            &mut wtxn,
+            vec![entry],
+        )
+        .expect_err(case);
+        assert_eq!(refused.kind(), ErrorKind::InvalidClaimBody, "{case}");
+        drop(view);
+        drop(segment);
+        drop(wtxn);
+
+        // The refusal must precede the first staged byte, exactly as the base
+        // door's does: a half-written turn in a room is the outcome both doors
+        // exist to prevent.
+        {
+            let snapshot = overlay.snapshot()?;
+            assert_eq!(
+                snapshot.row_count(crate::session_overlay::OverlayKeyspace::Entities),
+                0,
+                "{case}: no row may stage"
+            );
+            assert_eq!(
+                snapshot.journal_entries().len(),
+                0,
+                "{case}: nothing may be journaled"
+            );
+        }
+    }
+
+    session.close()?;
+    Ok(())
+}
