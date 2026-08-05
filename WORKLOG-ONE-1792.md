@@ -53,6 +53,39 @@ transaction after the door applies. No claim subject is rewritten and no
 `merged_into` edge is authored here. Different `party_key` values are never
 merged.
 
+### 4. Test strengthening
+The cross-vault convergence test originally compared claim COUNTS, which would
+have passed against random ids. It now plants the same party row at an explicit
+id in two fresh vaults, projects one source event per slot, and asserts id
+equality across vaults and distinctness within one.
+
+## Gates
+
+| Gate | Result |
+|---|---|
+| `cargo fmt --all --check` | clean |
+| `cargo clippy --workspace --all-targets --all-features -D warnings` | clean (one pre-existing `sha1` deprecation warning in `oneiron-seal`, untouched by this diff) |
+| `cargo test -p oneiron --all-features` (lib + all integration suites) | 3164 lib + all integration suites pass |
+| comm module | 45 tests, 0 failures (31 pre-existing + 14 new) |
+
+**Mutation-checked** — each feature area was reverted in turn and the suite
+re-run, confirming the new tests actually bite:
+- disable the reconciler → 4 twin tests fail
+- cache-miss-as-absence → 4 rebuild tests fail
+- `EntityId::now()` for projected claims → 4 determinism tests fail
+
+### Pre-existing flake (NOT from this lane)
+Parallel full-suite runs intermittently fail ONE tracing-capture test, a
+different one each run (`embed::…partial_remote_completion…`,
+`attempt_queue::…cleanup_log_span…`, `batch::…authority_fold_backfills…`).
+Cause: `tracing::subscriber::with_default` is thread-local, so parallel tests
+emitting spans pollute each other's captures. Evidence it is not this lane's:
+- reproduces on the clean base commit `e9d9e9a` in a separate worktree;
+- `--test-threads=1` is fully green (**3164 passed, 0 failed**);
+- each test passes in isolation, repeatedly;
+- this diff contains zero tracing/logging lines and touches only `comm.rs` +
+  `comm/tests.rs`.
+
 ## Blueprint deltas
 
 - `put_projected_comm_claim_in_txn`, `projected_comm_claim_id`,
