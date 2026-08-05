@@ -292,3 +292,46 @@ ratification rather than worked around.
   pair, and the 3 calendar-claim test failures whose root cause is
   `calendar/claims.rs`'s validator family being dead code. The second one will
   fail EVERY lane's `--all-features` gate in this wave until it is fixed.
+
+## SIMPLIFY pass (K3, 2026-08-06) — verdicts
+
+Walked `git diff 485ec14..HEAD` (identity_topology.rs, receipt.rs, lib.rs,
+sync/bridge/tests.rs + the two test files read-only) with deletion bias.
+
+**One finding, applied (`89ed0250`):**
+- `apply_reassignment_in_txn` (8 args) was committed WITHOUT the
+  `clippy::too_many_arguments` annotation, so `-D warnings` reported it as an
+  ERROR — the impl leg's "clippy clean for every file this lane touches"
+  receipt was inaccurate (base-red calendar/secret_custody noise masked it).
+  Added `#[expect(clippy::too_many_arguments, reason=…)]` matching the two
+  neighbouring door fns (`reconcile_identity_topology_for_materialized_…`,
+  `write_identity_event_in_txn`). 8 args is inherent to the shared split/facet
+  door shape; reducing arity would split the door, which is worse. No other
+  change — the arity is legitimate, only the missing annotation was the defect.
+
+**Candidates considered and REJECTED (deletion bias — collapse = adding structure):**
+- Duplicate `.filter(|c| !assigned.contains(c)).collect()` tail in
+  `ambiguous_residue_claims` / `claims_remaining_on_origin`: different sources
+  (origin-index residue half vs subject-binding), a shared helper would be a
+  new abstraction layer over 3 lines. Left.
+- `claims_assigned_to` `|_| true` keep-closure: the destination index half is
+  payload-less by design (key carries the row); the uniform `keep` param serves
+  the other two callers. Left.
+- `to_fold_action` facet placeholder labels (`.map(|_| FacetSpec { label:
+  String::new() })`): single call site, no `Default` derive on `FacetSpec`;
+  extracting a helper adds structure. Left.
+- `ReassignmentContext::resolve` `_ => None` arm: catches cross-shaped rows
+  (corruption, not caller error) already rejected upstream by
+  `evaluate_transition`; one line, correctly maps to InvariantViolation. Left.
+- `store.rs`/`edge.rs`/`registry.rs`/`claim.rs`/`error.rs` correctly NOT
+  touched (impl leg already shrank claims below the blueprint's reservation).
+- The heavy simplify work was already done by the impl leg: `shell_edge_weight`
+  →`topology_edge_weight` rename, `edges`→`effects` widening, Facet arm
+  `Unarmed`→real apply, two speculative doors banked, reserved-kind guard
+  extension rejected. This pass found the diff at near its deletion floor.
+
+**Cheap gate after the commit:** fmt clean · clippy `-D warnings` now silent for
+identity_topology (calendar + secret_custody base-red remain, charged to no
+lane) · identity_topology:: 58/58 · merge_split_oracle 14 passed / 0 failed / 9
+ignored · receipt 36/36 · scoped nextest union 211/211 incl. the O(N²) canary
+`identity_topology_receipt_scan_caps_visited_rows`. NOT PUSHED.
