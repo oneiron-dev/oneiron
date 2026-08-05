@@ -110,3 +110,57 @@ ON `ingest.rs` is 1810-ONLY. Must NOT touch: `session_lifecycle.rs`, `facade.rs`
 - No entity type byte allocated.
 - No Meet bot / Drive connector / recorder / platform capture.
 - `diarization` (ONE-1799) and `identity` (ONE-1800) are reserved and emitted `null`.
+
+## Segment log — fix leg (K3, w5-belt-vox)
+
+Fix list applied as per-fix commits. Satellite commits live in
+`/Volumes/Cinema/w5-lt/vox-transcribe` (branch ONE-1810); the engine commit in
+`/Volumes/Cinema/w5-lt/vox` (branch ONE-1810).
+
+- [x] FIX1 `.gitignore` packet violation — reverted commit `b096b14` (revert
+      chosen over PACKET_AMEND: pycache-on-disk untracked is the constraint).
+- [x] FIX2 forced-aligner unwired — new `transcribe_pipeline/forced_aligner_qwen3.py`
+      (`Qwen3ForcedAligner` over the local mlx-audio hub, lazy load) +
+      `ProducerConfig.forge_default()` auto-wiring it when the hub is
+      importable; CLI's ingest path forges through it. Missing provider words
+      now land through the aligner, never ProducerError.
+- [x] FIX3 asr text loss — `_merge_timed_with_text`: provider timed words
+      interleave with the full text stream; skipped tokens are emitted in ORDER
+      position with `timed=False` and BOTH endpoints null (interpolation stays
+      forbidden). Test at :739 inverted: "hello there" is the output.
+- [x] FIX4 alignment chunking — reconcile is now a pure same-word dedup over
+      the overlap; a 700s pack / six-word transcript yields exactly 6 ordered
+      words (pin test).
+- [x] FIX5 pack-band overrun — overrun rule fires on the OPEN pack whenever
+      the next span would carry it past PACK_MAX_MS; `[0,80s]+[90,140s]` mints
+      an 80s pack plus a 50s under-band tail.
+- [x] FIX6 vad-speech accounting — Silero detector runs UNPADDED; pad is
+      applied as explicit arithmetic (edges out by speech_pad_ms, clamped at
+      neighbours). `speech_ms` = detected speech, extent = what gets sliced.
+- [x] FIX7 join provenance — `TimedWord.crossed_join` carried through and
+      emitted on the wire only when true.
+- [x] FIX8 satellite bridge — all-silence/all-blank input mints body "empty
+      audio recording (no detected speech), <duration>"; engine's non-empty
+      note requirement passes.
+- [x] FIX9 cleanup status sealing — `status=done` requires decisions,
+      action_items, open_questions AND garbled_spans as present keys; a
+      done-flagged subset response rejects at decode and at validate.
+- [x] FIX10 cleanup grounding — invented `owner`/`due` values (absent from
+      every input turn's text) reject; garbled-span timestamps must sit inside
+      the input time bounds.
+- [x] FIX11 adapter dispatch — `--emit-ingest-json` short-circuits the
+      stale-md skip guard before any md existence check; source-order pin test
+      + README documents the behaviour change.
+- [x] FIX12 timestamp remap — directional span ownership (start inclusive,
+      end exclusive); a word whose endpoints land in the same span is not
+      flagged `crossed_join`.
+- [x] FIX13 capture-time — `_capture_started_at` mtime fallback deleted;
+      `capture_started_at: None` flows to engine `occurred_at: None`.
+- [x] FIX14 timestamp overflow — engine `occurred_at` uses checked_add;
+      u64::MAX-adjacent capture_started_at rejects with
+      `IngestError::TimestampOverflow`.
+- [x] FIX15 hygiene — ruff F401 unused imports removed; `ruff check` clean.
+- [x] Gates: `pytest tests/test_producer_pipeline.py` 54 green;
+      `pytest --collect-only` on forced_aligner_qwen3 OK;
+      engine `cargo test -p oneiron --all-features --lib` 3165 green, fmt
+      clean, clippy clean.
