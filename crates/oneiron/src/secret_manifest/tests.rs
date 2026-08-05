@@ -81,7 +81,10 @@ fn entry_class_inside_floor_band_validates() {
     let m = manifest(vec![entry(
         "device-pin",
         CustodyClass::CustodyDeviceBound,
-        vec![binding("connector:calendar", CustodyTier::T2LocalRegistered)],
+        vec![binding(
+            "connector:calendar",
+            CustodyTier::T2LocalRegistered,
+        )],
         &[],
     )]);
     validate_secret_manifest(&m, &floor()).expect("at-max binding validates");
@@ -127,7 +130,10 @@ declared_paths = [".secrets/door.key"]
     assert_eq!(m.secrets[0].class, CustodyClass::CustodyPortable);
     assert_eq!(m.secrets[0].declared_paths.len(), 2);
     assert_eq!(m.secrets[0].bindings[0].effector, "connector:gmail");
-    assert_eq!(m.secrets[0].bindings[0].tier_ceiling, CustodyTier::T2LocalRegistered);
+    assert_eq!(
+        m.secrets[0].bindings[0].tier_ceiling,
+        CustodyTier::T2LocalRegistered
+    );
     assert_eq!(m.secrets[1].class, CustodyClass::CrossVault);
 }
 

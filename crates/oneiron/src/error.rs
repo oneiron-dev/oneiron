@@ -1518,7 +1518,10 @@ pub enum Error {
     /// value read or use without a declared binding (SECRET-01; door/lease
     /// enforcement lands in SECRET-02).
     #[error("no secret binding for effector `{effector}` on secret `{secret_ref}`")]
-    SecretBindingDenied { effector: String, secret_ref: String },
+    SecretBindingDenied {
+        effector: String,
+        secret_ref: String,
+    },
     /// A repo-side manifest asks for more exposure than the vault floor
     /// permits for the entry's class (ARCH-0069 S2 — narrow-only).
     #[error(

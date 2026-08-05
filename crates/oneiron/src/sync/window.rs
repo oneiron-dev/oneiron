@@ -31,7 +31,9 @@ use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::edge::decode_edge_value_for_kind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
-use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY};
+use crate::registry::{
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
+};
 use crate::store::Store;
 use loro::{CommitOptions, ExportMode, LoroDoc, LoroMap, Subscription, VersionVector};
 
@@ -725,7 +727,9 @@ fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) 
     let mut custody_ids = HashSet::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
-        let Ok(id) = EntityId::from_hex(raw_key) else { return };
+        let Ok(id) = EntityId::from_hex(raw_key) else {
+            return;
+        };
         if is_secret_custody_record(blob) {
             custody_ids.insert(id);
         }

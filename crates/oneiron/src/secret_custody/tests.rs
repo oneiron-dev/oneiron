@@ -50,7 +50,10 @@ fn record(
 fn custody_class_wire_strings_match_canon() {
     // ARCH-0069 canon nouns, kebab-case on the wire.
     assert_eq!(CustodyClass::CustodyPortable.as_str(), "custody-portable");
-    assert_eq!(CustodyClass::CustodyDeviceBound.as_str(), "custody-device-bound");
+    assert_eq!(
+        CustodyClass::CustodyDeviceBound.as_str(),
+        "custody-device-bound"
+    );
     assert_eq!(CustodyClass::CrossVault.as_str(), "cross-vault");
     assert_eq!(
         CustodyClass::parse("cross-vault"),
@@ -65,7 +68,10 @@ fn tier_orders_by_exposure() {
     assert!(CustodyTier::T0Doored < CustodyTier::T1Leased);
     assert!(CustodyTier::T1Leased < CustodyTier::T2LocalRegistered);
     assert_eq!(CustodyTier::from_u8(0), Some(CustodyTier::T0Doored));
-    assert_eq!(CustodyTier::from_u8(2), Some(CustodyTier::T2LocalRegistered));
+    assert_eq!(
+        CustodyTier::from_u8(2),
+        Some(CustodyTier::T2LocalRegistered)
+    );
     assert_eq!(CustodyTier::from_u8(3), None);
 }
 
@@ -115,7 +121,10 @@ fn record_debug_redacts_value_bytes() {
         !dbg.contains("super-secret-value"),
         "Debug must never leak the value, got: {dbg}"
     );
-    assert!(dbg.contains("<redacted"), "Debug shows a redacted marker: {dbg}");
+    assert!(
+        dbg.contains("<redacted"),
+        "Debug shows a redacted marker: {dbg}"
+    );
 }
 
 #[test]
@@ -176,7 +185,10 @@ fn register_then_resolve_and_metadata() {
         vault.resolve_secret_ref("api-key").expect("resolve"),
         Some(id)
     );
-    let meta = vault.get_secret_metadata(&id).expect("metadata").expect("some");
+    let meta = vault
+        .get_secret_metadata(&id)
+        .expect("metadata")
+        .expect("some");
     assert_eq!(meta.name, "api-key");
     assert_eq!(meta.status, SecretCustodyStatus::Active);
     // Unknown name resolves to None.
@@ -189,7 +201,9 @@ fn duplicate_live_name_is_denied() {
     let a = record("dup", CustodyClass::CustodyPortable, b"one", vec![]);
     vault.register_secret(a).expect("first register");
     let b = record("dup", CustodyClass::CustodyPortable, b"two", vec![]);
-    let err = vault.register_secret(b).expect_err("duplicate live name denied");
+    let err = vault
+        .register_secret(b)
+        .expect_err("duplicate live name denied");
     assert!(matches!(err, Error::SecretNameInUse { .. }), "got {err:?}");
 }
 
@@ -243,7 +257,9 @@ fn decode_rejects_missing_required_body_keys() {
         use rmpv::Value;
         let mut cursor = std::io::Cursor::new(bytes);
         let value = rmpv::decode::read_value(&mut cursor).expect("decode");
-        let Value::Map(entries) = value else { panic!("map") };
+        let Value::Map(entries) = value else {
+            panic!("map")
+        };
         let kept: Vec<(Value, Value)> = entries
             .into_iter()
             .filter(|(k, _)| k.as_str() != Some(drop))
@@ -253,7 +269,12 @@ fn decode_rejects_missing_required_body_keys() {
         out
     }
 
-    for key in ["bindings", "manifest_ref", "declared_paths", "policy_floor_snapshot"] {
+    for key in [
+        "bindings",
+        "manifest_ref",
+        "declared_paths",
+        "policy_floor_snapshot",
+    ] {
         let body = drop_key(&full, key);
         let err = decode_secret_custody_body(&body)
             .expect_err(&format!("missing required key {key} must reject"));
@@ -329,7 +350,10 @@ fn register_secret_with_credential_shaped_value_commits() {
     let id = vault
         .register_secret(rec)
         .expect("custody body with credential-shaped value must commit");
-    let meta = vault.get_secret_metadata(&id).expect("metadata").expect("some");
+    let meta = vault
+        .get_secret_metadata(&id)
+        .expect("metadata")
+        .expect("some");
     assert_eq!(meta.name, "gh-token");
 }
 
@@ -342,13 +366,7 @@ fn credential_scan_still_rejects_other_entity_types() {
     let id = EntityId::now();
     let occurred = TimeRange { start: 1, end: 1 };
     let err = vault
-        .put_entity(
-            &id,
-            crate::registry::ENTITY_TYPE_TURN,
-            occurred,
-            1,
-            token,
-        )
+        .put_entity(&id, crate::registry::ENTITY_TYPE_TURN, occurred, 1, token)
         .expect_err("credential-shaped bytes on a non-custody type still reject");
     assert!(
         matches!(err, Error::GateWriteRejected { .. }),

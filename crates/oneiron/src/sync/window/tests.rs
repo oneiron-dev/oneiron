@@ -3598,7 +3598,10 @@ fn secret_custody_never_enters_doc_via_reverse_rematerialize() -> Result<()> {
     vault.put_entity(
         &ordinary,
         ENTITY_TYPE_TURN,
-        TimeRange { start: learned_at, end: learned_at },
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
         learned_at,
         b"ordinary turn",
     )?;
@@ -3646,7 +3649,10 @@ fn secret_custody_never_leaves_doc_via_export() -> Result<()> {
     vault.put_entity(
         &ordinary,
         ENTITY_TYPE_TURN,
-        TimeRange { start: learned_at, end: learned_at },
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
         learned_at,
         b"ordinary turn",
     )?;

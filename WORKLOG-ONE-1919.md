@@ -87,3 +87,12 @@ Seven verdict items applied in order, each its own commit on `w5/l1-secret/main`
 - Commits: 2c59ed8 (FIX1) · e3bcc62 (FIX6) · c0f7dc9 (FIX2) · c33ba0c (FIX3) · b50db04 (FIX4) · 1c0f0fc (FIX5) · this commit (FIX-final). Worklogs (this file + WORKLOG-LANE-BOOT.md) committed here.
 
 NEXT: hand `w5/l1-secret/main` to the running K3 verdict leg for a fresh read + ruling on the full diff from 44849ed through the FIX-final SHA.
+
+## FIX8 SEG (L1-SECRET close-out, 2026-08-05) — byte ruling + fmt gate GREEN
+
+- **Ruling:** Fable DEV-1, ratified 2026-08-05, re-keyed `ENTITY_TYPE_SECRET_CUSTODY` from 86 to **77**. The ratified full registry row is `short_id_prefix: None`, `EntityClassification::Maintenance`, and `TypeByteBand::Companion`; public raw-put rejection therefore surfaces `MaintenanceKindNotWritable(77)` while the dedicated engine-internal custody door remains intact.
+- **Files swept for stale byte 86 / registry metadata:** `crates/oneiron/src/registry.rs`, `secret_custody.rs`, `secret_custody/`, `secret_manifest.rs`, `secret_manifest/`, `sync/window.rs`, `sync/selector.rs`, `batch.rs`, `batch/secret_scan.rs`, `error.rs`, and the top-level `tests.rs` conformance fixture. The sweep is clean; only the custody-byte literal, custody-byte comments, full registry metadata row, and directly coupled test expectations changed in FIX8A.
+- **FIX8A implementation SHA:** `ec04323b2bb2c4f34886c18885a6abd2354d189f`.
+- **Gate evidence:** `cargo test -p oneiron --all-features -j 6 --lib` = **3180 passed / 0 failed / 24 ignored** after the authorized flake rerun and again after formatting; `cargo clippy -p oneiron --all-features -j 6 -- -D warnings` = **GREEN** before and after formatting; `cargo +1.96 fmt --all` followed by `cargo +1.96 fmt --all -- --check` = **GREEN**.
+- **Flake quarantine:** two tracing-capture flakes observed on first rerun; both green on re-run; quarantined as known-tracing-class; charged to no lane. The affected tests were `attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields` and `partial_remote_completion_is_logged_when_local_batch_fails`; both observe process-global tracing subscriber state and neither intersects FIX8 scope.
+- **Final HEAD SHA:** this FIX8B commit (the commit object cannot self-record its own SHA; the resolved SHA is carried in the close-out relay).
