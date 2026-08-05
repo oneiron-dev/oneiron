@@ -825,8 +825,14 @@ pub use crate::store::{
 };
 pub use crate::surface_event::{
     INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
-    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
-    SurfaceCounterpartyStamp, SurfaceEvent,
+    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_ATTEMPT_KIND,
+    SURFACE_EVENT_SCHEMA_VERSION, SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAck,
+    SurfaceEventAction, SurfaceEventAdmission, SurfaceEventAttemptPayload, SurfaceEventAttemptRef,
+    SurfaceEventDispatchDisposition, SurfaceEventDispatchRequest, SurfaceEventDispatchRoute,
+    SurfaceEventDispatcher, SurfaceEventHandoffState, SurfaceEventHandoffStatus,
+    SurfaceEventSource, SurfaceEventWorkerOutcome, SurfaceInteractionKind, SurfaceSourceApp,
+    decode_surface_event_attempt_payload, encode_surface_event_attempt_payload,
+    surface_event_run_id,
 };
 pub use crate::task_verb::{
     DEFAULT_TASK_CANCEL_MODE, TASKS_VERBS, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt,
