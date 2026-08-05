@@ -676,16 +676,23 @@ impl OffRecordSession<'_> {
         );
         match route.target() {
             RouteTarget::Overlay => {
-                let segment = self.entry.overlay.install_txn_segment()?;
-                // The view above was taken BEFORE the segment installed, so it
-                // cannot see this run's own staged row; the registration needs
-                // a segment-aware view to stage into.
-                let staging = self.vault.store.session_view(self.entry.overlay.clone())?;
-                self.vault.with_write_txn(|wtxn| {
+                // BASE WRITER FIRST, then the segment permit. That order is the
+                // overlay's own invariant (`acquire_segment_lease`: "Base
+                // writers are acquired before this permit; there is no
+                // reverse-order path") and the order the witness takes. Taking
+                // the permit out here and the writer inside was the reverse
+                // path — an ABBA deadlock against any concurrent witness on
+                // the same room.
+                let segment = self.vault.with_write_txn(|wtxn| {
+                    let segment = self.entry.overlay.install_txn_segment()?;
                     route.revalidate()?;
-                    staging.record_retrieval_run_in_txn(wtxn, &record)
+                    // Built AFTER the install, so the staging view is
+                    // segment-aware; the scoring view above was taken before
+                    // and cannot see this run's own staged row.
+                    let staging = self.vault.store.session_view(self.entry.overlay.clone())?;
+                    staging.record_retrieval_run_in_txn(wtxn, &record)?;
+                    Ok(segment)
                 })?;
-                drop(staging);
                 segment.commit()?;
             }
             // Post-flip the room is on record: telemetry, like every other
@@ -712,14 +719,17 @@ impl OffRecordSession<'_> {
         route.revalidate()?;
         match route.target() {
             RouteTarget::Overlay => {
+                // Same base-writer-then-segment-permit order as the retrieval
+                // arm above: the permit is never held while waiting for the
+                // base writer.
                 let overlay = self.entry.overlay.clone();
-                let segment = overlay.install_txn_segment()?;
-                let view = self.vault.store.session_view(overlay)?;
-                self.vault.with_write_txn(|wtxn| {
+                let segment = self.vault.with_write_txn(|wtxn| {
+                    let segment = overlay.install_txn_segment()?;
                     route.revalidate()?;
-                    view.vault_meta_put_in_txn(wtxn, key, value)
+                    let view = self.vault.store.session_view(overlay.clone())?;
+                    view.vault_meta_put_in_txn(wtxn, key, value)?;
+                    Ok(segment)
                 })?;
-                drop(view);
                 segment.commit()
             }
             RouteTarget::Base => self.vault.with_write_txn(|wtxn| {

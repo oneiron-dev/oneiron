@@ -5752,3 +5752,112 @@ fn a_route_minted_before_a_flip_is_refused() {
 
     session.close().expect("close session");
 }
+
+/// R3 lock order: the base writer is taken BEFORE the overlay segment permit,
+/// on EVERY session write path.
+///
+/// The overlay states the invariant itself (`acquire_segment_lease`: "Base
+/// writers are acquired before this permit; there is no reverse-order path"),
+/// and the witness obeys it. The session retrieval-telemetry arm did not — it
+/// installed the segment, then opened the base txn — so a witness holding the
+/// base writer and waiting for the permit met a telemetry run holding the
+/// permit and waiting for the writer: ABBA, on one room, no timeout anywhere in
+/// the stack.
+///
+/// The whole race runs in a DETACHED driver thread and the test body waits on a
+/// channel. That is deliberate: a deadlock inside `thread::scope` would hang
+/// the suite (the implicit join blocks even while unwinding), so the watchdog
+/// has to sit outside the scope. A timeout here IS the deadlock.
+#[test]
+fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    const ROUNDS: usize = 40;
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<(usize, usize, bool)>();
+    std::thread::spawn(move || {
+        let (_dir, vault) = open_vault();
+        let (session, actor) = session_witness_fixture(&vault, "sess-lock-order", 0x57);
+        let facade = facade_for(&vault, actor);
+        let overlay_shell = session
+            .overlay_conversation_shell()
+            .expect("allocate the room shell up front");
+
+        let witnessed = AtomicUsize::new(0);
+        let searched = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for round in 0..ROUNDS {
+                    // Refusals are legitimate: the flipper may have sealed the
+                    // room under this route. Only a HANG is a failure.
+                    if facade
+                        .witness_into_session(
+                            &session,
+                            &WitnessTurn {
+                                conversation_ref: String::new(),
+                                turn_ref: None,
+                                messages: vec![witness_message(
+                                    0,
+                                    WitnessAuthor::User,
+                                    "lockorderneedle",
+                                )],
+                                occurred_at: 960 + round as u64,
+                            },
+                            None,
+                        )
+                        .is_ok()
+                    {
+                        witnessed.fetch_add(1, AtomicOrdering::Relaxed);
+                    }
+                }
+            });
+            scope.spawn(|| {
+                for _ in 0..ROUNDS {
+                    if session.search_text("lockorderneedle", 4).is_ok() {
+                        searched.fetch_add(1, AtomicOrdering::Relaxed);
+                    }
+                }
+            });
+            scope.spawn(|| {
+                for _ in 0..ROUNDS {
+                    let _ = session.flip_on_record();
+                    let _ = session.flip_off_record();
+                }
+            });
+        });
+
+        // Classification survived the race: the room's own conversation shell
+        // never became a base row, whichever arm each call took.
+        let shell_leaked = vault.get_raw(&overlay_shell).expect("base get").is_some();
+        done_tx
+            .send((
+                witnessed.load(AtomicOrdering::Relaxed),
+                searched.load(AtomicOrdering::Relaxed),
+                shell_leaked,
+            ))
+            .ok();
+    });
+
+    let (witnessed, searched, shell_leaked) = match done_rx
+        .recv_timeout(std::time::Duration::from_secs(90))
+    {
+        Ok(outcome) => outcome,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!(
+                "concurrent room witness + telemetry deadlocked (segment permit taken before the base writer)"
+            )
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("the concurrency driver thread panicked")
+        }
+    };
+    assert!(
+        witnessed > 0 && searched > 0,
+        "both writers must make real progress, not merely fail fast \
+         (witnessed {witnessed}, searched {searched})"
+    );
+    assert!(
+        !shell_leaked,
+        "the room's overlay conversation shell must never become a base row"
+    );
+}
