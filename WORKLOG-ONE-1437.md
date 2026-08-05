@@ -99,3 +99,27 @@ it was weighed, not missed.
 The negative fixtures assert via `tokio::time::timeout` on `refresh_on_change`
 rather than counting reads after the fact — a read count cannot distinguish
 "woke on the noise frame" from "woke on the later real frame".
+
+## SIMPLIFY pass (K3, ff328ed — final commit, on top of abf5bcd)
+
+Deletion-biased, zero assertion/fixture/public-API change (tests.rs untouched):
+
+- `spawn_local_change_producer` → unit return (was `Option<JoinHandle>` whose
+  handle is detached-by-design and was dropped at the one call site). Attach
+  moved below the runtime check so a no-runtime server never arms an unread
+  Observer-A sender; `let Ok(handle) = try_current()` replaces the named
+  `runtime` binding (plain tokio::spawn idiom).
+- `refresh_on_change`: loop-break → plain `return Ok(&self.snapshot)`;
+  `revision += 1` (local cache epoch, untriggerable wrap; saturating_ idiom is
+  reserved for untrusted/wire-driven arithmetic in this codebase).
+- Doc dedupe: ReactiveChangeSubscriber carried the no-echo-suppression
+  rationale twice (struct + recv) — kept at recv, where the conn_id is
+  actually discarded; the "Two things separate it" framing collapsed to the
+  lag-escalation contrast. api.rs seam comment and the double-link
+  InvalidateAll doc trimmed.
+
+Gates after: fmt exit 0 · clippy `--all-targets --all-features -D warnings`
+exit 0 · lib suite 388 passed + 1 pre-existing baseline failure (tokio-
+tungstenite 0.29/0.28 pin, same as pre-simplify) · the 8 `local_reactive_*`
+fixtures green by name filter · ws_sync 41/41, core_discover 10/10,
+skills_pack 7/7. Packet still exactly the five claimed files.
