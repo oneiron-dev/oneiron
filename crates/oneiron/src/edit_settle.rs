@@ -93,16 +93,16 @@ use crate::blob_artifact::{
     BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES, BlobArtifactVersion,
     read_blob_artifact_head_in_txn, require_entity_type,
 };
+use crate::consent::{
+    ActionClass as ConsentActionClass, ActionEnvelope as ConsentActionEnvelope,
+    ActorBound as ConsentActorBound, GrantBound as ConsentGrantBound,
+};
 use crate::edit_roundtrip::{EditManifest, EditProposal, OfficeFormat};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::temporal::TimeRange;
-use crate::consent::{
-    ActionClass as ConsentActionClass, ActionEnvelope as ConsentActionEnvelope,
-    ActorBound as ConsentActorBound, GrantBound as ConsentGrantBound,
-};
 use crate::write_envelope::WriteActor;
 
 /// Current settlement-record body schema version.

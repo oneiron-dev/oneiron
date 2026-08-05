@@ -52,7 +52,9 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::access_grant::{AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus};
+use crate::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -667,11 +669,7 @@ impl GrantBound {
     }
 
     /// Builds an action bound: actor → verb class → target envelope.
-    pub fn action(
-        actor: ActorBound,
-        class: ActionClass,
-        envelope: ActionEnvelope,
-    ) -> Result<Self> {
+    pub fn action(actor: ActorBound, class: ActionClass, envelope: ActionEnvelope) -> Result<Self> {
         Self::new(
             BoundSubject::Actor(actor),
             BoundClass::Action(class),
@@ -1531,9 +1529,30 @@ pub(crate) fn evaluate_consent(
 }
 
 fn covers(grants: &[StandingConsentGrant], required: &GrantBound) -> bool {
-    grants
-        .iter()
-        .any(|grant| grant.bound().contains(required))
+    grants.iter().any(|grant| grant.bound().contains(required))
+}
+
+/// Whether an uncovered requirement is an EXCEEDED bound rather than an absent
+/// one — i.e. a grant already names this subject and class, but its envelope
+/// does not reach this candidate.
+///
+/// The distinction IS invariant 3: an absent grant makes a first ask, while an
+/// exceeded one is a scope-exceed escalation whose approve-and-stop-asking
+/// mints a NEW, wider row. Both ask; the pending reason is what tells the
+/// surface which conversation to have.
+pub(crate) fn bound_exceeded(effect: &ComposedEffect, grants: &[StandingConsentGrant]) -> bool {
+    [effect.disclosure_requirement(), effect.action_requirement()]
+        .into_iter()
+        .flatten()
+        .any(|required| {
+            !covers(grants, required)
+                && grants.iter().any(|grant| {
+                    let bound = grant.bound();
+                    bound.domain() == required.domain()
+                        && bound.subject.contains(&required.subject)
+                        && bound.class.matches(&required.class)
+                })
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -1629,10 +1648,7 @@ fn encode_subject(subject: &BoundSubject) -> Value {
             SUBJECT_KIND_ACTOR,
             vec![
                 Value::from(actor.actor_ref.as_str()),
-                actor
-                    .actor_class
-                    .as_deref()
-                    .map_or(Value::Nil, |class| Value::from(class)),
+                actor.actor_class.as_deref().map_or(Value::Nil, Value::from),
             ],
         ),
         BoundSubject::Audience(audience) => (
@@ -1680,12 +1696,7 @@ fn decode_subject(value: &Value, domain: ConsentDomain) -> Result<BoundSubject> 
         (SUBJECT_KIND_AUDIENCE, ConsentDomain::Disclosure) => {
             let members = refs
                 .iter()
-                .map(|member| {
-                    member
-                        .as_str()
-                        .map(str::to_owned)
-                        .ok_or_else(invalid_row)
-                })
+                .map(|member| member.as_str().map(str::to_owned).ok_or_else(invalid_row))
                 .collect::<Result<Vec<_>>>()?;
             Ok(BoundSubject::Audience(
                 AudienceBound::new(members).map_err(|_| invalid_row())?,
@@ -1699,9 +1710,7 @@ fn decode_subject(value: &Value, domain: ConsentDomain) -> Result<BoundSubject> 
 
 fn encode_envelope(envelope: &BoundEnvelope) -> Value {
     let (selectors, target, budget, receipt_required) = match envelope {
-        BoundEnvelope::Disclosure(envelope) => {
-            (&envelope.selectors, None, None, false)
-        }
+        BoundEnvelope::Disclosure(envelope) => (&envelope.selectors, None, None, false),
         BoundEnvelope::Action(envelope) => (
             &envelope.selectors,
             envelope.target.as_deref(),
@@ -1727,10 +1736,7 @@ fn encode_envelope(envelope: &BoundEnvelope) -> Value {
             Value::from(ENVELOPE_KEYS[2]),
             budget.map_or(Value::Nil, Value::from),
         ),
-        (
-            Value::from(ENVELOPE_KEYS[3]),
-            Value::from(receipt_required),
-        ),
+        (Value::from(ENVELOPE_KEYS[3]), Value::from(receipt_required)),
     ])
 }
 
@@ -1744,12 +1750,7 @@ fn decode_envelope(value: &Value, domain: ConsentDomain) -> Result<BoundEnvelope
     };
     let selectors = raw_selectors
         .iter()
-        .map(|selector| {
-            selector
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(invalid_row)
-        })
+        .map(|selector| selector.as_str().map(str::to_owned).ok_or_else(invalid_row))
         .collect::<Result<Vec<_>>>()?;
     let target_value = required_value(entries, ENVELOPE_KEYS[1])?;
     let budget_value = required_value(entries, ENVELOPE_KEYS[2])?;
@@ -1772,16 +1773,14 @@ fn decode_envelope(value: &Value, domain: ConsentDomain) -> Result<BoundEnvelope
             ))
         }
         ConsentDomain::Action => {
-            let mut envelope =
-                ActionEnvelope::new(selectors).map_err(|_| invalid_row())?;
+            let mut envelope = ActionEnvelope::new(selectors).map_err(|_| invalid_row())?;
             if !matches!(target_value, Value::Nil) {
                 envelope = envelope
                     .with_target(target_value.as_str().ok_or_else(invalid_row)?)
                     .map_err(|_| invalid_row())?;
             }
             if !matches!(budget_value, Value::Nil) {
-                envelope =
-                    envelope.with_budget(budget_value.as_u64().ok_or_else(invalid_row)?);
+                envelope = envelope.with_budget(budget_value.as_u64().ok_or_else(invalid_row)?);
             }
             Ok(BoundEnvelope::Action(
                 envelope.with_receipt_required(receipt_required),
@@ -1829,9 +1828,8 @@ fn decode_owner_stamp(value: &Value) -> Result<ConsentOwnerStamp> {
     let decision_hex = required_value(entries, OWNER_STAMP_KEYS[2])?
         .as_str()
         .ok_or_else(invalid_row)?;
-    let decision_id = GateDecisionId::from_bytes(
-        hex_to_16_bytes(decision_hex).ok_or_else(invalid_row)?,
-    );
+    let decision_id =
+        GateDecisionId::from_bytes(hex_to_16_bytes(decision_hex).ok_or_else(invalid_row)?);
     Ok(ConsentOwnerStamp {
         actor,
         principal_ref,
@@ -1889,7 +1887,7 @@ pub fn action_grant_from_standing_outbound_grant(
     grant: &StandingOutboundGrant,
 ) -> Result<ActionGrant> {
     let actor = ActorBound::new(grant.principal_ref.as_str())?;
-    let (class, selectors, target) = outbound_scope_axes(&grant.scope)?;
+    let (class, selectors, target) = outbound_scope_axes(&grant.scope);
     let mut envelope = ActionEnvelope::new(selectors)?;
     if let Some(target) = target {
         envelope = envelope.with_target(target)?;
@@ -1907,8 +1905,8 @@ const OUTBOUND_SEND_VERB_CLASS: &str = "send";
 
 fn outbound_scope_axes(
     scope: &StandingOutboundGrantScope,
-) -> Result<(String, Vec<String>, Option<String>)> {
-    Ok(match scope {
+) -> (String, Vec<String>, Option<String>) {
+    match scope {
         StandingOutboundGrantScope::Contact { contact_ref } => (
             OUTBOUND_SEND_VERB_CLASS.to_owned(),
             vec![format!("contact:{contact_ref}")],
@@ -1952,7 +1950,7 @@ fn outbound_scope_axes(
                 Some(format!("{server}/{tool}")),
             )
         }
-    })
+    }
 }
 
 /// Projects a [`PolicyScopedGrant`] into an [`ActionGrant`].
@@ -1964,6 +1962,10 @@ fn outbound_scope_axes(
 /// restrict a covered use by demanding a receipt, and is never consulted to
 /// authorize one. A grant with no `actor_ref` names no subject and therefore
 /// cannot become a bound at all.
+// Crate-private because `PolicyScopedGrant` is crate-private (gate.rs). The
+// production consumer is the GOV belt's gate.rs work, which lands behind this
+// contract; until then the adapter's callers are its conformance tests.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn action_grant_from_policy_scoped_grant(
     grant: &PolicyScopedGrant,
 ) -> Result<ActionGrant> {
@@ -1985,6 +1987,7 @@ pub(crate) fn action_grant_from_policy_scoped_grant(
     )?)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn policy_value_selectors(label: &str, value: Option<&Value>) -> Vec<String> {
     let Some(Value::Map(entries)) = value else {
         return vec![format!("{label}:*")];
@@ -2330,8 +2333,7 @@ impl Vault {
             grant_ref: grant_ref.to_owned(),
             effect_digest,
         };
-        let stamp = row.owner_stamp.clone();
-        self.append_consent_gate_decision_in_txn(&mut wtxn, &stamp, &receipt)?;
+        self.append_consent_gate_decision_in_txn(&mut wtxn, &row.owner_stamp, &receipt)?;
         wtxn.commit()?;
         Ok(receipt)
     }
@@ -2339,7 +2341,11 @@ impl Vault {
     /// Reads one standing consent-grant row.
     pub fn consent_grant(&self, grant_ref: &str) -> Result<Option<ConsentGrantRow>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(&rtxn, &consent_grant_key(grant_ref))? else {
+        let Some(raw) = self
+            .store
+            .vault_meta
+            .get(&rtxn, &consent_grant_key(grant_ref))?
+        else {
             return Ok(None);
         };
         decode_consent_grant_row(&raw).map(Some)
@@ -2356,6 +2362,32 @@ impl Vault {
             .filter(ConsentGrantRow::is_active)
             .map(|row| row.grant)
             .collect())
+    }
+
+    /// The DEC-0006 door: evaluates one composed effect against the owner's
+    /// current remembered state and returns both the verdict and the Gate
+    /// reason codes that explain it.
+    ///
+    /// This is what a write door calls to opt onto the unified consent path.
+    /// It loads the ACTIVE grants itself, so a caller cannot pass a stale or
+    /// hand-picked grant set, and it routes through the one evaluator, so no
+    /// door re-implements the ladder. `pending_approve_once` is the exact
+    /// digest of an approve-once receipt already in hand for this op, if any.
+    ///
+    /// The returned reason codes are empty exactly when the verdict is
+    /// [`ConsentDecision::Auto`].
+    pub fn evaluate_consent_for(
+        &self,
+        effect: &ComposedEffect,
+        pending_approve_once: Option<&EffectDigest>,
+    ) -> Result<ConsentEvaluation> {
+        let grants = self.active_standing_consent_grants()?;
+        let context =
+            crate::gate::ConsentGateContext::evaluate(effect, pending_approve_once, &grants);
+        Ok(ConsentEvaluation {
+            decision: context.decision,
+            reason_codes: crate::gate::consent_gate_reason_codes(&context),
+        })
     }
 
     /// The unified consent registry — surface (b) of invariant 9.
@@ -2434,6 +2466,16 @@ impl Vault {
         };
         self.store.append_gate_decision_in_txn(wtxn, &record)
     }
+}
+
+/// One consent verdict plus the Gate reason codes that explain it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsentEvaluation {
+    /// The evaluator's verdict.
+    pub decision: ConsentDecision,
+    /// Stable `gate.`-namespaced pending reason codes; empty iff `decision`
+    /// is [`ConsentDecision::Auto`].
+    pub reason_codes: Vec<String>,
 }
 
 /// The catastrophe class a bound would cover, if any.

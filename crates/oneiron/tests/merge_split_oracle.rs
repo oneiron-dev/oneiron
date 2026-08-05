@@ -768,6 +768,27 @@ fn ms06_ramp_scope_keys_on_op_class_agent_tuple() {
     assert_eq!(scope_a, scope_a_again);
 }
 
+/// The MS-06 ramp guard: a streak of untouched approvals raises its confidence
+/// and, at the streak floor, surfaces ONE graduation offer for the scope. It is
+/// a [`oneiron::consent::ConsentGuard`], so the type system already forbids it
+/// from granting anything (DEC-0006 invariant 5).
+struct RampGuard {
+    bound: oneiron::consent::GrantBound,
+    untouched_streak: usize,
+}
+
+impl oneiron::consent::ConsentGuard for RampGuard {
+    fn propose(&self, facts: &oneiron::consent::EffectFacts) -> oneiron::consent::ConsentProposal {
+        oneiron::consent::ConsentProposal {
+            effect_digest: oneiron::consent::ComposedEffect::new(facts.clone()).digest(),
+            // Confidence rises with the streak; authority does not.
+            #[allow(clippy::cast_precision_loss)]
+            confidence: (self.untouched_streak as f32 / 12.0).min(1.0),
+            suggested_bound: self.bound.clone(),
+        }
+    }
+}
+
 /// r7/§7 + DEC-0006 invariant 5: a streak of approved-untouched receipts
 /// produces a graduation OFFER (a proposed create_standing_grant) — the
 /// system offers, it NEVER auto-grants; the grant lands only on the tap.
@@ -781,10 +802,12 @@ fn ms06_ramp_scope_keys_on_op_class_agent_tuple() {
 #[test]
 fn ms06_streak_offers_standing_grant_never_auto_grants() {
     use oneiron::consent::{
-        ActionClass, ActionEnvelope, ActorBound, ComposedEffect, ConsentGuard, ConsentProposal,
-        EffectFacts, GrantBound,
+        ActionClass, ActionEnvelope, ActorBound, ConsentGuard, ConsentProposal, EffectFacts,
+        GrantBound,
     };
     use oneiron::store::GateDecisionId;
+
+    const STREAK_FLOOR: usize = 12;
 
     let (_dir, vault) = open_vault();
     let owner_id = put_person(&vault, 0x25);
@@ -792,28 +815,6 @@ fn ms06_streak_offers_standing_grant_never_auto_grants() {
         .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner");
 
-    // The ramp guard: a streak of untouched approvals raises its confidence
-    // and, at the streak floor, surfaces ONE graduation offer for the scope.
-    // It is a `ConsentGuard`, so the type system already forbids it from
-    // granting anything (DEC-0006 invariant 5).
-    struct RampGuard {
-        bound: GrantBound,
-        untouched_streak: usize,
-    }
-
-    impl ConsentGuard for RampGuard {
-        fn propose(&self, facts: &EffectFacts) -> ConsentProposal {
-            ConsentProposal {
-                effect_digest: ComposedEffect::new(facts.clone()).digest(),
-                // Confidence rises with the streak; authority does not.
-                #[allow(clippy::cast_precision_loss)]
-                confidence: (self.untouched_streak as f32 / 12.0).min(1.0),
-                suggested_bound: self.bound.clone(),
-            }
-        }
-    }
-
-    const STREAK_FLOOR: usize = 12;
     let scope_bound = GrantBound::action(
         ActorBound::new("agent-a").expect("actor"),
         ActionClass::new("send_email").expect("class"),

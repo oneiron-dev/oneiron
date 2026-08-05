@@ -10,6 +10,7 @@ use super::*;
 
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
+use crate::genui::{ConsentConfirmOutcome, ConsentScopeEscalator};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
@@ -189,8 +190,12 @@ fn consent_lifetime_types_share_one_receipt_enum_owner_only_standing() {
     // `ConsentProposal` (all a guard can produce) carries no owner stamp and
     // there is no conversion from it into an `AuthenticatedOwner`. The runtime
     // half is that unauthenticated principals never get an owner handle at all.
-    let unauth =
-        vault.authenticate_owner(owner.actor(), "principal:owner", false, GateDecisionId::now());
+    let unauth = vault.authenticate_owner(
+        owner.actor(),
+        "principal:owner",
+        false,
+        GateDecisionId::now(),
+    );
     assert_eq!(
         unauth.expect_err("unauthenticated principal").kind(),
         ErrorKind::ConsentOwnerNotAuthenticated
@@ -217,7 +222,11 @@ fn consent_lifetime_types_share_one_receipt_enum_owner_only_standing() {
     let registry = vault
         .consent_registry(ConsentRegistryQuery::new(16, false))
         .expect("registry");
-    assert_eq!(registry.rows.len(), 1, "exactly one row was flipped to auto");
+    assert_eq!(
+        registry.rows.len(),
+        1,
+        "exactly one row was flipped to auto"
+    );
     assert_eq!(
         registry.rows[0].revoke_action.command,
         CONSENT_REVOKE_COMMAND
@@ -466,7 +475,7 @@ fn consent_guard_proposes_never_grants() {
     // The proposal exists, at maximum confidence — and the op still ASKS,
     // because inference is not authority.
     let effect = ComposedEffect::new(irreversible_send_facts())
-        .with_action_requirement(bound.clone())
+        .with_action_requirement(bound)
         .expect("requirement");
     let grants = vault
         .active_standing_consent_grants()
@@ -548,7 +557,9 @@ fn consent_reversibility_is_host_classified_biased_permissive() {
     let axes: [(&str, EffectFacts); 5] = [
         (
             "hooks",
-            EffectFacts::new("claim.put").expect("facts").with_hooks(true),
+            EffectFacts::new("claim.put")
+                .expect("facts")
+                .with_hooks(true),
         ),
         (
             "publish/deploy trigger",
@@ -849,7 +860,6 @@ fn consent_has_only_ask_and_registry_surfaces_no_duration_picker() {
     // SURFACE (a) — the in-moment ask. Every emitted action id maps into the
     // confirm TRIO and nothing else, so the ask offers exactly three outcomes
     // no matter how many bound-naming escalators a surface renders.
-    use crate::genui::{ConsentConfirmOutcome, ConsentScopeEscalator};
     assert_eq!(
         ConsentConfirmOutcome::trio(),
         [
@@ -872,11 +882,13 @@ fn consent_has_only_ask_and_registry_surfaces_no_duration_picker() {
         crate::genui::CONSENT_ACTION_DECLINE.to_owned(),
         crate::genui::CONSENT_BUNDLE_ACTION_DECLINE.to_owned(),
     ];
-    emitted.extend(
-        ConsentScopeEscalator::all()
-            .iter()
-            .map(|scope| format!("{}{}", crate::genui::CONSENT_ACTION_ESCALATE_PREFIX, scope.as_str())),
-    );
+    emitted.extend(ConsentScopeEscalator::all().iter().map(|scope| {
+        format!(
+            "{}{}",
+            crate::genui::CONSENT_ACTION_ESCALATE_PREFIX,
+            scope.as_str()
+        )
+    }));
     emitted.push(format!(
         "{}{}",
         crate::genui::CONSENT_BUNDLE_ACTION_ID_PREFIX,
@@ -1005,7 +1017,10 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
     );
     assert!(access_grant_projection_is_active(&access));
     let after = crate::access_grant::encode_access_grant_body(&access).expect("encode");
-    assert_eq!(before, after, "projection must not rewrite the source bytes");
+    assert_eq!(
+        before, after,
+        "projection must not rewrite the source bytes"
+    );
     assert_eq!(
         crate::access_grant::decode_access_grant_body(&after).expect("decode"),
         access,
@@ -1030,7 +1045,7 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
     ];
     for scope in scopes {
         let dial_before = scope.dial_label();
-        let (class, selectors, _) = outbound_scope_axes(&scope).expect("axes");
+        let (class, selectors, _) = outbound_scope_axes(&scope);
         assert!(!class.is_empty() && !selectors.is_empty());
         assert_eq!(
             scope.dial_label(),
@@ -1074,11 +1089,14 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
     // DisclosureScope → DisclosureGrant.
     let scope = DisclosureScope::task_scoped("q3 planning", vec![entity(0x71)], 5).expect("scope");
     let before = crate::disclosure::encode_disclosure_scope_body(&scope).expect("encode");
-    let projected =
-        disclosure_grant_from_disclosure_scope(&scope, "contact:doctor", "health").expect("project");
+    let projected = disclosure_grant_from_disclosure_scope(&scope, "contact:doctor", "health")
+        .expect("project");
     assert_eq!(projected.bound().domain(), ConsentDomain::Disclosure);
     let after = crate::disclosure::encode_disclosure_scope_body(&scope).expect("encode");
-    assert_eq!(before, after, "projection must not rewrite the source bytes");
+    assert_eq!(
+        before, after,
+        "projection must not rewrite the source bytes"
+    );
     assert_eq!(
         crate::disclosure::decode_disclosure_scope_body(&after).expect("decode"),
         scope

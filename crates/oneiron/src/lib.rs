@@ -313,6 +313,17 @@ pub use crate::config::{
 // this contract's claim. The pinned downstream import path for the consent
 // subject type is therefore `oneiron::consent::ActorBound`; every other name
 // in the contract is re-exported below.
+pub use crate::connector_key::{
+    CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, CalendarPeriod, CompiledCharter,
+    CompiledConnectorPolicy, ConnectorCharterBlock, ConnectorCharterCompileIssue,
+    ConnectorKeyDispatchTally, ConnectorKeyRecord, ConnectorKeyStatus,
+    EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,
+    EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudget,
+    EffectorBudgetCharge, EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetRead,
+    EffectorBudgetReservePolicy, EffectorBudgetRowRead, EffectorBudgetWindow,
+    PendingConnectorCharter, compile_connector_charter, decode_connector_key_body,
+    encode_connector_key_body,
+};
 pub use crate::consent::{
     ActionClass, ActionEnvelope, ActionGrant, AudienceBound, AuthenticatedOwner,
     BULK_BLAST_RADIUS_FLOOR, BoundClass, BoundEnvelope, BoundSubject, CATASTROPHE_FLOOR_V1,
@@ -328,17 +339,6 @@ pub use crate::consent::{
     action_grant_from_standing_outbound_grant, bound_catastrophe_class, decode_consent_grant_row,
     disclosure_grant_from_access_grant, disclosure_grant_from_disclosure_scope,
     encode_consent_grant_row,
-};
-pub use crate::connector_key::{
-    CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, CalendarPeriod, CompiledCharter,
-    CompiledConnectorPolicy, ConnectorCharterBlock, ConnectorCharterCompileIssue,
-    ConnectorKeyDispatchTally, ConnectorKeyRecord, ConnectorKeyStatus,
-    EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,
-    EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudget,
-    EffectorBudgetCharge, EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetRead,
-    EffectorBudgetReservePolicy, EffectorBudgetRowRead, EffectorBudgetWindow,
-    PendingConnectorCharter, compile_connector_charter, decode_connector_key_body,
-    encode_connector_key_body,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,

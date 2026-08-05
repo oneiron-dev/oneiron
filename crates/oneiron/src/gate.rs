@@ -378,6 +378,46 @@ pub(crate) enum ConsentPendingReason {
     WriteClassificationFailed,
 }
 
+impl ConsentGateContext {
+    /// Runs the DEC-0006 evaluator and packages its verdict for the Gate.
+    ///
+    /// This is the ONE composer: `consent.rs` owns the decision, and the Gate
+    /// only translates it into reason codes. Keeping the call here means a
+    /// door opts into the unified consent path by composing a
+    /// [`crate::consent::ComposedEffect`], never by re-implementing the ladder.
+    pub(crate) fn evaluate(
+        effect: &crate::consent::ComposedEffect,
+        pending_approve_once: Option<&crate::consent::EffectDigest>,
+        grants: &[crate::consent::StandingConsentGrant],
+    ) -> Self {
+        let decision = crate::consent::evaluate_consent(effect, pending_approve_once, grants);
+        Self {
+            decision,
+            reason: (decision != crate::consent::ConsentDecision::Auto)
+                .then(|| Self::pending_reason(effect, grants)),
+        }
+    }
+
+    /// Why a non-Auto verdict was reached, in the evaluator's own precedence:
+    /// catastrophe first, then a classification failure, then a bound a grant
+    /// names but does not cover, else the plain irreversible case.
+    fn pending_reason(
+        effect: &crate::consent::ComposedEffect,
+        grants: &[crate::consent::StandingConsentGrant],
+    ) -> ConsentPendingReason {
+        if effect.catastrophe().is_some() {
+            return ConsentPendingReason::CatastropheFloor;
+        }
+        if crate::consent::classify_composed_effect(effect.facts()).is_err() {
+            return ConsentPendingReason::WriteClassificationFailed;
+        }
+        if crate::consent::bound_exceeded(effect, grants) {
+            return ConsentPendingReason::BoundExceeded;
+        }
+        ConsentPendingReason::IrreversibleEffect
+    }
+}
+
 impl ConsentPendingReason {
     const fn reason_code(self) -> GateReasonCode {
         match self {
@@ -397,6 +437,16 @@ impl ConsentPendingReason {
 /// write — the difference between them is the SURFACE the host raises, which
 /// is the domain fail-safe (invariant 8) and is carried by the reason, not by
 /// a second Gate outcome.
+/// The stable `gate.`-namespaced reason-code strings for one consent verdict.
+///
+/// Empty exactly when the verdict is Auto.
+pub(crate) fn consent_gate_reason_codes(consent: &ConsentGateContext) -> Vec<String> {
+    consent_ladder_reasons(Some(consent))
+        .into_iter()
+        .map(|code| code.as_str().to_owned())
+        .collect()
+}
+
 fn consent_ladder_reasons(consent: Option<&ConsentGateContext>) -> Vec<GateReasonCode> {
     let Some(consent) = consent else {
         return Vec::new();
