@@ -1713,6 +1713,108 @@ fn derived_id_collision_with_a_different_claim_body_fails_closed() -> CommResult
     Ok(())
 }
 
+#[test]
+fn derived_id_collision_with_a_rejected_twin_fails_closed() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-collide-rejected")?;
+    let source_event = entity(0x79);
+    let value = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+    let derived = projected_comm_claim_id(source_event, &value)?;
+
+    // Squat the derived id with a claim that decodes to the SAME
+    // CommClaimValue on the SAME subject edge and differs only on the consent
+    // axis. Typed equivalence cannot see that; byte identity must.
+    let mut rejected = value.claim_body();
+    rejected.approval = ClaimApprovalStatus::Rejected;
+    vault.put_claim(&derived, &rejected, TimeRange { start: 10, end: 10 }, 10)?;
+
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+
+    let error = run_comm_projector(&vault).expect_err("rejected resident twin fails closed");
+    assert!(matches!(error, CommError::InvalidRecord));
+    // The event is NOT retired against the rejected row, and no standing state
+    // was invented in its place.
+    assert!(
+        !comm_event_is_projected(&vault, source_event)?,
+        "a fail-closed projection must leave its source event unconsumed"
+    );
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-collide-rejected",
+            "email",
+        )?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn derived_id_with_a_detached_claim_of_edge_fails_closed() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-collide-detached")?;
+    let source_event = entity(0x7a);
+    let value = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+    let derived = projected_comm_claim_id(source_event, &value)?;
+
+    // Byte-identical body, no live `claim_of` edge: every comm reader resolves
+    // standing state through that edge, so this row is invisible to all of them.
+    vault.try_with_write_txn(|wtxn| {
+        put_comm_claim_with_id_in_txn(&vault, wtxn, derived, &value, 10).map(|_| ())
+    })?;
+    assert!(vault.delete_edge(&derived, EdgeKind::ClaimOf, &party_ref)?);
+
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+
+    let error = run_comm_projector(&vault).expect_err("detached resident claim fails closed");
+    assert!(matches!(error, CommError::InvalidRecord));
+    assert!(
+        !comm_event_is_projected(&vault, source_event)?,
+        "an unreadable claim must not retire its source event"
+    );
+    Ok(())
+}
+
+fn comm_event_is_projected(vault: &Vault, event_id: EntityId) -> CommResult<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&rtxn, event_id.as_bytes())?
+        .ok_or(CommError::InvalidRecord)?;
+    match decode_comm_record(&raw[ENTITY_METADATA_HEADER_LEN..])? {
+        CommRecord::Event { projected, .. } => Ok(projected),
+        _ => Err(CommError::InvalidRecord),
+    }
+}
+
 fn clear_party_index(vault: &Vault, party: &str) -> CommResult<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     vault

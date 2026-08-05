@@ -1384,11 +1384,27 @@ fn projected_comm_claim_id(
 
 /// Writes one projector-created `comm.*` claim at its derived id.
 ///
-/// Returns `(id, minted)`. When the derived id already holds a byte-identical
-/// CLAIM on the same subject the write is skipped — replaying a source event is
-/// a no-op, not a rewrite, so a claim the projector already closed is never
-/// silently resurrected. Any other resident row at that id is a deterministic-id
-/// collision and fails closed rather than overwriting it.
+/// Returns `(id, minted)`. A resident row at the derived id is recognized as a
+/// replay — skip the write, `minted = false` — only when it is BYTE-IDENTICAL
+/// to the body this projection authors AND is still reachable from the party
+/// through a live `claim_of` edge. Anything else is a deterministic-id
+/// collision and fails closed rather than overwriting the resident row.
+///
+/// Both halves are load-bearing, because `minted = false` is exactly what tells
+/// [`project_event`] to stamp the source COMM_RECORD `projected`:
+///
+/// * Byte identity, not typed `CommClaimValue` equality. The encoded body
+///   carries the whole governance envelope — `appr`, `life`, and the
+///   elided-when-false `stale` marker all live in those bytes, and
+///   [`CommClaimValue::claim_body`] pins them to `auto` / `active` / absent. A
+///   rejected, supplanted, retracted, or staleness-marked row therefore cannot
+///   pass as "already projected" the way decoded-value equality let it, which
+///   would have retired the source event against a row that no longer says what
+///   the projector meant — silently dropping standing state a `STOP` depends on.
+/// * The live edge. The body names its subject, but only the `claim_of` edge
+///   makes the claim reachable from the party, and every comm reader walks that
+///   edge. A row carrying the right bytes with no live edge is standing state
+///   nothing can see.
 fn put_projected_comm_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1399,16 +1415,13 @@ fn put_projected_comm_claim_in_txn(
     let id = projected_comm_claim_id(source_event_id, value)?;
     if let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
         let header = EntityMetadataHeader::parse(&raw).ok_or(CommError::InvalidRecord)?;
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Err(CommError::InvalidRecord);
-        }
-        let resident = vault
-            .get_claim_in_txn(&*wtxn, &id)?
-            .ok_or(CommError::InvalidRecord)?;
-        let same_value =
-            CommClaim::from_claim_body(&resident).is_ok_and(|resident| resident.value == *value);
-        let same_subject = resident.subject == ClaimSubject::Entity(value.party_ref());
-        if !same_value || !same_subject {
+        let projected_body = encode_claim_body(&value.claim_body())?;
+        if header.entity_type != ENTITY_TYPE_CLAIM
+            || raw[ENTITY_METADATA_HEADER_LEN..] != projected_body[..]
+            || !vault
+                .claims_for_subject_in_txn(&*wtxn, &value.party_ref())?
+                .contains(&id)
+        {
             return Err(CommError::InvalidRecord);
         }
         return Ok((id, false));
