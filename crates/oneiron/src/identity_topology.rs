@@ -2671,6 +2671,10 @@ fn clear_reassignment_rows_in_txn(
 /// `stamps` is applied by the caller's [`apply_ops`] batch AFTER the minted
 /// FACET rows land in the same batch — a `facet_of` edge whose target has no
 /// entity row fails closed at that table.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one shared split/facet apply door over event + origin + map + targets, accumulating into the caller's effect batch"
+)]
 pub(crate) fn apply_reassignment_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
