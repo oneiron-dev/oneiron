@@ -519,3 +519,70 @@ UNCONSUMED by design — `SessionWriteRoute`, `JournalRole`'s six variants,
 `stage_journal_entry`, `write_route`, and `ClaimCandidate::world()` get their first
 lib-target callers in seg 1 (batch.rs) and seg 2 (facade witness). The allow-reasons
 name the consuming ticket in each case.
+
+## SIMPLIFY PASS (K3, 2026-08-06) — commit d81dea0
+
+**Net: +2 / −24** across `batch.rs` and `session_overlay.rs`.
+
+What was cut and why:
+
+1. **Five stale `#[allow(dead_code)]` in `session_overlay.rs`** (−20 lines). Each
+   carried the reason "ONE-1728 facade `witness_into_session` is the first
+   lib-target consumer of the session short-id namespace". That consumer landed
+   in seg 3 (`facade.rs:1786` calls `overlay.alloc_session_short_id`), so the
+   allow was scaffolding predicting a future that has already arrived. The
+   helper chain (`alloc_session_short_id` → `session_short_id_content_hash`,
+   `encode_session_short_id_forward_key`, `parse_session_short_id_value`;
+   `SESSION_SHORT_ID_SIGIL` read inside the formatter) is covered transitively.
+   Removing the attribute is the honest signal: these are used production code,
+   not pinned-downstream seams.
+
+2. **`check_decode_point_taint_guard`: dropped the never-read `_wtxn:
+   &RwTxn<'_>` parameter** (−4 lines). The doc argued the param was the
+   "structural pin" keeping the guard inside the applying transaction. That is
+   confabulated: LMDB admits exactly one write transaction at a time, so the
+   in-txn membership read cannot race a concurrent commit regardless of whether
+   the guard's signature mentions the txn. What carries the K4 invariant is the
+   *call site* (inside the per-op decode loop), not the parameter list. The
+   blueprint's keystone sketch kept carrying the arg out of its pseudo-signature;
+   the landed body satisfies the same contract without it. Doc paragraph
+   rewritten to say so.
+
+What was NOT cut, and why not:
+
+- **`floor_writes_seal` module and the `_seal` field** (`promote.rs`). Done-means
+  #317 pins "`pub(crate) fn new` is the sole constructor gated by the
+  module-private `_seal` field". The blueprint *requires* the seal as the
+  construction-forbidding mechanism; deleting it is a shape deviation, not a
+  simplification, so it stays.
+- **`#[allow(dead_code)]` on the session-side seams awaiting their ticket** —
+  the `impl SessionStoreView` telemetry siblings (`finalize_/delete_/read_
+  retrieval_run_in_txn`, `record_context_pack_provisional_…`), the
+  `vault_meta_put`/`vault_meta_get` pair, `scoped_read_in_session`,
+  `PipelineBuilder::in_session`, the `JournalScope::turn`/`conversation`
+  accessors, and the `BaseWriteOrigin::PromoteReplay` variant. Every one carries
+  a reason naming its consuming ticket (1729/1730), which is what D20 ratified;
+  those stays.
+- **`ManifestDbs`' six unconsumed accessors** and `RetrievalRunId::from_bytes`.
+  Seg-4 already banked them into the *Post-merge DELETE-LIST* above; cutting
+  them in-lane contradicts D9's single-list-no-drift contract.
+- **BM25's `Entry::size()` / `Buffer::len()`-era helpers, HNSW probed insert,
+  and the ppr reader bodies**. Each is byte-identical-parameterized per
+  D9/D16/D18 — the shared body IS the canonical path. No duplicate survives.
+
+Cheap gates re-run after the pass: `cargo fmt --check` clean · `clippy
+--all-targets --all-features` clean (zero warnings) · `clippy --all-targets
+--features sync` shows the single pre-existing `put_replicated` dead-code
+warning (baseline, not this lane) · `cargo test -p oneiron --all-features`:
+3172 lib + every integration target green, 0 failed (the three new
+`session_overlay_spec` arms and all 18 oracle tests included).
+
+## Next-step INTENT (post-simplify)
+
+The simplify leg is closed. `ONE-1730` (P5, promote) is the next spine ticket:
+it reads `JournalScope::turn`/`conversation` to cut a turn's closure out of the
+journal, consumes `OverlaySnapshot`/`journal_entries`/`JournalRole`, and binds
+`apply_ops_with_origin(.., PromoteReplay, Some(membership))`. Its re-cut must
+re-point the superseded `PromoteReplayGrant` paragraph from
+CLAIMS.md (surface-flagged in the blueprint's Edges & waits; the sibling
+artifact is downstream of SPINE-ROOT).
