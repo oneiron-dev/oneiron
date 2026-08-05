@@ -1326,6 +1326,13 @@ fn proposal_scope_target(op: &IdentityTopologyOp) -> Result<EntityId> {
 /// subjects the decider saw, never reach an entity the proposal never named
 /// — otherwise "approve this merge, amended" would be a capability to merge
 /// anything at all.
+///
+/// On a SPLIT the subject walk is not the whole reach: the reassignment map
+/// also picks routes. A row's `Head` TARGET is where an item flows, and an
+/// EDGE item is replayed by moving the edge itself — so both endpoints and
+/// every head target stay bounded to the proposal's named set, and an
+/// amendment may narrow the map but never route through an entity the
+/// decider never saw. Bare claim items are not routes ([`reassignment_entry_in_scope`]).
 fn assert_amendment_in_scope(
     proposed: &IdentityTopologyOp,
     amended: &IdentityTopologyOp,
@@ -1336,16 +1343,50 @@ fn assert_amendment_in_scope(
         ));
     }
     let proposed_subjects: BTreeSet<EntityId> = proposed.participants().into_iter().collect();
-    if !amended
-        .participants()
-        .iter()
-        .all(|subject| proposed_subjects.contains(subject))
-    {
+    let in_scope = |entity: &EntityId| proposed_subjects.contains(entity);
+    if !amended.participants().iter().all(in_scope) {
         return Err(Error::IdentityProposalAmendmentOutOfScope(
             "amended body names a subject outside the proposal",
         ));
     }
+    if let IdentityTopologyOp::Split(split) = amended
+        && split
+            .reassignment
+            .entries
+            .iter()
+            .any(|entry| !reassignment_entry_in_scope(entry, &proposed_subjects))
+    {
+        return Err(Error::IdentityProposalAmendmentOutOfScope(
+            "amended split map references an entity outside the proposal",
+        ));
+    }
     Ok(())
+}
+
+/// Every entity one map row might ROUTE TO is bounded to the proposal's
+/// participant set: `Head` targets, and either side of an edge ITEM —
+/// ONE-1745 replays reassignments by moving the edge, so an edge endpoint
+/// outside the named set is an out-of-scope route. Row items naming a bare
+/// claim (an `Entity` subject) are not routes: a split's map moves claims
+/// freely across the split's own heads whether or not the proposal named
+/// each one, which is how the verdict itself reviews them. Facet targets
+/// are op-internal indices and residue names nothing, so neither reaches
+/// an entity the proposal did not.
+fn reassignment_entry_in_scope(
+    entry: &ReassignmentEntry,
+    proposed_subjects: &BTreeSet<EntityId>,
+) -> bool {
+    let item_in_scope = match &entry.item {
+        ClaimSubject::Entity(_) => true,
+        ClaimSubject::Edge { source, target, .. } => {
+            proposed_subjects.contains(source) && proposed_subjects.contains(target)
+        }
+    };
+    let target_in_scope = match &entry.target {
+        ReassignmentTarget::Head(head) => proposed_subjects.contains(head),
+        ReassignmentTarget::Facet { .. } | ReassignmentTarget::Residue => true,
+    };
+    item_in_scope && target_in_scope
 }
 
 /// The AMENDABLE op kinds: only the two ops whose apply door is armed and
