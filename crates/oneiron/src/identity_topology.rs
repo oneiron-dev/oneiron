@@ -2763,14 +2763,27 @@ impl Vault {
         };
 
         let scope = self.proposal_scope_in_txn(&*wtxn, &record, &proposed_op)?;
+        let proposer_evidence = record.evidence.as_ref();
         let (outcome, amended_body) = match (&ruling, amended) {
             (ProposalRuling::Reject, _) => (ProposalOutcome::Rejected, None),
             (ProposalRuling::Approve, _) => {
-                self.apply_resolved_identity_op_in_txn(wtxn, &proposed_op, write, now)?;
+                self.apply_resolved_identity_op_in_txn(
+                    wtxn,
+                    &proposed_op,
+                    proposer_evidence,
+                    write,
+                    now,
+                )?;
                 (ProposalOutcome::ApprovedUntouched, None)
             }
             (ProposalRuling::AmendThenApprove(_), Some((amended_op, body))) => {
-                self.apply_resolved_identity_op_in_txn(wtxn, &amended_op, write, now)?;
+                self.apply_resolved_identity_op_in_txn(
+                    wtxn,
+                    &amended_op,
+                    proposer_evidence,
+                    write,
+                    now,
+                )?;
                 (ProposalOutcome::ApprovedAmended, Some(body))
             }
             // `amended` is Some exactly when the ruling is AmendThenApprove.
@@ -2810,11 +2823,16 @@ impl Vault {
 
     /// Applies the op a ruling approved, under `Approved` consent — the
     /// decider's ruling IS the approval, whatever axis the original
-    /// proposal carried.
+    /// proposal carried. The proposal row's evidence rides along: the
+    /// stored-action codec reconstructs an op without it
+    /// (`to_fold_action` carries no envelope data), and an approved ruling
+    /// must not silently sever the decision from the refs and rationale
+    /// that motivated it.
     fn apply_resolved_identity_op_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         op: &IdentityTopologyOp,
+        proposer_evidence: Option<&IdentityOpEvidence>,
         write: &IdentityOpWrite,
         now: u64,
     ) -> Result<()> {
@@ -2822,7 +2840,22 @@ impl Vault {
             approval: ClaimApprovalStatus::Approved,
             ..*write
         };
-        self.apply_identity_topology_op_in_txn(wtxn, op, &applied_write, now)?;
+        let op = match (proposer_evidence, op) {
+            (Some(evidence), IdentityTopologyOp::Merge(merge)) => {
+                IdentityTopologyOp::Merge(MergeOp {
+                    evidence: evidence.clone(),
+                    ..merge.clone()
+                })
+            }
+            (Some(evidence), IdentityTopologyOp::Split(split)) => {
+                IdentityTopologyOp::Split(SplitOp {
+                    evidence: evidence.clone(),
+                    ..split.clone()
+                })
+            }
+            _ => op.clone(),
+        };
+        self.apply_identity_topology_op_in_txn(wtxn, &op, &applied_write, now)?;
         Ok(())
     }
 
