@@ -70,6 +70,15 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 /// this module; suffix is the 16-byte grant id.
 pub(crate) const CONSENT_GRANT_KEY_PREFIX: &[u8] = b"consent.grant.v1:";
 
+/// `vault_meta` key prefix for approve-once spend markers. Owned by this
+/// module; suffix is the 32-byte effect digest. One row per consumed
+/// approve-once: presence means the digest already authorized its one op, so
+/// the mint door rejects a replay in the same write transaction as the
+/// receipt it would have produced (DEC-0006 invariant 2, consume-once). The
+/// value is the approving [`GateDecisionId`] — not a bare tombstone — so a
+/// contested spend points at its evidence receipt.
+pub(crate) const CONSENT_APPROVE_ONCE_KEY_PREFIX: &[u8] = b"consent.once.v1:";
+
 /// Body schema version of a persisted standing consent-grant row.
 pub const CONSENT_GRANT_SCHEMA_VERSION: u64 = 1;
 
@@ -2247,19 +2256,55 @@ impl Vault {
     ///
     /// Consumes only that digest: an approve-once receipt authorizes this op,
     /// now, and covers no other op and no future op. It mints no standing row.
+    /// The mint is REPLAY-REJECTED: a spent marker keyed by the digest is
+    /// claimed in the SAME write transaction as the receipt, so a second
+    /// `approve_once` over the same digest — the owner re-tapping an
+    /// already-answered ask, or a replayed digest — is refused with
+    /// [`Error::ConsentApproveOnceSpent`]. LMDB serializes writers, so a
+    /// concurrent mint sees the committed marker and rolls back.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ConsentApproveOnceSpent`] when the digest was already
+    /// approved, and [`Error::ConsentOwnerNotAuthenticated`] transitively
+    /// from the owner-stamp check.
     pub fn approve_once(
         &self,
         owner: &AuthenticatedOwner,
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let decision_id = GateDecisionId::now();
+        self.claim_approve_once_in_txn(&mut wtxn, &effect_digest, decision_id)?;
         let receipt = ConsentReceipt::Approved {
-            decision_id: GateDecisionId::now(),
+            decision_id,
             grant: ConsentGrant::ApproveOnce(effect_digest),
         };
-        let mut wtxn = self.store.env.write_txn()?;
         self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
         wtxn.commit()?;
         Ok(receipt)
+    }
+
+    /// Claims the approve-once spend slot for `digest` inside `wtxn`, or fails
+    /// when it is already claimed. The marker value is the approving
+    /// [`GateDecisionId`] bytes, so a contested claim names its evidence; the
+    /// consent receipt projection written by the same transaction is the audit
+    /// trail. LMDB serializes writers, so two racing mints cannot both win.
+    fn claim_approve_once_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        digest: &EffectDigest,
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
+        let key = consent_approve_once_key(digest);
+        let decision_id_bytes = decision_id.as_bytes();
+        if self.store.vault_meta.get(&*wtxn, &key)?.is_some() {
+            return Err(Error::ConsentApproveOnceSpent(
+                "this op digest already carries an approve-once receipt",
+            ));
+        }
+        self.store.vault_meta.put(wtxn, &key, &decision_id_bytes)?;
+        Ok(())
     }
 
     /// The ONLY persistence door for a standing consent grant.
@@ -2569,6 +2614,13 @@ pub fn load_active_standing_grants(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn consent_approve_once_key(digest: &EffectDigest) -> Vec<u8> {
+    let mut key = Vec::with_capacity(CONSENT_APPROVE_ONCE_KEY_PREFIX.len() + 32);
+    key.extend_from_slice(CONSENT_APPROVE_ONCE_KEY_PREFIX);
+    key.extend_from_slice(digest.as_bytes());
+    key
+}
 
 fn consent_grant_key(grant_ref: &str) -> Vec<u8> {
     let mut key = Vec::with_capacity(CONSENT_GRANT_KEY_PREFIX.len() + grant_ref.len());

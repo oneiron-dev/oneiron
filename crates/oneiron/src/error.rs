@@ -190,6 +190,7 @@ pub enum ErrorKind {
     ConsentCatastropheNotRememberable,
     ConsentGrantNotFound,
     ConsentGrantRevoked,
+    ConsentApproveOnceSpent,
     InvalidTaskBody,
     CorruptedIndex,
     ContextPackValidation,
@@ -982,6 +983,12 @@ pub enum Error {
     /// A standing grant was used after revocation. Revocation is immediate.
     #[error("consent grant is revoked")]
     ConsentGrantRevoked,
+    /// An approve-once digest was replayed: either the owner tried to mint a
+    /// second approve-once over it, or the evaluator matched a receipt whose
+    /// effect already ran. Approve-once authorizes this op, NOW, exactly once
+    /// (DEC-0006 invariant 2). Nothing was written.
+    #[error("approve-once digest already spent: {0}")]
+    ConsentApproveOnceSpent(&'static str),
     /// A TASK record failed pinned role-field validation. Nothing was written.
     #[error("invalid TASK body: {0}")]
     InvalidTaskBody(&'static str),
@@ -1662,6 +1669,7 @@ impl Error {
             }
             Self::ConsentGrantNotFound => ErrorKind::ConsentGrantNotFound,
             Self::ConsentGrantRevoked => ErrorKind::ConsentGrantRevoked,
+            Self::ConsentApproveOnceSpent(_) => ErrorKind::ConsentApproveOnceSpent,
             Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,

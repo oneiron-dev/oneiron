@@ -186,6 +186,27 @@ fn consent_lifetime_types_share_one_receipt_enum_owner_only_standing() {
         "an approve-once receipt must not cover a different op"
     );
 
+    // ...and it authorizes this op ONCE: running the effect twice sees the
+    // first approve land and the second replay rejected at the mint door
+    // (FIX-3, consume-once). The evaluator's own Auto arm is unchanged — a
+    // matched digest still authorizes — but RE-MINTING the same digest is
+    // refused, so replay evidence cannot be produced a second time.
+    let replay_digest = ComposedEffect::new(irreversible_send_facts())
+        .with_action_requirement(action_bound("agent-b", "archive", &["channel:notes"]))
+        .expect("replay requirement")
+        .digest();
+    vault
+        .approve_once(&owner, replay_digest)
+        .expect("first approve mints");
+    assert_eq!(
+        vault
+            .approve_once(&owner, replay_digest)
+            .expect_err("replayed digest")
+            .kind(),
+        ErrorKind::ConsentApproveOnceSpent,
+        "the second approve_once over one digest must reject"
+    );
+
     // Standing minting is OWNER-ONLY, enforced by the type system: a
     // `ConsentProposal` (all a guard can produce) carries no owner stamp and
     // there is no conversion from it into an `AuthenticatedOwner`. The runtime
