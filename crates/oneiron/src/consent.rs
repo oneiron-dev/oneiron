@@ -2355,12 +2355,20 @@ impl Vault {
     /// Revoked rows are filtered here rather than at the call site so a
     /// revocation is immediate for every consumer.
     pub fn active_standing_consent_grants(&self) -> Result<Vec<StandingConsentGrant>> {
-        Ok(self
-            .consent_grant_rows()?
-            .into_iter()
-            .filter(ConsentGrantRow::is_active)
-            .map(|row| row.grant)
-            .collect())
+        let rtxn = self.store.env.read_txn()?;
+        self.active_standing_consent_grants_in_txn(&rtxn)
+    }
+
+    /// Transaction-composable [`Vault::active_standing_consent_grants`].
+    ///
+    /// Reads on the caller's transaction (read or write — an `RwTxn`
+    /// derefs here), so a door composing the consent context INSIDE its own
+    /// write txn sees the same snapshot the enclosing commit is decided on.
+    pub fn active_standing_consent_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<StandingConsentGrant>> {
+        load_active_standing_grants(&self.store, txn)
     }
 
     /// The DEC-0006 door: evaluates one composed effect against the owner's
@@ -2488,6 +2496,35 @@ pub fn bound_catastrophe_class(bound: &GrantBound) -> Option<CatastropheClass> {
     CATASTROPHE_FLOOR_V1
         .into_iter()
         .find(|catastrophe| catastrophe.as_str() == class)
+}
+
+/// Every ACTIVE standing grant, read on the caller's transaction.
+///
+/// This is the `Store`-level projection a write door (which holds the store
+/// and its in-flight write txn, not the `Vault`) uses to compose a
+/// [`crate::gate::ConsentGateContext`]. Reading on the SAME transaction the
+/// enclosing commit rides on keeps a revocation inside that txn visible to
+/// the verdict.
+///
+/// Revoked rows are filtered here rather than at the call site so a
+/// revocation is immediate for every consumer — the `RoTxn` bound accepts a
+/// `&RwTxn` by deref.
+pub fn load_active_standing_grants(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<StandingConsentGrant>> {
+    let mut grants = Vec::new();
+    for entry in store
+        .vault_meta
+        .prefix_iter(txn, CONSENT_GRANT_KEY_PREFIX)?
+    {
+        let (_, value) = entry?;
+        let row = decode_consent_grant_row(&value)?;
+        if row.is_active() {
+            grants.push(row.grant);
+        }
+    }
+    Ok(grants)
 }
 
 // ---------------------------------------------------------------------------

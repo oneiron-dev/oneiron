@@ -2614,7 +2614,10 @@ fn forged_standing_grant_ref_does_not_authorize_external_effect() -> Result<()> 
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
-        vec!["gate.pending.external_effect_authority"]
+        vec![
+            "gate.pending.consent.irreversible_effect",
+            "gate.pending.external_effect_authority",
+        ]
     );
     let decisions = vault.store.gate_decisions(10)?;
     assert_eq!(decisions.len(), 1);
@@ -2945,7 +2948,10 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
-        vec!["gate.pending.external_effect_authority"]
+        vec![
+            "gate.pending.consent.irreversible_effect",
+            "gate.pending.external_effect_authority",
+        ]
     );
 
     let mut lifecycle_effect = external_effect_gate_input("sender", "provision", "line");
@@ -2956,7 +2962,10 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
-        vec!["gate.pending.external_effect_authority"]
+        vec![
+            "gate.pending.consent.irreversible_effect",
+            "gate.pending.external_effect_authority",
+        ]
     );
 
     put_policy_manifest_bytes(&vault, test_id(0xDC), &encode_policy_manifest(vec![]))?;
@@ -3185,7 +3194,10 @@ fn external_effect_public_first_touch_applies_hold_floor_and_receipt() -> Result
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
-        vec!["gate.pending.external_effect_authority"]
+        vec![
+            "gate.pending.consent.irreversible_effect",
+            "gate.pending.external_effect_authority",
+        ]
     );
     assert_eq!(
         decision.receipt_reasons(),
@@ -3200,7 +3212,10 @@ fn external_effect_public_first_touch_applies_hold_floor_and_receipt() -> Result
     assert_eq!(shaped.outcome, "pending");
     assert_eq!(
         shaped.reason_codes,
-        vec!["gate.pending.external_effect_authority"]
+        vec![
+            "gate.pending.consent.irreversible_effect",
+            "gate.pending.external_effect_authority",
+        ]
     );
 
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
@@ -3216,6 +3231,7 @@ fn external_effect_public_first_touch_applies_hold_floor_and_receipt() -> Result
     assert_eq!(
         shaped_receipt.policy_trace,
         vec![
+            "gate.pending.consent.irreversible_effect",
             "gate.pending.external_effect_authority",
             "counterparty_first_touch_public"
         ]
@@ -3247,7 +3263,7 @@ fn external_effect_requires_opt_in_and_permission() -> Result<()> {
 
     let mut missing_opt_in = external_effect_gate_input("sender", "send", "line");
     missing_opt_in.has_opted_in = false;
-    let decision = policy.evaluate_gate(&missing_opt_in.gate_input(None));
+    let decision = policy.evaluate_gate(&missing_opt_in.gate_input(None, None));
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
@@ -3256,7 +3272,7 @@ fn external_effect_requires_opt_in_and_permission() -> Result<()> {
 
     let mut missing_permission = external_effect_gate_input("sender", "send", "line");
     missing_permission.has_permission = false;
-    let decision = policy.evaluate_gate(&missing_permission.gate_input(None));
+    let decision = policy.evaluate_gate(&missing_permission.gate_input(None, None));
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
@@ -3277,7 +3293,7 @@ fn external_effect_policy_risk_holds_but_owner_grant_can_dial_allow_all() -> Res
     let mut risky = external_effect_gate_input("sender", "send", "line");
     risky.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
 
-    let decision = pending_policy.evaluate_gate(&risky.gate_input(None));
+    let decision = pending_policy.evaluate_gate(&risky.gate_input(None, None));
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
@@ -3302,7 +3318,7 @@ fn external_effect_policy_risk_holds_but_owner_grant_can_dial_allow_all() -> Res
     )]);
     put_policy_manifest_bytes(&allowed_vault, test_id(0xD3), &data)?;
     let allowed_policy = resolve(&allowed_vault)?;
-    let decision = allowed_policy.evaluate_gate(&risky.gate_input(None));
+    let decision = allowed_policy.evaluate_gate(&risky.gate_input(None, None));
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
     Ok(())
@@ -3323,7 +3339,7 @@ fn external_effect_budgeted_grants_hold_without_budget_enforcer() -> Result<()> 
     put_policy_manifest_bytes(&vault, test_id(0xD4), &data)?;
     let policy = resolve(&vault)?;
     let effect = external_effect_gate_input("sender", "send", "line");
-    let decision = policy.evaluate_gate(&effect.gate_input(None));
+    let decision = policy.evaluate_gate(&effect.gate_input(None, None));
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
@@ -6384,12 +6400,15 @@ fn definition_ceiling_blocks_external_effect_auto() -> Result<()> {
     effect.standing_grant_ref = Some("grant:test".to_owned());
 
     assert_eq!(
-        policy.evaluate_gate(&effect.gate_input(None)).outcome(),
+        policy
+            .evaluate_gate(&effect.gate_input(None, None))
+            .outcome(),
         GateOutcome::Allow,
         "the effect is auto-eligible without a definition bound"
     );
 
-    let decision = policy.evaluate_gate(&effect.gate_input(Some(PolicyApprovalCeiling::Proposed)));
+    let decision =
+        policy.evaluate_gate(&effect.gate_input(Some(PolicyApprovalCeiling::Proposed), None));
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert!(
         decision
@@ -7321,5 +7340,58 @@ fn admitted_wrapper_charges_budget_and_denies_exhausted_key() -> Result<()> {
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     assert!(charge.is_none(), "governance-only checks must not debit");
+    Ok(())
+}
+
+/// FIX-1 (gate chokepoint): both gate-input constructors take a typed consent
+/// context, and the PRODUCTION external-effect door composes it from
+/// host-observed facts inside its write transaction — no caller re-implements
+/// the ladder and no constructor hard-codes `consent: None` at a DEC-0006
+/// door. An ungranted irreversible send rides the ladder (pending); an effect
+/// covered by remembered state is consent-Auto and its other lanes rule.
+#[test]
+fn external_effect_gate_input_composes_consent_context() -> Result<()> {
+    // Ungranted: the composed context holds the irreversible send at Ask.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xD5), &encode_policy_manifest(vec![]))?;
+    let policy = resolve(&vault)?;
+    let effect = external_effect_gate_input("sender", "send", "line");
+    let consent = external_effect_consent_context(&effect, &[])
+        .expect("a send effect composes an honest consent context");
+    assert_eq!(
+        consent.decision,
+        crate::consent::ConsentDecision::Ask,
+        "an irreversible send with no covering grant must ask"
+    );
+    let decision = policy.evaluate_gate(&effect.gate_input(None, Some(consent)));
+    assert!(
+        gate_reason_strs(&decision)
+            .iter()
+            .any(|code| code.starts_with("gate.pending.consent.")),
+        "the typed consent context must reach the decision, got {:?}",
+        gate_reason_strs(&decision)
+    );
+
+    // Covered: a remembered grant auto-runs INSIDE its bound (invariant 1/3).
+    let request = external_effect_action_requirement(&effect).expect("requirement");
+    let covering = crate::consent::StandingConsentGrant::from_bound(request)
+        .expect("a bound mints a standing grant");
+    let consent =
+        external_effect_consent_context(&effect, &[covering]).expect("covered effect composes");
+    assert_eq!(
+        consent.decision,
+        crate::consent::ConsentDecision::Auto,
+        "an effect inside its bound reuses the grant quietly"
+    );
+
+    // A constructor caller that does not compose consent keeps the explicit
+    // `None` arm — pre-DEC-0006 behaviour, never a hidden Auto.
+    let decision = policy.evaluate_gate(&effect.gate_input(None, None));
+    assert!(
+        !gate_reason_strs(&decision)
+            .iter()
+            .any(|code| code.starts_with("gate.pending.consent.")),
+        "None consent contributes no consent reasons"
+    );
     Ok(())
 }
