@@ -597,6 +597,18 @@ fn invalid_body(reason: &'static str) -> Error {
     Error::InvalidSecretCustodyBody(reason)
 }
 
+/// ONE-1865 arms the replication and export posture for SECRET_CUSTODY; until
+/// then the type byte is sealed from every CRDT plane. This is the ONE
+/// rejection constructor every door names, so a grep for the byte's rejection
+/// audits the whole seal: the sync selector ([`crate::sync::selector`]), the
+/// canonical-doc mirror paths ([`crate::sync::window`] reverse
+/// rematerialization and the export scrub), and the write walls
+/// (`batch::apply_put` / `batch::validate_public_raw_put` — the custody record
+/// writes ONLY through [`Vault::register_secret`]).
+pub(crate) fn reject_secret_custody_byte() -> Error {
+    invalid_body("secret custody records are sealed from the raw/CRDT planes until ONE-1865")
+}
+
 fn tier_band_to_value(band: &TierBand) -> Value {
     Value::Map(vec![
         (Value::from("min"), Value::from(u64::from(band.min.as_u8()))),
@@ -1010,7 +1022,12 @@ impl Vault {
                 },
                 learned_at: rec.registered_at,
                 data,
-                allow_maintenance: false,
+                // SECRET-01 dedicated door: the `apply_put` seal admits byte 86
+                // only through the engine-internal non-replicated shape
+                // (`allow_maintenance && !allow_reserved_predicate`, the shape
+                // the default policy-manifest seeder uses). Any public or
+                // replicated CRDT carry of byte 86 rejects there until ONE-1865.
+                allow_maintenance: true,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
             }],

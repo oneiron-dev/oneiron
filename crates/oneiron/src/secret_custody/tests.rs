@@ -194,6 +194,43 @@ fn duplicate_live_name_is_denied() {
 }
 
 #[test]
+fn raw_put_doors_reject_secret_custody_byte() {
+    use crate::temporal::TimeRange;
+
+    let (_tmp, vault) = temp_vault();
+    let rec = record("raw-put", CustodyClass::CustodyPortable, b"hunter2", vec![]);
+    let body = encode_secret_custody_body(&rec).expect("encode");
+    let id = EntityId::now();
+    let occurred = TimeRange { start: 1, end: 1 };
+
+    // The convenience `Vault::put_entity` door (BatchBuilder::put) must reject.
+    let err = vault
+        .put_entity(&id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
+        .expect_err("put_entity on SECRET_CUSTODY must be denied");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+
+    // The raw batch door must reject at apply, not just at builder time.
+    let err = vault
+        .batch()
+        .put(&id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
+        .commit()
+        .expect_err("batch put on SECRET_CUSTODY must be denied");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+
+    // The raw-write rejection never minted a record on this id.
+    assert!(
+        vault.get_raw(&id).expect("raw read").is_none(),
+        "rejected raw put must not leave a stored row"
+    );
+}
+
+#[test]
 fn value_read_requires_binding() {
     let (_tmp, vault) = temp_vault();
     let rec = record(
