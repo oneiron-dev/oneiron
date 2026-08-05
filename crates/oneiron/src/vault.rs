@@ -723,6 +723,11 @@ impl Vault {
     }
 
     /// Retrieves an entity blob by ID.
+    ///
+    /// SECRET_CUSTODY (byte 77) is denied: the custody body carries the secret
+    /// value in the clear, and the ONLY sanctioned value read is the bound door
+    /// [`Vault::get_secret_value_in_txn`]. The value-less projection is
+    /// [`Vault::get_secret_metadata`].
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
         let value = self.store.entities.get(&rtxn, id.as_bytes())?;
@@ -730,8 +735,11 @@ impl Vault {
             return Ok(None);
         };
 
-        if EntityMetadataHeader::parse(&bytes).is_none() {
+        let Some(header) = EntityMetadataHeader::parse(&bytes) else {
             return Err(Error::CorruptedIndex("entity header"));
+        };
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
         }
 
         Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
@@ -1565,8 +1573,31 @@ impl Vault {
 
     /// Returns the raw entity blob (header + data) for an entity.
     ///
-    /// Unlike `get()` which strips the header, this returns the full LMDB value.
+    /// Unlike `get()` which strips the header, this returns the full LMDB
+    /// value. SECRET_CUSTODY (byte 77) is denied for the same reason `get()`
+    /// denies it: the body carries the secret value in the clear.
     pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let Some(bytes) = self.get_raw_unsealed(id)? else {
+            return Ok(None);
+        };
+        if EntityMetadataHeader::parse(&bytes)
+            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
+        {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
+        Ok(Some(bytes))
+    }
+
+    /// Raw entity bytes WITHOUT the custody seal.
+    ///
+    /// Crate-internal, for the passes whose whole job is to read the type byte
+    /// and then refuse, skip, or scrub a custody row (`sync::window`'s mirror,
+    /// scrub and rematerialization passes). Sealing this reader would make
+    /// those passes fail closed on the very row they exist to remove, and
+    /// would turn one custody carrier into a wedged window. `get_raw_in` is
+    /// unsealed for the same reason. Everything outside those passes uses the
+    /// sealed public [`Vault::get_raw`].
+    pub(crate) fn get_raw_unsealed(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
         self.get_raw_in(&rtxn, id)
     }

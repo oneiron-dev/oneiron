@@ -317,6 +317,43 @@ impl From<oneiron::SurfaceEventAck> for SurfaceEventAckResponse {
     }
 }
 
+/// Why identity routing refused an inbound event.
+///
+/// Closed in the engine and closed here: an adapter branches on this, so a
+/// schema that erased it to a bare string would leave every client guessing
+/// the spellings from prose.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "variant names are the engine's, and their snake_case is the wire contract"
+)]
+pub(crate) enum SurfaceEventRejectionReasonPayload {
+    UnknownReceivingIdentity,
+    NonAgentBoundIdentity,
+    InactiveReceivingIdentity,
+    TombstonedReceivingIdentity,
+}
+
+impl From<oneiron::InboundSurfaceRejectionReason> for SurfaceEventRejectionReasonPayload {
+    fn from(reason: oneiron::InboundSurfaceRejectionReason) -> Self {
+        match reason {
+            oneiron::InboundSurfaceRejectionReason::UnknownReceivingIdentity => {
+                Self::UnknownReceivingIdentity
+            }
+            oneiron::InboundSurfaceRejectionReason::NonAgentBoundIdentity => {
+                Self::NonAgentBoundIdentity
+            }
+            oneiron::InboundSurfaceRejectionReason::InactiveReceivingIdentity => {
+                Self::InactiveReceivingIdentity
+            }
+            oneiron::InboundSurfaceRejectionReason::TombstonedReceivingIdentity => {
+                Self::TombstonedReceivingIdentity
+            }
+        }
+    }
+}
+
 /// Typed route rejection: identity routing refused the event before it reached
 /// the queue.
 ///
@@ -383,12 +420,13 @@ pub(crate) struct SurfaceEventRejectionResponse {
     /// rejection.
     #[schema(example = false)]
     identity_retiring: bool,
-    /// Stable engine reason: `unknown_receiving_identity`,
-    /// `non_agent_bound_identity`, `inactive_receiving_identity`, or
-    /// `tombstoned_receiving_identity`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = String, example = "unknown_receiving_identity")]
-    rejection_reason: Option<oneiron::InboundSurfaceRejectionReason>,
+    /// Which of the four stable engine reasons applied.
+    ///
+    /// Always present on this body: a rejection is exactly the outcome that
+    /// carries one, and an adapter branching on the reason must not have to
+    /// tell "no reason" apart from "field not in this build".
+    #[schema(required = true)]
+    rejection_reason: Option<SurfaceEventRejectionReasonPayload>,
 }
 
 impl From<oneiron::InboundSurfaceRouteReceipt> for SurfaceEventRejectionResponse {
@@ -407,7 +445,7 @@ impl From<oneiron::InboundSurfaceRouteReceipt> for SurfaceEventRejectionResponse
             foreign_inbound: receipt.foreign_inbound,
             claims_not_instructions: receipt.claims_not_instructions,
             identity_retiring: receipt.identity_retiring,
-            rejection_reason: receipt.rejection_reason,
+            rejection_reason: receipt.rejection_reason.map(Into::into),
         }
     }
 }

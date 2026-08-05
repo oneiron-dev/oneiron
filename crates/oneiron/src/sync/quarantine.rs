@@ -275,7 +275,16 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // typed reason here — off-table stamp quarantined, window continues.
         // Endpoint types are read AFTER the endpoint-existence check, so a
         // not-yet-arrived endpoint defers instead of reaching this arm.
-        | ErrorKind::InvalidFacetOfEdge => Some(reason_code_for(error)),
+        | ErrorKind::InvalidFacetOfEdge
+        // SECRET-01 (ONE-1919): a replicated SECRET_CUSTODY (byte 77) carrier
+        // is refused by the replay write wall until ONE-1865 arms the dial.
+        // That refusal is a rejection of the remote op, not a local storage
+        // failure — one poisoned custody row must not wedge every other change
+        // in the window. Locally stored custody rows never surface this kind
+        // on the replay path (a corrupt on-disk row reads as `CorruptedIndex`
+        // through `read_secret_custody_in_txn`), so this arm cannot swallow
+        // local corruption.
+        | ErrorKind::InvalidSecretCustodyBody => Some(reason_code_for(error)),
         _ => None,
     }
 }
