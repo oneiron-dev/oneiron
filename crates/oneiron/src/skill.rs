@@ -1225,6 +1225,14 @@ impl Vault {
     /// Crate-private on purpose: hosts move this value by projecting the claim
     /// ([`crate::skill_reliability::rebuild_skill_confidence_cache`]), never by
     /// asserting a number.
+    ///
+    /// A SUPERSEDED revision keeps the cache it was frozen with. The lifecycle
+    /// machine below hard-rejects any update to a frozen revision, and this
+    /// door shares its caller's write transaction — so a late outcome
+    /// attributed to v1 after v2 was admitted would roll back the OUTCOME and
+    /// the reliability CLAIM alongside the cache write, losing valid evidence
+    /// to a materialization. Truth still lands; only the cache, which the
+    /// frozen revision no longer serves anything from, is skipped.
     pub(crate) fn refresh_skill_confidence_cache_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1234,6 +1242,9 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let stored = self.read_skill_record_in_txn(wtxn, id)?;
+        if stored.lifecycle_status == SkillLifecycle::Superseded {
+            return Ok(());
+        }
         let mut refreshed = stored.clone();
         refreshed.confidence = confidence;
         validate_skill_update(&stored, &refreshed)?;

@@ -48,16 +48,21 @@
 //! OF-184, and should be done with both call sites in hand rather than by
 //! guessing a seam from one.
 
+use std::collections::HashMap;
+
 use rmpv::Value;
 
 use crate::Vault;
+use crate::batch::EntityMetadataHeader;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::skill::SkillRecord;
-use crate::skill_attribution::{AttributionJudgment, AttributionVerdict};
+use crate::receipt::ReceiptRecord;
+use crate::skill::{SkillContentHash, SkillRecord};
+use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
+use crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE;
 use crate::temporal::TimeRange;
 
 /// The §G.1 predicate this module projects. Reserved `skill.*` namespace:
@@ -120,15 +125,28 @@ const SELECTION_EXPLORATION: f64 = 0.25;
 /// re-running a pass over the same judgments cannot double-count.
 const OUTCOME_PREFIX: &[u8] = b"skill_reliability:outcome:v1:";
 
+/// `skill_reliability:imported_base:v1:` + skill id (16 B).
+///
+/// The α, β a synced claim carried that this vault's outcome ledger cannot
+/// reproduce. Node-local like the ledger it completes — this row is a record of
+/// what arrived, not a fact about the skill, so it never travels.
+const IMPORTED_BASE_PREFIX: &[u8] = b"skill_reliability:imported_base:v1:";
+
 /// Terminal attempt state that credits a contributing win
 /// (`AttemptState::Completed`'s wire string, as stamped on the pack receipt).
 const ATTEMPT_OUTCOME_COMPLETED: &str = "completed";
 
-/// `skill.scan_verdict` body key + the value that marks canonical bytes vetted.
-/// Duplicated rather than imported: `ScanVerdict::as_str` is private to
+/// `skill.scan_verdict` body keys + the values that decide whether canonical
+/// bytes were actually CLEARED. Duplicated rather than imported:
+/// `ScanVerdict::as_str` / `SkillGovernance::as_str` are private to
 /// `skill_hub`, and the wire spelling is the pinned ABI either way.
 const SCAN_VERDICT_KEY: &str = "verdict";
 const SCAN_VERDICT_CLEAN: &str = "clean";
+const SCAN_GOVERNANCE_KEY: &str = "governance";
+const SCAN_GOVERNANCE_PROHIBITED: &str = "prohibited";
+
+/// `skill.hub_provenance` body key naming the bytes a hub alias vouches for.
+const HUB_PROVENANCE_CONTENT_HASH_KEY: &str = "contentHash";
 
 const KEY_ALPHA: &str = "alpha";
 const KEY_BETA: &str = "beta";
@@ -300,10 +318,14 @@ pub fn skill_provenance_trust_class(
     skill: &EntityId,
 ) -> Result<ProvenanceTrustClass> {
     let record = read_skill(vault, skill)?;
-    provenance_trust_class(vault, &record)
+    provenance_trust_class(vault, skill, &record)
 }
 
-fn provenance_trust_class(vault: &Vault, record: &SkillRecord) -> Result<ProvenanceTrustClass> {
+fn provenance_trust_class(
+    vault: &Vault,
+    skill: &EntityId,
+    record: &SkillRecord,
+) -> Result<ProvenanceTrustClass> {
     if record.generated {
         return Ok(ProvenanceTrustClass::Generated);
     }
@@ -313,15 +335,62 @@ fn provenance_trust_class(vault: &Vault, record: &SkillRecord) -> Result<Provena
     let Some(content_hash) = record.content_hash else {
         return Ok(ProvenanceTrustClass::UnvettedImport);
     };
-    let vetted = vault
-        .skill_scan_verdicts_for_content_hash(content_hash)?
-        .iter()
-        .any(|body| map_str(&body.value, SCAN_VERDICT_KEY) == Some(SCAN_VERDICT_CLEAN));
+    // The top prior is the VETTED-HUB import (ARCH-0053 §5): a hub carries
+    // these bytes AND a scanner cleared them. Both halves are read, because
+    // either half alone is a different claim. A clean verdict on bytes no hub
+    // vouches for says only "a scanner looked at some bytes" — there is no
+    // trust relationship behind it to be optimistic about — and a hub alias
+    // over bytes nobody scanned is what `UnvettedImport` NAMES.
+    let vetted = hub_vouches_for_content(vault, skill, content_hash)?
+        && vault
+            .skill_scan_verdicts_for_content_hash(content_hash)?
+            .iter()
+            .any(scan_verdict_cleared_the_bytes);
     Ok(if vetted {
         ProvenanceTrustClass::VettedImport
     } else {
         ProvenanceTrustClass::UnvettedImport
     })
+}
+
+/// True when a scanner receipt actually CLEARED the bytes it names.
+///
+/// `verdict == clean` alone is not a clearance. `governance` is a separate
+/// POLICY axis carried on the same receipt (`skill_hub::SkillGovernance`), and
+/// the scan-ingest door validates only the provider text — nothing stops a
+/// receipt that pairs a clean scan with `prohibited` governance. Seeding the
+/// MOST optimistic prior off bytes the governance axis forbids inverts the
+/// table it is keyed by, so a prohibited row clears nothing however clean the
+/// scanner found it.
+///
+/// `riskLevel` and `completeness` are deliberately NOT read here: both are
+/// scanner-signal axes the scanner already summarized into `verdict`, so
+/// re-judging them would be this module second-guessing the provider.
+/// `governance` is the one axis on the row that is NOT the scanner's opinion.
+fn scan_verdict_cleared_the_bytes(body: &ClaimBody) -> bool {
+    map_str(&body.value, SCAN_VERDICT_KEY) == Some(SCAN_VERDICT_CLEAN)
+        && map_str(&body.value, SCAN_GOVERNANCE_KEY) != Some(SCAN_GOVERNANCE_PROHIBITED)
+}
+
+/// True when an active `skill.hub_provenance` alias on this skill names exactly
+/// these canonical bytes.
+///
+/// Scan verdicts hang off the content ANCHOR, which is content-global — every
+/// holder of the same bytes sees the same verdicts. The provenance row is the
+/// per-skill half: it is what says a HUB carried these bytes to this vault.
+fn hub_vouches_for_content(
+    vault: &Vault,
+    skill: &EntityId,
+    content_hash: SkillContentHash,
+) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let hash_hex = content_hash.to_hex();
+    for (_, body, _) in active_claims_in_txn(vault, &rtxn, skill, PREDICATE_SKILL_HUB_PROVENANCE)? {
+        if map_str(&body.value, HUB_PROVENANCE_CONTENT_HASH_KEY) == Some(hash_hex.as_str()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The prior a skill's posterior starts from, before any attributed outcome.
@@ -361,14 +430,7 @@ pub fn record_skill_contributing_win(
             "a contributing win requires a completed attempt receipt",
         ));
     }
-    // A receipt stamped before the manifest field-set carries no manifest and
-    // cannot answer which skills the pack loaded — an absent fact, not a failed
-    // check (the ONE-1737 evidence door draws the same line).
-    if let Some(manifest) = receipt.pack_manifest_skills()
-        && !manifest
-            .iter()
-            .any(|entry| manifest_entry_names_skill(entry, &record.skill_id))
-    {
+    if !receipt_manifest_names_skill(&receipt, &record) {
         return Err(invalid(
             "contributing win names a skill absent from the receipt manifest",
         ));
@@ -376,12 +438,37 @@ pub fn record_skill_contributing_win(
     vault.with_write_txn(|wtxn| record_outcome_in_txn(vault, wtxn, skill, receipt_ref, true, at))
 }
 
+/// The manifest chokepoint BOTH outcome doors run: did the pack that stamped
+/// this receipt actually load this skill revision?
+///
+/// A receipt stamped before the manifest field-set carries no manifest and
+/// cannot answer which skills the pack loaded — an absent fact, not a failed
+/// check (the ONE-1737 evidence door draws the same line).
+fn receipt_manifest_names_skill(receipt: &ReceiptRecord, record: &SkillRecord) -> bool {
+    let Some(manifest) = receipt.pack_manifest_skills() else {
+        return true;
+    };
+    manifest
+        .iter()
+        .any(|entry| manifest_entry_names_skill(entry, &record.skill_id, &record.version))
+}
+
 /// A manifest wire form is `reference@version`; a SKILL row's reference is its
-/// `skill_id`. Split from the RIGHT so an id containing `@` still resolves.
-fn manifest_entry_names_skill(wire_form: &str, skill_id: &str) -> bool {
+/// `skill_id` and its version is the REVISION the pack loaded. Split from the
+/// RIGHT so an id containing `@` still resolves.
+///
+/// The version is compared exactly whenever the entry carries one. A revision
+/// is its own SKILL entity with its own posterior (`supersede_skill_record`
+/// freezes the old one), so a `skill@1` receipt crediting the `skill@2` entity
+/// would move a claim about bytes that attempt never ran. An entry with an
+/// empty version is an absent fact — it names no revision to disagree with —
+/// and still resolves, exactly as an absent manifest does above.
+fn manifest_entry_names_skill(wire_form: &str, skill_id: &str, version: &str) -> bool {
     wire_form
         .rsplit_once('@')
-        .is_some_and(|(reference, _)| reference == skill_id)
+        .is_some_and(|(reference, entry_version)| {
+            reference == skill_id && (entry_version.is_empty() || entry_version == version)
+        })
 }
 
 /// Writes one outcome row, keyed `(skill, receipt)`.
@@ -448,10 +535,6 @@ struct OutcomeTally {
 }
 
 impl OutcomeTally {
-    fn total(&self) -> u32 {
-        self.wins.saturating_add(self.losses)
-    }
-
     fn posterior(&self, prior: SkillReliabilityPosterior) -> SkillReliabilityPosterior {
         SkillReliabilityPosterior {
             alpha: prior.alpha + count_weight(self.wins),
@@ -507,10 +590,21 @@ fn decode_outcome_win(raw: &[u8]) -> Result<bool> {
 /// resumable rather than atomic: the posterior is RECOMPUTED from the outcome
 /// ledger every time, so an interrupted pass leaves stale claims that the next
 /// pass corrects — never double-counted ones.
+///
+/// **Every judgment is re-grounded here, not trusted.** [`AttributionJudgment`]
+/// is a public type with public fields, so the argument is caller-owned data —
+/// and this function authors reserved `skill.*` truth through the engine-owned
+/// door. So a row counts only if it IS the row ONE-1737's projector persisted
+/// at that sequence (`attribution_judgments` is the stack seam, and the seam is
+/// over PERSISTED judgments) and its citation resolves to a real pack receipt
+/// whose manifest loaded this skill — the same grounding
+/// [`record_skill_contributing_win`] runs on the α side. Ungrounded rows are
+/// SKIPPED rather than fatal: one forged row must not deny a whole pass.
 pub fn project_skill_reliability(
     vault: &Vault,
     judgments: &[AttributionJudgment],
 ) -> Result<Vec<EntityId>> {
+    let persisted = persisted_judgments_by_sequence(vault)?;
     let mut batches: Vec<(EntityId, Vec<&AttributionJudgment>)> = Vec::new();
     for judgment in judgments {
         if judgment.verdict != AttributionVerdict::SkillDefect {
@@ -519,13 +613,26 @@ pub fn project_skill_reliability(
         // The subject of a defect verdict is a SKILL by SK-04's routing, but a
         // projector that trusts that without checking would mint a reliability
         // claim on whatever entity a malformed row named.
-        if vault.get_skill_record(&judgment.subject)?.is_none() {
+        let Some(record) = vault.get_skill_record(&judgment.subject)? else {
             continue;
-        }
+        };
         // A judgment with nothing to cite cannot be counted: the row it would
         // write has no key, and a loss with no trace is the thing the doctrine
         // header exists to refuse.
-        if judgment.evidence_receipts.is_empty() {
+        let Some(receipt_ref) = judgment.evidence_receipts.first() else {
+            continue;
+        };
+        // …and a citation that names no stamped receipt, or a receipt whose
+        // pack never loaded this skill, is a trace only in shape.
+        let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
+            continue;
+        };
+        if !receipt_manifest_names_skill(&receipt, &record) {
+            continue;
+        }
+        // Grounded — but grounding is not authorization. This row must also BE
+        // the row ONE-1737's projector routed at this sequence.
+        if persisted.get(&judgment.sequence) != Some(judgment) {
             continue;
         }
         match batches.iter_mut().find(|(id, _)| *id == judgment.subject) {
@@ -579,8 +686,10 @@ fn project_in_txn(
     prior: SkillReliabilityPosterior,
     at: u64,
 ) -> Result<SkillReliabilityPosterior> {
+    let heads = active_reliability_heads_in_txn(vault, wtxn, skill)?;
+    let base = projection_base_in_txn(vault, wtxn, skill, prior, &heads)?;
     let tally = tally_outcomes(vault, wtxn, skill)?;
-    let posterior = tally.posterior(prior);
+    let posterior = tally.posterior(base);
     let evidence = Value::Array(
         tally
             .cited
@@ -589,10 +698,15 @@ fn project_in_txn(
             .collect(),
     );
 
-    let active = active_reliability_claim_in_txn(vault, wtxn, skill)?;
-    let unchanged = active.as_ref().is_some_and(|(_, body)| {
-        body.value == posterior.to_value() && body.evidence.as_ref() == Some(&evidence)
-    });
+    // Convergence, not just currency: ONE head that already says exactly this
+    // is the no-op case, but TWO heads is a fork that must collapse even when
+    // the winning value is unchanged.
+    let unchanged = match heads.as_slice() {
+        [(_, body, _)] => {
+            body.value == posterior.to_value() && body.evidence.as_ref() == Some(&evidence)
+        }
+        _ => false,
+    };
     if !unchanged {
         let claim_id = EntityId::now();
         let mut body = ClaimBody::new(
@@ -612,8 +726,18 @@ fn project_in_txn(
             TimeRange { start: at, end: at },
             at,
         )?;
-        if let Some((prior_id, _)) = active {
-            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, &prior_id, at)?;
+        // EVERY active head is superseded, not just the first one found.
+        // `EntityId::now()` is per-replica unique, so two replicas that both
+        // projected this skill hold two distinct claim entities; after a sync
+        // both are Active, and superseding one of them leaves the other active
+        // forever. Same shape as the scan-verdict precedent in `skill_hub`,
+        // including its `superseded_at` clamp: `supersede_reserved_claim_in_txn`
+        // re-Puts the old row over `{start: old_start, end: now}`, and an
+        // out-of-order event time would make that range invalid and roll the
+        // whole transaction back — permanently, since the retry re-derives the
+        // same `at`.
+        for (head_id, _, head_start) in &heads {
+            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, head_id, at.max(*head_start))?;
         }
     }
 
@@ -625,8 +749,161 @@ fn project_in_txn(
         TimeRange { start: at, end: at },
         at,
     )?;
-    floor_check_in_txn(vault, wtxn, skill, posterior, tally.total(), at)?;
+    floor_check_in_txn(
+        vault,
+        wtxn,
+        skill,
+        posterior,
+        attributed_outcomes(prior, posterior),
+        at,
+    )?;
     Ok(posterior)
+}
+
+/// The α, β the local outcome ledger is folded ON TOP of.
+///
+/// Sync carries entities, edges and tombstones — `vault_meta` outcome rows
+/// stay node-local, so a replica that receives another's reliability CLAIM
+/// receives the posterior but none of the outcomes underneath it. Recomputing
+/// `prior + local tally` and superseding that claim would DESTROY the other
+/// replica's history with one local loss.
+///
+/// So a head citing receipts this vault holds no outcome rows for is history
+/// this ledger cannot reproduce: its α, β becomes the base, and the local tally
+/// folds onto it. The base is persisted (node-local, like the ledger it
+/// completes) because the head that carried it is superseded moments later —
+/// and because the claim body is pinned to `{alpha, beta}`, so it has nowhere
+/// else to live. Claims THIS replica writes cite only local receipts, so they
+/// never re-enter as a base and the fold cannot double-count itself.
+///
+/// The honest bound: this converges history INTO a replica, not between two
+/// replicas that each attribute outcomes the other never sees. Cross-replica
+/// exactness needs per-outcome identity on the wire (the outcome rows
+/// themselves), which is a sync-scope change, not a projector one.
+fn projection_base_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    skill: &EntityId,
+    prior: SkillReliabilityPosterior,
+    heads: &[(EntityId, ClaimBody, u64)],
+) -> Result<SkillReliabilityPosterior> {
+    let mut base = read_imported_base_in_txn(vault, wtxn, skill)?;
+    let mut imported = None;
+    for (_, body, _) in heads {
+        if !cites_receipts_absent_locally(vault, wtxn, skill, body)? {
+            continue;
+        }
+        let candidate = SkillReliabilityPosterior::from_value(&body.value)?;
+        // The richest head wins: more pseudo-observations is strictly more
+        // history, and picking by weight is order-independent where picking
+        // by arrival is not.
+        if base.is_none_or(|held| candidate.observations() > held.observations()) {
+            base = Some(candidate);
+            imported = Some(candidate);
+        }
+    }
+    if let Some(imported) = imported {
+        write_imported_base_in_txn(vault, wtxn, skill, imported)?;
+    }
+    Ok(base.unwrap_or(prior))
+}
+
+/// True when the claim rests on at least one receipt the local outcome ledger
+/// has no row for — the mark of a posterior projected somewhere else.
+fn cites_receipts_absent_locally(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    body: &ClaimBody,
+) -> Result<bool> {
+    let Some(Value::Array(cited)) = body.evidence.as_ref() else {
+        return Ok(false);
+    };
+    for receipt in cited {
+        let Some(receipt) = receipt.as_str() else {
+            continue;
+        };
+        if vault
+            .store
+            .vault_meta
+            .get(rtxn, &outcome_key(skill, receipt))?
+            .is_none()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn read_imported_base_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<Option<SkillReliabilityPosterior>> {
+    let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(rtxn, &imported_base_key(skill))?
+    else {
+        return Ok(None);
+    };
+    let value = decode_value(&raw)?;
+    if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
+        return Err(invalid(
+            "unsupported skill reliability imported-base schema",
+        ));
+    }
+    SkillReliabilityPosterior::from_value(&value).map(Some)
+}
+
+fn write_imported_base_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    skill: &EntityId,
+    base: SkillReliabilityPosterior,
+) -> Result<()> {
+    let row = Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(SKILL_RELIABILITY_SCHEMA_VERSION),
+        ),
+        (Value::from(KEY_ALPHA), Value::F32(base.alpha)),
+        (Value::from(KEY_BETA), Value::F32(base.beta)),
+    ]);
+    let encoded = encode_value(&row)?;
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, &imported_base_key(skill), &encoded)?;
+    Ok(())
+}
+
+fn imported_base_key(skill: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(IMPORTED_BASE_PREFIX.len() + ENTITY_ID_LEN);
+    key.extend_from_slice(IMPORTED_BASE_PREFIX);
+    key.extend_from_slice(skill.as_bytes());
+    key
+}
+
+/// Attributed outcomes carried by a posterior: the pseudo-observation weight it
+/// holds ABOVE its prior.
+///
+/// Derived rather than counted, because the local outcome ledger is not the
+/// whole story on a replica — a synced posterior carries outcomes whose rows
+/// never travelled. Equals the local tally exactly whenever it is the whole
+/// story, so the pure-local reading is unchanged.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "float-to-int saturates in Rust; the weight is clamped non-negative first"
+)]
+fn attributed_outcomes(
+    prior: SkillReliabilityPosterior,
+    posterior: SkillReliabilityPosterior,
+) -> u32 {
+    (posterior.observations() - prior.observations())
+        .round()
+        .max(0.0) as u32
 }
 
 /// Reads the active `skill.reliability` posterior, or `None` when the skill has
@@ -636,34 +913,63 @@ pub fn skill_reliability_posterior(
     skill: &EntityId,
 ) -> Result<Option<SkillReliabilityPosterior>> {
     let rtxn = vault.store.env.read_txn()?;
-    active_reliability_claim_in_txn(vault, &rtxn, skill)?
-        .map(|(_, body)| SkillReliabilityPosterior::from_value(&body.value))
-        .transpose()
+    resolved_reliability_posterior_in_txn(vault, &rtxn, skill)
 }
 
-fn active_claim_in_txn(
+/// The posterior the active heads settle on: the richest one.
+///
+/// A fork is transient — the next projection supersedes every head — but a read
+/// that lands mid-fork must not answer with whichever row the edge index
+/// happened to yield first.
+fn resolved_reliability_posterior_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<Option<SkillReliabilityPosterior>> {
+    let mut resolved: Option<SkillReliabilityPosterior> = None;
+    for (_, body, _) in active_reliability_heads_in_txn(vault, rtxn, skill)? {
+        let candidate = SkillReliabilityPosterior::from_value(&body.value)?;
+        if resolved.is_none_or(|held| candidate.observations() > held.observations()) {
+            resolved = Some(candidate);
+        }
+    }
+    Ok(resolved)
+}
+
+/// EVERY active claim for `predicate` on `skill`, with the `occurred_start` a
+/// supersession has to clamp against.
+fn active_claims_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
     predicate: &str,
-) -> Result<Option<(EntityId, ClaimBody)>> {
+) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
+    let mut rows = Vec::new();
     for id in vault.claims_for_subject_in_txn(rtxn, skill)? {
         let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
             continue;
         };
-        if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active {
-            return Ok(Some((id, body)));
+        if body.predicate != predicate || body.lifecycle != ClaimLifecycleStatus::Active {
+            continue;
         }
+        let raw = vault
+            .store
+            .entities
+            .get(rtxn, id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("claim_of edge"))?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        rows.push((id, body, header.occurred_start));
     }
-    Ok(None)
+    Ok(rows)
 }
 
-fn active_reliability_claim_in_txn(
+fn active_reliability_heads_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
-) -> Result<Option<(EntityId, ClaimBody)>> {
-    active_claim_in_txn(vault, rtxn, skill, PREDICATE_SKILL_RELIABILITY)
+) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
+    active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_RELIABILITY)
 }
 
 // ---------------------------------------------------------------------------
@@ -678,13 +984,14 @@ fn active_reliability_claim_in_txn(
 /// truth — this reads them and never writes them, which is the direction proof.
 /// A skill with no reliability claim rebuilds to its provenance prior's mean,
 /// so the cache is defined before the first attributed outcome too.
+///
+/// A SUPERSEDED revision is frozen history and keeps the cache it was frozen
+/// with (see `Vault::refresh_skill_confidence_cache_in_txn`); the value returned
+/// is still the claim's, so a caller reading it reads truth either way.
 pub fn rebuild_skill_confidence_cache(vault: &Vault, skill: &EntityId, at: u64) -> Result<f32> {
     let prior = skill_reliability_prior(vault, skill)?;
     vault.with_write_txn(|wtxn| {
-        let posterior = match active_reliability_claim_in_txn(vault, wtxn, skill)? {
-            Some((_, body)) => SkillReliabilityPosterior::from_value(&body.value)?,
-            None => prior,
-        };
+        let posterior = resolved_reliability_posterior_in_txn(vault, wtxn, skill)?.unwrap_or(prior);
         let mean = posterior.mean();
         vault.refresh_skill_confidence_cache_in_txn(
             wtxn,
@@ -773,6 +1080,12 @@ pub fn set_skill_reliability_floor(vault: &Vault, floor: f32) -> Result<()> {
 ///
 /// Returns the EXISTING proposal while one is open: a second crossing is the
 /// same unanswered question, not a second question.
+///
+/// Reads the CLAIM, exactly as selection does. The local outcome ledger is not
+/// the whole posterior on a replica — a vault that synced a below-floor claim
+/// holds no outcome rows behind it, so recomputing from the tally would exit at
+/// `outcomes < MIN_OUTCOMES` and skip the quarantine proposal the evidence
+/// already demands. The ledger answers only for a skill nobody has projected.
 pub fn check_reliability_floor(
     vault: &Vault,
     skill: &EntityId,
@@ -780,9 +1093,18 @@ pub fn check_reliability_floor(
 ) -> Result<Option<EntityId>> {
     let prior = skill_reliability_prior(vault, skill)?;
     vault.with_write_txn(|wtxn| {
-        let tally = tally_outcomes(vault, wtxn, skill)?;
-        let posterior = tally.posterior(prior);
-        floor_check_in_txn(vault, wtxn, skill, posterior, tally.total(), at)
+        let posterior = match resolved_reliability_posterior_in_txn(vault, wtxn, skill)? {
+            Some(posterior) => posterior,
+            None => tally_outcomes(vault, wtxn, skill)?.posterior(prior),
+        };
+        floor_check_in_txn(
+            vault,
+            wtxn,
+            skill,
+            posterior,
+            attributed_outcomes(prior, posterior),
+            at,
+        )
     })
 }
 
@@ -802,8 +1124,10 @@ fn floor_check_in_txn(
     if lower_bound >= floor {
         return Ok(None);
     }
-    if let Some((existing, _)) =
-        active_claim_in_txn(vault, wtxn, skill, PREDICATE_SKILL_QUARANTINE_PROPOSAL)?
+    if let Some((existing, _, _)) =
+        active_claims_in_txn(vault, wtxn, skill, PREDICATE_SKILL_QUARANTINE_PROPOSAL)?
+            .into_iter()
+            .next()
     {
         return Ok(Some(existing));
     }
@@ -840,6 +1164,17 @@ fn read_skill(vault: &Vault, skill: &EntityId) -> Result<SkillRecord> {
     vault
         .get_skill_record(skill)?
         .ok_or(invalid("skill reliability names an unknown skill"))
+}
+
+/// The ROUTED judgments ONE-1737 persisted, keyed by sequence.
+///
+/// Read once per pass rather than once per judgment: the seam is a prefix scan,
+/// and a batch of N judgments must not cost N scans.
+fn persisted_judgments_by_sequence(vault: &Vault) -> Result<HashMap<u64, AttributionJudgment>> {
+    Ok(attribution_judgments(vault)?
+        .into_iter()
+        .map(|judgment| (judgment.sequence, judgment))
+        .collect())
 }
 
 /// f64 math down to the f32 the posterior stores. The intermediate width exists
