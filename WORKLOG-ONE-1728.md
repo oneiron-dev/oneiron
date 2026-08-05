@@ -303,32 +303,65 @@ a guarded invariant.
 
 ## Next-step INTENT
 
-Seg 1 landed the three surfaces that had no dependency on the session apply
-entry: K4 (batch.rs), K7 (facade door), K6 (embed rule). Seg 2 landed the
-write-target seam they all route through, plus the short-id namespace.
+Seg 1 landed the surfaces independent of the session apply entry (K4, K7, K6).
+Seg 2 landed the write-target seam (`ManifestDbs`) + the short-id namespace.
+Seg 3 landed the EXECUTABLE SEAM: `apply_ops_session`, the staging helpers it
+shares with base, and `witness_into_session` on top of them. A session-witnessed
+turn now lands in the overlay, reads back in-room, and adds zero base rows —
+the ticket's load-bearing property is proven end to end.
 
-**Seg 3 opens at `apply_ops_session`.** The seam is now in place, so the
-remaining work is threading it, not inventing it:
+**Seg 4 opens at RETRIEVAL**, the other half of §7. Witness writes into the
+room; nothing yet READS the room through the pipeline. Suggested order:
 
-1. `apply_ops_session(view, route, ...)` + op-loop write-target parameterization.
-   Unlike bm25/hnsw, batch.rs's op loop also calls `impl Store` METHODS
-   (`mark_pending_embedding`, `clear_pending_embedding`,
-   `has_current_pending_embedding_in_txn`, `validate_entity_type`,
-   `validate_public_entity_type`, `short_id_prefix`) and `store.off_record_sessions`
-   / `store.env` — none of which live on `ManifestDbs`. Those are the real seam
-   decisions for seg 3; the pure-accessor helpers (short-id family, already done)
-   parameterize by signature alone. `route.revalidate()` runs before staging;
-   batch.rs never reads a route field. The op-loop `mark_pending_embedding` call
-   SKIPS for the overlay target (K6: skip, not redirect).
-2. Then store.rs session-side writer variants + `impl SessionStoreView` composed
-   read accessors, and only then facade `witness_into_session` (which needs 1+2)
-   and the oracle arming (which needs all of it).
+1. **`SessionVault::search_text` + ppr.rs reader generalization.** bm25's reader
+   side already accepts `&impl ManifestDbs`; ppr.rs is reader-generalization
+   ONLY per its Claims row (it defines no `index_text`/`deindex_text` and stays
+   write-target-free). This is the smallest step that makes the room readable
+   through a real retrieval path rather than a raw accessor.
+2. **pipeline `run_for_pack` registration routing** (pipeline.rs:2020-2026,
+   inside `run_for_pack` :1011) with the additive
+   `session_view: Option<&SessionStoreView<'_>>` threaded from the session
+   retrieval entries; canonical callers pass `None` and are behaviorally
+   unchanged. The `run_with_pending_vectors` embed-enqueue arm is base-only —
+   a one-line guard at the registration slice, NOT a `run_for_pack` interior
+   rewrite (RETRIEVAL-API owns the rest of that function).
+3. **store.rs session-side variants** of `record_retrieval_run_with_visibility`,
+   `finalize_context_pack_retrieval_run`, `delete_retrieval_run`, plus
+   `OffRecordSession::{vault_meta_put, vault_meta_get}`. Note the K5 pattern
+   from seg 3: the extraction that worked was a target-parameterized FREE
+   FUNCTION (`append_gate_decision_row_in_txn`) with the `Store` method reduced
+   to a one-line forwarder — `&self` methods cannot be target-parameterized, so
+   every one of these needs the same shape.
+4. **K8 receipt-verb deletion + the pre-close census.** Deferred deliberately to
+   seg 4 because `context_receipts_deleted` must now be computed from the
+   OVERLAY `VaultMeta` rows that step 2 creates — doing it before retrieval
+   registration exists would mean counting rows nothing writes yet.
+5. Then claim.rs ScopedRead composition, context_pack.rs breadth readers +
+   finalize/discard routing, and finally the 7 oracle stubs + seam helpers
+   (which need all of the above).
 
-Retained watch item (unchanged from seg 2): the door-partition question D5
-settled for K4 recurs for `apply_ops_session` — the session path must NOT re-run
-`guard_off_record_entity_put`, which rejects live-overlay membership and would
-refuse the session's own witness writes. The session path never enters the base
-apply, so this is a structural consequence of that separation, not an extra guard.
+**Watch items carried into seg 4:**
+
+- `SessionStoreView` construction takes a snapshot per call. `witness_into_session`
+  builds ONE view inside the write txn for exactly this reason; a retrieval path
+  doing multi-step walks must likewise take ONE view for the whole walk, or a
+  concurrent stage tears the union mid-traversal. This is what "never see a torn
+  union" means operationally.
+- **`OverlaySnapshot` holds a LEASE and `close()` DRAINS leases** — a snapshot
+  held across `session.close()` deadlocks the closing thread. Cost me a hung
+  test in seg 3 (scope snapshots tightly in every test that also closes). The
+  pre-close census in step 4 runs INSIDE close, so it must read its counts and
+  drop the snapshot before the drain.
+- The two remaining clippy warnings (`RetrievalRunId::from_bytes`, six
+  unconsumed `ManifestDbs` accessors — `ppr_cache`, `ppr_cache_deps`,
+  `sync_state`, `sync_queue`, `attempt_records`, `attempt_ready`,
+  `attempt_dedupe`) are seg-4's consumers arriving: retrieval-run rows and the
+  PPR cache are exactly what steps 1-3 touch. They should go to zero naturally;
+  if any survives seg 4, that accessor is genuinely unused and should be cut
+  from the macro list rather than allowed.
+- D5's door-partition reasoning held for `apply_ops_session` as predicted: the
+  session path never enters the base apply, so `guard_off_record_entity_put` is
+  structurally unreachable there rather than explicitly skipped.
 
 Superseded seg-2 entry plan (kept for provenance):
 
