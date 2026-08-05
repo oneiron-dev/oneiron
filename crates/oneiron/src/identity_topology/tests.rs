@@ -342,9 +342,11 @@ fn transition_table_covers_every_state_and_role_cell() {
         evaluate_transition(&empty, &merge_op(vec![b], b)),
         Err(IdentityTopologyRejection::SelfReference { entity: b })
     );
+    // ONE-1744 lifted the zero-head guard: `heads: []` is the legal r2
+    // "gone" form and shells the original like any other split.
     assert_eq!(
         evaluate_transition(&empty, &split_op(a, Vec::new())),
-        Err(IdentityTopologyRejection::EmptyHeads)
+        Ok(vec![(a, EntityLifecycleState::Split)])
     );
     assert_eq!(
         evaluate_transition(&empty, &split_op(a, vec![b, b])),
@@ -1386,12 +1388,18 @@ fn split_apply_records_canonical_map_and_undo_restores() {
     assert_eq!(receipts[0].fields.get("assigned"), Some(&"1".to_owned()));
     assert_eq!(receipts[0].fields.get("residue"), Some(&"1".to_owned()));
 
-    // MS-01 zero-head split parks until the redirect projection (ONE-1744).
+    // ONE-1744 lifted the zero-head guard: the r2 "gone" form now APPLIES,
+    // shelling the entity with no successor and no `split_into` edge.
     let fresh = put_person(&vault, 0x64);
-    let err = vault
-        .apply_identity_topology_op(&split_op(fresh, Vec::new()), &write, 300)
-        .expect_err("zero heads must reject");
-    assert_eq!(expect_rejection(err), IdentityTopologyRejection::EmptyHeads);
+    let (_, zero_head_transitions) = expect_applied(
+        vault
+            .apply_identity_topology_op(&split_op(fresh, Vec::new()), &write, 300)
+            .expect("zero-head split applies"),
+    );
+    assert_eq!(
+        zero_head_transitions,
+        vec![(fresh, EntityLifecycleState::Split)]
+    );
 
     // Undo restores the original and removes both head edges.
     let (_, undo_transitions) = expect_applied(
