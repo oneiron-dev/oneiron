@@ -30,6 +30,9 @@ use crate::attempt_queue::{
 use crate::batch::{
     ApplyOpsGateMode, BatchOp, apply_ops, apply_ops_with_gate_mode, parse_short_id_value,
 };
+use crate::calendar::{
+    CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
+};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     claim_surfaceable,
@@ -938,6 +941,171 @@ pub struct OutboundIntentReceipt {
     pub gate_reason_codes: Vec<String>,
     /// True when the idempotency key coalesced onto an existing schedule.
     pub deduped: bool,
+}
+
+/// Connector key the calendar invite surface schedules against. CAL-04
+/// (ONE-1786) registers the manifest; until then `outbound_verb_contract`
+/// returns the ordinary unsupported-capability error for this pair.
+pub const CALENDAR_INVITE_OUTBOUND_CHANNEL: &str = "calendar";
+/// Outbound verb the calendar invite surface schedules.
+///
+/// This string is the seam with CAL-04 (ONE-1786), which registers
+/// `calendar.invite` in `COMMON_OUTBOUND_VERB_KINDS` and branches its dispatch
+/// chokepoint on `draft.verb == CALENDAR_INVITE_VERB`. A shorter local spelling
+/// would leave that branch dead on arrival — the invite would schedule as a
+/// generic draft and never reach the iMIP payload codec — so the value is
+/// pinned to CAL-04's, not to this module's vocabulary.
+pub const CALENDAR_INVITE_OUTBOUND_VERB: &str = "calendar.invite";
+
+/// iMIP method the invite surface accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum CalendarInviteSurfaceMethod {
+    /// `METHOD:REQUEST` — create or update an invitation.
+    Request,
+    /// `METHOD:CANCEL` — withdraw an invitation.
+    Cancel,
+}
+
+impl CalendarInviteSurfaceMethod {
+    /// Wire token (`REQUEST` / `CANCEL`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Request => "REQUEST",
+            Self::Cancel => "CANCEL",
+        }
+    }
+
+    /// Parses the wire token. The set is closed: an unrecognized iMIP method is
+    /// a typed rejection at the boundary, never a defaulted `REQUEST`.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "REQUEST" => Some(Self::Request),
+            "CANCEL" => Some(Self::Cancel),
+            _ => None,
+        }
+    }
+}
+
+/// C7's exact five-field invite payload.
+///
+/// Closed on purpose: an [`OutboundDraftInput`] here would let a caller choose
+/// its own channel, verb, and trigger, which is precisely the bypass the
+/// invite-through-the-gate rule exists to prevent.
+///
+/// This type *is* the payload CAL-04 (ONE-1786) exact-decodes — five typed
+/// fields, uppercase iMIP method, closed to unknown keys. It stays typed all
+/// the way to [`Self::outbound_draft`]; nothing here re-parses a key back into
+/// a method, uid, or sequence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarInviteSurfaceInput {
+    /// iMIP method.
+    pub method: CalendarInviteSurfaceMethod,
+    /// EVENT UID the invite addresses.
+    pub uid: String,
+    /// iTIP SEQUENCE of this revision.
+    pub sequence: u32,
+    /// Blob ref of the rendered ICS payload.
+    pub ics_blob_ref: String,
+    /// Delivery target.
+    pub recipient: String,
+}
+
+impl CalendarInviteSurfaceInput {
+    /// Deterministic idempotency key: a retry of the same revision to the same
+    /// recipient coalesces instead of scheduling a second invite.
+    #[must_use]
+    pub fn idempotency_key(&self) -> String {
+        format!(
+            "calendar.invite:{}:{}:{}:{}",
+            self.method.as_str(),
+            self.uid,
+            self.sequence,
+            self.recipient
+        )
+    }
+
+    /// Trigger ref carried onto the intent.
+    #[must_use]
+    pub fn trigger_ref(&self) -> String {
+        format!("calendar.invite:{}:{}", self.uid, self.sequence)
+    }
+
+    /// The generic outbound draft this invite schedules.
+    ///
+    /// One named site for the whole invite→draft encoding, so the seam CAL-04
+    /// (ONE-1786) picks up is testable before its half exists. What is pinned
+    /// here: the verb is CAL-04's `calendar.invite`, the channel is the
+    /// `calendar` connector, and `recipient`/`ics_blob_ref` ride the typed
+    /// `target`/`content_ref` fields.
+    ///
+    /// KNOWN HOLE (CAL-04's, not fixable from CAL-09): `method`, `uid`, and
+    /// `sequence` have no typed home on [`OutboundDraftInput`] or
+    /// `OutboundIntentDraft` on this baseline, so they reach the chokepoint
+    /// only inside the derived idempotency/trigger strings. Adding the typed
+    /// payload channel means editing `outbound.rs`, which CAL-04 owns and this
+    /// ticket must not touch. When ONE-1786 lands it, this function is the one
+    /// site that fills it — the public surface above does not change.
+    #[must_use]
+    pub fn outbound_draft(&self) -> OutboundDraftInput {
+        OutboundDraftInput {
+            verb: CALENDAR_INVITE_OUTBOUND_VERB.to_owned(),
+            channel: CALENDAR_INVITE_OUTBOUND_CHANNEL.to_owned(),
+            target: self.recipient.clone(),
+            on_behalf_of: None,
+            content_ref: Some(self.ics_blob_ref.clone()),
+            idempotency_key: Some(self.idempotency_key()),
+            dedupe_key: None,
+            // This surface carries no session, so it uses the queue trigger
+            // class rather than fabricating an originating-session ref.
+            trigger: "gap_queue".to_owned(),
+            trigger_ref: self.trigger_ref(),
+            job_ref: None,
+            occurred_at: None,
+        }
+    }
+
+    fn validate(&self) -> FacadeResult<()> {
+        for (field, value) in [
+            ("uid", self.uid.as_str()),
+            ("ics_blob_ref", self.ics_blob_ref.as_str()),
+            ("recipient", self.recipient.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(FacadeError::bad_request_with(
+                    format!("calendar invite {field} must not be blank"),
+                    &["Supply method, uid, sequence, ics_blob_ref, and recipient."],
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One source-redacted busy interval, half-open `[start_utc, end_utc)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalendarFreebusyIntervalDto {
+    /// Inclusive half-open start, Unix seconds.
+    pub start_utc: u64,
+    /// Exclusive half-open end, Unix seconds.
+    pub end_utc: u64,
+}
+
+/// External freebusy projection: occupancy only.
+pub type CalendarFreebusyDto = Vec<CalendarFreebusyIntervalDto>;
+
+/// Rejects an inverted calendar window at the surface boundary.
+fn validate_calendar_range(range: Option<CalendarRangeDto>) -> FacadeResult<()> {
+    match range {
+        Some(range) if !range.is_ordered() => Err(FacadeError::bad_request_with(
+            "calendar range start must not exceed end",
+            &["Pass an inclusive range with start <= end."],
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Internal side-index record: the gate surface a scheduled outbound attempt's
@@ -3157,6 +3325,96 @@ impl MemoryFacade<'_> {
             .ok()
             .flatten()
             .and_then(|raw| serde_json::from_slice(&raw).ok())
+    }
+
+    // ── calendar (CAL-09) ───────────────────────────────────────────────
+
+    /// The bound actor's scoped-read lane.
+    ///
+    /// Calendar bodies are imported foreign content, so this surface reads them
+    /// through the policy scoped-read lane rather than raw vault reads: an
+    /// actor's calendar view is always a subset of the internal projection.
+    fn calendar_read_lane(&self) -> FacadeResult<crate::claim::ScopedRead<'_>> {
+        let key = crate::claim::ScopedReadActorKey::with_actor_class(
+            self.actor.to_hex(),
+            self.actor_class.gate_actor_class(),
+        )
+        .ok_or_else(|| {
+            FacadeError::bad_request("bound actor cannot be used as a scoped read key")
+        })?;
+        Ok(self.vault.scoped_read(key))
+    }
+
+    /// Reads one calendar EVENT under the caller's read scope.
+    pub fn calendar_read(
+        &self,
+        req: &CalendarReadRequest,
+    ) -> FacadeResult<Option<CalendarEventView>> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        Ok(crate::calendar::read_event_scoped(
+            &self.calendar_read_lane()?,
+            req,
+        )?)
+    }
+
+    /// Searches calendar EVENTs under the caller's read scope.
+    pub fn calendar_search(
+        &self,
+        req: &CalendarSearchRequest,
+    ) -> FacadeResult<Vec<CalendarEventView>> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        validate_calendar_range(req.range)?;
+        Ok(crate::calendar::search_events_scoped(
+            &self.calendar_read_lane()?,
+            req,
+        )?)
+    }
+
+    /// Projects busy-only occupancy over `range`, source-redacted.
+    ///
+    /// The internal [`BusyInterval`] keeps a representative `source` EVENT for
+    /// engine consumers; this external DTO drops it, so an SDK or MCP caller
+    /// receives occupancy and nothing else — no name, description, attendee,
+    /// meeting link, or entity ref.
+    pub fn calendar_freebusy(
+        &self,
+        calendars: &[CalendarSel],
+        range: TimeRange,
+    ) -> FacadeResult<CalendarFreebusyDto> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        if range.start > range.end {
+            return Err(FacadeError::bad_request_with(
+                "calendar freebusy range start must not exceed end",
+                &["Pass an inclusive range with start <= end."],
+            ));
+        }
+        let union =
+            crate::calendar::freebusy_scoped(&self.calendar_read_lane()?, calendars, range)?;
+        Ok(union
+            .into_iter()
+            .map(|interval| CalendarFreebusyIntervalDto {
+                start_utc: interval.start_utc,
+                end_utc: interval.end_utc,
+            })
+            .collect())
+    }
+
+    /// Schedules one iMIP-shaped calendar invite through the ordinary outbound
+    /// gate.
+    ///
+    /// The public input is C7's exact five-field payload, never an
+    /// [`OutboundDraftInput`]: this surface owns the invite vocabulary and
+    /// constructs the generic draft internally, so no caller can hand-roll a
+    /// draft that bypasses the invite contract. Delivery is never performed
+    /// here — [`Self::schedule_outbound`] is the only path, and until CAL-04
+    /// (ONE-1786) registers the `calendar`/`calendar.invite` capability the
+    /// existing unsupported-capability error is returned unchanged.
+    pub fn calendar_invite(
+        &self,
+        input: &CalendarInviteSurfaceInput,
+    ) -> FacadeResult<OutboundIntentReceipt> {
+        input.validate()?;
+        self.schedule_outbound(&input.outbound_draft())
     }
 
     // ── internals ───────────────────────────────────────────────────────

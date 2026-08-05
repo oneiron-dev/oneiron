@@ -1,4 +1,5 @@
 use super::API_LEVEL;
+use super::MCP_TOOL_CAPABILITY_PREFIX;
 use super::SKILL_PACK_ENDPOINT;
 use super::SKILL_PACK_FORMAT;
 use super::SKILL_PACK_LAYER_BOUNDARY;
@@ -10,6 +11,7 @@ use super::check_api_auth;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ErrorCode;
+use crate::mcp::McpToolName;
 use crate::runtime::RuntimeHealthStatus;
 use crate::runtime::RuntimeStatus;
 use crate::server::SyncServer;
@@ -171,9 +173,11 @@ pub(crate) struct DiscoveredEntity {
 /// Capability flags advertised by the HTTP API.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct FeatureFlags {
-    /// Operation capabilities clients may rely on.
-    #[schema(value_type = Vec<String>, example = json!(["core.discover", "search.vector", "search.text"]))]
-    capabilities: Vec<&'static str>,
+    /// Operation capabilities clients may rely on, including one
+    /// `mcp.tool.<name>` token per advertised MCP tool and one
+    /// `mcp.tool.<name>.<op>` token per closed tool operation.
+    #[schema(value_type = Vec<String>, example = json!(["core.discover", "search.vector", "search.text", "mcp.tool.oneiron.calendar", "mcp.tool.oneiron.calendar.freebusy"]))]
+    capabilities: Vec<String>,
     /// Model or runtime effort modes advertised by the API.
     #[schema(value_type = Vec<String>, example = json!(["flash", "thinking", "pro", "ultra"]))]
     modes: Vec<&'static str>,
@@ -504,9 +508,33 @@ pub(crate) fn supported_formats() -> Vec<&'static str> {
 
 pub(crate) fn feature_flags() -> FeatureFlags {
     FeatureFlags {
-        capabilities: CAPABILITIES.to_vec(),
+        capabilities: CAPABILITIES
+            .iter()
+            .map(|capability| (*capability).to_owned())
+            .chain(mcp_tool_capabilities())
+            .collect(),
         modes: CAPABILITY_MODES.to_vec(),
     }
+}
+
+/// Advertises every MCP tool in the closed catalog, plus one token per
+/// operation for tools that carry an `op` discriminator (CAL-09's
+/// `oneiron.calendar` is the first).
+///
+/// Derived from `McpToolName` rather than hand-listed: a tool or operation that
+/// exists in the catalog is advertised by construction.
+fn mcp_tool_capabilities() -> Vec<String> {
+    let mut tokens = Vec::new();
+    for tool in McpToolName::all() {
+        let name = tool.as_str();
+        tokens.push(format!("{MCP_TOOL_CAPABILITY_PREFIX}{name}"));
+        tokens.extend(
+            tool.operations()
+                .iter()
+                .map(|op| format!("{MCP_TOOL_CAPABILITY_PREFIX}{name}.{op}")),
+        );
+    }
+    tokens
 }
 
 pub(crate) fn outbound_capability_discovery() -> OutboundCapabilityDiscovery {
