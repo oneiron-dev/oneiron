@@ -17,11 +17,13 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use napi_derive::napi;
 use oneiron::{
-    AdmitImportedClaimInput, BlobArtifactInput, ClaimInput, ClaimListFilter, CompanionRecordInput,
-    ConsolidationAttemptInput, Effort, EntityId, FacadeError, HabitCheckinInput, MemoryFacade,
-    NeighborOpts, OutboundDraftInput, RecallScope, SafeDeleteReason, StructuralEdgeSpec,
-    StructuralPutInput, TextIndexField, Vault, VaultConfig, WitnessAuthor, WitnessMessage,
-    WitnessTurn, parse_actor_key,
+    AdmitImportedClaimInput, BlobArtifactInput, CalendarEventView, CalendarInviteSurfaceInput,
+    CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest,
+    CalendarSel, ClaimInput, ClaimListFilter, CompanionRecordInput, ConsolidationAttemptInput,
+    Effort, EntityId, FacadeError, HabitCheckinInput, MemoryFacade, NeighborOpts,
+    OutboundDraftInput, RecallScope, SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput,
+    TextIndexField, TimeRange, Vault, VaultConfig, WitnessAuthor, WitnessMessage, WitnessTurn,
+    parse_actor_key,
 };
 
 type BoundaryResult<T> = std::result::Result<T, String>;
@@ -636,6 +638,80 @@ pub struct NapiOutboundIntentReceipt {
     pub deduped: bool,
 }
 
+/// Inclusive UTC window for the calendar verbs.
+#[napi(object)]
+pub struct NapiCalendarRange {
+    /// Inclusive start, Unix seconds.
+    pub start: i64,
+    /// Inclusive end, Unix seconds.
+    pub end: i64,
+}
+
+/// One calendar selector. `system` is accepted and ignored until CAL-02's
+/// passport index lands; it never empties a result set on this baseline.
+#[napi(object)]
+pub struct NapiCalendarSel {
+    /// Calendar system key.
+    pub system: Option<String>,
+}
+
+/// One projected calendar EVENT.
+#[napi(object)]
+pub struct NapiCalendarEventView {
+    /// Hex EVENT entity id.
+    pub event_ref: String,
+    /// EVENT display name, when the body carries one.
+    pub name: Option<String>,
+    /// Inclusive UTC occurrence start.
+    pub start_utc: Option<i64>,
+    /// Inclusive UTC occurrence end.
+    pub end_utc: Option<i64>,
+    /// Calendar systems this EVENT holds a passport for.
+    pub calendar_systems: Vec<String>,
+    /// Whether this EVENT consumes availability.
+    pub blocks_time: bool,
+}
+
+/// `calendarSearch` request.
+#[napi(object)]
+pub struct NapiCalendarSearchRequest {
+    /// Calendar selectors; omitted ⇒ every readable calendar EVENT.
+    pub calendars: Option<Vec<NapiCalendarSel>>,
+    /// Inclusive UTC window; omitted ⇒ unbounded.
+    pub range: Option<NapiCalendarRange>,
+    /// Case-insensitive substring matched against the EVENT name.
+    pub text: Option<String>,
+    /// Maximum rows returned, clamped engine-side.
+    pub limit: u32,
+}
+
+/// One source-redacted busy interval, half-open `[startUtc, endUtc)`.
+///
+/// The internal `BusyInterval.source` never crosses this boundary: the bridge
+/// surface carries occupancy only.
+#[napi(object)]
+pub struct NapiCalendarFreebusyInterval {
+    /// Inclusive half-open start, Unix seconds.
+    pub start_utc: i64,
+    /// Exclusive half-open end, Unix seconds.
+    pub end_utc: i64,
+}
+
+/// C7's exact five-field invite payload (never an outbound draft).
+#[napi(object)]
+pub struct NapiCalendarInviteInput {
+    /// `REQUEST` | `CANCEL`.
+    pub method: String,
+    /// EVENT UID the invite addresses.
+    pub uid: String,
+    /// iTIP SEQUENCE of this revision.
+    pub sequence: u32,
+    /// Blob ref of the rendered ICS payload.
+    pub ics_blob_ref: String,
+    /// Delivery target.
+    pub recipient: String,
+}
+
 /// Selector for `forget`: a claim short ref, or `{subjectRef, predicate}`.
 #[napi(object)]
 pub struct NapiForgetSelector {
@@ -648,6 +724,44 @@ pub struct NapiForgetSelector {
 }
 
 // ── conversions ─────────────────────────────────────────────────────────
+
+fn calendar_selectors_to_engine(selectors: Option<Vec<NapiCalendarSel>>) -> Vec<CalendarSel> {
+    selectors
+        .unwrap_or_default()
+        .into_iter()
+        .map(|selector| CalendarSel {
+            system: selector.system,
+        })
+        .collect()
+}
+
+fn calendar_range_to_engine(range: Option<NapiCalendarRange>) -> BoundaryResult<Option<TimeRange>> {
+    range
+        .map(|range| {
+            Ok(TimeRange {
+                start: ts_to_engine(range.start, "range.start")?,
+                end: ts_to_engine(range.end, "range.end")?,
+            })
+        })
+        .transpose()
+}
+
+fn calendar_event_from_engine(view: CalendarEventView) -> BoundaryResult<NapiCalendarEventView> {
+    Ok(NapiCalendarEventView {
+        event_ref: view.event_ref,
+        name: view.name,
+        start_utc: view
+            .start_utc
+            .map(|value| ts_from_engine(value, "start_utc"))
+            .transpose()?,
+        end_utc: view
+            .end_utc
+            .map(|value| ts_from_engine(value, "end_utc"))
+            .transpose()?,
+        calendar_systems: view.calendar_systems,
+        blocks_time: view.blocks_time,
+    })
+}
 
 fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<WitnessTurn> {
     let mut messages = Vec::with_capacity(turn.messages.len());
@@ -1438,6 +1552,104 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .schedule_outbound(&engine_draft)
+            .map_err(facade_error)?;
+        Ok(NapiOutboundIntentReceipt {
+            intent_ref: receipt.intent_ref,
+            outcome: receipt.outcome,
+            gate_outcome: receipt.gate_outcome,
+            gate_decision_ref: receipt.gate_decision_ref,
+            gate_reason_codes: receipt.gate_reason_codes,
+            deduped: receipt.deduped,
+        })
+    }
+
+    /// Reads one calendar EVENT under the bound actor's read scope; `null`
+    /// when the id is unknown, unreadable, or not a calendar EVENT.
+    #[napi]
+    pub fn calendar_read(
+        &self,
+        event_ref: String,
+    ) -> napi::Result<Option<NapiCalendarEventView>> {
+        self.facade()?
+            .calendar_read(&CalendarReadRequest { event_ref })
+            .map_err(facade_error)?
+            .map(calendar_event_from_engine)
+            .transpose()
+            .map_err(boundary_error)
+    }
+
+    /// Searches calendar EVENTs under the bound actor's read scope.
+    #[napi]
+    pub fn calendar_search(
+        &self,
+        request: NapiCalendarSearchRequest,
+    ) -> napi::Result<Vec<NapiCalendarEventView>> {
+        let engine_request = CalendarSearchRequest {
+            calendars: calendar_selectors_to_engine(request.calendars),
+            range: calendar_range_to_engine(request.range)
+                .map_err(boundary_error)?
+                .map(|range| CalendarRangeDto {
+                    start: range.start,
+                    end: range.end,
+                }),
+            text: request.text,
+            limit: request.limit,
+        };
+        self.facade()?
+            .calendar_search(&engine_request)
+            .map_err(facade_error)?
+            .into_iter()
+            .map(calendar_event_from_engine)
+            .collect::<BoundaryResult<Vec<_>>>()
+            .map_err(boundary_error)
+    }
+
+    /// Projects busy-only occupancy over an inclusive UTC window.
+    #[napi]
+    pub fn calendar_freebusy(
+        &self,
+        calendars: Option<Vec<NapiCalendarSel>>,
+        range: NapiCalendarRange,
+    ) -> napi::Result<Vec<NapiCalendarFreebusyInterval>> {
+        let engine_range = calendar_range_to_engine(Some(range))
+            .map_err(boundary_error)?
+            .ok_or_else(|| boundary_error("range is required".to_owned()))?;
+        self.facade()?
+            .calendar_freebusy(&calendar_selectors_to_engine(calendars), engine_range)
+            .map_err(facade_error)?
+            .into_iter()
+            .map(|interval| {
+                Ok(NapiCalendarFreebusyInterval {
+                    start_utc: ts_from_engine(interval.start_utc, "start_utc")?,
+                    end_utc: ts_from_engine(interval.end_utc, "end_utc")?,
+                })
+            })
+            .collect::<BoundaryResult<Vec<_>>>()
+            .map_err(boundary_error)
+    }
+
+    /// Schedules one calendar invite through the ordinary outbound gate. The
+    /// bridge never delivers; receipts surface via `receipts()`.
+    #[napi]
+    pub fn calendar_invite(
+        &self,
+        input: NapiCalendarInviteInput,
+    ) -> napi::Result<NapiOutboundIntentReceipt> {
+        let method = CalendarInviteSurfaceMethod::parse(&input.method).ok_or_else(|| {
+            boundary_error(format!(
+                "method must be one of REQUEST, CANCEL; got {:?}",
+                input.method
+            ))
+        })?;
+        let receipt = self
+            .facade()?
+            .calendar_invite(&CalendarInviteSurfaceInput {
+                method,
+                uid: input.uid,
+                sequence: input.sequence,
+                ics_blob_ref: input.ics_blob_ref,
+                recipient: input.recipient,
+            })
             .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
             intent_ref: receipt.intent_ref,

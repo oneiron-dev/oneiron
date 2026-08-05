@@ -119,6 +119,11 @@ pub(crate) use self::search::*;
 pub(crate) use self::vad::*;
 
 const API_LEVEL: &str = "v1";
+/// Capability-token prefix under which discovery advertises each MCP tool and,
+/// for tools with a closed `op` discriminator, each of its operations. The
+/// tokens are derived from `crate::mcp::McpToolName`, so the catalog and the
+/// advertisement cannot drift.
+pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
 // ONE-214 is read-only and adds no notification-specific storage. Keep resume
 // hydration bounded by returning pending notifications from a latest window.
 

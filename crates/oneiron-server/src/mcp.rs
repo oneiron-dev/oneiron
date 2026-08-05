@@ -50,6 +50,12 @@ const EDIT_ACTION_FIELDS: &[&str] = &[
     "reasoning_effort",
 ];
 
+/// Closed operation set of the `oneiron.calendar` tool (CAL-09).
+///
+/// One tool with a schema-validated `op` discriminator keeps the catalog
+/// closed-ish: the calendar surface grows operations, never tool names.
+pub const MCP_CALENDAR_OPERATIONS: &[&str] = &["read", "search", "freebusy", "invite"];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpToolName {
     Nav,
@@ -57,15 +63,17 @@ pub enum McpToolName {
     Edit,
     Ask,
     RoutedAsk,
+    Calendar,
 }
 
 impl McpToolName {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Nav,
         Self::Read,
         Self::Edit,
         Self::Ask,
         Self::RoutedAsk,
+        Self::Calendar,
     ];
 
     #[must_use]
@@ -81,6 +89,7 @@ impl McpToolName {
             Self::Edit => "oneiron.edit",
             Self::Ask => "oneiron.ask",
             Self::RoutedAsk => "oneiron.ask_routed",
+            Self::Calendar => "oneiron.calendar",
         }
     }
 
@@ -92,7 +101,18 @@ impl McpToolName {
             "oneiron.edit" => Some(Self::Edit),
             "oneiron.ask" => Some(Self::Ask),
             "oneiron.ask_routed" => Some(Self::RoutedAsk),
+            "oneiron.calendar" => Some(Self::Calendar),
             _ => None,
+        }
+    }
+
+    /// Operation discriminators this tool accepts, empty for tools that carry
+    /// no `op` field.
+    #[must_use]
+    pub const fn operations(self) -> &'static [&'static str] {
+        match self {
+            Self::Calendar => MCP_CALENDAR_OPERATIONS,
+            _ => &[],
         }
     }
 
@@ -106,6 +126,9 @@ impl McpToolName {
             }
             Self::RoutedAsk => {
                 "Ask over a supplied context pack with explicit foreign-client routing metadata."
+            }
+            Self::Calendar => {
+                "Read, search, or project busy time over Oneiron calendar EVENTs, or schedule one calendar invite through the outbound gate."
             }
         }
     }
@@ -136,6 +159,7 @@ pub fn mcp_tool_schema(tool: McpToolName) -> McpToolSchema {
         McpToolName::Edit => edit_tool_schema(),
         McpToolName::Ask => ask_tool_schema(),
         McpToolName::RoutedAsk => routed_ask_tool_schema(),
+        McpToolName::Calendar => calendar_tool_schema(),
     };
 
     McpToolSchema {
@@ -153,6 +177,7 @@ pub enum McpValidatedToolArgs {
     Edit(Box<McpEditToolArgs>),
     Ask(McpAskToolArgs),
     RoutedAsk(McpRoutedAskToolArgs),
+    Calendar(McpCalendarToolArgs),
 }
 
 pub fn validate_mcp_tool_args(
@@ -174,6 +199,9 @@ pub fn validate_mcp_tool_args(
         }
         McpToolName::RoutedAsk => decode_tool_args::<McpRoutedAskToolArgs>(tool, args)
             .map(McpValidatedToolArgs::RoutedAsk),
+        McpToolName::Calendar => {
+            decode_tool_args::<McpCalendarToolArgs>(tool, args).map(McpValidatedToolArgs::Calendar)
+        }
     }
 }
 
@@ -381,6 +409,92 @@ pub struct McpRoutedAskToolArgs {
     pub citation_mode: Option<McpCitationMode>,
 }
 
+/// `oneiron.calendar` arguments.
+///
+/// The actor/consent envelope is the same one every tool carries; the calendar
+/// vocabulary lives entirely inside [`McpCalendarOperation`], so the catalog
+/// grows one tool rather than four.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpCalendarToolArgs {
+    pub schema_version: String,
+    pub actor: McpActorMetadata,
+    pub consent: McpConsentMetadata,
+    pub operation: McpCalendarOperation,
+}
+
+/// The closed `read|search|freebusy|invite` operation set.
+///
+/// Each arm is independently closed: a field that belongs to another operation
+/// is a validation failure, not an ignored extra.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum McpCalendarOperation {
+    Read {
+        event_ref: String,
+    },
+    Search {
+        #[serde(default)]
+        calendars: Vec<McpCalendarSelector>,
+        #[serde(default)]
+        range: Option<McpCalendarRange>,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        limit: Option<u32>,
+    },
+    Freebusy {
+        #[serde(default)]
+        calendars: Vec<McpCalendarSelector>,
+        range: McpCalendarRange,
+    },
+    /// C7's exact typed payload — never an outbound draft.
+    Invite {
+        method: McpCalendarInviteMethod,
+        uid: String,
+        sequence: u32,
+        ics_blob_ref: String,
+        recipient: String,
+    },
+}
+
+impl McpCalendarOperation {
+    /// The wire discriminator for this arm.
+    #[must_use]
+    pub const fn op(&self) -> &'static str {
+        match self {
+            Self::Read { .. } => "read",
+            Self::Search { .. } => "search",
+            Self::Freebusy { .. } => "freebusy",
+            Self::Invite { .. } => "invite",
+        }
+    }
+}
+
+/// One calendar selector; `system` is ignored until CAL-02's passport index.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpCalendarSelector {
+    #[serde(default)]
+    pub system: Option<String>,
+}
+
+/// Inclusive UTC window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpCalendarRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// iMIP method accepted by the invite arm.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum McpCalendarInviteMethod {
+    Request,
+    Cancel,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpAskEffort {
@@ -478,6 +592,77 @@ impl ValidateMcpArgs for McpReadToolArgs {
         self.consent.validate(tool)?;
         self.target.validate(tool)
     }
+}
+
+impl ValidateMcpArgs for McpCalendarToolArgs {
+    fn validate(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        validate_schema_version(tool, &self.schema_version)?;
+        self.actor.validate(tool)?;
+        self.consent.validate(tool)?;
+        match &self.operation {
+            McpCalendarOperation::Read { event_ref } => {
+                validate_entity_ref(tool, "operation.event_ref", event_ref)
+            }
+            McpCalendarOperation::Search {
+                calendars,
+                range,
+                text,
+                limit,
+            } => {
+                validate_calendar_selectors(tool, calendars)?;
+                if let Some(range) = range {
+                    validate_calendar_range(tool, *range)?;
+                }
+                validate_optional_nonblank(tool, "operation.text", text.as_deref())?;
+                if *limit == Some(0) {
+                    return Err(McpToolValidationError::field(
+                        tool,
+                        "operation.limit",
+                        "must be greater than zero",
+                    ));
+                }
+                Ok(())
+            }
+            McpCalendarOperation::Freebusy { calendars, range } => {
+                validate_calendar_selectors(tool, calendars)?;
+                validate_calendar_range(tool, *range)
+            }
+            McpCalendarOperation::Invite {
+                uid,
+                ics_blob_ref,
+                recipient,
+                ..
+            } => {
+                validate_nonblank(tool, "operation.uid", uid)?;
+                validate_nonblank(tool, "operation.ics_blob_ref", ics_blob_ref)?;
+                validate_nonblank(tool, "operation.recipient", recipient)
+            }
+        }
+    }
+}
+
+fn validate_calendar_selectors(
+    tool: McpToolName,
+    calendars: &[McpCalendarSelector],
+) -> Result<(), McpToolValidationError> {
+    for selector in calendars {
+        validate_optional_nonblank(tool, "operation.calendars.system", selector.system.as_deref())?;
+    }
+    Ok(())
+}
+
+fn validate_calendar_range(
+    tool: McpToolName,
+    range: McpCalendarRange,
+) -> Result<(), McpToolValidationError> {
+    if range.start > range.end {
+        return Err(McpToolValidationError::field(
+            tool,
+            "operation.range",
+            "start must not exceed end",
+        ));
+    }
+    Ok(())
 }
 
 impl ValidateMcpArgs for McpEditToolArgs {
@@ -1399,6 +1584,90 @@ fn routed_ask_tool_schema() -> Value {
             "route",
         ],
     )
+}
+
+fn calendar_tool_schema() -> Value {
+    tool_schema_root(
+        "https://oneiron.local/schemas/mcp/calendar.args.v1.json",
+        json!({
+            "schema_version": schema_version_property(),
+            "actor": actor_schema(),
+            "consent": consent_schema(),
+            "operation": calendar_operation_schema(),
+        }),
+        &["schema_version", "actor", "consent", "operation"],
+    )
+}
+
+/// One closed branch per operation. The `op` discriminator is the only shared
+/// key; every other field belongs to exactly one arm.
+fn calendar_operation_schema() -> Value {
+    json!({
+        "oneOf": [
+            closed_object_schema(
+                &["op", "event_ref"],
+                json!({
+                    "op": { "const": "read" },
+                    "event_ref": entity_id_schema(),
+                }),
+            ),
+            closed_object_schema(
+                &["op"],
+                json!({
+                    "op": { "const": "search" },
+                    "calendars": calendar_selectors_schema(),
+                    "range": calendar_range_schema(),
+                    "text": nonblank_string_schema(),
+                    "limit": { "type": "integer", "minimum": 1 },
+                }),
+            ),
+            closed_object_schema(
+                &["op", "range"],
+                json!({
+                    "op": { "const": "freebusy" },
+                    "calendars": calendar_selectors_schema(),
+                    "range": calendar_range_schema(),
+                }),
+            ),
+            closed_object_schema(
+                &["op", "method", "uid", "sequence", "ics_blob_ref", "recipient"],
+                json!({
+                    "op": { "const": "invite" },
+                    "method": { "type": "string", "enum": ["REQUEST", "CANCEL"] },
+                    "uid": nonblank_string_schema(),
+                    "sequence": { "type": "integer", "minimum": 0 },
+                    "ics_blob_ref": nonblank_string_schema(),
+                    "recipient": nonblank_string_schema(),
+                }),
+            ),
+        ],
+    })
+}
+
+fn calendar_selectors_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": closed_object_schema(&[], json!({ "system": nonblank_string_schema() })),
+    })
+}
+
+fn calendar_range_schema() -> Value {
+    closed_object_schema(
+        &["start", "end"],
+        json!({
+            "start": { "type": "integer", "minimum": 0 },
+            "end": { "type": "integer", "minimum": 0 },
+        }),
+    )
+}
+
+fn closed_object_schema(required: &[&'static str], properties: Value) -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": required,
+        "properties": properties,
+    })
 }
 
 fn tool_schema_root(id: &'static str, properties: Value, required: &[&'static str]) -> Value {

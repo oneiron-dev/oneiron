@@ -949,6 +949,17 @@ impl CalendarInviteSurfaceMethod {
             Self::Cancel => "CANCEL",
         }
     }
+
+    /// Parses the wire token. The set is closed: an unrecognized iMIP method is
+    /// a typed rejection at the boundary, never a defaulted `REQUEST`.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "REQUEST" => Some(Self::Request),
+            "CANCEL" => Some(Self::Cancel),
+            _ => None,
+        }
+    }
 }
 
 /// C7's exact five-field invite payload.
