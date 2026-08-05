@@ -143,3 +143,46 @@ Simplify note: the diff is deliberately thin — additive enum arms plus tests;
 there is little to delete. Do NOT "simplify" the pinned test tables into loops
 over `EdgeKind`; their whole value is being hand-written contract literals that
 fail on drift. ONE-1375 (layer 2) rebases on this branch next.
+
+## Segment 1 — marker RELAY-ONE-1924-simplify-seg0 (SIMPLIFY pass)
+
+Deletion-biased review of the full `origin/main...HEAD` diff (8 files, +355/−34
+including this worklog; +218/−32 source). Every impl "simplify-confess" below
+carries its verdict.
+
+| Impl note / confess | Verdict |
+|---|---|
+| "Do NOT simplify the pinned test tables into loops over `EdgeKind`" | **HELD — no change.** The tables are hand-written contract literals (`CONTRACT_EDGE_VALUE_LAYOUTS`, `PINNED_EDGE_KIND_DISCRIMINANTS`, `default_weight` literal table); their entire value is drift-on-pin failure. Not defensive code — load-bearing by design. |
+| `code_run.rs` structural-reject arm (compile-forced) | **Minimum already.** One identifier in an existing alternation; nothing to delete. |
+| `context_pack.rs` walk-gate arm (`matches!` + `BlockedBy`) | **Minimum already.** Added one alternative to an existing macro; the comment re-wrap was forced by the rustfmt line. |
+| `edge.rs` variant + 3 arm sites + `try_from_u8` row | **Minimum already.** Enum variant, `default_weight` None, `try_from_u8(23)`, layout alternation — each is a single additive line at its chokepoint. |
+| `ppr.rs` / `facade.rs` rows | **Minimum already.** One row per site; doc lines updated, not added. |
+| Test additions (facade round-trip, 3 pinned-table extensions, 2 contract tests, gating extension) | **Untouched per hard rule** (never touch test assertions/fixtures). No speculative tests found — each pins a distinct contract literal (byte frontier, contract row, round-trip, sync-ship). |
+
+**Sweep for the four simplify demons:**
+- Layers: none added (all edits are in-place arms/rows).
+- Duplication: none. `BlockedBy` appears once per required site — no helper
+  introduced, no repeated literal that a single constant would kill. The
+  facade/`tests.rs` "blocked_by" string appears at exactly the from_str/name
+  seam and their test — intentional contract pinning, not duplication.
+- Defensive branches: none. Negative-space done-means (no readiness DB / no
+  counter / no projector) were *honored*, so there is no unused guard to strip.
+- Speculative generality: none. No trait, no generic, no config knob, no
+  "future kind" hook.
+
+**Diff accounting this segment: 0 source lines added, 0 deleted** (worklog
+only). The impl segment was already the simplification of itself — additive, no
+scaffolding left behind, no dead code.
+
+**Cheap gate re-ran (segment 1 close):** `cargo check -p oneiron
+--all-features --all-targets -j 6` clean (11.59s) · `cargo clippy -p oneiron
+--all-features --all-targets -j 6` zero warnings on a forced real run (25.75s,
+after `touch src/lib.rs` defeated the 0.22s cached no-op — cached result not
+trusted as evidence, per seg-0's own precedent). No code changed, so the seg-0
+test evidence (3153 passed, 0 failed) stands un-invalidated.
+
+### NEXT INTENT
+
+Simplify complete, zero edits warranted. Hand to Sol finder (max) → K3 verdict.
+Simplify has nothing to land; do NOT manufacture a change to justify the stage.
+`WORKLOG-ONE-1924.md` segment-1 section is the verdict record for the finder.
