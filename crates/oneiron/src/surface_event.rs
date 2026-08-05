@@ -1,11 +1,13 @@
 //! Inbound SurfaceEvent adapter contract (OF-347 CID-6).
 //!
 //! Adapters normalize inbound provider payloads through this module after
-//! resolving the receiving channel identity. The contract is intentionally
-//! storage-light: it returns a route receipt and, when accepted, the
-//! identity-stamped SurfaceEvent for downstream ingestion.
+//! resolving the receiving channel identity. Routing returns a receipt and,
+//! when accepted, the identity-stamped SurfaceEvent; admission then commits
+//! that event to the durable attempt queue and acks before any dispatcher
+//! runs.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
@@ -13,10 +15,138 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 /// Current inbound SurfaceEvent schema version.
-pub const SURFACE_EVENT_SCHEMA_VERSION: u64 = 1;
+pub const SURFACE_EVENT_SCHEMA_VERSION: u64 = 2;
 
 /// Stable receipt family label for inbound SurfaceEvent routing.
 pub const INBOUND_SURFACE_RECEIPT_KIND: &str = "inbound_surface_event_route";
+
+/// Provider app a normalized inbound event came from.
+///
+/// Closed by ruling (OF-247 R4 channel reconciliation): adapters map their
+/// provider key onto one of these, and an unmapped key is an adapter defect,
+/// not an open extension point.
+///
+/// The wire spelling is the provider channel key verbatim, so
+/// [`SurfaceSourceApp::from_channel_key`] round-trips. The two acronym
+/// variants are renamed explicitly because serde's mechanical snake_case
+/// would split them into `i_message` / `link_ed_in`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceSourceApp {
+    Email,
+    Slack,
+    Discord,
+    Web,
+    Voice,
+    #[serde(rename = "imessage")]
+    IMessage,
+    Line,
+    Telegram,
+    #[serde(rename = "linkedin")]
+    LinkedIn,
+}
+
+impl SurfaceSourceApp {
+    /// Derives the source app from a raw provider channel key.
+    ///
+    /// The raw key stays authoritative for identity assignment lookups; this
+    /// is the closed projection adapters get for free through
+    /// [`InboundSurfaceEventInput::new`].
+    #[must_use]
+    pub fn from_channel_key(channel: &str) -> Option<Self> {
+        match channel {
+            "email" => Some(Self::Email),
+            "slack" => Some(Self::Slack),
+            "discord" => Some(Self::Discord),
+            "web" => Some(Self::Web),
+            "voice" => Some(Self::Voice),
+            "imessage" => Some(Self::IMessage),
+            "line" => Some(Self::Line),
+            "telegram" => Some(Self::Telegram),
+            "linkedin" => Some(Self::LinkedIn),
+            _ => None,
+        }
+    }
+}
+
+/// Where an inbound event came from, as a closed app plus a provider user ref.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceEventSource {
+    pub app: SurfaceSourceApp,
+    pub user_ref: String,
+}
+
+impl SurfaceEventSource {
+    /// Builds a source stamp.
+    #[must_use]
+    pub fn new(app: SurfaceSourceApp, user_ref: impl Into<String>) -> Self {
+        Self {
+            app,
+            user_ref: user_ref.into(),
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_non_blank(
+            &self.user_ref,
+            "surface event source user ref must be non-empty",
+        )
+    }
+}
+
+/// Non-message interaction kinds carried by an inbound surface event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceInteractionKind {
+    Reaction,
+    CardCompletion,
+    Dwell,
+    Tap,
+}
+
+/// What the counterparty did on the surface.
+///
+/// A message dispatches toward the addressed actor's `self.*` flow; every
+/// interaction normalizes into observed-source enrichment and never
+/// synthesizes a TURN (OF-247 R4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SurfaceEventAction {
+    Message,
+    Interaction {
+        interaction: SurfaceInteractionKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_ref: Option<String>,
+    },
+}
+
+impl SurfaceEventAction {
+    /// Dispatch route this action normalizes into.
+    #[must_use]
+    pub const fn dispatch_route(&self) -> SurfaceEventDispatchRoute {
+        match self {
+            Self::Message => SurfaceEventDispatchRoute::ActorSelf,
+            Self::Interaction { .. } => SurfaceEventDispatchRoute::ObservedSourceEnrichment,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        match self {
+            Self::Message => Ok(()),
+            Self::Interaction { target_ref, .. } => target_ref.as_deref().map_or(Ok(()), |value| {
+                validate_non_blank(value, "surface interaction target ref must be non-empty")
+            }),
+        }
+    }
+}
+
+/// Downstream flow a routed surface event hands off to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceEventDispatchRoute {
+    ActorSelf,
+    ObservedSourceEnrichment,
+}
 
 /// Counterparty identity known at inbound normalization time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +176,15 @@ impl SurfaceCounterpartyStamp {
         }
     }
 
+    /// Provider-native user ref this stamp contributes when an adapter does
+    /// not supply a richer one.
+    fn default_user_ref(&self) -> String {
+        match self {
+            Self::Known { counterparty_ref } => counterparty_ref.clone(),
+            Self::Unknown { counterparty_key } => counterparty_key.clone(),
+        }
+    }
+
     fn validate(&self) -> Result<()> {
         match self {
             Self::Known { counterparty_ref } => validate_non_blank(
@@ -69,6 +208,13 @@ pub struct InboundSurfaceEventInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_ref: Option<String>,
     pub counterparty: SurfaceCounterpartyStamp,
+    /// Closed source app plus the provider-native sending user.
+    pub source: SurfaceEventSource,
+    /// What the counterparty did: a message, or a typed interaction.
+    pub action: SurfaceEventAction,
+    /// Provider-authored correlation id. Public and preserved verbatim; the
+    /// queue run id is derived from it, never the other way around.
+    pub correlation_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_ref: Option<String>,
     pub received_at: u64,
@@ -78,6 +224,12 @@ pub struct InboundSurfaceEventInput {
 
 impl InboundSurfaceEventInput {
     /// Builds an inbound payload for identity routing.
+    ///
+    /// Adapters that carry no richer signal get the ruled defaults: the source
+    /// app is derived from the channel key, the source user ref falls back to
+    /// the counterparty stamp, the correlation id falls back to the provider
+    /// event id, and the action is a message. Builders override each of those
+    /// when an adapter knows better.
     #[must_use]
     pub fn new(
         event_id: impl Into<String>,
@@ -87,12 +239,21 @@ impl InboundSurfaceEventInput {
         received_at: u64,
         foreign_inbound: bool,
     ) -> Self {
+        let event_id = event_id.into();
+        let channel = channel.into();
+        let source = SurfaceEventSource {
+            app: SurfaceSourceApp::from_channel_key(&channel).unwrap_or(SurfaceSourceApp::Web),
+            user_ref: counterparty.default_user_ref(),
+        };
         Self {
-            event_id: event_id.into(),
-            channel: channel.into(),
+            correlation_id: event_id.clone(),
+            event_id,
+            channel,
             receiving_address_or_handle: receiving_address_or_handle.into(),
             workspace_ref: None,
             counterparty,
+            source,
+            action: SurfaceEventAction::Message,
             payload_ref: None,
             received_at,
             foreign_inbound,
@@ -113,12 +274,37 @@ impl InboundSurfaceEventInput {
         self
     }
 
+    /// Overrides the derived source stamp with adapter-supplied detail.
+    #[must_use]
+    pub fn with_source(mut self, source: SurfaceEventSource) -> Self {
+        self.source = source;
+        self
+    }
+
+    /// Marks this event as a non-message interaction.
+    #[must_use]
+    pub fn with_action(mut self, action: SurfaceEventAction) -> Self {
+        self.action = action;
+        self
+    }
+
+    /// Overrides the correlation id defaulted from the provider event id.
+    #[must_use]
+    pub fn with_correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
+        self.correlation_id = correlation_id.into();
+        self
+    }
+
     fn validate(&self) -> Result<()> {
         validate_non_blank(&self.event_id, "surface event id must be non-empty")?;
         validate_non_blank(&self.channel, "surface event channel must be non-empty")?;
         validate_non_blank(
             &self.receiving_address_or_handle,
             "surface event receiving address must be non-empty",
+        )?;
+        validate_non_blank(
+            &self.correlation_id,
+            "surface event correlation id must be non-empty",
         )?;
         if let Some(payload_ref) = &self.payload_ref {
             validate_non_blank(payload_ref, "surface event payload ref must be non-empty")?;
@@ -129,6 +315,8 @@ impl InboundSurfaceEventInput {
                 "surface event workspace ref must be non-empty",
             )?;
         }
+        self.source.validate()?;
+        self.action.validate()?;
         self.counterparty.validate()
     }
 }
@@ -147,6 +335,12 @@ pub struct SurfaceEvent {
     /// Agent resolved from the receiving ChannelIdentity binding.
     pub agent_ref: String,
     pub counterparty: SurfaceCounterpartyStamp,
+    /// Closed source app plus the provider-native sending user.
+    pub source: SurfaceEventSource,
+    /// What the counterparty did: a message, or a typed interaction.
+    pub action: SurfaceEventAction,
+    /// Provider-authored correlation id, preserved verbatim.
+    pub correlation_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_ref: Option<String>,
     pub received_at: u64,
@@ -155,6 +349,14 @@ pub struct SurfaceEvent {
     pub claims_not_instructions: bool,
     /// Quarantined/released identities still route so replies are not dropped.
     pub identity_retiring: bool,
+}
+
+impl SurfaceEvent {
+    /// Downstream flow this event hands off to.
+    #[must_use]
+    pub const fn dispatch_route(&self) -> SurfaceEventDispatchRoute {
+        self.action.dispatch_route()
+    }
 }
 
 /// Inbound routing result class.
@@ -320,6 +522,9 @@ fn routed_receipt(
         receiving_identity_ref: identity_ref.to_hex(),
         agent_ref: agent_ref.to_hex(),
         counterparty: input.counterparty.clone(),
+        source: input.source.clone(),
+        action: input.action.clone(),
+        correlation_id: input.correlation_id.clone(),
         payload_ref: input.payload_ref.clone(),
         received_at: input.received_at,
         foreign_inbound: input.foreign_inbound,
@@ -372,6 +577,34 @@ fn rejected_receipt(
         surface_event: None,
     }
 }
+
+/// Longest provider correlation id carried into the queue verbatim.
+///
+/// The attempt queue caps `run_id` at 128 bytes. A provider id at or under
+/// that cap is its own run id; anything longer folds to a `sha256:` digest so
+/// admission never rejects an event merely for a long provider id.
+const MAX_VERBATIM_CORRELATION_RUN_ID_BYTES: usize = 128;
+
+/// Derives the bounded queue run id for a public correlation id.
+///
+/// Deterministic in both directions of a replay: the same provider id always
+/// yields the same run id, and the public correlation id is never rewritten.
+#[must_use]
+pub fn surface_event_run_id(correlation_id: &str) -> String {
+    if correlation_id.len() <= MAX_VERBATIM_CORRELATION_RUN_ID_BYTES {
+        return correlation_id.to_owned();
+    }
+    let digest = Sha256::digest(correlation_id.as_bytes());
+    let mut run_id = String::with_capacity("sha256:".len() + digest.len() * 2);
+    run_id.push_str("sha256:");
+    for byte in digest {
+        run_id.push(HEX_DIGITS[usize::from(byte >> 4)] as char);
+        run_id.push(HEX_DIGITS[usize::from(byte & 0x0f)] as char);
+    }
+    run_id
+}
+
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 fn validate_non_blank(value: &str, reason: &'static str) -> Result<()> {
     if value.trim().is_empty() {

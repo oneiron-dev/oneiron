@@ -216,6 +216,195 @@ fn inbound_requested_and_pending_fulfillment_reject_as_inactive() -> Result<()> 
 }
 
 #[test]
+fn routed_event_carries_closed_source_action_and_correlation_stamps() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let identity_ref = entity(0x18);
+    let agent_ref = entity(0x58);
+    vault.create_channel_identity(
+        &identity_ref,
+        &identity(
+            "stamped@example.com",
+            agent_ref,
+            ChannelIdentityState::Active,
+        ),
+    )?;
+
+    let receipt = vault.route_inbound_surface_event(input(
+        "stamped@example.com",
+        SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+    ))?;
+
+    let event = receipt.surface_event.expect("routed surface event");
+    assert_eq!(event.schema_version, SURFACE_EVENT_SCHEMA_VERSION);
+    assert_eq!(event.source.app, SurfaceSourceApp::Email);
+    assert_eq!(event.source.user_ref, "email:sender@example.com");
+    assert_eq!(event.action, SurfaceEventAction::Message);
+    assert_eq!(event.correlation_id, "evt-stamped@example.com");
+    assert_eq!(event.receiving_identity_ref, identity_ref.to_hex());
+    assert_eq!(event.agent_ref, agent_ref.to_hex());
+    assert!(event.claims_not_instructions);
+    assert!(!event.identity_retiring);
+
+    let encoded = serde_json::to_value(&event).expect("surface event serializes");
+    assert_eq!(encoded["source"]["app"], "email");
+    assert_eq!(encoded["action"]["kind"], "message");
+    assert_eq!(encoded["correlation_id"], "evt-stamped@example.com");
+    Ok(())
+}
+
+#[test]
+fn source_app_round_trips_every_ruled_channel_key() {
+    for (channel, app) in [
+        ("email", SurfaceSourceApp::Email),
+        ("slack", SurfaceSourceApp::Slack),
+        ("discord", SurfaceSourceApp::Discord),
+        ("web", SurfaceSourceApp::Web),
+        ("voice", SurfaceSourceApp::Voice),
+        ("imessage", SurfaceSourceApp::IMessage),
+        ("line", SurfaceSourceApp::Line),
+        ("telegram", SurfaceSourceApp::Telegram),
+        ("linkedin", SurfaceSourceApp::LinkedIn),
+    ] {
+        assert_eq!(
+            SurfaceSourceApp::from_channel_key(channel),
+            Some(app),
+            "{channel} must map to a closed source app"
+        );
+        let encoded = serde_json::to_value(app).expect("source app serializes");
+        assert_eq!(
+            encoded,
+            serde_json::Value::from(channel),
+            "{channel} wire spelling must equal its channel key"
+        );
+        let decoded: SurfaceSourceApp =
+            serde_json::from_value(encoded).expect("source app deserializes");
+        assert_eq!(decoded, app);
+    }
+
+    assert_eq!(SurfaceSourceApp::from_channel_key("carrier-pigeon"), None);
+}
+
+#[test]
+fn interaction_actions_decode_and_route_to_observed_source_enrichment() {
+    for (kind, wire) in [
+        (SurfaceInteractionKind::Reaction, "reaction"),
+        (SurfaceInteractionKind::CardCompletion, "card_completion"),
+        (SurfaceInteractionKind::Dwell, "dwell"),
+        (SurfaceInteractionKind::Tap, "tap"),
+    ] {
+        let action = SurfaceEventAction::Interaction {
+            interaction: kind,
+            target_ref: Some("msg-1".to_owned()),
+        };
+        let encoded = serde_json::to_value(&action).expect("action serializes");
+        assert_eq!(encoded["kind"], "interaction");
+        assert_eq!(encoded["interaction"], wire);
+        assert_eq!(encoded["target_ref"], "msg-1");
+        let decoded: SurfaceEventAction =
+            serde_json::from_value(encoded).expect("action deserializes");
+        assert_eq!(decoded, action);
+        assert_eq!(
+            action.dispatch_route(),
+            SurfaceEventDispatchRoute::ObservedSourceEnrichment
+        );
+    }
+
+    assert_eq!(
+        SurfaceEventAction::Message.dispatch_route(),
+        SurfaceEventDispatchRoute::ActorSelf
+    );
+}
+
+#[test]
+fn run_id_is_verbatim_under_the_cap_and_digested_above_it() {
+    let short = "evt-provider-1";
+    assert_eq!(surface_event_run_id(short), short);
+
+    let boundary = "b".repeat(128);
+    assert_eq!(surface_event_run_id(&boundary), boundary);
+
+    let long = "c".repeat(129);
+    let run_id = surface_event_run_id(&long);
+    assert_eq!(run_id, surface_event_run_id(&long), "derivation is stable");
+    assert_ne!(run_id, long);
+    let digest = run_id
+        .strip_prefix("sha256:")
+        .expect("long provider ids fold to a sha256 run id");
+    assert_eq!(digest.len(), 64);
+    assert!(
+        digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "digest must be lowercase hex: {digest}"
+    );
+    assert!(run_id.len() <= 128, "derived run id must fit the queue cap");
+    assert_ne!(
+        surface_event_run_id(&"d".repeat(129)),
+        run_id,
+        "distinct provider ids derive distinct run ids"
+    );
+}
+
+#[test]
+fn builders_override_the_defaults_new_derives() {
+    let derived = input(
+        "agent@example.com",
+        SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+    );
+    assert_eq!(derived.source.app, SurfaceSourceApp::Email);
+    assert_eq!(derived.source.user_ref, "email:sender@example.com");
+    assert_eq!(derived.correlation_id, derived.event_id);
+    assert_eq!(derived.action, SurfaceEventAction::Message);
+
+    let overridden = derived
+        .with_source(SurfaceEventSource::new(
+            SurfaceSourceApp::Telegram,
+            "telegram:user:77",
+        ))
+        .with_action(SurfaceEventAction::Interaction {
+            interaction: SurfaceInteractionKind::Tap,
+            target_ref: None,
+        })
+        .with_correlation_id("provider-correlation-9");
+    assert_eq!(overridden.source.app, SurfaceSourceApp::Telegram);
+    assert_eq!(overridden.source.user_ref, "telegram:user:77");
+    assert_eq!(overridden.correlation_id, "provider-correlation-9");
+    assert_ne!(overridden.correlation_id, overridden.event_id);
+}
+
+#[test]
+fn blank_source_and_correlation_stamps_are_rejected() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    vault.create_channel_identity(
+        &entity(0x19),
+        &identity(
+            "blank@example.com",
+            entity(0x59),
+            ChannelIdentityState::Active,
+        ),
+    )?;
+
+    let blank_correlation = input(
+        "blank@example.com",
+        SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+    )
+    .with_correlation_id("   ");
+    assert!(
+        vault
+            .route_inbound_surface_event(blank_correlation)
+            .is_err()
+    );
+
+    let blank_user_ref = input(
+        "blank@example.com",
+        SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+    )
+    .with_source(SurfaceEventSource::new(SurfaceSourceApp::Email, "  "));
+    assert!(vault.route_inbound_surface_event(blank_user_ref).is_err());
+    Ok(())
+}
+
+#[test]
 fn inbound_vault_bound_identity_rejects_as_non_agent_bound() -> Result<()> {
     let (_dir, vault) = test_vault();
     let identity_ref = entity(0x17);
