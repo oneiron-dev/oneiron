@@ -1389,6 +1389,13 @@ impl<'a> TxnBatchBuilder<'a> {
 
 fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
     match entity_type {
+        // SECRET_CUSTODY records write ONLY through `Vault::register_secret`
+        // (body-schema + floor + name-index discipline). The generic raw
+        // public door never carries one; the rejection names the ONE-1865
+        // seal constructor so all doors grep to one site.
+        crate::registry::ENTITY_TYPE_SECRET_CUSTODY => {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
         crate::registry::ENTITY_TYPE_CLAIM => {
             let body = crate::claim::validate_claim_body_and_decode(data, false)?;
             if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
@@ -1815,6 +1822,20 @@ pub(crate) fn apply_ops_with_gate_mode(
                     store.validate_entity_type(entity_type)?;
                 } else {
                     store.validate_public_entity_type(entity_type)?;
+                }
+                // SECRET_CUSTODY is door-sealed: the type byte writes ONLY via
+                // `Vault::register_secret`, which uses the engine-internal
+                // non-replicated door shape (`allow_maintenance &&
+                // !allow_reserved_predicate` — the same shape the default
+                // policy-manifest seeder uses). Every other path — public raw
+                // puts, both batch builders, typed puts, claim candidates, and
+                // CRDT→LMDB sync replay (which is allow_maintenance &&
+                // allow_reserved_predicate) — rejects byte 77 here until
+                // ONE-1865 arms the replication dial.
+                if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                    && (!allow_maintenance || allow_reserved_predicate)
+                {
+                    return Err(crate::secret_custody::reject_secret_custody_byte());
                 }
                 let applied = apply_put(
                     store,

@@ -3543,3 +3543,157 @@ fn forward_remat_still_quarantines_off_table_when_endpoint_rows_are_healthy() ->
     assert_eq!(records[0].1.reason_code, "InvalidFacetOfEdge");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// SECRET_CUSTODY (byte 77) ONE-1865 seal — FIX1 CHOKEPOINT
+// ---------------------------------------------------------------------------
+
+/// Builds a live custody record in the vault via the door and returns its raw
+/// stored bytes (header + body), mirrored exactly as `reverse_rematerialize`
+/// would read them back.
+fn seed_secret_custody(
+    vault: &Vault,
+    window_key: &WindowKey,
+    name: &str,
+    value: &[u8],
+) -> Result<(EntityId, Vec<u8>)> {
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let rec = crate::secret_custody::SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: name.to_owned(),
+        class: crate::secret_custody::CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: value.to_vec(),
+        status: crate::secret_custody::SecretCustodyStatus::Active,
+        registered_at: learned_at,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![crate::secret_custody::SecretBinding {
+            effector: "door:receive-pack".to_owned(),
+            tier_ceiling: crate::secret_custody::CustodyTier::T0Doored,
+            scopes: vec!["read".to_owned()],
+        }],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec![".secrets/api.key".to_owned()],
+        policy_floor_snapshot: crate::secret_custody::SecretCustodyFloor::default(),
+    };
+    let id = vault.register_secret(rec)?;
+    let raw = vault.get_raw(&id)?.expect("custody row present");
+    Ok((id, raw))
+}
+
+/// Reverse re-materialization must never mirror a custody record into the
+/// canonical window doc, and must scrub any custody carrier (and its incident
+/// edges) that landed before the pass ran.
+#[test]
+fn secret_custody_never_enters_doc_via_reverse_rematerialize() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let secret_value = b"hunter2-secret";
+    let (custody, custody_raw) = seed_secret_custody(&vault, &window_key, "api-key", secret_value)?;
+
+    // An ordinary control entity proves the pass still mirrors other rows.
+    let ordinary = EntityId::from_bytes([0x47; 16])?;
+    vault.put_entity(
+        &ordinary,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"ordinary turn",
+    )?;
+
+    let doc = create_window_doc("source", &window_key);
+    let entities = doc.get_map("entities");
+    let edge_key = format_edge_key(&ordinary, EdgeKind::Mentions, &custody);
+    let edge_val = encode_edge_value_for_crdt(EdgeKind::Mentions, 0.5, learned_at, None, None)?;
+
+    // Pre-seed a custody carrier + incident edge as if they landed before the
+    // seal: reverse remat must scrub BOTH, not merely skip the insert.
+    map_insert_bytes(&entities, &custody.to_hex(), &custody_raw)?;
+    map_insert_bytes(&doc.get_map("edges"), &edge_key, &edge_val)?;
+    doc.commit();
+
+    // Count = 1: only the ordinary control mirrors. The custody row is sealed.
+    assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 1);
+    assert!(
+        map_get_bytes(&entities, &ordinary.to_hex()).is_some(),
+        "ordinary entity still mirrors through reverse remat"
+    );
+    assert!(
+        map_get_bytes(&entities, &custody.to_hex()).is_none(),
+        "custody record body must be scrubbed from the canonical doc"
+    );
+    assert!(
+        map_get_bytes(&doc.get_map("edges"), &edge_key).is_none(),
+        "custody incident edge must be scrubbed from the canonical doc"
+    );
+    Ok(())
+}
+
+/// The export path runs the same seal: a custody carrier already resident in
+/// the doc must be scrubbed and the window forced onto history-free snapshot
+/// transport, so exported bytes never carry the secret value.
+#[test]
+fn secret_custody_never_leaves_doc_via_export() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let secret_value = b"hunter2-secret";
+    let (custody, custody_raw) = seed_secret_custody(&vault, &window_key, "api-key", secret_value)?;
+
+    let ordinary = EntityId::from_bytes([0x48; 16])?;
+    vault.put_entity(
+        &ordinary,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"ordinary turn",
+    )?;
+
+    let doc = create_window_doc("source", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &custody.to_hex(), &custody_raw)?;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary turn"),
+    )?;
+    doc.commit();
+
+    // Export to a fresh peer: the custody body must not survive, the ordinary
+    // control must.
+    let export = export_window_updates_since(
+        &vault,
+        &window_key,
+        &doc,
+        &VersionVector::default().encode(),
+    )?;
+    let peer = create_window_doc("peer", &window_key);
+    import_doc(&peer, &export)?;
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), &custody.to_hex()).is_none(),
+        "exported window must not carry the custody record body"
+    );
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some(),
+        "ordinary entity still exports"
+    );
+    // The local doc was scrubbed in place too.
+    assert!(
+        map_get_bytes(&doc.get_map("entities"), &custody.to_hex()).is_none(),
+        "local doc scrubbed before export"
+    );
+    // And the window is now pinned history-free, so the pre-scrub set-op bytes
+    // in Loro history can never take a raw delta/snapshot path later.
+    assert!(
+        history_free_window_required(&vault, &window_key)?,
+        "custody carrier scrub pins the window to history-free transport"
+    );
+    Ok(())
+}

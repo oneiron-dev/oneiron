@@ -294,6 +294,11 @@ pub enum ErrorKind {
     IdentityTopologyEventDivergence,
     AuthorityLogAppendOnlyViolation,
     AuthorityLogStoreKeyMismatch,
+    InvalidSecretCustodyBody,
+    SecretNameInUse,
+    SecretCustodyNotActive,
+    SecretBindingDenied,
+    ManifestWidensFloor,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1498,6 +1503,36 @@ pub enum Error {
         id.to_hex()
     )]
     AuthorityLogStoreKeyMismatch { id: EntityId },
+    /// A SECRET_CUSTODY body failed structural validation (SECRET-01,
+    /// ONE-1919).
+    #[error("invalid secret custody body: {0}")]
+    InvalidSecretCustodyBody(&'static str),
+    /// A live secret name was re-registered while still held by a
+    /// non-revoked record (SECRET-01).
+    #[error("secret name in use: {name}")]
+    SecretNameInUse { name: String },
+    /// A value read was attempted on a non-`Active` custody record.
+    #[error("secret custody record is not active: {name}")]
+    SecretCustodyNotActive { name: String },
+    /// No binding covers `(secret_ref, effector)` — the typed deny for a
+    /// value read or use without a declared binding (SECRET-01; door/lease
+    /// enforcement lands in SECRET-02).
+    #[error("no secret binding for effector `{effector}` on secret `{secret_ref}`")]
+    SecretBindingDenied {
+        effector: String,
+        secret_ref: String,
+    },
+    /// A repo-side manifest asks for more exposure than the vault floor
+    /// permits for the entry's class (ARCH-0069 S2 — narrow-only).
+    #[error(
+        "manifest widens the vault floor for `{secret_ref}` ({class:?}): requested {requested:?} exceeds floor max {floor_max:?}"
+    )]
+    ManifestWidensFloor {
+        secret_ref: String,
+        class: crate::secret_custody::CustodyClass,
+        requested: crate::secret_custody::CustodyTier,
+        floor_max: crate::secret_custody::CustodyTier,
+    },
 }
 
 impl Error {
@@ -1746,6 +1781,11 @@ impl Error {
                 ErrorKind::AuthorityLogAppendOnlyViolation
             }
             Self::AuthorityLogStoreKeyMismatch { .. } => ErrorKind::AuthorityLogStoreKeyMismatch,
+            Self::InvalidSecretCustodyBody(_) => ErrorKind::InvalidSecretCustodyBody,
+            Self::SecretNameInUse { .. } => ErrorKind::SecretNameInUse,
+            Self::SecretCustodyNotActive { .. } => ErrorKind::SecretCustodyNotActive,
+            Self::SecretBindingDenied { .. } => ErrorKind::SecretBindingDenied,
+            Self::ManifestWidensFloor { .. } => ErrorKind::ManifestWidensFloor,
         }
     }
 
