@@ -215,3 +215,37 @@ Seeds 0x73–0x8C, all outside `PINNED_ID_BYTES` (seed-band law).
 `error.rs`, `identity_topology.rs` (+tests), `lib.rs`, `receipt.rs`,
 `tests/merge_split_oracle.rs` — all within the ticket's claim slice.
 `Cargo.lock` NOT committed. No `git add -A` used.
+
+## seg0 (cont.) — K3 simplify pass (commit b135e0f)
+
+Deletion-biased polish, no restructuring. Two edits plus import hygiene:
+
+1. **`receipt.rs` projectors return typed errors on dispatch slips.**
+   `proposal_outcome_receipt` had `unreachable!` and
+   `identity_topology_receipt` had a stale fallback arm fabricating a
+   lifecycle receipt for a resolution row (its own comment said the arm
+   was unreachable — the shape existed because the enum is exhaustive).
+   Both now return `Result<ReceiptRecord>` with
+   `Error::InvariantViolation`: a future dispatch slip surfaces as a
+   typed error, never a panic or a stealth kind-mix. Both projectors are
+   crate-private with the single dispatcher as sole call site — no
+   public-API change.
+2. **Hoisted `entity_type_registry_entry` to the import block** — the
+   deferred `crate::registry::…` use-site was the only one in the
+   module.
+
+Sweep findings: zero trailing whitespace / excess blank lines in all six
+touched files. Stale-comment audit: comments are dense but accurate; the
+one borderline case (the self-describing dead arm) was deleted with the
+arm. Kept as-is (deliberate, not excess): the `AmendThenApprove, None`
+unreachable-invariant arm in the resolution door (truth-synced
+InvariantViolation), the fold's duplicate-resolution rejection (ledger
+tabu-defense), and the kind-gate redundancy between scan level and
+projector level (belt-and-suspenders, documented in-place).
+
+Gates after: `cargo fmt --all -- --check` clean · `cargo clippy -p
+oneiron --all-features --all-targets -- -D warnings` clean · `cargo
+test -p oneiron --all-features --lib` **3157/0** · oracle integration
+test `merge_split_oracle` **3 passed / 20 ignored** (1748/1749 stubs
+intact). No test assertions touched; no public API changed; NO PUSH.
+
