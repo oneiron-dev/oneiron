@@ -12,6 +12,7 @@ pub mod authority;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
+pub mod calendar;
 pub mod campaign;
 pub mod channel_identity;
 pub mod channel_identity_lifecycle;
