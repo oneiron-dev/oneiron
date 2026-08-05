@@ -549,10 +549,11 @@ pub use crate::inbox::{
     InboxSubCluster,
 };
 pub use crate::ingest::{
-    INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
-    IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry,
-    IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
-    KNOWN_INGEST_HARNESS_CONFIG, NormalizedIngestBatch, NormalizedIngestClaim,
+    INGEST_SOURCE_REGISTRY, IngestAdapterSkillRef, IngestError, IngestHarnessConfig, IngestResult,
+    IngestSource, IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration,
+    IngestSourceRegistry, IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
+    KNOWN_INGEST_HARNESS_CONFIG, MEETING_TRANSCRIPT_SCHEMA_V1, MEETING_TRANSCRIPT_SOURCE_ID,
+    MeetingTranscriptSource, NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestNote,
     NormalizedIngestRecord,
 };
 pub use crate::interlocutor::{

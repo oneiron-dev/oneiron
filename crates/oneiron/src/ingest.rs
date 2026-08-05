@@ -17,11 +17,28 @@ use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
 
 pub const JSONL_TRANSCRIPT_SOURCE_ID: &str = "jsonl-transcript";
+pub const MEETING_TRANSCRIPT_SOURCE_ID: &str = "meeting-transcript";
+
+/// Schema version this build of `MeetingTranscriptSource` accepts.
+pub const MEETING_TRANSCRIPT_SCHEMA_V1: &str = "oneiron.meeting_transcript.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IngestSourceFormat {
     JsonlTranscript,
+    MeetingTranscriptV1,
+}
+
+/// The ARCH-0027 adapter skill a source's records came from.
+///
+/// A built-in source is compiled-in code, not a runtime SKILL entity: this
+/// descriptor is the parity authority for what produced the input, and it
+/// never participates in SKILL lifecycle or hub machinery. Sources with no
+/// adapter (records handed straight to the engine) carry `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IngestAdapterSkillRef {
+    pub skill_id: &'static str,
+    pub version: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +73,7 @@ pub struct IngestSourceConfig {
     pub source_id: &'static str,
     pub label: &'static str,
     pub format: IngestSourceFormat,
+    pub adapter_skill: Option<IngestAdapterSkillRef>,
     pub writes_claims: bool,
     pub trust_ceiling: IngestTrustCeiling,
     pub default_admission: ClaimApprovalStatus,
@@ -95,6 +113,19 @@ pub struct NormalizedIngestBatch {
     pub source_id: &'static str,
     pub records: Vec<NormalizedIngestRecord>,
     pub claims: Vec<NormalizedIngestClaim>,
+    /// A whole-batch note the producer supplied for consumers that cannot land
+    /// `records` as individual entities. Present whenever the producer supplied
+    /// one; choosing it over the records is the consumer's decision, not this
+    /// layer's.
+    pub note_fallback: Option<NormalizedIngestNote>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedIngestNote {
+    pub source_record_id: String,
+    pub occurred_at: Option<u64>,
+    pub title: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,6 +300,57 @@ pub enum IngestError {
         source_id: &'static str,
         line: usize,
     },
+
+    // The meeting-transcript artifact is one document rather than a line
+    // stream, so its failures name the offending path or id instead of a line.
+    #[error("ingest source `{source_id}` document has invalid JSON: {message}")]
+    InvalidDocument {
+        source_id: &'static str,
+        message: String,
+    },
+
+    #[error("ingest source `{source_id}` expects schema `{expected}`, got `{found}`")]
+    UnsupportedSchema {
+        source_id: &'static str,
+        expected: &'static str,
+        found: String,
+    },
+
+    #[error("ingest source `{source_id}` document field `{path}` is missing or malformed")]
+    InvalidDocumentField {
+        source_id: &'static str,
+        path: String,
+    },
+
+    #[error("ingest source `{source_id}` document has a duplicate `{kind}` id `{id}`")]
+    DuplicateId {
+        source_id: &'static str,
+        kind: &'static str,
+        id: String,
+    },
+
+    #[error(
+        "ingest source `{source_id}` turn `{turn_id}` has non-monotone or out-of-bounds timestamps"
+    )]
+    InvalidTurnTimestamps {
+        source_id: &'static str,
+        turn_id: String,
+    },
+
+    #[error("ingest source `{source_id}` turn `{turn_id}` references unknown word `{word_id}`")]
+    UnknownWordReference {
+        source_id: &'static str,
+        turn_id: String,
+        word_id: String,
+    },
+
+    #[error(
+        "ingest source `{source_id}` turn `{turn_id}` timestamp overflows `occurred_at` arithmetic"
+    )]
+    TimestampOverflow {
+        source_id: &'static str,
+        turn_id: String,
+    },
 }
 
 pub trait IngestSource: Send + Sync {
@@ -387,27 +469,305 @@ impl IngestSource for JsonlTranscriptSource {
             source_id: JSONL_TRANSCRIPT_SOURCE_ID,
             records,
             claims: Vec::new(),
+            note_fallback: None,
         })
     }
 }
 
+/// Normalizes the `oneiron.meeting_transcript.v1` producer artifact.
+///
+/// Normalization stays pre-semantic: corrected turns become records, the
+/// producer's structured cleanup stays producer metadata, and no claim is ever
+/// emitted. Turn text is already corrected upstream, so this layer validates
+/// and maps rather than interpreting.
+pub struct MeetingTranscriptSource;
+
+impl IngestSource for MeetingTranscriptSource {
+    fn normalize(&self, input: &str) -> IngestResult<NormalizedIngestBatch> {
+        let document: Value =
+            serde_json::from_str(input).map_err(|err| IngestError::InvalidDocument {
+                source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                message: err.to_string(),
+            })?;
+        let document = document
+            .as_object()
+            .ok_or_else(|| document_field_error("<root>"))?;
+
+        let schema = document_string(document, "schema")?;
+        if schema != MEETING_TRANSCRIPT_SCHEMA_V1 {
+            return Err(IngestError::UnsupportedSchema {
+                source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                expected: MEETING_TRANSCRIPT_SCHEMA_V1,
+                found: schema.to_owned(),
+            });
+        }
+
+        let recording = document_object(document, "recording")?;
+        let recording_id = document_string(recording, "recording.recording_id")?;
+        if recording_id.trim().is_empty() {
+            return Err(document_field_error("recording.recording_id"));
+        }
+        let duration_ms = document_u64(recording, "recording.duration_ms")?;
+        // Capture time anchors every turn into wall-clock; without it turns are
+        // still ordered and offset-bearing, so they normalize with no
+        // `occurred_at` rather than failing the batch.
+        let capture_started_at = optional_document_u64(recording, "recording.capture_started_at")?;
+
+        let word_ids = collect_word_ids(document)?;
+        let turns = document_array(document, "turns")?;
+        let mut records = Vec::with_capacity(turns.len());
+        let mut seen_turn_ids = std::collections::HashSet::with_capacity(turns.len());
+        let mut previous_end_ms = 0_u64;
+
+        for (index, turn) in turns.iter().enumerate() {
+            let turn = turn
+                .as_object()
+                .ok_or_else(|| document_field_error(&format!("turns[{index}]")))?;
+            let turn_id = document_string(turn, &format!("turns[{index}].turn_id"))?;
+            if turn_id.trim().is_empty() {
+                return Err(document_field_error(&format!("turns[{index}].turn_id")));
+            }
+            if !seen_turn_ids.insert(turn_id.to_owned()) {
+                return Err(IngestError::DuplicateId {
+                    source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                    kind: "turn",
+                    id: turn_id.to_owned(),
+                });
+            }
+
+            let start_ms = document_u64(turn, &format!("turns[{index}].start_ms"))?;
+            let end_ms = document_u64(turn, &format!("turns[{index}].end_ms"))?;
+            // Turns are time-ordered, non-overlapping, and inside the
+            // recording: anything else means the producer's time mapping broke,
+            // and mapped `occurred_at` values would silently lie.
+            if end_ms < start_ms || start_ms < previous_end_ms || end_ms > duration_ms {
+                return Err(IngestError::InvalidTurnTimestamps {
+                    source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                    turn_id: turn_id.to_owned(),
+                });
+            }
+            previous_end_ms = end_ms;
+
+            let text = normalize_space(document_string(turn, &format!("turns[{index}].text"))?);
+            if text.is_empty() {
+                return Err(document_field_error(&format!("turns[{index}].text")));
+            }
+
+            for word_ref in document_array(turn, &format!("turns[{index}].source_word_ids"))? {
+                let word_ref = word_ref.as_str().ok_or_else(|| {
+                    document_field_error(&format!("turns[{index}].source_word_ids"))
+                })?;
+                if !word_ids.contains(word_ref) {
+                    return Err(IngestError::UnknownWordReference {
+                        source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                        turn_id: turn_id.to_owned(),
+                        word_id: word_ref.to_owned(),
+                    });
+                }
+            }
+
+            records.push(NormalizedIngestRecord {
+                source_record_id: turn_id.to_owned(),
+                thread_id: Some(recording_id.to_owned()),
+                // A resolved identity outranks the anonymous cluster that
+                // produced it; with neither, the turn is speaker-less rather
+                // than attributed to a guess.
+                speaker: optional_document_string(turn, &format!("turns[{index}].speaker_ref"))?
+                    .or(optional_document_string(
+                        turn,
+                        &format!("turns[{index}].speaker_cluster"),
+                    )?)
+                    .map(str::to_owned),
+                occurred_at: capture_started_at
+                    .map(|base| {
+                        base.checked_add(start_ms / 1000).ok_or_else(|| {
+                            IngestError::TimestampOverflow {
+                                source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                                turn_id: turn_id.to_owned(),
+                            }
+                        })
+                    })
+                    .transpose()?,
+                text,
+            });
+        }
+
+        Ok(NormalizedIngestBatch {
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+            records,
+            claims: Vec::new(),
+            note_fallback: note_fallback(document, recording_id, capture_started_at)?,
+        })
+    }
+}
+
+/// Collects word ids, rejecting duplicates so turn references stay unambiguous.
+fn collect_word_ids(
+    document: &Map<String, Value>,
+) -> IngestResult<std::collections::HashSet<String>> {
+    let words = document_array(document, "words")?;
+    let mut ids = std::collections::HashSet::with_capacity(words.len());
+    for (index, word) in words.iter().enumerate() {
+        let word = word
+            .as_object()
+            .ok_or_else(|| document_field_error(&format!("words[{index}]")))?;
+        let word_id = document_string(word, &format!("words[{index}].word_id"))?;
+        if word_id.trim().is_empty() {
+            return Err(document_field_error(&format!("words[{index}].word_id")));
+        }
+        if !ids.insert(word_id.to_owned()) {
+            return Err(IngestError::DuplicateId {
+                source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                kind: "word",
+                id: word_id.to_owned(),
+            });
+        }
+    }
+    Ok(ids)
+}
+
+fn note_fallback(
+    document: &Map<String, Value>,
+    recording_id: &str,
+    capture_started_at: Option<u64>,
+) -> IngestResult<Option<NormalizedIngestNote>> {
+    let Some(note) = document.get("note_fallback") else {
+        return Ok(None);
+    };
+    if note.is_null() {
+        return Ok(None);
+    }
+    let note = note
+        .as_object()
+        .ok_or_else(|| document_field_error("note_fallback"))?;
+
+    let title = normalize_space(document_string(note, "note_fallback.title")?);
+    let text = document_string(note, "note_fallback.body")?
+        .trim()
+        .to_owned();
+    if title.is_empty() || text.is_empty() {
+        return Err(document_field_error("note_fallback"));
+    }
+
+    Ok(Some(NormalizedIngestNote {
+        source_record_id: recording_id.to_owned(),
+        occurred_at: capture_started_at,
+        title,
+        text,
+    }))
+}
+
+fn document_field_error(path: &str) -> IngestError {
+    IngestError::InvalidDocumentField {
+        source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+        path: path.to_owned(),
+    }
+}
+
+fn document_string<'a>(object: &'a Map<String, Value>, path: &str) -> IngestResult<&'a str> {
+    object
+        .get(leaf_key(path))
+        .and_then(Value::as_str)
+        .ok_or_else(|| document_field_error(path))
+}
+
+fn optional_document_string<'a>(
+    object: &'a Map<String, Value>,
+    path: &str,
+) -> IngestResult<Option<&'a str>> {
+    match object.get(leaf_key(path)) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| document_field_error(path)),
+    }
+}
+
+fn document_u64(object: &Map<String, Value>, path: &str) -> IngestResult<u64> {
+    object
+        .get(leaf_key(path))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| document_field_error(path))
+}
+
+fn optional_document_u64(object: &Map<String, Value>, path: &str) -> IngestResult<Option<u64>> {
+    match object.get(leaf_key(path)) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| document_field_error(path)),
+    }
+}
+
+fn document_object<'a>(
+    object: &'a Map<String, Value>,
+    path: &str,
+) -> IngestResult<&'a Map<String, Value>> {
+    object
+        .get(leaf_key(path))
+        .and_then(Value::as_object)
+        .ok_or_else(|| document_field_error(path))
+}
+
+fn document_array<'a>(object: &'a Map<String, Value>, path: &str) -> IngestResult<&'a Vec<Value>> {
+    object
+        .get(leaf_key(path))
+        .and_then(Value::as_array)
+        .ok_or_else(|| document_field_error(path))
+}
+
+/// The key to look up from a dotted diagnostic path (`turns[0].text` -> `text`).
+///
+/// Paths exist so an error names where in the document the problem is; lookup
+/// only ever needs the last segment, because the caller already holds that
+/// object.
+fn leaf_key(path: &str) -> &str {
+    path.rsplit('.').next().unwrap_or(path)
+}
+
 static JSONL_TRANSCRIPT_SOURCE: JsonlTranscriptSource = JsonlTranscriptSource;
-static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 1] = [IngestSourceRegistration::new(
-    IngestSourceConfig {
-        source_id: JSONL_TRANSCRIPT_SOURCE_ID,
-        label: "JSONL transcript",
-        format: IngestSourceFormat::JsonlTranscript,
-        writes_claims: false,
-        trust_ceiling: IngestTrustCeiling {
-            claim_source: ClaimSource::Imported,
-            max_auto_sensitivity: None,
-            receipted: false,
-            warned: false,
+static MEETING_TRANSCRIPT_SOURCE: MeetingTranscriptSource = MeetingTranscriptSource;
+static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 2] = [
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: JSONL_TRANSCRIPT_SOURCE_ID,
+            label: "JSONL transcript",
+            format: IngestSourceFormat::JsonlTranscript,
+            adapter_skill: None,
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
         },
-        default_admission: ClaimApprovalStatus::Proposed,
-    },
-    &JSONL_TRANSCRIPT_SOURCE,
-)];
+        &JSONL_TRANSCRIPT_SOURCE,
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+            label: "Meeting transcript",
+            format: IngestSourceFormat::MeetingTranscriptV1,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.meeting-transcript",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &MEETING_TRANSCRIPT_SOURCE,
+    ),
+];
 
 pub static INGEST_SOURCE_REGISTRY: IngestSourceRegistry =
     IngestSourceRegistry::new(&INGEST_SOURCE_ENTRIES);
