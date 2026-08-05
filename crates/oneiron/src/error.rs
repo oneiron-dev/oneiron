@@ -288,6 +288,7 @@ pub enum ErrorKind {
     ReceiptLeaseRevoked,
     IdentityTopologyRejected,
     IdentityTopologyUnarmed,
+    IdentityProposalAmendmentOutOfScope,
     InvalidIdentityTopologyEventBody,
     ReservedEdgeKind,
     #[cfg(feature = "sync")]
@@ -1484,6 +1485,14 @@ pub enum Error {
     /// effect.
     #[error("identity topology op is not armed yet: {0}")]
     IdentityTopologyUnarmed(&'static str),
+    /// An ARCH-0055 r7 proposal amendment left the reviewed proposal's scope
+    /// (ONE-1747): a different op kind, a subject the proposal never named,
+    /// or a body that does not decode as an op at all. An amendment narrows
+    /// what the decider reviewed — it is never a capability to substitute
+    /// one operation for another. Fail-closed: nothing is applied and the
+    /// park stays open.
+    #[error("identity proposal amendment is out of scope: {0}")]
+    IdentityProposalAmendmentOutOfScope(&'static str),
     /// An AUTHORITY_LOG row is append-only at its store key (ONE-1604-D1): a
     /// write carried body-divergent bytes for an existing type-122 id. Local
     /// callers get this as a hard error; replicated doors classify it as a
@@ -1769,6 +1778,9 @@ impl Error {
             Self::ReceiptLeaseRevoked { .. } => ErrorKind::ReceiptLeaseRevoked,
             Self::IdentityTopologyRejected(_) => ErrorKind::IdentityTopologyRejected,
             Self::IdentityTopologyUnarmed(_) => ErrorKind::IdentityTopologyUnarmed,
+            Self::IdentityProposalAmendmentOutOfScope(_) => {
+                ErrorKind::IdentityProposalAmendmentOutOfScope
+            }
             Self::InvalidIdentityTopologyEventBody(_) => {
                 ErrorKind::InvalidIdentityTopologyEventBody
             }
