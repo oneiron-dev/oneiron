@@ -1485,72 +1485,89 @@ fn projected_claim_ids_are_derived_from_the_source_event_not_minted() -> CommRes
     Ok(())
 }
 
+/// Plants a comm-owned PERSON at an EXPLICIT id — the replicated shape, where
+/// two devices hold the same party row rather than each minting their own.
+fn plant_comm_person(vault: &Vault, id: EntityId, party: &str) -> CommResult<()> {
+    let body = crate::comm::encode_value(&Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(COMM_SCHEMA_VERSION),
+        ),
+        (Value::from(KEY_PARTY_KEY), Value::from(party)),
+    ]))?;
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 0, end: 0 },
+        1,
+        &body,
+    )?;
+    point_party_index(vault, party, id)
+}
+
 #[test]
 fn two_vaults_project_one_source_event_to_byte_identical_claim_ids() -> CommResult<()> {
-    // The convergence property: the SAME explicit source event id, projected
-    // independently on two devices, yields one physical row id per slot — so
-    // importing both projections cannot produce two heads for one conflict key.
-    fn project_in_fresh_vault(event_id: EntityId) -> CommResult<Vec<EntityId>> {
+    // The convergence property: two vaults holding the same COMM_RECORD event
+    // and the same party row project byte-identical claim ids for every slot —
+    // so importing both projections yields ONE physical row per source event
+    // and no require_at_most_one failure.
+    fn project_in_fresh_vault(
+        source_event: EntityId,
+        party_ref: EntityId,
+    ) -> CommResult<Vec<EntityId>> {
         let (_dir, vault) = open_vault();
-        let party_ref = resolve_or_create_comm_party(&vault, "party-converge")?;
-        let event = CommRecord::Event {
-            sequence: 1,
-            kind: CommEventKind::SendSucceeded,
-            party_ref,
-            channel_class: Some("email".to_owned()),
-            thread_ref: None,
-            occurred_at: 10,
-            projected: false,
-        };
-        vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, event_id, &event))?;
+        plant_comm_person(&vault, party_ref, "party-converge")?;
+        // One source event per slot: last-touch, opt-out, and thread membership.
+        for (offset, kind, channel, thread) in [
+            (0_u8, CommEventKind::SendSucceeded, Some("email"), None),
+            (1, CommEventKind::InboundStop, Some("sms"), None),
+            (2, CommEventKind::ThreadJoined, None, Some("thread-c")),
+        ] {
+            let mut bytes = *source_event.as_bytes();
+            bytes[15] ^= offset;
+            let event_id = EntityId::from_bytes(bytes).map_err(CommError::from)?;
+            let event = CommRecord::Event {
+                sequence: u64::from(offset),
+                kind,
+                party_ref,
+                channel_class: channel.map(str::to_owned),
+                thread_ref: thread.map(str::to_owned),
+                occurred_at: 10,
+                projected: false,
+            };
+            vault.try_with_write_txn(|wtxn| {
+                put_comm_record_in_txn(&vault, wtxn, event_id, &event)
+            })?;
+        }
         run_comm_projector(&vault)?;
+
         let rtxn = vault.store.env.read_txn()?;
-        let claims = matching_claims_in_txn(
-            &vault,
-            &rtxn,
-            party_ref,
-            PREDICATE_COMM_LAST_TOUCH,
-            Some("email"),
-            None,
-            true,
-        )?;
-        Ok(claims.into_iter().map(|(id, _)| id).collect())
+        let mut ids = Vec::new();
+        for (predicate, channel, thread) in [
+            (PREDICATE_COMM_LAST_TOUCH, Some("email"), None),
+            (PREDICATE_COMM_OPT_OUT, Some("sms"), None),
+            (PREDICATE_COMM_THREAD_MEMBER, None, Some("thread-c")),
+        ] {
+            let claims =
+                matching_claims_in_txn(&vault, &rtxn, party_ref, predicate, channel, thread, true)?;
+            assert_eq!(claims.len(), 1, "{predicate} has exactly one standing head");
+            ids.push(claims[0].0);
+        }
+        Ok(ids)
     }
 
     let source_event = entity(0x75);
-    let left = project_in_fresh_vault(source_event)?;
-    let right = project_in_fresh_vault(source_event)?;
-    assert_eq!(left.len(), 1);
-    // Party ids differ per vault, yet the claim rows agree — the derivation is
-    // anchored on the SOURCE EVENT, and the party enters through the conflict
-    // key only. Two vaults sharing a party (the replicated case) converge on
-    // one id; here we assert the derivation is stable and total.
-    assert_eq!(right.len(), 1);
-
-    // The replicated case proper: same event id AND same party id.
-    let (_dir, vault) = open_vault();
-    let party_ref = resolve_or_create_comm_party(&vault, "party-shared")?;
-    let value = CommClaimValue::LastTouch {
-        party_ref,
-        channel_class: "email".to_owned(),
-        occurred_at: 10,
-    };
-    let derived = projected_comm_claim_id(source_event, &value)?;
-    let event = CommRecord::Event {
-        sequence: 1,
-        kind: CommEventKind::SendSucceeded,
-        party_ref,
-        channel_class: Some("email".to_owned()),
-        thread_ref: None,
-        occurred_at: 10,
-        projected: false,
-    };
-    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
-    run_comm_projector(&vault)?;
+    let party_ref = entity(0x79);
+    let left = project_in_fresh_vault(source_event, party_ref)?;
+    let right = project_in_fresh_vault(source_event, party_ref)?;
     assert_eq!(
-        standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_LAST_TOUCH, "email")?,
-        derived,
-        "the projected row lands at exactly the derived id"
+        left, right,
+        "independent projections of one event agree on every claim id"
+    );
+    // The three slots are still distinct rows within a vault.
+    assert_eq!(
+        std::collections::BTreeSet::from_iter(left.iter().copied()).len(),
+        3
     );
     Ok(())
 }
