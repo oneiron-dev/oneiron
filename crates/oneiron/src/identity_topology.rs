@@ -1136,6 +1136,44 @@ impl StoredIdentityOpAction {
         }
     }
 
+    /// The reassignment map this action carries, if its op kind has one —
+    /// the DECLARED decision (ARCH-0055 r2/r5).
+    #[must_use]
+    pub const fn reassignment_map(&self) -> Option<&ReassignmentMap> {
+        match self {
+            Self::Split { reassignment, .. } | Self::Facet { reassignment, .. } => {
+                Some(reassignment)
+            }
+            Self::Merge { .. } | Self::Undo { .. } | Self::ProposalResolution { .. } => None,
+        }
+    }
+
+    /// What the apply door actually RECORDED for that map (ONE-1745), which
+    /// may be less than the map declared: a row naming an item the vault
+    /// holds no CLAIM for records nothing.
+    ///
+    /// Stamped onto the event at apply time precisely so this read needs no
+    /// vault — the receipt projector is a pure function of the record.
+    #[must_use]
+    pub const fn applied_reassignment_stats(&self) -> Option<ReassignmentStats> {
+        match self {
+            Self::Split {
+                applied_assigned,
+                applied_residue,
+                ..
+            }
+            | Self::Facet {
+                applied_assigned,
+                applied_residue,
+                ..
+            } => Some(ReassignmentStats {
+                assigned: *applied_assigned as usize,
+                residue: *applied_residue as usize,
+            }),
+            Self::Merge { .. } | Self::Undo { .. } | Self::ProposalResolution { .. } => None,
+        }
+    }
+
     /// Reconstructs the fold-grade action. Evidence and survivorship plan
     /// do not participate in transition evaluation; the split map rides
     /// along verbatim.
@@ -1415,9 +1453,11 @@ fn encode_applied_counts(assigned: u64, residue: u64, entries: &mut Vec<(Value, 
 fn decode_applied_counts(map: &[(Value, Value)]) -> Result<(u64, u64)> {
     let count = |key: &'static str| match map_field(map, key) {
         None => Ok(0),
-        Some(value) => value.as_u64().ok_or(Error::InvalidIdentityTopologyEventBody(
-            "identity topology event applied count",
-        )),
+        Some(value) => value
+            .as_u64()
+            .ok_or(Error::InvalidIdentityTopologyEventBody(
+                "identity topology event applied count",
+            )),
     };
     Ok((
         count(BODY_KEY_APPLIED_ASSIGNED)?,
@@ -2481,7 +2521,9 @@ fn reassignment_key(
 /// fixed-width tails, so this is exact for either prefix.
 fn decode_reassignment_key(prefix: &[u8], key: &[u8]) -> Result<(EntityId, EntityId)> {
     let corrupt = || Error::CorruptedIndex("identity reassignment key");
-    let tail = key.get(prefix.len() + ENTITY_ID_LEN..).ok_or_else(corrupt)?;
+    let tail = key
+        .get(prefix.len() + ENTITY_ID_LEN..)
+        .ok_or_else(corrupt)?;
     let (event, claim) = tail.split_at_checked(ENTITY_ID_LEN).ok_or_else(corrupt)?;
     let id = |bytes: &[u8]| {
         let bytes: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| corrupt())?;

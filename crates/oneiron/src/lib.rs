@@ -570,10 +570,9 @@ pub use crate::identity_topology::{
     IdentityTopologyFold, IdentityTopologyOp, IdentityTopologyRejection, MergeOp,
     PREDICATE_ENTITY_DISTINCT_FROM, PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED, ProposalOutcome,
     ProposalRuling, ProposalScope, ReassignmentEntry, ReassignmentMap, ReassignmentStats,
-    ReassignmentTarget, SplitOp,
-    StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan, decode_identity_op_amendment,
-    distinct_pair_key, encode_identity_op_amendment, evaluate_transition,
-    fold_identity_topology_log, merge_lifecycle_states,
+    ReassignmentTarget, SplitOp, StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan,
+    decode_identity_op_amendment, distinct_pair_key, encode_identity_op_amendment,
+    evaluate_transition, fold_identity_topology_log, merge_lifecycle_states,
 };
 pub use crate::inbox::{
     INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,
@@ -755,8 +754,8 @@ pub use crate::receipt::{
     StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, append_context_receipt_fields,
     append_pack_manifest_fields, attempt_pack_receipt, attempt_pack_receipt_id,
     eiri_memory_board_state_ref, outbound_intent_receipt, project_receipts_by_brief,
-    project_receipts_by_counterparty, project_receipts_by_grant,
-    proposal_outcome_amended_body, proposal_outcome_delta,
+    project_receipts_by_counterparty, project_receipts_by_grant, proposal_outcome_amended_body,
+    proposal_outcome_delta,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
