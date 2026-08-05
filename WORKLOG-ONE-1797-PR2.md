@@ -88,14 +88,51 @@ the pre-split test rendered.
 - `progressive_budget_squeeze_uses_canonical_shed_order` sweeps every integer cap from
   `floor_tok - 4` to `full_tok + 4` and asserts `applied` is a `SHED_ORDER` prefix at each.
 
+## Simplify pass (build-side, deletion-biased) — DONE
+
+One bounded pass over `frame.rs`. Only `frame.rs` was touched; the oracle tests and the public
+surface are pinned by the keystone blueprint, so no re-export, type shape, fixture byte, or
+assertion semantic changed. Cheap gates green at tail.
+
+**Diff:** `crates/oneiron/src/context_board/frame.rs` — +10 / −18.
+
+**Deletions / simplifications applied:**
+
+1. **Shed loop: dropped the redundant `collapse_rank -> bool` changed-flag.** Every `SHED_ORDER`
+   rank materially alters the render (TasksToCounts strips real rows), so the flag was always true;
+   it only pushed a re-render onto the no-op path. `collapse_rank` now returns `()` and is called
+   unconditionally before `applied.push(rank)`. The applied-prefix and `floor_tok < full_tok`
+   contract tests pin the resulting behavior exactly.
+2. **`resolve_board_budget`: factored the double-min** `x.unwrap_or(d).min(d)` into
+   `x.map_or(d, |c| c.min(d))` — one less clause, identical min semantics for `None`/`Some`.
+3. **Unit test `board_block_envelope_is_exactly_one_open_one_close`:** removed the two tautological
+   `[CONTEXT_BOARD` string-count assertions. The test never puts that byte sequence into any input
+   and the renderer never emits it, so both `count() == 0` checks were vacuous (WORKLOG decision #4
+   already removed the false-positive variant on the hostile side). The dead-wrapper contract
+   remains pinned by the oracle's `[/CONTEXT_BOARD]` check. Also trimmed each fixture's redundant
+   third section (kept clean and hostile at two parallel sections so the equal-line-count
+   comparison stays honest), adjusting the line count 9 → 7.
+
+**Considered and deliberately left alone:**
+
+- `ShedSection::of` + `collapse_rank` merge (WORKLOG next-step candidate #1): the `of` constructor
+  is also the full-view builder in `shed_and_render`'s seed; folding would couple two call shapes
+  for no line savings. Keep.
+- BoardSection accessor block (candidate #2): ONE-1701/1706 are the declared consumers; deleting
+  would be premature. Keep.
+- TASKS/AGENTS duplication in `assemble_task_agent_sections`: 2-iteration table-shape; a closure/
+  helper obscures more than it deletes. Keep.
+- `XmlLeaf` enum: the two-way Attribute/Text distinction is genuinely load-bearing (quote escaping);
+  the enum documents the two positions. Keep.
+
+**Gates (all green after the pass):** `cargo test -p oneiron --lib context_board` (16/16) · the
+five `cb_oracle_{frame,tasks,stream,plugin,agents}` targets · `oneiron-server --test mcp_oracle`
+(unchanged) · `cargo fmt -p oneiron -- --check` · `cargo clippy -p oneiron --all-targets
+--all-features` (exit 0, no warnings).
+
 ## Next-step intent
 
-Nothing outstanding for PR-2 implementation. The natural next legs, in order:
+PR-2 implementation and simplify are complete and cheap-gate green. Remaining legs:
 
-1. **Simplify pass** (build-side, deletion-biased) over `frame.rs` — it is a fresh ~470-line
-   module; the candidates I would look at first are whether `ShedSection::of` and `collapse_rank`
-   want to fold together, and whether the accessor block earns its keep at PR-2's single consumer
-   count (it does not yet, but ONE-1701/1706 are the declared consumers, so deleting would be
-   premature).
-2. **Cross-model screen** (pairing law: this was built on the opus seat, so screen elsewhere).
-3. Orchestrator splits PR-1/PR-2 into the stack and publishes via `gh stack sync`.
+1. **Cross-model screen** (pairing law: built + simplified on the opus seat, so screen elsewhere).
+2. Orchestrator splits PR-1/PR-2 into the stack and publishes via `gh stack sync`.
