@@ -231,6 +231,46 @@ fn raw_put_doors_reject_secret_custody_byte() {
 }
 
 #[test]
+fn register_rejects_binding_wider_than_live_floor() {
+    // FIX4 FLOOR-TOCTOU: resolve_secret runs inside the write txn against the
+    // LIVE floor. A CrossVault record binding T2LocalRegistered against the
+    // DEFAULT floor (T0..T0 band) must be rejected even though the same
+    // binding would pass a stale/wider snapshot the caller asserted.
+    let (_tmp, vault) = temp_vault();
+    let rec = record(
+        "xv-t2",
+        CustodyClass::CrossVault,
+        b"v",
+        vec![binding("door:receive-pack", CustodyTier::T2LocalRegistered)],
+    );
+    let err = vault
+        .register_secret(rec)
+        .expect_err("CrossVault + T2 binding exceeds live floor");
+    assert!(
+        matches!(err, Error::ManifestWidensFloor { .. }),
+        "got {err:?}"
+    );
+    // The rejected registration must not hold the name.
+    assert_eq!(vault.resolve_secret_ref("xv-t2").expect("resolve"), None);
+}
+
+#[test]
+fn register_custody_portable_t2_binding_passes_default_floor() {
+    // The default floor's portable band is T0..T2, so a portable T2 binding is
+    // inside it: same shape, class that admits it, must commit.
+    let (_tmp, vault) = temp_vault();
+    let rec = record(
+        "port-t2",
+        CustodyClass::CustodyPortable,
+        b"v",
+        vec![binding("connector:gmail", CustodyTier::T2LocalRegistered)],
+    );
+    vault
+        .register_secret(rec)
+        .expect("portable T2 binding fits the default floor");
+}
+
+#[test]
 fn register_secret_with_credential_shaped_value_commits() {
     // FIX3 SCAN-CONFLICT: the batch secret scanner skips the credential-shape
     // scan for SECRET_CUSTODY Put bodies only. Registering a secret whose

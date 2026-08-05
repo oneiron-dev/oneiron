@@ -1010,6 +1010,39 @@ impl Vault {
 
         let mut wtxn = self.store.env.write_txn()?;
         let index_key = name_index_key(&rec.name);
+
+        // Resolve the floor against the LIVE vault inside this write
+        // transaction and enforce narrow-only against it (never against the
+        // caller-supplied snapshot, which may be stale). Every binding's tier
+        // ceiling must fit inside the live floor's band for the record's
+        // class: a CrossVault record read against the default snapshot (its
+        // band T0..T0) but binding T2 must be rejected here, not after commit.
+        let live_floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
+        let live_band = live_floor.band_for(rec.class);
+        for b in &rec.bindings {
+            if b.tier_ceiling > live_band.max {
+                return Err(Error::ManifestWidensFloor {
+                    secret_ref: rec.name.clone(),
+                    class: rec.class,
+                    requested: b.tier_ceiling,
+                    floor_max: live_band.max,
+                });
+            }
+        }
+        // The audit snapshot attached to the record must be narrower-or-equal
+        // to the live floor: a caller-attested WIDER floor would lie about
+        // the register-time posture. Most-restrictive-wins merge means a
+        // snapshot equal to or narrower than live is accepted as-is.
+        let snap_band = rec.policy_floor_snapshot.band_for(rec.class);
+        if snap_band.max > live_band.max {
+            return Err(Error::ManifestWidensFloor {
+                secret_ref: rec.name.clone(),
+                class: rec.class,
+                requested: snap_band.max,
+                floor_max: live_band.max,
+            });
+        }
+
         if let Some(existing_bytes) = self.store.vault_meta.get(&wtxn, &index_key)? {
             let id_bytes: [u8; 16] = existing_bytes
                 .as_ref()
