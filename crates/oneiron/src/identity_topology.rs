@@ -46,7 +46,10 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, is_structural_kind};
+use crate::registry::{
+    ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, entity_type_registry_entry,
+    is_structural_kind,
+};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -2765,7 +2768,7 @@ impl Vault {
         let target = proposal_scope_target(op)?;
         let target_class = self
             .get_entity_type_in_txn(rtxn, &target)?
-            .and_then(crate::registry::entity_type_registry_entry)
+            .and_then(entity_type_registry_entry)
             .ok_or(Error::EntityNotFound)?
             .kind;
         Ok(ProposalScope {
