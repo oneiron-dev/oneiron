@@ -3764,3 +3764,89 @@ fn secret_custody_never_leaves_doc_via_export() -> Result<()> {
     );
     Ok(())
 }
+
+/// C2 EXPORT-SCRUB BYPASS: the map key is peer-chosen, the type byte is not.
+/// Parsing the key before classifying the body let a custody carrier filed
+/// under a non-canonical key skip the scrub and ship its plaintext in the
+/// export.
+#[test]
+fn secret_custody_under_malformed_key_never_leaves_doc_via_export() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let secret_value = b"hunter2-malformed-key";
+    let (_custody, custody_raw) =
+        seed_secret_custody(&vault, &window_key, "api-key", secret_value)?;
+
+    // A key no `EntityId::from_hex` can parse — exactly what a hostile or
+    // buggy peer is free to write into the entities map.
+    let malformed_key = "not-a-canonical-entity-id";
+    let ordinary = EntityId::from_bytes([0x49; 16])?;
+    vault.put_entity(
+        &ordinary,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"ordinary turn",
+    )?;
+
+    let doc = create_window_doc("source", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), malformed_key, &custody_raw)?;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary turn"),
+    )?;
+    doc.commit();
+
+    let export = export_window_updates_since(
+        &vault,
+        &window_key,
+        &doc,
+        &VersionVector::default().encode(),
+    )?;
+
+    // The load-bearing assertion: the secret value is not anywhere in the bytes
+    // that go on the wire.
+    assert!(
+        !export
+            .windows(secret_value.len())
+            .any(|w| w == secret_value.as_slice()),
+        "exported bytes must not carry the secret value"
+    );
+
+    let peer = create_window_doc("peer", &window_key);
+    import_doc(&peer, &export)?;
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), malformed_key).is_none(),
+        "a malformed-key custody carrier must not reach the peer"
+    );
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some(),
+        "ordinary entity still exports"
+    );
+    assert!(
+        map_get_bytes(&doc.get_map("entities"), malformed_key).is_none(),
+        "local doc scrubbed before export"
+    );
+    assert!(
+        history_free_window_required(&vault, &window_key)?,
+        "the scrub pins the window to history-free transport"
+    );
+
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Entities);
+    assert_eq!(quarantined[0].1.reason_code, "InvalidSecretCustodyBody");
+    assert_eq!(
+        (
+            quarantined[0].1.crdt_key_hash,
+            quarantined[0].1.crdt_key_len
+        ),
+        crate::sync::quarantine::crdt_key_metadata(malformed_key)
+    );
+    Ok(())
+}

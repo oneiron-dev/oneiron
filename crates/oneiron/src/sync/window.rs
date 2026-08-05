@@ -721,20 +721,45 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
 /// before the seal or arrived from a peer. Deleting the row does not erase its
 /// prior set-op bytes from ordinary Loro history, so any removal forces the
 /// window onto history-free snapshot transport (same rule as the fence scrub).
+///
+/// The BODY decides, never the key. A peer chooses its own map keys, so parsing
+/// the key first let a custody body filed under a non-canonical key skip the
+/// scrub entirely and ship in the export — the key is attacker-controlled, the
+/// type byte is not. A malformed key cannot name an entity to scrub by id, so
+/// that row is deleted by its raw key and quarantined as the protocol violation
+/// it is.
 fn scrub_secret_custody_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
+    let mut malformed_key_carriers: Vec<String> = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
-        let Ok(id) = EntityId::from_hex(raw_key) else {
+        if !is_secret_custody_record(blob) {
             return;
-        };
-        if is_secret_custody_record(blob) {
-            custody_ids.insert(id);
+        }
+        match EntityId::from_hex(raw_key) {
+            Ok(id) => {
+                custody_ids.insert(id);
+            }
+            Err(_) => malformed_key_carriers.push(raw_key.to_owned()),
         }
     });
     let mut removed = false;
+    for raw_key in &malformed_key_carriers {
+        // Quarantine keeps hashed evidence (never the bytes); the delete is
+        // what stops the body from reaching an exported update.
+        quarantine::quarantine_rejected_op(
+            vault,
+            key.as_str(),
+            QuarantineContainer::Entities,
+            raw_key,
+            &crate::secret_custody::reject_secret_custody_byte(),
+            &map_get_bytes(&entities_map, raw_key).unwrap_or_default(),
+        )?;
+        map_delete(&entities_map, raw_key)?;
+        removed = true;
+    }
     for id in &custody_ids {
         removed |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
     }

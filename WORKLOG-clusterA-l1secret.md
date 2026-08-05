@@ -77,6 +77,47 @@ Files: `crates/oneiron/src/batch.rs`, `crates/oneiron/src/sync/quarantine.rs`,
 
 ---
 
+## C2 — P1 export-scrub bypass via malformed CRDT key
+
+**Trace (confirmed).** `sync/window.rs::scrub_secret_custody_carriers` parsed
+the map key BEFORE classifying the body:
+
+```rust
+let Ok(id) = EntityId::from_hex(raw_key) else { return; };   // early return
+if is_secret_custody_record(blob) { custody_ids.insert(id); }
+```
+
+The map key is peer-chosen; the type byte is not. A custody body filed under
+any non-hex key took the early return, was never counted as custody, and
+`export_window_updates_since` shipped it — plaintext `value_bytes` and all.
+
+**Fix.** The BODY decides. `is_secret_custody_record(blob)` runs first; a
+matching row with an unparseable key cannot be scrubbed by entity id, so it is
+deleted by its raw key and quarantined as the protocol violation it is (hashed
+evidence only — the quarantine record stores a payload HASH, never bytes). The
+existing removal bookkeeping then pins the window history-free, so the
+pre-scrub set-op bytes can never take a raw delta/snapshot path later.
+
+**Test (mutation-verified).**
+`sync::window::tests::secret_custody_under_malformed_key_never_leaves_doc_via_export`
+files a real custody body under `"not-a-canonical-entity-id"` alongside an
+ordinary TURN control, exports to a fresh peer, and asserts:
+* the exported BYTES do not contain the secret value anywhere (a raw
+  `windows()` scan — the load-bearing assertion, independent of map semantics);
+* the peer doc has no such key, the ordinary control still exports;
+* the local doc was scrubbed in place and the window is pinned history-free;
+* exactly one `Entities` quarantine record with reason
+  `InvalidSecretCustodyBody` and the malformed key's own hash/len metadata.
+
+Mutation: restoring the old key-first ordering (malformed arm made a no-op)
+fails the test at `exported bytes must not carry the secret value` — the leak
+is directly demonstrated, not merely inferred.
+
+Files: `crates/oneiron/src/sync/window.rs`,
+`crates/oneiron/src/sync/window/tests.rs`.
+
+---
+
 ## Banked (legitimate maximalism / out-of-packet), one per row
 
 | # | Item | Why banked |
