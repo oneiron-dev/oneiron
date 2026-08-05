@@ -1380,6 +1380,71 @@ pub(crate) struct SessionStoreView<'store> {
     pub(crate) attempt_dedupe: OverlayDb,
 }
 
+/// Generates [`ManifestDbs`] and its two implementations from ONE list of the
+/// manifest's named databases, so the trait cannot drift from the structs: a
+/// database renamed in `Store` or `SessionStoreView` and not here fails to
+/// compile.
+macro_rules! manifest_dbs {
+    ($($name:ident: $ty:ty),+ $(,)?) => {
+        /// The manifest's named databases, addressed uniformly by write target
+        /// (ARCH-0052 D2, ONE-1728 K11).
+        ///
+        /// [`Store`] answers with canonical accessors that read and write base
+        /// LMDB rows. [`SessionStoreView`] answers with composed accessors over
+        /// one shared overlay snapshot: reads see overlay ∪ base, writes stage
+        /// into the session overlay and evaporate at close.
+        ///
+        /// This is what "write-target parameterization" means in this codebase.
+        /// An index writer generic over `&impl ManifestDbs` has ONE body serving
+        /// both targets — the base path is byte-identical because it is
+        /// literally the same code reaching the same accessors, not a copy that
+        /// could drift. `OverlayDb` already decides base-vs-overlay internally,
+        /// so no writer needs a target branch.
+        pub(crate) trait ManifestDbs {
+            $(fn $name(&self) -> &$ty;)+
+        }
+
+        impl ManifestDbs for Store {
+            $(fn $name(&self) -> &$ty { &self.$name })+
+        }
+
+        impl ManifestDbs for SessionStoreView<'_> {
+            $(fn $name(&self) -> &$ty { &self.$name })+
+        }
+    };
+}
+
+manifest_dbs! {
+    entities: OverlayDb,
+    type_index: OverlayDb,
+    short_ids: OverlayDb,
+    short_ids_reverse: OverlayDb,
+    vault_meta: OverlayDb,
+    vectors: OverlayDb,
+    hnsw_neighbors: OverlayDb,
+    hnsw_meta: OverlayDb,
+    text_postings: OverlayDb,
+    text_meta: OverlayDb,
+    text_forward: OverlayDb,
+    text_bm25_field_stats: OverlayDb,
+    text_doc_field_lengths: OverlayDb,
+    edges_out: OverlayDb,
+    edges_in: OverlayDb,
+    ppr_cache: OverlayDb,
+    ppr_cache_deps: OverlayDb,
+    temporal_occurred_start: OverlayDb,
+    temporal_occurred_end: OverlayDb,
+    temporal_learned: OverlayDb,
+    temporal_long_intervals: OverlayDb,
+    phonetic_index: OverlayDb,
+    phonetic_forward: OverlayDb,
+    sync_state: OverlayStrDb,
+    sync_queue: OverlayDb,
+    attempt_records: OverlayDb,
+    attempt_ready: OverlayDb,
+    attempt_dedupe: OverlayDb,
+}
+
 impl std::ops::Deref for Store {
     type Target = StoreCore;
 
