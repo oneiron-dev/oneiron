@@ -316,9 +316,9 @@ impl SecretCustodyFloor {
     }
 
     /// Resolves the floor from every POLICY_MANIFEST body in the vault.
-    /// Most-restrictive wins per field. Malformed or unexpected floor rows
-    /// are ignored (a floor that cannot be parsed simply does not narrow);
-    /// the floor's job is to narrow, never to widen past the defaults.
+    /// Most-restrictive wins per field. An ABSENT floor row takes the default
+    /// — that is what "no floor declared" means. A row that is PRESENT but
+    /// unreadable is an ERROR: see [`decode_floor_keys`].
     pub fn resolve(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Self> {
         use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 
@@ -340,7 +340,7 @@ impl SecretCustodyFloor {
             if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
                 continue;
             }
-            if let Some(partial) = decode_floor_keys(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+            if let Some(partial) = decode_floor_keys(&raw[ENTITY_METADATA_HEADER_LEN..])? {
                 floor.merge(partial);
             }
         }
@@ -349,68 +349,95 @@ impl SecretCustodyFloor {
 }
 
 /// Decodes the `secret.custody.*` rows out of one POLICY_MANIFEST body into a
-/// partial floor (absent rows leave the defaults). Two packs with conflicting
-/// rows resolve most-restrictive per field via [`SecretCustodyFloor::merge`].
-fn decode_floor_keys(body: &[u8]) -> Option<SecretCustodyFloor> {
+/// partial floor. Two packs with conflicting rows resolve most-restrictive per
+/// field via [`SecretCustodyFloor::merge`].
+///
+/// ABSENT rows leave the defaults — that is what "this pack declares no floor
+/// for that field" means. A row that is PRESENT but unreadable (wrong
+/// MessagePack type, tier grade outside `0..=2`, or DUPLICATED so the intended
+/// value is ambiguous) is an ERROR, not a default. Defaulting it would widen
+/// the vault's posture back to the permissive `T0..T2` band — a floor may only
+/// ever narrow, so silently reverting a declared narrowing is the one failure
+/// direction this type exists to prevent. `Ok(None)` means only that this body
+/// is not a MessagePack map: the POLICY_MANIFEST body schema belongs to
+/// [`crate::gate`], and a body this module cannot open carries no floor rows
+/// for it to read.
+fn decode_floor_keys(body: &[u8]) -> Result<Option<SecretCustodyFloor>> {
     use std::io::Cursor;
 
     let mut cursor = Cursor::new(body);
-    let value = rmpv::decode::read_value(&mut cursor).ok()?;
-    let Value::Map(entries) = value else {
-        return None;
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return Ok(None);
     };
 
-    let tier_at = |key: &str| -> Option<CustodyTier> {
+    let tier_at = |key: &'static str| -> Result<Option<CustodyTier>> {
         match single_map_value(&entries, key) {
-            MapValue::Present(v) => {
-                as_u64(v).and_then(|n| CustodyTier::from_u8(u8::try_from(n).ok()?))
-            }
-            MapValue::Missing | MapValue::Duplicate => None,
+            MapValue::Missing => Ok(None),
+            MapValue::Present(v) => as_u64(v)
+                .and_then(|n| CustodyTier::from_u8(u8::try_from(n).ok()?))
+                .map(Some)
+                .ok_or_else(|| invalid_body(key)),
+            MapValue::Duplicate => Err(invalid_body(key)),
         }
     };
 
     let mut floor = SecretCustodyFloor::default();
-    if let Some(t) = tier_at(floor_keys::PORTABLE_MIN) {
+    if let Some(t) = tier_at(floor_keys::PORTABLE_MIN)? {
         floor.portable.min = t;
     }
-    if let Some(t) = tier_at(floor_keys::PORTABLE_MAX) {
+    if let Some(t) = tier_at(floor_keys::PORTABLE_MAX)? {
         floor.portable.max = t;
     }
-    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MIN) {
+    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MIN)? {
         floor.device_bound.min = t;
     }
-    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MAX) {
+    if let Some(t) = tier_at(floor_keys::DEVICE_BOUND_MAX)? {
         floor.device_bound.max = t;
     }
-    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MIN) {
+    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MIN)? {
         floor.cross_vault.min = t;
     }
-    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MAX) {
+    if let Some(t) = tier_at(floor_keys::CROSS_VAULT_MAX)? {
         floor.cross_vault.max = t;
     }
-    if let MapValue::Present(v) = single_map_value(&entries, floor_keys::ROTATION_MAX_AGE_SECS) {
-        floor.rotation_max_age_secs = as_u64(v);
+    match single_map_value(&entries, floor_keys::ROTATION_MAX_AGE_SECS) {
+        MapValue::Missing => {}
+        MapValue::Present(v) => {
+            floor.rotation_max_age_secs =
+                Some(as_u64(v).ok_or(invalid_body(floor_keys::ROTATION_MAX_AGE_SECS))?);
+        }
+        MapValue::Duplicate => return Err(invalid_body(floor_keys::ROTATION_MAX_AGE_SECS)),
     }
-    if let MapValue::Present(Value::Map(rows)) =
-        single_map_value(&entries, floor_keys::ENV_BINDINGS)
-    {
-        for (k, v) in rows {
-            if let (Some(k), Some(v)) = (k.as_str(), v.as_str()) {
+    match single_map_value(&entries, floor_keys::ENV_BINDINGS) {
+        MapValue::Missing => {}
+        MapValue::Present(Value::Map(rows)) => {
+            for (k, v) in rows {
+                let (Some(k), Some(v)) = (k.as_str(), v.as_str()) else {
+                    return Err(invalid_body(floor_keys::ENV_BINDINGS));
+                };
                 floor.env_bindings.insert(k.to_owned(), v.to_owned());
             }
         }
+        MapValue::Present(_) | MapValue::Duplicate => {
+            return Err(invalid_body(floor_keys::ENV_BINDINGS));
+        }
     }
-    Some(floor)
+    Ok(Some(floor))
 }
 
 // ---------------------------------------------------------------------------
 // Bindings, status, record, metadata
 // ---------------------------------------------------------------------------
 
+/// The scope verb a binding must declare before the value door will hand over
+/// plaintext. Scopes are otherwise free-form: they name what a binding is FOR,
+/// and only this one is load-bearing at a door.
+pub const SECRET_SCOPE_READ: &str = "read";
+
 /// A binding scoping which effector may use a secret ref, at what tier
 /// ceiling. The binding check scopes usage, drives tier admission, and
-/// stamps receipts. No binding for `(secret_ref, effector)` ⇒
-/// [`Error::SecretBindingDenied`].
+/// stamps receipts. No binding covering `(secret_ref, effector)` with the
+/// required scope ⇒ [`Error::SecretBindingDenied`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretBinding {
     /// The effector, e.g. `"connector:gmail"`, `"door:receive-pack"`.
@@ -419,6 +446,20 @@ pub struct SecretBinding {
     pub tier_ceiling: CustodyTier,
     /// Declared scopes the binding covers.
     pub scopes: Vec<String>,
+}
+
+impl SecretBinding {
+    /// Whether this binding carries the [`SECRET_SCOPE_READ`] grant the value
+    /// door requires.
+    ///
+    /// An EMPTY scope list is NOT a wildcard. Reading it as one is how a
+    /// declared-but-unenforced field becomes a hole: every binding written
+    /// before scopes meant anything would silently grant plaintext reads. A
+    /// binding that declares no scope grants no read.
+    #[must_use]
+    pub fn grants_read(&self) -> bool {
+        self.scopes.iter().any(|s| s == SECRET_SCOPE_READ)
+    }
 }
 
 /// Lifecycle status of a custody record. Only `Active` records are usable;
@@ -464,7 +505,12 @@ impl SecretCustodyStatus {
 /// `manifest_ref` + `declared_paths` are copied from the manifest entry so
 /// downstream consumers (SECRET-03, snapshot exclusion) have a vault-side
 /// data source.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// No `Serialize`/`Deserialize`: a derived serializer would emit `value_bytes`
+/// into whatever format a caller reached for (JSON log line, receipt, wire
+/// payload) with no door in the way — the same leak `Debug` is hand-rolled to
+/// prevent. The body codec below is the ONE serialization of this type, and it
+/// exists to write the vault-resident body, nothing else.
+#[derive(Clone, PartialEq, Eq)]
 pub struct SecretCustodyRecord {
     /// Body schema version (`SECRET_CUSTODY_SCHEMA_VERSION` at encode).
     pub schema_version: u16,
@@ -615,13 +661,24 @@ fn invalid_body(reason: &'static str) -> Error {
 }
 
 /// ONE-1865 arms the replication and export posture for SECRET_CUSTODY; until
-/// then the type byte is sealed from every CRDT plane. This is the ONE
-/// rejection constructor every door names, so a grep for the byte's rejection
-/// audits the whole seal: the sync selector ([`crate::sync::selector`]), the
-/// canonical-doc mirror paths ([`crate::sync::window`] reverse
-/// rematerialization and the export scrub), and the write walls
-/// (`batch::apply_put` / `batch::validate_public_raw_put` — the custody record
-/// writes ONLY through [`Vault::register_secret`]).
+/// then the type byte is sealed from the raw and CRDT planes. This is the ONE
+/// rejection constructor every REJECTING door names, so a grep for it audits
+/// the whole seal:
+///
+/// * the replicated write wall (`batch::apply_ops`' Put arm) — the CRDT replay
+///   door never materializes a peer-supplied custody body; the record writes
+///   ONLY through [`Vault::register_secret`]. Public raw puts are already
+///   refused one level up by the `Maintenance` classification
+///   (`MaintenanceKindNotWritable(77)`);
+/// * the generic read doors [`Vault::get`] and [`Vault::get_raw`], whose bytes
+///   would otherwise carry `value_bytes` in the clear — the ONLY sanctioned
+///   value read is [`Vault::get_secret_value_in_txn`];
+/// * the export scrub's malformed-key arm ([`crate::sync::window`]), which
+///   quarantines a custody carrier filed under a non-canonical peer key.
+///
+/// The two SILENT doors are deliberately not errors: the sync selector
+/// ([`crate::sync::selector`]) drops the byte from the export set, and reverse
+/// rematerialization skips-and-scrubs it. Neither has a caller to fail.
 pub(crate) fn reject_secret_custody_byte() -> Error {
     invalid_body("secret custody records are sealed from the raw/CRDT planes until ONE-1865")
 }
@@ -1123,8 +1180,11 @@ impl Vault {
     }
 
     /// Door/lease paths only (SECRET-02). Reads the raw value bytes for a
-    /// record within a write txn, requiring a binding covering `effector`:
-    /// no binding for `(secret_ref, effector)` ⇒ [`Error::SecretBindingDenied`].
+    /// record within a write txn, requiring a binding that covers `effector`
+    /// AND declares the [`SECRET_SCOPE_READ`] grant: anything else ⇒
+    /// [`Error::SecretBindingDenied`]. Naming the effector is not by itself a
+    /// read grant — the binding's declared scope is what admits plaintext, and
+    /// an empty scope list is no grant at all.
     /// The value never escapes into claims/CRDT/export/receipts/logs; this
     /// door is the narrowest possible read and exists so SECRET-02's door /
     /// lease machinery is the single value-read call-site. Declared now so
@@ -1142,7 +1202,10 @@ impl Vault {
         if rec.status != SecretCustodyStatus::Active {
             return Err(Error::SecretCustodyNotActive { name: rec.name });
         }
-        if rec.binding_for(effector).is_none() {
+        if !rec
+            .binding_for(effector)
+            .is_some_and(SecretBinding::grants_read)
+        {
             return Err(Error::SecretBindingDenied {
                 effector: effector.to_owned(),
                 secret_ref: rec.name,
