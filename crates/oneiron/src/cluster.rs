@@ -22,12 +22,16 @@
 //!    deliberately — single-link/connected-components would chain two mutually
 //!    incoherent claims together through a bridge claim.
 //!
-//! Determinism: sorting by claim id before grouping makes the output invariant
-//! under input permutation, and [`CohortId`] is a domain-separated BLAKE3 hash
+//! Determinism: claim ids are required to be UNIQUE — duplicates are rejected
+//! up front, because the id sort is stable and would otherwise leave tied ids
+//! in caller order, making both cohesion and cohort membership depend on input
+//! order. Given unique ids, sorting by claim id before grouping makes the
+//! output invariant under input permutation, and [`CohortId`] is a
+//! domain-separated BLAKE3 hash
 //! over the partition key plus the ascending member ids, so a cohort's identity
 //! is stable across runs, processes, and architectures.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::claim::{ClaimSubject, predicate_root};
 use crate::distance::cosine_similarity;
@@ -144,9 +148,9 @@ pub struct ClusterAssignments {
 /// # Errors
 ///
 /// Returns [`Error::InvalidConfig`] when the threshold is outside `[-1, 1]`
-/// (NaN included) or every embedding is empty, [`Error::DimensionMismatch`]
-/// when embedding dimensions differ, and [`Error::InvalidVector`] when a
-/// component is NaN or infinite.
+/// (NaN included), when an embedding is empty, or when two claims share a
+/// `claim_id`; [`Error::DimensionMismatch`] when embedding dimensions differ;
+/// and [`Error::InvalidVector`] when a component is NaN or infinite.
 pub fn cluster_claims(
     claims: &[ClusterClaim],
     options: ClusterOptions,
@@ -220,6 +224,13 @@ fn validate_cluster_input(claims: &[ClusterClaim], options: ClusterOptions) -> R
         ));
     }
 
+    // Unique ids are a PRECONDITION of the permutation-invariance contract, not
+    // a courtesy check: the id sort is stable, so tied ids keep caller order and
+    // both cohort membership and reported cohesion become order-dependent.
+    // Distinct cohorts could also collide on one `CohortId`, whose preimage is
+    // the partition plus member ids. Enforced here, at the single validation
+    // chokepoint, rather than at any call site.
+    let mut seen = BTreeSet::new();
     for claim in claims {
         if claim.embedding.len() != dimensions {
             return Err(Error::DimensionMismatch {
@@ -229,6 +240,12 @@ fn validate_cluster_input(claims: &[ClusterClaim], options: ClusterOptions) -> R
         }
         if let Some(error) = Error::invalid_vector_component(&claim.embedding) {
             return Err(error);
+        }
+        if !seen.insert(claim.claim_id) {
+            return Err(Error::InvalidConfig(format!(
+                "duplicate cluster claim id {}",
+                claim.claim_id.to_hex()
+            )));
         }
     }
 

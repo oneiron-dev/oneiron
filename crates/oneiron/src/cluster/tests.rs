@@ -400,6 +400,83 @@ fn out_of_range_thresholds_are_rejected() {
 }
 
 #[test]
+fn duplicate_claim_ids_are_rejected_and_the_error_names_the_id() {
+    // Unique ids are a PRECONDITION, not a courtesy: `sort_by_key` is stable,
+    // so tied ids keep caller order and the output stops being permutation-
+    // invariant (see the sibling test below for the shape that would break).
+    let duplicated = entity(0x02);
+    let claims = [
+        claim(0x01, "person.name", axis(0.0)),
+        claim(0x02, "person.name", axis(0.1)),
+        claim(0x02, "person.name", axis(0.9)),
+    ];
+    let error = cluster_claims(&claims, ClusterOptions::default()).expect_err("duplicate claim id");
+    let Error::InvalidConfig(message) = &error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert!(
+        message.contains(&duplicated.to_hex()),
+        "error must name the duplicated id, got: {message}"
+    );
+
+    // The same ids across DIFFERENT partitions are still duplicates: the check
+    // is global over the input, because the sort that needs uniqueness runs
+    // before partitioning.
+    let cross_partition = [
+        claim(0x01, "person.name", axis(0.0)),
+        claim(0x01, "org.name", axis(0.0)),
+    ];
+    assert!(
+        matches!(
+            cluster_claims(&cross_partition, ClusterOptions::default())
+                .expect_err("duplicate across partitions"),
+            Error::InvalidConfig(_)
+        ),
+        "duplicates must be rejected across partition boundaries too"
+    );
+}
+
+#[test]
+fn the_permissive_duplicate_shape_that_broke_permutation_invariance_is_gone() {
+    // The traced counterexample, kept as a regression pin. Two claims share an
+    // id: A1 at 0 rad, A2 at `SPLIT` rad (cos(A1,A2) = 0.622, BELOW the 0.82
+    // floor), plus B placed between them so cos(A1,B) = 0.955 and
+    // cos(A2,B) = 0.826 — both ABOVE the floor. Under the old permissive
+    // validator the stable sort left the tied pair in CALLER order, so B joined
+    // whichever of A1/A2 came first and the cohort reported cohesion 0.955 or
+    // 0.825 depending purely on input order. Both orders must now be rejected
+    // identically, which is what restores the documented invariance.
+    const SPLIT: f32 = 0.899_502; // acos(0.622)
+    const BETWEEN: f32 = 0.301_137; // acos(0.955)
+
+    // Same seed for a1/a2 — that is the duplicate under test.
+    let a1 = claim(0x01, "person.name", axis(0.0));
+    let a2 = claim(0x01, "person.name", axis(SPLIT));
+    let b = claim(0x03, "person.name", axis(BETWEEN));
+
+    // The geometry is the one the counterexample needs: B clears the floor
+    // against BOTH tied claims, while the tied claims do not clear it against
+    // each other — so cohort membership genuinely hinged on caller order.
+    let cos = |x: &ClusterClaim, y: &ClusterClaim| {
+        crate::distance::cosine_similarity(&x.embedding, &y.embedding)
+    };
+    assert!(cos(&a1, &b) >= CLUSTER_COHESION_THRESHOLD);
+    assert!(cos(&a2, &b) >= CLUSTER_COHESION_THRESHOLD);
+    assert!(cos(&a1, &a2) < CLUSTER_COHESION_THRESHOLD);
+
+    for order in [vec![a1.clone(), a2.clone(), b.clone()], vec![a2, a1, b]] {
+        assert!(
+            matches!(
+                cluster_claims(&order, ClusterOptions::default())
+                    .expect_err("order-dependent duplicate shape"),
+                Error::InvalidConfig(_)
+            ),
+            "every permutation of the duplicate shape must be rejected"
+        );
+    }
+}
+
+#[test]
 fn validation_precedes_grouping_so_no_partial_output_escapes() {
     // A well-formed pair that WOULD cluster, plus one malformed claim: the call
     // must fail outright rather than return the good cohort.

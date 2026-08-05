@@ -137,3 +137,72 @@ Gates after pass: `cargo fmt --all -- --check` clean · `cargo clippy -p oneiron
 --all-features --lib` 3169 passed, 0 failed.
 
 Diffstat: **+14 / -4** across `cluster.rs` (+8/-2) and `cluster/tests.rs` (+10/-2).
+
+---
+
+## FIX round 1 — dup-`claim_id` chokepoint (K3 round-1 verdict on dab4446)
+
+ONE verdict-pinned item: **P2, class=determinism, chokepoint-not-call-site**,
+`crates/oneiron/src/cluster.rs:205` (`validate_cluster_input`). Every verdict
+fact re-derived before editing rather than trusted:
+
+- `sort_by_key(claim_id)` at `cluster.rs:157` is `slice::sort_by_key` =
+  **stable** → tied ids keep caller order. Confirmed.
+- The traced triple is **geometrically realizable**: for cos(A1,B)=0.955 and
+  cos(A1,A2)=0.622 the planar range for cos(A2,B) is [0.6203, 0.9555], and the
+  realized value is **0.8263 — above the 0.82 floor by 0.0063**, while
+  cos(A1,A2)=0.622 is **below** it by 0.198. So B clears the floor against BOTH
+  tied claims but the tied claims do not clear it against each other: cohort
+  membership and reported cohesion (0.955 vs 0.826) genuinely hinged on input
+  order, breaking the permutation-invariance contract documented at
+  `cluster.rs:142` and in the module doc.
+  (Note: the verdict's stated sufficiency test `0.622 >= 2*0.82^2-1 = 0.3448`
+  is a weaker bound than the true planar range, but the conclusion holds.)
+- Two orthogonal same-id entries in one partition → two singleton cohorts both
+  with `member_ids = [A]` → **one `CohortId` for two distinct cohorts**, since
+  the preimage at `cluster.rs:255` is partition + ascending member ids.
+  The "no two distinct cohorts share a preimage" doc claim was therefore false
+  exactly on the duplicate-id input.
+- `validate_cluster_input` had **no** uniqueness check, at a `pub` re-exported
+  boundary (`lib.rs` exports `cluster`; `DreamerRunnerStore::propose_claim_cohorts`
+  is a second public door onto the same function).
+
+**Fix (a) — chokepoint, not call sites.** `validate_cluster_input` now rejects
+duplicate `claim_id`s inside its existing per-claim loop via a `BTreeSet`, with
+`Error::InvalidConfig` naming the duplicated id (`to_hex`). Error-taxonomy check
+per the blueprint: **no new variant minted.** `Error::DuplicateKey` /
+`WorldDuplicateKey` are sync-selector-scoped (`error.rs:401,405`) and would be
+dishonest here; `InvalidConfig(String)` is already this same function's variant
+for input-shape rejection (empty embedding, out-of-range threshold), so the
+closest existing typed variant honestly carries it. The check is global over the
+input, not per-partition, because the sort that needs uniqueness runs *before*
+partitioning.
+
+**Fix (b) — two regression tests** in `cluster/tests.rs`:
+- `duplicate_claim_ids_are_rejected_and_the_error_names_the_id` — asserts the
+  typed error surfaces AND that the message contains the duplicated id's hex;
+  second half pins that duplicates are caught **across** partition boundaries.
+- `the_permissive_duplicate_shape_that_broke_permutation_invariance_is_gone` —
+  the traced counterexample kept as a pin. Asserts the geometry itself
+  (B clears the floor vs both tied claims; the tied claims do not clear it vs
+  each other) so a future edit cannot silently neuter the test, then asserts
+  **both** orderings of the shape are now rejected identically — which is what
+  restores the invariance contract.
+- No existing test assertion or fixture was touched (fixture-sync law): a scan
+  confirmed no pre-existing test passes duplicate seeds, so nothing else moved.
+
+**Fix (c) — docs.** The `# Errors` list on `cluster_claims` presented validation
+as complete; it now lists the duplicate-id rejection under `InvalidConfig`. The
+module-level Determinism paragraph now states uniqueness as the precondition it
+is, explaining *why* (stable sort + tied ids ⇒ order-dependent output).
+
+**Gates (d)** — all green on the **first** run, no rerun consumed, no flake hit:
+- `cargo fmt --all --check` → clean (exit 0)
+- `cargo clippy -p oneiron --all-targets --all-features -- -D warnings` → clean (exit 0)
+- `cargo test -p oneiron --all-features --lib` → **3171 passed, 0 failed**, 24
+  ignored (3169 baseline + the 2 new tests). Cluster suite: 19/19.
+
+Diffstat: **+100 / -6** across `cluster.rs` (+29/-6... net +23) and
+`cluster/tests.rs` (+77). Packet-clean: `git diff --name-only` = exactly
+`crates/oneiron/src/cluster.rs` + `crates/oneiron/src/cluster/tests.rs`, both
+lane-claimed. No other edits.
