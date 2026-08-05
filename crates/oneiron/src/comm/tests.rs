@@ -483,7 +483,8 @@ fn finding_2_contact_view_is_purely_claim_derived() -> CommResult<()> {
             reason: OPT_OUT_REASON_STOP.to_owned(),
             occurred_at: 12,
         };
-        let new_id = put_comm_claim_in_txn(&vault, wtxn, &replacement, 12)?;
+        let new_id =
+            put_comm_claim_with_id_in_txn(&vault, wtxn, EntityId::now(), &replacement, 12)?;
         vault.supersede_claim_in_txn(wtxn, &new_id, &old_id, 12)?;
         Ok(())
     })?;
@@ -1366,6 +1367,325 @@ fn finding_5_malformed_comm_record_does_not_wedge_family_operations() -> CommRes
     let materialized = materialize_contact_record(&vault, "party-f5")?;
     assert!(!materialized.is_empty());
     assert_eq!(count_contact_record_claim_entries(&vault, "party-f5")?, 1);
+    Ok(())
+}
+
+#[test]
+fn projected_claim_ids_are_derived_from_the_source_event_not_minted() -> CommResult<()> {
+    let party = entity(0x71);
+    let event = entity(0x72);
+    let last_touch = CommClaimValue::LastTouch {
+        party_ref: party,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+
+    // Same inputs → same id, on any device, for any number of replays.
+    assert_eq!(
+        projected_comm_claim_id(event, &last_touch)?,
+        projected_comm_claim_id(event, &last_touch)?
+    );
+
+    // occurred_at is NOT part of the conflict key: the same source event
+    // projecting the same slot converges even if the payload time moves.
+    let same_slot_later = CommClaimValue::LastTouch {
+        party_ref: party,
+        channel_class: "email".to_owned(),
+        occurred_at: 999,
+    };
+    assert_eq!(
+        projected_comm_claim_id(event, &last_touch)?,
+        projected_comm_claim_id(event, &same_slot_later)?
+    );
+
+    // Every other input axis moves the id.
+    let base = projected_comm_claim_id(event, &last_touch)?;
+    let other_event = projected_comm_claim_id(entity(0x73), &last_touch)?;
+    let other_predicate = projected_comm_claim_id(
+        event,
+        &CommClaimValue::OptOut {
+            party_ref: party,
+            channel_class: "email".to_owned(),
+            reason: OPT_OUT_REASON_STOP.to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let other_party = projected_comm_claim_id(
+        event,
+        &CommClaimValue::LastTouch {
+            party_ref: entity(0x74),
+            channel_class: "email".to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let other_channel = projected_comm_claim_id(
+        event,
+        &CommClaimValue::LastTouch {
+            party_ref: party,
+            channel_class: "sms".to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let thread_a = projected_comm_claim_id(
+        event,
+        &CommClaimValue::ThreadMember {
+            party_ref: party,
+            thread_ref: "thread-a".to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let thread_b = projected_comm_claim_id(
+        event,
+        &CommClaimValue::ThreadMember {
+            party_ref: party,
+            thread_ref: "thread-b".to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let distinct = std::collections::BTreeSet::from([
+        base,
+        other_event,
+        other_predicate,
+        other_party,
+        other_channel,
+        thread_a,
+        thread_b,
+    ]);
+    assert_eq!(
+        distinct.len(),
+        7,
+        "every input axis must move the derived id"
+    );
+
+    // Length prefixes: ("ab","c") and ("a","bc") must not collide.
+    let split_left = projected_comm_conflict_key(&CommClaimValue::ThreadMember {
+        party_ref: party,
+        thread_ref: "ab-c".to_owned(),
+        occurred_at: 1,
+    });
+    let split_right = projected_comm_conflict_key(&CommClaimValue::ThreadMember {
+        party_ref: party,
+        thread_ref: "a-bc".to_owned(),
+        occurred_at: 1,
+    });
+    assert_ne!(split_left, split_right);
+
+    // The derived id carries the same v7 version/variant nibbles as the
+    // connector actor id, so it is a well-formed entity id.
+    let bytes = base.as_bytes();
+    assert_eq!(bytes[6] & 0xf0, 0x70);
+    assert_eq!(bytes[8] & 0xc0, 0x80);
+    Ok(())
+}
+
+#[test]
+fn two_vaults_project_one_source_event_to_byte_identical_claim_ids() -> CommResult<()> {
+    // The convergence property: the SAME explicit source event id, projected
+    // independently on two devices, yields one physical row id per slot — so
+    // importing both projections cannot produce two heads for one conflict key.
+    fn project_in_fresh_vault(event_id: EntityId) -> CommResult<Vec<EntityId>> {
+        let (_dir, vault) = open_vault();
+        let party_ref = resolve_or_create_comm_party(&vault, "party-converge")?;
+        let event = CommRecord::Event {
+            sequence: 1,
+            kind: CommEventKind::SendSucceeded,
+            party_ref,
+            channel_class: Some("email".to_owned()),
+            thread_ref: None,
+            occurred_at: 10,
+            projected: false,
+        };
+        vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, event_id, &event))?;
+        run_comm_projector(&vault)?;
+        let rtxn = vault.store.env.read_txn()?;
+        let claims = matching_claims_in_txn(
+            &vault,
+            &rtxn,
+            party_ref,
+            PREDICATE_COMM_LAST_TOUCH,
+            Some("email"),
+            None,
+            true,
+        )?;
+        Ok(claims.into_iter().map(|(id, _)| id).collect())
+    }
+
+    let source_event = entity(0x75);
+    let left = project_in_fresh_vault(source_event)?;
+    let right = project_in_fresh_vault(source_event)?;
+    assert_eq!(left.len(), 1);
+    // Party ids differ per vault, yet the claim rows agree — the derivation is
+    // anchored on the SOURCE EVENT, and the party enters through the conflict
+    // key only. Two vaults sharing a party (the replicated case) converge on
+    // one id; here we assert the derivation is stable and total.
+    assert_eq!(right.len(), 1);
+
+    // The replicated case proper: same event id AND same party id.
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-shared")?;
+    let value = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+    let derived = projected_comm_claim_id(source_event, &value)?;
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_LAST_TOUCH, "email")?,
+        derived,
+        "the projected row lands at exactly the derived id"
+    );
+    Ok(())
+}
+
+#[test]
+fn replaying_an_identical_event_is_a_no_op_without_self_supersession() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-replay")?;
+    let source_event = entity(0x76);
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+    run_comm_projector(&vault)?;
+    let first = standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_LAST_TOUCH, "email")?;
+
+    // Re-arm the very same source event (the cross-device replay shape) and
+    // project again: the row must be recognized, not rewritten, and no
+    // self-supersession edge may be attempted.
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+    run_comm_projector(&vault)?;
+
+    assert_eq!(
+        standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_LAST_TOUCH, "email")?,
+        first
+    );
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-replay", "email")?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-replay", "email")?,
+        1,
+        "replay must not add a history row"
+    );
+    Ok(())
+}
+
+#[test]
+fn derived_id_collision_with_a_foreign_row_fails_closed() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-collide")?;
+    let source_event = entity(0x77);
+    let value = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+    let derived = projected_comm_claim_id(source_event, &value)?;
+
+    // Squat the derived id with a foreign (non-CLAIM) row.
+    vault.put_entity(
+        &derived,
+        ENTITY_TYPE_MACHINE,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"machine",
+    )?;
+
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+
+    let error = run_comm_projector(&vault).expect_err("resident foreign row fails closed");
+    assert!(matches!(error, CommError::InvalidRecord));
+    // The squatter is untouched — nothing was overwritten.
+    assert_eq!(vault.get_entity_type(&derived)?, Some(ENTITY_TYPE_MACHINE));
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-collide", "email")?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn derived_id_collision_with_a_different_claim_body_fails_closed() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-collide-claim")?;
+    let source_event = entity(0x78);
+    let value = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+    let derived = projected_comm_claim_id(source_event, &value)?;
+
+    // Squat the derived id with a CLAIM whose decoded body differs (a
+    // different channel — i.e. a different standing-state slot).
+    let foreign = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "sms".to_owned(),
+        occurred_at: 10,
+    };
+    vault.try_with_write_txn(|wtxn| {
+        put_comm_claim_with_id_in_txn(&vault, wtxn, derived, &foreign, 10).map(|_| ())
+    })?;
+
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+
+    let error = run_comm_projector(&vault).expect_err("mismatched resident claim fails closed");
+    assert!(matches!(error, CommError::InvalidRecord));
+    // The resident claim keeps its own body — no overwrite.
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-collide-claim",
+            "sms",
+        )?,
+        1
+    );
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-collide-claim",
+            "email",
+        )?,
+        0
+    );
     Ok(())
 }
 

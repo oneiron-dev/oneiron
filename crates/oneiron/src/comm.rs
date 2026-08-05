@@ -82,6 +82,12 @@ const PARTY_INDEX_PREFIX: &[u8] = b"comm.party.v1:";
 const EVENT_SEQUENCE_KEY: &[u8] = b"comm.event_sequence.v1";
 const MAX_KEY_BYTES: usize = 512;
 
+/// Domain separator for projector-derived `comm.*` CLAIM ids. A deterministic
+/// projector derives its row ids from its inputs, so replaying one source event
+/// — or projecting it independently on two devices — converges on ONE physical
+/// row instead of racing two random ids into the same conflict key.
+const PROJECTED_COMM_CLAIM_ID_DOMAIN: &[u8] = b"oneiron.comm.projected_claim.v1\0";
+
 /// Typed error for communication projector and consent operations.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -1014,11 +1020,14 @@ fn project_event(vault: &Vault, event_id: EntityId) -> CommResult<()> {
         apply_projector_rule_in_txn(
             vault,
             wtxn,
-            *rule,
-            party_ref,
-            channel_class.as_deref(),
-            thread_ref.as_deref(),
-            occurred_at,
+            &ProjectedCommEvent {
+                rule: *rule,
+                source_event_id: event_id,
+                party_ref,
+                channel_class: channel_class.as_deref(),
+                thread_ref: thread_ref.as_deref(),
+                occurred_at,
+            },
         )?;
         let consumed = CommRecord::Event {
             sequence,
@@ -1034,15 +1043,32 @@ fn project_event(vault: &Vault, event_id: EntityId) -> CommResult<()> {
     })
 }
 
+/// One source COMM_RECORD event, resolved to the projector rule it fires.
+/// Bundled so the deterministic id's source event travels with the inputs it is
+/// derived from rather than as one more positional argument.
+#[derive(Debug, Clone, Copy)]
+struct ProjectedCommEvent<'a> {
+    rule: ProjectorRule,
+    source_event_id: EntityId,
+    party_ref: EntityId,
+    channel_class: Option<&'a str>,
+    thread_ref: Option<&'a str>,
+    occurred_at: u64,
+}
+
 fn apply_projector_rule_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    rule: ProjectorRule,
-    party_ref: EntityId,
-    channel_class: Option<&str>,
-    thread_ref: Option<&str>,
-    occurred_at: u64,
+    event: &ProjectedCommEvent<'_>,
 ) -> CommResult<()> {
+    let &ProjectedCommEvent {
+        rule,
+        source_event_id,
+        party_ref,
+        channel_class,
+        thread_ref,
+        occurred_at,
+    } = event;
     match rule.action {
         ProjectorAction::UpsertLastTouch => {
             let channel = channel_class.ok_or(CommError::InvalidRecord)?;
@@ -1061,8 +1087,13 @@ fn apply_projector_rule_in_txn(
                 channel_class: channel.to_owned(),
                 occurred_at,
             };
-            let new_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
-            if let Some((old_head_id, old_head)) = active.into_iter().next() {
+            let (new_id, minted) =
+                put_projected_comm_claim_in_txn(vault, wtxn, source_event_id, &value, occurred_at)?;
+            if !minted {
+                return Ok(());
+            }
+            if let Some((old_head_id, old_head)) = active.into_iter().find(|(id, _)| *id != new_id)
+            {
                 let head_at = old_head.valid_from.unwrap_or(occurred_at);
                 let close_at = occurred_at.max(head_at);
                 if occurred_at >= head_at {
@@ -1102,8 +1133,16 @@ fn apply_projector_rule_in_txn(
                     reason: OPT_OUT_REASON_STOP.to_owned(),
                     occurred_at,
                 };
-                let claim_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
-                if let Some(boundary) = latest_transition.filter(|boundary| occurred_at < *boundary)
+                let (claim_id, minted) = put_projected_comm_claim_in_txn(
+                    vault,
+                    wtxn,
+                    source_event_id,
+                    &value,
+                    occurred_at,
+                )?;
+                if minted
+                    && let Some(boundary) =
+                        latest_transition.filter(|boundary| occurred_at < *boundary)
                 {
                     vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
                 }
@@ -1167,13 +1206,20 @@ fn apply_projector_rule_in_txn(
                     thread_ref: thread.to_owned(),
                     occurred_at,
                 };
-                let claim_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
+                let (claim_id, minted) = put_projected_comm_claim_in_txn(
+                    vault,
+                    wtxn,
+                    source_event_id,
+                    &value,
+                    occurred_at,
+                )?;
                 // Deterministic tie-breaker: at equal occurred_at a join loses to
                 // the boundary (a same-time leave/transition), so equal-time
                 // opposing thread events converge to non-membership regardless of
                 // projection order (restrictive-wins-tie, symmetric with LeaveThread).
-                if let Some(boundary) =
-                    latest_transition.filter(|boundary| occurred_at <= *boundary)
+                if minted
+                    && let Some(boundary) =
+                        latest_transition.filter(|boundary| occurred_at <= *boundary)
                 {
                     vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
                 }
@@ -1211,15 +1257,114 @@ fn apply_projector_rule_in_txn(
     }
 }
 
-fn put_comm_claim_in_txn(
+/// Canonical conflict key for one projected `comm.*` value: the tuple that
+/// makes two claims the SAME standing-state slot. Length-prefixed so
+/// `("ab", "c")` and `("a", "bc")` can never hash alike.
+fn projected_comm_conflict_key(value: &CommClaimValue) -> Vec<u8> {
+    let mut key = Vec::new();
+    let mut push = |bytes: &[u8]| {
+        key.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        key.extend_from_slice(bytes);
+    };
+    match value {
+        CommClaimValue::OptOut {
+            party_ref,
+            channel_class,
+            ..
+        }
+        | CommClaimValue::LastTouch {
+            party_ref,
+            channel_class,
+            ..
+        }
+        | CommClaimValue::ReachableVia {
+            party_ref,
+            channel_class,
+            ..
+        } => {
+            push(party_ref.as_bytes());
+            push(channel_class.as_bytes());
+        }
+        CommClaimValue::ThreadMember {
+            party_ref,
+            thread_ref,
+            ..
+        } => {
+            push(party_ref.as_bytes());
+            push(thread_ref.as_bytes());
+        }
+    }
+    key
+}
+
+/// Derives the deterministic CLAIM id for one projector-created `comm.*` claim
+/// from `(source event, predicate, conflict key)`. Version/variant nibbles are
+/// stamped exactly as [`crate::outbound::connector_actor_id`] so the result is
+/// a well-formed v7-shaped id.
+fn projected_comm_claim_id(
+    source_event_id: EntityId,
+    value: &CommClaimValue,
+) -> CommResult<EntityId> {
+    let predicate = value.claim_body().predicate;
+    let conflict_key = projected_comm_conflict_key(value);
+    let mut hash = blake3::Hasher::new();
+    hash.update(PROJECTED_COMM_CLAIM_ID_DOMAIN);
+    hash.update(source_event_id.as_bytes());
+    hash.update(&(predicate.len() as u64).to_le_bytes());
+    hash.update(predicate.as_bytes());
+    hash.update(&(conflict_key.len() as u64).to_le_bytes());
+    hash.update(&conflict_key);
+    let mut bytes = [0_u8; ENTITY_ID_LEN];
+    bytes.copy_from_slice(&hash.finalize().as_bytes()[..ENTITY_ID_LEN]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    EntityId::from_bytes(bytes).map_err(CommError::from)
+}
+
+/// Writes one projector-created `comm.*` claim at its derived id.
+///
+/// Returns `(id, minted)`. When the derived id already holds a byte-identical
+/// CLAIM on the same subject the write is skipped — replaying a source event is
+/// a no-op, not a rewrite, so a claim the projector already closed is never
+/// silently resurrected. Any other resident row at that id is a deterministic-id
+/// collision and fails closed rather than overwriting it.
+fn put_projected_comm_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
+    source_event_id: EntityId,
+    value: &CommClaimValue,
+    occurred_at: u64,
+) -> CommResult<(EntityId, bool)> {
+    let id = projected_comm_claim_id(source_event_id, value)?;
+    if let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+        let header = EntityMetadataHeader::parse(&raw).ok_or(CommError::InvalidRecord)?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(CommError::InvalidRecord);
+        }
+        let resident = vault
+            .get_claim_in_txn(&*wtxn, &id)?
+            .ok_or(CommError::InvalidRecord)?;
+        let same_value =
+            CommClaim::from_claim_body(&resident).is_ok_and(|resident| resident.value == *value);
+        let same_subject = resident.subject == ClaimSubject::Entity(value.party_ref());
+        if !same_value || !same_subject {
+            return Err(CommError::InvalidRecord);
+        }
+        return Ok((id, false));
+    }
+    put_comm_claim_with_id_in_txn(vault, wtxn, id, value, occurred_at)?;
+    Ok((id, true))
+}
+
+fn put_comm_claim_with_id_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: EntityId,
     value: &CommClaimValue,
     occurred_at: u64,
 ) -> CommResult<EntityId> {
     let body = value.claim_body();
     let data = encode_claim_body(&body)?;
-    let id = EntityId::now();
     let subject = value.party_ref();
     // A comm.* claim's subject must be a PERSON party. A replicated event can
     // name any existing entity as party_ref; a subject that is absent or not a
