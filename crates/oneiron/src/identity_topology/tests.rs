@@ -3094,3 +3094,81 @@ fn replicated_resolution_is_validated_against_the_same_door_rule() {
         },
     );
 }
+
+#[test]
+fn approved_resolution_preserves_proposal_evidence() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0xB4);
+    let loser = put_person(&vault, 0xB5);
+    let backed_claim = put_person(&vault, 0xB6);
+
+    // Park a proposal carrying REAL evidence — the refs a replay must not
+    // lose when the ruling re-applies the op as its own Approved event.
+    let proposer_evidence = IdentityOpEvidence {
+        refs: vec![backed_claim],
+        rationale: "duplicate person record from import batch 7".to_owned(),
+    };
+    let mut proposed = IdentityOpWrite::auto(ClaimSource::Inferred);
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    let proposal = expect_parked(
+        vault
+            .apply_identity_topology_op(
+                &IdentityTopologyOp::Merge(MergeOp {
+                    sources: vec![loser],
+                    survivor,
+                    evidence: proposer_evidence.clone(),
+                    survivorship_plan: SurvivorshipPlan::ReadThrough,
+                }),
+                &proposed,
+                200,
+            )
+            .expect("proposed merge parks"),
+    );
+
+    let (outcome, _) = vault
+        .resolve_identity_proposal(&proposal, ProposalRuling::Approve, &ruling_write(), 300)
+        .expect("approve resolves");
+    assert_eq!(outcome, ProposalOutcome::ApprovedUntouched);
+
+    // The NEW applied event (the Approved merge, distinct from both the park
+    // and the resolution row) carries the proposal's evidence: the ruling
+    // did not sever the decision from what backed it.
+    let applied: Vec<EntityId> = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        vault
+            .identity_topology_events_in_txn(&rtxn)
+            .expect("events")
+            .into_iter()
+            .filter(|event| {
+                event.approval == ClaimApprovalStatus::Approved
+                    && matches!(event.action, IdentityTopologyAction::Apply(_))
+            })
+            .map(|event| event.event_id)
+            .collect()
+    };
+    assert_eq!(applied.len(), 1, "exactly one approved op event");
+    let record = vault
+        .identity_topology_event(&applied[0])
+        .expect("read applied")
+        .expect("applied event exists");
+    assert_eq!(
+        record.approval,
+        ClaimApprovalStatus::Approved,
+        "the applied event is the ruling-grade row"
+    );
+    assert_eq!(
+        record.evidence.as_ref(),
+        Some(&proposer_evidence),
+        "the proposal's refs and rationale persist through the Approved apply"
+    );
+    assert_eq!(
+        record.evidence.as_ref().map(|e| e.refs.as_slice()),
+        Some(&[backed_claim][..])
+    );
+    assert!(
+        record
+            .evidence
+            .as_ref()
+            .is_some_and(|e| e.rationale.contains("import batch 7")),
+    );
+}
