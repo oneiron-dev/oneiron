@@ -1103,8 +1103,11 @@ impl<'a> AttemptQueue<'a> {
         self.store
             .attempt_ready
             .put(&mut wtxn, &ready_key, next.id.as_bytes())?;
-        self.store
-            .put_attempt_run_index_in_txn(&mut wtxn, next.run_id.as_deref(), next.id.as_bytes())?;
+        self.store.put_attempt_run_index_in_txn(
+            &mut wtxn,
+            next.run_id.as_deref(),
+            next.id.as_bytes(),
+        )?;
 
         // Only the newest pending member of a dedupe chain owns the advisory
         // index, so the entry moves off the now-terminal source.

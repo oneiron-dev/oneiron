@@ -221,7 +221,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     assert_eq!(retried_profile.attempt.state, AttemptState::Scheduled);
     assert_eq!(retried_profile.attempt.scheduled_at, Some(40));
     assert_eq!(retried_profile.attempt.backoff_until, None);
-    assert_eq!(retried_profile.attempt.retry_of, Some(profile_status.attempt.id));
+    assert_eq!(
+        retried_profile.attempt.retry_of,
+        Some(profile_status.attempt.id)
+    );
     assert_eq!(retried_profile.attempt.last_error, None);
     assert_eq!(retried_profile.task, profile_task);
     let failed_try = companion_queue

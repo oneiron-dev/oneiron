@@ -774,7 +774,9 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
     assert_eq!(trap.attempt_id, stale_retry.id);
     assert_eq!(trap.budget.remaining_units, 0);
     assert_eq!(trap.budget.reserved_units, 10);
-    let stale_status = runner.status(stale_retry.id)?.expect("paused stale attempt");
+    let stale_status = runner
+        .status(stale_retry.id)?
+        .expect("paused stale attempt");
     assert_eq!(stale_status.attempt.state, AttemptState::Paused);
     let reserved_status = runner.status(reserved_retry.id)?.expect("reserved attempt");
     assert_eq!(reserved_status.attempt.state, AttemptState::Scheduled);

@@ -1352,7 +1352,10 @@ fn attempt_queue_retry_chain_keeps_every_try_independently_queryable() -> Result
 
     for (index, id) in chain.iter().enumerate() {
         let record = queue.get(*id)?.expect("every try stays queryable");
-        assert_eq!(record.retry_of, index.checked_sub(1).map(|prev| chain[prev]));
+        assert_eq!(
+            record.retry_of,
+            index.checked_sub(1).map(|prev| chain[prev])
+        );
         assert_eq!(record.payload, b"payload-10");
         assert_eq!(record.run_id.as_deref(), Some("run-10"));
         if index + 1 == chain.len() {
@@ -2021,4 +2024,135 @@ fn ready_key_round_trips() -> Result<()> {
     let key = ready_key(42, id);
     assert_eq!(decode_ready_key(&key)?, (42, id));
     Ok(())
+}
+
+/// A row written before `scheduled_at`/`retry_of` existed, at the unchanged
+/// record version.
+#[derive(serde::Serialize)]
+struct PreScheduledAttemptRecord {
+    id: AttemptId,
+    kind: String,
+    payload: Vec<u8>,
+    state: AttemptState,
+    lease_owner: Option<String>,
+    attempt_count: u32,
+    claimed_at: Option<u64>,
+    backoff_until: Option<u64>,
+    last_error: Option<String>,
+    task_ref: Option<String>,
+    run_id: Option<String>,
+    dedupe_key: Option<String>,
+    created_at: u64,
+    updated_at: u64,
+    events: Vec<AttemptEvent>,
+}
+
+#[test]
+fn legacy_backoff_row_decodes_and_keeps_its_readiness_instant() -> Result<()> {
+    // Record version is unchanged: appending a unit-enum variant and two
+    // defaulted fields must not force a bump or a migration.
+    assert_eq!(ATTEMPT_RECORD_VERSION, 2);
+
+    let id = AttemptId::from_bytes(&[0x7A; 16])?;
+    let legacy = PreScheduledAttemptRecord {
+        id,
+        kind: "claim_extraction".to_owned(),
+        payload: b"legacy-payload".to_vec(),
+        state: AttemptState::Queued,
+        lease_owner: None,
+        attempt_count: 1,
+        claimed_at: Some(20),
+        backoff_until: Some(100),
+        last_error: Some("rate limited".to_owned()),
+        task_ref: None,
+        run_id: Some("run-legacy".to_owned()),
+        dedupe_key: Some("turn:legacy".to_owned()),
+        created_at: 10,
+        updated_at: 30,
+        events: Vec::new(),
+    };
+    let mut encoded = vec![ATTEMPT_RECORD_VERSION];
+    encoded.extend(rmp_serde::to_vec_named(&legacy).expect("serialize legacy attempt record"));
+
+    let decoded = decode_record(&encoded, id)?;
+    assert_eq!(decoded.state, AttemptState::Queued);
+    assert_eq!(decoded.backoff_until, Some(100));
+    assert_eq!(decoded.scheduled_at, None);
+    assert_eq!(decoded.retry_of, None);
+    assert_eq!(decoded.attempt_count, 1);
+    assert_eq!(decoded.last_error.as_deref(), Some("rate limited"));
+
+    // The legacy spelling still drives readiness, at the exact same instant.
+    assert_eq!(ready_at(&decoded), 100);
+
+    // Re-encoding a decoded legacy row keeps it decodable and unchanged.
+    let round_tripped = decode_record(&encode_record(&decoded)?, id)?;
+    assert_eq!(round_tripped, decoded);
+
+    Ok(())
+}
+
+#[test]
+fn legacy_backoff_row_stays_claimable_at_its_original_instant() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(attempt) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:legacy-live"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // Plant a pre-ONE-1795 row in place: Queued with only `backoff_until`, and
+    // a ready entry at that instant. No bulk rewrite converts it.
+    let mut record = queue.get(attempt.id)?.expect("enqueued row");
+    record.state = AttemptState::Queued;
+    record.backoff_until = Some(100);
+    record.attempt_count = 1;
+    record.claimed_at = Some(20);
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .attempt_ready
+            .delete(&mut wtxn, &ready_key(0, record.id))?;
+        let encoded = encode_record(&record)?;
+        vault
+            .store
+            .attempt_records
+            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+        vault.store.attempt_ready.put(
+            &mut wtxn,
+            &ready_key(100, record.id),
+            record.id.as_bytes(),
+        )?;
+        wtxn.commit()?;
+    }
+
+    assert_eq!(
+        queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now: 99,
+        })?,
+        ClaimOutcome::Empty
+    );
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 100,
+    })?
+    else {
+        panic!("legacy backoff row must claim at its own instant");
+    };
+    assert_eq!(claimed.id, attempt.id);
+    assert_eq!(claimed.backoff_until, None);
+    assert_eq!(claimed.scheduled_at, None);
+    assert_eq!(claimed.attempt_count, 2);
+
+    Ok(())
+}
+
+#[test]
+fn dedupe_hash_domain_stays_pinned() {
+    // Changing this silently orphans every live dedupe entry.
+    assert_eq!(DEDUPE_DOMAIN, b"oneiron.job_queue.dedupe.v1\0");
 }

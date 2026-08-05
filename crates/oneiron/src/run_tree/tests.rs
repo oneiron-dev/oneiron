@@ -341,7 +341,10 @@ fn run_tree_attaches_a_scheduled_retry_under_its_failed_source() -> Result<()> {
     assert_eq!(root.children.len(), 1);
     let child = &root.children[0];
     assert_eq!(child.attempt_id, hex(retried.id));
-    assert_eq!(child.parent_id.as_deref(), Some(hex(queued.attempt.id).as_str()));
+    assert_eq!(
+        child.parent_id.as_deref(),
+        Some(hex(queued.attempt.id).as_str())
+    );
     // Scheduled maps onto the existing Paused token — deferred, not runnable
     // now — which the Context Board already renders as `Scheduled`.
     assert_eq!(child.status, RunTreeStatus::Paused);
