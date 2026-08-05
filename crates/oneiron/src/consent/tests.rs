@@ -385,6 +385,33 @@ fn consent_bound_reuse_exceed_and_widen_are_distinct() {
     // no covering subject the candidate is still outside.
     assert!(!granted.contains(&action_bound("agent-zzz", "send", &["channel:email"])));
 
+    // FIX-8, envelope mismatch axis: a different SELECTOR SET is its own
+    // envelope, and the standing grant never lets it inherit. Same subject,
+    // same class, a DIFFERENT channel list — containment is strict equality
+    // up to subset, not a pattern match.
+    let mismatched = action_bound("agent-a", "send", &["channel:telegram"]);
+    assert!(
+        !granted.contains(&mismatched),
+        "an envelope naming a different selector is outside the grant"
+    );
+    let mismatched_op = ComposedEffect::new(irreversible_send_facts())
+        .with_action_requirement(mismatched.clone())
+        .expect("requirement");
+    assert_eq!(
+        evaluate_consent(&mismatched_op, None, &grants),
+        ConsentDecision::Ask,
+        "envelope mismatch must ask, never reuse"
+    );
+    // And even a SUBSET-strict reading is exact: an envelope with extra
+    // selectors not named in the grant is outside, so a narrower-looking but
+    // different-shaped candidate is not silently covered.
+    let superset = action_bound(
+        "agent-a",
+        "send",
+        &["channel:email", "channel:sms", "channel:extra"],
+    );
+    assert!(!granted.contains(&superset));
+
     // WIDENING IS ITS OWN DECISION: reuse did not mutate the bound, and the
     // wider grant is a SEPARATE row with its own receipt and its own stamp.
     let row = vault
@@ -1061,6 +1088,28 @@ fn consent_has_only_ask_and_registry_surfaces_no_duration_picker() {
             .rows
             .len(),
         1
+    );
+    // FIX-7: owner disclosure — the registry is the full-dump surface; with
+    // the audit flag the revoked row is still listed so the review/one-tap
+    // floor shows everything the owner ever armed, with subject, class,
+    // envelope selectors, and status rendered per row (rather than a bare
+    // ref list).
+    let audit = vault
+        .consent_registry(ConsentRegistryQuery::new(16, true))
+        .expect("audit registry");
+    assert_eq!(audit.rows.len(), 2);
+    for row in &audit.rows {
+        assert!(!row.subject.trim().is_empty());
+        assert!(!row.class.trim().is_empty());
+        assert!(!row.selectors.is_empty());
+        assert!(!row.grant_ref.trim().is_empty());
+    }
+    assert!(
+        audit
+            .rows
+            .iter()
+            .any(|row| row.status == ConsentGrantStatus::Revoked),
+        "the owner's full audit dump must retain the revoked row"
     );
 
     // NO DURATION/EXPIRY FIELD on a bound or a registry row: the persisted key
