@@ -71,3 +71,11 @@ Decisions worth flagging to the screen:
 ### NEXT (seg1)
 - Run the `cargo test -p oneiron claim` lane explicitly + integration-test targets (`--tests`) for a full cheap gate.
 - Push branch ONE-1782 (worker never pushes — leave to harness per lane law).
+
+### Full cheap gate re-run (post-commit) — ALL GREEN
+- `cargo test -p oneiron --all-features -j 6 claim` (all targets): **284 unit + 11 integration-target hits, 0 failed** across 33 test binaries.
+- `cargo check --workspace --all-features -j 6`: clean. Only warning is pre-existing `sha1` deprecation in `crates/oneiron-seal/src/native/verify.rs:1280` — untouched by this lane.
+
+Commit: `39d70c7` on branch `ONE-1782` (base `w5/cal/main`). NOT pushed — workers never push.
+
+### seg0 CLOSED. Lane is at a clean resume point.
