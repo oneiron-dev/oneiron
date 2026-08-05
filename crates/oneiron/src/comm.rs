@@ -16,7 +16,10 @@ use crate::claim::{
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::identity_topology::EntityLifecycleState;
+use crate::identity_topology::{
+    EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
+    IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+};
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
@@ -85,6 +88,10 @@ const OPT_OUT_CLEAR_APPROVED: &str = "comm_opt_out_clear_approved";
 const PARTY_INDEX_PREFIX: &[u8] = b"comm.party.v1:";
 const EVENT_SEQUENCE_KEY: &[u8] = b"comm.event_sequence.v1";
 const MAX_KEY_BYTES: usize = 512;
+
+/// Stable machine rationale recorded on the MS-01 ledger event when the
+/// projector reconciles offline-minted twins of one `party_key`.
+const PARTY_KEY_TWIN_RATIONALE: &str = "comm.party_key_offline_twin";
 
 /// Domain separator for projector-derived `comm.*` CLAIM ids. A deterministic
 /// projector derives its row ids from its inputs, so replaying one source event
@@ -662,7 +669,57 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
             Err(error) => return Err(error),
         }
     }
+    reconcile_comm_party_twins(vault, crate::unix_seconds_now())?;
     Ok(())
+}
+
+/// Converges offline-minted twins of one `party_key` onto a single canonical
+/// party, returning how many twins were merged away.
+///
+/// Identity created while synced truth was unreachable reconciles by MERGE, not
+/// by prevention: two devices that each minted a party row for one key are both
+/// right about the party and simply disagree about its id. Each group's lowest
+/// id survives (a total order every node computes identically) and the rest go
+/// through the ARCH-0055 MS-01 door as read-through merges — that door owns the
+/// shell edges, the maintenance-band ledger, and undo. No claim subject is
+/// rewritten and no `merged_into` edge is authored here.
+///
+/// Different `party_key` values are never merged. Deciding that two keys name
+/// one human is cross-channel identity judgment and belongs to the Dreamer tier.
+fn reconcile_comm_party_twins(vault: &Vault, now: u64) -> CommResult<usize> {
+    let twin_groups: Vec<(String, Vec<EntityId>)> = {
+        let rtxn = vault.store.env.read_txn()?;
+        active_comm_persons_by_party_key_in_txn(vault, &rtxn)?
+            .into_iter()
+            .filter(|(_, ids)| ids.len() > 1)
+            .collect()
+    };
+    let mut merged = 0;
+    for (party_key, twins) in twin_groups {
+        // The door takes its own write transaction, so it runs outside the
+        // PERSON scan's read transaction.
+        let (survivor, sources) = twins.split_first().ok_or(CommError::InvalidRecord)?;
+        let outcome = vault.apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: sources.to_vec(),
+                survivor: *survivor,
+                evidence: IdentityOpEvidence {
+                    refs: twins.clone(),
+                    rationale: PARTY_KEY_TWIN_RATIONALE.to_owned(),
+                },
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            now,
+        )?;
+        if matches!(outcome, IdentityOpOutcome::Applied { .. }) {
+            merged += sources.len();
+        }
+        vault.try_with_write_txn(|wtxn| {
+            put_party_index_in_txn(vault, wtxn, &party_key, *survivor)
+        })?;
+    }
+    Ok(merged)
 }
 
 /// Counts active claims by the full `(predicate, party, channel_class)` key.

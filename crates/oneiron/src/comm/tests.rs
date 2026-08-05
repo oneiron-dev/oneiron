@@ -6,11 +6,13 @@ use crate::claim::{
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::identity_topology::{
-    IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+    EntityLifecycleState, IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+    SurvivorshipPlan,
 };
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
-    EntityClassification, TypeByteBand, entity_type_registry_entry,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, EntityClassification, TypeByteBand,
+    entity_type_registry_entry,
 };
 use crate::temporal::TimeRange;
 
@@ -1884,6 +1886,216 @@ fn malformed_person_bodies_do_not_wedge_party_resolution() -> CommResult<()> {
     clear_party_index(&vault, "party-tolerant")?;
     assert_eq!(resolve_party(&vault, "party-tolerant")?, Some(synced));
     assert_eq!(resolve_party(&vault, "party-never-seen")?, None);
+    Ok(())
+}
+
+fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut count = 0;
+    for entry in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+    {
+        entry?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+#[test]
+fn offline_party_twins_converge_on_the_lowest_id_through_ms01() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    // Two devices each minted a PERSON for one party_key while synced truth
+    // was unreachable; both rows land here after replication.
+    let first = mint_comm_person(&vault, "party-twin")?;
+    let second = mint_comm_person(&vault, "party-twin")?;
+    assert_ne!(first, second);
+    let mut sorted = [first, second];
+    sorted.sort_unstable();
+    let [survivor, loser] = sorted;
+    point_party_index(&vault, "party-twin", loser)?;
+
+    run_comm_projector(&vault)?;
+
+    // Lowest id survives; the other becomes an MS-01 Merged redirect shell.
+    assert_eq!(
+        vault.entity_lifecycle_state(&survivor)?,
+        EntityLifecycleState::Active
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        EntityLifecycleState::Merged
+    );
+    // Exactly ONE read-through merge event, and the cache names the survivor.
+    assert_eq!(count_identity_topology_events(&vault)?, 1);
+    assert_eq!(resolve_party(&vault, "party-twin")?, Some(survivor));
+    assert_eq!(
+        resolve_or_create_comm_party(&vault, "party-twin")?,
+        survivor
+    );
+    // The shell body is still readable — a merge is a redirect, not a delete.
+    assert_eq!(vault.get_entity_type(&loser)?, Some(ENTITY_TYPE_PERSON));
+
+    // A second pass writes no additional topology event: the group is no longer
+    // a group, because the shell is no longer active.
+    run_comm_projector(&vault)?;
+    assert_eq!(count_identity_topology_events(&vault)?, 1);
+    assert_eq!(resolve_party(&vault, "party-twin")?, Some(survivor));
+    Ok(())
+}
+
+#[test]
+fn twin_merge_records_sorted_evidence_and_the_stable_rationale_token() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let first = mint_comm_person(&vault, "party-evidence")?;
+    let second = mint_comm_person(&vault, "party-evidence")?;
+    let mut expected_refs = vec![first, second];
+    expected_refs.sort_unstable();
+
+    run_comm_projector(&vault)?;
+
+    let event_id = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut ids = Vec::new();
+        for entry in vault
+            .store
+            .type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+        {
+            let (key, _) = entry?;
+            ids.push(entity_id_from_type_index_key(&key)?);
+        }
+        assert_eq!(ids.len(), 1);
+        ids[0]
+    };
+    let event = vault
+        .identity_topology_event(&event_id)?
+        .ok_or(CommError::InvalidRecord)?;
+    let evidence = event.evidence.ok_or(CommError::InvalidRecord)?;
+    assert_eq!(evidence.refs, expected_refs);
+    assert_eq!(evidence.rationale, PARTY_KEY_TWIN_RATIONALE);
+    Ok(())
+}
+
+#[test]
+fn parties_with_different_keys_are_never_merged() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-alpha", "email", 10)?;
+    record_comm_send_receipt(&vault, "party-beta", "email", 11)?;
+    run_comm_projector(&vault)?;
+
+    let alpha = resolve_party(&vault, "party-alpha")?.ok_or(CommError::InvalidRecord)?;
+    let beta = resolve_party(&vault, "party-beta")?.ok_or(CommError::InvalidRecord)?;
+    assert_ne!(alpha, beta);
+
+    run_comm_projector(&vault)?;
+
+    // Distinct keys are distinct parties. Deciding otherwise is cross-channel
+    // identity judgment, which this projector deliberately does not do.
+    assert_eq!(count_identity_topology_events(&vault)?, 0);
+    assert_eq!(
+        vault.entity_lifecycle_state(&alpha)?,
+        EntityLifecycleState::Active
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&beta)?,
+        EntityLifecycleState::Active
+    );
+    assert_eq!(resolve_party(&vault, "party-alpha")?, Some(alpha));
+    assert_eq!(resolve_party(&vault, "party-beta")?, Some(beta));
+    Ok(())
+}
+
+#[test]
+fn twin_merge_keeps_claims_on_their_own_subjects_and_reads_through() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    // Each twin carries its own projected standing state before reconciliation.
+    let first = mint_comm_person(&vault, "party-readthrough")?;
+    let second = mint_comm_person(&vault, "party-readthrough")?;
+    let mut sorted = [first, second];
+    sorted.sort_unstable();
+    let [survivor, loser] = sorted;
+
+    for (party_ref, channel, at) in [(survivor, "email", 10), (loser, "sms", 11)] {
+        let event = CommRecord::Event {
+            sequence: 0,
+            kind: CommEventKind::SendSucceeded,
+            party_ref,
+            channel_class: Some(channel.to_owned()),
+            thread_ref: None,
+            occurred_at: at,
+            projected: false,
+        };
+        vault.try_with_write_txn(|wtxn| {
+            put_comm_record_in_txn(&vault, wtxn, EntityId::now(), &event)
+        })?;
+    }
+    run_comm_projector(&vault)?;
+
+    // MS-01 owns the redirect: the loser's claim stays on the loser's subject.
+    let rtxn = vault.store.env.read_txn()?;
+    let on_shell = matching_claims_in_txn(
+        &vault,
+        &rtxn,
+        loser,
+        PREDICATE_COMM_LAST_TOUCH,
+        Some("sms"),
+        None,
+        true,
+    )?;
+    assert_eq!(on_shell.len(), 1, "claims are not reparented by a merge");
+    let on_survivor = matching_claims_in_txn(
+        &vault,
+        &rtxn,
+        survivor,
+        PREDICATE_COMM_LAST_TOUCH,
+        Some("sms"),
+        None,
+        true,
+    )?;
+    assert!(
+        on_survivor.is_empty(),
+        "read-through is a read-time union, not a rewrite"
+    );
+    drop(rtxn);
+
+    // The redirect edge is the door's, authored exactly once.
+    assert_eq!(count_identity_topology_events(&vault)?, 1);
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        EntityLifecycleState::Merged
+    );
+    // Contact materialization reads the canonical party.
+    assert!(!materialize_contact_record(&vault, "party-readthrough")?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn three_way_twins_converge_in_one_pass() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let mut twins = [
+        mint_comm_person(&vault, "party-triple")?,
+        mint_comm_person(&vault, "party-triple")?,
+        mint_comm_person(&vault, "party-triple")?,
+    ];
+    twins.sort_unstable();
+
+    run_comm_projector(&vault)?;
+
+    // One N→1 merge event, not a chain of pairwise merges.
+    assert_eq!(count_identity_topology_events(&vault)?, 1);
+    assert_eq!(
+        vault.entity_lifecycle_state(&twins[0])?,
+        EntityLifecycleState::Active
+    );
+    for loser in &twins[1..] {
+        assert_eq!(
+            vault.entity_lifecycle_state(loser)?,
+            EntityLifecycleState::Merged
+        );
+    }
+    assert_eq!(resolve_party(&vault, "party-triple")?, Some(twins[0]));
     Ok(())
 }
 
