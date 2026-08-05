@@ -192,8 +192,10 @@ Seeds 0x73–0x8C, all outside `PINNED_ID_BYTES` (seed-band law).
 
 - `cargo fmt --all -- --check` clean.
 - `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` clean.
-- `cargo test -p oneiron --all-features`: **3157 passed / 0 failed** (lib run
-  twice back-to-back, both clean).
+- FULL nextest gate (post-fix tree, HEAD `c8042e0`):
+  `cargo nextest run -p oneiron --all-features --locked` —
+  **3427 passed / 0 failed / 97 skipped** (exit 0). The fix leg's gate of
+  record; the earlier `cargo test` interim runs were superseded by this.
 - One FLAKE observed on a full-suite run:
   `attempt_queue::tests::attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields`.
   Charged to NO lane: it lives in a module this ticket never touches, passes
@@ -248,4 +250,86 @@ oneiron --all-features --all-targets -- -D warnings` clean · `cargo
 test -p oneiron --all-features --lib` **3157/0** · oracle integration
 test `merge_split_oracle` **3 passed / 20 ignored** (1748/1749 stubs
 intact). No test assertions touched; no public API changed; NO PUSH.
+(Superseded: the `cargo test` interim receipt was replaced by the FULL
+nextest gate at the fix leg's end — see the gate-of-record receipt below.)
+
+
+## seg0 (cont.) — K3 fix leg (relay MS-05 fix round)
+
+Post-screen verdict: 5 P1s + 1 banked P2. All addressed; cheap trio green after each block; full nextest gate LAST (it must run on the post-fix tree).
+
+### FIX2 — revert b135e0f's receipt.rs projector signature change
+`proposal_outcome_receipt` / `identity_topology_receipt` restored to plain
+`ReceiptRecord` returns with `unreachable!` / documented fallback arm — the
+dispatch shape of the rest of the projector family. The b135e0f import hoist
+(`entity_type_registry_entry`) kept: unrelated to the signature change. The
+kind-mix slip the `Result` wraps aimed at is closed structurally by FIX6
+(fold-consulting projection).
+
+### FIX3 — amendment scope pin walks split map routes (identity_topology.rs:1338)
+The pin compared only `participants()` — an amended split reached any entity
+through the reassignment map. Head targets and both EDGE-item endpoints are
+now bounded to the proposal's named set; bare claim items stay un-checked as
+routes (a map's job is to re-route claims across the split's own heads —
+checking them as routes would fail-closed every amended split whose proposal
+carried a map row). New unit test
+`amendment_scope_includes_reassignment_map`: (a) in-scope retarget + (b) fresh
+bare-claim rows amend cleanly; (c) head route + (d) edge route to a stranger
+reject typed, fail-closed, stranger untouched.
+
+### FIX4 — replicated resolution admission joins the door rule (identity_topology.rs:2911)
+`ResolveProposal` was grouped with `Undo` at admission: only a type check on
+the named park, every proposal-resolution invariant skipped. All four cells
+now live in ONE validator `validate_identity_proposal_resolution_in_txn`,
+called by BOTH paths: `Proposed` park + op row · fold has not retired the
+park · the RULING's own consent axis effective (`write.approval` at the door,
+`record.approval` on the wire) · replicated rows must stamp the scope tuple
+the proposal row derives, else `ResolutionRuleMismatch`. Replicated amended
+bodies pass the scope pin. The door's inlined cells are DELETED, not
+duplicated. A stateless decode-time check rejects resolutions scoped to a
+non-op kind on every admission path. New variant
+`IdentityTopologyRejection::ResolutionRuleMismatch { reason }`. New test
+`replicated_resolution_is_validated_against_the_same_door_rule` proves replay
+rejects a second ruling on a retired park and a mis-stamped scope on an open
+park, typed.
+
+Door signature: `resolve_identity_proposal`/`_in_txn` keep their 4-arg shape
+(the relay's "thread proposer" sketch was tried and folded back out — the
+proposer's consent IS the ruling's own axis; a separate param checked it
+against the WRONG set, and both call sites' consent flows through the row's
+own approval field).
+
+### FIX5 — proposal evidence persists through Approved re-apply (identity_topology:2662)
+`to_fold_action` reconstructs an op WITHOUT the envelope evidence; the
+Approved re-apply minted the decision with `IdentityOpEvidence::default()`.
+`apply_resolved_identity_op_in_txn` now takes the proposal row's evidence and
+threads it onto the re-applied merge/split. Test
+`approved_resolution_preserves_proposal_evidence` proves refs + rationale land
+on the new Approved row. Seed-band: a 0xA1 fixture collided with
+PINNED_ID_BYTES; moved to 0xB4..0xB6.
+
+### FIX6 — fold-rejected resolutions mint no outcome receipt (receipt.rs:2169)
+`identity_topology_receipts` projected EVERY resolution row, even fold-
+rejected duplicates. The scan now folds the effective log and skips any
+resolution row the fold rejected `ProposalAlreadyResolved` — stored evidence
+kept, projection refuses the double-count. Convergent by construction (the
+rejection decision IS the fold's). New test
+`fold_rejected_duplicate_resolution_mints_no_outcome_receipt`.
+
+### FIX7 — lane guard (additive-only confirm, post-revert)
+With FIX6 consulting the fold's rejection set, the projector Result-wrap of
+b135e0f is unnecessary — FIX2's revert stands and the diff vs base is
+additive in the additive sense this ticket owns: ONE new resolution action
+kind, ONE new receipt kind + projector, ONE new rejection variant, scope-pin
+widening INSIDE the existing pin, evidence threading through the door's own
+private helper, and the receipt scan teaching its own dispatch. No public
+API retired; no behavior the claims shape didn't name.
+
+### Gates after each block (fix leg)
+fmt --check clean · clippy -p oneiron --all-features --all-targets -D warnings
+clean · lib suite green (3161/0 post-FIX6) · oracle integration
+`merge_split_oracle` 3 passed / 20 ignored. Committed per logical fix:
+FIX2 `19eb160` · FIX3 `ad4c5ef` · FIX4 `c8b35cd` · FIX5 `3abacef` · FIX6 `c8042e0`.
+WORKLOG-LANE-BOOT.md (was untracked) is committed in the final gate-receipts
+commit below.
 
