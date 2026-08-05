@@ -235,3 +235,173 @@ Gates after the pass: `skill_reliability` lib 17/17 · `skill::` lib 28/28 · `s
 `identity_topology/tests.rs:4203` redundant-clone clippy error and the `surface_event/tests.rs`
 fmt red both reproduce with this branch's edits stashed — pre-existing main defects, not this
 packet (the worklog's flagged-defects list above gains the identity_topology one).
+
+## VERDICT-FIX (Opus, on tip `06fd491` → `fe7c187`)
+
+Eight verdict-verified findings, all fixed. No re-adjudication; the notes below
+record the SHAPE chosen and the bounds that remain honest, not a second opinion
+on whether the findings were real.
+
+Packet: `skill_reliability.rs` (+ tests), `skill.rs`, `WORKLOG-ONE-1738.md`.
+No `skill_attribution.rs` (1737's — the persisted-judgment check consumes its
+already-public `attribution_judgments` seam), no `skill_hub.rs`, no
+`Cargo.toml`/`Cargo.lock`, no oracle edit (all three `sk05_*` arms pass
+unchanged; the fixes were behaviour under the contract, not contract changes).
+
+### F1 — reserved-door authorization (P1)
+`project_skill_reliability` took `&[AttributionJudgment]` — a public type with
+public fields — and authored reserved `skill.*` truth off it after checking only
+"subject is a SKILL" and "receipts non-empty". The win door already resolved its
+receipt and checked manifest membership; the loss door did neither.
+
+Both halves added, at ONE chokepoint each:
+- `receipt_manifest_names_skill` is now the single manifest predicate both doors
+  run (previously the win door open-coded it).
+- the persisted-store check compares the caller's row against
+  `attribution_judgments()` **by sequence, whole-row** (`AttributionJudgment:
+  Eq`), read ONCE per pass into a `HashMap` — the bulk seam is a prefix scan and
+  N judgments must not cost N scans.
+
+Ungrounded rows are **skipped, not fatal**. A batch already mixes rows this
+projector deliberately ignores (lapses, discoveries); erroring the whole pass on
+one forgery would let a single bad row deny every real one.
+
+Gate ORDER is grounding-then-authorization, which is what gives each limb its
+own witnessing test: a fabricated judgment dies on grounding, and
+`a_judgment_routed_against_an_earlier_revision_no_longer_grounds` shows why the
+grounding re-check is not redundant with 1737's evidence door — 1737 matches the
+manifest by `skill_id` ALONE, so a judgment routed at v1 stays persisted after
+the entity revises in place, and counting it would move v2's posterior.
+
+### F2 + F3 + F8 — the replica-convergence cluster (P1/P1/P2)
+Fixed together at `project_in_txn`, per the verdict's cluster guidance.
+
+**The base (F2).** A head citing receipts the local outcome ledger has no rows
+for was projected somewhere else; its α, β becomes the base the local tally folds
+onto, instead of the provenance prior.
+
+The base is **persisted** (`skill_reliability:imported_base:v1:<skill>`, one row
+per skill, node-local like the ledger it completes). It has to be: F3 supersedes
+the head that carried it in the same transaction, and the claim body is pinned by
+the oracle to `{alpha, beta}`, so there is nowhere in the claim to keep it. Two
+alternatives were tried and rejected on paper first:
+- *carry the remote receipts forward in the new claim's `evidence`* — works until
+  the 64-entry citation cap evicts the local receipts, after which every
+  projection re-folds the whole local ledger onto the base. Unbounded α growth.
+- *detect "the head knows more than the ledger can recompute" arithmetically* —
+  not idempotent; the second pass re-folds.
+
+Claims THIS replica writes cite only local receipts, so they never re-enter as a
+base and the fold cannot double-count itself. Tested directly: re-project after
+the merge is a no-op, and a second local loss moves β by exactly one.
+
+**Honest bound, stated rather than hidden:** this converges history INTO a
+replica. Two replicas that each attribute outcomes the other never sees still
+double-count on a full round trip, because "fold α,β as the base" has no
+per-outcome identity to dedupe against. Exactness needs the outcome ROWS on the
+wire — a sync-scope change, not a projector one. Recorded in the module doc, not
+just here.
+
+**Every head (F3).** `active_reliability_heads_in_txn` replaces the
+first-match reader; the projector supersedes all of them. The `unchanged`
+fast-path now requires exactly ONE head that already matches — two heads is a
+fork that must collapse even when the winning value is unchanged. Reads
+(`skill_reliability_posterior`, the cache rebuild, the floor) resolve a
+mid-fork subject to the RICHEST head rather than whichever the edge index
+yielded first.
+
+**The floor (F8).** `check_reliability_floor` reads the claim; the local tally
+answers only for a skill nobody has projected. The outcome COUNT had the same
+defect and is now derived — `attributed_outcomes(prior, posterior)` = the
+pseudo-observation weight above the prior — which equals the local tally exactly
+whenever the ledger is the whole story, so the pure-local reading is unchanged
+and `floor_never_fires_on_a_bare_prior` still pins the guard.
+
+### F4 — supersession temporal clamp (P2)
+`superseded_at = at.max(prior_start)`, the same clamp `skill_hub.rs:1271`
+applies, using the `occurred_start` the head reader now returns. Without it an
+out-of-order event time hands `supersede_reserved_claim_in_txn` an inverted
+`{start: old_start, end: now}` range, which fails the write and rolls the whole
+projection back — permanently, because the retry re-derives the same `at`.
+
+### F5 — frozen revisions keep their cache (P2)
+The guard lands in the cache DOOR (`skill.rs::refresh_skill_confidence_cache_in_txn`),
+not at the two call sites: it is the only writer of that field, and
+`rebuild_skill_confidence_cache` needed the same protection. A `Superseded`
+record returns early. Truth (outcome row + claim) still lands; only the
+materialization the frozen revision no longer serves anything from is skipped.
+
+### F6 — manifest membership compares the revision (P2)
+`manifest_entry_names_skill(wire_form, skill_id, version)`. An entry with an
+EMPTY version still resolves — it names no revision to disagree with, the same
+absent-fact line the absent-manifest branch already draws — but a populated one
+must match exactly.
+
+### F7 — prior seeding reads both halves (P2)
+Two limbs, both real:
+1. `governance` is a POLICY axis carried on the scan row, and the ingest door
+   validates only the provider text, so `clean` + `prohibited` is a storable
+   receipt that was seeding Beta(3,1). `scan_verdict_cleared_the_bytes` now
+   refuses it. `riskLevel`/`completeness` are deliberately NOT read: they are
+   scanner-signal axes the scanner already summarized into `verdict`, and
+   re-judging them would be this module second-guessing the provider. Governance
+   is the one axis on the row that is not the scanner's opinion.
+2. `VettedImport` is the **vetted-HUB** import (blueprint §5: "hub trust tier —
+   scan-verdict + hub provenance rows"). Scan verdicts hang off the
+   content-global anchor, so a clean verdict alone says a scanner looked at some
+   bytes; the active `skill.hub_provenance` alias naming the same
+   `contentHash` is what says a hub carried them HERE. Both are now required.
+
+   The TIER byte itself is still unreachable and this lane did not invent a path
+   to it: `SkillHubRecord` has encode/decode only — no storage door, no
+   entity-type byte, no getter — so resolving a tier from a `hubRef.hubId` would
+   mean decoding an entity that no engine door ever writes. The provenance ROW is
+   the reachable half the blueprint names in the same parenthetical; whichever
+   ticket lands hub storage (ONE-1751) can key the prior finer without moving
+   this seam.
+
+   Cost: the fixture test now imports through the real `import_skill_from_hub`
+   door instead of `put_skill_record`, which is a stronger test of the same
+   claim.
+
+### Mutation verification
+Every fix was reverted in place and the naming test re-run; all nine mutations
+(F1 has two limbs) were KILLED:
+
+| mutation | test that died |
+|---|---|
+| drop the persisted-store gate | `a_forged_judgment_writes_no_reserved_claim` |
+| drop the loss-path receipt grounding | `a_judgment_routed_against_an_earlier_revision_no_longer_grounds` |
+| `tally.posterior(base)` → `(prior)` | `a_synced_posterior_is_the_base_a_local_loss_folds_onto` |
+| supersede only `heads.first()` | `every_active_head_is_superseded_not_just_the_first` |
+| drop `at.max(head_start)` | `supersession_clamps_to_the_prior_rows_event_time` |
+| drop the `Superseded` early return | `a_late_outcome_on_a_frozen_revision_keeps_its_outcome_and_claim` |
+| drop the manifest version compare | `a_win_receipt_must_name_the_revision_it_credits` |
+| drop the governance guard | `a_clean_scan_on_governance_prohibited_bytes_clears_nothing` |
+| drop the hub-provenance requirement | `a_clean_scan_without_a_hub_alias_is_still_an_unvetted_import` |
+
+### Gates (tip `fe7c187`)
+- `rustfmt --check` on all three packet files — clean.
+- `cargo clippy -p oneiron --all-features --all-targets` — **zero diagnostics on
+  every packet file**. The three pre-existing main defects flagged above still
+  reproduce (`identity_topology/tests.rs:4203` redundant-clone is still the hard
+  clippy error; `surface_event/tests.rs` and `campaign_claim_gate_oracle.rs` warn).
+  A `cargo fmt -p oneiron` run touched `surface_event/tests.rs` and was reverted:
+  reformatting a file this lane does not own is a packet violation for a
+  whitespace fix, exactly as recorded in the first pass.
+- `cargo test -p oneiron --all-features --lib skill` — **119 passed** (was 108;
+  +11 verdict-fix tests, one renamed).
+- `cargo test -p oneiron --all-features --test skills_epic_oracle` — 12 passed,
+  4 ignored (ONE-1739's), no arm edited.
+- `cargo test -p oneiron --all-features --lib` — **3473 passed, 0 failed, 17
+  ignored**. The `attempt_queue` callsite-registration flake documented above did
+  not fire on this run.
+
+### Deltas a reviewer should look at first
+- One new `vault_meta` keyspace (`skill_reliability:imported_base:v1:`), schema
+  version 1, node-local by design. It is the price of preserving synced history
+  under a claim body the oracle pins to two keys.
+- `OutcomeTally::total` deleted — `attributed_outcomes` replaced its only two
+  call sites.
+- `provenance_trust_class` now takes the skill's `EntityId` (it must read
+  per-skill provenance rows, not just the record).
