@@ -96,6 +96,12 @@ mod lease;
 mod mcp_gateway;
 mod memory;
 mod openapi;
+// ONE-1437: in-process local reactive read contract. It has no HTTP surface by
+// design (the client-framework binding, ONE-1925, and the cloud carrier,
+// ONE-1495, are its consumers), so the non-test build sees a contract with no
+// caller — same posture as `protocol::close_codes`.
+#[allow(dead_code)]
+mod reactive;
 mod resume;
 mod run_tree;
 mod search;
@@ -114,6 +120,7 @@ pub(crate) use self::lease::*;
 pub(crate) use self::mcp_gateway::*;
 pub(crate) use self::memory::*;
 pub(crate) use self::openapi::*;
+pub(crate) use self::reactive::*;
 pub(crate) use self::resume::*;
 pub(crate) use self::run_tree::*;
 pub(crate) use self::search::*;

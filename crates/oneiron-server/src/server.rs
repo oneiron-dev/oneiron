@@ -199,6 +199,12 @@ impl SyncServer {
             SERVER_USER_ID,
         ));
         reassert_manager.attach_to_vault();
+        // Detached on purpose: the relay ends by itself when the manager (and
+        // with it the outbound sink holding the sender) drops with this server.
+        drop(spawn_local_change_producer(
+            &reassert_manager,
+            &broadcast_tx,
+        ));
 
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
@@ -902,6 +908,61 @@ impl SyncServer {
             .map_err(|e| oneiron::Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;
         Ok(Some(delta))
     }
+}
+
+/// Bridges the engine's Observer-A local-update path into `broadcast_tx`.
+///
+/// Until now only *relayed* writes produced a change notice: a client's update
+/// was re-broadcast by the WebSocket handler, but a write this process made
+/// itself — an HTTP mutation mirrored into a window, a reassertion drain, a
+/// scrub — reached the broadcast channel only where some call site remembered
+/// to publish it. `WindowManager` already funnels every persisted local window
+/// commit through one shared `OutboundSink` (bridge.rs Observer A), so the
+/// server attaches its own receiver there and re-publishes each update as the
+/// existing WindowSync `UPDATE` frame with `conn_id = 0`, the local/bridge
+/// sender sentinel. Local writes then look exactly like relayed ones to anyone
+/// reading the channel, which is what makes an in-process reactive local read
+/// (ONE-1437, `api::reactive`) possible without a second notification path.
+///
+/// The frames are CRDT updates, so the handful of call sites that also publish
+/// their own coarse delta stay correct: a client importing the same update
+/// twice converges to the same state.
+///
+/// Returns `None` outside a Tokio runtime — synchronous unit-test construction.
+/// Nothing is attached in that case, so Observer A keeps its durable
+/// `SyncQueue` fallback and no unread sender can accumulate updates.
+fn spawn_local_change_producer(
+    reassert_manager: &Arc<WindowManager>,
+    broadcast_tx: &broadcast::Sender<BroadcastPayload>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let runtime = tokio::runtime::Handle::try_current().ok()?;
+    let (updates_tx, mut updates_rx) = tokio::sync::mpsc::unbounded_channel();
+    reassert_manager.outbound().attach(updates_tx);
+
+    let broadcast_tx = broadcast_tx.clone();
+    Some(runtime.spawn(async move {
+        while let Some(update) = updates_rx.recv().await {
+            let window_key = update.window_key;
+            match crate::protocol::encode_window_sync(
+                &window_key,
+                crate::protocol::window_sub_tags::UPDATE,
+                &update.update_bytes,
+            )
+            .into_result()
+            {
+                Ok(msg) => {
+                    let _ = crate::broadcast::broadcast(&broadcast_tx, 0, msg);
+                }
+                Err(err) => {
+                    tracing::error!(
+                        window = %window_key,
+                        error = crate::protocol::transport_err_msg(err),
+                        "local-change producer failed to encode window update"
+                    );
+                }
+            }
+        }
+    }))
 }
 
 fn mcp_registry_hash_key(config: &SyncServerConfig) -> [u8; 32] {
