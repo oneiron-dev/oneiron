@@ -94,6 +94,7 @@ pub mod session_lifecycle;
 pub(crate) mod session_overlay;
 pub mod settings;
 pub mod skill;
+pub mod skill_attribution;
 pub mod skill_hub;
 pub mod speculative;
 pub mod store;
@@ -767,6 +768,15 @@ pub use crate::skill::{
     SKILL_TREE_PATH_MAX_BYTES, SKILL_VERSION_MAX_BYTES, SkillContentHash, SkillDependency,
     SkillLifecycle, SkillRecord, canonical_skill_tree_hash, cross_check_declared_content_hash,
     decode_skill_record, encode_skill_record,
+};
+pub use crate::skill_attribution::{
+    ATTRIBUTION_CALL_PURPOSE_NAME, AttemptOutcome, AttributionAuditReport, AttributionJudge,
+    AttributionJudgment, AttributionVerdict, AuditFixture, OutcomeEvidence, RuleAttributionJudge,
+    SKILL_ATTRIBUTION_SCHEMA_VERSION, attribution_audit_reports, attribution_call_purpose,
+    attribution_judgments, held_out_audit_fixtures, pending_edit_proposals,
+    read_attribution_cursor, record_attribution_evidence, run_attribution_audit,
+    run_attribution_audit_with_judge, run_attribution_projector,
+    run_attribution_projector_with_judge,
 };
 pub use crate::skill_hub::{
     GitSkillHubAdapter, HUB_PIN_KEYS, HUB_REF_KEYS, HttpIndexSkillHubAdapter,

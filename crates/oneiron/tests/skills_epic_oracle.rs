@@ -22,14 +22,16 @@
 
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
-    AttemptQueue, AttemptRecord, ClaimApprovalStatus, ClaimAttempt, ClaimBody,
-    ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject, CompleteAttempt,
-    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, EntityId, HubDependencyResolution, HubFile,
-    HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy, LocalDirSkillHubAdapter,
-    ManifestEntry, ManifestKind, ReceiptKind, ReceiptRecord, Result, ScanCompleteness,
-    ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillContentHash, SkillGovernance,
-    SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
-    append_pack_manifest_fields, canonical_skill_tree_hash, cross_check_declared_content_hash,
+    AttemptOutcome, AttemptQueue, AttemptRecord, AttributionVerdict, ClaimApprovalStatus,
+    ClaimAttempt, ClaimBody, ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject,
+    CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, EntityId,
+    HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
+    LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptKind,
+    ReceiptRecord, Result, ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface,
+    SkillContentHash, SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange,
+    Vault, VaultConfig, append_pack_manifest_fields, canonical_skill_tree_hash,
+    cross_check_declared_content_hash, pending_edit_proposals, record_attribution_evidence,
+    run_attribution_projector,
 };
 use rmpv::Value;
 
@@ -864,12 +866,26 @@ fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
     );
 }
 
-/// Contract (ARCH-0053 §4, ONE-1737): the attribution projector classifies
-/// BEFORE writing. Skill defect → claim on the SKILL entity (zero on the
-/// actor). Execution lapse → `actor.failure_mode` on the ACTOR (zero new
-/// rows on the skill — a lapse contributes nothing to the skill, §5).
+/// Contract (ARCH-0053 §4, ONE-1737 + ONE-1739): the attribution projector
+/// classifies BEFORE writing. Skill defect → claim on the SKILL entity (zero
+/// on the actor). Execution lapse → `actor.failure_mode` on the ACTOR (zero
+/// new rows on the skill — a lapse contributes nothing to the skill, §5).
+///
+/// RE-POINTED TO ONE-1739 (ONE-1737, deviation-board item). Every assert here
+/// counts CLAIM ROWS, and the claim-write doors plus the `actor.*` predicate
+/// reservation belong to ONE-1739 — the SK stack deliberately splits routing
+/// (1737) from claiming (1738 reliability / 1739 actor rows), so 1737 cannot
+/// satisfy these counts without writing claims its layer must not write. The
+/// counts are untouched, per the arming law.
+///
+/// ONE-1737 landed the routing half and it is green under
+/// `skill_attribution::tests::defect_routes_to_the_skill_and_lapse_routes_to_the_actor`:
+/// the same two fixtures route to `SkillDefect` on the SKILL and
+/// `ExecutionLapse` on the ACTOR, with each verdict citing its receipt and
+/// neither contributing to the other's subject. ONE-1739 replaces the ARM seam
+/// below with the claim writes those judgments drive.
 #[test]
-#[ignore = "armed by ONE-1737: ARCH-0035 attribution projector routing"]
+#[ignore = "armed by ONE-1739: actor.* + skill claim writes over ONE-1737's routed judgments"]
 fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -878,14 +894,28 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     put_actor(&vault, &actor_entity)?;
     let skill_claims_before = total_claims(&vault, &skill_entity)?;
 
-    // ARM(ONE-1737): run the projector over (a) a failed-attempt receipt
-    // judged SKILL DEFECT, then (b) a failed-attempt receipt judged
-    // EXECUTION LAPSE, both with this skill in the manifest and this
-    // actor executing.
-    let projected = false;
+    // ONE-1737's half, live: route (a) a failed-attempt receipt judged SKILL
+    // DEFECT and (b) one judged EXECUTION LAPSE, both with this skill in the
+    // manifest and this actor executing.
+    let failed = |receipt: &str, followed_skill: bool| {
+        OutcomeEvidence::new(receipt, actor_entity, AttemptOutcome::Failed, 30)
+            .with_skill(skill_entity)
+            .with_routing_facts(followed_skill, true)
+    };
+    record_attribution_evidence(&vault, &failed("receipt:oracle.defect", true))?;
+    record_attribution_evidence(&vault, &failed("receipt:oracle.lapse", false))?;
+    let judgments = run_attribution_projector(&vault, 0)?;
+    assert_eq!(judgments.len(), 2, "both failures routed");
+    assert_eq!(judgments[0].verdict, AttributionVerdict::SkillDefect);
+    assert_eq!(judgments[0].subject, skill_entity);
+    assert_eq!(judgments[1].verdict, AttributionVerdict::ExecutionLapse);
+    assert_eq!(judgments[1].subject, actor_entity);
+
+    // ARM(ONE-1739): drive the claim writes off those routed judgments.
+    let claims_written = false;
     assert!(
-        projected,
-        "armed by ONE-1737: attribution projector not built yet"
+        claims_written,
+        "armed by ONE-1739: actor.*/skill claim write doors not built yet"
     );
 
     // (a) defect landed on the skill, not the actor.
@@ -920,7 +950,6 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
 /// content) is NOT a claim at all — it becomes a skill EDIT PROPOSAL.
 /// Zero claims land on either entity.
 #[test]
-#[ignore = "armed by ONE-1737: discovery routing to SKILL-OPT edit proposals"]
 fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -929,15 +958,29 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     put_actor(&vault, &actor_entity)?;
     let skill_claims_before = total_claims(&vault, &skill_entity)?;
 
-    // ARM(ONE-1737): run the projector over an outcome judged DISCOVERY
-    // (the skill was missing content the attempt needed); capture how many
-    // edit proposals it minted.
-    let projected = false;
-    let edit_proposals_minted: usize = 0;
+    // ARMED (ONE-1737): the projector runs over an outcome the routing table
+    // judges DISCOVERY — the attempt failed, the actor DID follow the skill,
+    // and the skill did NOT cover the failing step (missing content).
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(
+            "receipt:oracle.discovery",
+            actor_entity,
+            AttemptOutcome::Failed,
+            20,
+        )
+        .with_skill(skill_entity)
+        .with_routing_facts(true, false),
+    )?;
+    let judgments = run_attribution_projector(&vault, 0)?;
+    let projected = judgments.len() == 1
+        && judgments[0].verdict == AttributionVerdict::Discovery
+        && judgments[0].subject == skill_entity;
+    let edit_proposals_minted: usize = pending_edit_proposals(&vault)?.len();
 
     assert!(
         projected,
-        "armed by ONE-1737: discovery routing not built yet"
+        "the outcome routed to exactly one DISCOVERY verdict"
     );
     assert_eq!(
         total_claims(&vault, &skill_entity)?,
