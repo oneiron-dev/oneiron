@@ -129,6 +129,16 @@ deletion bias rather than left by default.
 
 Net lane delta from this pass: **+0 / −1** (the dead binding). Cheap gate below.
 
+### Cheap gate, tail of pass
+
+- `cargo check -p oneiron -j6` — clean; the one warning is the pre-existing,
+  untemplated `batch.rs` dead-code marker (`facet_of_endpoints_provably_off_table`),
+  present on the base template too (its warning count = 1 there, same file).
+- `cargo clippy -p oneiron -j6` — clean, same baseline warning only.
+- `cargo test -p oneiron --lib consent::` — **40 passed, 0 failed**.
+
+RELAY-ONE-1606-simplify-seg0 — committed as `79d7764`.
+
 ## Next-step INTENT
 
 1. **Rebase on post-1728 `gate.rs`** before any push (CLAIMS §gate.rs seam) and
