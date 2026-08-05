@@ -199,6 +199,41 @@ mod seam {
         /// the room lands TURN + MESSAGE + SUMMARY — the three transcript
         /// entities the master-close oracle counts.
         pub(super) fn witness_turn(&self, text: &str) -> Result<(EntityId, EntityId, EntityId)> {
+            let (turn, message, summary) = self.witness_turn_shape(text, Some(text))?;
+            // With `Some(summary)` the room always materializes a SUMMARY,
+            // EXCEPT post-flip, where the base program has none — the
+            // fallback below is the flip oracle's, not this arm's.
+            Ok((turn, message, summary.unwrap_or(turn)))
+        }
+
+        /// ONE-1728: the same witness with the SUMMARY suppressed.
+        ///
+        /// The staged transcript shape is a parameter, not a constant: an
+        /// oracle that asserts "this room created zero background jobs" wants
+        /// the SMALLEST program that still exercises the session write path,
+        /// and a summary is one more `Text` op whose absence sharpens rather
+        /// than weakens the claim. Returns `(turn, message)`.
+        pub(super) fn witness_turn_without_summary(
+            &self,
+            text: &str,
+        ) -> Result<(EntityId, EntityId)> {
+            let (turn, message, summary) = self.witness_turn_shape(text, None)?;
+            assert!(
+                summary.is_none(),
+                "a witness with summary=None must materialize no SUMMARY"
+            );
+            Ok((turn, message))
+        }
+
+        /// The one witness body both shapes share: `summary` is threaded
+        /// straight through to `witness_into_session`, and the SUMMARY id is
+        /// reported as `Option` rather than collapsed into the turn id, so a
+        /// caller that asked for no summary can PROVE none was made.
+        fn witness_turn_shape(
+            &self,
+            text: &str,
+            summary: Option<&str>,
+        ) -> Result<(EntityId, EntityId, Option<EntityId>)> {
             // The bound actor is a BASE entity by construction — the witness
             // door proves the actor exists in the store before it writes. It
             // is therefore seeded once at `enter`, BEFORE any oracle takes its
@@ -229,7 +264,7 @@ mod seam {
                         }],
                         occurred_at: 1,
                     },
-                    Some(text),
+                    summary,
                 )
                 .unwrap_or_else(|error| panic!("oracle session witness failed: {error:?}"));
             let turn_id = EntityId::from_hex(
@@ -240,7 +275,9 @@ mod seam {
             )?;
             // The SUMMARY is the room's only `DerivedFrom` source on this
             // turn, so the edge index names it exactly — no guessing from
-            // put order.
+            // put order. SUMMARY materialization is SESSION-ONLY (blueprint
+            // §facade), so a post-flip witness legitimately has none; `None`
+            // states that rather than aliasing the turn id.
             let view = self.session.read_view()?;
             let rtxn = self.vault.store.env.read_txn()?;
             let mut summary_id = None;
@@ -254,12 +291,83 @@ mod seam {
             }
             drop(rtxn);
             drop(view);
-            // SUMMARY materialization is SESSION-ONLY (blueprint §facade): a
-            // post-flip witness runs the base program, which has no SUMMARY
-            // put. Report the turn id in that slot rather than failing — the
-            // flip oracle asks "where did this land", not "was a summary
-            // made". Off-record callers still get a real, distinct summary id.
-            Ok((turn_id, message_id, summary_id.unwrap_or(turn_id)))
+            Ok((turn_id, message_id, summary_id))
+        }
+
+        /// ONE-1728: stage one legal CLAIM into the session overlay.
+        ///
+        /// CLAIM is the only entity class the BASE apply marks pending-embed
+        /// (`batch.rs`' op-loop CLAIM arm calls `mark_pending_embedding`), so
+        /// it is the exact op the K6 routing rule has to skip. A witness of
+        /// TURN/MESSAGE alone would prove nothing here: those types never
+        /// reach the marker branch on either path, so the assertion would
+        /// hold even if the session path DID enqueue.
+        ///
+        /// Staged through the same `apply_ops_session` entry the witness
+        /// uses, with a `TurnOwnedArtifact` role — the claim is turn-scoped
+        /// content, not one of the five closed transcript roles.
+        pub(super) fn stage_session_claim(&self, subject: &EntityId) -> Result<EntityId> {
+            use crate::claim::{
+                ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+            };
+
+            let claim_id = EntityId::now();
+            let mut body = ClaimBody::new(
+                "dream.symbol",
+                ClaimSubject::Entity(*subject),
+                rmpv::Value::from("a blue door"),
+                0.9,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            );
+            body.source = Some(ClaimSource::Inferred);
+            let data = crate::claim::encode_claim_body(&body)?;
+
+            let route = self.session.write_route()?;
+            let overlay = self.session.overlay();
+            let occurred = TimeRange { start: 1, end: 1 };
+            let entry = JournalEntry {
+                scope: JournalScope::new(EntityId::now(), *subject),
+                role: JournalRole::TurnOwnedArtifact,
+                learned_at: 1,
+                occurred,
+                op: BatchOp::Put {
+                    id: claim_id,
+                    entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                    occurred,
+                    learned_at: 1,
+                    data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                },
+            };
+            let segment = self.vault.with_write_txn(|wtxn| {
+                let segment = overlay.install_txn_segment()?;
+                crate::batch::apply_ops_session(
+                    &self.session.read_view()?,
+                    &route,
+                    &self.vault.config,
+                    &self.vault.analyzer,
+                    wtxn,
+                    vec![entry],
+                )?;
+                Ok(segment)
+            })?;
+            segment.commit()?;
+            Ok(claim_id)
+        }
+
+        /// ONE-1728: does the room's composed view (overlay ∪ base) hold an
+        /// entity body for `id`? The landing probe every staging helper needs
+        /// — a stage that silently wrote nothing must not read as success.
+        pub(super) fn session_sees_entity(&self, id: &EntityId) -> Result<bool> {
+            let view = self.session.read_view()?;
+            let rtxn = self.vault.store.env.read_txn()?;
+            let seen = view.entities.get(&rtxn, id.as_bytes())?.is_some();
+            drop(rtxn);
+            drop(view);
+            Ok(seen)
         }
 
         /// ONE-1728: session retrieval through the composed handle (records
@@ -764,6 +872,60 @@ mod seam {
     pub(super) fn crash_and_reopen(dir: &std::path::Path, vault: Vault) -> Result<Vault> {
         drop(vault);
         Vault::open(dir, VaultConfig::default())
+    }
+
+    /// ONE-1728 (K6): the three background-job database row counts —
+    /// (`attempt_records`, `attempt_ready`, `attempt_dedupe`).
+    ///
+    /// K6's rule is "session flows create ZERO background-job rows", which is
+    /// a claim about all three tables, not just the record table: a job whose
+    /// record row were suppressed but whose ready/dedupe rows landed would
+    /// still be a room leaking into the background worker's view.
+    pub(super) fn attempt_row_counts(vault: &Vault) -> Result<(u64, u64, u64)> {
+        let rtxn = vault.store.env.read_txn()?;
+        Ok((
+            vault.store.attempt_records.len(&rtxn)?,
+            vault.store.attempt_ready.len(&rtxn)?,
+            vault.store.attempt_dedupe.len(&rtxn)?,
+        ))
+    }
+
+    /// ONE-1728 (K6): every base job row whose key or value mentions one of
+    /// `ids` — the reference half of the rule.
+    ///
+    /// Counting table LENGTHS alone would pass a vault that already held
+    /// unrelated jobs; this asks the sharper question the done-means pins,
+    /// "does any job row REFERENCE overlay content", across the embed queue
+    /// (`sync_queue`), the `pe:` marker keyspace (`sync_state`), and all
+    /// three attempt tables. Ids are matched as raw 16-byte needles, which is
+    /// how every one of these keyspaces embeds an entity id.
+    pub(super) fn job_rows_referencing(vault: &Vault, ids: &[EntityId]) -> Result<usize> {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut hits = 0_usize;
+        let mentions = |bytes: &[u8]| {
+            ids.iter()
+                .any(|id| bytes.windows(16).any(|window| window == id.as_bytes()))
+        };
+        for row in vault.store.sync_state.iter(&rtxn)? {
+            let (key, value) = row?;
+            if mentions(key.as_bytes()) || mentions(&value) {
+                hits += 1;
+            }
+        }
+        for db in [
+            &vault.store.sync_queue,
+            &vault.store.attempt_records,
+            &vault.store.attempt_ready,
+            &vault.store.attempt_dedupe,
+        ] {
+            for row in db.iter(&rtxn)? {
+                let (key, value) = row?;
+                if mentions(&key) || mentions(&value) {
+                    hits += 1;
+                }
+            }
+        }
+        Ok(hits)
     }
 
     /// ONE-1728: submit a BASE batch containing one op referencing
@@ -1389,32 +1551,71 @@ fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
 /// D3 embedding rule: session flows never enqueue `pe:` markers or embed
 /// job rows (base rows carrying raw text); generalized — no background
 /// attempt rows reference overlay content.
+///
+/// The room stages a CLAIM, because CLAIM is the ONLY entity class the base
+/// apply marks pending-embed (`batch.rs` op-loop CLAIM arm). A TURN/MESSAGE
+/// witness alone would satisfy every assertion below even if the session path
+/// enqueued freely, since neither type ever reaches the marker branch on
+/// EITHER path — the test would be green for the wrong reason.
 #[test]
 fn no_pe_markers_or_embed_job_rows_for_session_content() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let attempts_before = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault.store.attempt_records.len(&rtxn)?
-    };
     let mut session = seam::SessionVault::enter(&vault, "oracle-embed").expect("enter session");
     session.bind_actor()?;
-    let (_turn, _msg, _summary) = session.witness_turn("embed me inline only")?;
+    let attempts_before = seam::attempt_row_counts(&vault)?;
+    // No summary: the smallest witness program that still drives the session
+    // write path, so nothing about this assertion rides on a second Text op.
+    let (turn, message) = session.witness_turn_without_summary("embed me inline only")?;
+    // The op the rule is actually about. Staged against the turn as subject
+    // so the claim is genuine turn-scoped room content.
+    let claim = session.stage_session_claim(&turn)?;
+    // The claim REALLY landed in the room and nowhere else. Without this, a
+    // staging call that silently wrote nothing would make every assertion
+    // below trivially true — the failure mode this whole oracle exists to
+    // catch, inverted.
+    assert!(
+        session.session_sees_entity(&claim)?,
+        "the staged CLAIM is readable through the room's composed view"
+    );
+    assert_eq!(
+        vault.get(&claim)?,
+        None,
+        "and base sees nothing of it — the claim is room content, so K6's \
+         'zero jobs' claim below is about a row that actually exists"
+    );
+
     let rtxn = vault.store.env.read_txn()?;
     let mut pe_rows = 0_usize;
     for row in vault.store.sync_state.prefix_iter(&rtxn, "pe:")? {
         row?;
         pe_rows += 1;
     }
+    drop(rtxn);
     assert_eq!(
         pe_rows, 0,
-        "no pe: pending-embedding marker for session content"
+        "no pe: pending-embedding marker for session content, INCLUDING the \
+         staged CLAIM — the one op class base would have marked"
     );
+
+    // All three background-job tables, not just `attempt_records`: a job whose
+    // record row were suppressed while its ready/dedupe rows landed would
+    // still be the room reaching the background worker.
     assert_eq!(
-        vault.store.attempt_records.len(&rtxn)?,
+        seam::attempt_row_counts(&vault)?,
         attempts_before,
-        "no background attempt row may reference overlay content"
+        "session flows create zero rows in attempt_records / attempt_ready / \
+         attempt_dedupe"
     );
-    drop(rtxn);
+
+    // The reference half of the done-means: table counts alone would also pass
+    // on a vault that merely held no jobs. This asks whether ANY job row —
+    // embed queue, pe: marker, or attempt table — names one of the room's ids.
+    assert_eq!(
+        seam::job_rows_referencing(&vault, &[turn, message, claim])?,
+        0,
+        "no background job row may reference an overlay id"
+    );
+
     session.close()?;
     Ok(())
 }
