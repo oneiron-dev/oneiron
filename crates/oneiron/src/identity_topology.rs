@@ -32,10 +32,20 @@
 //! approved; `Rejected` is the consent no-op. The propose lane is an
 //! explicit caller choice, never an engine-imposed gate. Undo is a
 //! counter-event over the ledger, never a rewrite (r1); claim subjects are
-//! never eagerly rewritten (r6) — read-time canonicalization through the
-//! redirect projection is ONE-1744. Reassignment-map application and FACET
-//! minting arm in ONE-1745; `entity.distinct_from` claim storage arms in
-//! ONE-1746.
+//! never eagerly rewritten (r6) — read-time canonicalization runs through
+//! the redirect projection in [`crate::identity_redirect`] (ONE-1744).
+//! Reassignment-map application and FACET minting arm in ONE-1745;
+//! `entity.distinct_from` claim storage arms in ONE-1746.
+//!
+//! Zero-head split (r2 "gone", ONE-1744): `split(entity, heads: [])` is a
+//! legal deliberate retire-without-successor. It shells the original like
+//! any split but writes NO `split_into` edge, so it is the one topology arm
+//! the canonical edges structurally cannot witness — the type-76 ledger is
+//! its sole witness. Everything that derives shell truth from edges
+//! therefore consults the ledger for this arm too:
+//! [`zero_head_split_shells_in_txn`] is that witness, and both the
+//! lifecycle read and the redirect projection route through it. D11's
+//! "edges are canonical" holds unchanged for every edge-ful op.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -368,10 +378,12 @@ pub struct MergeOp {
 pub struct SplitOp {
     /// The conflated original; becomes a `Split` redirect-to-set shell.
     pub entity: EntityId,
-    /// Head entities the original resolves to. MS-01 requires ≥1 head —
-    /// the r2 zero-head ("gone") form has no readable witness until the
-    /// redirect projection lands (ONE-1744 lifts
-    /// [`IdentityTopologyRejection::EmptyHeads`]).
+    /// Head entities the original resolves to. EMPTY is legal (ONE-1744
+    /// lifted the MS-01 `EmptyHeads` guard): the r2 zero-head ("gone") form
+    /// is a deliberate retire-without-successor, shelling the original with
+    /// no successor to redirect to. It writes no `split_into` edge, so the
+    /// type-76 ledger is its only witness, and it resolves to the EMPTY set
+    /// through [`Vault::resolve_entity`].
     pub heads: Vec<EntityId>,
     /// Evidence-guided item map; recorded canonically on the event,
     /// application arms in ONE-1745.
@@ -549,10 +561,6 @@ pub struct ProposalScope {
 pub enum IdentityTopologyRejection {
     /// merge names zero sources.
     EmptySources,
-    /// split names zero heads. MS-01 only: the r2 zero-head ("gone") form
-    /// arms with the redirect projection (ONE-1744), the only surface able
-    /// to express an empty resolution set.
-    EmptyHeads,
     /// facet names zero facet specs.
     EmptyFacets,
     /// An op names one entity on both sides (survivor among sources, the
@@ -713,9 +721,11 @@ pub fn evaluate_transition(
             Ok(transitions)
         }
         IdentityTopologyOp::Split(split) => {
-            if split.heads.is_empty() {
-                return Err(IdentityTopologyRejection::EmptyHeads);
-            }
+            // ONE-1744 lifted the zero-head guard: `heads: []` is the r2
+            // "gone" form — a deliberate retire-without-successor. It shells
+            // the original like any split, writes NO `split_into` edge (there
+            // is no head to point at), and resolves to the empty set through
+            // the redirect projection.
             let mut seen = BTreeSet::new();
             for head in &split.heads {
                 if !seen.insert(*head) {
@@ -2089,7 +2099,82 @@ fn desired_shell_edges_for_store_entity_in_txn(
     })
 }
 
-fn identity_topology_shell_peers_for_store_in_txn(
+/// Entities the ledger currently holds in a ZERO-HEAD split shell — the one
+/// topology arm that leaves no `split_into` edge, so the type-76 log is its
+/// only witness (ONE-1744). Everything that would otherwise read shell truth
+/// from the edges alone consults this for that arm: the lifecycle read and
+/// the redirect projection both do.
+///
+/// Derived from the EFFECTIVE fold, so an undone or superseded zero-head
+/// split correctly drops out of the set.
+/// Conservative "a zero-head split has been recorded in this vault" marker.
+///
+/// The witness fold below is O(event family), and the apply door needs the
+/// answer for every participant of every op — which would make a run of N
+/// topology ops O(N²). Zero-head splits are RARE, so this marker buys the
+/// common case back: absent means none has ever been recorded, and the fold
+/// is skipped entirely.
+///
+/// It is set, never cleared: an undone or evicted zero-head split leaves it
+/// standing. That direction is the safe one — a stale-SET marker costs one
+/// fold that returns the empty set, while a stale-CLEAR marker would hide a
+/// live shell. Correctness never depends on it, only cost.
+pub(crate) const IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY: &[u8] =
+    b"m:identity_topology_zero_head_seen";
+
+/// Records that a zero-head split exists, arming the witness fold.
+pub(crate) fn note_zero_head_split_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
+    if store
+        .vault_meta
+        .get(&*wtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    store
+        .vault_meta
+        .put(wtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY, &[1])?;
+    Ok(())
+}
+
+/// [`zero_head_split_shells_for_store_in_txn`] behind the marker: skips the
+/// fold outright on a vault that has never recorded a zero-head split.
+pub(crate) fn zero_head_split_shells_if_any_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    if store
+        .vault_meta
+        .get(rtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY)?
+        .is_none()
+    {
+        return Ok(BTreeSet::new());
+    }
+    zero_head_split_shells_for_store_in_txn(store, rtxn)
+}
+
+pub(crate) fn zero_head_split_shells_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let effective = fold_effective_identity_topology_events_for_store_in_txn(store, rtxn)?;
+    let fold = fold_identity_topology_log(&effective);
+    let mut shells = BTreeSet::new();
+    for (entity, event_id) in &fold.current_event {
+        if fold.states.get(entity) != Some(&EntityLifecycleState::Split) {
+            continue;
+        }
+        let record = identity_topology_event_for_store_in_txn(store, rtxn, event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        if matches!(&record.action, StoredIdentityOpAction::Split { heads, .. } if heads.is_empty())
+        {
+            shells.insert(*entity);
+        }
+    }
+    Ok(shells)
+}
+
+pub(crate) fn identity_topology_shell_peers_for_store_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     entity: &EntityId,
@@ -2110,7 +2195,10 @@ fn identity_topology_shell_peers_for_store_in_txn(
 /// Every entity the SURVIVING type-76 apply family names as a shell-edge
 /// source. This is the reconciler's touched set: the ids whose
 /// `merged_into` / `split_into` rows the current ledger can still speak for.
-fn surviving_shell_edge_sources_for_store_in_txn(
+/// It is also the redirect projection's rebuild candidate set (ONE-1744) —
+/// the same derivation, since an entity with no topology event has no
+/// redirect row either.
+pub(crate) fn shell_edge_sources_for_store_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<BTreeSet<EntityId>> {
@@ -2146,7 +2234,7 @@ fn reconcile_identity_topology_edges_for_store_in_txn(
 ) -> Result<()> {
     #[cfg(test)]
     test_hooks::note_full_reconciliation();
-    let touched = surviving_shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
+    let touched = shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
     reconcile_shell_edges_for_sources_in_txn(
         store,
         config,
@@ -2194,7 +2282,7 @@ pub(crate) fn reconcile_shell_edges_after_eviction_in_txn(
     if evicted_sources.is_empty() {
         return Ok(());
     }
-    let mut sources = surviving_shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
+    let mut sources = shell_edge_sources_for_store_in_txn(store, &*wtxn)?;
     sources.extend(evicted_sources.iter().copied());
     reconcile_shell_edges_for_sources_in_txn(
         store,
@@ -2212,7 +2300,7 @@ pub(crate) fn reconcile_shell_edges_after_eviction_in_txn(
 ///
 /// Callers own the derivation of `sources`, and the two derivations are NOT
 /// interchangeable. Append-only batches use the surviving-family set
-/// ([`surviving_shell_edge_sources_for_store_in_txn`]); an eviction batch
+/// ([`shell_edge_sources_for_store_in_txn`]); an eviction batch
 /// must use the union in
 /// [`reconcile_shell_edges_after_eviction_in_txn`], because a removed row is
 /// no longer enumerable AND its removal replays the whole fold.
@@ -2290,18 +2378,34 @@ fn reconcile_shell_edges_for_sources_in_txn(
             }
         }
     }
-    if ops.is_empty() {
-        return Ok(());
+    if !ops.is_empty() {
+        apply_ops(
+            store,
+            config,
+            analyzer,
+            wtxn,
+            ops,
+            text_index_trusted,
+            false,
+            true,
+        )?;
     }
-    apply_ops(
+    // ONE-1744 redirect maintenance runs for EVERY reconciled source, past
+    // the no-edge-ops case on purpose: a zero-head split moves no edge at
+    // all, so an empty op list is exactly the shape whose redirect row would
+    // otherwise never be written. This is the chokepoint BOTH reconcile
+    // paths share (sync ingest and ONE-1604-D1 post-eviction unwind), so
+    // hooking it covers both without duplicating the hook.
+    // The reconcile path pays the UNGATED fold: it is the sync-ingest door,
+    // so it must DISCOVER a replicated zero-head split (and arm the marker)
+    // on a vault that has never recorded one locally. It already folds for
+    // its own edge derivation, so this costs nothing extra.
+    let zero_head_shells = zero_head_split_shells_for_store_in_txn(store, &*wtxn)?;
+    crate::identity_redirect::maintain_redirect_projection_in_txn(
         store,
-        config,
-        analyzer,
         wtxn,
-        ops,
-        text_index_trusted,
-        false,
-        true,
+        sources,
+        &zero_head_shells,
     )
 }
 
@@ -2409,10 +2513,21 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
 }
 
 impl Vault {
+    /// Entities the ledger currently holds in a zero-head split shell — see
+    /// [`zero_head_split_shells_for_store_in_txn`].
+    pub(crate) fn zero_head_split_shells_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+    ) -> Result<BTreeSet<EntityId>> {
+        zero_head_split_shells_if_any_for_store_in_txn(&self.store, rtxn)
+    }
+
     /// Current lifecycle state of `id`, read from its canonical redirect
-    /// edges (D11: the edge is the sole state witness; the ledger fold and
-    /// the apply path keep them in lockstep). An id with no shell edge —
-    /// including one never written — is `Active`.
+    /// edges (D11: the edge is the state witness for every op that leaves
+    /// one; the ledger fold and the apply path keep them in lockstep). An id
+    /// with no shell edge is `Active` — EXCEPT the zero-head split, which
+    /// shells its entity while writing no edge at all, so the ledger is
+    /// consulted for exactly that arm (ONE-1744).
     pub fn entity_lifecycle_state(&self, id: &EntityId) -> Result<EntityLifecycleState> {
         let rtxn = self.store.env.read_txn()?;
         self.entity_lifecycle_state_in_txn(&rtxn, id)
@@ -2427,6 +2542,20 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
+    ) -> Result<EntityLifecycleState> {
+        self.entity_lifecycle_state_with_zero_head_shells_in_txn(rtxn, id, None)
+    }
+
+    /// [`Vault::entity_lifecycle_state_in_txn`] with a caller-supplied
+    /// zero-head-shell witness. A caller resolving several ids against one
+    /// txn folds the (rare, quota-bounded) event family ONCE and passes the
+    /// set here; `None` folds it on demand, and only when the edges leave
+    /// the question open.
+    pub(crate) fn entity_lifecycle_state_with_zero_head_shells_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        zero_head_shells: Option<&BTreeSet<EntityId>>,
     ) -> Result<EntityLifecycleState> {
         let merged = self.filtered_edge_peers(
             rtxn,
@@ -2445,7 +2574,22 @@ impl Vault {
             "identity topology",
         )?;
         match (merged.len(), split.is_empty()) {
-            (0, true) => Ok(EntityLifecycleState::Active),
+            // No shell edge: live, UNLESS the ledger holds a zero-head split
+            // over this id. Without this the retired entity would read back
+            // `Active` and the apply door would admit an op the fold then
+            // rejects `NotActive` — ledger and edge truth diverging, which is
+            // the wedge the reconciler exists to prevent.
+            (0, true) => {
+                let is_zero_head_shell = match zero_head_shells {
+                    Some(shells) => shells.contains(id),
+                    None => self.zero_head_split_shells_in_txn(rtxn)?.contains(id),
+                };
+                if is_zero_head_shell {
+                    Ok(EntityLifecycleState::Split)
+                } else {
+                    Ok(EntityLifecycleState::Active)
+                }
+            }
             (1, true) => Ok(EntityLifecycleState::Merged),
             (0, false) => Ok(EntityLifecycleState::Split),
             _ => Err(Error::CorruptedIndex("identity topology shell")),
@@ -2501,11 +2645,19 @@ impl Vault {
                 return Err(Error::IdentityTopologyRejected(rejection));
             }
         }
+        // Folded ONCE for the whole op: the zero-head-shell witness is the
+        // same for every participant, and folding per participant would pay
+        // the family scan N times.
+        let zero_head_shells = self.zero_head_split_shells_in_txn(&*wtxn)?;
         let mut states = BTreeMap::new();
         for participant in &participants {
             states.insert(
                 *participant,
-                self.entity_lifecycle_state_in_txn(&*wtxn, participant)?,
+                self.entity_lifecycle_state_with_zero_head_shells_in_txn(
+                    &*wtxn,
+                    participant,
+                    Some(&zero_head_shells),
+                )?,
             );
         }
         let transitions =
@@ -3420,6 +3572,29 @@ impl Vault {
             true,
         )?;
         if write.is_effective() {
+            // ONE-1744 redirect maintenance, AFTER the edges land: the
+            // projection derives each row from the post-op shell edges (plus
+            // the ledger for the zero-head arm), so running it before
+            // `apply_ops` would project the topology this event replaces.
+            // A parked event moves no topology and maintains nothing.
+            let touched: BTreeSet<EntityId> =
+                transitions.iter().map(|(entity, _)| *entity).collect();
+            // The zero-head witness comes from the ACTION, not a fold: this
+            // door already knows whether the op it just wrote is a zero-head
+            // split, and folding the event family here would make a run of N
+            // topology ops O(N²).
+            let zero_head_shells: BTreeSet<EntityId> = match &record.action {
+                StoredIdentityOpAction::Split { entity, heads, .. } if heads.is_empty() => {
+                    BTreeSet::from([*entity])
+                }
+                _ => BTreeSet::new(),
+            };
+            crate::identity_redirect::maintain_redirect_projection_in_txn(
+                &self.store,
+                wtxn,
+                &touched,
+                &zero_head_shells,
+            )?;
             Ok(IdentityOpOutcome::Applied {
                 event: event_id,
                 transitions,
