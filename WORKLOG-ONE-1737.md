@@ -84,6 +84,22 @@ Final tree: **3442 tests run, 3442 passed, 98 skipped.** Suite grew by 26 (13 at
 - [x] Receipt plumbing extended not forked: no new receipt kind, no new store; ES oracle green.
 - [x] Gates green.
 
+## K3 simplify pass (commit `972bafd`, `SIMPLIFY: ONE-1737`)
+
+Deletion-biased polish over the two impl commits; no restructuring, no API change,
+no assertion/fixture edits. Full-tree read of `skill_attribution.rs` (892 lines),
+both impl diffs on `attempt_queue.rs`/`receipt.rs`, `skill_attribution/tests.rs`,
+and the oracle diff. Findings: the impl was already house-shaped — every candidate
+deletion was deliberate (audit-sequence reuse on `next_evidence_sequence_in_txn`,
+blanket validate-on-decode posture via `validate_attempt_manifest`, defensive
+`(sequence, at)` audit key, `let _ = context` mirroring `expect_map`'s idle-param,
+receipt.rs module-level doors matching the `eiri_memory_board_state_ref` precedent).
+**One polish landed:** `decode_u64`'s explicit `let _ = context;` suppression folded
+into an idiomatic `_context` parameter rename (+1 / −2 lines). Gates after the edit:
+`cargo fmt --check` ✓ · `cargo clippy -p oneiron --all-targets --all-features --
+-D warnings` ✓ · `cargo test -p oneiron --all-features --lib` → **3177 passed, 0
+failed, 24 ignored** ✓. Porcelain clean apart from pre-existing `WORKLOG-LANE-BOOT.md`.
+
 ## Notes for the stack
 
 - **1738** reads `attribution_judgments(vault)` and folds the `SkillDefect` rows into the Beta
