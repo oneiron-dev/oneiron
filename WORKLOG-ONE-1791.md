@@ -259,3 +259,35 @@ No `Cargo.toml` / `Cargo.lock` edit. No `registry.rs`, `edge.rs`, `gate.rs`,
 `outbound.rs`, `serialize.rs`, `temporal.rs`, `store.rs`, `context_pack.rs`, or
 `calendar/claims.rs` edit. No new entity byte, `EdgeKind`, claim predicate, or
 connector manifest. No push, no merge.
+
+## Simplify pass (K3, post-implementation)
+
+Three deletions, no behavior change, no test/fixture edits, no public wire or
+engine API change:
+
+1. **`crates/oneiron-server/src/mcp.rs`** — deleted the duplicate
+   `McpCalendarInviteMethod` enum. The invite arm now carries
+   `oneiron::CalendarInviteSurfaceMethod` directly, exactly as the blueprint
+   skeleton pinned; the serde wire shape (`REQUEST|CANCEL`, UPPERCASE) is
+   identical, so the closed-schema tests are untouched.
+2. **`crates/oneiron-server/src/api/mcp_gateway.rs`** — the invite arm passes
+   `method` straight through (the enum-to-enum conversion match died with
+   deletion 1); collapsed the `let structured` / `let mut structured` shadow
+   into one binding.
+3. **`crates/oneiron/src/calendar/freebusy.rs`** — `normalize_busy` dropped its
+   `bounds` parameter and the bounds re-check in `retain`: the collection-site
+   `clip` already guarantees in-bounds non-empty intervals, so the conjuncts
+   were unreachable. The empties guard stays (blueprint-named contract).
+
+Considered and left alone: narrowing `CalendarRead` to `pub(crate)` (would
+touch the public surface — out of simplify scope); unifying the N-API
+`calendar_range_to_engine` Option dance in `calendar_freebusy` (its shape is
+pinned by an in-file test assertion); merging the facade's two range-check
+messages (test-pin risk on the typed error text); the MCP-local selector/range
+DTOs (deliberate `deny_unknown_fields` closure the engine DTOs lack).
+
+Gates after the pass: `cargo fmt --all --check` clean; clippy `-D warnings`
+clean on `oneiron --lib`, `oneiron --test calendar_surface_oracle`, and
+`oneiron-server`/`oneiron-napi --all-targets`; `cargo test -p oneiron
+calendar_` + `freebusy` (38 tests) green, `--test calendar_surface_oracle`
+4/4 green, `oneiron-server --lib mcp` 31/31 green, `oneiron-napi` 17/17 green.

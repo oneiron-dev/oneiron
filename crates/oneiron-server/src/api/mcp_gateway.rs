@@ -400,7 +400,7 @@ pub(crate) fn execute_mcp_calendar(
         .vault
         .memory_facade(actor.actor_ref, actor.actor_class);
 
-    let structured = match args.operation {
+    let mut structured = match args.operation {
         crate::mcp::McpCalendarOperation::Read { event_ref } => {
             let item = facade
                 .calendar_read(&oneiron::CalendarReadRequest { event_ref })
@@ -447,14 +447,7 @@ pub(crate) fn execute_mcp_calendar(
         } => {
             let receipt = facade
                 .calendar_invite(&oneiron::CalendarInviteSurfaceInput {
-                    method: match method {
-                        crate::mcp::McpCalendarInviteMethod::Request => {
-                            oneiron::CalendarInviteSurfaceMethod::Request
-                        }
-                        crate::mcp::McpCalendarInviteMethod::Cancel => {
-                            oneiron::CalendarInviteSurfaceMethod::Cancel
-                        }
-                    },
+                    method,
                     uid,
                     sequence,
                     ics_blob_ref,
@@ -465,7 +458,6 @@ pub(crate) fn execute_mcp_calendar(
         }
     };
 
-    let mut structured = structured;
     if let Some(object) = structured.as_object_mut() {
         object.insert(
             "tool".to_owned(),

@@ -450,7 +450,7 @@ pub enum McpCalendarOperation {
     },
     /// C7's exact typed payload — never an outbound draft.
     Invite {
-        method: McpCalendarInviteMethod,
+        method: oneiron::CalendarInviteSurfaceMethod,
         uid: String,
         sequence: u32,
         ics_blob_ref: String,
@@ -485,14 +485,6 @@ pub struct McpCalendarSelector {
 pub struct McpCalendarRange {
     pub start: u64,
     pub end: u64,
-}
-
-/// iMIP method accepted by the invite arm.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum McpCalendarInviteMethod {
-    Request,
-    Cancel,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]

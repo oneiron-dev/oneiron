@@ -93,22 +93,19 @@ fn freebusy_in(
         Ok(())
     })?;
 
-    Ok(normalize_busy(intervals, bounds))
+    Ok(normalize_busy(intervals))
 }
 
 /// Sorts, then merges overlapping *and* touching intervals.
 ///
-/// Inputs are already clipped to the query bounds. The merged component keeps
-/// the lowest `EntityId` as its representative: a single-source field cannot
+/// Inputs are already clipped to the query bounds by [`clip`], so this pass
+/// only drops empties, sorts, and coalesces. The merged component keeps the
+/// lowest `EntityId` as its representative: a single-source field cannot
 /// retain every overlapping EVENT, and a deterministic representative keeps the
 /// ratified internal ABI stable while full provenance stays queryable from the
 /// underlying EVENTs.
-fn normalize_busy(mut intervals: Vec<BusyInterval>, bounds: (u64, u64)) -> BusyUnion {
-    intervals.retain(|interval| {
-        interval.start_utc < interval.end_utc
-            && interval.start_utc >= bounds.0
-            && interval.end_utc <= bounds.1
-    });
+fn normalize_busy(mut intervals: Vec<BusyInterval>) -> BusyUnion {
+    intervals.retain(|interval| interval.start_utc < interval.end_utc);
     intervals.sort_unstable_by(|left, right| {
         (left.start_utc, left.end_utc, left.source).cmp(&(
             right.start_utc,
