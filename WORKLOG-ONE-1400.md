@@ -110,3 +110,30 @@ expectations, no external legacy code, runtime data, or shared fixture file.
 | `cargo test -p oneiron --all-features --lib` (full regression) | see commit trailer |
 
 `--all-features` used throughout per the wave recipe-defect rule.
+
+## SIMPLIFY pass (K3, on bf36a07)
+
+Deletion-biased polish only; no restructuring, no public-API change, no test-assertion
+edits beyond the blueprint pins.
+
+- Tightened the `ClusterPartitionKey::predicate_root` doc with an explicit
+  `PARTITION:` marker — the impl-flagged think-to-watch-for
+  ("predicate_root drops the leaf") is now pinned at the exact seam where
+  blueprint text consumers read it: `person.name.given` and
+  `person.name.family` share the `person.name` bucket.
+- Tightened the `ClusterClaim::predicate` doc to note the leaf is dropped.
+- Hardened the frozen `v1_parity` fixture: four up-front
+  `predicate_root("person.name.given") == "person.name"`-style assertions
+  (blueprint pinned-derivation, not new assertions) so a future predicate
+  vocabulary change fails loudly one line above the fixture it invalidates,
+  instead of as five cryptic cohort mismatches. Mirrors the geometry-pin
+  pattern already used by `complete_link_refuses_the_chain_single_link_would_build`.
+
+Nothing else material survived the deletion-bias check — the impl was already
+tight (no dead code, no duplication, no stale comments, fmt clean at entry).
+
+Gates after pass: `cargo fmt --all -- --check` clean · `cargo clippy -p oneiron
+--all-targets --all-features -- -D warnings` clean · `cargo test -p oneiron
+--all-features --lib` 3169 passed, 0 failed.
+
+Diffstat: **+14 / -4** across `cluster.rs` (+8/-2) and `cluster/tests.rs` (+10/-2).

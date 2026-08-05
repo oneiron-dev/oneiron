@@ -56,7 +56,11 @@ type PartitionOrd = (Vec<u8>, String, Option<EntityId>, Option<EntityId>);
 pub struct ClusterPartitionKey {
     /// Claim subject, compared exactly (entity or edge reference).
     pub subject: ClaimSubject,
-    /// Grouping unit of the predicate — every segment except the leaf.
+    /// Grouping unit of the predicate.
+    ///
+    /// PARTITION: the ROOT, not the full predicate — `predicate_root` drops
+    /// the LEAF, so `person.name.given` and `person.name.family` share the
+    /// `person.name` bucket (DESIGN-PIN A0).
     pub predicate_root: String,
     /// World scope; `None` is base reality and is its own bucket.
     pub world: Option<EntityId>,
@@ -72,7 +76,7 @@ pub struct ClusterClaim {
     pub claim_id: EntityId,
     /// Claim subject.
     pub subject: ClaimSubject,
-    /// Full dotted predicate; the module groups by its root.
+    /// Full dotted predicate; the module groups by its root (leaf dropped).
     pub predicate: String,
     /// World scope, absent for base reality.
     pub world: Option<EntityId>,

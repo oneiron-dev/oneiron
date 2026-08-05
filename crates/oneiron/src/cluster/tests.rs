@@ -7,7 +7,7 @@
 //! per target arch (AVX2 / NEON / scalar), the fixture asserts cohort
 //! MEMBERSHIP and ORDERING, never exact-bit cosine values.
 
-use crate::claim::ClaimSubject;
+use crate::claim::{ClaimSubject, predicate_root};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -468,7 +468,13 @@ fn v1_parity() {
     //
     // Layout, in ascending claim-id order. Note the roots: `predicate_root`
     // drops the LEAF, so `person.name.given` roots to `person.name` while
-    // `org.legal_name` roots to `org`.
+    // `org.legal_name` roots to `org`. Assert the pinning up front so a
+    // vocabulary change fails LOUDLY here, one line above the fixture it
+    // invalidates, rather than as five cryptic cohort mismatches.
+    assert_eq!(predicate_root("person.name.given"), "person.name");
+    assert_eq!(predicate_root("person.name.family"), "person.name");
+    assert_eq!(predicate_root("person.name.nick"), "person.name");
+    assert_eq!(predicate_root("org.legal_name"), "org");
     //
     //   0x01 person.name.given  world=None  facet=None   near-0 rad
     //   0x02 person.name.family world=None  facet=None   near-0 rad  → joins 0x01
