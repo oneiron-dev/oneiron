@@ -180,3 +180,20 @@ File oracle satisfied: the diff for `crates/oneiron/src/comm.rs` and
 entity/type byte, no `EdgeKind`, no registry row, no descriptor runtime, no
 second deny reason (`GateReasonCode::DenyCounterpartyOptOut` reused as-is), no
 docs edits. No push, no merge.
+
+## SIMPLIFY (b79b14b)
+
+One edit. The lane was already deletion-biased: descriptor rows are spelled out
+rather than derived, validators use exact key-set tables, and the comm
+party-index key is deliberately mirrored because `comm.rs` is a CA non-claim.
+The only remaining redundancy was `optional_value`, which scanned the map twice
+— an `any()` presence gate feeding `required_value`. Collapsed to one
+`filter_map` pass that returns the value and still rejects a duplicated
+optional key. Behavior-identical; no fixture, test-assertion, or public-API
+change.
+
+Cheap gate after the edit: `cargo test -p oneiron --all-features --lib
+campaign` 16/16, `--test campaign_claim_gate_oracle` 3/3, `claims.rs` clippy-
+and fmt-clean. The repo-wide clippy still carries the pre-existing
+`secret_custody.rs:625` dead-code error and `lib.rs` fmt drift from the base —
+both charged to no lane, untouched here.
