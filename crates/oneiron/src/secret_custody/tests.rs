@@ -208,7 +208,7 @@ fn raw_put_doors_reject_secret_custody_byte() {
         .put_entity(&id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
         .expect_err("put_entity on SECRET_CUSTODY must be denied");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::MaintenanceKindNotWritable(77)),
         "got {err:?}"
     );
 
@@ -219,7 +219,7 @@ fn raw_put_doors_reject_secret_custody_byte() {
         .commit()
         .expect_err("batch put on SECRET_CUSTODY must be denied");
     assert!(
-        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        matches!(err, Error::MaintenanceKindNotWritable(77)),
         "got {err:?}"
     );
 

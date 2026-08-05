@@ -3545,7 +3545,7 @@ fn forward_remat_still_quarantines_off_table_when_endpoint_rows_are_healthy() ->
 }
 
 // ---------------------------------------------------------------------------
-// SECRET_CUSTODY (byte 86) ONE-1865 seal — FIX1 CHOKEPOINT
+// SECRET_CUSTODY (byte 77) ONE-1865 seal — FIX1 CHOKEPOINT
 // ---------------------------------------------------------------------------
 
 /// Builds a live custody record in the vault via the door and returns its raw

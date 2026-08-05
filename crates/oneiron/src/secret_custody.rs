@@ -1078,11 +1078,11 @@ impl Vault {
                 },
                 learned_at: rec.registered_at,
                 data,
-                // SECRET-01 dedicated door: the `apply_put` seal admits byte 86
+                // SECRET-01 dedicated door: the `apply_put` seal admits byte 77
                 // only through the engine-internal non-replicated shape
                 // (`allow_maintenance && !allow_reserved_predicate`, the shape
                 // the default policy-manifest seeder uses). Any public or
-                // replicated CRDT carry of byte 86 rejects there until ONE-1865.
+                // replicated CRDT carry of byte 77 rejects there until ONE-1865.
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,

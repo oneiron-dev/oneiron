@@ -1830,7 +1830,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                 // policy-manifest seeder uses). Every other path — public raw
                 // puts, both batch builders, typed puts, claim candidates, and
                 // CRDT→LMDB sync replay (which is allow_maintenance &&
-                // allow_reserved_predicate) — rejects byte 86 here until
+                // allow_reserved_predicate) — rejects byte 77 here until
                 // ONE-1865 arms the replication dial.
                 if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                     && (!allow_maintenance || allow_reserved_predicate)

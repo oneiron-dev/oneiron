@@ -6598,10 +6598,10 @@ fn all_entity_type_prefixes() {
         ),
         (
             "SECRET_CUSTODY",
-            86,
-            Some("sc"),
-            EntityClassification::Pack,
-            TypeByteBand::Productivity,
+            77,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::Companion,
         ),
         (
             "REDACTION_AUDIT",
