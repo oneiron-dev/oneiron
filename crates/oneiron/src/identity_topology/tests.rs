@@ -2838,3 +2838,176 @@ fn amendment_codec_round_trips_and_refuses_unarmed_kinds() {
     trailing.push(0x00);
     assert!(decode_identity_op_amendment(&trailing).is_err());
 }
+
+#[test]
+fn amendment_scope_includes_reassignment_map() {
+    // (a) An in-scope map row: the SAME claim item, reassigned to the OTHER
+    // named head — narrowing the reviewed decision, so it amends cleanly.
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x8D);
+    let head_a = put_person(&vault, 0x8E);
+    let head_b = put_person(&vault, 0x8F);
+    let claim_item = id(0x90);
+    let stranger = put_person(&vault, 0x91);
+
+    let mut proposed = IdentityOpWrite::auto(ClaimSource::Inferred);
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    let park = |vault: &Vault, original: EntityId, head_a: EntityId, head_b: EntityId| {
+        expect_parked(
+            vault
+                .apply_identity_topology_op(
+                    &IdentityTopologyOp::Split(SplitOp {
+                        entity: original,
+                        heads: vec![head_a, head_b],
+                        reassignment: ReassignmentMap {
+                            entries: vec![ReassignmentEntry {
+                                item: ClaimSubject::Entity(claim_item),
+                                target: ReassignmentTarget::Head(head_a),
+                            }],
+                        },
+                        evidence: evidence(),
+                    }),
+                    &proposed,
+                    200,
+                )
+                .expect("proposed split parks"),
+        )
+    };
+    let amend = |vault: &Vault,
+                 proposal: EntityId,
+                 amended: IdentityTopologyOp|
+     -> Result<ProposalOutcome> {
+        let body = encode_identity_op_amendment(&amended).expect("encode amendment");
+        vault
+            .resolve_identity_proposal(
+                &proposal,
+                ProposalRuling::AmendThenApprove(&body),
+                &ruling_write(),
+                300,
+            )
+            .map(|(outcome, _)| outcome)
+    };
+    let split_with_heads = |original: EntityId,
+                            head_a: EntityId,
+                            head_b: EntityId,
+                            entries: Vec<ReassignmentEntry>| {
+        IdentityTopologyOp::Split(SplitOp {
+            entity: original,
+            heads: vec![head_a, head_b],
+            reassignment: ReassignmentMap { entries },
+            evidence: evidence(),
+        })
+    };
+
+    // (a) in-scope: same claim item, retargeted onto the OTHER named head.
+    let proposal = park(&vault, original, head_a, head_b);
+    let outcome = amend(
+        &vault,
+        proposal,
+        split_with_heads(
+            original,
+            head_a,
+            head_b,
+            vec![ReassignmentEntry {
+                item: ClaimSubject::Entity(claim_item),
+                target: ReassignmentTarget::Head(head_b),
+            }],
+        ),
+    )
+    .expect("an in-scope map row amends");
+    assert_eq!(outcome, ProposalOutcome::ApprovedAmended);
+
+    // (b) A bare claim item the proposal never named is NOT a route — the
+    // map re-routes claims across the split's own heads, so a fresh claim
+    // rides the same named heads without leaving scope. (A stranger only
+    // enters through (c)/(d) routes, never as the item.)
+    let original_b = put_person(&vault, 0x92);
+    let head_a_b = put_person(&vault, 0x93);
+    let head_b_b = put_person(&vault, 0x94);
+    let proposal = park(&vault, original_b, head_a_b, head_b_b);
+    let outcome = amend(
+        &vault,
+        proposal,
+        split_with_heads(
+            original_b,
+            head_a_b,
+            head_b_b,
+            vec![ReassignmentEntry {
+                item: ClaimSubject::Entity(id(0x95)),
+                target: ReassignmentTarget::Head(head_a_b),
+            }],
+        ),
+    )
+    .expect("a fresh bare claim item still rides named heads");
+    assert_eq!(outcome, ProposalOutcome::ApprovedAmended);
+
+    // (c) A map row targeting a head the proposal never named — a ROUTE
+    // through a stranger — must reject as out of scope, not merely as a
+    // foreign head (that is the transition table's job; the scope pin
+    // rejects it first, as review scope).
+    let original_c = put_person(&vault, 0x96);
+    let head_a_c = put_person(&vault, 0x97);
+    let head_b_c = put_person(&vault, 0x98);
+    let proposal = park(&vault, original_c, head_a_c, head_b_c);
+    let error = amend(
+        &vault,
+        proposal,
+        split_with_heads(
+            original_c,
+            head_a_c,
+            head_b_c,
+            vec![ReassignmentEntry {
+                item: ClaimSubject::Entity(claim_item),
+                target: ReassignmentTarget::Head(stranger),
+            }],
+        ),
+    )
+    .expect_err("a head route to a stranger is out of scope");
+    assert!(
+        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        "expected out-of-scope, got {error:?}"
+    );
+
+    // (d) A map row whose ITEM is an EDGE with an endpoint the proposal
+    // never named — replay moves that edge, so its endpoints are routes.
+    let original_d = put_person(&vault, 0x99);
+    let head_a_d = put_person(&vault, 0x9A);
+    let head_b_d = put_person(&vault, 0x9B);
+    let proposal = park(&vault, original_d, head_a_d, head_b_d);
+    let error = amend(
+        &vault,
+        proposal,
+        split_with_heads(
+            original_d,
+            head_a_d,
+            head_b_d,
+            vec![ReassignmentEntry {
+                item: ClaimSubject::Edge {
+                    source: head_a_d,
+                    kind: EdgeKind::About,
+                    target: stranger,
+                },
+                target: ReassignmentTarget::Head(head_b_d),
+            }],
+        ),
+    )
+    .expect_err("an edge route through a stranger is out of scope");
+    assert!(
+        matches!(error, Error::IdentityProposalAmendmentOutOfScope(_)),
+        "expected out-of-scope, got {error:?}"
+    );
+
+    // Every rejection was fail-closed: no out-of-scope park resolved and no
+    // stranger took any topology effect.
+    let resolved = vault
+        .receipts(
+            crate::receipt::ReceiptQuery::new(50)
+                .with_kind(crate::receipt::ReceiptKind::ProposalOutcome),
+        )
+        .expect("query outcome receipts");
+    assert_eq!(resolved.len(), 2, "only the two in-scope rulings landed");
+    assert_eq!(
+        vault.entity_lifecycle_state(&stranger).expect("stranger"),
+        EntityLifecycleState::Active
+    );
+}
