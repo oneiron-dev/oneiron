@@ -216,9 +216,28 @@ struct FlatRunTreeNode {
 
 const RUN_TREE_RUNTIME_ACTOR: &str = "runtime";
 
+/// Projects one row's lifecycle onto the surface status.
+///
+/// READINESS, not the bare enum, separates runnable-now from deferred. A
+/// pre-ONE-1795 row decodes as [`AttemptState::Queued`] carrying only
+/// `backoff_until`, and the queue's readiness instant keeps that claim time, so
+/// the claim loop holds it back exactly like an [`AttemptState::Scheduled`]
+/// row. Rendering it `Queued` would tell every read surface it is runnable now
+/// while the queue refuses to hand it out. A row queued by this build never
+/// carries a readiness instant — claim and lease-timeout requeue both clear
+/// both spellings — so only deferred rows take this arm.
+fn run_tree_status(record: &AttemptRecord) -> RunTreeStatus {
+    let deferred = record.scheduled_at.or(record.backoff_until).is_some();
+    match record.state {
+        AttemptState::Queued if deferred => RunTreeStatus::Paused,
+        state => RunTreeStatus::from(state),
+    }
+}
+
 fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
     let metadata = attempt_metadata(&record);
     let state = record.state;
+    let status = run_tree_status(&record);
     let attempt_id = attempt_id_hex(&record);
     let events = run_tree_events(
         record.created_at,
@@ -234,7 +253,7 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         parent_id: metadata.parent_id,
         worker_kind: metadata.worker_kind,
         agent_id: metadata.agent_id,
-        status: RunTreeStatus::from(state),
+        status,
         timestamps: RunTreeTimestamps {
             created_at: record.created_at,
             updated_at: record.updated_at,

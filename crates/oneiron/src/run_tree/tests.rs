@@ -354,6 +354,29 @@ fn run_tree_attaches_a_scheduled_retry_under_its_failed_source() -> Result<()> {
     Ok(())
 }
 
+/// A pre-ONE-1795 row decodes as `Queued` carrying only `backoff_until`, and
+/// the queue keeps holding it back until that instant. Projecting the bare enum
+/// renders it runnable-now on every read surface — run tree, Context Board,
+/// facade attempt view — while the claim loop refuses to hand it out.
+#[test]
+fn legacy_backoff_row_projects_deferred_not_runnable_now() -> Result<()> {
+    let deferred = legacy_queued_record(0xA1, 10, Some(900));
+    let runnable = legacy_queued_record(0xB2, 20, None);
+
+    let tree = render_run_tree(vec![deferred, runnable])?;
+
+    assert_eq!(tree.roots.len(), 2);
+    // Identical readiness posture to a `Scheduled` retry row, so identical
+    // token: deferred, not eligible to run now.
+    assert_eq!(tree.roots[0].status, RunTreeStatus::Paused);
+    // Deferred is not "paused by an operator" — no Paused event is projected.
+    assert_eq!(event_kinds(&tree.roots[0]), vec![RunTreeEventKind::Created]);
+    // A queued row with no readiness instant stays genuinely runnable now.
+    assert_eq!(tree.roots[1].status, RunTreeStatus::Queued);
+
+    Ok(())
+}
+
 #[test]
 fn run_tree_projects_intervention_events_and_states() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -573,6 +596,30 @@ fn dreamer_record(
 
 fn fixed_attempt_id(byte: u8) -> crate::AttemptId {
     crate::AttemptId::from_bytes(&[byte; 16]).expect("valid fixed attempt id")
+}
+
+/// A version-2 row as written before ONE-1795: `Queued`, with its readiness
+/// instant in the legacy `backoff_until` spelling and no `scheduled_at`.
+fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -> AttemptRecord {
+    AttemptRecord {
+        id: crate::AttemptId::from_bytes(&[seed; 16]).expect("attempt id"),
+        kind: "legacy-worker".to_owned(),
+        payload: Vec::new(),
+        state: AttemptState::Queued,
+        lease_owner: None,
+        attempt_count: 0,
+        claimed_at: None,
+        scheduled_at: None,
+        retry_of: None,
+        backoff_until,
+        last_error: None,
+        task_ref: None,
+        run_id: None,
+        dedupe_key: None,
+        created_at,
+        updated_at: created_at,
+        events: Vec::new(),
+    }
 }
 
 fn hex(id: crate::AttemptId) -> String {
