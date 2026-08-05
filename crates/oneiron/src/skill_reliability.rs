@@ -239,7 +239,7 @@ impl SkillReliabilityPosterior {
         let horizon = (2.0 * f64::from(total_pulls.max(1).saturating_add(1)).ln()).sqrt();
         let bonus = SELECTION_EXPLORATION * self.std_dev() * horizon;
         // A ranking key, so no unit clamp — see the doc comment above.
-        f64::from(self.mean()).mul_add(1.0, bonus) as f32
+        narrow(f64::from(self.mean()) + bonus)
     }
 
     /// Beta standard deviation, in f64 so the square roots keep their digits.
@@ -443,8 +443,8 @@ impl OutcomeTally {
 
     fn posterior(&self, prior: SkillReliabilityPosterior) -> SkillReliabilityPosterior {
         SkillReliabilityPosterior {
-            alpha: prior.alpha + f32::from(u16::try_from(self.wins).unwrap_or(u16::MAX)),
-            beta: prior.beta + f32::from(u16::try_from(self.losses).unwrap_or(u16::MAX)),
+            alpha: prior.alpha + count_weight(self.wins),
+            beta: prior.beta + count_weight(self.losses),
         }
     }
 }
@@ -517,6 +517,12 @@ pub fn project_skill_reliability(
         if vault.get_skill_record(&judgment.subject)?.is_none() {
             continue;
         }
+        // A judgment with nothing to cite cannot be counted: the row it would
+        // write has no key, and a loss with no trace is the thing the doctrine
+        // header exists to refuse.
+        if judgment.evidence_receipts.is_empty() {
+            continue;
+        }
         match batches.iter_mut().find(|(id, _)| *id == judgment.subject) {
             Some((_, rows)) => rows.push(judgment),
             None => batches.push((judgment.subject, vec![judgment])),
@@ -529,9 +535,16 @@ pub fn project_skill_reliability(
         let prior = skill_reliability_prior(vault, &skill)?;
         vault.with_write_txn(|wtxn| {
             for row in &rows {
-                for receipt in &row.evidence_receipts {
-                    record_outcome_in_txn(vault, wtxn, &skill, receipt, false, row.at)?;
-                }
+                // ONE judgment is ONE attributed outcome, so it writes ONE row.
+                // `evidence_receipts` is a list because the type is general —
+                // SK-04 emits a single receipt per routed outcome — and keying
+                // on each element would turn one multi-cited outcome into
+                // several losses.
+                let receipt = row
+                    .evidence_receipts
+                    .first()
+                    .ok_or(invalid("a reliability loss must cite a receipt"))?;
+                record_outcome_in_txn(vault, wtxn, &skill, receipt, false, row.at)?;
             }
             project_in_txn(vault, wtxn, &skill, prior, at)
         })?;
@@ -825,7 +838,31 @@ fn read_skill(vault: &Vault, skill: &EntityId) -> Result<SkillRecord> {
 }
 
 fn clamp_unit(value: f64) -> f32 {
-    value.clamp(0.0, 1.0) as f32
+    narrow(value.clamp(0.0, 1.0))
+}
+
+/// f64 math down to the f32 the posterior stores. The intermediate width exists
+/// so the square roots keep their digits; the stored value never needed it.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "f64 intermediate narrowed to the f32 the posterior stores"
+)]
+fn narrow(value: f64) -> f32 {
+    value as f32
+}
+
+/// An attributed-outcome count as posterior weight.
+///
+/// Past 2^24 an f32 stops representing consecutive integers, so a skill with
+/// ~16.7M attributed outcomes accumulates rounding. That is the honest failure:
+/// the RATIO is unaffected at that scale, whereas saturating the count would
+/// silently freeze the posterior against all further evidence.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "outcome counts weight an f32 posterior; the ratio is what is read"
+)]
+fn count_weight(count: u32) -> f32 {
+    count as f32
 }
 
 fn map_entry<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
