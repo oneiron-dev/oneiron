@@ -10069,6 +10069,21 @@ async fn v1_core_surface_event_replay_returns_the_original_attempt() {
     assert_eq!(second_status, StatusCode::ACCEPTED);
     assert_eq!(second["replayed"], Value::from(true));
     assert_eq!(second["attempt_ref"], first["attempt_ref"]);
+    assert_eq!(second["accepted_at"], first["accepted_at"]);
+
+    // The ack and the status snapshot describe one attempt, so the admission
+    // timestamp reads the same on both endpoints. (The engine test carries the
+    // clock-separated proof; there is no clock seam at this layer to inject.)
+    let (status_code, snapshot) = core_json(
+        server,
+        "GET",
+        "/v1/core/surface-events/provider-replay-1",
+        "core:read",
+        None,
+    )
+    .await;
+    assert_eq!(status_code, StatusCode::OK);
+    assert_eq!(snapshot["created_at"], first["accepted_at"]);
 }
 
 #[tokio::test]
