@@ -187,6 +187,7 @@ pub enum ErrorKind {
     InvalidConsentGrantRow,
     InvalidConsentEffectFacts,
     ConsentOwnerNotAuthenticated,
+    ConsentUnauthenticatedActor,
     ConsentCatastropheNotRememberable,
     ConsentGrantNotFound,
     ConsentGrantRevoked,
@@ -971,6 +972,11 @@ pub enum Error {
     /// hunch (DEC-0006 invariant 2). Nothing was written.
     #[error("consent owner not authenticated: {0}")]
     ConsentOwnerNotAuthenticated(&'static str),
+    /// A GenUI consent action reached evaluation without a store-authenticated
+    /// owner handle bound to both the card principal and the claimed actor.
+    /// Caller-deserialized actor text and voice booleans are never authority.
+    #[error("consent actor is not authenticated: {0}")]
+    ConsentUnauthenticatedActor(&'static str),
     /// A standing-grant mint named a catastrophe-floor class. The closed floor
     /// is non-rememberable at ANY trust level (DEC-0006 invariant 7): the
     /// owner may approve the op in the moment, but never make it automatic.
@@ -1664,6 +1670,7 @@ impl Error {
             Self::InvalidConsentGrantRow(_) => ErrorKind::InvalidConsentGrantRow,
             Self::InvalidConsentEffectFacts(_) => ErrorKind::InvalidConsentEffectFacts,
             Self::ConsentOwnerNotAuthenticated(_) => ErrorKind::ConsentOwnerNotAuthenticated,
+            Self::ConsentUnauthenticatedActor(_) => ErrorKind::ConsentUnauthenticatedActor,
             Self::ConsentCatastropheNotRememberable(_) => {
                 ErrorKind::ConsentCatastropheNotRememberable
             }

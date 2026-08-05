@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Error, Result,
+    consent::AuthenticatedOwner,
     lens::{
         ButtonControl, CollectionAtom, GeneratedLens, LensAtom, LensAtomId, LensNode, LensText,
         MetaLineAtom, ReceiptAtom, SealAtom, SealLevel, SelfUiAction, SelfUiActionId,
@@ -510,18 +511,12 @@ impl ConsentAskCard {
     pub fn evaluate_action(
         &self,
         request: &ConsentActionRequest,
+        authenticated_owner: &AuthenticatedOwner,
     ) -> Result<ConsentActionEvaluation> {
         ensure_component_request(&self.card_id, request)?;
         ensure_principal_ref(&self.principal_ref)?;
         ensure_declared_action(&self.actions(), request)?;
-        if !request.actor.authenticates_principal(&self.principal_ref) {
-            return Ok(noop_non_principal(
-                Of336ComponentKind::ConsentAsk,
-                &self.card_id,
-                &self.principal_ref,
-                request,
-            ));
-        }
+        ensure_authenticated_actor(&self.principal_ref, request, authenticated_owner)?;
 
         let (decision, grant_mint_intent) = match request.action {
             ConsentActionKind::Approve => (ConsentActionDecision::ApprovedOnce, None),
@@ -709,6 +704,7 @@ impl BundleApproveCard {
     pub fn evaluate_action(
         &self,
         request: &ConsentActionRequest,
+        authenticated_owner: &AuthenticatedOwner,
     ) -> Result<ConsentActionEvaluation> {
         ensure_component_request(&self.card_id, request)?;
         ensure_principal_ref(&self.principal_ref)?;
@@ -718,14 +714,7 @@ impl BundleApproveCard {
                 "bundle approve card must include at least one send item".to_string(),
             ));
         }
-        if !request.actor.authenticates_principal(&self.principal_ref) {
-            return Ok(noop_non_principal(
-                Of336ComponentKind::BundleApprove,
-                &self.card_id,
-                &self.principal_ref,
-                request,
-            ));
-        }
+        ensure_authenticated_actor(&self.principal_ref, request, authenticated_owner)?;
 
         let (decision, grant_mint_intent) = match request.action {
             ConsentActionKind::Decline => (ConsentActionDecision::Declined, None),
@@ -1075,6 +1064,23 @@ impl ConsentActorIdentity {
             } => *owner_voice_print_verified && speaker_ref == principal_ref,
         }
     }
+
+    /// Whether this claimed actor matches a store-authenticated owner handle.
+    ///
+    /// Consent action evaluation uses this door: neither actor text nor the
+    /// caller-deserialized voice boolean is authority. The handle can only come
+    /// from [`crate::Vault::authenticate_owner`].
+    #[must_use]
+    pub fn authenticates_owner(
+        &self,
+        principal_ref: &str,
+        authenticated_owner: &AuthenticatedOwner,
+    ) -> bool {
+        !principal_ref.trim().is_empty()
+            && !self.actor_ref().trim().is_empty()
+            && authenticated_owner.principal_ref() == principal_ref
+            && self.actor_ref() == principal_ref
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1257,25 +1263,20 @@ fn consent_evaluation(
     }
 }
 
-fn noop_non_principal(
-    component_kind: Of336ComponentKind,
-    component_id: &str,
+fn ensure_authenticated_actor(
     principal_ref: &str,
     request: &ConsentActionRequest,
-) -> ConsentActionEvaluation {
-    let decision = ConsentActionDecision::NoopNonPrincipal;
-    ConsentActionEvaluation {
-        decision,
-        receipt: consent_receipt(
-            component_kind,
-            component_id,
-            principal_ref,
-            request,
-            decision,
-            Some("principal_auth:actor_mismatch"),
-        ),
-        grant_mint_intent: None,
+    authenticated_owner: &AuthenticatedOwner,
+) -> Result<()> {
+    if request
+        .actor
+        .authenticates_owner(principal_ref, authenticated_owner)
+    {
+        return Ok(());
     }
+    Err(Error::ConsentUnauthenticatedActor(
+        "the action actor is not bound to the card's store-authenticated principal",
+    ))
 }
 
 fn noop_policy_rejection(
