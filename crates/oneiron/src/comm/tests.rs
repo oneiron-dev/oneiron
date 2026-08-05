@@ -5,6 +5,9 @@ use crate::claim::{
 };
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
+use crate::identity_topology::{
+    IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
     EntityClassification, TypeByteBand, entity_type_registry_entry,
@@ -1213,7 +1216,10 @@ fn stale_non_person_cached_party_is_reminted_before_reuse() -> CommResult<()> {
         wtxn.commit()?;
     }
     assert_eq!(vault.get_entity_type(&stale_id)?, Some(ENTITY_TYPE_MACHINE));
-    assert_eq!(resolve_party(&vault, "party-reuse")?, Some(stale_id));
+    // The cache is a shortcut, not truth: a hit naming a non-PERSON row is
+    // rejected and the synced scan finds nothing, so the party reads as absent
+    // rather than as the stale id.
+    assert_eq!(resolve_party(&vault, "party-reuse")?, None);
 
     // A new local record must remint a fresh PERSON and rebind the index rather
     // than mint the event against the stale non-PERSON id.
@@ -1271,10 +1277,9 @@ fn deleted_indexed_party_is_reminted_before_projector_reuse() -> CommResult<()> 
 
     assert!(vault.delete_entity(&deleted_party)?);
     assert_eq!(vault.get_entity_type(&deleted_party)?, None);
-    assert_eq!(
-        resolve_party(&vault, "party-reminted")?,
-        Some(deleted_party)
-    );
+    // A cache hit naming a deleted row is stale, and synced truth holds no
+    // replacement — absent, not the dangling id.
+    assert_eq!(resolve_party(&vault, "party-reminted")?, None);
 
     record_comm_send_receipt(&vault, "party-reminted", "email", 20)?;
     let reminted_party =
@@ -1686,6 +1691,199 @@ fn derived_id_collision_with_a_different_claim_body_fails_closed() -> CommResult
         )?,
         0
     );
+    Ok(())
+}
+
+fn clear_party_index(vault: &Vault, party: &str) -> CommResult<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .delete(&mut wtxn, &party_index_key(party))?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+fn point_party_index(vault: &Vault, party: &str, id: EntityId) -> CommResult<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &party_index_key(party), id.as_bytes())?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// Mints a comm-owned PERSON for `party` WITHOUT touching the node-local
+/// shortcut — the offline-twin shape: two devices each minted a party row for
+/// one key while synced truth was unreachable.
+fn mint_comm_person(vault: &Vault, party: &str) -> CommResult<EntityId> {
+    vault.try_with_write_txn(|wtxn| mint_comm_person_in_txn(vault, wtxn, party))
+}
+
+fn count_person_rows(vault: &Vault) -> CommResult<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut count = 0;
+    for entry in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[ENTITY_TYPE_PERSON])?
+    {
+        entry?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+#[test]
+fn cleared_party_index_rebuilds_from_synced_truth_without_minting() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-rebuild", "email", 10)?;
+    run_comm_projector(&vault)?;
+    let synced = resolve_party(&vault, "party-rebuild")?.ok_or(CommError::InvalidRecord)?;
+    let persons_before = count_person_rows(&vault)?;
+
+    // Drop the node-local shortcut, leaving the synced PERSON row intact — the
+    // shape a fresh device sees after replicating a party it never minted.
+    clear_party_index(&vault, "party-rebuild")?;
+
+    assert_eq!(resolve_party(&vault, "party-rebuild")?, Some(synced));
+    assert_eq!(
+        resolve_or_create_comm_party(&vault, "party-rebuild")?,
+        synced
+    );
+    assert_eq!(
+        count_person_rows(&vault)?,
+        persons_before,
+        "rebuild must not mint a PERSON"
+    );
+
+    // The shortcut is repaired, so the next lookup is a plain hit.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .vault_meta
+            .get(&rtxn, &party_index_key("party-rebuild"))?
+            .ok_or(CommError::InvalidRecord)?;
+        assert_eq!(decode_entity_id(&raw)?, synced);
+    }
+
+    // Standing state is unchanged and still reachable through the rebuilt path.
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-rebuild", "email")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn stale_index_entries_are_rejected_and_repaired_before_minting() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-stale", "email", 10)?;
+    run_comm_projector(&vault)?;
+    let synced = resolve_party(&vault, "party-stale")?.ok_or(CommError::InvalidRecord)?;
+    let persons_before = count_person_rows(&vault)?;
+
+    // (a) A hit naming a row that does not exist.
+    point_party_index(&vault, "party-stale", entity(0x81))?;
+    assert_eq!(resolve_party(&vault, "party-stale")?, Some(synced));
+
+    // (b) A hit naming a live NON-PERSON row.
+    let machine = entity(0x82);
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"machine",
+    )?;
+    point_party_index(&vault, "party-stale", machine)?;
+    assert_eq!(resolve_party(&vault, "party-stale")?, Some(synced));
+
+    // (c) A hit naming a PERSON whose party_key is a DIFFERENT party.
+    let other = resolve_or_create_comm_party(&vault, "party-other")?;
+    assert_ne!(other, synced);
+    point_party_index(&vault, "party-stale", other)?;
+    assert_eq!(resolve_party(&vault, "party-stale")?, Some(synced));
+    // The other party's own shortcut is untouched by the repair.
+    assert_eq!(resolve_party(&vault, "party-other")?, Some(other));
+
+    assert_eq!(
+        count_person_rows(&vault)?,
+        persons_before + 1,
+        "only the explicitly created party-other was minted"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cached_merged_shell_is_stale_despite_staying_a_person() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let survivor = resolve_or_create_comm_party(&vault, "party-shell")?;
+    // A second active PERSON carrying the same party_key, then merged away
+    // through MS-01: its type stays PERSON while its identity moved.
+    let shell = mint_comm_person(&vault, "party-shell")?;
+    vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![shell],
+            survivor,
+            evidence: IdentityOpEvidence {
+                refs: vec![shell, survivor],
+                rationale: "test fixture: merged party twin".to_owned(),
+            },
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        100,
+    )?;
+    assert_eq!(
+        vault.get_entity_type(&shell)?,
+        Some(ENTITY_TYPE_PERSON),
+        "a merge leaves a readable PERSON shell, not a tombstone"
+    );
+
+    // Cache the shell: it is a PERSON with the right party_key, yet stale.
+    point_party_index(&vault, "party-shell", shell)?;
+    assert_eq!(resolve_party(&vault, "party-shell")?, Some(survivor));
+    assert_eq!(
+        resolve_or_create_comm_party(&vault, "party-shell")?,
+        survivor
+    );
+    Ok(())
+}
+
+#[test]
+fn malformed_person_bodies_do_not_wedge_party_resolution() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-tolerant", "email", 10)?;
+    run_comm_projector(&vault)?;
+    let synced = resolve_party(&vault, "party-tolerant")?.ok_or(CommError::InvalidRecord)?;
+
+    // A PERSON with undecodable bytes, and one with a valid but unrelated body:
+    // neither is a comm party, and neither may wedge the scan.
+    vault.put_entity(
+        &entity(0x83),
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &[0xC1],
+    )?;
+    let unrelated = crate::comm::encode_value(&Value::Map(vec![(
+        Value::from("display_name"),
+        Value::from("someone"),
+    )]))?;
+    vault.put_entity(
+        &entity(0x84),
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &unrelated,
+    )?;
+
+    clear_party_index(&vault, "party-tolerant")?;
+    assert_eq!(resolve_party(&vault, "party-tolerant")?, Some(synced));
+    assert_eq!(resolve_party(&vault, "party-never-seen")?, None);
     Ok(())
 }
 

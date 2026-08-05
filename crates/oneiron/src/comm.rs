@@ -1,6 +1,6 @@
 //! Communication standing-state claims and the ARCH-0035 projector.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -16,6 +16,7 @@ use crate::claim::{
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::identity_topology::EntityLifecycleState;
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
@@ -51,6 +52,9 @@ const KEY_OPTED_OUT: &str = "opted_out";
 const KEY_JOINED: &str = "joined";
 const KEY_REACHABLE: &str = "reachable";
 const KEY_REASON: &str = "reason";
+/// Synced-truth field on a comm-owned PERSON body. `PARTY_INDEX_PREFIX` caches
+/// the lookup; THIS is what the cache is a cache of.
+const KEY_PARTY_KEY: &str = "party_key";
 
 const COMM_RECORD_KEYS: [&str; 15] = [
     "schema_version",
@@ -1630,6 +1634,138 @@ fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
     vault.try_with_write_txn(|wtxn| resolve_or_create_party_in_txn(vault, wtxn, party))
 }
 
+/// Reads the `party_key` of `id` if — and only if — it is an ACTIVE comm-owned
+/// PERSON row. `None` covers every way an id can fail to be synced truth for a
+/// party: absent, non-PERSON, undecodable or unrelated body, or a merge shell
+/// (whose type stays PERSON while its identity has moved to the survivor).
+///
+/// Single validator for both the cache check and the synced scan, so the
+/// shortcut can never disagree with the truth it is a shortcut for.
+fn active_comm_party_key_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> CommResult<Option<String>> {
+    let Some(raw) = vault.store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_PERSON {
+        return Ok(None);
+    }
+    if vault.entity_lifecycle_state_in_txn(rtxn, &id)? != EntityLifecycleState::Active {
+        return Ok(None);
+    }
+    let mut cursor = Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
+    let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
+        return Ok(None);
+    };
+    let Ok(entries) = value_map(&value) else {
+        return Ok(None);
+    };
+    Ok(required_string(entries, KEY_PARTY_KEY)
+        .ok()
+        .map(str::to_owned))
+}
+
+/// Every active comm-owned PERSON row, grouped by its exact `party_key`, ids
+/// ascending. This is the synced truth the node-local index caches.
+fn active_comm_persons_by_party_key_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> CommResult<BTreeMap<String, Vec<EntityId>>> {
+    let mut groups: BTreeMap<String, Vec<EntityId>> = BTreeMap::new();
+    for entry in vault
+        .store
+        .type_index
+        .prefix_iter(rtxn, &[ENTITY_TYPE_PERSON])?
+    {
+        let (key, _) = entry?;
+        let id = entity_id_from_type_index_key(&key)?;
+        if let Some(party_key) = active_comm_party_key_in_txn(vault, rtxn, id)? {
+            groups.entry(party_key).or_default().push(id);
+        }
+    }
+    for ids in groups.values_mut() {
+        ids.sort_unstable();
+    }
+    Ok(groups)
+}
+
+/// What synced truth says about one party, and whether the node-local shortcut
+/// agrees with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PartyLookup {
+    /// The shortcut names the canonical row; nothing to repair.
+    Fresh(EntityId),
+    /// Synced truth names this row, but the shortcut disagrees.
+    Repairable(EntityId),
+    /// No active comm-owned PERSON carries this `party_key`.
+    Absent,
+}
+
+/// Resolves one party against synced truth, read-only.
+///
+/// `PARTY_INDEX_PREFIX` is node-local cache state; the synced truth is the
+/// PERSON body's `party_key`. A cache miss therefore means "look again", not
+/// "absent" — treating it as absence is what mints a twin for a party that
+/// already synced in. On a stale or missing hit this scans the type-4 rows and,
+/// when several active rows share the key, picks the lexicographically smallest
+/// id so every node converges on the same one.
+fn lookup_party_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    party_key: &str,
+) -> CommResult<PartyLookup> {
+    if let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(rtxn, &party_index_key(party_key))?
+    {
+        let id = decode_entity_id(&raw)?;
+        if active_comm_party_key_in_txn(vault, rtxn, id)?.as_deref() == Some(party_key) {
+            return Ok(PartyLookup::Fresh(id));
+        }
+    }
+    Ok(active_comm_persons_by_party_key_in_txn(vault, rtxn)?
+        .remove(party_key)
+        .and_then(|ids| ids.into_iter().next())
+        .map_or(PartyLookup::Absent, PartyLookup::Repairable))
+}
+
+/// Points the node-local shortcut at `id`.
+fn put_party_index_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party_key: &str,
+    id: EntityId,
+) -> CommResult<()> {
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, &party_index_key(party_key), id.as_bytes())?;
+    Ok(())
+}
+
+/// Transaction-composable party resolution: repairs the shortcut from synced
+/// truth on a miss and never mints.
+fn resolve_party_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party_key: &str,
+) -> CommResult<Option<EntityId>> {
+    match lookup_party_in_txn(vault, &*wtxn, party_key)? {
+        PartyLookup::Fresh(id) => Ok(Some(id)),
+        PartyLookup::Repairable(id) => {
+            put_party_index_in_txn(vault, wtxn, party_key, id)?;
+            Ok(Some(id))
+        }
+        PartyLookup::Absent => Ok(None),
+    }
+}
+
 /// Resolves (or mints) the PERSON party for `party` inside an existing write
 /// transaction, so a caller can make party creation atomic with the write that
 /// references it (e.g. recording an event). Doing the resolve in a separate
@@ -1641,31 +1777,28 @@ fn resolve_or_create_party_in_txn(
     party: &str,
 ) -> CommResult<EntityId> {
     validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
-    let index_key = party_index_key(party);
-    if let Some(raw) = vault.store.vault_meta.get(&*wtxn, &index_key)? {
-        let id = decode_entity_id(&raw)?;
-        // Only reuse the cached party id if it still resolves to a PERSON row.
-        // If the entity was deleted (or its explicit id reused by another entity
-        // type), the cache is stale — fall through to remint and rebind,
-        // otherwise new comm events would be minted against a non-PERSON subject
-        // and wedge at the projector's PERSON check.
-        let cached_is_person = vault
-            .store
-            .entities
-            .get(&*wtxn, id.as_bytes())?
-            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
-            == Some(ENTITY_TYPE_PERSON);
-        if cached_is_person {
-            return Ok(id);
-        }
+    if let Some(id) = resolve_party_in_txn(vault, wtxn, party)? {
+        return Ok(id);
     }
+    let id = mint_comm_person_in_txn(vault, wtxn, party)?;
+    put_party_index_in_txn(vault, wtxn, party, id)?;
+    Ok(id)
+}
+
+/// Mints one comm-owned PERSON row carrying `party_key`. The caller decides
+/// whether the node-local shortcut should name it.
+fn mint_comm_person_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party: &str,
+) -> CommResult<EntityId> {
     let id = EntityId::now();
     let body = encode_value(&Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(COMM_SCHEMA_VERSION),
         ),
-        (Value::from("party_key"), Value::from(party)),
+        (Value::from(KEY_PARTY_KEY), Value::from(party)),
     ]))?;
     apply_ops(
         &vault.store,
@@ -1688,24 +1821,27 @@ fn resolve_or_create_party_in_txn(
         false,
         true,
     )?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &index_key, id.as_bytes())?;
     Ok(id)
 }
 
+/// Read-side party lookup. Answers from synced truth, and repairs the node-local
+/// shortcut when it disagrees — a read-side miss must not report a party that
+/// exists as absent (which would let the next write mint a twin for it). Only a
+/// repair takes a write transaction; the fresh and absent cases stay read-only.
 fn resolve_party(vault: &Vault, party: &str) -> CommResult<Option<EntityId>> {
     validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
-    let rtxn = vault.store.env.read_txn()?;
-    vault
-        .store
-        .vault_meta
-        .get(&rtxn, &party_index_key(party))?
-        .as_deref()
-        .map(decode_entity_id)
-        .transpose()
-        .map_err(CommError::from)
+    let lookup = {
+        let rtxn = vault.store.env.read_txn()?;
+        lookup_party_in_txn(vault, &rtxn, party)?
+    };
+    match lookup {
+        PartyLookup::Fresh(id) => Ok(Some(id)),
+        PartyLookup::Repairable(id) => {
+            vault.try_with_write_txn(|wtxn| put_party_index_in_txn(vault, wtxn, party, id))?;
+            Ok(Some(id))
+        }
+        PartyLookup::Absent => Ok(None),
+    }
 }
 
 fn party_index_key(party: &str) -> Vec<u8> {
