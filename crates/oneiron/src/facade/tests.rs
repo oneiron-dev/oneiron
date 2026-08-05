@@ -5677,6 +5677,62 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
     session.close().expect("close session");
 }
 
+/// K10, the durable half: a BASE-routed session witness whose route went stale
+/// commits ZERO base rows.
+///
+/// The base arm publishes the room's substance durably, so it is the arm where
+/// a missed flip actually leaks: a witness admitted while the room was on
+/// record must not land turn + messages + continuation shell in base once the
+/// room has flipped back off record. The route minted before the flip stands
+/// in for the in-flight route of a witness the flip overtakes mid-call.
+#[test]
+fn a_stale_base_route_session_witness_commits_no_base_rows() {
+    let (_dir, vault) = open_vault();
+    let (session, actor) = session_witness_fixture(&vault, "sess-witness-stale-base", 0x56);
+    let facade = facade_for(&vault, actor);
+
+    session.flip_on_record().expect("flip on record");
+    let route = session.write_route().expect("mint base route");
+    let continuation = session
+        .on_record_continuation_shell()
+        .expect("continuation shell");
+    session.flip_off_record().expect("flip back off record");
+
+    let base_entity_rows = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        vault.store.entities.len(&rtxn).expect("entity count")
+    };
+    let refused = facade
+        .witness_with_route(
+            &WitnessTurn {
+                conversation_ref: continuation.to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(
+                    0,
+                    WitnessAuthor::User,
+                    "overtaken by the flip",
+                )],
+                occurred_at: 950,
+            },
+            Some(&route),
+        )
+        .expect_err("a stale base route refuses the witness");
+    assert!(
+        refused.message.contains("off-record overlay generation"),
+        "the refusal is the stale-route family, got {refused:?}"
+    );
+    assert_eq!(
+        {
+            let rtxn = vault.store.env.read_txn().expect("read txn");
+            vault.store.entities.len(&rtxn).expect("entity count")
+        },
+        base_entity_rows,
+        "a refused base-routed witness adds ZERO base entity rows"
+    );
+
+    session.close().expect("close session");
+}
+
 /// A route minted before a mode flip is refused by `revalidate` before ANY
 /// staging — so a flip landing mid-call cannot leave half a turn in a room the
 /// caller no longer believes it is in.

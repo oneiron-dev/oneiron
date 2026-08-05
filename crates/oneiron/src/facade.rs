@@ -68,7 +68,9 @@ use crate::registry::{
     ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 use crate::serialize::{SerializeConfig, serialize_pack};
-use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarget};
+use crate::session_overlay::{
+    JournalEntry, JournalRole, JournalScope, RouteTarget, SessionWriteRoute,
+};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{
     ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor, WriteEnvelope, WriteProvenance,
@@ -1440,6 +1442,32 @@ impl MemoryFacade<'_> {
     /// `PartOf`/`BelongsTo`/`AuthoredBy` edges, and BM25 `content`
     /// indexing — all in ONE atomic batch.
     pub fn witness(&self, turn: &WitnessTurn) -> FacadeResult<WitnessReceipt> {
+        self.witness_with_route(turn, None)
+    }
+
+    /// The base witness program, optionally bound to a session write route.
+    ///
+    /// `session_route` is `Some` only on [`Self::witness_into_session`]'s
+    /// post-flip `Base` arm, where the route is the sole evidence that the
+    /// room was ON RECORD when this turn was admitted. The route is
+    /// revalidated INSIDE the write transaction, after every row is staged
+    /// and before the commit, so a flip back to `OffRecord` landing mid-call
+    /// rolls the whole turn back instead of publishing the room's substance
+    /// to durable base under a session that now claims to be private.
+    ///
+    /// The check cannot hold the session state lock: `tag_turn_off_record`
+    /// holds that lock ACROSS its own write transaction (state -> writer), so
+    /// a base writer taking it (writer -> state) would invert the order.
+    /// `revalidate` takes only the overlay's own lifecycle lock, which no
+    /// holder ever blocks on the base writer for, so this ordering is safe.
+    /// What remains uncovered is the instant between this check and
+    /// `wtxn.commit()`; closing that would require the flip to drain base
+    /// writers the way `seal_writes` drains overlay segments.
+    fn witness_with_route(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+    ) -> FacadeResult<WitnessReceipt> {
         if turn.messages.is_empty() {
             return Err(FacadeError::bad_request("witness turn carries no messages"));
         }
@@ -1569,6 +1597,13 @@ impl MemoryFacade<'_> {
                 wtxn,
                 learned_at,
             )?;
+            // LAST statement in the transaction, deliberately: a session
+            // witness admitted on record must not commit base rows once the
+            // room has flipped back off record (K10). Every earlier row is
+            // rolled back with this `Err`.
+            if let Some(route) = session_route {
+                route.revalidate()?;
+            }
             Ok(None)
         })?;
         if let Some(id) = refused {
@@ -1622,10 +1657,15 @@ impl MemoryFacade<'_> {
             // ordinary base apply under the continuation shell. It never
             // reuses the overlay conversation id, so K4 sees no overlay refs
             // and K7 does not fire (the shell is not an overlay member).
+            //
+            // The route rides INTO the base transaction: the overlay arms
+            // revalidate before they commit, and a base-routed turn is the
+            // half that publishes durably, so it is the half that most needs
+            // the same refusal.
             let continuation = session.on_record_continuation_shell()?;
             let mut base_turn = turn.clone();
             base_turn.conversation_ref = continuation.to_hex();
-            return self.witness(&base_turn);
+            return self.witness_with_route(&base_turn, Some(&route));
         }
 
         let occurred = TimeRange {
