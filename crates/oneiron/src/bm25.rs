@@ -44,7 +44,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::registry::short_id_prefix;
-use crate::store::{ManifestDbs, Store};
+use crate::store::ManifestDbs;
 
 // === Layout constants ===
 
@@ -673,7 +673,7 @@ pub(crate) fn deindex_text(
 // === Scoring ===
 
 fn collect_query_terms(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     config: &Bm25Config,
     query: &str,
@@ -706,7 +706,7 @@ fn collect_query_terms(
 }
 
 fn collect_final_token_prefix_terms(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     trimmed_query_end: usize,
     config: &Bm25Config,
@@ -731,7 +731,7 @@ fn collect_final_token_prefix_terms(
         // bounded by prefix_count * MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS while
         // accepted expansions still share MAX_FINAL_TOKEN_PREFIX_TERMS.
         for (scanned_terms, row) in store
-            .text_postings
+            .text_postings()
             .prefix_iter(rtxn, prefix.as_bytes())?
             .move_between_keys()
             .enumerate()
@@ -764,7 +764,7 @@ fn collect_final_token_prefix_terms(
 }
 
 pub(crate) fn final_token_exact_posting_matches<F>(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -782,7 +782,10 @@ where
     let mut tokens = Vec::new();
     analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
     for term in final_token_prefix_terms(&tokens, trimmed_query_end) {
-        let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+        let Some(dups) = store
+            .text_postings()
+            .get_duplicates(rtxn, term.as_bytes())?
+        else {
             continue;
         };
         for item in dups {
@@ -801,7 +804,7 @@ where
 }
 
 pub(crate) fn final_token_prefix_expansion_has_scoped_and_rejected_postings<F>(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -832,7 +835,7 @@ where
         }
 
         for (scanned_terms, row) in store
-            .text_postings
+            .text_postings()
             .prefix_iter(rtxn, prefix.as_bytes())?
             .move_between_keys()
             .enumerate()
@@ -876,13 +879,16 @@ fn final_token_prefix_candidate(token: &Token, trimmed_query_end: usize) -> bool
 }
 
 fn exact_term_has_scoped_posting(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     config: &Bm25Config,
     term: &str,
     exact_posting_matches_scope: &mut impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<bool> {
-    let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+    let Some(dups) = store
+        .text_postings()
+        .get_duplicates(rtxn, term.as_bytes())?
+    else {
         return Ok(false);
     };
     for item in dups {
@@ -905,13 +911,16 @@ struct TermPostingDecisions {
 }
 
 fn term_posting_decisions(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     config: &Bm25Config,
     term: &str,
     classify_posting: &mut impl FnMut(&EntityId) -> Result<PrefixExpansionPostingDecision>,
 ) -> Result<TermPostingDecisions> {
-    let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+    let Some(dups) = store
+        .text_postings()
+        .get_duplicates(rtxn, term.as_bytes())?
+    else {
         return Ok(TermPostingDecisions::default());
     };
 
@@ -962,7 +971,7 @@ fn insert_query_term(terms: &mut BTreeMap<String, f64>, term: String, weight: f6
 }
 
 fn apply_recency_blend(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     recency: Option<Bm25RecencyConfig>,
     scores: &mut HashMap<EntityId, f64>,
@@ -981,7 +990,7 @@ fn apply_recency_blend(
     let decay = std::f64::consts::LN_2 / seconds_per_half_life;
 
     for (id, score) in scores {
-        let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = store.entities().get(rtxn, id.as_bytes())? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -996,7 +1005,7 @@ fn apply_recency_blend(
 }
 
 pub(crate) fn search_text(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -1007,7 +1016,7 @@ pub(crate) fn search_text(
 }
 
 pub(crate) fn search_text_with_recency(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -1031,7 +1040,7 @@ pub(crate) fn search_text_with_recency(
 }
 
 pub(crate) fn search_text_scoped_with_recency<F>(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -1075,7 +1084,7 @@ where
 
     for query_term in query_terms {
         let Some(dups) = store
-            .text_postings
+            .text_postings()
             .get_duplicates(rtxn, query_term.term.as_bytes())?
         else {
             continue;
@@ -1118,7 +1127,7 @@ where
             // that reach a `CountLengthIncrement` branch — otherwise a
             // NoNorm-only match silently skips the corruption guard.
             if let Entry::Vacant(v) = field_length_cache.entry(id) {
-                let raw = store.text_doc_field_lengths.get(rtxn, id.as_bytes())?;
+                let raw = store.text_doc_field_lengths().get(rtxn, id.as_bytes())?;
                 let Some(bytes) = raw else {
                     return Err(corrupted_with_diagnostic(
                         "missing field lengths for scored doc",
@@ -1233,7 +1242,7 @@ where
         .collect())
 }
 
-fn compute_avgdl(store: &Store, rtxn: &RoTxn<'_>, field_id: u16) -> Result<f64> {
+fn compute_avgdl(store: &impl ManifestDbs, rtxn: &RoTxn<'_>, field_id: u16) -> Result<f64> {
     let (doc_count, total_length) = read_field_stats(store, rtxn, field_id)?;
     if doc_count == 0 {
         return Ok(0.0);
@@ -1242,7 +1251,7 @@ fn compute_avgdl(store: &Store, rtxn: &RoTxn<'_>, field_id: u16) -> Result<f64> 
 }
 
 fn collapse_lexical_query_hint_scores(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     scores: &mut HashMap<EntityId, f64>,
 ) -> Result<()> {
@@ -1280,7 +1289,7 @@ enum LexicalQueryHintResolution {
 }
 
 fn resolve_lexical_query_hint_record(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LexicalQueryHintResolution> {
@@ -1290,7 +1299,7 @@ fn resolve_lexical_query_hint_record(
     {
         return Ok(LexicalQueryHintResolution::NonHint);
     }
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.entities().get(rtxn, id.as_bytes())? else {
         return Ok(LexicalQueryHintResolution::NonHint);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -1323,11 +1332,11 @@ fn resolve_lexical_query_hint_record(
 }
 
 fn lexical_query_hint_target_is_live_claim(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     target: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(rtxn, target.as_bytes())? else {
+    let Some(raw) = store.entities().get(rtxn, target.as_bytes())? else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -1345,7 +1354,7 @@ fn lexical_query_hint_target_is_live_claim(
 }
 
 fn lexical_query_hint_scope_id(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityId>> {
