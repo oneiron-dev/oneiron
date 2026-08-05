@@ -7356,7 +7356,7 @@ fn external_effect_gate_input_composes_consent_context() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xD5), &encode_policy_manifest(vec![]))?;
     let policy = resolve(&vault)?;
     let effect = external_effect_gate_input("sender", "send", "line");
-    let consent = external_effect_consent_context(&effect, &[])
+    let consent = external_effect_consent_context(&effect, None, &[])
         .expect("a send effect composes an honest consent context");
     assert_eq!(
         consent.decision,
@@ -7376,8 +7376,8 @@ fn external_effect_gate_input_composes_consent_context() -> Result<()> {
     let request = external_effect_action_requirement(&effect).expect("requirement");
     let covering = crate::consent::StandingConsentGrant::from_bound(request)
         .expect("a bound mints a standing grant");
-    let consent =
-        external_effect_consent_context(&effect, &[covering]).expect("covered effect composes");
+    let consent = external_effect_consent_context(&effect, None, &[covering])
+        .expect("covered effect composes");
     assert_eq!(
         consent.decision,
         crate::consent::ConsentDecision::Auto,
@@ -7392,6 +7392,84 @@ fn external_effect_gate_input_composes_consent_context() -> Result<()> {
             .iter()
             .any(|code| code.starts_with("gate.pending.consent.")),
         "None consent contributes no consent reasons"
+    );
+    Ok(())
+}
+
+/// TARGET A pin: the store marker is spent by the transaction that authorizes
+/// delivery, not by minting or by caller-supplied digest equality.
+#[test]
+fn approve_once_not_atomic_is_closed_for_production_and_public_evaluation() -> Result<()> {
+    const EFFECT_RAN_KEY: &[u8] = b"test.approve_once.production_effect";
+
+    let (_tmp, vault) = temp_vault();
+    let owner_id = test_id(0xE0);
+    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let owner =
+        vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+    let actor_ref = owner_id.to_hex();
+    let policy_data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+        &actor_ref,
+        "external:send",
+        Value::Map(vec![(
+            Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+            Value::from("line"),
+        )]),
+        None,
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0xD5), &policy_data)?;
+    let policy = resolve(&vault)?;
+
+    let production_effect = external_effect_gate_input(&actor_ref, "send", "line");
+    let production_digest = external_effect_composed_effect(&production_effect)
+        .expect("production effect composes")
+        .digest();
+    vault.approve_once(&owner, production_digest)?;
+
+    vault.with_write_txn(|wtxn| {
+        let governance =
+            evaluate_external_effect_policy(&vault.store, wtxn, &production_effect, &policy, None)?;
+        assert_eq!(governance.outcome(), GateOutcome::Allow);
+        vault.store.vault_meta.put(wtxn, EFFECT_RAN_KEY, b"once")?;
+        record_external_effect_policy(&vault.store, wtxn, governance)?;
+        Ok(())
+    })?;
+    let replay = vault
+        .with_write_txn(|wtxn| {
+            evaluate_external_effect_policy(&vault.store, wtxn, &production_effect, &policy, None)
+                .map(|_| ())
+        })
+        .expect_err("production replay must stop before a second effect");
+    assert_eq!(replay.kind(), ErrorKind::ConsentApproveOnceSpent);
+    let rtxn = vault.store.env.read_txn()?;
+    let effect_ran = vault.store.vault_meta.get(&rtxn, EFFECT_RAN_KEY)?;
+    assert_eq!(
+        effect_ran.as_deref(),
+        Some(b"once".as_slice()),
+        "the production effect marker was written exactly once"
+    );
+    drop(rtxn);
+
+    let public_effect = external_effect_composed_effect(&external_effect_gate_input(
+        &owner_id.to_hex(),
+        "send",
+        "email",
+    ))
+    .expect("public effect composes");
+    let public_digest = public_effect.digest();
+    vault.approve_once(&owner, public_digest)?;
+    assert_eq!(
+        vault
+            .evaluate_consent_for(&public_effect, Some(&public_digest))?
+            .decision,
+        crate::consent::ConsentDecision::Auto
+    );
+    assert_eq!(
+        vault
+            .evaluate_consent_for(&public_effect, Some(&public_digest))
+            .expect_err("public replay must reject")
+            .kind(),
+        ErrorKind::ConsentApproveOnceSpent
     );
     Ok(())
 }

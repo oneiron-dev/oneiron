@@ -387,10 +387,10 @@ impl ConsentGateContext {
     /// [`crate::consent::ComposedEffect`], never by re-implementing the ladder.
     pub(crate) fn evaluate(
         effect: &crate::consent::ComposedEffect,
-        pending_approve_once: Option<&crate::consent::EffectDigest>,
+        approve_once: Option<&crate::consent::ApproveOnceAuthorization>,
         grants: &[crate::consent::StandingConsentGrant],
     ) -> Self {
-        let decision = crate::consent::evaluate_consent(effect, pending_approve_once, grants);
+        let decision = crate::consent::evaluate_consent(effect, approve_once, grants);
         Self {
             decision,
             reason: (decision != crate::consent::ConsentDecision::Auto)
@@ -478,16 +478,27 @@ fn consent_ladder_reasons(consent: Option<&ConsentGateContext>) -> Vec<GateReaso
 /// requirement pair (a verb or channel that fails the bound-ref rules) — the
 /// door then keeps its pre-DEC-0006 criticality behaviour rather than
 /// fabricate a bound no grant could ever cover or could always cover.
-fn external_effect_consent_context(
+fn external_effect_composed_effect(
     effect: &ExternalEffectGateInput,
-    grants: &[crate::consent::StandingConsentGrant],
-) -> Option<ConsentGateContext> {
+) -> Option<crate::consent::ComposedEffect> {
     let facts = external_effect_facts(effect);
     let requirement = external_effect_action_requirement(effect)?;
-    let composed = crate::consent::ComposedEffect::new(facts)
+    crate::consent::ComposedEffect::new(facts)
         .with_action_requirement(requirement)
-        .ok()?;
-    Some(ConsentGateContext::evaluate(&composed, None, grants))
+        .ok()
+}
+
+fn external_effect_consent_context(
+    effect: &ExternalEffectGateInput,
+    approve_once: Option<&crate::consent::ApproveOnceAuthorization>,
+    grants: &[crate::consent::StandingConsentGrant],
+) -> Option<ConsentGateContext> {
+    let composed = external_effect_composed_effect(effect)?;
+    Some(ConsentGateContext::evaluate(
+        &composed,
+        approve_once,
+        grants,
+    ))
 }
 
 /// The host-observed fact set for one external effect, in the consent
@@ -3135,6 +3146,7 @@ pub(crate) struct ExternalEffectGovernance {
     input: GateEvaluatorInput,
     binding: GateConsentBinding,
     grant_ref: Option<String>,
+    approve_once: Option<crate::consent::ApproveOnceAuthorization>,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
     budget_target: Option<ExternalEffectBudgetTarget>,
 }
@@ -3243,7 +3255,19 @@ pub(crate) fn evaluate_external_effect_policy(
     {
         consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
     }
-    let consent = external_effect_consent_context(&hydrated_effect, &consent_grants);
+    // The exact engine-computed digest is the only approve-once lookup key.
+    // Reading it on THIS write transaction yields either no approval, one
+    // unforgeable available authorization, or a typed spent-replay refusal.
+    // The marker is changed to spent only when the final Gate decision is
+    // recorded as Allow in this same transaction.
+    let approve_once = external_effect_composed_effect(&hydrated_effect)
+        .map(|effect| {
+            crate::consent::approve_once_authorization_in_txn(store, &*wtxn, &effect.digest())
+        })
+        .transpose()?
+        .flatten();
+    let consent =
+        external_effect_consent_context(&hydrated_effect, approve_once.as_ref(), &consent_grants);
     let mut input = hydrated_effect.gate_input(agent_definition_ceiling, consent);
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
@@ -3370,6 +3394,7 @@ pub(crate) fn evaluate_external_effect_policy(
         input,
         binding,
         grant_ref,
+        approve_once,
         matched_grant,
         budget_target,
     })
@@ -3387,9 +3412,15 @@ pub(crate) fn record_external_effect_policy(
         input,
         binding,
         grant_ref,
+        approve_once,
         matched_grant,
         budget_target: _,
     } = governance;
+    if decision.outcome() == GateOutcome::Allow
+        && let Some(authorization) = approve_once.as_ref()
+    {
+        crate::consent::spend_approve_once_in_txn(store, wtxn, authorization)?;
+    }
     crate::off_record::FloorWrites::new(store).append_egress_gate_decision(
         wtxn,
         &GateDecisionRecord {

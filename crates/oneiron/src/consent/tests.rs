@@ -192,7 +192,8 @@ fn consent_lifetime_types_share_one_receipt_enum_owner_only_standing() {
         }
     ));
 
-    // approve_once authorizes THIS op, now — and no other op.
+    // approve_once authorizes THIS op, now — and no other op. The mismatched
+    // evaluation does not consume the marker; the exact evaluation does.
     let this_op = ComposedEffect::new(irreversible_send_facts())
         .with_action_requirement(action_bound("agent-a", "send", &["channel:email"]))
         .expect("requirement");
@@ -200,14 +201,23 @@ fn consent_lifetime_types_share_one_receipt_enum_owner_only_standing() {
         .with_action_requirement(action_bound("agent-a", "send", &["channel:sms"]))
         .expect("requirement");
     let this_digest = this_op.digest();
+    vault
+        .approve_once(&owner, this_digest)
+        .expect("approve exact op");
     assert_eq!(
-        evaluate_consent(&this_op, Some(&this_digest), &[]),
-        ConsentDecision::Auto
-    );
-    assert_eq!(
-        evaluate_consent(&other_op, Some(&this_digest), &[]),
+        vault
+            .evaluate_consent_for(&other_op, Some(&this_digest))
+            .expect("mismatched evaluation")
+            .decision,
         ConsentDecision::Ask,
         "an approve-once receipt must not cover a different op"
+    );
+    assert_eq!(
+        vault
+            .evaluate_consent_for(&this_op, Some(&this_digest))
+            .expect("exact evaluation")
+            .decision,
+        ConsentDecision::Auto
     );
 
     // ...and it authorizes this op ONCE: running the effect twice sees the
@@ -818,8 +828,18 @@ fn consent_catastrophe_floor_is_closed_any_trust_non_rememberable() {
         .expect("requirement");
         let covering = [StandingConsentGrant::from_bound(bound.clone()).expect("grant")];
         let digest = effect.digest();
+        vault
+            .approve_once(&owner, digest)
+            .expect("approve catastrophe in the moment");
+        let decision = vault
+            .with_write_txn(|wtxn| {
+                let authorization = approve_once_authorization_in_txn(&vault.store, wtxn, &digest)?
+                    .expect("available approve-once marker");
+                Ok(evaluate_consent(&effect, Some(&authorization), &covering))
+            })
+            .expect("evaluate catastrophe");
         assert_eq!(
-            evaluate_consent(&effect, Some(&digest), &covering),
+            decision,
             ConsentDecision::Ask,
             "{} must ask even with a covering grant and an exact receipt",
             catastrophe.as_str()

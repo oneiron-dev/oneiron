@@ -70,14 +70,18 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 /// this module; suffix is the 16-byte grant id.
 pub(crate) const CONSENT_GRANT_KEY_PREFIX: &[u8] = b"consent.grant.v1:";
 
-/// `vault_meta` key prefix for approve-once spend markers. Owned by this
-/// module; suffix is the 32-byte effect digest. One row per consumed
-/// approve-once: presence means the digest already authorized its one op, so
-/// the mint door rejects a replay in the same write transaction as the
-/// receipt it would have produced (DEC-0006 invariant 2, consume-once). The
-/// value is the approving [`GateDecisionId`] — not a bare tombstone — so a
-/// contested spend points at its evidence receipt.
+/// `vault_meta` key prefix for approve-once state. Owned by this module;
+/// suffix is the 32-byte effect digest. Minting writes an available marker in
+/// the same transaction as its receipt. Delivery atomically changes that marker
+/// to spent in the transaction that authorizes the effect. Presence therefore
+/// rejects a duplicate mint, while the state distinguishes the one live tap
+/// from a replay (DEC-0006 invariant 2).
 pub(crate) const CONSENT_APPROVE_ONCE_KEY_PREFIX: &[u8] = b"consent.once.v1:";
+
+const CONSENT_APPROVE_ONCE_MARKER_VERSION: u8 = 1;
+const CONSENT_APPROVE_ONCE_AVAILABLE: u8 = 0;
+const CONSENT_APPROVE_ONCE_SPENT: u8 = 1;
+const CONSENT_APPROVE_ONCE_MARKER_LEN: usize = 18;
 
 /// Body schema version of a persisted standing consent-grant row.
 pub const CONSENT_GRANT_SCHEMA_VERSION: u64 = 1;
@@ -228,6 +232,16 @@ impl EffectDigest {
     pub fn to_hex(&self) -> String {
         crate::entity_id::bytes_to_hex_lower(&self.0)
     }
+}
+
+/// Store-attested proof that one approve-once marker is available to spend.
+///
+/// Fields are private: raw caller input cannot construct this proof. The only
+/// constructor reads the marker on the write transaction that will either
+/// authorize and spend the effect or abort without consuming the tap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ApproveOnceAuthorization {
+    effect_digest: EffectDigest,
 }
 
 // ---------------------------------------------------------------------------
@@ -1488,8 +1502,9 @@ pub enum ConsentDecision {
 /// 1. **Catastrophe first.** The closed floor is evaluated before trust and
 ///    grants and always Asks — no standing grant, preference, or high-trust
 ///    actor reaches past it (invariant 7).
-/// 2. **An exact approve-once receipt, or a covering standing grant.** For a
-///    mixed op, "covering" means BOTH conjuncts are covered (invariant 4).
+/// 2. **An exact store-attested approve-once authorization, or a covering
+///    standing grant.** For a mixed op, "covering" means BOTH conjuncts are
+///    covered (invariant 4).
 /// 3. **Host reversibility.** An effect-reversible op runs automatically —
 ///    undo is the net (invariant 1); classification is host-owned and
 ///    biased-permissive (invariant 6).
@@ -1499,7 +1514,7 @@ pub enum ConsentDecision {
 /// (invariant 8) rather than guessing.
 pub(crate) fn evaluate_consent(
     effect: &ComposedEffect,
-    pending_approve_once: Option<&EffectDigest>,
+    approve_once: Option<&ApproveOnceAuthorization>,
     grants: &[StandingConsentGrant],
 ) -> ConsentDecision {
     // 1. The only always-gate.
@@ -1507,8 +1522,10 @@ pub(crate) fn evaluate_consent(
         return ConsentDecision::Ask;
     }
 
-    // 2a. An approve-once receipt authorizes exactly this op, and only this op.
-    if pending_approve_once.is_some_and(|digest| *digest == effect.digest()) {
+    // 2a. Only a store-attested, still-available approve-once marker can
+    // authorize exactly this op. Raw caller-supplied digest equality is not
+    // authority.
+    if approve_once.is_some_and(|authorization| authorization.effect_digest == effect.digest()) {
         return ConsentDecision::Auto;
     }
 
@@ -2291,11 +2308,11 @@ impl Vault {
         Ok(receipt)
     }
 
-    /// Claims the approve-once spend slot for `digest` inside `wtxn`, or fails
-    /// when it is already claimed. The marker value is the approving
-    /// [`GateDecisionId`] bytes, so a contested claim names its evidence; the
-    /// consent receipt projection written by the same transaction is the audit
-    /// trail. LMDB serializes writers, so two racing mints cannot both win.
+    /// Claims the approve-once slot for `digest` inside `wtxn`, or fails when
+    /// any marker already exists. The available marker carries the approving
+    /// [`GateDecisionId`], so a contested mint names its evidence; delivery
+    /// preserves that id while atomically changing the state to spent. LMDB
+    /// serializes writers, so two racing mints cannot both win.
     fn claim_approve_once_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -2303,13 +2320,13 @@ impl Vault {
         decision_id: GateDecisionId,
     ) -> Result<()> {
         let key = consent_approve_once_key(digest);
-        let decision_id_bytes = decision_id.as_bytes();
         if self.store.vault_meta.get(&*wtxn, &key)?.is_some() {
             return Err(Error::ConsentApproveOnceSpent(
                 "this op digest already carries an approve-once receipt",
             ));
         }
-        self.store.vault_meta.put(wtxn, &key, &decision_id_bytes)?;
+        let marker = encode_approve_once_marker(CONSENT_APPROVE_ONCE_AVAILABLE, decision_id);
+        self.store.vault_meta.put(wtxn, &key, &marker)?;
         Ok(())
     }
 
@@ -2469,7 +2486,11 @@ impl Vault {
     /// It loads the ACTIVE grants itself, so a caller cannot pass a stale or
     /// hand-picked grant set, and it routes through the one evaluator, so no
     /// door re-implements the ladder. `pending_approve_once` is the exact
-    /// digest of an approve-once receipt already in hand for this op, if any.
+    /// engine-emitted digest of an approve-once receipt already in hand for this
+    /// op, if any. Digest equality alone is not authority: this door reads the
+    /// marker, evaluates the ladder, and changes an admitted marker to spent in
+    /// one write transaction. A replay is refused before another `Auto` can be
+    /// returned.
     ///
     /// The returned reason codes are empty exactly when the verdict is
     /// [`ConsentDecision::Auto`].
@@ -2478,13 +2499,25 @@ impl Vault {
         effect: &ComposedEffect,
         pending_approve_once: Option<&EffectDigest>,
     ) -> Result<ConsentEvaluation> {
-        let grants = self.active_standing_consent_grants()?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let grants = self.active_standing_consent_grants_in_txn(&wtxn)?;
+        let approve_once = pending_approve_once
+            .map(|digest| approve_once_authorization_in_txn(&self.store, &wtxn, digest))
+            .transpose()?
+            .flatten();
         let context =
-            crate::gate::ConsentGateContext::evaluate(effect, pending_approve_once, &grants);
-        Ok(ConsentEvaluation {
+            crate::gate::ConsentGateContext::evaluate(effect, approve_once.as_ref(), &grants);
+        if context.decision == ConsentDecision::Auto
+            && let Some(authorization) = approve_once.as_ref()
+        {
+            spend_approve_once_in_txn(&self.store, &mut wtxn, authorization)?;
+        }
+        let evaluation = ConsentEvaluation {
             decision: context.decision,
             reason_codes: crate::gate::consent_gate_reason_codes(&context),
-        })
+        };
+        wtxn.commit()?;
+        Ok(evaluation)
     }
 
     /// The unified consent registry — surface (b) of invariant 9.
@@ -2617,9 +2650,87 @@ pub fn load_active_standing_grants(
     Ok(grants)
 }
 
+/// Reads one approve-once marker from the caller's transaction.
+///
+/// An available marker yields an unforgeable authorization. A spent marker is
+/// a replay and fails typed. Absence yields `None`, so a caller-supplied digest
+/// with no receipt never reaches the evaluator's approve-once `Auto` arm.
+pub(crate) fn approve_once_authorization_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    digest: &EffectDigest,
+) -> Result<Option<ApproveOnceAuthorization>> {
+    let key = consent_approve_once_key(digest);
+    let Some(raw) = store.vault_meta.get(txn, &key)? else {
+        return Ok(None);
+    };
+    let (state, _) = decode_approve_once_marker(&raw)?;
+    match state {
+        CONSENT_APPROVE_ONCE_AVAILABLE => Ok(Some(ApproveOnceAuthorization {
+            effect_digest: *digest,
+        })),
+        CONSENT_APPROVE_ONCE_SPENT => Err(Error::ConsentApproveOnceSpent(
+            "this approve-once authorization already delivered its effect",
+        )),
+        _ => Err(Error::CorruptedIndex("consent approve-once marker state")),
+    }
+}
+
+/// Changes one store-attested approve-once marker to spent in `wtxn`.
+///
+/// The caller performs this only when the enclosing authorization is `Auto`.
+/// Because the state transition shares the effect's write transaction, aborting
+/// that transaction restores the available tap; committing it makes every
+/// replay fail before authorization.
+pub(crate) fn spend_approve_once_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    authorization: &ApproveOnceAuthorization,
+) -> Result<()> {
+    let key = consent_approve_once_key(&authorization.effect_digest);
+    let Some(raw) = store.vault_meta.get(&*wtxn, &key)? else {
+        return Err(Error::ConsentApproveOnceSpent(
+            "approve-once authorization has no live marker",
+        ));
+    };
+    let (state, decision_id) = decode_approve_once_marker(&raw)?;
+    if state == CONSENT_APPROVE_ONCE_SPENT {
+        return Err(Error::ConsentApproveOnceSpent(
+            "this approve-once authorization already delivered its effect",
+        ));
+    }
+    if state != CONSENT_APPROVE_ONCE_AVAILABLE {
+        return Err(Error::CorruptedIndex("consent approve-once marker state"));
+    }
+    let marker = encode_approve_once_marker(CONSENT_APPROVE_ONCE_SPENT, decision_id);
+    store.vault_meta.put(wtxn, &key, &marker)?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn encode_approve_once_marker(state: u8, decision_id: GateDecisionId) -> [u8; 18] {
+    let mut marker = [0_u8; CONSENT_APPROVE_ONCE_MARKER_LEN];
+    marker[0] = CONSENT_APPROVE_ONCE_MARKER_VERSION;
+    marker[1] = state;
+    marker[2..].copy_from_slice(&decision_id.as_bytes());
+    marker
+}
+
+fn decode_approve_once_marker(raw: &[u8]) -> Result<(u8, GateDecisionId)> {
+    if raw.len() != CONSENT_APPROVE_ONCE_MARKER_LEN || raw[0] != CONSENT_APPROVE_ONCE_MARKER_VERSION
+    {
+        return Err(Error::CorruptedIndex("consent approve-once marker"));
+    }
+    let decision_id = GateDecisionId::from_bytes(
+        raw[2..]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("consent approve-once marker"))?,
+    );
+    Ok((raw[1], decision_id))
+}
 
 fn consent_approve_once_key(digest: &EffectDigest) -> Vec<u8> {
     let mut key = Vec::with_capacity(CONSENT_APPROVE_ONCE_KEY_PREFIX.len() + 32);
