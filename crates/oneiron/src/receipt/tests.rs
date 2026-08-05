@@ -1575,3 +1575,207 @@ fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
     );
     Ok(())
 }
+
+// ─── ONE-1737 · ARCH-0053 §2 pack-manifest receipt fields ───────────────
+
+fn manifest_receipt() -> ReceiptRecord {
+    projected_receipt(
+        "attempt:oracle",
+        ReceiptKind::Outbound,
+        20,
+        "completed",
+        None,
+        None,
+        &[],
+    )
+}
+
+/// The terminal receipt carries the FULL accumulated manifest, split by kind,
+/// in append order — never sorted, never deduped: the sequence IS the evidence.
+#[test]
+fn pack_manifest_projects_both_kinds_in_append_order() -> Result<()> {
+    let manifest = [
+        ManifestEntry::new(ManifestKind::Skill, "pdf", "3", 11),
+        ManifestEntry::new(ManifestKind::ActorClaim, "actor.lesson", "7", 12),
+        ManifestEntry::new(ManifestKind::Skill, "index", "1", 13),
+    ];
+    let mut receipt = manifest_receipt();
+
+    append_pack_manifest_fields(&mut receipt, &manifest)?;
+
+    assert_eq!(
+        receipt.pack_manifest_skills(),
+        Some(vec!["pdf@3".to_owned(), "index@1".to_owned()]),
+        "skills keep manifest order, not sorted order"
+    );
+    assert_eq!(
+        receipt.pack_manifest_actor_claims(),
+        Some(vec!["actor.lesson@7".to_owned()])
+    );
+    Ok(())
+}
+
+/// A pack that loaded nothing of a kind stamps an EMPTY array, distinct from a
+/// receipt that predates the field-set (absent key).
+#[test]
+fn an_empty_pack_is_distinguishable_from_a_receipt_without_the_field() -> Result<()> {
+    let mut stamped = manifest_receipt();
+    append_pack_manifest_fields(&mut stamped, &[])?;
+    let unstamped = manifest_receipt();
+
+    assert_eq!(stamped.pack_manifest_skills(), Some(Vec::new()));
+    assert_eq!(stamped.pack_manifest_actor_claims(), Some(Vec::new()));
+    assert_eq!(
+        unstamped.pack_manifest_skills(),
+        None,
+        "an unstamped receipt predates the manifest; it did not load nothing"
+    );
+    Ok(())
+}
+
+/// Repeated pulls of the same skill@version stay repeated: collapsing them
+/// would erase how many times the pack reached for it.
+#[test]
+fn repeated_pulls_are_not_deduped() -> Result<()> {
+    let manifest = [
+        ManifestEntry::new(ManifestKind::Skill, "pdf", "3", 11),
+        ManifestEntry::new(ManifestKind::Skill, "pdf", "3", 12),
+    ];
+    let mut receipt = manifest_receipt();
+
+    append_pack_manifest_fields(&mut receipt, &manifest)?;
+
+    assert_eq!(
+        receipt.pack_manifest_skills(),
+        Some(vec!["pdf@3".to_owned(), "pdf@3".to_owned()])
+    );
+    Ok(())
+}
+
+/// The manifest rides the RS1 `fields` map: no new receipt kind, no new store,
+/// and every other field on the receipt survives the stamp.
+#[test]
+fn the_manifest_rides_the_shared_spine_without_disturbing_it() -> Result<()> {
+    let mut receipt = projected_receipt(
+        "attempt:spine",
+        ReceiptKind::Outbound,
+        20,
+        "completed",
+        Some("brief:1"),
+        Some("trigger:1"),
+        &[(FIELD_TASK_REF, "tk_owner")],
+    );
+    let before = receipt.clone();
+
+    append_pack_manifest_fields(
+        &mut receipt,
+        &[ManifestEntry::new(ManifestKind::Skill, "index", "1", 11)],
+    )?;
+
+    assert_eq!(receipt.receipt_kind, before.receipt_kind);
+    assert_eq!(receipt.job_ref, before.job_ref);
+    assert_eq!(receipt.trigger_ref, before.trigger_ref);
+    assert_eq!(
+        receipt.fields.get(FIELD_TASK_REF),
+        before.fields.get(FIELD_TASK_REF)
+    );
+    assert_eq!(
+        receipt.fields.len(),
+        before.fields.len() + 2,
+        "exactly the two manifest keys were added"
+    );
+    Ok(())
+}
+
+/// A garbled field reads as absent rather than panicking or half-decoding.
+#[test]
+fn a_corrupt_manifest_field_reads_as_absent() {
+    let mut receipt = manifest_receipt();
+    receipt
+        .fields
+        .insert(FIELD_MANIFEST_SKILLS.to_owned(), "not-json".to_owned());
+
+    assert_eq!(receipt.pack_manifest_skills(), None);
+}
+
+/// The manifest is NOT emit-gated: a floor receipt for a completed attempt
+/// carries it, unlike the OF-369 context field-set.
+#[test]
+fn the_manifest_is_not_restricted_to_emit_adjacent_receipts() -> Result<()> {
+    let mut receipt = projected_receipt(
+        "artifact_settle:oracle",
+        ReceiptKind::ArtifactSettle,
+        20,
+        "selected",
+        None,
+        None,
+        &[],
+    );
+
+    append_pack_manifest_fields(
+        &mut receipt,
+        &[ManifestEntry::new(ManifestKind::Skill, "index", "1", 11)],
+    )?;
+
+    assert_eq!(
+        receipt.pack_manifest_skills(),
+        Some(vec!["index@1".to_owned()])
+    );
+    Ok(())
+}
+
+/// The stamped ledger is keyed by receipt id, so a fabricated `receipt_ref`
+/// resolves to nothing even while a real receipt sits beside it. Attribution's
+/// evidence door rests on exactly this property.
+#[test]
+fn the_pack_receipt_ledger_resolves_only_ids_it_stamped() -> Result<()> {
+    use crate::attempt_queue::{
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
+    };
+
+    let (_dir, vault) = temp_vault()?;
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "pack".to_owned(),
+        payload: Vec::new(),
+        dedupe_key: None,
+        run_id: None,
+        now: 10,
+    })?
+    else {
+        panic!("a fresh dedupe-free enqueue is never Existing");
+    };
+    queue.append_manifest_entry(
+        attempt.id,
+        ManifestEntry::new(ManifestKind::Skill, "index", "1", 11),
+    )?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("the enqueued attempt is claimable");
+    };
+    queue.complete(CompleteAttempt {
+        id: attempt.id,
+        lease_owner: "worker".to_owned(),
+        attempt_count: leased.attempt_count,
+        now: 13,
+    })?;
+
+    assert!(
+        attempt_pack_receipt(&vault, &attempt_pack_receipt_id(&attempt.id))?.is_some(),
+        "the id the queue stamped resolves"
+    );
+    assert_eq!(
+        attempt_pack_receipt(&vault, "attempt:00000000000000000000000000000000")?,
+        None,
+        "a well-formed but unstamped attempt id resolves to nothing"
+    );
+    assert_eq!(
+        attempt_pack_receipt(&vault, "receipt:fabricated")?,
+        None,
+        "a receipt id from another namespace never resolves here"
+    );
+    Ok(())
+}
