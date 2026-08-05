@@ -3806,6 +3806,15 @@
         ],
         "type": "string"
       },
+      "SurfaceEventRejectionReasonPayload": {
+        "enum": [
+          "unknown_receiving_identity",
+          "non_agent_bound_identity",
+          "inactive_receiving_identity",
+          "tombstoned_receiving_identity"
+        ],
+        "type": "string"
+      },
       "SurfaceEventRejectionResponse": {
         "properties": {
           "agent_ref": {
@@ -3848,7 +3857,14 @@
             ]
           },
           "rejection_reason": {
-            "type": "string"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SurfaceEventRejectionReasonPayload"
+              }
+            ]
           },
           "schema_version": {
             "format": "int64",
@@ -3871,7 +3887,8 @@
           "counterparty",
           "foreign_inbound",
           "claims_not_instructions",
-          "identity_retiring"
+          "identity_retiring",
+          "rejection_reason"
         ],
         "type": "object"
       },

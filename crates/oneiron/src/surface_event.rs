@@ -387,9 +387,14 @@ pub enum InboundSurfaceRouteOutcome {
 }
 
 /// Stable rejection reasons for inbound SurfaceEvent routing receipts.
+///
+/// Closed on purpose, like [`SurfaceSourceApp`]: adapters branch on the reason
+/// and the `/v1/core` schema enumerates these four spellings, so a projection
+/// of this enum onto a wire contract must stay exhaustive. Sealing it would
+/// only buy semver headroom this pre-release crate has no consumer for, at the
+/// cost of letting a fifth reason ship a schema that silently lies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum InboundSurfaceRejectionReason {
     UnknownReceivingIdentity,
     NonAgentBoundIdentity,
@@ -522,6 +527,9 @@ pub struct SurfaceEventAck {
     pub state: SurfaceEventHandoffState,
     /// `true` when this correlation id already had an attempt row.
     pub replayed: bool,
+    /// When the attempt backing this correlation id was admitted. A replay
+    /// carries the original admission, matching the status snapshot's
+    /// `created_at`, never the replay's own clock.
     pub accepted_at: u64,
     pub status_path: String,
 }
@@ -609,7 +617,10 @@ impl Vault {
             attempt_ref: SurfaceEventAttemptRef::from_attempt_id(record.attempt.id),
             state: SurfaceEventHandoffState::from_attempt_state(record.attempt.state),
             replayed: record.replayed,
-            accepted_at: now,
+            // The row's own stamp, not this call's clock: a replay admitted
+            // nothing, and dating the ack `now` would contradict the
+            // `created_at` the status snapshot reads off the same attempt.
+            accepted_at: record.attempt.created_at,
         }))
     }
 

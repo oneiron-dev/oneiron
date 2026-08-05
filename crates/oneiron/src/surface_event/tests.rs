@@ -575,12 +575,16 @@ fn surface_event_once_per_correlation_survives_terminal_state() -> Result<()> {
 
     let first = accepted(submit(1_800_001_000)?);
     assert!(!first.replayed);
+    assert_eq!(first.accepted_at, 1_800_001_000);
 
     // Concurrent-shaped resubmission before any worker runs.
     let second = accepted(submit(1_800_001_001)?);
     assert!(second.replayed);
     assert_eq!(second.attempt_ref, first.attempt_ref);
     assert_eq!(surface_event_attempt_rows(&vault), 1);
+    // A replay admitted nothing, so it is dated by the admission it found,
+    // not by its own clock.
+    assert_eq!(second.accepted_at, first.accepted_at);
 
     // Replay after a terminal completion.
     let dispatcher = FakeDispatcher::new(SurfaceEventDispatchDisposition::Complete);
@@ -590,6 +594,14 @@ fn surface_event_once_per_correlation_survives_terminal_state() -> Result<()> {
     assert_eq!(after_complete.attempt_ref, first.attempt_ref);
     assert_eq!(after_complete.state, SurfaceEventHandoffState::Completed);
     assert_eq!(surface_event_attempt_rows(&vault), 1);
+    assert_eq!(after_complete.accepted_at, first.accepted_at);
+
+    // The ack and the status snapshot describe one attempt, so their
+    // admission timestamps cannot disagree.
+    let status = vault
+        .surface_event_handoff_status(&first.correlation_id)?
+        .expect("admitted correlation id has a status snapshot");
+    assert_eq!(status.created_at, after_complete.accepted_at);
 
     // A replay never re-offers the row to a worker.
     let replay_dispatcher = FakeDispatcher::new(SurfaceEventDispatchDisposition::Complete);
