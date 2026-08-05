@@ -5,7 +5,7 @@
 //! leaf types.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt,
     marker::PhantomData,
 };
@@ -24,7 +24,7 @@ use crate::{
 };
 
 pub const LENS_ATOM_KIT_VERSION: u16 = 2;
-pub const GENERATED_UI_WIRE_VERSION: u16 = 1;
+pub const GENERATED_UI_WIRE_VERSION: u16 = 2;
 pub const GENERATED_UI_SEGMENT_CONTENT_TYPE: &str =
     "application/vnd.oneiron.generated-ui.segment+json";
 
@@ -139,6 +139,7 @@ lens_token_type!(LensMediaHandle, "lens media handle");
 lens_token_type!(SelfUiControlId, "self.ui control id");
 lens_token_type!(SelfUiActionId, "self.ui action id", true);
 lens_token_type!(SelfUiOptionValue, "self.ui option value");
+lens_token_type!(SelfUiStateKey, "self.ui state key");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LensText(String);
@@ -401,6 +402,9 @@ pub struct LensNode {
     pub fallback_text: LensText,
     #[serde(default)]
     pub bindings: Vec<LensHandleRef>,
+    /// Declarative `$state` bindings; the wire key is literally `$bind`.
+    #[serde(rename = "$bind", default)]
+    pub state_bindings: Vec<SelfUiBinding>,
     #[serde(default)]
     pub children: Vec<LensNode>,
 }
@@ -419,6 +423,7 @@ impl LensNode {
             atom,
             fallback_text,
             bindings: Vec::new(),
+            state_bindings: Vec::new(),
             children: Vec::new(),
         }
     }
@@ -684,6 +689,594 @@ impl GeneratedUiSummaryCardPrebuilt {
     }
 }
 
+/// JSON-Pointer prefix that addresses the flattened `$state` snapshot. State keys
+/// are lens tokens (ASCII alnum, `.`, `_`, `-`), so no pointer escaping is possible
+/// and a `/values/` wrapper segment can never appear.
+const GENERATED_UI_STATE_POINTER_PREFIX: &str = "/$state/";
+
+/// Ruled interaction tiers (ONEIRON-ARCH-0048 G2). Deterministic and model tiers
+/// yield triggers only; execution stays behind the host-stamped write chokepoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedUiActionTier {
+    Local,
+    DeterministicTool,
+    ModelRoundTrip,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiActionDeclaration {
+    pub element_id: LensAtomId,
+    pub action_id: SelfUiActionId,
+    pub tier: GeneratedUiActionTier,
+    pub action: SelfUiAction,
+}
+
+impl GeneratedUiActionDeclaration {
+    fn validate(&self) -> Result<()> {
+        self.action.validate()?;
+        if self.tier == GeneratedUiActionTier::Local
+            && self
+                .action
+                .args
+                .iter()
+                .any(|arg| matches!(arg, SelfUiValue::Handle(_)))
+        {
+            return Err(Error::InvalidConfig(
+                "generated-ui local actions must not declare host handle arguments".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiActionDeclaration {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiActionDeclarationWire {
+            element_id: LensAtomId,
+            action_id: SelfUiActionId,
+            tier: GeneratedUiActionTier,
+            action: SelfUiAction,
+        }
+
+        let wire = GeneratedUiActionDeclarationWire::deserialize(deserializer)?;
+        let declaration = Self {
+            element_id: wire.element_id,
+            action_id: wire.action_id,
+            tier: wire.tier,
+            action: wire.action,
+        };
+        declaration.validate().map_err(de::Error::custom)?;
+        Ok(declaration)
+    }
+}
+
+/// Client-authored interaction event. It names *what was touched* and nothing else:
+/// no command, actor, source, approval, or authority field exists on the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiActionEvent {
+    pub card_id: LensRenderId,
+    pub element_id: LensAtomId,
+    pub action_id: SelfUiActionId,
+    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    pub patch: Vec<GeneratedUiStatePatch>,
+    pub occurred_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(
+    tag = "type",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum SelfUiStateValue {
+    Bool(bool),
+    Number(FiniteF64),
+    Text(LensText),
+    Token(SelfUiOptionValue),
+}
+
+impl SelfUiStateValue {
+    #[must_use]
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Bool(_) => "bool",
+            Self::Number(_) => "number",
+            Self::Text(_) => "text",
+            Self::Token(_) => "token",
+        }
+    }
+
+    fn has_same_type(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+impl Serialize for SelfUiStateValue {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Bool(value) => serialize_tagged(serializer, "type", "bool", "value", value),
+            Self::Number(value) => serialize_tagged(serializer, "type", "number", "value", value),
+            Self::Text(value) => serialize_tagged(serializer, "type", "text", "value", value),
+            Self::Token(value) => serialize_tagged(serializer, "type", "token", "value", value),
+        }
+    }
+}
+
+/// The closed set of control properties a `$bind` descriptor may drive. There is no
+/// expression language: a binding names one state key and one property, nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelfUiBindableProperty {
+    Checked,
+    Selected,
+    Value,
+    Text,
+}
+
+impl SelfUiBindableProperty {
+    fn accepts(self, value: &SelfUiStateValue) -> bool {
+        match self {
+            Self::Checked => matches!(value, SelfUiStateValue::Bool(_)),
+            Self::Selected => matches!(value, SelfUiStateValue::Token(_)),
+            Self::Text => matches!(value, SelfUiStateValue::Text(_)),
+            Self::Value => matches!(
+                value,
+                SelfUiStateValue::Number(_) | SelfUiStateValue::Text(_)
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SelfUiBinding {
+    pub state_key: SelfUiStateKey,
+    pub property: SelfUiBindableProperty,
+}
+
+/// Typed `$state` snapshot. The wire shape is the map itself — `{"$state":{"<key>":…}}`
+/// — so `/$state/<key>` addresses an entry with no `values` wrapper segment.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GeneratedUiStateSnapshot {
+    values: BTreeMap<SelfUiStateKey, SelfUiStateValue>,
+}
+
+impl GeneratedUiStateSnapshot {
+    #[must_use]
+    pub fn new(values: BTreeMap<SelfUiStateKey, SelfUiStateValue>) -> Self {
+        Self { values }
+    }
+
+    #[must_use]
+    pub fn values(&self) -> &BTreeMap<SelfUiStateKey, SelfUiStateValue> {
+        &self.values
+    }
+
+    #[must_use]
+    pub fn get(&self, key: &SelfUiStateKey) -> Option<&SelfUiStateValue> {
+        self.values.get(key)
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
+
+impl FromIterator<(SelfUiStateKey, SelfUiStateValue)> for GeneratedUiStateSnapshot {
+    fn from_iter<I: IntoIterator<Item = (SelfUiStateKey, SelfUiStateValue)>>(iter: I) -> Self {
+        Self {
+            values: iter.into_iter().collect(),
+        }
+    }
+}
+
+impl Serialize for GeneratedUiStateSnapshot {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.values.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiStateSnapshot {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let values = BTreeMap::<SelfUiStateKey, SelfUiStateValue>::deserialize(deserializer)?;
+        validate_lens_collection_len("generated-ui $state entries", values.len())
+            .map_err(de::Error::custom)?;
+        Ok(Self { values })
+    }
+}
+
+/// JSON-Pointer patch over `/$state/`. Paths are exact and never healed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GeneratedUiStatePatch {
+    Add {
+        path: String,
+        value: SelfUiStateValue,
+    },
+    Replace {
+        path: String,
+        value: SelfUiStateValue,
+    },
+    Remove {
+        path: String,
+    },
+}
+
+impl GeneratedUiStatePatch {
+    #[must_use]
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Add { path, .. } | Self::Replace { path, .. } | Self::Remove { path } => path,
+        }
+    }
+
+    #[must_use]
+    pub fn value(&self) -> Option<&SelfUiStateValue> {
+        match self {
+            Self::Add { value, .. } | Self::Replace { value, .. } => Some(value),
+            Self::Remove { .. } => None,
+        }
+    }
+}
+
+/// Canonical card lifecycle. `completed`/`expired` are archive *reasons*, not phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedUiCardPhase {
+    Generating,
+    Active,
+    Responded,
+    Archived,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedUiArchiveReason {
+    Completed,
+    Expired,
+    Dismissed,
+    Superseded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiCardLifecycle {
+    pub phase: GeneratedUiCardPhase,
+    pub revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_reason: Option<GeneratedUiArchiveReason>,
+}
+
+impl GeneratedUiCardLifecycle {
+    /// The phase a completed tree emits in `card_state_update`.
+    #[must_use]
+    pub fn initial() -> Self {
+        Self {
+            phase: GeneratedUiCardPhase::Active,
+            revision: 0,
+            archive_reason: None,
+        }
+    }
+
+    pub fn new(
+        phase: GeneratedUiCardPhase,
+        revision: u64,
+        archive_reason: Option<GeneratedUiArchiveReason>,
+    ) -> Result<Self> {
+        let lifecycle = Self {
+            phase,
+            revision,
+            archive_reason,
+        };
+        lifecycle.validate()?;
+        Ok(lifecycle)
+    }
+
+    /// Advance the lifecycle. Phases are totally ordered, so this admits exactly the
+    /// forward edges of `generating → active → responded → archived`, rejects
+    /// backwards and self transitions, and makes `archived` terminal.
+    pub fn transition(
+        &self,
+        next: GeneratedUiCardPhase,
+        archive_reason: Option<GeneratedUiArchiveReason>,
+    ) -> Result<Self> {
+        if next <= self.phase {
+            return Err(Error::InvalidConfig(format!(
+                "generated-ui card lifecycle must advance: {:?} cannot become {next:?}",
+                self.phase
+            )));
+        }
+        let revision = self.revision.checked_add(1).ok_or_else(|| {
+            Error::InvalidConfig("generated-ui card lifecycle revision overflowed".to_string())
+        })?;
+        Self::new(next, revision, archive_reason)
+    }
+
+    fn validate(&self) -> Result<()> {
+        match (self.phase, self.archive_reason) {
+            (GeneratedUiCardPhase::Archived, None) => Err(Error::InvalidConfig(
+                "generated-ui archived cards must carry an archive reason".to_string(),
+            )),
+            (phase, Some(_)) if phase != GeneratedUiCardPhase::Archived => {
+                Err(Error::InvalidConfig(
+                    "generated-ui archive reasons are only valid on archived cards".to_string(),
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl Default for GeneratedUiCardLifecycle {
+    fn default() -> Self {
+        Self::initial()
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiCardLifecycle {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiCardLifecycleWire {
+            phase: GeneratedUiCardPhase,
+            revision: u64,
+            #[serde(default)]
+            archive_reason: Option<GeneratedUiArchiveReason>,
+        }
+
+        let wire = GeneratedUiCardLifecycleWire::deserialize(deserializer)?;
+        Self::new(wire.phase, wire.revision, wire.archive_reason).map_err(de::Error::custom)
+    }
+}
+
+/// Host-side outcome of `LensRenderFrame::validate_action_event`. Every variant carries
+/// the emitter stamped from the frame's principal binding; none is a wire type, and
+/// none is self-executing.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GeneratedUiValidatedAction {
+    Local {
+        emitter: LensPrincipalBinding,
+        state: GeneratedUiStateSnapshot,
+    },
+    DeterministicTool {
+        emitter: LensPrincipalBinding,
+        action: LensApprovedAction,
+    },
+    ModelRoundTrip {
+        emitter: LensPrincipalBinding,
+        callback: GeneratedUiAgentCallback,
+    },
+}
+
+impl GeneratedUiValidatedAction {
+    #[must_use]
+    pub fn emitter(&self) -> &LensPrincipalBinding {
+        match self {
+            Self::Local { emitter, .. }
+            | Self::DeterministicTool { emitter, .. }
+            | Self::ModelRoundTrip { emitter, .. } => emitter,
+        }
+    }
+}
+
+/// Data handed to the next agent turn. It is not a tool call and is never auto-forwarded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratedUiAgentCallback {
+    pub action_name: SelfUiActionId,
+    pub resolved_params: Vec<LensApprovedActionArg>,
+    pub source_card_id: LensRenderId,
+    pub source_element_id: LensAtomId,
+}
+
+/// One addressable element of a card, in either the authored tree or the lowered
+/// flat render. Interactivity validation is shape-agnostic across the two.
+struct LensElementRef<'a> {
+    id: &'a LensAtomId,
+    atom: &'a LensAtom,
+    state_bindings: &'a [SelfUiBinding],
+}
+
+impl<'a> LensElementRef<'a> {
+    fn collect_tree(root: &'a LensNode) -> Vec<Self> {
+        let mut elements = Vec::new();
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            elements.push(Self {
+                id: &node.id,
+                atom: &node.atom,
+                state_bindings: &node.state_bindings,
+            });
+            stack.extend(node.children.iter());
+        }
+        elements
+    }
+
+    fn collect_flat(nodes: &'a [GeneratedUiNode]) -> Vec<Self> {
+        nodes
+            .iter()
+            .map(|node| Self {
+                id: &node.id,
+                atom: &node.atom,
+                state_bindings: &node.state_bindings,
+            })
+            .collect()
+    }
+}
+
+/// The single interactivity gate: every card, render, and reconstructed segment stream
+/// proves its manifest and `$bind` descriptors against its own elements and `$state`.
+fn validate_generated_ui_interactivity(
+    elements: &[LensElementRef<'_>],
+    actions: &[GeneratedUiActionDeclaration],
+    state: &GeneratedUiStateSnapshot,
+) -> Result<()> {
+    validate_lens_collection_len("generated-ui action declarations", actions.len())?;
+
+    let by_id = elements
+        .iter()
+        .map(|element| (element.id.as_str(), element))
+        .collect::<HashMap<_, _>>();
+
+    let mut declared_actions = HashSet::with_capacity(actions.len());
+    let mut declared_elements = HashSet::with_capacity(actions.len());
+    for declaration in actions {
+        declaration.validate()?;
+        if !declared_actions.insert(declaration.action_id.as_str()) {
+            return Err(Error::InvalidConfig(
+                "generated-ui action ids must be declared exactly once".to_string(),
+            ));
+        }
+        if !declared_elements.insert(declaration.element_id.as_str()) {
+            return Err(Error::InvalidConfig(
+                "generated-ui elements must declare at most one action".to_string(),
+            ));
+        }
+        let element = by_id.get(declaration.element_id.as_str()).ok_or_else(|| {
+            Error::InvalidConfig(
+                "generated-ui action declarations must reference a declared element".to_string(),
+            )
+        })?;
+        let LensAtom::SelfUi(control) = element.atom else {
+            return Err(Error::InvalidConfig(
+                "generated-ui action declarations must reference a self.ui control".to_string(),
+            ));
+        };
+        if control.action() != &declaration.action {
+            return Err(Error::InvalidConfig(
+                "generated-ui element action must match its manifest declaration".to_string(),
+            ));
+        }
+    }
+
+    for element in elements {
+        validate_lens_collection_len("generated-ui $bind descriptors", element.state_bindings.len())?;
+        if !element.state_bindings.is_empty() && !matches!(element.atom, LensAtom::SelfUi(_)) {
+            return Err(Error::InvalidConfig(
+                "generated-ui $bind descriptors are only valid on self.ui controls".to_string(),
+            ));
+        }
+        let mut bound_properties = HashSet::with_capacity(element.state_bindings.len());
+        for binding in element.state_bindings {
+            if !bound_properties.insert(binding.property) {
+                return Err(Error::InvalidConfig(
+                    "generated-ui $bind must bind each control property at most once".to_string(),
+                ));
+            }
+            let value = state.get(&binding.state_key).ok_or_else(|| {
+                Error::InvalidConfig(
+                    "generated-ui $bind must reference a declared $state key".to_string(),
+                )
+            })?;
+            if !binding.property.accepts(value) {
+                return Err(Error::InvalidConfig(format!(
+                    "generated-ui $bind property {:?} does not accept a {} value",
+                    binding.property,
+                    value.type_name()
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Resolve `/$state/<key>` to its key. Exact match only — no healing, no nesting, and
+/// no `/values/` segment can survive because state keys are lens tokens.
+fn generated_ui_state_patch_key(path: &str) -> Result<SelfUiStateKey> {
+    let key = path
+        .strip_prefix(GENERATED_UI_STATE_POINTER_PREFIX)
+        .ok_or_else(|| {
+            Error::InvalidConfig(format!(
+                "generated-ui state patch path must be an exact {GENERATED_UI_STATE_POINTER_PREFIX}<key> pointer"
+            ))
+        })?;
+    SelfUiStateKey::new(key)
+}
+
+/// Apply a client patch to the current snapshot under the card's declared schema.
+/// The declared snapshot is the closed key space *and* the type schema: undeclared
+/// keys and type changes are rejected before any trigger is returned.
+fn apply_generated_ui_state_patch(
+    schema: &GeneratedUiStateSnapshot,
+    current: &GeneratedUiStateSnapshot,
+    patch: &[GeneratedUiStatePatch],
+) -> Result<GeneratedUiStateSnapshot> {
+    validate_lens_collection_len("generated-ui state patch", patch.len())?;
+
+    for (key, value) in current.values() {
+        let declared = schema.get(key).ok_or_else(|| {
+            Error::InvalidConfig(
+                "generated-ui card state must not contain undeclared $state keys".to_string(),
+            )
+        })?;
+        if !declared.has_same_type(value) {
+            return Err(Error::InvalidConfig(
+                "generated-ui card state must not change a declared $state type".to_string(),
+            ));
+        }
+    }
+
+    let mut next = current.clone();
+    for op in patch {
+        let key = generated_ui_state_patch_key(op.path())?;
+        let declared = schema.get(&key).ok_or_else(|| {
+            Error::InvalidConfig(
+                "generated-ui state patch must address a declared $state key".to_string(),
+            )
+        })?;
+        if !matches!(op, GeneratedUiStatePatch::Add { .. }) && !next.values.contains_key(&key) {
+            return Err(Error::InvalidConfig(
+                "generated-ui state patch must address a present $state key".to_string(),
+            ));
+        }
+        match op {
+            GeneratedUiStatePatch::Add { value, .. }
+            | GeneratedUiStatePatch::Replace { value, .. } => {
+                if !declared.has_same_type(value) {
+                    return Err(Error::InvalidConfig(format!(
+                        "generated-ui state patch must not change {} to {}",
+                        declared.type_name(),
+                        value.type_name()
+                    )));
+                }
+                next.values.insert(key, value.clone());
+            }
+            GeneratedUiStatePatch::Remove { .. } => {
+                next.values.remove(&key);
+            }
+        }
+    }
+
+    Ok(next)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedUiCard {
@@ -691,6 +1284,10 @@ pub struct GeneratedUiCard {
     pub catalog: GeneratedUiCatalog,
     pub card_id: LensRenderId,
     pub tree: GeneratedLens,
+    /// Engine-authored action manifest. Serialized with the card; never ambient host state.
+    pub actions: Vec<GeneratedUiActionDeclaration>,
+    #[serde(rename = "$state")]
+    pub state: GeneratedUiStateSnapshot,
 }
 
 impl GeneratedUiCard {
@@ -708,6 +1305,24 @@ impl GeneratedUiCard {
             catalog: GeneratedUiCatalog::LensAtomKit,
             card_id,
             tree,
+            actions: Vec::new(),
+            state: GeneratedUiStateSnapshot::default(),
+        };
+        card.validate()?;
+        Ok(card)
+    }
+
+    /// Attach the engine-authored action manifest and initial `$state` to a card. The
+    /// manifest is proved against the authored tree here, before any render is emitted.
+    pub fn with_interactivity(
+        self,
+        actions: Vec<GeneratedUiActionDeclaration>,
+        state: GeneratedUiStateSnapshot,
+    ) -> Result<Self> {
+        let card = Self {
+            actions,
+            state,
+            ..self
         };
         card.validate()?;
         Ok(card)
@@ -731,12 +1346,20 @@ impl GeneratedUiCard {
                 .iter()
                 .map(|child| child.id.clone())
                 .collect::<Vec<_>>();
+            // A degraded element renders as fallback text, so it can neither host a
+            // control action nor drive a bound property on this surface.
+            let supported = surface.supports(node.atom.primitive());
             nodes.push(GeneratedUiNode {
                 id: node.id.clone(),
                 parent,
                 atom: compile_atom_for_surface(&node.atom, &node.fallback_text, surface),
                 fallback_text: node.fallback_text.clone(),
                 bindings: node.bindings.clone(),
+                state_bindings: if supported {
+                    node.state_bindings.clone()
+                } else {
+                    Vec::new()
+                },
                 child_refs,
             });
 
@@ -745,7 +1368,27 @@ impl GeneratedUiCard {
             }
         }
 
-        GeneratedUiRender::new(self.card_id.clone(), self.catalog, root.id.clone(), nodes)
+        let offered = nodes
+            .iter()
+            .filter(|node| matches!(node.atom, LensAtom::SelfUi(_)))
+            .map(|node| node.id.as_str().to_owned())
+            .collect::<HashSet<_>>();
+        let actions = self
+            .actions
+            .iter()
+            .filter(|declaration| offered.contains(declaration.element_id.as_str()))
+            .cloned()
+            .collect();
+
+        GeneratedUiRender::interactive(
+            self.card_id.clone(),
+            self.catalog,
+            root.id.clone(),
+            nodes,
+            actions,
+            self.state.clone(),
+            GeneratedUiCardLifecycle::initial(),
+        )
     }
 
     pub fn segments(&self) -> Result<Vec<GeneratedUiSegment>> {
@@ -783,7 +1426,12 @@ impl GeneratedUiCard {
                 self.protocol_version
             )));
         }
-        self.tree.validate()
+        self.tree.validate()?;
+        validate_generated_ui_interactivity(
+            &LensElementRef::collect_tree(self.tree.root()),
+            &self.actions,
+            &self.state,
+        )
     }
 }
 
@@ -802,6 +1450,10 @@ impl<'de> Deserialize<'de> for GeneratedUiCard {
             tree: Option<GeneratedLens>,
             #[serde(default)]
             prebuilt: Option<GeneratedUiPrebuilt>,
+            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            actions: Vec<GeneratedUiActionDeclaration>,
+            #[serde(rename = "$state", default)]
+            state: GeneratedUiStateSnapshot,
         }
 
         let wire = GeneratedUiCardWire::deserialize(deserializer)?;
@@ -827,6 +1479,8 @@ impl<'de> Deserialize<'de> for GeneratedUiCard {
             catalog: wire.catalog,
             card_id: wire.card_id,
             tree,
+            actions: wire.actions,
+            state: wire.state,
         };
         card.validate().map_err(de::Error::custom)?;
         Ok(card)
@@ -841,6 +1495,10 @@ pub struct GeneratedUiRender {
     pub card_id: LensRenderId,
     pub root: LensAtomId,
     pub nodes: Vec<GeneratedUiNode>,
+    pub actions: Vec<GeneratedUiActionDeclaration>,
+    #[serde(rename = "$state")]
+    pub state: GeneratedUiStateSnapshot,
+    pub lifecycle: GeneratedUiCardLifecycle,
 }
 
 impl GeneratedUiRender {
@@ -850,12 +1508,35 @@ impl GeneratedUiRender {
         root: LensAtomId,
         nodes: Vec<GeneratedUiNode>,
     ) -> Result<Self> {
+        Self::interactive(
+            card_id,
+            catalog,
+            root,
+            nodes,
+            Vec::new(),
+            GeneratedUiStateSnapshot::default(),
+            GeneratedUiCardLifecycle::initial(),
+        )
+    }
+
+    pub fn interactive(
+        card_id: LensRenderId,
+        catalog: GeneratedUiCatalog,
+        root: LensAtomId,
+        nodes: Vec<GeneratedUiNode>,
+        actions: Vec<GeneratedUiActionDeclaration>,
+        state: GeneratedUiStateSnapshot,
+        lifecycle: GeneratedUiCardLifecycle,
+    ) -> Result<Self> {
         let render = Self {
             protocol_version: GENERATED_UI_WIRE_VERSION,
             catalog,
             card_id,
             root,
             nodes,
+            actions,
+            state,
+            lifecycle,
         };
         render.validate()?;
         Ok(render)
@@ -895,6 +1576,9 @@ impl GeneratedUiRender {
                     root: self.root.clone(),
                     node_count: self.nodes.len(),
                     catalog: self.catalog,
+                    actions: self.actions.clone(),
+                    state: self.state.clone(),
+                    lifecycle: self.lifecycle.clone(),
                 },
             },
         ));
@@ -923,7 +1607,7 @@ impl GeneratedUiRender {
 
         let mut nodes = Vec::with_capacity(start.node_count);
         let mut budget = LensBudget::default();
-        let mut saw_state_update = false;
+        let mut interactivity = None;
 
         for segment in rest {
             match segment {
@@ -934,7 +1618,7 @@ impl GeneratedUiRender {
                     ));
                 }
                 GeneratedUiSegment::CardElement(element) => {
-                    if saw_state_update {
+                    if interactivity.is_some() {
                         return Err(Error::InvalidConfig(
                             "generated-ui card_element segments must precede card_state_update"
                                 .to_string(),
@@ -950,7 +1634,7 @@ impl GeneratedUiRender {
                     nodes.push(element.node.clone());
                 }
                 GeneratedUiSegment::CardStateUpdate(state) => {
-                    if saw_state_update {
+                    if interactivity.is_some() {
                         return Err(Error::InvalidConfig(
                             "generated-ui segment stream must contain exactly one card_state_update"
                                 .to_string(),
@@ -980,16 +1664,16 @@ impl GeneratedUiRender {
                                 .to_string(),
                         ));
                     }
-                    saw_state_update = true;
+                    interactivity = Some(&state.data_model);
                 }
             }
         }
 
-        if !saw_state_update {
+        let Some(data_model) = interactivity else {
             return Err(Error::InvalidConfig(
                 "generated-ui segment stream must end with card_state_update".to_string(),
             ));
-        }
+        };
         if nodes.len() != start.node_count {
             return Err(Error::InvalidConfig(
                 "generated-ui card_element count must match card_start node count".to_string(),
@@ -1002,6 +1686,9 @@ impl GeneratedUiRender {
             card_id: start.card_id.clone(),
             root: start.root.clone(),
             nodes,
+            actions: data_model.actions.clone(),
+            state: data_model.state.clone(),
+            lifecycle: data_model.lifecycle.clone(),
         };
         render.validate()?;
         Ok(render)
@@ -1135,7 +1822,11 @@ impl GeneratedUiRender {
                 "generated-ui flat tree must not contain orphan nodes".to_string(),
             ));
         }
-        Ok(())
+        validate_generated_ui_interactivity(
+            &LensElementRef::collect_flat(&self.nodes),
+            &self.actions,
+            &self.state,
+        )
     }
 }
 
@@ -1153,6 +1844,12 @@ impl<'de> Deserialize<'de> for GeneratedUiRender {
             root: LensAtomId,
             #[serde(deserialize_with = "deserialize_limited_vec")]
             nodes: Vec<GeneratedUiNode>,
+            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            actions: Vec<GeneratedUiActionDeclaration>,
+            #[serde(rename = "$state", default)]
+            state: GeneratedUiStateSnapshot,
+            #[serde(default)]
+            lifecycle: GeneratedUiCardLifecycle,
         }
 
         let wire = GeneratedUiRenderWire::deserialize(deserializer)?;
@@ -1162,6 +1859,9 @@ impl<'de> Deserialize<'de> for GeneratedUiRender {
             card_id: wire.card_id,
             root: wire.root,
             nodes: wire.nodes,
+            actions: wire.actions,
+            state: wire.state,
+            lifecycle: wire.lifecycle,
         };
         render.validate().map_err(de::Error::custom)?;
         Ok(render)
@@ -1178,6 +1878,8 @@ pub struct GeneratedUiNode {
     pub fallback_text: LensText,
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
     pub bindings: Vec<LensHandleRef>,
+    #[serde(rename = "$bind", default, deserialize_with = "deserialize_limited_vec")]
+    pub state_bindings: Vec<SelfUiBinding>,
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
     pub child_refs: Vec<LensAtomId>,
 }
@@ -1188,6 +1890,7 @@ impl GeneratedUiNode {
         self.atom.validate()?;
         self.atom.count_collection_items(budget)?;
         budget.add_collection("generated-ui node bindings", self.bindings.len())?;
+        budget.add_collection("generated-ui node $bind", self.state_bindings.len())?;
         budget.add_collection("generated-ui child refs", self.child_refs.len())
     }
 }
@@ -1380,11 +2083,20 @@ pub struct GeneratedUiDataModel {
     pub root: LensAtomId,
     pub node_count: usize,
     pub catalog: GeneratedUiCatalog,
+    pub actions: Vec<GeneratedUiActionDeclaration>,
+    #[serde(rename = "$state")]
+    pub state: GeneratedUiStateSnapshot,
+    pub lifecycle: GeneratedUiCardLifecycle,
 }
 
 impl GeneratedUiDataModel {
     fn validate(&self) -> Result<()> {
-        validate_generated_ui_node_count("generated-ui data model node count", self.node_count)
+        validate_generated_ui_node_count("generated-ui data model node count", self.node_count)?;
+        validate_lens_collection_len("generated-ui action declarations", self.actions.len())?;
+        for declaration in &self.actions {
+            declaration.validate()?;
+        }
+        Ok(())
     }
 }
 
@@ -1399,6 +2111,12 @@ impl<'de> Deserialize<'de> for GeneratedUiDataModel {
             root: LensAtomId,
             node_count: usize,
             catalog: GeneratedUiCatalog,
+            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            actions: Vec<GeneratedUiActionDeclaration>,
+            #[serde(rename = "$state", default)]
+            state: GeneratedUiStateSnapshot,
+            #[serde(default)]
+            lifecycle: GeneratedUiCardLifecycle,
         }
 
         let wire = GeneratedUiDataModelWire::deserialize(deserializer)?;
@@ -1406,6 +2124,9 @@ impl<'de> Deserialize<'de> for GeneratedUiDataModel {
             root: wire.root,
             node_count: wire.node_count,
             catalog: wire.catalog,
+            actions: wire.actions,
+            state: wire.state,
+            lifecycle: wire.lifecycle,
         };
         data_model.validate().map_err(de::Error::custom)?;
         Ok(data_model)
@@ -1430,6 +2151,8 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
             Atom,
             FallbackText,
             Bindings,
+            #[serde(rename = "$bind")]
+            StateBindings,
             Children,
         }
 
@@ -1452,6 +2175,7 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                 let mut atom = None;
                 let mut fallback_text = None;
                 let mut bindings = None;
+                let mut state_bindings = None;
                 let mut children = None;
 
                 while let Some(field) = map.next_key::<Field>()? {
@@ -1483,6 +2207,15 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                                     _marker: PhantomData,
                                 })?);
                         }
+                        Field::StateBindings => {
+                            if state_bindings.is_some() {
+                                return Err(de::Error::duplicate_field("$bind"));
+                            }
+                            state_bindings =
+                                Some(map.next_value_seed(LimitedVecSeed::<SelfUiBinding> {
+                                    _marker: PhantomData,
+                                })?);
+                        }
                         Field::Children => {
                             if children.is_some() {
                                 return Err(de::Error::duplicate_field("children"));
@@ -1500,6 +2233,7 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                     fallback_text: fallback_text
                         .ok_or_else(|| de::Error::missing_field("fallbackText"))?,
                     bindings: bindings.unwrap_or_default(),
+                    state_bindings: state_bindings.unwrap_or_default(),
                     children: children.unwrap_or_default(),
                 })
             }
@@ -1522,13 +2256,18 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                         _marker: PhantomData,
                     })?
                     .unwrap_or_default();
+                let state_bindings = seq
+                    .next_element_seed(LimitedVecSeed::<SelfUiBinding> {
+                        _marker: PhantomData,
+                    })?
+                    .unwrap_or_default();
                 let children = seq
                     .next_element_seed(LensChildrenSeed {
                         child_depth: self.depth + 1,
                     })?
                     .unwrap_or_default();
                 if seq.next_element::<de::IgnoredAny>()?.is_some() {
-                    return Err(de::Error::invalid_length(5, &self));
+                    return Err(de::Error::invalid_length(6, &self));
                 }
 
                 Ok(LensNode {
@@ -1536,6 +2275,7 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                     atom,
                     fallback_text,
                     bindings,
+                    state_bindings,
                     children,
                 })
             }
@@ -1549,7 +2289,7 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
 
         deserializer.deserialize_struct(
             "LensNode",
-            &["id", "atom", "fallbackText", "bindings", "children"],
+            &["id", "atom", "fallbackText", "bindings", "$bind", "children"],
             LensNodeVisitor { depth: self.depth },
         )
     }
@@ -2067,6 +2807,115 @@ impl LensRenderFrame {
         Ok(LensApprovedAction {
             command: action.command.clone(),
             args,
+        })
+    }
+
+    /// Resolve a client interaction event against the engine-authored manifest.
+    ///
+    /// `emitter` is the host's own [`LensRenderFrame::principal`]; it is never read
+    /// from event JSON and must match this frame's binding. `render.state` is the
+    /// declared `$state` schema; `state` is the current snapshot the patch applies to.
+    pub fn validate_action_event(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        emitter: &LensPrincipalBinding,
+        render: &GeneratedUiRender,
+        state: &GeneratedUiStateSnapshot,
+        event: &GeneratedUiActionEvent,
+    ) -> Result<GeneratedUiValidatedAction> {
+        self.ensure_scoped_read_actor(scoped_read)?;
+        if emitter != &self.principal {
+            return Err(Error::InvalidConfig(
+                "lens action emitter must be this render frame's acting principal".to_string(),
+            ));
+        }
+        if render.card_id != self.render_id {
+            return Err(Error::InvalidConfig(
+                "generated-ui render must belong to this render frame".to_string(),
+            ));
+        }
+        if event.card_id != render.card_id {
+            return Err(Error::InvalidConfig(
+                "generated-ui action event card_id must match the render".to_string(),
+            ));
+        }
+        if render.lifecycle.phase == GeneratedUiCardPhase::Archived {
+            return Err(Error::InvalidConfig(
+                "generated-ui archived cards must not accept action events".to_string(),
+            ));
+        }
+
+        let node = render
+            .nodes
+            .iter()
+            .find(|node| node.id == event.element_id)
+            .ok_or_else(|| {
+                Error::InvalidConfig(
+                    "generated-ui action event must name an element of this render".to_string(),
+                )
+            })?;
+
+        let mut matches = render
+            .actions
+            .iter()
+            .filter(|declaration| declaration.action_id == event.action_id);
+        let declaration = matches.next().ok_or_else(|| {
+            Error::InvalidConfig("generated-ui action event names an undeclared action".to_string())
+        })?;
+        if matches.next().is_some() {
+            return Err(Error::InvalidConfig(
+                "generated-ui action ids must be declared exactly once".to_string(),
+            ));
+        }
+        if declaration.element_id != event.element_id {
+            return Err(Error::InvalidConfig(
+                "generated-ui action event element must match its declaration".to_string(),
+            ));
+        }
+        let LensAtom::SelfUi(control) = &node.atom else {
+            return Err(Error::InvalidConfig(
+                "generated-ui action element must be a self.ui control".to_string(),
+            ));
+        };
+        if control.action() != &declaration.action {
+            return Err(Error::InvalidConfig(
+                "generated-ui element action must match its manifest declaration".to_string(),
+            ));
+        }
+
+        // Only the local tier carries client state; trigger tiers take their arguments
+        // from the engine-authored declaration alone.
+        if declaration.tier != GeneratedUiActionTier::Local && !event.patch.is_empty() {
+            return Err(Error::InvalidConfig(
+                "only local generated-ui actions may carry a $state patch".to_string(),
+            ));
+        }
+        let next_state = apply_generated_ui_state_patch(&render.state, state, &event.patch)?;
+
+        let emitter = self.principal.clone();
+        Ok(match declaration.tier {
+            GeneratedUiActionTier::Local => GeneratedUiValidatedAction::Local {
+                emitter,
+                state: next_state,
+            },
+            GeneratedUiActionTier::DeterministicTool => {
+                GeneratedUiValidatedAction::DeterministicTool {
+                    emitter,
+                    action: self.approve_action(scoped_read, &declaration.action)?,
+                }
+            }
+            GeneratedUiActionTier::ModelRoundTrip => {
+                let approved = self.approve_action(scoped_read, &declaration.action)?;
+                GeneratedUiValidatedAction::ModelRoundTrip {
+                    emitter,
+                    callback: GeneratedUiAgentCallback {
+                        action_name: approved.command,
+                        resolved_params: approved.args,
+                        source_card_id: render.card_id.clone(),
+                        source_element_id: event.element_id.clone(),
+                    },
+                }
+            }
         })
     }
 
@@ -3480,6 +4329,19 @@ impl InspectorAtom {
 }
 
 impl SelfUiControl {
+    /// The single engine-declared action embedded in this control.
+    #[must_use]
+    pub fn action(&self) -> &SelfUiAction {
+        match self {
+            Self::Button(control) => &control.action,
+            Self::Toggle(control) => &control.action,
+            Self::Segmented(control) => &control.action,
+            Self::Select(control) => &control.action,
+            Self::Slider(control) => &control.action,
+            Self::TextInput(control) => &control.action,
+        }
+    }
+
     fn fallback_text(&self) -> String {
         match self {
             Self::Button(control) => control.label.as_str().to_string(),
@@ -3559,6 +4421,7 @@ fn validate_lens_tree(root: &LensNode) -> Result<()> {
         }
 
         budget.add_collection("lens node bindings", node.bindings.len())?;
+        budget.add_collection("lens node $bind", node.state_bindings.len())?;
         budget.add_collection("lens node children", node.children.len())?;
         validate_required_lens_text("lens node fallbackText", &node.fallback_text)?;
         node.atom.validate()?;

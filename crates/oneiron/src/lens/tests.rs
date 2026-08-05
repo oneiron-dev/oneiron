@@ -46,6 +46,7 @@ fn generated_ui_node(value: &str, parent: Option<&str>, child_refs: &[&str]) -> 
         atom: LensAtom::StatusDot(status()),
         fallback_text: text(value),
         bindings: Vec::new(),
+        state_bindings: Vec::new(),
         child_refs: child_refs.iter().map(|child| id(child)).collect(),
     }
 }
@@ -958,6 +959,9 @@ fn generated_ui_segment_stream_enforces_aggregate_budget() {
                 root: id("root"),
                 node_count: 2,
                 catalog: GeneratedUiCatalog::LensAtomKit,
+                actions: Vec::new(),
+                state: GeneratedUiStateSnapshot::default(),
+                lifecycle: GeneratedUiCardLifecycle::initial(),
             },
         }),
     ];
@@ -1044,6 +1048,7 @@ fn generated_ui_flat_tree_enforces_depth_and_aggregate_budget() {
             atom: LensAtom::StatusDot(status()),
             fallback_text: text(&name),
             bindings: Vec::new(),
+            state_bindings: Vec::new(),
             child_refs: child.iter().map(|child| id(child)).collect(),
         });
     }
