@@ -40,7 +40,9 @@ const SURFACE_EVENT_STATUS_PATH_PREFIX: &str = "/v1/core/surface-events/";
 /// The wire spelling is the provider channel key verbatim, so
 /// [`SurfaceSourceApp::from_channel_key`] round-trips. The two acronym
 /// variants are renamed explicitly because serde's mechanical snake_case
-/// would split them into `i_message` / `link_ed_in`.
+/// inserts a leading underscore on the interior capital, producing
+/// `i_message` / `linked_in` rather than the pinned `imessage` / `linkedin`
+/// channel keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SurfaceSourceApp {
