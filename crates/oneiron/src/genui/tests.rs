@@ -394,3 +394,66 @@ fn atom_kit_buttons_use_safe_self_ui_action_ids() -> Result<()> {
     assert!(crate::lens::SelfUiOptionValue::new("just_once").is_ok());
     Ok(())
 }
+
+/// FIX-9: the cross-vendor pin is honest — the ask's admission requires the
+/// card's principal to BE authenticated by the actor identity, and the actor
+/// identity is a typed variant the surface attests, never a caller-supplied
+/// free-text actor string widened by assertion.
+#[test]
+fn consent_actor_identity_pin_is_not_a_free_text_claim() {
+    // Two callers, same text payload, one actor-class each. Only SurfaceActor
+    // carries equal text; VoicePath requires the enrolled voice print before
+    // its text runs. A free-text "caller said so" claimant would authenticate
+    // whichever it typed.
+    let owner_card = ask_card().expect("card");
+    let surface_actor = ConsentActorIdentity::SurfaceActor {
+        actor_ref: "owner".to_owned(),
+    };
+    let unverified_voice = ConsentActorIdentity::VoicePath {
+        speaker_ref: "owner".to_owned(),
+        owner_voice_print_verified: false,
+    };
+    // The principal check must bind the identity to the owner — and must
+    // refuse when the actor-class pin's guard (voice print) fails.
+    assert!(surface_actor.authenticates_principal("owner"));
+    assert!(
+        !unverified_voice.authenticates_principal("owner"),
+        "voice-path lane is honest only when its print guard held"
+    );
+
+    // Both variants hit the evaluate door with the SAME ask text: one admits,
+    // one exits without touching the grant door. The difference is the actor
+    // class verified at admission, not the card's text.
+    let surface_req = ConsentActionRequest::new(
+        "ask-1",
+        "approve_once",
+        ConsentActionKind::Approve,
+        surface_actor,
+        ConsentSurface::EiriConversation,
+        104,
+    )
+    .expect("surface request");
+    let voice_req = ConsentActionRequest::new(
+        "ask-1",
+        "approve_once",
+        ConsentActionKind::Approve,
+        unverified_voice,
+        ConsentSurface::Voice,
+        104,
+    )
+    .expect("voice request");
+    let surface_eval = owner_card
+        .evaluate_action(&surface_req)
+        .expect("surface eval");
+    let voice_eval = owner_card.evaluate_action(&voice_req).expect("voice eval");
+    assert_eq!(
+        surface_eval.decision,
+        ConsentActionDecision::ApprovedOnce,
+        "the pinned actor class authenticated the owner"
+    );
+    assert_eq!(
+        voice_eval.decision,
+        ConsentActionDecision::NoopNonPrincipal,
+        "the unverified voice class is not a principal"
+    );
+}
