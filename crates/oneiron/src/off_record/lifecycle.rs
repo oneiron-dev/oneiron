@@ -637,6 +637,96 @@ impl OffRecordSession<'_> {
         Ok(*state.continuation_shell.get_or_insert_with(EntityId::now))
     }
 
+    /// In-room BM25 retrieval over the composed union (ARCH-0052 §7).
+    ///
+    /// This is the session sibling of `Vault::search_text_with_telemetry` and
+    /// mirrors it exactly: the same generalized `bm25::search_text` body, the
+    /// same `VaultSearch` telemetry shape. Only the target differs — scoring
+    /// reads overlay ∪ base, and the retrieval-run row registers into the
+    /// room's overlay `VaultMeta`, so the base telemetry ledger gains nothing
+    /// (K10) and the row evaporates at close, where the pre-close census
+    /// counts it as a deleted context receipt (K8).
+    ///
+    /// ONE view serves the whole run. Constructing a view snapshots the
+    /// overlay, so a walk that built a view per step could see a torn union
+    /// if a concurrent stage landed between them; scoring and registration
+    /// therefore share this one.
+    pub(crate) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<EntityId>> {
+        let route = self.write_route()?;
+        let view = self.read_view()?;
+        let search = self.vault.search_text_scored(
+            &view,
+            query,
+            limit,
+            &crate::config::Bm25RankProfile::default(),
+        )?;
+        drop(view);
+
+        let record = Vault::vault_search_retrieval_run_record(
+            crate::store::RetrievalSignal::Text,
+            search.started_at,
+            search.started,
+            &search.scores,
+            limit,
+        );
+        match route.target() {
+            RouteTarget::Overlay => {
+                let segment = self.entry.overlay.install_txn_segment()?;
+                // The view above was taken BEFORE the segment installed, so it
+                // cannot see this run's own staged row; the registration needs
+                // a segment-aware view to stage into.
+                let staging = self.vault.store.session_view(self.entry.overlay.clone())?;
+                self.vault.with_write_txn(|wtxn| {
+                    route.revalidate()?;
+                    staging.record_retrieval_run_in_txn(wtxn, &record)
+                })?;
+                drop(staging);
+                segment.commit()?;
+            }
+            // Post-flip the room is on record: telemetry, like every other
+            // write, routes to base ordinarily (K10).
+            RouteTarget::Base => self.vault.store.record_retrieval_run(&record)?,
+        }
+
+        Ok(search.scores.into_iter().map(|scored| scored.id).collect())
+    }
+
+    /// Mode-aware VaultMeta write (ONE-1728 K10): the overlay keyspace while
+    /// `OffRecord`, the base `vault_meta` while `OnRecord`.
+    ///
+    /// The route revalidates before anything is staged, so a write minted
+    /// against a mode epoch that a concurrent flip has replaced is refused
+    /// rather than landing in the wrong place. The base half runs inside this
+    /// module's private vault access; no vault getter escapes.
+    pub(crate) fn vault_meta_put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let route = self.write_route()?;
+        route.revalidate()?;
+        match route.target() {
+            RouteTarget::Overlay => {
+                let overlay = self.entry.overlay.clone();
+                let segment = overlay.install_txn_segment()?;
+                let view = self.vault.store.session_view(overlay)?;
+                self.vault.with_write_txn(|wtxn| {
+                    route.revalidate()?;
+                    view.vault_meta_put_in_txn(wtxn, key, value)
+                })?;
+                drop(view);
+                segment.commit()
+            }
+            RouteTarget::Base => self.vault.with_write_txn(|wtxn| {
+                route.revalidate()?;
+                self.vault.store.vault_meta.put(wtxn, key, value)
+            }),
+        }
+    }
+
+    /// Composed VaultMeta read over overlay ∪ base.
+    pub(crate) fn vault_meta_get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let view = self.read_view()?;
+        let rtxn = self.vault.store.env.read_txn()?;
+        view.vault_meta_get_in_txn(&rtxn, key)
+    }
+
     pub fn flip_on_record(&self) -> Result<()> {
         self.vault
             .set_off_record_session_mode(&self.session_ref, OffRecordMode::OnRecord)?;

@@ -1380,6 +1380,106 @@ pub(crate) struct SessionStoreView<'store> {
     pub(crate) attempt_dedupe: OverlayDb,
 }
 
+/// The session-side retrieval-telemetry surface (ONE-1728 §7 / K10).
+///
+/// Each method is the session sibling of the identically-named `Store`
+/// method and rides the SAME extracted staging body, so the two targets
+/// cannot drift in key format or side-write footprint. The difference is
+/// purely which accessor bundle the body reaches: a session run's rows land
+/// in the overlay `VaultMeta` keyspace and evaporate at close, so the base
+/// telemetry ledger gains zero rows from an OffRecord session.
+///
+/// These take the caller's `wtxn` rather than opening their own, because a
+/// session write must commit in the same transaction its overlay segment is
+/// staged into — the segment guard applies staged rows only after the base
+/// commit returns.
+impl SessionStoreView<'_> {
+    /// Session sibling of `Store::record_retrieval_run`.
+    pub(crate) fn record_retrieval_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &RetrievalRunRecord,
+    ) -> Result<()> {
+        stage_retrieval_run_with_visibility(self, wtxn, record, true)
+    }
+
+    /// Session sibling of `Store::record_context_pack_provisional_retrieval_run`.
+    pub(crate) fn record_context_pack_provisional_retrieval_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &RetrievalRunRecord,
+    ) -> Result<()> {
+        stage_retrieval_run_with_visibility(self, wtxn, record, false)
+    }
+
+    /// Session sibling of `Store::finalize_context_pack_retrieval_run`.
+    ///
+    /// Finalizes the same overlay row the session registration created; the
+    /// base finalizer never sees that row and this one never reaches a base
+    /// row.
+    pub(crate) fn finalize_context_pack_retrieval_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: RetrievalRunId,
+        elapsed_us: u64,
+        claims_suppressed: usize,
+        surfaced_result_ids: &[[u8; 16]],
+        empty_reason: Option<String>,
+    ) -> Result<()> {
+        stage_context_pack_retrieval_run_finalize(
+            self,
+            wtxn,
+            run_id,
+            elapsed_us,
+            claims_suppressed,
+            surfaced_result_ids,
+            empty_reason,
+        )
+    }
+
+    /// Session sibling of `Store::delete_retrieval_run`, used to discard a
+    /// failed session context-pack run's provisional overlay row.
+    pub(crate) fn delete_retrieval_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: RetrievalRunId,
+    ) -> Result<()> {
+        stage_retrieval_run_delete(self, wtxn, run_id)
+    }
+
+    /// Composed read of the newest published retrieval-run rows: overlay ∪
+    /// base, so an in-room caller sees its own runs and its ancestors'.
+    pub(crate) fn retrieval_runs_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        limit: usize,
+    ) -> Result<Vec<RetrievalRunRecord>> {
+        read_retrieval_runs_in_txn(self, rtxn, limit)
+    }
+
+    /// Mode-aware VaultMeta write half consumed by
+    /// `OffRecordSession::vault_meta_put`. Reuses the existing raw key/value
+    /// representation; this pins routing, not a new encoding.
+    pub(crate) fn vault_meta_put_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<()> {
+        self.vault_meta.put(wtxn, key, value)
+    }
+
+    /// Composed VaultMeta read half consumed by
+    /// `OffRecordSession::vault_meta_get` — overlay ∪ base.
+    pub(crate) fn vault_meta_get_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        Ok(self.vault_meta.get(rtxn, key)?.map(|raw| raw.into_owned()))
+    }
+}
+
 /// Generates [`ManifestDbs`] and its two implementations from ONE list of the
 /// manifest's named databases, so the trait cannot drift from the structs: a
 /// database renamed in `Store` or `SessionStoreView` and not here fails to
@@ -1470,10 +1570,6 @@ impl Drop for StoreOwner {
 impl Store {
     /// Captures one segment-aware snapshot and applies it to every database
     /// accessor in this logical read transaction.
-    #[allow(
-        dead_code,
-        reason = "ONE-1727 completes the all-28 accessor view; ONE-1728 witness/retrieval is its first lib-target caller"
-    )]
     pub(crate) fn session_view(
         &self,
         overlay: Arc<crate::session_overlay::SessionOverlay>,
@@ -3441,24 +3537,8 @@ impl Store {
             ));
         }
 
-        let key = retrieval_run_key(record.run_id);
-        let value = encode_retrieval_run(record)?;
-        let provisional_key = retrieval_run_provisional_key(record.run_id);
         let mut wtxn = self.env.write_txn()?;
-        self.vault_meta.put(&mut wtxn, &key, &value)?;
-        if published {
-            self.vault_meta.delete(&mut wtxn, &provisional_key)?;
-            if let Some(trace) = &record.trace {
-                put_retrieval_trace_fork_index(
-                    &self.vault_meta,
-                    &mut wtxn,
-                    &trace.fork_hash,
-                    record.run_id,
-                )?;
-            }
-        } else {
-            self.vault_meta.put(&mut wtxn, &provisional_key, b"1")?;
-        }
+        stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -3470,21 +3550,8 @@ impl Store {
             ));
         }
 
-        let key = retrieval_run_key(run_id);
-        let provisional_key = retrieval_run_provisional_key(run_id);
-        let outcome_prefix = retrieval_outcome_run_prefix(run_id);
         let mut wtxn = self.env.write_txn()?;
-        delete_retrieval_trace_fork_indexes_for_run(&self.vault_meta, &mut wtxn, &key, run_id)?;
-        let mut outcome_keys = Vec::new();
-        for row in self.vault_meta.prefix_iter(&wtxn, &outcome_prefix)? {
-            let (key, _) = row?;
-            outcome_keys.push(key.to_vec());
-        }
-        for key in outcome_keys {
-            self.vault_meta.delete(&mut wtxn, &key)?;
-        }
-        self.vault_meta.delete(&mut wtxn, &provisional_key)?;
-        self.vault_meta.delete(&mut wtxn, &key)?;
+        stage_retrieval_run_delete(self, &mut wtxn, run_id)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -3503,46 +3570,16 @@ impl Store {
             ));
         }
 
-        let key = retrieval_run_key(run_id);
-        let provisional_key = retrieval_run_provisional_key(run_id);
         let mut wtxn = self.env.write_txn()?;
-        let Some(raw) = self.vault_meta.get(&wtxn, &key)? else {
-            self.vault_meta.delete(&mut wtxn, &provisional_key)?;
-            wtxn.commit()?;
-            return Ok(());
-        };
-        let mut record = decode_retrieval_run(&raw)?;
-        record.elapsed_us = elapsed_us;
-        record.claims_suppressed = claims_suppressed;
-        record.result_ids = surfaced_result_ids.to_vec();
-        let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
-        for (index, result_id) in surfaced_result_ids.iter().enumerate() {
-            if let Some(entry) = record
-                .score_breakdown
-                .iter()
-                .find(|entry| entry.result_id == *result_id)
-            {
-                let mut entry = entry.clone();
-                entry.final_rank = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
-                surfaced_breakdown.push(entry);
-            }
-        }
-        record.score_breakdown = surfaced_breakdown;
-        if let Some(trace) = record.trace.as_mut() {
-            trace.final_stage.candidates = record.score_breakdown.clone();
-        }
-        record.empty_reason = empty_reason;
-        let value = encode_retrieval_run(&record)?;
-        self.vault_meta.put(&mut wtxn, &key, &value)?;
-        if let Some(trace) = &record.trace {
-            put_retrieval_trace_fork_index(
-                &self.vault_meta,
-                &mut wtxn,
-                &trace.fork_hash,
-                record.run_id,
-            )?;
-        }
-        self.vault_meta.delete(&mut wtxn, &provisional_key)?;
+        stage_context_pack_retrieval_run_finalize(
+            self,
+            &mut wtxn,
+            run_id,
+            elapsed_us,
+            claims_suppressed,
+            surfaced_result_ids,
+            empty_reason,
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -3590,41 +3627,8 @@ impl Store {
     }
 
     pub fn retrieval_runs(&self, limit: usize) -> Result<Vec<RetrievalRunRecord>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
         let rtxn = self.env.read_txn()?;
-        let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-        let upper = retrieval_run_upper_bound();
-        for row in self.vault_meta.rev_range(
-            &rtxn,
-            &(
-                std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
-                break;
-            }
-            let run_id = retrieval_run_id_from_key(&key)?;
-            if self
-                .vault_meta
-                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
-                .is_some()
-            {
-                continue;
-            }
-            let record = decode_retrieval_run(&value)?;
-            if record.run_id != run_id {
-                return Err(Error::CorruptedIndex("retrieval run telemetry"));
-            }
-            records.push(record);
-            if records.len() == limit {
-                break;
-            }
-        }
-        Ok(records)
+        read_retrieval_runs_in_txn(self, &rtxn, limit)
     }
 
     pub(crate) fn retrieval_run(
@@ -3881,6 +3885,160 @@ impl Store {
         }
         retrieval_outcomes_for_run_in_txn(&self.vault_meta, &rtxn, run_id)
     }
+}
+
+/// Reads the newest published retrieval-run rows from `target`, newest first.
+///
+/// `Store` reads base rows; a `SessionStoreView` reads overlay ∪ base, so an
+/// in-room caller sees its own run rows and a base caller never does.
+fn read_retrieval_runs_in_txn(
+    target: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    limit: usize,
+) -> Result<Vec<RetrievalRunRecord>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
+    let upper = retrieval_run_upper_bound();
+    for row in target.vault_meta().rev_range(
+        rtxn,
+        &(
+            std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
+            std::ops::Bound::Excluded(upper.as_slice()),
+        ),
+    )? {
+        let (key, value) = row?;
+        if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
+            break;
+        }
+        let run_id = retrieval_run_id_from_key(&key)?;
+        if target
+            .vault_meta()
+            .get(rtxn, &retrieval_run_provisional_key(run_id))?
+            .is_some()
+        {
+            continue;
+        }
+        let record = decode_retrieval_run(&value)?;
+        if record.run_id != run_id {
+            return Err(Error::CorruptedIndex("retrieval run telemetry"));
+        }
+        records.push(record);
+        if records.len() == limit {
+            break;
+        }
+    }
+    Ok(records)
+}
+
+/// Stages one retrieval-run row and its provisional/fork-index side writes
+/// into `target`'s `vault_meta` (ONE-1728 K11).
+///
+/// The base path is byte-identical because it IS this body: `Store`'s
+/// `record_retrieval_run_with_visibility` opens the txn and calls here. A
+/// session target passes its `SessionStoreView`, so an OffRecord run's row
+/// stages into the overlay keyspace and evaporates at close — the base
+/// telemetry ledger gains nothing (ARCH-0052 §7 / K10).
+fn stage_retrieval_run_with_visibility(
+    target: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    record: &RetrievalRunRecord,
+    published: bool,
+) -> Result<()> {
+    let key = retrieval_run_key(record.run_id);
+    let value = encode_retrieval_run(record)?;
+    let provisional_key = retrieval_run_provisional_key(record.run_id);
+    target.vault_meta().put(wtxn, &key, &value)?;
+    if published {
+        target.vault_meta().delete(wtxn, &provisional_key)?;
+        if let Some(trace) = &record.trace {
+            put_retrieval_trace_fork_index(
+                target.vault_meta(),
+                wtxn,
+                &trace.fork_hash,
+                record.run_id,
+            )?;
+        }
+    } else {
+        target.vault_meta().put(wtxn, &provisional_key, b"1")?;
+    }
+    Ok(())
+}
+
+/// Stages the deletion of one retrieval-run row, its provisional marker, its
+/// outcome rows, and its trace fork indexes into `target`'s `vault_meta`.
+fn stage_retrieval_run_delete(
+    target: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    run_id: RetrievalRunId,
+) -> Result<()> {
+    let key = retrieval_run_key(run_id);
+    let provisional_key = retrieval_run_provisional_key(run_id);
+    let outcome_prefix = retrieval_outcome_run_prefix(run_id);
+    delete_retrieval_trace_fork_indexes_for_run(target.vault_meta(), wtxn, &key, run_id)?;
+    let mut outcome_keys = Vec::new();
+    for row in target.vault_meta().prefix_iter(wtxn, &outcome_prefix)? {
+        let (key, _) = row?;
+        outcome_keys.push(key.to_vec());
+    }
+    for key in outcome_keys {
+        target.vault_meta().delete(wtxn, &key)?;
+    }
+    target.vault_meta().delete(wtxn, &provisional_key)?;
+    target.vault_meta().delete(wtxn, &key)?;
+    Ok(())
+}
+
+/// Stages the finalize of one provisional context-pack retrieval-run row —
+/// clearing the provisional marker — into `target`'s `vault_meta`.
+///
+/// A session run finalizes the SAME overlay row its registration created:
+/// the row is looked up through the composed accessor, so the base finalizer
+/// never sees it and this one never reaches a base row (ARCH-0052 §7).
+fn stage_context_pack_retrieval_run_finalize(
+    target: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    run_id: RetrievalRunId,
+    elapsed_us: u64,
+    claims_suppressed: usize,
+    surfaced_result_ids: &[[u8; 16]],
+    empty_reason: Option<String>,
+) -> Result<()> {
+    let key = retrieval_run_key(run_id);
+    let provisional_key = retrieval_run_provisional_key(run_id);
+    let Some(raw) = target.vault_meta().get(wtxn, &key)? else {
+        target.vault_meta().delete(wtxn, &provisional_key)?;
+        return Ok(());
+    };
+    let mut record = decode_retrieval_run(&raw)?;
+    record.elapsed_us = elapsed_us;
+    record.claims_suppressed = claims_suppressed;
+    record.result_ids = surfaced_result_ids.to_vec();
+    let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
+    for (index, result_id) in surfaced_result_ids.iter().enumerate() {
+        if let Some(entry) = record
+            .score_breakdown
+            .iter()
+            .find(|entry| entry.result_id == *result_id)
+        {
+            let mut entry = entry.clone();
+            entry.final_rank = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
+            surfaced_breakdown.push(entry);
+        }
+    }
+    record.score_breakdown = surfaced_breakdown;
+    if let Some(trace) = record.trace.as_mut() {
+        trace.final_stage.candidates = record.score_breakdown.clone();
+    }
+    record.empty_reason = empty_reason;
+    let value = encode_retrieval_run(&record)?;
+    target.vault_meta().put(wtxn, &key, &value)?;
+    if let Some(trace) = &record.trace {
+        put_retrieval_trace_fork_index(target.vault_meta(), wtxn, &trace.fork_hash, record.run_id)?;
+    }
+    target.vault_meta().delete(wtxn, &provisional_key)?;
+    Ok(())
 }
 
 fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {

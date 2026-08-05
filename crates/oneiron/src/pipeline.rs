@@ -543,6 +543,12 @@ pub struct PipelineBuilder<'a> {
     capture_retrieval_trace: bool,
     rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     skip_vector_rescore: bool,
+    /// Additive session routing (ONE-1728 K10). `None` on every canonical
+    /// entry, which is therefore behaviorally unchanged; the session
+    /// retrieval entries pass their composed view so the retrieval-run
+    /// registration writes into the room's overlay `VaultMeta` instead of the
+    /// base ledger. Retrieval SCORING is untouched by this field.
+    session_view: Option<&'a crate::store::SessionStoreView<'a>>,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -577,7 +583,16 @@ impl<'a> PipelineBuilder<'a> {
             capture_retrieval_trace: false,
             rerank: None,
             skip_vector_rescore: false,
+            session_view: None,
         }
+    }
+
+    /// Routes this run's retrieval-run registration into a live session's
+    /// overlay (ONE-1728 K10). Additive: retrieval scoring, filters, and
+    /// every base reader stay exactly as they were.
+    pub(crate) fn in_session(mut self, view: &'a crate::store::SessionStoreView<'a>) -> Self {
+        self.session_view = Some(view);
+        self
     }
 
     pub(crate) fn telemetry_action(mut self, action: RetrievalAction) -> Self {
@@ -927,14 +942,22 @@ impl<'a> PipelineBuilder<'a> {
     ) -> Result<RetrievalWithPendingVectors<Vec<ScoredEntity>>> {
         #[cfg(feature = "sync")]
         let vault = self.vault;
+        // K6: the enqueue arm is BASE-ONLY. A session surfacing returns its
+        // pending vectors to the caller for inline handling and never writes
+        // a `pe:` marker or an embed job row — there is no overlay `pe:`
+        // keyspace, so redirecting is not an option and skipping is the rule.
+        #[cfg(feature = "sync")]
+        let enqueue = self.session_view.is_none();
         let output = self.run_for_pack()?;
         let pending_vector_ids = pending_vector_ids(&output.pending_vectors);
         #[cfg(feature = "sync")]
-        crate::embed::enqueue_pending_embedding_jobs(
-            vault,
-            &pending_vector_ids,
-            crate::embed::EMBED_PRIORITY_SURFACED_HOT,
-        )?;
+        if enqueue {
+            crate::embed::enqueue_pending_embedding_jobs(
+                vault,
+                &pending_vector_ids,
+                crate::embed::EMBED_PRIORITY_SURFACED_HOT,
+            )?;
+        }
         Ok(RetrievalWithPendingVectors {
             value: output.scores,
             pending_vector_ids,
@@ -2017,12 +2040,27 @@ impl<'a> PipelineBuilder<'a> {
             empty_reason.map(|reason| format!("{reason:?}")),
         )
         .with_trace(retrieval_trace);
-        let write_result = if telemetry_action == RetrievalAction::ContextPack {
-            self.vault
+        // ONE-1728 K10: the retrieval-run registration routes by the caller's
+        // write target. A session run's row stages into the room's overlay
+        // `VaultMeta` and evaporates at close, so the base telemetry ledger
+        // gains ZERO rows from an OffRecord session; canonical entries carry
+        // `None` and take the unchanged base path. Both arms ride the same
+        // extracted staging body, so the key format and the provisional /
+        // fork-index side writes cannot drift between targets.
+        let provisional = telemetry_action == RetrievalAction::ContextPack;
+        let write_result = match self.session_view {
+            Some(view) => self.vault.try_with_write_txn(|wtxn| {
+                if provisional {
+                    view.record_context_pack_provisional_retrieval_run_in_txn(wtxn, &run_record)
+                } else {
+                    view.record_retrieval_run_in_txn(wtxn, &run_record)
+                }
+            }),
+            None if provisional => self
+                .vault
                 .store
-                .record_context_pack_provisional_retrieval_run(&run_record)
-        } else {
-            self.vault.store.record_retrieval_run(&run_record)
+                .record_context_pack_provisional_retrieval_run(&run_record),
+            None => self.vault.store.record_retrieval_run(&run_record),
         };
         let telemetry_run_id = match write_result {
             Ok(()) => Some(run_id),

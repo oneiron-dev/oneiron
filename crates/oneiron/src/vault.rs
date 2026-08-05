@@ -1117,25 +1117,71 @@ impl Vault {
         limit: usize,
         profile: &crate::config::Bm25RankProfile,
     ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
+        let results = self.search_text_scored(&self.store, query, limit, profile)?;
+        let run_id = self.record_vault_search_retrieval_run(
+            RetrievalSignal::Text,
+            results.started_at,
+            results.started,
+            &results.scores,
+            limit,
+        );
+        Ok(RetrievalWithTelemetry {
+            value: results.scores,
+            run_id,
+        })
+    }
+
+    /// Scores one BM25 search against `target` and returns the scores plus the
+    /// timing the telemetry row needs.
+    ///
+    /// `target` is `&Store` on the canonical path and a `SessionStoreView` on
+    /// the session path (ONE-1728 §7), so an in-room search scores over
+    /// overlay ∪ base through the SAME body — the two cannot drift in
+    /// scoring, and canonical output stays byte-identical.
+    pub(crate) fn search_text_scored(
+        &self,
+        target: &impl crate::store::ManifestDbs,
+        query: &str,
+        limit: usize,
+        profile: &crate::config::Bm25RankProfile,
+    ) -> Result<TimedSearch> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
         let started_at = unix_seconds_now();
         let started = Instant::now();
-        let results = {
+        let scores = {
             let rtxn = self.store.env.read_txn()?;
-            bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)?
+            bm25::search_text(target, &rtxn, &self.analyzer, &config, query, limit)?
         };
-        let run_id = self.record_vault_search_retrieval_run(
-            RetrievalSignal::Text,
+        Ok(TimedSearch {
+            scores,
             started_at,
             started,
-            &results,
-            limit,
-        );
-        Ok(RetrievalWithTelemetry {
-            value: results,
-            run_id,
         })
+    }
+
+    /// Builds the `VaultSearch` telemetry row for one search.
+    ///
+    /// Shared with the session path so an in-room search's row carries the
+    /// identical shape; only where it LANDS differs (K10).
+    pub(crate) fn vault_search_retrieval_run_record(
+        signal: RetrievalSignal,
+        started_at: u64,
+        started: Instant,
+        results: &[ScoredEntity],
+        limit: usize,
+    ) -> RetrievalRunRecord {
+        RetrievalRunRecord::new(
+            RetrievalRunId::now(),
+            RetrievalAction::VaultSearch,
+            started_at,
+            started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            vec![signal],
+            vault_search_score_breakdown(signal, results),
+            results.len(),
+            0,
+            (limit > 0 && results.is_empty()).then(|| "NoData".to_owned()),
+        )
     }
 
     fn record_vault_search_retrieval_run(
@@ -1146,19 +1192,9 @@ impl Vault {
         results: &[ScoredEntity],
         limit: usize,
     ) -> Option<RetrievalRunId> {
-        let score_breakdown = vault_search_score_breakdown(signal, results);
-        let run_id = RetrievalRunId::now();
-        let record = RetrievalRunRecord::new(
-            run_id,
-            RetrievalAction::VaultSearch,
-            started_at,
-            started.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            vec![signal],
-            score_breakdown,
-            results.len(),
-            0,
-            (limit > 0 && results.is_empty()).then(|| "NoData".to_owned()),
-        );
+        let record =
+            Self::vault_search_retrieval_run_record(signal, started_at, started, results, limit);
+        let run_id = record.run_id;
         if let Err(error) = self.store.record_retrieval_run(&record) {
             tracing::warn!(
                 ?error,
@@ -2191,6 +2227,13 @@ fn scan_edges(
         edges.push(parse_edge_record(&key, &value)?);
     }
     Ok(edges)
+}
+
+/// One scored search plus the timing its telemetry row is built from.
+pub(crate) struct TimedSearch {
+    pub(crate) scores: Vec<ScoredEntity>,
+    pub(crate) started_at: u64,
+    pub(crate) started: Instant,
 }
 
 fn vault_search_score_breakdown(
