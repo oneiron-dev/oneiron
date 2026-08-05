@@ -44,11 +44,19 @@ parameterized · batch.rs short-id family parameterized ·
 `SessionOverlay::alloc_session_short_id` + the session short-id namespace.
 4 new tests; see D9–D11.
 
-**SEG 3+ (remaining)** —
-`apply_ops_session` + op-loop write-target parameterization · store.rs
-session-side writer variants + `impl SessionStoreView` composed read accessors ·
-ppr reader generalization · facade `witness_into_session` · pipeline `run_for_pack`
-registration routing · gate.rs threading · claim.rs ScopedRead · context_pack.rs ·
+**SEG 3 (done: 1deec97 + this commit)** — `apply_ops_session` (the executable
+session seam) · the four extract-parameterized staging helpers
+(`stage_entity_body_row`, `stage_entity_index_rows`, `stage_edge_rows`,
+`stage_vector_row`) + `apply_phonetic`/`ensure_model_id_for_vector_write`
+generalized · K5 `append_gate_decision_row_in_txn` · facade
+`witness_into_session` + the room/continuation shell pair · `JournalScope`
+accessors. 6 new tests; see D12–D15.
+
+**SEG 4+ (remaining)** — pipeline `run_for_pack` registration routing ·
+store.rs session-side retrieval-run/finalize/delete variants +
+`OffRecordSession::vault_meta_put`/`vault_meta_get` · ppr reader
+generalization · `SessionVault::search_text` · claim.rs ScopedRead ·
+context_pack.rs · K8 receipt-verb deletion + the pre-close census ·
 oracle arming (7 stubs + seam helpers).
 
 ## Decisions
@@ -221,6 +229,77 @@ parallel-load class, charged to no lane — unchanged from seg 0.
   stages into (reverse rows are one-per-entity and are never deleted mid-room),
   so a second allocation in the same segment cannot reuse an ordinal. Base
   `sid_counter:` rows and base short-id tables are neither read nor written.
+
+## Seg-3 decisions
+
+- **D12 — `apply_ops_session` is a SIBLING of the base apply, not a target flag
+  on it.** The blueprint says the Overlay session path "never enters the base
+  apply". The tempting reading is "thread the target through
+  `apply_ops_with_origin` and branch"; I rejected it. That body is base-shaped
+  in four independent places a room has no answer for — it publishes gate
+  decisions to the durable ledger, enqueues `pe:` embed jobs, runs the
+  identity-topology fold across the whole ledger, and schedules legacy HNSW
+  rebuilds off the base `vectors` DB. Threading a target puts a live
+  `if session { skip }` in front of each: four chances for a later edit to leak
+  a room into base, each individually reasonable-looking. The sibling has NO
+  `&Store` in scope, so there is no base row it *could* write — the isolation
+  is a type fact, not a reviewed invariant. What the two share is exactly what
+  must not drift: the row STAGING, through the same `ManifestDbs` accessors.
+  That is why promote can be a replay of bytes rather than a re-derivation.
+- **D13 — the session apply takes `JournalEntry` values, not `BatchOp`s.** The
+  blueprint requires every staged op to carry its role tag and preserved
+  timestamps, and forbids inferring roles from index keys. A `Vec<BatchOp>`
+  parameter plus a "remember to journal each one" rule would make that a
+  discipline; taking `Vec<JournalEntry>` makes staging-a-row and
+  journaling-it one act that cannot be half-performed. The entry's own
+  `occurred`/`learned_at` — not the op's — feed the row and the edge
+  `created_at`, so a promoted turn lands in the month window it happened in
+  (ARCH-0052 D4) rather than the one it was promoted in.
+- **D14 — the on-record continuation shell is a SECOND shell, and the two are
+  structurally separate.** K10 says post-flip witness runs "under the session's
+  on-record continuation shell … carrying zero references to overlay ids". The
+  cheap implementation reuses the room's conversation id for both modes. That
+  would write a BASE row whose conversation is a live overlay member — exactly
+  the taint K4 exists to reject — and would make the private room reachable
+  from base by following the edge, defeating "pre-flip turns remain
+  base-invisible". So the registry record holds `overlay_shell` and
+  `continuation_shell` as distinct in-memory fields, and
+  `on_record_continuation_shell()` refuses while off record. Both live only in
+  memory (no durable session row), so they evaporate with the room.
+  `overlay_shell_staged` is separate from `overlay_shell` because allocating
+  the id and staging its `Put` happen at different moments — the id is minted
+  before the write txn opens — so a second witness must reuse the shell rather
+  than re-put it.
+- **D15 — session puts keep the public entity-type gate.** A room is not a
+  place where unknown or engine-authored type bytes become writable: promote
+  replays these rows into base through the ordinary doors, so a byte that would
+  be rejected there must be rejected at witness time, not discovered at promote
+  when the user has already consented. The base ENTITY DOOR
+  (`guard_off_record_entity_put`) is deliberately NOT run — it rejects
+  live-overlay membership and would refuse the room's own writes — but that is
+  a door about WHERE a write lands, not about what a type byte means.
+
+## Cheap gate — seg 3
+
+`cargo fmt --check` clean; `cargo clippy --all-targets --all-features` clean.
+Two warnings remain, both pre-existing seg-0/seg-2 surfaces awaiting their
+seg-4 consumers (`RetrievalRunId::from_bytes`, the six unconsumed `ManifestDbs`
+accessors) — the seg-2 inventory is otherwise unchanged, so this segment adds no
+lint debt. `cargo clippy --all-targets --features sync` clean.
+`cargo test -p oneiron --all-features --lib`: **3165 passed / 0 failed**
+(3159 at seg-2 + the 6 new tests); the full suite incl. integration targets was
+green at 1deec97. No flake recurrence this segment.
+
+**Mutation-checked, not just green.** Two deliberate defects were injected and
+the suite re-run: (a) post-flip witness reusing the OVERLAY shell instead of the
+continuation shell → `post_flip_session_witness_lands_in_base_under_a_fresh_shell`
+FAILS, as it must; (b) deleting the `route.revalidate()?` call from
+`apply_ops_session` → every facade test still PASSED. That second result is why
+`session_apply_refuses_a_route_minted_before_a_mode_flip` exists in
+`batch/tests.rs`: `SessionWriteRoute::revalidate` being correct in isolation is
+not evidence that the apply entry CALLS it, and the facade tests never mint a
+route across a flip. A guard with no test that fails when it is deleted is not
+a guarded invariant.
 
 ## Next-step INTENT
 

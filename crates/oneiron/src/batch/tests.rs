@@ -4845,3 +4845,80 @@ fn taint_guard_releases_after_session_close() -> Result<()> {
     assert!(vault.edge_exists(&source, EdgeKind::Mentions, &overlay_id)?);
     Ok(())
 }
+
+/// The session apply entry refuses a STALE route before staging anything.
+///
+/// `SessionWriteRoute::revalidate` being correct in isolation is not enough:
+/// what matters is that `apply_ops_session` actually CALLS it. A mode flip
+/// landing between mint and apply must abort the write whole — half a turn
+/// staged into a room the caller no longer believes it is in would be worse
+/// than either outcome.
+#[test]
+fn session_apply_refuses_a_route_minted_before_a_mode_flip() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-apply-stale-route", OffRecordBackendClass::Local)?;
+    let route = session.write_route()?;
+    // The flip republishes the mode generation, stranding the route above.
+    session.flip_on_record()?;
+    session.flip_off_record()?;
+
+    let turn = EntityId::now();
+    let entry = crate::session_overlay::JournalEntry {
+        scope: crate::session_overlay::JournalScope::new(EntityId::now(), turn),
+        role: crate::session_overlay::JournalRole::TurnPut,
+        learned_at: 10,
+        occurred: TimeRange { start: 10, end: 10 },
+        op: BatchOp::Put {
+            id: turn,
+            entity_type: crate::registry::ENTITY_TYPE_TURN,
+            occurred: TimeRange { start: 10, end: 10 },
+            learned_at: 10,
+            data: b"stale-route turn".to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        },
+    };
+
+    let overlay = session.overlay();
+    let mut wtxn = vault.store.env.write_txn()?;
+    let segment = overlay.install_txn_segment()?;
+    let view = session.read_view()?;
+    let refused = crate::batch::apply_ops_session(
+        &view,
+        &route,
+        &vault.config,
+        &vault.analyzer,
+        &mut wtxn,
+        vec![entry],
+    )
+    .expect_err("a route minted before the flip must be refused");
+    assert_eq!(
+        refused.kind(),
+        crate::error::ErrorKind::OffRecordOverlayLeaseClosed
+    );
+    drop(view);
+    drop(segment);
+    drop(wtxn);
+
+    // Nothing staged: the refusal happens before the first row. The snapshot
+    // holds a read lease and close DRAINS leases, so it is scoped tightly —
+    // holding one across close deadlocks the closing thread.
+    {
+        let snapshot = overlay.snapshot()?;
+        assert_eq!(
+            snapshot.row_count(crate::session_overlay::OverlayKeyspace::Entities),
+            0,
+            "a refused session apply stages no rows"
+        );
+        assert_eq!(
+            snapshot.journal_entries().len(),
+            0,
+            "a refused session apply journals nothing"
+        );
+    }
+    session.close()?;
+    Ok(())
+}
