@@ -1833,7 +1833,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                 // allow_reserved_predicate) — rejects byte 86 here until
                 // ONE-1865 arms the replication dial.
                 if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                    && !(allow_maintenance && !allow_reserved_predicate)
+                    && (!allow_maintenance || allow_reserved_predicate)
                 {
                     return Err(crate::secret_custody::reject_secret_custody_byte());
                 }
