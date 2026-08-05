@@ -222,8 +222,7 @@ impl SkillReliabilityPosterior {
     #[must_use]
     pub fn lower_bound(&self) -> f32 {
         let mean = f64::from(self.mean());
-        let bound = mean - LOWER_BOUND_Z * self.std_dev();
-        clamp_unit(bound)
+        narrow((mean - LOWER_BOUND_Z * self.std_dev()).clamp(0.0, 1.0))
     }
 
     /// Selection score: posterior mean plus the exploration bonus
@@ -488,14 +487,8 @@ fn decode_outcome_win(raw: &[u8]) -> Result<bool> {
     if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
         return Err(invalid("unsupported skill reliability outcome schema"));
     }
-    value
-        .as_map()
-        .and_then(|entries| {
-            entries
-                .iter()
-                .find(|(k, _)| k.as_str() == Some(KEY_WIN))
-                .and_then(|(_, v)| v.as_bool())
-        })
+    map_entry(&value, KEY_WIN)
+        .and_then(Value::as_bool)
         .ok_or(invalid("skill reliability outcome is missing win"))
 }
 
@@ -847,10 +840,6 @@ fn read_skill(vault: &Vault, skill: &EntityId) -> Result<SkillRecord> {
     vault
         .get_skill_record(skill)?
         .ok_or(invalid("skill reliability names an unknown skill"))
-}
-
-fn clamp_unit(value: f64) -> f32 {
-    narrow(value.clamp(0.0, 1.0))
 }
 
 /// f64 math down to the f32 the posterior stores. The intermediate width exists

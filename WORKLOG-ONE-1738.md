@@ -212,3 +212,26 @@ None is in this packet; each is reachable without any of this branch's code.
 reliability claim, but 1739 owns the assert and should decide whether its `actor.*` writes make
 the count 1-or-more. `attribution_judgments` remains the stack seam; 1739's actor rows read the
 `ExecutionLapse` judgments this projector deliberately ignores.
+
+## SIMPLIFY pass (K3, on tip `1b3b553`)
+
+Two deletions, both in `skill_reliability.rs`; no test, fixture, or public-API touch:
+
+1. `clamp_unit` helper deleted — single call site; `lower_bound` now clamps inline
+   (`narrow((mean − Z·σ).clamp(0.0, 1.0))`), which the doc comment already states.
+2. `decode_outcome_win` open-coded a map lookup the module's own `map_entry` helper exists
+   for — now `map_entry(&value, KEY_WIN).and_then(Value::as_bool)` (−6 lines).
+
+Considered and kept: `active_reliability_claim_in_txn` (3 call sites), `OutcomeTally::total`
+(2), `read_skill` (2), the `map_f32` F64 arm (reserved-namespace bodies round-trip F32, but the
+decoder is the wrong place to pin the encoder's width), and the unreachable-looking
+`evidence_receipts.first().ok_or(..)` in the projector (cheap grounding at a trust boundary;
+the batch filter above it is an optimization, not a contract). The full lib.rs re-export
+surface stays: host wiring for the win/selection/floor doors lands in later tickets
+(ONE-1739, batch runner), and deleting public exports is a public-API change, not a simplify.
+
+Gates after the pass: `skill_reliability` lib 17/17 · `skill::` lib 28/28 · `skills_epic_oracle`
+12 passed / 4 ignored · zero clippy diagnostics on the file · fmt clean on the file. The
+`identity_topology/tests.rs:4203` redundant-clone clippy error and the `surface_event/tests.rs`
+fmt red both reproduce with this branch's edits stashed — pre-existing main defects, not this
+packet (the worklog's flagged-defects list above gains the identity_topology one).
