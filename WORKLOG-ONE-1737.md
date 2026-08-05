@@ -226,3 +226,127 @@ contention class, untouched by this packet.
   (`attempt_pack_receipt_id`), not a synthesized string.
 - The LLM tier is a `trait AttributionJudge` seam, not a client. A host implementation stamps
   `attribution_call_purpose()` on its `llm.rs` call; the projector takes `&dyn AttributionJudge`.
+
+## POST-MERGE SWEEP — F1 (P2, unbounded-receipt-scan)
+
+Post-merge sweep `wf_aad7b48f-8b4` returned one confirmed REAL P2 against the
+merge-in tip `3ebfb1a`. This section records its close.
+
+### The finding
+
+`attempt_pack_receipts` (`crates/oneiron/src/receipt.rs`) walked
+`vault_meta.prefix_iter(ATTEMPT_PACK_RECEIPT_KEY_PREFIX)` with NO bound,
+decoded every row, and collected the lot into a `Vec`. Every sibling collector
+in `collect_receipt_records` is already capped at `MAX_RECEIPT_QUERY_SCAN`
+(gate paging, identity-topology, access-grant, federation, settle), so this was
+the one uncapped member of the family. Two multipliers made it more than a
+theoretical scan:
+
+- **`job_ref` queries scan the family TWICE.** `receipt_family_query` re-runs
+  `collect_receipt_records` under `lineage_scan_query()` to build the lineage
+  index, so a lineage query re-collected the same unbounded set.
+- **Pack receipt rows never drain.** The attempt EVENTS they project from are
+  consumed; the receipt ledger persists for the life of the vault. Latency
+  therefore degrades monotonically with total attempt history, and the backlog
+  is caller-growable.
+
+### The fix
+
+Three parts, all inside `attempt_pack_receipts` and its two new helpers:
+
+1. **Bounded.** The walk takes `MAX_RECEIPT_QUERY_SCAN + 1` rows and stops at
+   the cap. The one row past the cap is READ but never decoded — it is exactly
+   what distinguishes a ledger holding the cap from one the cap truncated.
+2. **Newest-first, not oldest-first.** The key embeds the UUIDv7 attempt id, so
+   lexicographic key order IS mint order; a forward cap would have permanently
+   hidden every RECENT receipt behind an old backlog, on a family query whose
+   contract is newest-first. `OverlayDb` has no reverse prefix iterator, so the
+   walk uses `rev_range` over the prefix's half-open range —
+   `attempt_pack_receipt_key_range_end()` names the exclusive bound by bumping
+   the ASCII prefix's final byte. This is the same shape
+   `identity_topology_receipts` already uses (`rev_range` + `.take(cap)`).
+   Below the cap the returned SET is unchanged, and callers sort newest-first
+   downstream regardless, so nothing else moves.
+3. **Not silent.** `note_attempt_pack_scan_capped()` fires when the cap trips:
+   `tracing::warn!` for operators, plus the file's existing test-observability
+   idiom (a `#[cfg(test)]` thread-local counter beside
+   `GATE_RECEIPT_PAGES_SCANNED`). The discarded remainder is unbounded by
+   construction and is deliberately NOT counted — the fact worth reporting is
+   that the answer came from a prefix, and counting the rest would undo the cap.
+
+Support change: `overwrite_attempt_pack_receipt_for_test` was split so its
+transaction-scoped half (`put_attempt_pack_receipt_for_test`) can be called
+inside one write txn — a cap-sized fixture cannot afford a transaction per row.
+
+### The test
+
+`receipt::tests::the_pack_receipt_scan_stops_at_the_family_cap_and_signals_it`
+builds `MAX_RECEIPT_QUERY_SCAN + 1` pack receipt rows — the smallest ledger
+that MUST truncate — with attempt ids carrying a big-endian index in their
+leading bytes, so ledger key order reproduces real mint order. It asserts the
+scan returns exactly the cap, the signal fired exactly once, the NEWEST row
+survived, the OLDEST row is the one discarded, and that the public
+`vault.receipts()` door is bounded by the same cap and still answers
+newest-first from the capped set. Runtime 1.44s (the fixture needs a 256 MiB
+map; the 16 MiB default test map returns `MapFull`).
+
+### Mutation verification
+
+| Mutation | Assertion that failed |
+|---|---|
+| lift the cap floor to `MAX * 4` | `left: 100001, right: 100000` — "the scan terminates at the family work cap" |
+| `rev_range` → forward `range` | "the cap keeps the newest row" |
+| delete the `note_attempt_pack_scan_capped()` call | `left: 0, right: 1` — "a truncated scan raises the cap signal exactly once" |
+
+All mutations restored; the committed tree is the unmutated code.
+
+### Gates
+
+`cargo fmt -p oneiron --check` ✓ · `cargo test -p oneiron --all-features --lib
+receipt` → **122 passed, 0 failed**.
+
+Full `cargo test -p oneiron --all-features` → **3359 passed, 3 failed** in
+275.96s. All three failures are BASE-RED and belong to another lane — see
+"Base defects" below. Zero failures in this packet.
+
+`cargo clippy -p oneiron --all-features --all-targets -D warnings` reports
+**zero** hits in `src/receipt*`.
+
+### Base defects found while gating (NOT this packet — charge elsewhere)
+
+**B1 — `origin/main` regression: the calendar claim validator has no call
+site.** `validate_calendar_claim_structure` is defined at
+`crates/oneiron/src/calendar/claims.rs:563`, and its own module doc at line 10
+says it is "wired into" the write door. It is not: `git grep` finds ZERO call
+sites anywhere in `crates/`, so the compiler also emits a `dead_code` warning
+for it. Three tests consequently get `Ok(())` where they assert
+`Err(Error::InvalidClaimBody(..))`:
+
+- `calendar::claims::tests::calendar_claim_validator_rejects_malformed_shapes`
+- `calendar::claims::tests::calendar_claims_require_event_subjects`
+- `claim::tests::write_door_validates_calendar_claim_structure`
+
+Attribution is airtight: both failing files last changed in `8fb98e6`
+(ONE-1782 [CAL], the redo of sandbagged #561, PR #573), the call site is
+absent at HEAD~1 `3ebfb1a` AND on `origin/main` (only 2 hits there, both
+inside the defining file), and this packet touches neither file. Reads as a
+sandbag-redo defect — the redo landed the validator but dropped its wire, so
+calendar claim structure validation is currently DEAD on main.
+
+**B2 — pre-existing clippy errors, another lane's file.** Present verbatim at
+HEAD `3ebfb1a`:
+
+- `crates/oneiron/src/secret_custody/tests.rs:156` — `field_reassign_with_default`
+- `crates/oneiron/src/secret_custody/tests.rs:256` — `items_after_statements`
+
+Both left untouched (out of packet); flagged for the orchestrator to charge.
+
+### PACKET_AMEND — `crates/oneiron/src/lib.rs`
+
+`cargo fmt -p oneiron` re-wrapped a 4-line `pub use crate::receipt::{...}`
+export list in `lib.rs`. The un-wrapped line was introduced by this lane's own
+merge-in commit `3ebfb1a` (`git log -L 752,760` attributes it there): the merge
+resolution combined main's and ONE-1737's receipt exports without re-running
+rustfmt, leaving the branch fmt-dirty. The hunk is pure whitespace, touches
+only receipt exports, and is required for `cargo fmt --check` to pass. Kept,
+and recorded here as an amendment rather than silently absorbed.

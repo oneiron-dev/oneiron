@@ -45,6 +45,7 @@ pub(crate) const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;
 thread_local! {
     static GATE_RECEIPT_PAGES_SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static GATE_RECEIPT_MAX_BUFFERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ATTEMPT_PACK_SCAN_CAPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -61,6 +62,16 @@ fn gate_receipt_pages_scanned() -> usize {
 #[cfg(test)]
 fn gate_receipt_max_buffered() -> usize {
     GATE_RECEIPT_MAX_BUFFERED.get()
+}
+
+#[cfg(test)]
+fn attempt_pack_scan_capped() -> usize {
+    ATTEMPT_PACK_SCAN_CAPPED.get()
+}
+
+#[cfg(test)]
+fn reset_attempt_pack_scan_capped() {
+    ATTEMPT_PACK_SCAN_CAPPED.set(0);
 }
 const RECEIPT_VIEW_COMPONENT: &str = "receipt_view";
 const FIELD_JOB_REF: &str = "job_ref";
@@ -678,30 +689,93 @@ pub(crate) fn overwrite_attempt_pack_receipt_for_test(
     vault: &Vault,
     receipt: &ReceiptRecord,
 ) -> Result<()> {
-    let encoded = rmp_serde::to_vec_named(receipt)
-        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(
-            wtxn,
-            &attempt_pack_receipt_key(&receipt.receipt_id),
-            &encoded,
-        )?;
-        Ok(())
-    })
+    vault.with_write_txn(|wtxn| put_attempt_pack_receipt_for_test(&vault.store, wtxn, receipt))
 }
 
+/// The transaction-scoped half of [`overwrite_attempt_pack_receipt_for_test`],
+/// so a test that synthesizes a large ledger pays one write transaction rather
+/// than one per row.
+#[cfg(test)]
+pub(crate) fn put_attempt_pack_receipt_for_test(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt: &ReceiptRecord,
+) -> Result<()> {
+    let encoded = rmp_serde::to_vec_named(receipt)
+        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
+    store.vault_meta.put(
+        wtxn,
+        &attempt_pack_receipt_key(&receipt.receipt_id),
+        &encoded,
+    )?;
+    Ok(())
+}
+
+/// Names the first key past the attempt pack receipt family.
+///
+/// The reverse walk needs an explicit half-open range because `OverlayDb`
+/// exposes no reverse prefix iterator. The prefix is an ASCII literal, so its
+/// final byte is nowhere near `0xFF` and bumping it is the exclusive bound.
+fn attempt_pack_receipt_key_range_end() -> Vec<u8> {
+    let mut end = ATTEMPT_PACK_RECEIPT_KEY_PREFIX.to_vec();
+    if let Some(last) = end.last_mut() {
+        *last = last.saturating_add(1);
+    }
+    end
+}
+
+/// Collects the attempt pack receipt ledger under the family DoS guard.
+///
+/// Walks the key range NEWEST-FIRST — the key embeds the UUIDv7 attempt id, so
+/// key order IS mint order — and caps the walk at [`MAX_RECEIPT_QUERY_SCAN`].
+/// Direction is the whole point of the cap: these rows persist for the life of
+/// the vault (unlike the attempt events they project from, which drain), so an
+/// oldest-first cap would permanently hide every RECENT receipt behind an
+/// attacker-grown backlog, and the family query is newest-first by contract.
+/// Callers sort and truncate downstream, so below the cap this returns the
+/// same set the unbounded walk did.
+///
+/// Above the cap the answer is a bounded PREFIX, not the family — which
+/// [`note_attempt_pack_scan_capped`] says out loud rather than truncating in
+/// silence.
 fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
+    let end = attempt_pack_receipt_key_range_end();
+    let bounds = (
+        std::ops::Bound::Included(ATTEMPT_PACK_RECEIPT_KEY_PREFIX),
+        std::ops::Bound::Excluded(&end[..]),
+    );
     let mut receipts = Vec::new();
+    // One row PAST the cap is read and never decoded: it is what separates a
+    // ledger holding exactly the cap from one the cap truncated.
     for row in vault
         .store
         .vault_meta
-        .prefix_iter(&rtxn, ATTEMPT_PACK_RECEIPT_KEY_PREFIX)?
+        .rev_range(&rtxn, &bounds)?
+        .take(MAX_RECEIPT_QUERY_SCAN + 1)
     {
         let (_, raw) = row?;
+        if receipts.len() == MAX_RECEIPT_QUERY_SCAN {
+            note_attempt_pack_scan_capped();
+            break;
+        }
         receipts.push(decode_attempt_pack_receipt(&raw)?);
     }
     Ok(receipts)
+}
+
+/// Surfaces an attempt pack receipt scan that stopped at the work cap.
+///
+/// The discarded remainder is unbounded by construction, so it is never
+/// counted — the signal is that the cap FIRED, which is the fact an operator
+/// (or a test) needs to know the query answered from a prefix.
+fn note_attempt_pack_scan_capped() {
+    tracing::warn!(
+        scan_cap = MAX_RECEIPT_QUERY_SCAN,
+        "attempt pack receipt scan hit the receipt-family work cap; older rows were not projected"
+    );
+    #[cfg(test)]
+    ATTEMPT_PACK_SCAN_CAPPED.with(|fired| fired.set(fired.get() + 1));
 }
 
 fn decode_attempt_pack_receipt(raw: &[u8]) -> Result<ReceiptRecord> {
