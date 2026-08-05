@@ -29,6 +29,7 @@ pub mod comm;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
+pub mod consent;
 pub mod context_board;
 pub mod context_pack;
 pub mod counterparty_contact;
@@ -320,6 +321,28 @@ pub use crate::connector_key::{
     EffectorBudgetReservePolicy, EffectorBudgetRowRead, EffectorBudgetWindow,
     PendingConnectorCharter, compile_connector_charter, decode_connector_key_body,
     encode_connector_key_body,
+};
+// DEC-0006 unified consent-mode. `consent::ActorBound` is deliberately NOT
+// re-exported here: `crate::vault::ActorBound` (the engine-internal write
+// handle) already owns that name at the crate root, and `vault.rs` is outside
+// this contract's claim. The pinned downstream import path for the consent
+// subject type is therefore `oneiron::consent::ActorBound`; every other name
+// in the contract is re-exported below.
+pub use crate::consent::{
+    ActionClass, ActionEnvelope, ActionGrant, AudienceBound, AuthenticatedOwner,
+    BULK_BLAST_RADIUS_FLOOR, BoundClass, BoundEnvelope, BoundSubject, CATASTROPHE_FLOOR_V1,
+    CATASTROPHE_FLOOR_VERSION, CONSENT_CONTENT_KIND, CONSENT_GRANT_BODY_KEYS,
+    CONSENT_GRANT_SCHEMA_VERSION, CONSENT_REASON_APPROVE_ONCE, CONSENT_REASON_DENIED,
+    CONSENT_REASON_REVOKED, CONSENT_REASON_STANDING_CREATED, CONSENT_REASON_STANDING_USED,
+    CONSENT_REVOKE_COMMAND, CatastropheClass, ComposedEffect, ConsentDecision, ConsentDomain,
+    ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp,
+    ConsentProposal, ConsentReceipt, ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow,
+    ConsentRevokeAction, DisclosureClass, DisclosureEnvelope, DisclosureGrant, EffectDigest,
+    EffectFacts, GrantBound, MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
+    ReversibilityClass, StandingConsentGrant, UndoFidelity, access_grant_projection_is_active,
+    action_grant_from_standing_outbound_grant, bound_catastrophe_class, decode_consent_grant_row,
+    disclosure_grant_from_access_grant, disclosure_grant_from_disclosure_scope,
+    encode_consent_grant_row,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
