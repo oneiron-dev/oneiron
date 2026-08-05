@@ -62,6 +62,7 @@ pub mod graph_fs;
 pub mod habit;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
+pub mod identity_redirect;
 pub mod identity_reputation;
 pub mod identity_topology;
 pub mod inbox;
@@ -551,6 +552,7 @@ pub use crate::graph_fs::{
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile,
     GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
+pub use crate::identity_redirect::REDIRECT_CARRIER_CLASS;
 pub use crate::identity_reputation::{
     CONSTRAINED_REPUTATION_DAILY_CAP, DEGRADED_REPUTATION_DAILY_CAP, EmailReputationWebhookSignal,
     IDENTITY_REPUTATION_CLAIM_PREDICATES, IDENTITY_REPUTATION_SCHEMA_VERSION,

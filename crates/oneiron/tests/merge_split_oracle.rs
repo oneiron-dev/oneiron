@@ -182,37 +182,75 @@ fn outcome_receipt(vault: &Vault, receipt: EntityId) -> oneiron::ReceiptRecord {
 /// the ticket that must replace it with the real engine API.
 #[allow(dead_code)]
 mod seam {
-    use super::{EntityId, IdentityOpOutcome, ProposalOutcome, ProposalRuling, Vault};
+    use super::{
+        ClaimApprovalStatus, ClaimSubject, EntityId, IdentityOpOutcome, ProposalOutcome,
+        ProposalRuling, Vault,
+    };
 
     // ---- ONE-1744 (MS-02): redirect projection + read-time resolution ----
+    // ARMED: every stub below is the real engine API.
 
     /// Resolves an entity id through the redirect projection to its current
     /// head set (r6 read-time canonicalization; Senzing 0/1/N semantics).
-    pub(crate) fn resolve_entity(_vault: &Vault, _id: &EntityId) -> Vec<EntityId> {
-        unimplemented!("armed by ONE-1744: redirect-projection resolution")
+    pub(crate) fn resolve_entity(vault: &Vault, id: &EntityId) -> Vec<EntityId> {
+        vault.resolve_entity(id).expect("resolve entity")
     }
 
     /// Splits an entity into ZERO heads (r2 "gone" semantics) — MS-01
-    /// rejects the zero-head form (`EmptyHeads`) because only the redirect
-    /// projection can express an empty resolution set; ONE-1744 lifts it.
-    pub(crate) fn split_into_zero_heads(_vault: &Vault, _entity: &EntityId) {
-        unimplemented!("armed by ONE-1744: zero-head split")
+    /// rejected the zero-head form (`EmptyHeads`) because only the redirect
+    /// projection can express an empty resolution set; ONE-1744 lifted it,
+    /// so this is now an ordinary applied split.
+    pub(crate) fn split_into_zero_heads(vault: &Vault, entity: &EntityId) {
+        super::real_split(vault, *entity, Vec::new(), 200);
     }
 
     /// Drops the materialized redirect projection (cache, never truth).
-    pub(crate) fn drop_redirect_projection(_vault: &Vault) {
-        unimplemented!("armed by ONE-1744: drop rebuildable projection")
+    pub(crate) fn drop_redirect_projection(vault: &Vault) {
+        vault
+            .drop_redirect_projection()
+            .expect("drop redirect projection");
     }
 
-    /// Rebuilds the redirect projection from the `merged_into` /
-    /// `split_into` edges ALONE (CID-7 / ARCH-0035 rebuildability).
-    pub(crate) fn rebuild_redirect_projection_from_edges(_vault: &Vault) {
-        unimplemented!("armed by ONE-1744: rebuild projection from edges")
+    /// Rebuilds the redirect projection from engine-authored truth: the
+    /// `merged_into` / `split_into` edges for every edge-ful op, plus the
+    /// type-76 ledger for the zero-head arm no edge can witness
+    /// (CID-7 / ARCH-0035 rebuildability).
+    pub(crate) fn rebuild_redirect_projection_from_edges(vault: &Vault) {
+        vault
+            .rebuild_redirect_projection_from_edges()
+            .expect("rebuild redirect projection");
     }
 
     /// Writes a claim whose subject is `subject`; returns the claim id.
-    pub(crate) fn write_note_claim_about(_vault: &Vault, _subject: &EntityId) -> EntityId {
-        unimplemented!("armed by ONE-1744: oracle claim-fixture writer")
+    ///
+    /// The predicate sits under `profile.`, the one prefix the DEFAULT policy
+    /// manifest rates `criticality: normal` — every unmatched predicate
+    /// defaults to `critical`, which the Gate queues for consent
+    /// (`gate.pending.criticality_floor`) instead of committing. This fixture
+    /// needs a plain COMMITTED claim to witness that its subject is never
+    /// rewritten, so it writes on the auto-commit lane. The subject, not the
+    /// predicate, is what these contracts assert.
+    pub(crate) fn write_note_claim_about(vault: &Vault, subject: &EntityId) -> EntityId {
+        let note = EntityId::now();
+        vault
+            .put_claim(
+                &note,
+                &oneiron::ClaimBody::new(
+                    "profile.note",
+                    ClaimSubject::Entity(*subject),
+                    rmpv::Value::from("oracle note claim"),
+                    0.9,
+                    ClaimApprovalStatus::Auto,
+                    oneiron::ClaimLifecycleStatus::Active,
+                ),
+                oneiron::temporal::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+            )
+            .expect("write note claim");
+        note
     }
 
     // ---- ONE-1745 (MS-03): reassignment application + FACET minting ----
@@ -463,7 +501,6 @@ mod seam {
 /// r2/§4: a split into ZERO heads makes the original resolve to the EMPTY
 /// set — the id is "gone" but the ledger event and shell remain.
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_redirect_zero_heads_resolves_to_empty_set() {
     let (_dir, vault) = open_vault();
     let entity = put_person(&vault, 0x21);
@@ -473,7 +510,6 @@ fn ms02_redirect_zero_heads_resolves_to_empty_set() {
 
 /// r1/§3: after merge(B → A), B resolves to exactly ONE canonical head.
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_redirect_one_head_resolves_to_single_survivor() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);
@@ -485,7 +521,6 @@ fn ms02_redirect_one_head_resolves_to_single_survivor() {
 /// r2/§4: a split into N heads resolves the original to the EXACT set of
 /// N heads (residue claims read through all heads).
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_redirect_n_heads_resolves_to_exact_head_set() {
     let (_dir, vault) = open_vault();
     let original = put_person(&vault, 0x21);
@@ -501,23 +536,44 @@ fn ms02_redirect_n_heads_resolves_to_exact_head_set() {
 }
 
 /// r1/§3 + CID-7/ARCH-0035: the redirect table is a rebuildable projection
-/// — dropping it and rebuilding from the `merged_into`/`split_into` edges
-/// ALONE yields identical resolution. Edges are the sole truth; the
-/// projection is never authoritative.
+/// — dropping it and rebuilding from ENGINE-AUTHORED TRUTH ALONE yields
+/// identical resolution. The projection is never authoritative.
+///
+/// DOC RE-SCOPED BY ONE-1744 (arming, not weakening — every assert below is
+/// kept and the op sequence is STRENGTHENED): the contract was authored as
+/// "from the `merged_into`/`split_into` edges ALONE / edges are the sole
+/// truth". That holds for every edge-ful op, but this ticket lifts the
+/// zero-head split, which shells its entity while writing NO edge — so no
+/// edge set can distinguish a retired id from a live one. The rebuild input
+/// is therefore edges PLUS the type-76 identity-topology event ledger, both
+/// append-only engine-authored truth. D11's "edges are canonical" is
+/// unchanged; the TABLE remains the only droppable projection, so CID-7 is
+/// intact.
+///
+/// Per that lift the fixture now carries a zero-head split alongside the
+/// merge, because it is exactly the arm a from-edges-only rebuild would get
+/// wrong, and a rebuild-identity test that omits it cannot see the
+/// difference.
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_redirect_table_rebuilds_identically_from_edges_alone() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);
     let loser = put_person(&vault, 0x22);
+    let retired = put_person(&vault, 0x24);
     real_merge(&vault, vec![loser], survivor, 200);
+    seam::split_into_zero_heads(&vault, &retired);
 
     let before = seam::resolve_entity(&vault, &loser);
+    let before_retired = seam::resolve_entity(&vault, &retired);
     seam::drop_redirect_projection(&vault);
     seam::rebuild_redirect_projection_from_edges(&vault);
     let after = seam::resolve_entity(&vault, &loser);
     assert_eq!(before, after);
     assert_eq!(after, vec![survivor]);
+    // The zero-head arm survives the round trip identically: still the empty
+    // set, not the live-entity identity a from-edges-only rebuild would give.
+    assert_eq!(seam::resolve_entity(&vault, &retired), before_retired);
+    assert_eq!(seam::resolve_entity(&vault, &retired).len(), 0);
 }
 
 /// [NEG] r6/§9: claim subjects keep original entity ids FOREVER. After
@@ -525,7 +581,6 @@ fn ms02_redirect_table_rebuilds_identically_from_edges_alone() {
 /// redirect resolves B → A only at read time. An eager reference-rewrite
 /// implementation (the Wikidata unmerge killer) must fail here.
 #[test]
-#[ignore = "armed by ONE-1744"]
 fn ms02_refs_never_rewritten_after_merge() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);
