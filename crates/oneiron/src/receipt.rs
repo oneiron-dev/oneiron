@@ -2166,9 +2166,9 @@ fn identity_topology_receipts(
             record.action,
             crate::identity_topology::StoredIdentityOpAction::ProposalResolution { .. }
         ) {
-            proposal_outcome_receipt(&event_id, &record)?
+            proposal_outcome_receipt(&event_id, &record)
         } else {
-            identity_topology_receipt(&event_id, &record)?
+            identity_topology_receipt(&event_id, &record)
         };
         if query.includes_kind(receipt.receipt_kind) && query.matches(&receipt) {
             receipts.push(receipt);
@@ -2192,12 +2192,9 @@ fn identity_topology_receipts(
 fn proposal_outcome_receipt(
     event_id: &EntityId,
     record: &crate::identity_topology::StoredIdentityOpEvent,
-) -> Result<ReceiptRecord> {
+) -> ReceiptRecord {
     use crate::identity_topology::StoredIdentityOpAction;
 
-    // The caller dispatches on the action, so a non-resolution row here is
-    // a dispatch slip, never user data — typed, since a stealth-kind-mix
-    // bug past the signature change must surface as an error, not a panic.
     let StoredIdentityOpAction::ProposalResolution {
         proposal,
         outcome,
@@ -2205,9 +2202,7 @@ fn proposal_outcome_receipt(
         amended_body,
     } = &record.action
     else {
-        return Err(Error::InvariantViolation(
-            "proposal outcome receipt projects only resolution events",
-        ));
+        unreachable!("proposal outcome receipt projects only resolution events")
     };
 
     let mut fields = BTreeMap::new();
@@ -2228,7 +2223,7 @@ fn proposal_outcome_receipt(
         fields.insert(FIELD_AMENDED_BODY.to_owned(), hex_lower(amended_body));
     }
 
-    Ok(ReceiptRecord {
+    ReceiptRecord {
         receipt_id: format!("proposal_outcome:{}", event_id.to_hex()),
         receipt_kind: ReceiptKind::ProposalOutcome,
         occurred_at: record.at,
@@ -2239,7 +2234,7 @@ fn proposal_outcome_receipt(
         trigger_ref: Some(format!("event:{}", proposal.to_hex())),
         policy_trace: Vec::new(),
         fields,
-    })
+    }
 }
 
 /// The amended op body a proposal-outcome receipt carries — the raw bytes
@@ -2281,7 +2276,7 @@ fn receipt_hex_field(record: &ReceiptRecord, field: &str) -> Option<Vec<u8>> {
 fn identity_topology_receipt(
     event_id: &EntityId,
     record: &crate::identity_topology::StoredIdentityOpEvent,
-) -> Result<ReceiptRecord> {
+) -> ReceiptRecord {
     use crate::identity_topology::StoredIdentityOpAction;
 
     let mut fields = BTreeMap::new();
@@ -2316,16 +2311,14 @@ fn identity_topology_receipt(
             fields.insert("undo_of".to_owned(), target.to_hex());
             Some(format!("event:{}", target.to_hex()))
         }
-        // Resolution rows project the ProposalOutcome receipt; the caller
-        // dispatches on the action before reaching this projector.
-        StoredIdentityOpAction::ProposalResolution { .. } => {
-            return Err(Error::InvariantViolation(
-                "identity lifecycle receipt does not project resolution events",
-            ));
+        // Resolution rows project the ProposalOutcome receipt instead; the
+        // caller dispatches on the action before reaching this projector.
+        StoredIdentityOpAction::ProposalResolution { proposal, .. } => {
+            Some(format!("event:{}", proposal.to_hex()))
         }
     };
 
-    Ok(ReceiptRecord {
+    ReceiptRecord {
         receipt_id: format!("identity_topology:{}", event_id.to_hex()),
         receipt_kind: ReceiptKind::IdentityLifecycle,
         occurred_at: record.at,
@@ -2336,7 +2329,7 @@ fn identity_topology_receipt(
         trigger_ref,
         policy_trace: Vec::new(),
         fields,
-    })
+    }
 }
 
 fn channel_identity_lifecycle_receipts(
