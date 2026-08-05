@@ -715,3 +715,27 @@ fn meeting_transcript_rejects_malformed_json() {
         "got {err:?}"
     );
 }
+
+#[test]
+fn meeting_transcript_rejects_a_capture_time_that_overflows_occurred_at() {
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(
+            MEETING_TRANSCRIPT_SOURCE_ID,
+            &meeting_transcript_json(&[(
+                "\"capture_started_at\": 1000",
+                &format!("\"capture_started_at\": {}", u64::MAX),
+            )]),
+        )
+        .expect_err("u64::MAX-adjacent capture time must reject, not wrap");
+
+    assert!(
+        matches!(
+            err,
+            IngestError::TimestampOverflow {
+                source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+}

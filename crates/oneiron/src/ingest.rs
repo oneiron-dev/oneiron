@@ -343,6 +343,14 @@ pub enum IngestError {
         turn_id: String,
         word_id: String,
     },
+
+    #[error(
+        "ingest source `{source_id}` turn `{turn_id}` timestamp overflows `occurred_at` arithmetic"
+    )]
+    TimestampOverflow {
+        source_id: &'static str,
+        turn_id: String,
+    },
 }
 
 pub trait IngestSource: Send + Sync {
@@ -570,7 +578,16 @@ impl IngestSource for MeetingTranscriptSource {
                         &format!("turns[{index}].speaker_cluster"),
                     )?)
                     .map(str::to_owned),
-                occurred_at: capture_started_at.map(|base| base + start_ms / 1000),
+                occurred_at: capture_started_at
+                    .map(|base| {
+                        base.checked_add(start_ms / 1000).ok_or_else(|| {
+                            IngestError::TimestampOverflow {
+                                source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                                turn_id: turn_id.to_owned(),
+                            }
+                        })
+                    })
+                    .transpose()?,
                 text,
             });
         }
