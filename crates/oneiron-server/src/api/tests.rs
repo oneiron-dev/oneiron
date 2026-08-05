@@ -121,6 +121,7 @@ const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "SurfaceCounterpartyPayload",
     "SurfaceEventAckResponse",
     "SurfaceEventRejectionResponse",
+    "SurfaceEventRejectionReasonPayload",
     "SurfaceEventStatusResponse",
     "SurfaceEventHandoffStatePayload",
     "CoreRunTreeEvent",
@@ -10246,6 +10247,45 @@ async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
         receipt.get("agent_ref").is_none(),
         "a vault-bound identity stamps no agent: {receipt:?}"
     );
+}
+
+/// The schema publishes the closed engine set, spelling for spelling. The
+/// wire-payload enum exists only to give utoipa something to reference, so a
+/// rename on either side has to fail here rather than ship a schema naming
+/// values the engine never emits — the erasure to a bare `string` is exactly
+/// what left adapters reading the four spellings out of prose.
+#[test]
+fn v1_core_surface_event_rejection_reason_schema_is_the_closed_engine_set() {
+    use super::surface_events::SurfaceEventRejectionReasonPayload;
+
+    let engine = [
+        oneiron::InboundSurfaceRejectionReason::UnknownReceivingIdentity,
+        oneiron::InboundSurfaceRejectionReason::NonAgentBoundIdentity,
+        oneiron::InboundSurfaceRejectionReason::InactiveReceivingIdentity,
+        oneiron::InboundSurfaceRejectionReason::TombstonedReceivingIdentity,
+    ];
+
+    let spec = generated_spec();
+    let declared = openapi_component_schema(&spec, "SurfaceEventRejectionReasonPayload")["enum"]
+        .as_array()
+        .expect("rejection reason is a closed enum schema")
+        .clone();
+    assert_eq!(
+        declared,
+        engine
+            .iter()
+            .map(|reason| Value::from(reason.as_str()))
+            .collect::<Vec<_>>()
+    );
+
+    // And each mirrored variant serializes to the engine's stable string.
+    for reason in engine {
+        assert_eq!(
+            serde_json::to_value(SurfaceEventRejectionReasonPayload::from(reason))
+                .expect("serialize rejection reason"),
+            Value::from(reason.as_str())
+        );
+    }
 }
 
 #[tokio::test]

@@ -387,9 +387,14 @@ pub enum InboundSurfaceRouteOutcome {
 }
 
 /// Stable rejection reasons for inbound SurfaceEvent routing receipts.
+///
+/// Closed on purpose, like [`SurfaceSourceApp`]: adapters branch on the reason
+/// and the `/v1/core` schema enumerates these four spellings, so a projection
+/// of this enum onto a wire contract must stay exhaustive. Sealing it would
+/// only buy semver headroom this pre-release crate has no consumer for, at the
+/// cost of letting a fifth reason ship a schema that silently lies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum InboundSurfaceRejectionReason {
     UnknownReceivingIdentity,
     NonAgentBoundIdentity,
