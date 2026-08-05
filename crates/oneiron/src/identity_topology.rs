@@ -3147,7 +3147,9 @@ impl Vault {
     /// with an available invalid participant (or an undo naming an
     /// available non-event) is excluded from the effective fold. Missing
     /// references remain deferred and are reconsidered on materialization.
-    fn fold_effective_identity_topology_events_in_txn(
+    /// `pub(crate)`: the receipt projection folds the same projection to
+    /// suppress fold-rejected duplicate rulings.
+    pub(crate) fn fold_effective_identity_topology_events_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<Vec<IdentityTopologyEvent>> {

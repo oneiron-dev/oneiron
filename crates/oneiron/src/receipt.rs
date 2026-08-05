@@ -2159,13 +2159,35 @@ fn identity_topology_receipts(
         {
             continue;
         }
-        // Per-kind dispatch: a resolution row projects the ProposalOutcome
-        // receipt, every other action the identity-lifecycle one. One scan,
-        // two projectors — each gated on the kind its caller asked for.
-        let receipt = if matches!(
+        // Per-kind dispatch: a resolution row NAMED by the fold as a
+        // duplicate (the proposal already retired by an EARLIER ruling)
+        // projects nothing — an outcome receipt for it would read as a
+        // second, contradictory decision about one review. Rejection sets
+        // arrive from the fold the log itself maintains, so a replay that
+        // double-rules converges to the same single receipt everywhere.
+        let action_is_resolution = matches!(
             record.action,
             crate::identity_topology::StoredIdentityOpAction::ProposalResolution { .. }
-        ) {
+        );
+        if action_is_resolution {
+            let fold = crate::identity_topology::fold_identity_topology_log(
+                &vault.fold_effective_identity_topology_events_in_txn(rtxn)?,
+            );
+            if fold
+                .rejections
+                .iter()
+                .any(|(rejected, reason)| {
+                    *rejected == event_id
+                        && matches!(
+                            reason,
+                            crate::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. }
+                        )
+                })
+            {
+                continue;
+            }
+        }
+        let receipt = if action_is_resolution {
             proposal_outcome_receipt(&event_id, &record)
         } else {
             identity_topology_receipt(&event_id, &record)

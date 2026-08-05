@@ -3172,3 +3172,73 @@ fn approved_resolution_preserves_proposal_evidence() {
             .is_some_and(|e| e.rationale.contains("import batch 7")),
     );
 }
+
+#[test]
+fn fold_rejected_duplicate_resolution_mints_no_outcome_receipt() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0xB7);
+    let loser = put_person(&vault, 0xB8);
+
+    // A parked proposal, resolved LOCALLY — the winning ruling, and the
+    // receipt MUST project from it.
+    let proposal = park_merge_proposal(&vault, vec![loser], survivor, 200);
+    let (outcome, winner) = vault
+        .resolve_identity_proposal(&proposal, ProposalRuling::Reject, &ruling_write(), 300)
+        .expect("local ruling resolves the park");
+    assert_eq!(outcome, ProposalOutcome::Rejected);
+
+    // A SECOND resolution row rides in on the replicated path (a peer
+    // double-ruled the same park in the same replication frame). The fold
+    // retires the park on the FIRST ruling in (seq, id) order, so this
+    // later row lands as a fold REJECTION — it is still stored (the ledger
+    // keeps the evidence) but it must mint NO outcome receipt: projecting
+    // one would read as a second, contradictory decision about one review.
+    let winner_record = vault
+        .identity_topology_event(&winner)
+        .expect("read winner")
+        .expect("winner exists");
+    let loser_row = StoredIdentityOpEvent {
+        seq: winner_record.seq + 1,
+        at: 400,
+        actor: None,
+        source: ClaimSource::UserStated,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::ProposalResolution {
+            proposal,
+            outcome: ProposalOutcome::ApprovedUntouched,
+            scope: match &winner_record.action {
+                StoredIdentityOpAction::ProposalResolution { scope, .. } => scope.clone(),
+                _ => panic!("winner carries a resolution"),
+            },
+            amended_body: None,
+        },
+    };
+    put_identity_event_record(&vault, id(0xB9), &loser_row);
+
+    let receipts = proposal_outcome_receipts(&vault);
+    assert_eq!(
+        receipts.len(),
+        1,
+        "exactly one proposal-outcome receipt — the winning ruling only"
+    );
+    assert_eq!(
+        receipts[0].receipt_id,
+        format!("proposal_outcome:{}", winner.to_hex()),
+        "the receipt projects from the fold's accepted ruling"
+    );
+    assert_eq!(receipts[0].outcome, "rejected");
+
+    // The rejected row is still queryable as LEDGER (evidence kept), it just
+    // carries no receipt PROJECTION of its own — the store remains the
+    // record, the projection refuses the double-count.
+    let stored = vault
+        .identity_topology_event(&id(0xB9))
+        .expect("read rejected row")
+        .expect("fold-rejected rows are still stored");
+    assert!(matches!(
+        stored.action,
+        StoredIdentityOpAction::ProposalResolution { .. }
+    ));
+}
