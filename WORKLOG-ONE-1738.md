@@ -13,7 +13,7 @@ as #581. Blueprint: `~/.claude-wave5/blueprints/SKILLS/ONE-1738.md`.
 
 ## What landed
 
-**New:** `crates/oneiron/src/skill_reliability.rs` (+ `skill_reliability/tests.rs`, 16 tests).
+**New:** `crates/oneiron/src/skill_reliability.rs` (+ `skill_reliability/tests.rs`, 17 tests).
 **Edited:** `crates/oneiron/src/skill.rs` (+ `skill/tests.rs`, 1 test), `crates/oneiron/src/lib.rs`
 (mod + re-exports), `crates/oneiron/tests/skills_epic_oracle.rs` (3 `sk05_*` arms).
 

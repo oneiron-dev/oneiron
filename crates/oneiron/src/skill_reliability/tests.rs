@@ -7,10 +7,13 @@ use crate::attempt_queue::{
 use crate::config::VaultConfig;
 use crate::receipt::attempt_pack_receipt_id;
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::skill::SkillLifecycle;
+use crate::skill::{SkillLifecycle, canonical_skill_tree_hash};
 use crate::skill_attribution::{
     AttemptOutcome, OutcomeEvidence, read_attribution_cursor, record_attribution_evidence,
     run_attribution_projector,
+};
+use crate::skill_hub::{
+    ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillGovernance, SkillScanReceipt,
 };
 
 // ─── fixtures ───────────────────────────────────────────────────────────
@@ -180,6 +183,85 @@ fn provenance_priors_order_vetted_above_generated() {
     assert!(vetted.mean() > human.mean());
     assert!(human.mean() > unvetted.mean());
     assert!(unvetted.mean() > generated.mean());
+}
+
+#[test]
+fn a_clean_scan_verdict_on_the_canonical_bytes_promotes_an_import_to_vetted() {
+    // The vetted branch reads the scan-verdict claim's `verdict` wire string,
+    // which this module spells out rather than importing (ScanVerdict::as_str is
+    // private to skill_hub). Without a vault-level test that spelling could rot
+    // silently and every vetted import would quietly seed as unvetted.
+    let (_tmp, vault) = temp_vault();
+    let tree = canonical_skill_tree_hash([("SKILL.md", b"# vetted fixture\n".as_slice())])
+        .expect("tree hashes");
+    let skill = EntityId::now();
+    let imported =
+        record("sk05.skill.vetted", ClaimSource::Imported, false).with_content_hash(tree);
+    put_active(&vault, &skill, imported);
+
+    assert_eq!(
+        skill_provenance_trust_class(&vault, &skill).expect("class"),
+        ProvenanceTrustClass::UnvettedImport,
+        "an import nobody scanned is not vetted"
+    );
+
+    // A scanner that did NOT clear the bytes must not promote it either.
+    for (provider, verdict, at) in [
+        ("provider-suspicious", ScanVerdict::Suspicious, 20),
+        ("provider-unknown", ScanVerdict::Unknown, 21),
+    ] {
+        let receipt = SkillScanReceipt::new(
+            provider,
+            at,
+            verdict,
+            ScanRiskLevel::Medium,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )
+        .expect("scan receipt");
+        vault
+            .ingest_skill_scan_verdict(&skill, tree, &receipt, t(at), at + 1)
+            .expect("ingest verdict");
+    }
+    assert_eq!(
+        skill_provenance_trust_class(&vault, &skill).expect("class"),
+        ProvenanceTrustClass::UnvettedImport,
+        "suspicious and unknown are not a clearance"
+    );
+
+    let clean = SkillScanReceipt::new(
+        "provider-clean",
+        30,
+        ScanVerdict::Clean,
+        ScanRiskLevel::None,
+        ScanCompleteness::Complete,
+        SkillGovernance::Recommended,
+    )
+    .expect("scan receipt");
+    vault
+        .ingest_skill_scan_verdict(&skill, tree, &clean, t(30), 31)
+        .expect("ingest verdict");
+
+    assert_eq!(
+        skill_provenance_trust_class(&vault, &skill).expect("class"),
+        ProvenanceTrustClass::VettedImport
+    );
+    let prior = skill_reliability_prior(&vault, &skill).expect("prior");
+    assert!(
+        (prior.mean() - 0.75).abs() < 1e-6,
+        "the vetted prior seeded"
+    );
+
+    // …and the done-means ordering, end to end through the vault: a vetted
+    // import outranks a conversation-authored skill before either has run.
+    let generated = EntityId::now();
+    put_active(
+        &vault,
+        &generated,
+        record("sk05.skill.converted", ClaimSource::Generated, true),
+    );
+    let generated_prior = skill_reliability_prior(&vault, &generated).expect("prior");
+    assert!(prior.mean() > generated_prior.mean());
 }
 
 #[test]
