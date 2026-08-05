@@ -326,6 +326,53 @@ fn re_running_the_projector_over_the_same_judgments_is_a_no_op() {
 }
 
 #[test]
+fn a_routed_defect_outranks_the_default_win_credit_in_either_order() {
+    // A blamed attempt still reaches its terminal door COMPLETED, so the same
+    // receipt can be offered as a contributing win AND routed to a defect. The
+    // posterior must not depend on which call the host makes first.
+    let posterior_for = |credit_first: bool| {
+        let (_tmp, vault) = temp_vault();
+        let skill = EntityId::now();
+        let actor = EntityId::now();
+        put_active_import(&vault, &skill, "sk05.skill.order");
+        put_actor(&vault, &actor);
+
+        let receipt = stamped_receipt(&vault, "sk05.skill.order");
+        let blame = |vault: &Vault| {
+            record_attribution_evidence(
+                vault,
+                &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+                    .with_skill(skill)
+                    .with_routing_facts(true, true),
+            )
+            .expect("record evidence");
+            let cursor = read_attribution_cursor(vault).expect("cursor");
+            let judgments = run_attribution_projector(vault, cursor).expect("route");
+            project_skill_reliability(vault, &judgments).expect("project");
+        };
+        if credit_first {
+            record_skill_contributing_win(&vault, &skill, &receipt, 20).expect("credit");
+            blame(&vault);
+        } else {
+            blame(&vault);
+            record_skill_contributing_win(&vault, &skill, &receipt, 20).expect("credit");
+            project_skill_reliability_for(&vault, &skill, 40).expect("re-project");
+        }
+        skill_reliability_posterior(&vault, &skill)
+            .expect("read")
+            .expect("projected")
+    };
+
+    let credited_first = posterior_for(true);
+    let blamed_first = posterior_for(false);
+    assert_eq!(credited_first, blamed_first, "order-independent");
+    assert!(
+        (blamed_first.beta - 2.0).abs() < 1e-6 && (blamed_first.alpha - 1.0).abs() < 1e-6,
+        "one receipt, one outcome, and the routed verdict is the one that counts"
+    );
+}
+
+#[test]
 fn contributing_wins_raise_the_posterior_and_are_grounded_at_the_door() {
     let (_tmp, vault) = temp_vault();
     let skill = EntityId::now();

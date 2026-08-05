@@ -385,6 +385,14 @@ fn manifest_entry_names_skill(wire_form: &str, skill_id: &str) -> bool {
         .is_some_and(|(reference, _)| reference == skill_id)
 }
 
+/// Writes one outcome row, keyed `(skill, receipt)`.
+///
+/// **A routed verdict outranks the default credit, whichever arrives first.** A
+/// blamed attempt still reaches its terminal door COMPLETED, so the same receipt
+/// can plausibly be offered as a contributing win and routed to a skill defect —
+/// and a host that does both would otherwise get a posterior that depends on
+/// call order. A loss overwrites a win (SK-04 corrected the default); a win never
+/// overwrites a loss.
 fn record_outcome_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -396,6 +404,13 @@ fn record_outcome_in_txn(
     if receipt_ref.is_empty() {
         return Err(invalid("a reliability outcome must cite a receipt"));
     }
+    let key = outcome_key(skill, receipt_ref);
+    if win
+        && let Some(existing) = vault.store.vault_meta.get(wtxn, &key)?
+        && !decode_outcome_win(&existing)?
+    {
+        return Ok(());
+    }
     let row = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -405,10 +420,7 @@ fn record_outcome_in_txn(
         (Value::from(KEY_AT), Value::from(at)),
     ]);
     let encoded = encode_value(&row)?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &outcome_key(skill, receipt_ref), &encoded)?;
+    vault.store.vault_meta.put(wtxn, &key, &encoded)?;
     Ok(())
 }
 

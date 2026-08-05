@@ -1,7 +1,15 @@
 # WORKLOG — ONE-1738 [SK-05] `skill.reliability` claim + score demotion to cache
 
-Branch `ONE-1738`, cut off `origin/main` @ `03b29e1` (ONE-1737 landed as #581).
-Blueprint: `~/.claude-wave5/blueprints/SKILLS/ONE-1738.md`.
+Branch `ONE-1738`, rebased onto `origin/main` @ `f5fce02` (#591). ONE-1737 is on main
+as #581. Blueprint: `~/.claude-wave5/blueprints/SKILLS/ONE-1738.md`.
+
+> **Lane-setup note worth carrying forward.** The lane worktree
+> `/Volumes/Cinema/w5-lt/skills` is a separate CLONE, not a linked worktree of
+> `~/Desktop/code/oneiron` — it has its own `.git` and its own remote-tracking refs. A
+> `git fetch` run from the session cwd therefore does NOT advance the lane's `origin/main`,
+> and the branch silently cut off a four-commit-stale base. Caught by three unexplained
+> `calendar::claims` failures in the first full run, which #590 ("calendar validator
+> restore") had already fixed on the real main. Fetch inside the lane directory.
 
 ## What landed
 
@@ -157,15 +165,26 @@ bindings (clippy `unnecessary_literal_unwrap` rejects `Some(x).expect(..)` under
 deny list); the asserts they fed are unchanged. The four `sk04`/`sk06` tests stay ignored —
 ONE-1739's.
 
-## Gates
-- `cargo fmt -p oneiron -- --check` — clean.
-- `cargo clippy -p oneiron --all-features --all-targets` — **zero diagnostics on every touched
-  file**. The command as a whole is RED on `crates/oneiron/src/secret_custody/tests.rs`
-  (`field_reassign_with_default`, `items_after_statements`) — pre-existing on `origin/main`
-  from #566, charged to no lane here, not touched.
+## Gates (on the rebased tree, base `f5fce02`)
+- `cargo fmt -p oneiron -- --check` — clean on every touched file.
+- `cargo clippy -p oneiron --all-features --all-targets` — zero diagnostics on every touched
+  file.
 - `cargo test -p oneiron --lib skill` — 106 passed.
-- `cargo test -p oneiron --test skills_epic_oracle` — 12 passed, 4 ignored (1739's).
-- `cargo test -p oneiron --all-features` — see the final commit.
+- `cargo test -p oneiron --test skills_epic_oracle` — 12 passed, 4 ignored (ONE-1739's).
+- `cargo test -p oneiron --all-features` — green.
+
+### Two pre-existing main defects, flagged not fixed
+Neither is in this packet, and both are reproducible on a clean `origin/main` checkout:
+
+1. **fmt gate is RED on `crates/oneiron/src/surface_event/tests.rs:733`** (from #589,
+   SPINE-COMM ONE-1795) — a single over-long `assert_eq!` rustfmt wants wrapped. Deliberately
+   NOT reformatted here: `cargo fmt -p oneiron` would rewrite a file this lane does not own,
+   which is a packet violation for a whitespace fix. Whoever owns the next `surface_event`
+   touch (or a mech sweep) should take it. It will fail `scripts/verify.sh` stage `fmt` for
+   every lane until then.
+2. **clippy is RED on `crates/oneiron/src/secret_custody/tests.rs`** (from #566, SECRET-01
+   ONE-1919) — `field_reassign_with_default` at :156 and `items_after_statements` at :256,
+   both workspace-`deny`. Same reasoning: not this lane's file.
 
 ## Handoff to ONE-1739 (SK-06)
 `sk04_attribution_routes_defect_to_skill_and_lapse_to_actor` still asserts
