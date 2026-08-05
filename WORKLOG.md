@@ -155,3 +155,69 @@ RELAY-ONE-1606-simplify-seg0 — committed as `79d7764`.
    (`consent_registry_lens`).
 4. SECURITY-CORE RIDER: owner/cross-vendor review is a merge condition. A green
    implement/simplify/finder/verdict stack does NOT authorize merge.
+
+## FIX leg (K3, post-verdict on 62ddae1)
+
+Nine P1s from the verdict on commit `62ddae1`. Each closes as its own
+commit, cheap gate green per commit; full-workspace sweep lands next.
+
+- **FIX1 — gate chokepoint** (`15d0017`): both gate-input builders now take
+  `Option<ConsentGateContext>`; the legislated `Some` door
+  (`evaluate_external_effect_policy`) composes the ladder from host-observed
+  effect facts inside its own write txn and folds three remembered-state
+  sources that were ALREADY verified on that txn (active consent grants,
+  scope-matched `StandingOutboundGrant` through the pinned adapter,
+  budget-free policy-scoped matches echoed as covering grants). An
+  unauthorized IRREVERSIBLE send now surfaces
+  `gate.pending.consent.irreversible_effect` ahead of the authority code —
+  the three updated exact-vec reason pins in `gate/tests.rs` are the behavior
+  change made legible, not weakened coverage.
+- **FIX2 — owner-auth** (`08e4c85`): `authenticate_owner` additionally
+  validates the principal ref through `ActorBound` (shape check), requires
+  the actor's identity-topology lifecycle be ACTIVE (merged/split shells are
+  redirects, not owners), and fails a hex principal ref that decodes to a
+  DIFFERENT actor. Not in scope: distinguishing "the owner PERSON" from other
+  PERSON entities — the store has no owner-of-vault table; that is what the
+  principal-authentication handshake carries.
+- **FIX3 — approve-once** (`ce528fb`): `approve_once` claims a
+  `consent.once.v1:` spend marker keyed by the effect digest in the SAME
+  write txn as the receipt, so a re-mint of the same digest is refused with
+  `ConsentApproveOnceSpent`. The marker value is the approving
+  `GateDecisionId` — evidence on a contested spend, not a tombstone. The
+  evaluator's Auto arm on a matched digest is unchanged in shape; what
+  changed is that the RECEIPT it honors cannot be minted twice.
+- **FIX4 — reversibility** (`7676515`): the coverage arm now fires only when
+  the op carries a requirement to cover; a requirement-free irreversible op
+  falls through to the classifier and Asks (was: `is_none_or` over two
+  `None`s short-circuited Auto). A requirement-free REVERSIBLE op still
+  auto-runs — invariant 6's permissive bias is preserved where the invariant
+  says to preserve it.
+- **FIX5 — revocation TOCTOU** (`f5d456d`): both settle paths resolve
+  standing-grant authority INSIDE the settle's own write txn
+  (`authorize_settle_in_txn`). LMDB serializes writers, so a revocation is
+  either committed before the settle's txn opens (the grant reads Revoked and
+  the settle refuses) or lands after the settle commits (its read was live at
+  authorize time). The pre-txn `authorize_settle` call stays as the
+  early-error contract; the in-txn one is the atomicity pin. Test simulates
+  the race shape at the reader level (LMDB has one writer; a second writer's
+  commit is by definition serialized) plus the end-to-end revoke→settle
+  refusal.
+- **FIX6/7/8** (`a60232f`): test pins only — the catastrophe floor's mint
+  rejection + exact closed-set always-gate was already covered by the
+  invariant-7 test; this commit extends invariant 9's registry test with the
+  owner audit-dump assertions (subject/class/selectors/status per row,
+  revoked retained under the audit flag) and invariant 3's bound test with
+  the envelope-mismatch axis (different selector set, superset drift → Ask,
+  never inherit).
+- **FIX9 — cross-vendor pin** (`a43f7d4`): pins that actor-class admission is
+  a typed `ConsentActorIdentity` variant check, not a free-text claim — one
+  ask card, same payload, pinned `SurfaceActor` admits what an unverified
+  `VoicePath` turns into `NoopNonPrincipal`.
+
+State: cheap gate green per fix commit. Claims audit: lane diff touches ONLY
+files inside the fix list's allowed surface (consent.rs, consent/tests.rs,
+gate.rs, gate/tests.rs, edit_settle.rs, edit_settle/tests.rs, error.rs,
+genui.rs, genui/tests.rs, lib.rs, receipt.rs, merge_split_oracle.rs). No
+facade.rs, no Cargo.lock, no out-of-packet writes.
+
+RELAY-ONE-1606-fix-seg0
