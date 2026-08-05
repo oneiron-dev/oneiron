@@ -242,3 +242,23 @@ not call `retry` and passes in isolation and under `--test-threads=1`.
    the new try starts fresh. Same zero-exposure argument as (1). If dreamer
    attempts ever become retryable in production, the reservation needs to follow
    `retry_of` or be released when the source is finalized.
+
+## K3 simplify pass (post-implementation)
+
+Verdict: **no edit warranted.** Read the full production diff
+(`attempt_queue.rs`, `run_tree.rs`, `agent_dispatch.rs`,
+`dreamer_runner.rs`, `facade.rs`, `task_verb.rs`) against the blueprint.
+
+- Duplication was already factored by the implementer: `lease_claimed_record`
+  (two lease-mutation copies collapsed), `waiting_on_backoff` (three
+  report/validation sites), `is_ready_indexed` (four ready-scan guards),
+  `is_cancelable_attempt_state` (two cancel guards in `task_verb.rs`).
+- The new `retry` is one flat transaction body with no speculative layers;
+  the merged `Queued | Paused | Scheduled` report arms are already
+  deletion-shaped.
+- The only defensive-looking lines (`source.scheduled_at/backoff_until = None`
+  in `retry`, unreachable on a decode-validated `Leased` row) spell out the
+  blueprint's "clear lease/backoff" finalize step verbatim — kept as
+  blueprint-faithful, costless.
+- No fixture, test assertion, or public API touched. No gate re-run needed
+  (tree unchanged from the green full-suite run above).
