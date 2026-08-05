@@ -224,6 +224,13 @@ pub struct ScopedRead<'a> {
     vault: &'a crate::vault::Vault,
     actor_key: ScopedReadActorKey,
     policy: Mutex<Option<PolicyManifestResolution>>,
+    /// Session composition (ONE-1728 §7). `None` on the canonical handle,
+    /// which therefore reads base only exactly as before; `Some` when the
+    /// read was opened through a live session handle, in which case entity
+    /// reads compose overlay ∪ base. Every policy/admission predicate above
+    /// this field is unchanged — the union widens what is VISIBLE, never what
+    /// is permitted.
+    session_view: Option<&'a crate::store::SessionStoreView<'a>>,
 }
 
 impl crate::vault::Vault {
@@ -233,6 +240,29 @@ impl crate::vault::Vault {
             vault: self,
             actor_key,
             policy: Mutex::new(None),
+            session_view: None,
+        }
+    }
+
+    /// A scoped read composed over a live session's overlay: the same
+    /// admission and policy gates, applied to the union the room can see.
+    ///
+    /// `Vault::scoped_read` on the canonical handle keeps seeing base only.
+    #[allow(
+        dead_code,
+        reason = "ONE-1728 arms it through the branch-store oracle's ScopedRead sweep; the \
+                  lib-target caller arrives with ONE-1729's session executor binding"
+    )]
+    pub(crate) fn scoped_read_in_session<'a>(
+        &'a self,
+        actor_key: ScopedReadActorKey,
+        view: &'a crate::store::SessionStoreView<'a>,
+    ) -> ScopedRead<'a> {
+        ScopedRead {
+            vault: self,
+            actor_key,
+            policy: Mutex::new(None),
+            session_view: Some(view),
         }
     }
 }
@@ -241,6 +271,16 @@ impl<'a> ScopedRead<'a> {
     #[must_use]
     pub fn vault(&self) -> &'a crate::Vault {
         self.vault
+    }
+
+    /// The entity accessor this read composes over: the room's union when
+    /// opened in-session, base otherwise. Every entity read in this type goes
+    /// through here so the two cases cannot diverge site by site.
+    fn entities(&self) -> &crate::overlay_db::OverlayDb {
+        match self.session_view {
+            Some(view) => &view.entities,
+            None => &self.vault.store.entities,
+        }
     }
 
     #[must_use]
@@ -276,7 +316,7 @@ impl<'a> ScopedRead<'a> {
 
     pub fn get_entity_parts(&self, id: &EntityId) -> Result<Option<(u8, u64, Vec<u8>)>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let Some(raw) = self.vault.store.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = self.entities().get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
         let header =
@@ -440,7 +480,7 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
-        let Some(raw) = self.vault.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.entities().get(rtxn, id.as_bytes())? else {
             return Ok(false);
         };
         let header =
@@ -1481,6 +1521,13 @@ pub(crate) fn validate_claim_body_and_decode(
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)
     {
         crate::counterparty_contact::validate_counterparty_contact_claim_structure(&body)?;
+    } else if crate::calendar::claims::is_calendar_claim_predicate(&body.predicate) {
+        crate::calendar::claims::validate_calendar_claim_structure(&body)?;
+    } else if crate::campaign::claims::is_campaign_pack_claim_predicate(&body.predicate) {
+        // EXACT-predicate match, deliberately ahead of the `comm.` family: the
+        // CRM pack owns `comm.do_not_contact` / `comm.bounce` /
+        // `comm.jurisdiction` while `comm.rs` keeps `comm.opt_out` and friends.
+        crate::campaign::claims::validate_campaign_pack_claim_structure(&body)?;
     } else if crate::comm::is_comm_claim_predicate(&body.predicate) {
         crate::comm::validate_comm_claim_structure(&body)?;
     } else if crate::disclosure::is_disclosure_claim_predicate(&body.predicate) {

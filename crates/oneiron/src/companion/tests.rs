@@ -215,19 +215,24 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
             last_error: Some("profile model unavailable".to_owned()),
             now: 32,
         })?;
-    assert_eq!(retried_profile.attempt.state, AttemptState::Queued);
-    assert_eq!(retried_profile.attempt.backoff_until, Some(40));
+    // Retry mints a fresh ATTEMPT carrying the same companion task forward; the
+    // retryable reason stays on the finalized source try.
+    assert_ne!(retried_profile.attempt.id, profile_status.attempt.id);
+    assert_eq!(retried_profile.attempt.state, AttemptState::Scheduled);
+    assert_eq!(retried_profile.attempt.scheduled_at, Some(40));
+    assert_eq!(retried_profile.attempt.backoff_until, None);
     assert_eq!(
-        retried_profile.attempt.last_error.as_deref(),
-        Some("profile model unavailable")
+        retried_profile.attempt.retry_of,
+        Some(profile_status.attempt.id)
     );
+    assert_eq!(retried_profile.attempt.last_error, None);
+    assert_eq!(retried_profile.task, profile_task);
+    let failed_try = companion_queue
+        .status(profile_status.attempt.id)?
+        .expect("source try status");
+    assert_eq!(failed_try.attempt.state, AttemptState::Failed);
     assert_eq!(
-        companion_queue
-            .status(retried_profile.attempt.id)?
-            .expect("profile status")
-            .attempt
-            .last_error
-            .as_deref(),
+        failed_try.attempt.last_error.as_deref(),
         Some("profile model unavailable")
     );
     assert_eq!(
@@ -246,8 +251,8 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     else {
         panic!("expected profile reclaim");
     };
-    assert_eq!(reclaimed_profile.attempt.id, profile_status.attempt.id);
-    assert_eq!(reclaimed_profile.attempt.attempt_count, 2);
+    assert_eq!(reclaimed_profile.attempt.id, retried_profile.attempt.id);
+    assert_eq!(reclaimed_profile.attempt.attempt_count, 1);
     let CompleteCompanionTaskOutcome::Completed(completed_profile) =
         companion_queue.complete(CompleteCompanionTask {
             id: reclaimed_profile.attempt.id,

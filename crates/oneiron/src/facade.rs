@@ -67,10 +67,13 @@ use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::receipt::delivered_send_receipt_for_task;
 use crate::registry::{
     ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 use crate::serialize::{SerializeConfig, serialize_pack};
+use crate::session_overlay::{
+    JournalEntry, JournalRole, JournalScope, RouteTarget, SessionWriteRoute,
+};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{
     ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor, WriteEnvelope, WriteProvenance,
@@ -89,6 +92,11 @@ pub const FACADE_CODE_INVALID_STATE: &str = "INVALID_STATE";
 pub const FACADE_CODE_INTERNAL: &str = "INTERNAL_SERVER_ERROR";
 /// `recall(Deep)` called without a budget lease (W4/C4 lease rule).
 pub const FACADE_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
+/// The canonical door was asked to witness into a conversation owned by a live
+/// off-record session (ARCH-0052 D2 backstop (a), ONE-1728 K7). Distinct from
+/// `FORBIDDEN`: the write was not refused on policy grounds — the room is only
+/// reachable through the session handle.
+pub const FACADE_CODE_OFF_RECORD_SESSION_DOOR: &str = "OFF_RECORD_SESSION_DOOR";
 
 /// The S6 `MemoryPack` schema version.
 pub const MEMORY_PACK_VERSION: u32 = 1;
@@ -181,6 +189,18 @@ impl From<Error> for FacadeError {
                 &[
                     "The gate refused this write; review pending consents via pending_writes.",
                     "Submit the claim as proposed or adjust the actor/scope.",
+                ],
+            ),
+            // K7 (ONE-1728): distinct from the FORBIDDEN gate family above —
+            // nothing was refused on policy grounds. The room is simply not
+            // reachable through this door, and the remedy is a different door,
+            // not a different actor or scope.
+            ErrorKind::OffRecordWitnessDoorRejected => Self::new(
+                FACADE_CODE_OFF_RECORD_SESSION_DOOR,
+                message,
+                &[
+                    "This conversation belongs to a live off-record session; witness it through the session handle.",
+                    "Close the session first if the turn belongs on the record.",
                 ],
             ),
             ErrorKind::ClaimAlreadyClosed
@@ -1590,6 +1610,32 @@ impl MemoryFacade<'_> {
     /// `PartOf`/`BelongsTo`/`AuthoredBy` edges, and BM25 `content`
     /// indexing — all in ONE atomic batch.
     pub fn witness(&self, turn: &WitnessTurn) -> FacadeResult<WitnessReceipt> {
+        self.witness_with_route(turn, None)
+    }
+
+    /// The base witness program, optionally bound to a session write route.
+    ///
+    /// `session_route` is `Some` only on [`Self::witness_into_session`]'s
+    /// post-flip `Base` arm, where the route is the sole evidence that the
+    /// room was ON RECORD when this turn was admitted. The route is
+    /// revalidated INSIDE the write transaction, after every row is staged
+    /// and before the commit, so a flip back to `OffRecord` landing mid-call
+    /// rolls the whole turn back instead of publishing the room's substance
+    /// to durable base under a session that now claims to be private.
+    ///
+    /// The check cannot hold the session state lock: `tag_turn_off_record`
+    /// holds that lock ACROSS its own write transaction (state -> writer), so
+    /// a base writer taking it (writer -> state) would invert the order.
+    /// `revalidate` takes only the overlay's own lifecycle lock, which no
+    /// holder ever blocks on the base writer for, so this ordering is safe.
+    /// What remains uncovered is the instant between this check and
+    /// `wtxn.commit()`; closing that would require the flip to drain base
+    /// writers the way `seal_writes` drains overlay segments.
+    fn witness_with_route(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+    ) -> FacadeResult<WitnessReceipt> {
         if turn.messages.is_empty() {
             return Err(FacadeError::bad_request("witness turn carries no messages"));
         }
@@ -1600,6 +1646,28 @@ impl MemoryFacade<'_> {
         let learned_at = turn.occurred_at;
         let (conversation_id, conversation_is_new) =
             self.resolve_or_new_container(&turn.conversation_ref, ENTITY_TYPE_CONVERSATION)?;
+        // K7 witness-door ownership backstop (ARCH-0052 D2 backstop (a)). A
+        // conversation owned by a live session overlay is witnessed through the
+        // SESSION handle only; the canonical door refuses here, after container
+        // resolution and before any write. This lands IN ADDITION to the K4
+        // taint guard: the guard sees the ops, this sees the door.
+        //
+        // Reachable by 32-hex ref only. A non-hex ref to a session-local
+        // conversation fails base resolution with not-found before reaching
+        // this point, which is accepted: the refusal there is already correct
+        // (base cannot resolve a room it cannot see) and leaks strictly less.
+        if let Some(session_ref) = self
+            .vault
+            .store
+            .off_record_sessions
+            .owning_session_ref(&conversation_id)?
+        {
+            return Err(Error::OffRecordWitnessDoorRejected {
+                session_ref,
+                conversation_ref: conversation_id.to_hex(),
+            }
+            .into());
+        }
         let (turn_id, turn_is_new) = match &turn.turn_ref {
             Some(reference) => self.resolve_or_new_container(reference, ENTITY_TYPE_TURN)?,
             None => (EntityId::now(), true),
@@ -1697,6 +1765,13 @@ impl MemoryFacade<'_> {
                 wtxn,
                 learned_at,
             )?;
+            // LAST statement in the transaction, deliberately: a session
+            // witness admitted on record must not commit base rows once the
+            // room has flipped back off record (K10). Every earlier row is
+            // rolled back with this `Err`.
+            if let Some(route) = session_route {
+                route.revalidate()?;
+            }
             Ok(None)
         })?;
         if let Some(id) = refused {
@@ -1709,6 +1784,247 @@ impl MemoryFacade<'_> {
         }
         Ok(WitnessReceipt {
             turn_short_id: self.short_ref_or_hex(&turn_id)?,
+            message_short_ids,
+            receipt_ref: format!("witness:{}", turn_id.to_hex()),
+        })
+    }
+
+    /// Witnesses one turn INTO a session (ARCH-0052 §7, ONE-1728).
+    ///
+    /// Runs the base witness program — conversation shell, TURN put, MESSAGE
+    /// puts with `PartOf`/`BelongsTo`/`AuthoredBy` edges, BM25 `content` text
+    /// ops — plus a session-only SUMMARY put and its `DerivedFrom` edge when
+    /// `summary` is `Some`. While the route resolves to `Overlay` every row
+    /// stages into the session overlay and evaporates at close; after a flip
+    /// to `OnRecord` the same program runs through the ordinary base apply
+    /// under the session's on-record continuation shell.
+    ///
+    /// The receipt carries SESSION-LOCAL short ids: in-room aliases are
+    /// temporary presentation handles, and canonical ids are allocated at
+    /// promote (ONE-1730).
+    ///
+    /// # Why the summary is session-only
+    ///
+    /// A summary of an off-record turn is derived FROM content that does not
+    /// exist in base. Materializing it through the base door would publish the
+    /// substance of the room while the room still claims to be private — the
+    /// exact leak the vault exists to prevent. It rides the overlay with the
+    /// turn it summarizes and promotes with it or not at all.
+    pub fn witness_into_session(
+        &self,
+        session: &crate::off_record::OffRecordSession<'_>,
+        turn: &WitnessTurn,
+        summary: Option<&str>,
+    ) -> FacadeResult<WitnessReceipt> {
+        if turn.messages.is_empty() {
+            return Err(FacadeError::bad_request("witness turn carries no messages"));
+        }
+        let route = session.write_route()?;
+        if route.target() == RouteTarget::Base {
+            // Post-flip: the room is on record, so the witness takes the
+            // ordinary base apply under the continuation shell. It never
+            // reuses the overlay conversation id, so K4 sees no overlay refs
+            // and K7 does not fire (the shell is not an overlay member).
+            //
+            // The route rides INTO the base transaction: the overlay arms
+            // revalidate before they commit, and a base-routed turn is the
+            // half that publishes durably, so it is the half that most needs
+            // the same refusal.
+            let continuation = session.on_record_continuation_shell()?;
+            let mut base_turn = turn.clone();
+            base_turn.conversation_ref = continuation.to_hex();
+            return self.witness_with_route(&base_turn, Some(&route));
+        }
+
+        let occurred = TimeRange {
+            start: turn.occurred_at,
+            end: turn.occurred_at,
+        };
+        let learned_at = turn.occurred_at;
+        let overlay = session.overlay();
+        let conversation_id = session.overlay_conversation_shell()?;
+        let turn_id = EntityId::now();
+        let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
+
+        let mut entries = Vec::new();
+        let scope = JournalScope::new(conversation_id, turn_id);
+        // Every entry carries the witness's own `occurred`/`learned_at` — never
+        // `unix_seconds_now()` — because promote replays these stamps and a
+        // restamped row would land in the wrong month window (ARCH-0052 D4).
+        let entry = |role: JournalRole, op: BatchOp| JournalEntry {
+            scope,
+            role,
+            learned_at,
+            occurred,
+            op,
+        };
+        let put = |id: &EntityId, entity_type: u8, data: &[u8]| BatchOp::Put {
+            id: *id,
+            entity_type,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        };
+        let edge = |src: &EntityId, kind: EdgeKind, tgt: &EntityId| BatchOp::Edge {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight: 1.0,
+            vad: crate::affect::Vad::NEUTRAL,
+        };
+
+        entries.push(entry(
+            JournalRole::TurnPut,
+            put(&turn_id, ENTITY_TYPE_TURN, &container_body),
+        ));
+
+        let mut message_ids = Vec::with_capacity(turn.messages.len());
+        for message in &turn.messages {
+            let id = id_from_optional_hex(message.id.as_deref())?;
+            let body = encode_witness_message_body(message)?;
+            message_ids.push(id);
+            entries.push(entry(
+                JournalRole::MessagePartOf,
+                put(&id, ENTITY_TYPE_MESSAGE, &body),
+            ));
+            entries.push(entry(
+                JournalRole::MessagePartOf,
+                edge(&id, EdgeKind::PartOf, &turn_id),
+            ));
+            entries.push(entry(
+                JournalRole::AttributionEdge,
+                edge(&id, EdgeKind::BelongsTo, &conversation_id),
+            ));
+            if message.author != WitnessAuthor::System {
+                entries.push(entry(
+                    JournalRole::AttributionEdge,
+                    edge(&id, EdgeKind::AuthoredBy, &self.actor),
+                ));
+            }
+            if !message.content.is_empty() {
+                entries.push(entry(
+                    JournalRole::TurnOwnedArtifact,
+                    BatchOp::Text {
+                        id,
+                        fields: vec![("content".to_owned(), message.content.clone())],
+                    },
+                ));
+            }
+        }
+
+        let summary_id = match summary {
+            Some(text) => {
+                let id = EntityId::now();
+                let body = encode_rmpv(&Value::Map(vec![(
+                    Value::from("content"),
+                    Value::from(text),
+                )]))?;
+                entries.push(entry(
+                    JournalRole::SummaryDerivedFrom,
+                    put(&id, ENTITY_TYPE_SUMMARY, &body),
+                ));
+                entries.push(entry(
+                    JournalRole::SummaryDerivedFrom,
+                    edge(&id, EdgeKind::DerivedFrom, &turn_id),
+                ));
+                if !text.is_empty() {
+                    entries.push(entry(
+                        JournalRole::TurnOwnedArtifact,
+                        BatchOp::Text {
+                            id,
+                            fields: vec![("content".to_owned(), text.to_owned())],
+                        },
+                    ));
+                }
+                Some(id)
+            }
+            None => None,
+        };
+
+        // The room's one shell-staging claim is taken HERE — after every
+        // fallible step above (caller-controlled message ids and bodies) and
+        // released if the transaction below fails. Taking it earlier burned it
+        // on a witness that never staged the shell row, leaving later witnesses
+        // to hang `PartOf`/`BelongsTo` edges off a conversation id with no
+        // entity row. The shell `Put` leads the journal, so promote replays the
+        // shell before anything referring to it.
+        let shell_reservation = session.reserve_overlay_conversation_shell()?;
+        if shell_reservation.is_some() {
+            entries.insert(
+                0,
+                entry(
+                    JournalRole::ConversationShell,
+                    put(&conversation_id, ENTITY_TYPE_CONVERSATION, &container_body),
+                ),
+            );
+        }
+
+        // The overlay segment and the base txn commit together: the segment
+        // guard applies staged rows only after `wtxn.commit()` returns, so a
+        // failure anywhere in staging leaves the room byte-unchanged.
+        let alias_ids: Vec<EntityId> = std::iter::once(turn_id)
+            .chain(message_ids.iter().copied())
+            .chain(summary_id)
+            .collect();
+        let (segment, short_refs) = self.vault.try_with_write_txn(
+            |wtxn| -> FacadeResult<(crate::session_overlay::TxnSegmentGuard, Vec<(String, u8)>)> {
+                verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+                let segment = overlay.install_txn_segment()?;
+                // ONE ENTRY PER CALL, each against a FRESHLY constructed view.
+                //
+                // A `SessionStoreView` freezes its overlay snapshot at
+                // construction, so a view built once and reused across the
+                // whole program cannot see rows staged earlier in the same
+                // program. That is invisible for independent row writes but
+                // corrupts every READ-MODIFY-WRITE accumulator: two BM25
+                // documents in one turn (a message and its summary) would
+                // both read the pre-turn `total_docs`, both write
+                // `before + 1`, and leave 2 postings under a doc count of 1 —
+                // which the next in-room search fails closed on with
+                // `posting list length exceeds total_docs`.
+                //
+                // `read_view` is segment-aware (`SessionOverlay::snapshot`
+                // returns the active segment's preview), so re-taking it per
+                // entry gives each op read-your-own-writes over its
+                // predecessors. Atomicity is untouched: this is all still one
+                // base txn and one overlay segment, committed once below.
+                for entry in entries {
+                    crate::batch::apply_ops_session(
+                        &session.read_view()?,
+                        &route,
+                        &self.vault.config,
+                        &self.vault.analyzer,
+                        wtxn,
+                        vec![entry],
+                    )?;
+                }
+                let mut short_refs = Vec::with_capacity(alias_ids.len());
+                for id in &alias_ids {
+                    short_refs.push(overlay.alloc_session_short_id(id, id.as_bytes())?);
+                }
+                Ok((segment, short_refs))
+            },
+        )?;
+        segment.commit()?;
+        // The shell row is in the room now, so the claim is spent for good.
+        if let Some(reservation) = shell_reservation {
+            reservation.commit();
+        }
+
+        let mut short_refs = short_refs.into_iter();
+        let turn_short_id = session_short_ref_string(&short_refs.next().ok_or(
+            Error::InvariantViolation("session witness allocated no turn alias"),
+        )?);
+        let message_short_ids = short_refs
+            .by_ref()
+            .take(message_ids.len())
+            .map(|alias| session_short_ref_string(&alias))
+            .collect();
+        Ok(WitnessReceipt {
+            turn_short_id,
             message_short_ids,
             receipt_ref: format!("witness:{}", turn_id.to_hex()),
         })
@@ -3585,6 +3901,16 @@ impl MemoryFacade<'_> {
     }
 }
 
+/// Renders a session-local alias in the same `short_id:content_hash` shape the
+/// base resolver produces, so a client formats one kind of ref.
+///
+/// The alias itself is what keeps the namespaces apart: session ids carry the
+/// `s` sigil, which is not a legal base prefix, so an in-room ref can neither
+/// shadow a durable entity nor resolve at a base door.
+fn session_short_ref_string((short_id, content_hash): &(String, u8)) -> String {
+    format!("{short_id}:{content_hash:02x}")
+}
+
 fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> FacadeError {
     match err {
         OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
@@ -3708,6 +4034,7 @@ const fn attempt_state_str(state: AttemptState) -> &'static str {
         AttemptState::Completed => "completed",
         AttemptState::Failed => "failed",
         AttemptState::Cancelled => "cancelled",
+        AttemptState::Scheduled => "scheduled",
     }
 }
 

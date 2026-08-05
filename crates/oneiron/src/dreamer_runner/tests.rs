@@ -2,7 +2,7 @@ use std::sync::Barrier;
 use std::thread;
 
 use crate::attempt_queue::{
-    AttemptInterventionKind, AttemptState, CleanupAttemptLeases, RetryAttempt,
+    AttemptInterventionKind, AttemptState, CleanupAttemptLeases, RetryAttempt, RetryOutcome,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::config::VaultConfig;
@@ -549,13 +549,12 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
     assert_eq!(first.budget.remaining_units, 4);
     assert_eq!(first.reservation.reserved_units, 8);
 
-    queue.retry(RetryAttempt {
-        id: queued.attempt.id,
-        lease_owner: "single-pass-worker".to_owned(),
-        attempt_count: first.status.attempt.attempt_count,
-        backoff_until: 25,
-        last_error: Some("lease_timeout".to_owned()),
+    // Reclaim the SAME try through the lease-timeout path: it keeps the row
+    // identity its per-attempt budget reservation is keyed by. (`retry` now
+    // mints a distinct row, which is a new try, not a resumed one.)
+    queue.cleanup_leases(CleanupAttemptLeases {
         now: 24,
+        lease_timeout_secs: 1,
     })?;
 
     let axes = DreamerTournamentBudgetAxes {
@@ -630,13 +629,11 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
     };
     let first_budget = first.budget.clone();
     let first_reservation = first.reservation.clone();
-    queue.retry(RetryAttempt {
-        id: queued.attempt.id,
-        lease_owner: "single-pass-worker".to_owned(),
-        attempt_count: first.status.attempt.attempt_count,
-        backoff_until: 25,
-        last_error: Some("lease_timeout".to_owned()),
+    // Lease-timeout reclaim keeps the row (and therefore its reservation) so
+    // the re-admission exercises the top-up path.
+    queue.cleanup_leases(CleanupAttemptLeases {
         now: 24,
+        lease_timeout_secs: 1,
     })?;
 
     let axes = DreamerTournamentBudgetAxes {
@@ -710,7 +707,9 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
     else {
         panic!("expected reserved admission");
     };
-    queue.retry(RetryAttempt {
+    // Each retry mints the fresh row that carries the ready entry; the fixture
+    // now tracks those ids rather than the finalized sources.
+    let RetryOutcome::Retried(reserved_retry) = queue.retry(RetryAttempt {
         id: reserved.attempt.id,
         lease_owner: "reserved-worker".to_owned(),
         attempt_count: first.status.attempt.attempt_count,
@@ -731,7 +730,7 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
         panic!("expected to claim stale fixture attempt");
     };
     assert_eq!(stale_claim.id, stale.attempt.id);
-    queue.retry(RetryAttempt {
+    let RetryOutcome::Retried(stale_retry) = queue.retry(RetryAttempt {
         id: stale.attempt.id,
         lease_owner: "stale-prep".to_owned(),
         attempt_count: stale_claim.attempt_count,
@@ -739,7 +738,7 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
         last_error: Some("lease_timeout".to_owned()),
         now: 32,
     })?;
-    rewrite_ready_key(&vault, stale.attempt.id, 1, 0)?;
+    rewrite_ready_key(&vault, stale_retry.id, 1, 0)?;
 
     let axes = DreamerTournamentBudgetAxes {
         fanout_m: 2,
@@ -772,17 +771,15 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
         panic!("expected tournament BudgetTrap for stale ready candidate");
     };
 
-    assert_eq!(trap.attempt_id, stale.attempt.id);
+    assert_eq!(trap.attempt_id, stale_retry.id);
     assert_eq!(trap.budget.remaining_units, 0);
     assert_eq!(trap.budget.reserved_units, 10);
     let stale_status = runner
-        .status(stale.attempt.id)?
+        .status(stale_retry.id)?
         .expect("paused stale attempt");
     assert_eq!(stale_status.attempt.state, AttemptState::Paused);
-    let reserved_status = runner
-        .status(reserved.attempt.id)?
-        .expect("reserved attempt");
-    assert_eq!(reserved_status.attempt.state, AttemptState::Queued);
+    let reserved_status = runner.status(reserved_retry.id)?.expect("reserved attempt");
+    assert_eq!(reserved_status.attempt.state, AttemptState::Scheduled);
     assert_eq!(
         runner.budget_reservation("wake:micro", reserved.attempt.id)?,
         Some(first.reservation)
@@ -2574,4 +2571,164 @@ fn injected_turn_never_reaches_extraction_input() {
         vec!["my sister's name is Mira", "noted: Mira, your sister"]
     );
     assert!(extraction_input.iter().all(|text| !text.contains("Zoe")));
+}
+
+// ---------------------------------------------------------------------------
+// ONE-1400 — clustering adapter authority boundary
+// ---------------------------------------------------------------------------
+
+/// Snapshot of every durable surface the clustering adapter is forbidden to
+/// touch: raw vault bytes, attempt rows (records/ready/dedupe), claim and
+/// topology rows (both live in `entities` / `vault_meta`), and the LMDB file
+/// size. Compared before and after a `propose_claim_cohorts` call.
+#[derive(Debug, PartialEq, Eq)]
+struct VaultWriteSurfaces {
+    data_file_len: u64,
+    entities: Vec<(Vec<u8>, Vec<u8>)>,
+    vault_meta: Vec<(Vec<u8>, Vec<u8>)>,
+    attempt_records: Vec<(Vec<u8>, Vec<u8>)>,
+    attempt_ready: Vec<(Vec<u8>, Vec<u8>)>,
+    attempt_dedupe: Vec<(Vec<u8>, Vec<u8>)>,
+    type_index: Vec<(Vec<u8>, Vec<u8>)>,
+    edges_out: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+fn dump_db(
+    db: &crate::overlay_db::OverlayDb,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let mut rows = Vec::new();
+    for row in db.iter(rtxn)? {
+        let (key, value) = row?;
+        rows.push((key.into_owned(), value.into_owned()));
+    }
+    Ok(rows)
+}
+
+fn vault_write_surfaces(dir: &std::path::Path, vault: &Vault) -> Result<VaultWriteSurfaces> {
+    let data_file_len = std::fs::metadata(dir.join("data.mdb"))?.len();
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(VaultWriteSurfaces {
+        data_file_len,
+        entities: dump_db(&vault.store.entities, &rtxn)?,
+        vault_meta: dump_db(&vault.store.vault_meta, &rtxn)?,
+        attempt_records: dump_db(&vault.store.attempt_records, &rtxn)?,
+        attempt_ready: dump_db(&vault.store.attempt_ready, &rtxn)?,
+        attempt_dedupe: dump_db(&vault.store.attempt_dedupe, &rtxn)?,
+        type_index: dump_db(&vault.store.type_index, &rtxn)?,
+        edges_out: dump_db(&vault.store.edges_out, &rtxn)?,
+    })
+}
+
+fn cluster_fixture_claims() -> Vec<crate::cluster::ClusterClaim> {
+    let subject = crate::test_util::entity(0x70);
+    // Two near-parallel vectors (cluster together) plus one orthogonal
+    // (singleton) — enough that the adapter returns real, non-trivial data.
+    [
+        (0x01_u8, vec![1.0_f32, 0.0, 0.0, 0.0]),
+        (0x02, vec![0.995, 0.0998, 0.0, 0.0]),
+        (0x03, vec![0.0, 1.0, 0.0, 0.0]),
+    ]
+    .into_iter()
+    .map(|(seed, embedding)| crate::cluster::ClusterClaim {
+        claim_id: crate::test_util::entity(seed),
+        subject: ClaimSubject::Entity(subject),
+        predicate: "person.name".to_owned(),
+        world: None,
+        facet: None,
+        embedding,
+    })
+    .collect()
+}
+
+#[test]
+fn propose_claim_cohorts_returns_assignments() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+
+    let assignments = runner.propose_claim_cohorts(
+        &cluster_fixture_claims(),
+        crate::cluster::ClusterOptions::default(),
+    )?;
+
+    // The adapter is a pass-through: same result the module returns directly.
+    assert_eq!(
+        assignments,
+        crate::cluster::cluster_claims(
+            &cluster_fixture_claims(),
+            crate::cluster::ClusterOptions::default()
+        )?
+    );
+    assert_eq!(assignments.cohorts.len(), 2);
+    assert_eq!(
+        assignments.cohorts[0].member_ids,
+        vec![
+            crate::test_util::entity(0x01),
+            crate::test_util::entity(0x02)
+        ]
+    );
+    assert_eq!(
+        assignments.cohorts[1].member_ids,
+        vec![crate::test_util::entity(0x03)]
+    );
+
+    // Typed errors propagate through the adapter rather than panicking.
+    let bad = vec![crate::cluster::ClusterClaim {
+        embedding: vec![f32::NAN, 0.0, 0.0, 0.0],
+        ..cluster_fixture_claims()[0].clone()
+    }];
+    assert!(matches!(
+        runner
+            .propose_claim_cohorts(&bad, crate::cluster::ClusterOptions::default())
+            .expect_err("non-finite component"),
+        Error::InvalidVector { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn dreamer_decides_not_tool() -> Result<()> {
+    let (dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+
+    // Seed real state first, so the comparison is against a populated vault
+    // rather than an empty one: an attempt row, and a claim/topology-bearing
+    // entity row.
+    enqueue_attempt(&runner, "cluster-boundary", 10)?;
+    let claim_id = EntityId::now();
+    vault.put_entity(
+        &claim_id,
+        ENTITY_TYPE_TASK,
+        occurred(10),
+        10,
+        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+    )?;
+
+    let before = vault_write_surfaces(dir.path(), &vault)?;
+
+    // Call the tool repeatedly, including with inputs that fail validation —
+    // neither the success nor the failure path may write.
+    let claims = cluster_fixture_claims();
+    for _ in 0..3 {
+        let assignments =
+            runner.propose_claim_cohorts(&claims, crate::cluster::ClusterOptions::default())?;
+        assert!(!assignments.cohorts.is_empty());
+    }
+    assert!(
+        runner
+            .propose_claim_cohorts(
+                &claims,
+                crate::cluster::ClusterOptions {
+                    cohesion_threshold: 2.0,
+                },
+            )
+            .is_err()
+    );
+
+    let after = vault_write_surfaces(dir.path(), &vault)?;
+    assert_eq!(
+        before, after,
+        "clustering must not change vault bytes, attempt rows, claims, or topology rows"
+    );
+    Ok(())
 }

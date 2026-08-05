@@ -690,6 +690,145 @@ fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
     assert_eq!(seam::count_send_receipts_with_task_lineage(&vault), 1);
 }
 
+// ===== ONE-1795 — one TASK owns N node-local ATTEMPT tries =====
+
+/// Retries the one connector-send ATTEMPT `times` times, returning the id of
+/// every try in order (source first). Each retry finalizes the leased try and
+/// mints the next one, so the returned ids are all distinct.
+fn retry_send_attempt_chain(vault: &Vault, times: usize) -> Vec<oneiron::AttemptId> {
+    let queue = oneiron::AttemptQueue::new(vault);
+    let mut chain: Vec<oneiron::AttemptId> = queue
+        .list()
+        .expect("list attempt rows")
+        .into_iter()
+        .map(|attempt| attempt.id)
+        .collect();
+    assert_eq!(chain.len(), 1, "one scheduled send starts one try");
+
+    let mut now = 200;
+    for _ in 0..times {
+        let oneiron::ClaimOutcome::Claimed(claimed) = queue
+            .claim(oneiron::ClaimAttempt {
+                lease_owner: "oracle-worker".to_owned(),
+                now,
+            })
+            .expect("claim the pending try")
+        else {
+            panic!("the pending try must be claimable at {now}");
+        };
+        assert_eq!(claimed.id, *chain.last().expect("chain is never empty"));
+        let oneiron::RetryOutcome::Retried(next) = queue
+            .retry(oneiron::RetryAttempt {
+                id: claimed.id,
+                lease_owner: "oracle-worker".to_owned(),
+                attempt_count: claimed.attempt_count,
+                backoff_until: now + 10,
+                last_error: Some("provider unavailable".to_owned()),
+                now: now + 1,
+            })
+            .expect("retry the leased try")
+        else {
+            panic!("retry must return the newly scheduled try");
+        };
+        chain.push(next.id);
+        now += 10;
+    }
+    chain
+}
+
+/// Doc 13 (effect-spine r2 grammar): one synced TASK owns N node-local ATTEMPT
+/// rows. Retrying never resurrects a failed try — each try keeps its own id and
+/// its own terminal history, and the chain is explicit through `retry_of`.
+#[test]
+fn es02_one_task_owns_many_attempt_ids_with_per_try_terminal_history() {
+    let (_dir, vault) = open_vault();
+    seam::schedule_send(&vault, "party-yura", "email");
+    assert_eq!(seam::count_connector_assigned_tasks(&vault), 1);
+
+    let chain = retry_send_attempt_chain(&vault, 3);
+
+    // Three retries -> four tries, all distinct, under the SAME one task.
+    assert_eq!(chain.len(), 4);
+    assert_eq!(
+        chain.iter().collect::<std::collections::HashSet<_>>().len(),
+        4
+    );
+    assert_eq!(seam::count_connector_assigned_tasks(&vault), 1);
+
+    let queue = oneiron::AttemptQueue::new(&vault);
+    let rows = queue.list().expect("list attempt rows");
+    assert_eq!(rows.len(), 4);
+    for (index, id) in chain.iter().enumerate() {
+        let row = queue
+            .get(*id)
+            .expect("read attempt row")
+            .expect("every try stays independently queryable");
+        assert_eq!(row.retry_of, index.checked_sub(1).map(|prev| chain[prev]));
+        // Every try but the newest is terminal history with its own reason.
+        if index + 1 == chain.len() {
+            assert_eq!(row.state, oneiron::AttemptState::Scheduled);
+            assert_eq!(row.last_error, None);
+        } else {
+            assert_eq!(row.state, oneiron::AttemptState::Failed);
+            assert_eq!(row.last_error.as_deref(), Some("provider unavailable"));
+        }
+        // The whole logical send stays one paid intent: no try was sent.
+        assert_eq!(seam::count_send_receipts(&vault), 0);
+    }
+}
+
+/// Doc 13 §9.2: ATTEMPT rows are node-local execution state, never synced. The
+/// synced surface is entities/edges; an attempt id is not an entity, so retry
+/// churn cannot cross the wire — only the owning TASK is authoritative.
+#[test]
+fn es02_attempt_retry_churn_is_device_local_while_the_task_is_authoritative() {
+    let (_dir_a, vault_a) = open_vault();
+    let (_dir_b, vault_b) = open_vault();
+    seam::schedule_send(&vault_a, "party-yura", "email");
+    seam::schedule_send(&vault_b, "party-yura", "email");
+
+    // Device A churns through four tries; device B stays on its first.
+    let churned = retry_send_attempt_chain(&vault_a, 3);
+    assert_eq!(churned.len(), 4);
+
+    let rows_a = oneiron::AttemptQueue::new(&vault_a)
+        .list()
+        .expect("list device-A attempt rows");
+    let rows_b = oneiron::AttemptQueue::new(&vault_b)
+        .list()
+        .expect("list device-B attempt rows");
+    assert_eq!(rows_a.len(), 4);
+    assert_eq!(
+        rows_b.len(),
+        1,
+        "retry churn never crosses to another vault"
+    );
+
+    // No id is shared between the two devices' attempt stores.
+    let ids_a: std::collections::HashSet<_> = rows_a.iter().map(|row| row.id).collect();
+    let ids_b: std::collections::HashSet<_> = rows_b.iter().map(|row| row.id).collect();
+    assert_eq!(ids_a.intersection(&ids_b).count(), 0);
+
+    // Each device still has exactly one owning TASK — the synced authority.
+    assert_eq!(seam::count_connector_assigned_tasks(&vault_a), 1);
+    assert_eq!(seam::count_connector_assigned_tasks(&vault_b), 1);
+
+    // Attempt ids live only in the node-local job tables: none of them is an
+    // entity, so nothing about a try is reachable by the entity/edge sync
+    // surface on either device.
+    for row in rows_a.iter().chain(rows_b.iter()) {
+        let as_entity = oneiron::EntityId::from_bytes(*row.id.as_bytes()).expect("16-byte id");
+        assert_eq!(
+            vault_a.get_entity_type(&as_entity).expect("read entity"),
+            None
+        );
+        assert_eq!(
+            vault_b.get_entity_type(&as_entity).expect("read entity"),
+            None
+        );
+    }
+}
+
 // ===== ONE-1716 (ES-03) — comm.* projector + contact-record demotion =====
 
 /// Doc 13 §3: "on receipt(send, ok) -> upsert comm.last_touch". One send

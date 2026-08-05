@@ -8,12 +8,17 @@ const MINIMAL_TRANSCRIPT_FIXTURE: &str =
     include_str!("../../tests/fixtures/ingest/minimal_transcript.jsonl");
 const NULL_OPTIONAL_METADATA_FIXTURE: &str =
     include_str!("../../tests/fixtures/ingest/null_optional_metadata.jsonl");
+/// Seam fixture: CAL-08/ONE-1790's SESSION-first + NOTE-fallback consumer test
+/// reads this same artifact, so both sides are pinned to one wire example.
+const MEETING_TRANSCRIPT_FIXTURE: &str =
+    include_str!("../../tests/fixtures/ingest/meeting_transcript_v1.json");
 
 fn expected_jsonl_transcript_config() -> IngestSourceConfig {
     IngestSourceConfig {
         source_id: JSONL_TRANSCRIPT_SOURCE_ID,
         label: "JSONL transcript",
         format: IngestSourceFormat::JsonlTranscript,
+        adapter_skill: None,
         writes_claims: false,
         trust_ceiling: IngestTrustCeiling {
             claim_source: ClaimSource::Imported,
@@ -23,6 +28,66 @@ fn expected_jsonl_transcript_config() -> IngestSourceConfig {
         },
         default_admission: ClaimApprovalStatus::Proposed,
     }
+}
+
+fn expected_meeting_transcript_config() -> IngestSourceConfig {
+    IngestSourceConfig {
+        source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+        label: "Meeting transcript",
+        format: IngestSourceFormat::MeetingTranscriptV1,
+        adapter_skill: Some(IngestAdapterSkillRef {
+            skill_id: "builtin.ingest.meeting-transcript",
+            version: "1",
+        }),
+        writes_claims: false,
+        trust_ceiling: IngestTrustCeiling {
+            claim_source: ClaimSource::Imported,
+            max_auto_sensitivity: None,
+            receipted: false,
+            warned: false,
+        },
+        default_admission: ClaimApprovalStatus::Proposed,
+    }
+}
+
+/// A minimal valid artifact, so a test can mutate exactly the field it probes.
+fn meeting_transcript_json(overrides: &[(&str, &str)]) -> String {
+    let mut document = format!(
+        r#"{{
+          "schema": "{MEETING_TRANSCRIPT_SCHEMA_V1}",
+          "recording": {{
+            "recording_id": "sha256:rec",
+            "source_name": "m.mp4",
+            "source_sha256": "aa",
+            "canonical_pcm_sha256": "bb",
+            "capture_started_at": 1000,
+            "duration_ms": 60000,
+            "language_hint": null
+          }},
+          "producer": {{
+            "asr_model": "m",
+            "aligner_model": "a",
+            "vad_model": "v",
+            "glossary_sha256": "cc"
+          }},
+          "packs": [],
+          "words": [{{"word_id": "word-000001", "pack_id": "pack-0001",
+            "start_ms": 0, "end_ms": 500, "text": "hi", "confidence": null,
+            "speaker_cluster": null, "speaker_ref": null}}],
+          "turns": [{{"turn_id": "turn-0001", "start_ms": 2000, "end_ms": 5000,
+            "text": "Hello there.", "source_word_ids": ["word-000001"],
+            "speaker_cluster": "spk-1", "speaker_ref": null}}],
+          "cleanup": {{"status": "skipped"}},
+          "note_fallback": {{"title": "Meeting transcript", "body": "Hello there."}},
+          "diarization": null,
+          "identity": null
+        }}"#
+    );
+    for (from, to) in overrides {
+        assert!(document.contains(from), "override target not found: {from}");
+        document = document.replace(from, to);
+    }
+    document
 }
 
 use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
@@ -96,7 +161,48 @@ fn ingest_registry_equals_known_harness_config() {
         &INGEST_SOURCE_REGISTRY
     ));
     assert_eq!(registry_configs, harness_configs);
-    assert_eq!(registry_configs, [expected_jsonl_transcript_config()]);
+    assert_eq!(
+        registry_configs,
+        [
+            expected_jsonl_transcript_config(),
+            expected_meeting_transcript_config()
+        ]
+    );
+}
+
+#[test]
+fn ingest_source_ids_are_unique_and_adapter_skills_are_named_when_present() {
+    let configs = INGEST_SOURCE_REGISTRY.source_configs().collect::<Vec<_>>();
+
+    let mut ids = configs.iter().map(|c| c.source_id).collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), configs.len(), "source ids must be unique");
+
+    for config in &configs {
+        let Some(skill) = config.adapter_skill else {
+            continue;
+        };
+        assert!(!skill.skill_id.trim().is_empty(), "{:?}", config.source_id);
+        assert!(!skill.version.trim().is_empty(), "{:?}", config.source_id);
+    }
+}
+
+#[test]
+fn meeting_transcript_policy_matches_imported_proposed_fail_closed_defaults() {
+    let config = INGEST_SOURCE_REGISTRY
+        .get_config(MEETING_TRANSCRIPT_SOURCE_ID)
+        .expect("meeting transcript source config");
+
+    assert_eq!(config, expected_meeting_transcript_config());
+    assert_eq!(config.trust_ceiling.claim_source, ClaimSource::Imported);
+    assert_eq!(config.trust_ceiling.max_auto_sensitivity, None);
+    assert!(!config.trust_ceiling.receipted);
+    assert!(!config.trust_ceiling.warned);
+    assert_eq!(config.default_admission, ClaimApprovalStatus::Proposed);
+    assert!(!config.trust_ceiling.permits_auto(Some(0)));
+    assert!(!config.trust_ceiling.permits_auto(None));
+    assert!(!config.writes_claims);
 }
 
 #[test]
@@ -342,5 +448,294 @@ fn ingest_jsonl_transcript_required_null_field_is_invalid() {
             line: 1,
             field: "id",
         }
+    );
+}
+
+#[test]
+fn ingest_jsonl_transcript_batches_carry_no_note_fallback() {
+    let batch = INGEST_SOURCE_REGISTRY
+        .normalize(JSONL_TRANSCRIPT_SOURCE_ID, MINIMAL_TRANSCRIPT_FIXTURE)
+        .expect("fixture normalizes");
+
+    assert_eq!(batch.note_fallback, None);
+}
+
+// -- meeting-transcript ----------------------------------------------------
+
+#[test]
+fn meeting_transcript_fixture_normalizes_ordered_records_without_claims() {
+    let batch = INGEST_SOURCE_REGISTRY
+        .normalize(MEETING_TRANSCRIPT_SOURCE_ID, MEETING_TRANSCRIPT_FIXTURE)
+        .expect("fixture normalizes");
+
+    assert_eq!(batch.source_id, MEETING_TRANSCRIPT_SOURCE_ID);
+    assert!(
+        batch.claims.is_empty(),
+        "source normalization must not write claims"
+    );
+    assert_eq!(
+        batch.records,
+        [
+            NormalizedIngestRecord {
+                source_record_id: "turn-0001".to_owned(),
+                thread_id: Some(
+                    "sha256:9f2c4a1e7b3d5086c1f4a9e2b7d0c3f6a8e1b4d7c0f3a6e9b2d5c8f1a4e7b0d3"
+                        .to_owned()
+                ),
+                // Resolved identity wins over the anonymous cluster.
+                speaker: Some("person:ada".to_owned()),
+                occurred_at: Some(1_773_532_802),
+                text: "Morning everyone.".to_owned(),
+            },
+            NormalizedIngestRecord {
+                source_record_id: "turn-0002".to_owned(),
+                thread_id: Some(
+                    "sha256:9f2c4a1e7b3d5086c1f4a9e2b7d0c3f6a8e1b4d7c0f3a6e9b2d5c8f1a4e7b0d3"
+                        .to_owned()
+                ),
+                // No resolved ref yet: the provisional cluster label stands.
+                speaker: Some("spk-2".to_owned()),
+                occurred_at: Some(1_773_532_821),
+                text: "Numbers are up.".to_owned(),
+            },
+            NormalizedIngestRecord {
+                source_record_id: "turn-0003".to_owned(),
+                thread_id: Some(
+                    "sha256:9f2c4a1e7b3d5086c1f4a9e2b7d0c3f6a8e1b4d7c0f3a6e9b2d5c8f1a4e7b0d3"
+                        .to_owned()
+                ),
+                speaker: Some("person:ada".to_owned()),
+                occurred_at: Some(1_773_532_917),
+                text: "Agreed, let's ship it.".to_owned(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn meeting_transcript_preserves_the_producer_note_fallback() {
+    let batch = INGEST_SOURCE_REGISTRY
+        .normalize(MEETING_TRANSCRIPT_SOURCE_ID, MEETING_TRANSCRIPT_FIXTURE)
+        .expect("fixture normalizes");
+
+    assert_eq!(
+        batch.note_fallback,
+        Some(NormalizedIngestNote {
+            source_record_id:
+                "sha256:9f2c4a1e7b3d5086c1f4a9e2b7d0c3f6a8e1b4d7c0f3a6e9b2d5c8f1a4e7b0d3".to_owned(),
+            occurred_at: Some(1_773_532_800),
+            title: "Meeting transcript".to_owned(),
+            text: "The team reviewed quarterly numbers and agreed to ship.".to_owned(),
+        }),
+        "CAL-08 needs the fallback present even when records land as turns"
+    );
+}
+
+#[test]
+fn meeting_transcript_rejects_an_unsupported_schema_version() {
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(
+            MEETING_TRANSCRIPT_SOURCE_ID,
+            &meeting_transcript_json(&[(
+                "\"oneiron.meeting_transcript.v1\"",
+                "\"oneiron.meeting_transcript.v2\"",
+            )]),
+        )
+        .expect_err("unknown schema version must fail");
+
+    assert_eq!(
+        err,
+        IngestError::UnsupportedSchema {
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+            expected: MEETING_TRANSCRIPT_SCHEMA_V1,
+            found: "oneiron.meeting_transcript.v2".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn meeting_transcript_rejects_a_turn_reaching_past_the_recording() {
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(
+            MEETING_TRANSCRIPT_SOURCE_ID,
+            &meeting_transcript_json(&[("\"end_ms\": 5000", "\"end_ms\": 90000")]),
+        )
+        .expect_err("out-of-bounds turn must fail");
+
+    assert_eq!(
+        err,
+        IngestError::InvalidTurnTimestamps {
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+            turn_id: "turn-0001".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn meeting_transcript_rejects_non_monotone_turns() {
+    let two_turns = meeting_transcript_json(&[(
+        r#""turns": [{"turn_id": "turn-0001", "start_ms": 2000, "end_ms": 5000,"#,
+        r#""turns": [{"turn_id": "turn-0002", "start_ms": 20000, "end_ms": 25000,
+            "text": "Later.", "source_word_ids": [], "speaker_cluster": null,
+            "speaker_ref": null},
+          {"turn_id": "turn-0001", "start_ms": 2000, "end_ms": 5000,"#,
+    )]);
+
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(MEETING_TRANSCRIPT_SOURCE_ID, &two_turns)
+        .expect_err("turns going backwards in time must fail");
+
+    assert_eq!(
+        err,
+        IngestError::InvalidTurnTimestamps {
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+            turn_id: "turn-0001".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn meeting_transcript_rejects_a_turn_citing_an_unknown_word() {
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(
+            MEETING_TRANSCRIPT_SOURCE_ID,
+            &meeting_transcript_json(&[(
+                r#""source_word_ids": ["word-000001"]"#,
+                r#""source_word_ids": ["word-999999"]"#,
+            )]),
+        )
+        .expect_err("dangling word reference must fail");
+
+    assert_eq!(
+        err,
+        IngestError::UnknownWordReference {
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+            turn_id: "turn-0001".to_owned(),
+            word_id: "word-999999".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn meeting_transcript_rejects_duplicate_turn_ids() {
+    let duplicated = meeting_transcript_json(&[(
+        r#""turns": [{"turn_id": "turn-0001", "start_ms": 2000, "end_ms": 5000,"#,
+        r#""turns": [{"turn_id": "turn-0001", "start_ms": 0, "end_ms": 1000,
+            "text": "First.", "source_word_ids": [], "speaker_cluster": null,
+            "speaker_ref": null},
+          {"turn_id": "turn-0001", "start_ms": 2000, "end_ms": 5000,"#,
+    )]);
+
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(MEETING_TRANSCRIPT_SOURCE_ID, &duplicated)
+        .expect_err("duplicate turn ids must fail");
+
+    assert_eq!(
+        err,
+        IngestError::DuplicateId {
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+            kind: "turn",
+            id: "turn-0001".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn meeting_transcript_rejects_an_empty_recording_id() {
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(
+            MEETING_TRANSCRIPT_SOURCE_ID,
+            &meeting_transcript_json(&[(
+                "\"recording_id\": \"sha256:rec\"",
+                "\"recording_id\": \" \"",
+            )]),
+        )
+        .expect_err("blank recording id must fail");
+
+    assert_eq!(
+        err,
+        IngestError::InvalidDocumentField {
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+            path: "recording.recording_id".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn meeting_transcript_rejects_empty_turn_text() {
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(
+            MEETING_TRANSCRIPT_SOURCE_ID,
+            &meeting_transcript_json(&[("\"text\": \"Hello there.\"", "\"text\": \"   \"")]),
+        )
+        .expect_err("blank turn text must fail");
+
+    assert_eq!(
+        err,
+        IngestError::InvalidDocumentField {
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+            path: "turns[0].text".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn meeting_transcript_without_capture_time_normalizes_without_occurred_at() {
+    let batch = INGEST_SOURCE_REGISTRY
+        .normalize(
+            MEETING_TRANSCRIPT_SOURCE_ID,
+            &meeting_transcript_json(&[(
+                "\"capture_started_at\": 1000",
+                "\"capture_started_at\": null",
+            )]),
+        )
+        .expect("missing capture time is not a failure");
+
+    assert_eq!(batch.records[0].occurred_at, None);
+    assert_eq!(
+        batch.note_fallback.expect("note fallback").occurred_at,
+        None
+    );
+}
+
+#[test]
+fn meeting_transcript_rejects_malformed_json() {
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(MEETING_TRANSCRIPT_SOURCE_ID, "{ not json")
+        .expect_err("malformed document must fail");
+
+    assert!(
+        matches!(
+            err,
+            IngestError::InvalidDocument {
+                source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn meeting_transcript_rejects_a_capture_time_that_overflows_occurred_at() {
+    let err = INGEST_SOURCE_REGISTRY
+        .normalize(
+            MEETING_TRANSCRIPT_SOURCE_ID,
+            &meeting_transcript_json(&[(
+                "\"capture_started_at\": 1000",
+                &format!("\"capture_started_at\": {}", u64::MAX),
+            )]),
+        )
+        .expect_err("u64::MAX-adjacent capture time must reject, not wrap");
+
+    assert!(
+        matches!(
+            err,
+            IngestError::TimestampOverflow {
+                source_id: MEETING_TRANSCRIPT_SOURCE_ID,
+                ..
+            }
+        ),
+        "got {err:?}"
     );
 }

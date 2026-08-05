@@ -3681,6 +3681,366 @@
         ],
         "type": "object"
       },
+      "SurfaceCounterpartyPayload": {
+        "oneOf": [
+          {
+            "properties": {
+              "counterparty_ref": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "known"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "counterparty_ref",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "counterparty_key": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "counterparty_key",
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SurfaceEventAckResponse": {
+        "properties": {
+          "accepted_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "attempt_ref": {
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SurfaceEventHandoffStatePayload"
+          },
+          "status_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "correlation_id",
+          "attempt_ref",
+          "state",
+          "replayed",
+          "accepted_at",
+          "status_path"
+        ],
+        "type": "object"
+      },
+      "SurfaceEventActionPayload": {
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "message"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "interaction": {
+                "$ref": "#/components/schemas/SurfaceInteractionKindPayload"
+              },
+              "kind": {
+                "enum": [
+                  "interaction"
+                ],
+                "type": "string"
+              },
+              "target_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "interaction",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SurfaceEventHandoffStatePayload": {
+        "enum": [
+          "queued",
+          "leased",
+          "paused",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "SurfaceEventRejectionReasonPayload": {
+        "enum": [
+          "unknown_receiving_identity",
+          "non_agent_bound_identity",
+          "inactive_receiving_identity",
+          "tombstoned_receiving_identity"
+        ],
+        "type": "string"
+      },
+      "SurfaceEventRejectionResponse": {
+        "properties": {
+          "agent_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel": {
+            "type": "string"
+          },
+          "claims_not_instructions": {
+            "type": "boolean"
+          },
+          "counterparty": {
+            "$ref": "#/components/schemas/SurfaceCounterpartyPayload"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "foreign_inbound": {
+            "type": "boolean"
+          },
+          "identity_retiring": {
+            "type": "boolean"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "receipt_kind": {
+            "type": "string"
+          },
+          "receiving_address_or_handle": {
+            "type": "string"
+          },
+          "receiving_identity_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rejection_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SurfaceEventRejectionReasonPayload"
+              }
+            ]
+          },
+          "schema_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "workspace_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "receipt_kind",
+          "event_id",
+          "outcome",
+          "channel",
+          "receiving_address_or_handle",
+          "counterparty",
+          "foreign_inbound",
+          "claims_not_instructions",
+          "identity_retiring",
+          "rejection_reason"
+        ],
+        "type": "object"
+      },
+      "SurfaceEventSourcePayload": {
+        "properties": {
+          "app": {
+            "$ref": "#/components/schemas/SurfaceSourceAppPayload"
+          },
+          "user_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "user_ref"
+        ],
+        "type": "object"
+      },
+      "SurfaceEventStatusResponse": {
+        "properties": {
+          "attempt_count": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "attempt_ref": {
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/SurfaceEventHandoffStatePayload"
+          },
+          "updated_at": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "correlation_id",
+          "attempt_ref",
+          "state",
+          "attempt_count",
+          "last_error",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "SurfaceEventSubmitRequest": {
+        "properties": {
+          "action": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SurfaceEventActionPayload"
+              }
+            ]
+          },
+          "channel": {
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "counterparty": {
+            "$ref": "#/components/schemas/SurfaceCounterpartyPayload"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "foreign_inbound": {
+            "type": "boolean"
+          },
+          "payload_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "received_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "receiving_address_or_handle": {
+            "type": "string"
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SurfaceEventSourcePayload"
+              }
+            ]
+          },
+          "workspace_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "event_id",
+          "channel",
+          "receiving_address_or_handle",
+          "counterparty",
+          "received_at",
+          "foreign_inbound"
+        ],
+        "type": "object"
+      },
+      "SurfaceInteractionKindPayload": {
+        "enum": [
+          "reaction",
+          "card_completion",
+          "dwell",
+          "tap"
+        ],
+        "type": "string"
+      },
+      "SurfaceSourceAppPayload": {
+        "enum": [
+          "email",
+          "slack",
+          "discord",
+          "web",
+          "voice",
+          "imessage",
+          "line",
+          "telegram",
+          "linkedin"
+        ],
+        "type": "string"
+      },
       "TurnVadAnnotateQuery": {
         "properties": {
           "message_id": {
@@ -4599,6 +4959,117 @@
           },
           "500": {
             "description": "Run-tree read failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/core/surface-events": {
+      "post": {
+        "operationId": "submit_core_surface_event",
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/SurfaceEventSubmitRequest"
+        },
+        "responses": {
+          "202": {
+            "description": "Event committed to the durable queue and acked before any dispatch. A correlation replay returns the original attempt ref with `replayed: true`.",
+            "schema": {
+              "$ref": "#/components/schemas/SurfaceEventAckResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed submission body, or an input the engine refused to normalize.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:write.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "422": {
+            "description": "Identity routing refused the event without queueing. The body is the typed route receipt, naming which of the four rejection reasons applied.",
+            "schema": {
+              "$ref": "#/components/schemas/SurfaceEventRejectionResponse"
+            }
+          },
+          "500": {
+            "description": "Admission failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/core/surface-events/{correlation_id}": {
+      "get": {
+        "operationId": "get_core_surface_event",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "correlation_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Durable handoff snapshot for this correlation id.",
+            "schema": {
+              "$ref": "#/components/schemas/SurfaceEventStatusResponse"
+            }
+          },
+          "400": {
+            "description": "Blank correlation id.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "No surface event was admitted under this correlation id.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Handoff status read failed.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
