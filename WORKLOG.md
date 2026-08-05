@@ -221,3 +221,28 @@ genui.rs, genui/tests.rs, lib.rs, receipt.rs, merge_split_oracle.rs). No
 facade.rs, no Cargo.lock, no out-of-packet writes.
 
 RELAY-ONE-1606-fix-seg0
+
+### FIX12-final gates
+
+- `cargo fmt --all` clean.
+- `cargo clippy -p oneiron --lib --tests --all-features -- -D warnings` clean
+  (`ac6557b`). The workspace-wide sweep still reports the PRE-EXISTING
+  `oneiron-seal` sha1 deprecation first flagged on the lane base — outside
+  this lane's claims, charged to no fix here.
+- `cargo test -p oneiron --all-features` — **3190 passed, 0 failed** across
+  lib + integration binaries (except one unrelated timing flake in
+  `attempt_queue` cleanup-span observed once mid-leg; re-run solo green;
+  no consent/gate/settle to its code path).
+- `tests/effect_spine_oracle.rs es02` caught a real defect introduced by the
+  FIX-1 fold vocabulary: a Channel-scope `StandingOutboundGrant` minted by
+  the executor seam did not subset-match the requirement's verb-shaped
+  selectors, so the send held at the consent ladder with its own authority
+  already verified upstream. The fold now ECHOES the requirement as the
+  covering grant once the door's own four-axis match resolves
+  (`standing_outbound_grant_for_effect` enforces actor + scope + status on
+  the same txn); the normalized adapter vocabulary is advisory on that seam
+  rather than the containment authority. FIXED at `49033d0`; the es02 suite
+  is green end-to-end.
+
+RELAY-ONE-1606-fix-seg1 — all 12 fix-list items closed; ready for the
+FIX-verify leg.
