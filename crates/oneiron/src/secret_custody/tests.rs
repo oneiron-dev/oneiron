@@ -231,6 +231,53 @@ fn raw_put_doors_reject_secret_custody_byte() {
 }
 
 #[test]
+fn decode_rejects_missing_required_body_keys() {
+    // FIX5 BODY-SCHEMA: every key except rotated_at is required. Build a body
+    // with each of bindings / manifest_ref / declared_paths omitted and pin
+    // the immediate body-schema reject.
+    let rec = record("c", CustodyClass::CustodyPortable, b"v", vec![]);
+    let full = encode_secret_custody_body(&rec).expect("encode");
+
+    // Decode the full body and re-encode the MessagePack map minus one key.
+    fn drop_key(bytes: &[u8], drop: &str) -> Vec<u8> {
+        use rmpv::Value;
+        let mut cursor = std::io::Cursor::new(bytes);
+        let value = rmpv::decode::read_value(&mut cursor).expect("decode");
+        let Value::Map(entries) = value else { panic!("map") };
+        let kept: Vec<(Value, Value)> = entries
+            .into_iter()
+            .filter(|(k, _)| k.as_str() != Some(drop))
+            .collect();
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &Value::Map(kept)).expect("encode");
+        out
+    }
+
+    for key in ["bindings", "manifest_ref", "declared_paths", "policy_floor_snapshot"] {
+        let body = drop_key(&full, key);
+        let err = decode_secret_custody_body(&body)
+            .expect_err(&format!("missing required key {key} must reject"));
+        assert!(
+            matches!(err, Error::InvalidSecretCustodyBody(_)),
+            "key {key}: got {err:?}"
+        );
+    }
+
+    // Present-but-empty required values still decode (empty != missing).
+    let rec = SecretCustodyRecord {
+        bindings: vec![],
+        manifest_ref: String::new(),
+        declared_paths: vec![],
+        ..record("c", CustodyClass::CustodyPortable, b"v", vec![])
+    };
+    let bytes = encode_secret_custody_body(&rec).expect("encode");
+    let back = decode_secret_custody_body(&bytes).expect("decode");
+    assert!(back.bindings.is_empty());
+    assert_eq!(back.manifest_ref(), "");
+    assert!(back.declared_paths.is_empty());
+}
+
+#[test]
 fn register_rejects_binding_wider_than_live_floor() {
     // FIX4 FLOOR-TOCTOU: resolve_secret runs inside the write txn against the
     // LIVE floor. A CrossVault record binding T2LocalRegistered against the

@@ -841,8 +841,11 @@ pub fn encode_secret_custody_body(rec: &SecretCustodyRecord) -> Result<Vec<u8>> 
     Ok(out)
 }
 
-/// Decodes a custody record from its MessagePack key-map body. All keys are
-/// required except `rotated_at` (nil-or-int) — a record is complete on write.
+/// Decodes a custody record from its MessagePack key-map body. All 13 keys
+/// are required except `rotated_at` (nil-or-int): `bindings`, `manifest_ref`,
+/// and `declared_paths` may be EMPTY (an empty array or string is still a
+/// present, well-formed key) but must not be MISSING — a record is complete
+/// on write. A missing required key is a body-schema reject.
 pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
     use std::io::Cursor;
 
@@ -891,6 +894,9 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
         .and_then(as_u64)
         .and_then(|n| u32::try_from(n).ok())
         .ok_or(invalid_body("rotation_generation"))?;
+    // bindings / manifest_ref / declared_paths are REQUIRED keys (FIX5): an
+    // empty value is fine, but a MISSING key is a body-schema reject, not a
+    // silent empty default.
     let bindings = match required_value(&entries, SECRET_CUSTODY_BODY_KEYS[9]) {
         Some(Value::Array(items)) => {
             let mut bindings = Vec::with_capacity(items.len());
@@ -900,11 +906,11 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
             bindings
         }
         Some(_) => return Err(invalid_body("bindings must be an array")),
-        None => Vec::new(),
+        None => return Err(invalid_body("bindings")),
     };
     let manifest_ref = required_value(&entries, SECRET_CUSTODY_BODY_KEYS[10])
         .and_then(|v| v.as_str())
-        .unwrap_or_default()
+        .ok_or(invalid_body("manifest_ref"))?
         .to_owned();
     let declared_paths = match required_value(&entries, SECRET_CUSTODY_BODY_KEYS[11]) {
         Some(Value::Array(items)) => {
@@ -919,11 +925,11 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
             paths
         }
         Some(_) => return Err(invalid_body("declared_paths must be an array")),
-        None => Vec::new(),
+        None => return Err(invalid_body("declared_paths")),
     };
     let policy_floor_snapshot = match required_value(&entries, SECRET_CUSTODY_BODY_KEYS[12]) {
         Some(v) => floor_from_value(v)?,
-        None => SecretCustodyFloor::default(),
+        None => return Err(invalid_body("policy_floor_snapshot")),
     };
 
     Ok(SecretCustodyRecord {
