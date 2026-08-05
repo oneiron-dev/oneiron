@@ -1,6 +1,6 @@
 //! Typed, actor-bound verbs over the Context Board TASKS section.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::Ordering;
 
 use rmpv::Value;
@@ -9,8 +9,8 @@ use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{
-    AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptState,
-    EnqueueAttempt, EnqueueOutcome, InterveneAttempt,
+    AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
+    AttemptState, EnqueueAttempt, EnqueueOutcome, InterveneAttempt,
 };
 use crate::batch::{
     ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
@@ -481,33 +481,49 @@ impl MemoryFacade<'_> {
                 // must be acted on as its live state; otherwise the now-Queued
                 // attempt survives a "successful" cancel and stays claimable.
                 let queue = AttemptQueue::new(self.vault());
-                // Deferred membership TOCTOU: when multi-attempt-per-task
-                // ships, this in-txn re-read must re-enumerate the realizing
-                // SET, not just re-read the snapshotted attempt STATES —
-                // snapshot-then-restate-state misses an attempt enqueued
-                // between snapshot and write-txn.
-                let mut live_attempts: Vec<(AttemptId, AttemptState)> =
-                    Vec::with_capacity(state.attempts.len());
-                for (attempt_id, snapshot_state) in &state.attempts {
-                    match queue.get_in_write_txn(&*wtxn, *attempt_id)? {
-                        Some(record) => live_attempts.push((*attempt_id, record.state)),
-                        // Spawn realizations have no TASK backlink to recover
-                        // membership from. Preserve an already-terminal spawn
-                        // snapshot when the in-txn lookup cannot surface its
-                        // row; terminal attempt states cannot transition again.
-                        None if state.task_ref.is_none()
-                            && matches!(
-                                snapshot_state,
-                                AttemptState::Completed
-                                    | AttemptState::Failed
-                                    | AttemptState::Cancelled
-                            ) =>
-                        {
-                            live_attempts.push((*attempt_id, *snapshot_state));
-                        }
-                        None => {}
+                let live_attempts: Vec<(AttemptId, AttemptState)> = match state.task_ref {
+                    // Membership TOCTOU: a retry mints a NEW row under the same
+                    // `task_ref` and finalizes its source as `Failed`, so
+                    // re-reading only the snapshotted IDS would see the dead
+                    // source, report the task terminally failed, cancel
+                    // nothing, and leave the live successor to run and send. A
+                    // TASK target therefore re-derives its realizing SET here,
+                    // reduced to retry-chain heads.
+                    Some(task_ref) => {
+                        let records =
+                            queue.list_task_in_write_txn(&*wtxn, task_ref.to_hex().as_str())?;
+                        let superseded = superseded_attempt_ids(&records);
+                        records
+                            .iter()
+                            .filter(|record| !superseded.contains(&record.id))
+                            .map(|record| (record.id, record.state))
+                            .collect()
                     }
-                }
+                    // A spawn realization carries no TASK backlink to re-derive
+                    // membership from, so its single row is re-read by id.
+                    None => {
+                        let mut attempts = Vec::with_capacity(state.attempts.len());
+                        for (attempt_id, snapshot_state) in &state.attempts {
+                            match queue.get_in_write_txn(&*wtxn, *attempt_id)? {
+                                Some(record) => attempts.push((*attempt_id, record.state)),
+                                // Preserve an already-terminal spawn snapshot
+                                // when the in-txn lookup cannot surface its
+                                // row; terminal states cannot transition again.
+                                None if matches!(
+                                    snapshot_state,
+                                    AttemptState::Completed
+                                        | AttemptState::Failed
+                                        | AttemptState::Cancelled
+                                ) =>
+                                {
+                                    attempts.push((*attempt_id, *snapshot_state));
+                                }
+                                None => {}
+                            }
+                        }
+                        attempts
+                    }
+                };
 
                 // P1-a (leased-cancel honesty): a leased realization cannot be
                 // stopped in this txn (`intervene` refuses a leased attempt) and
@@ -961,12 +977,22 @@ fn task_presence(vault: &Vault) -> Result<(Vec<TaskIntentPresence>, Vec<JobPrese
         .iter()
         .map(|record| (attempt_hex(record.id), record.task_ref.clone()))
         .collect();
+    let superseded: HashSet<String> = superseded_attempt_ids(&records)
+        .into_iter()
+        .map(attempt_hex)
+        .collect();
     let tree = RunTreeAdapter::new(vault).read()?;
     let mut nodes = Vec::new();
     collect_run_tree_nodes(&tree.roots, &mut nodes);
     let mut realizing_jobs: BTreeMap<String, Vec<JobPresence>> = BTreeMap::new();
     let mut bare_jobs = Vec::new();
     for node in nodes {
+        // Only retry-chain HEADS reach the board: a superseded try is replaced
+        // work whose successor owns the realization. The run tree keeps every
+        // try — nested under the one it replaces — as the forensic surface.
+        if superseded.contains(&node.attempt_id) {
+            continue;
+        }
         let Some(job) = JobPresence::from_run_tree_node(node) else {
             continue;
         };
@@ -1145,6 +1171,23 @@ fn attempt_hex(attempt_id: AttemptId) -> String {
     out
 }
 
+/// Attempt ids replaced by a later try.
+///
+/// A retry mints a NEW row and leaves its source terminally `Failed`, so the
+/// rows behind one TASK are a forest of retry CHAINS, not a set of peers. Only
+/// chain HEADS — rows no later try replaces — are live realizations; deciding
+/// over every row decides over superseded history instead. Any-row status
+/// precedence would fold a held retry up as `Failed` rather than `Scheduled`
+/// and would keep folding a chain that later SUCCEEDED up as `Failed` forever,
+/// and a cancel would rule against a dead source while its live successor
+/// still runs and sends.
+fn superseded_attempt_ids(records: &[AttemptRecord]) -> HashSet<AttemptId> {
+    records
+        .iter()
+        .filter_map(|record| record.retry_of)
+        .collect()
+}
+
 /// Pre-lease states a task cancel can still stop in its own transaction.
 fn is_cancelable_attempt_state(state: AttemptState) -> bool {
     matches!(
@@ -1181,7 +1224,9 @@ mod tests {
     use crate::agent_dispatch::{
         AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
     };
-    use crate::attempt_queue::{ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt};
+    use crate::attempt_queue::{
+        ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt, RetryAttempt, RetryOutcome,
+    };
     use crate::config::VaultConfig;
     use crate::facade::OutboundDraftInput;
     use crate::genui::{GrantMintIntent, GrantMintIntentScope};
@@ -2351,6 +2396,176 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    /// Membership TOCTOU: a retry between the snapshot and the write txn
+    /// REPLACES the target's live realization with a new row under the same
+    /// `task_ref`. Re-reading only the snapshotted ids sees the dead source,
+    /// reports the task terminally failed, cancels nothing, and leaves the
+    /// scheduled successor to run and send.
+    #[test]
+    fn cancel_reaches_a_retry_minted_between_snapshot_and_write_txn() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        grant_cancel(&vault, own, 0xDC);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = facade.tasks_create(&spec(120)).expect("create task");
+        let task_ref = created.task_ref.expect("task ref");
+        let queue = AttemptQueue::new(&vault);
+        let claimed = match queue
+            .claim_kind(
+                TASK_REALIZE_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "worker".to_owned(),
+                    now: 121,
+                },
+            )
+            .expect("claim")
+        {
+            ClaimOutcome::Claimed(claimed) => claimed,
+            ClaimOutcome::Empty => panic!("created task must be claimable"),
+        };
+
+        // The snapshot the cancel would have taken: one leased realization.
+        let snapshot = CancelTargetState {
+            owned: true,
+            task_ref: Some(task_ref),
+            attempts: vec![(claimed.id, AttemptState::Leased)],
+            proposal_subject: task_ref,
+            target_ref: task_ref.to_hex(),
+        };
+
+        // The executor retries FIRST: the snapshotted row is now a terminal
+        // Failed source and a fresh Scheduled row owns the pending send.
+        let RetryOutcome::Retried(next) = queue
+            .retry(RetryAttempt {
+                id: claimed.id,
+                lease_owner: "worker".to_owned(),
+                attempt_count: claimed.attempt_count,
+                backoff_until: 400,
+                last_error: Some("rate limited".to_owned()),
+                now: 122,
+            })
+            .expect("retry the leased realization");
+        assert_ne!(next.id, claimed.id);
+
+        let cancel = facade
+            .tasks_cancel_with_injected_state_for_test(TaskCancelMode::Auto, snapshot)
+            .expect("cancel with pre-retry snapshot");
+        let after = queue.list().expect("list after");
+
+        // The successor is STOPPED, not merely reported around.
+        assert_eq!(
+            after
+                .iter()
+                .find(|r| r.id == next.id)
+                .expect("successor row")
+                .state,
+            AttemptState::Cancelled
+        );
+        // The task is not read off its superseded source: the cancel took
+        // effect and the TASK itself is withdrawn, rather than the verb
+        // reporting a terminal failure it did not stop.
+        assert_eq!(usize::from(cancel.effected), 1);
+        assert_eq!(cancel.status, Some(RunTreeStatus::Cancelled));
+        assert!(task_is_cancelled(&vault, task_ref).expect("cancel state"));
+        // Per-try history survives: the failed source stays point-readable.
+        assert_eq!(
+            after
+                .iter()
+                .find(|r| r.id == claimed.id)
+                .expect("source row")
+                .state,
+            AttemptState::Failed
+        );
+    }
+
+    /// A retry chain's HEAD carries the task's board status. Any-row precedence
+    /// (Failed > Scheduled > Done) reads the task off a superseded try: a held
+    /// retry folds up as `Failed`, and a chain that later SUCCEEDED keeps
+    /// folding up as `Failed` forever.
+    #[test]
+    fn board_reads_a_retry_chain_off_its_head_not_a_superseded_try() {
+        let (_dir, vault) = open_vault();
+        let own = own_agent(&vault);
+        let facade = vault.memory_facade(own, EdgeActorClass::Agent);
+        let created = facade.tasks_create(&spec(120)).expect("create task");
+        let task_ref = created.task_ref.expect("task ref");
+        let task_hex = task_ref.to_hex();
+        let queue = AttemptQueue::new(&vault);
+
+        // Two retries: three rows, the first two terminally Failed sources.
+        let mut head = None;
+        for now in [121_u64, 141] {
+            let claimed = match queue
+                .claim_kind(
+                    TASK_REALIZE_ATTEMPT_KIND,
+                    ClaimAttempt {
+                        lease_owner: "worker".to_owned(),
+                        now,
+                    },
+                )
+                .expect("claim")
+            {
+                ClaimOutcome::Claimed(claimed) => claimed,
+                ClaimOutcome::Empty => panic!("the chain head must be claimable"),
+            };
+            let RetryOutcome::Retried(next) = queue
+                .retry(RetryAttempt {
+                    id: claimed.id,
+                    lease_owner: "worker".to_owned(),
+                    attempt_count: claimed.attempt_count,
+                    backoff_until: now + 10,
+                    last_error: Some("upstream refused".to_owned()),
+                    now: now + 1,
+                })
+                .expect("retry");
+            head = Some(next.id);
+        }
+        let head = head.expect("chain head");
+
+        // Held retry: the task is deferred, not failed — and only the head is
+        // folded, so the board shows one live realization, not three rows.
+        let section = facade.tasks_check().expect("check tasks");
+        let row = section
+            .rows
+            .iter()
+            .find(|row| row.id == task_hex)
+            .expect("task row");
+        assert_eq!(row.status, TaskBoardStatus::Scheduled);
+        assert_eq!(row.folded_job_count, 1);
+
+        // The head SUCCEEDS: the logical task is done, not permanently failed.
+        let claimed = match queue
+            .claim_kind(
+                TASK_REALIZE_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "worker".to_owned(),
+                    now: 200,
+                },
+            )
+            .expect("claim head")
+        {
+            ClaimOutcome::Claimed(claimed) => claimed,
+            ClaimOutcome::Empty => panic!("the chain head must be claimable"),
+        };
+        assert_eq!(claimed.id, head);
+        queue
+            .complete(CompleteAttempt {
+                id: head,
+                lease_owner: "worker".to_owned(),
+                attempt_count: claimed.attempt_count,
+                now: 201,
+            })
+            .expect("complete the head");
+
+        let done = facade.tasks_check().expect("check after success");
+        let row = done
+            .rows
+            .iter()
+            .find(|row| row.id == task_hex)
+            .expect("task row");
+        assert_eq!(row.status, TaskBoardStatus::Done);
     }
 
     /// P1-c: a stored, `tasks.cancel`-granted actor cannot DIRECTLY cancel a

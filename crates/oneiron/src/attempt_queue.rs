@@ -1379,6 +1379,31 @@ impl<'a> AttemptQueue<'a> {
         decode_record(&raw, id).map(Some)
     }
 
+    /// Reads every row realizing one TASK inside a caller-owned write
+    /// transaction, in deterministic creation order.
+    ///
+    /// Membership is re-DERIVED, never re-read by id: [`Self::retry`] mints a
+    /// NEW row under the same `task_ref` and finalizes its source, so a caller
+    /// holding a pre-transaction id snapshot cannot reach the successor by
+    /// re-reading the ids it already knows.
+    pub(crate) fn list_task_in_write_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        task_ref: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let mut records = Vec::new();
+        for row in self.store.attempt_records.iter(wtxn)? {
+            let (key, raw_record) = row?;
+            let id = AttemptId::from_bytes(&key)?;
+            let record = decode_record(&raw_record, id)?;
+            if record.task_ref.as_deref() == Some(task_ref) {
+                records.push(record);
+            }
+        }
+        records.sort_by(attempt_record_order);
+        Ok(records)
+    }
+
     /// Reads all persisted attempt rows in deterministic creation order.
     pub fn list(&self) -> Result<Vec<AttemptRecord>> {
         let rtxn = self.store.env.read_txn()?;
