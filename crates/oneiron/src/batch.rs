@@ -2515,6 +2515,7 @@ pub(crate) fn apply_ops_session(
                 id,
                 entity_type,
                 data,
+                allow_reserved_predicate,
                 ..
             } => {
                 // Same registry discipline as base: a room is not a place
@@ -2522,6 +2523,20 @@ pub(crate) fn apply_ops_session(
                 // Promote replays these rows into base, so a byte that would
                 // be rejected there is rejected here.
                 crate::registry::validate_public_entity_type(*entity_type)?;
+                // D18, on the same terms: a CLAIM body is structurally
+                // validated before a byte of it is staged. The type-byte gate
+                // above is not enough — it admits the byte, not the shape.
+                //
+                // The op's OWN `allow_reserved_predicate` is what promote will
+                // replay this body under (`apply_put` reads the same field off
+                // the same op), so validating under it makes in-room admission
+                // byte-exactly promote's admission. Hardcoding `false` here
+                // would instead refuse in-room a body promote would accept —
+                // trading a claim that cannot land for one that cannot be
+                // written, which is the same divergence facing the other way.
+                if *entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                    crate::claim::validate_claim_body_and_decode(data, *allow_reserved_predicate)?;
+                }
                 // The ENTRY's stamps, not the op's: they are the witnessing
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).
