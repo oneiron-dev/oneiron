@@ -2250,6 +2250,73 @@ fn forward_rematerialization_quarantines_forged_shell_and_continues_edge_pass() 
 }
 
 #[test]
+fn forward_remat_quarantines_replicated_secret_custody_carrier() -> Result<()> {
+    // C1 APPLY-TIME SEAL, end to end: a peer files a SECRET_CUSTODY body in
+    // the window doc. The generic `put_replicated` arm used to admit byte 77
+    // straight into LMDB (the replicated type gate named only POLICY_MANIFEST
+    // / ACCESS_GRANT / OUTBOUND_GRANT), materializing peer-authored plaintext
+    // `value_bytes`. It must now quarantine the row and continue the pass.
+    use crate::secret_custody::{
+        CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
+        SecretCustodyStatus, encode_secret_custody_body,
+    };
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let custody_id = EntityId::from_bytes([0x51; 16])?;
+    let ordinary_id = EntityId::from_bytes([0x52; 16])?;
+
+    let body = encode_secret_custody_body(&SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "peer-authored".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"peer-plaintext-value".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: learned_at,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: Vec::new(),
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    let custody_blob = make_entity_blob(ENTITY_TYPE_SECRET_CUSTODY, learned_at, &body);
+    let ordinary_blob = make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary turn body");
+
+    let doc = create_window_doc("remote", &window_key);
+    let entities = doc.get_map("entities");
+    map_insert_bytes(&entities, &custody_id.to_hex(), &custody_blob)?;
+    map_insert_bytes(&entities, &ordinary_id.to_hex(), &ordinary_blob)?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+
+    assert_eq!(count, 1, "the ordinary row still materializes");
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&vault.store.env.read_txn()?, custody_id.as_bytes())?
+            .is_none(),
+        "a replicated custody body must never reach LMDB"
+    );
+    assert!(
+        vault.get_raw(&ordinary_id)?.is_some(),
+        "one sealed custody row must not wedge the rest of the pass"
+    );
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Entities);
+    assert_eq!(
+        quarantined[0].1.reason_code, "InvalidSecretCustodyBody",
+        "the custody seal must classify as a remote rejection, not a local failure"
+    );
+    Ok(())
+}
+
+#[test]
 fn forward_rematerialization_admits_byte_exact_mandated_shell_echo() -> Result<()> {
     use crate::identity_topology::{
         IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
@@ -3578,7 +3645,10 @@ fn seed_secret_custody(
         policy_floor_snapshot: crate::secret_custody::SecretCustodyFloor::default(),
     };
     let id = vault.register_secret(rec)?;
-    let raw = vault.get_raw(&id)?.expect("custody row present");
+    // The sealed public `get_raw` denies byte 77 by design; this fixture needs
+    // the on-disk bytes to plant a carrier, so it reads through the same
+    // crate-internal unsealed reader the scrub passes use.
+    let raw = vault.get_raw_unsealed(&id)?.expect("custody row present");
     Ok((id, raw))
 }
 
@@ -3694,6 +3764,92 @@ fn secret_custody_never_leaves_doc_via_export() -> Result<()> {
     assert!(
         history_free_window_required(&vault, &window_key)?,
         "custody carrier scrub pins the window to history-free transport"
+    );
+    Ok(())
+}
+
+/// C2 EXPORT-SCRUB BYPASS: the map key is peer-chosen, the type byte is not.
+/// Parsing the key before classifying the body let a custody carrier filed
+/// under a non-canonical key skip the scrub and ship its plaintext in the
+/// export.
+#[test]
+fn secret_custody_under_malformed_key_never_leaves_doc_via_export() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let secret_value = b"hunter2-malformed-key";
+    let (_custody, custody_raw) =
+        seed_secret_custody(&vault, &window_key, "api-key", secret_value)?;
+
+    // A key no `EntityId::from_hex` can parse — exactly what a hostile or
+    // buggy peer is free to write into the entities map.
+    let malformed_key = "not-a-canonical-entity-id";
+    let ordinary = EntityId::from_bytes([0x49; 16])?;
+    vault.put_entity(
+        &ordinary,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"ordinary turn",
+    )?;
+
+    let doc = create_window_doc("source", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), malformed_key, &custody_raw)?;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary turn"),
+    )?;
+    doc.commit();
+
+    let export = export_window_updates_since(
+        &vault,
+        &window_key,
+        &doc,
+        &VersionVector::default().encode(),
+    )?;
+
+    // The load-bearing assertion: the secret value is not anywhere in the bytes
+    // that go on the wire.
+    assert!(
+        !export
+            .windows(secret_value.len())
+            .any(|w| w == secret_value.as_slice()),
+        "exported bytes must not carry the secret value"
+    );
+
+    let peer = create_window_doc("peer", &window_key);
+    import_doc(&peer, &export)?;
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), malformed_key).is_none(),
+        "a malformed-key custody carrier must not reach the peer"
+    );
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some(),
+        "ordinary entity still exports"
+    );
+    assert!(
+        map_get_bytes(&doc.get_map("entities"), malformed_key).is_none(),
+        "local doc scrubbed before export"
+    );
+    assert!(
+        history_free_window_required(&vault, &window_key)?,
+        "the scrub pins the window to history-free transport"
+    );
+
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Entities);
+    assert_eq!(quarantined[0].1.reason_code, "InvalidSecretCustodyBody");
+    assert_eq!(
+        (
+            quarantined[0].1.crdt_key_hash,
+            quarantined[0].1.crdt_key_len
+        ),
+        crate::sync::quarantine::crdt_key_metadata(malformed_key)
     );
     Ok(())
 }
