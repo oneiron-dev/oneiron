@@ -1753,15 +1753,34 @@ impl MemoryFacade<'_> {
             |wtxn| -> FacadeResult<(crate::session_overlay::TxnSegmentGuard, Vec<(String, u8)>)> {
                 verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
                 let segment = overlay.install_txn_segment()?;
-                let view = session.read_view()?;
-                crate::batch::apply_ops_session(
-                    &view,
-                    &route,
-                    &self.vault.config,
-                    &self.vault.analyzer,
-                    wtxn,
-                    entries,
-                )?;
+                // ONE ENTRY PER CALL, each against a FRESHLY constructed view.
+                //
+                // A `SessionStoreView` freezes its overlay snapshot at
+                // construction, so a view built once and reused across the
+                // whole program cannot see rows staged earlier in the same
+                // program. That is invisible for independent row writes but
+                // corrupts every READ-MODIFY-WRITE accumulator: two BM25
+                // documents in one turn (a message and its summary) would
+                // both read the pre-turn `total_docs`, both write
+                // `before + 1`, and leave 2 postings under a doc count of 1 —
+                // which the next in-room search fails closed on with
+                // `posting list length exceeds total_docs`.
+                //
+                // `read_view` is segment-aware (`SessionOverlay::snapshot`
+                // returns the active segment's preview), so re-taking it per
+                // entry gives each op read-your-own-writes over its
+                // predecessors. Atomicity is untouched: this is all still one
+                // base txn and one overlay segment, committed once below.
+                for entry in entries {
+                    crate::batch::apply_ops_session(
+                        &session.read_view()?,
+                        &route,
+                        &self.vault.config,
+                        &self.vault.analyzer,
+                        wtxn,
+                        vec![entry],
+                    )?;
+                }
                 let mut short_refs = Vec::with_capacity(alias_ids.len());
                 for id in &alias_ids {
                     short_refs.push(overlay.alloc_session_short_id(id, id.as_bytes())?);

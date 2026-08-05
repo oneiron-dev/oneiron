@@ -59,6 +59,14 @@ mod seam {
     /// ONE-1727 owns the vault-level session handle that wraps it).
     pub(super) struct SessionVault<'vault> {
         session: crate::off_record::OffRecordSession<'vault>,
+        vault: &'vault Vault,
+        /// The base PERSON this room witnesses as, once one has been bound.
+        ///
+        /// The witness door requires a base-resident actor, so witnessing
+        /// necessarily adds ONE base row. Zero-residue oracles therefore call
+        /// `bind_actor` BEFORE taking their census, putting the actor in the
+        /// baseline instead of making it look like session residue.
+        actor: Option<EntityId>,
     }
 
     /// One (key, value) row as the model oracle sees it.
@@ -107,7 +115,11 @@ mod seam {
             vault
                 .off_record_session_vault()
                 .enter(session_ref, crate::off_record::OffRecordBackendClass::Local)
-                .map(|session| Self { session })
+                .map(|session| Self {
+                    session,
+                    vault,
+                    actor: None,
+                })
                 .map_err(map_session_error)
         }
 
@@ -125,7 +137,11 @@ mod seam {
                     crate::off_record::OffRecordBackendClass::Local,
                     budget,
                 )
-                .map(|session| Self { session })
+                .map(|session| Self {
+                    session,
+                    vault,
+                    actor: None,
+                })
                 .map_err(map_session_error)
         }
 
@@ -157,17 +173,108 @@ mod seam {
             }
         }
 
+        /// Seeds and binds the base PERSON this room witnesses as.
+        ///
+        /// Separate from `enter` because it WRITES a base row: a zero-residue
+        /// oracle calls it before taking its census, so the actor is baseline
+        /// rather than apparent session residue.
+        pub(super) fn bind_actor(&mut self) -> Result<EntityId> {
+            let actor = EntityId::now();
+            self.vault.put_entity(
+                &actor,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"branch-store oracle witness actor",
+            )?;
+            self.actor = Some(actor);
+            Ok(actor)
+        }
+
         /// ONE-1727: witness one turn (+ PartOf MESSAGE, DerivedFrom SUMMARY)
         /// through the session handle; rows land in the overlay only.
         /// Returns the ids of (turn, message, summary).
-        pub(super) fn witness_turn(&self, _text: &str) -> Result<(EntityId, EntityId, EntityId)> {
-            unimplemented!("armed by ONE-1728: session-vault witness")
+        ///
+        /// Armed on `MemoryFacade::witness_into_session` with a summary, so
+        /// the room lands TURN + MESSAGE + SUMMARY — the three transcript
+        /// entities the master-close oracle counts.
+        pub(super) fn witness_turn(&self, text: &str) -> Result<(EntityId, EntityId, EntityId)> {
+            // The bound actor is a BASE entity by construction — the witness
+            // door proves the actor exists in the store before it writes. It
+            // is therefore seeded once at `enter`, BEFORE any oracle takes its
+            // zero-residue census, so the actor row is part of the baseline
+            // rather than residue the room appears to have left behind.
+            let actor = self.actor.ok_or(Error::InvariantViolation(
+                "witness_turn needs bind_actor() first: the witness door writes \
+                 one BASE actor row, which zero-residue oracles must census",
+            ))?;
+            let facade = self
+                .vault
+                .memory_facade(actor, crate::edge::EdgeActorClass::Human);
+            let message_id = EntityId::now();
+            let receipt = facade
+                .witness_into_session(
+                    &self.session,
+                    &crate::facade::WitnessTurn {
+                        conversation_ref: String::new(),
+                        turn_ref: None,
+                        messages: vec![crate::facade::WitnessMessage {
+                            id: Some(message_id.to_hex()),
+                            author: crate::facade::WitnessAuthor::User,
+                            message_type: "utterance".to_owned(),
+                            content: text.to_owned(),
+                            metadata: None,
+                            is_visible: true,
+                            order: 0,
+                        }],
+                        occurred_at: 1,
+                    },
+                    Some(text),
+                )
+                .unwrap_or_else(|error| panic!("oracle session witness failed: {error:?}"));
+            let turn_id = EntityId::from_hex(
+                receipt
+                    .receipt_ref
+                    .strip_prefix("witness:")
+                    .ok_or(Error::InvariantViolation("witness receipt names no turn"))?,
+            )?;
+            // The SUMMARY is the room's only `DerivedFrom` source on this
+            // turn, so the edge index names it exactly — no guessing from
+            // put order.
+            let view = self.session.read_view()?;
+            let rtxn = self.vault.store.env.read_txn()?;
+            let mut summary_id = None;
+            for row in view.edges_in.prefix_iter(&rtxn, turn_id.as_bytes())? {
+                let (key, _) = row?;
+                let (source, kind, _) = crate::edge::parse_strict_edge_record_key(&key)?;
+                if kind == crate::edge::EdgeKind::DerivedFrom {
+                    summary_id = Some(source);
+                    break;
+                }
+            }
+            let summary_id = summary_id.ok_or(Error::InvariantViolation(
+                "session witness staged no DerivedFrom summary",
+            ))?;
+            drop(rtxn);
+            drop(view);
+            Ok((turn_id, message_id, summary_id))
         }
 
         /// ONE-1728: session retrieval through the composed handle (records
         /// its retrieval-run rows in the overlay).
-        pub(super) fn search_text(&self, _query: &str, _limit: usize) -> Result<Vec<EntityId>> {
-            unimplemented!("armed by ONE-1728: composed session retrieval")
+        pub(super) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<EntityId>> {
+            self.session.search_text(query, limit)
+        }
+
+        /// ONE-1728: the room's own retrieval-run rows, read through the
+        /// composed view (overlay ∪ base).
+        pub(super) fn retrieval_run_count(&self) -> Result<usize> {
+            let view = self.session.read_view()?;
+            let rtxn = self.vault.store.env.read_txn()?;
+            let count = view.retrieval_runs_in_txn(&rtxn, 1_000)?.len();
+            drop(rtxn);
+            drop(view);
+            Ok(count)
         }
 
         /// ONE-1727: mode flip (OffRecord <-> OnRecord).
@@ -201,8 +308,43 @@ mod seam {
         /// ONE-1728: the session-local short ref (short id + content hash)
         /// allocated in-room for `id` — session-scoped, never resolvable
         /// through the BASE resolver until promote.
-        pub(super) fn session_short_ref(&self, _id: &EntityId) -> Result<(String, u8)> {
-            unimplemented!("armed by ONE-1728: session-local short-id namespace")
+        ///
+        /// Witness already allocated the alias, so this reads the existing
+        /// one back rather than minting a second: `alloc_session_short_id` is
+        /// idempotent per id within a room.
+        pub(super) fn session_short_ref(&self, id: &EntityId) -> Result<(String, u8)> {
+            let overlay = self.session.overlay();
+            let _segment = overlay.install_txn_segment()?;
+            overlay.alloc_session_short_id(id, id.as_bytes())
+        }
+
+        /// ONE-1728: the number of claims a SESSION-side ScopedRead surfaces
+        /// for `subject` — the union half of the R10 reader family.
+        pub(super) fn session_scoped_read_visible_claim_count(
+            &self,
+            subject: &EntityId,
+        ) -> Result<usize> {
+            let view = self.session.read_view()?;
+            let count = scoped_read_visible_claim_count(
+                &self
+                    .vault
+                    .scoped_read_in_session(scoped_read_actor_key(), &view),
+                subject,
+            )?;
+            drop(view);
+            Ok(count)
+        }
+
+        /// ONE-1728 (K10): flip the room back to off record, rearming the
+        /// overlay so new writes stage there again.
+        pub(super) fn flip_off_record(&self) -> Result<()> {
+            self.session.flip_off_record()
+        }
+
+        /// ONE-1728 (K10): mint a write route at the CURRENT mode, so a test
+        /// can hold it across a flip and prove `revalidate` refuses it.
+        pub(super) fn write_route(&self) -> Result<crate::session_overlay::SessionWriteRoute> {
+            self.session.write_route()
         }
 
         /// ONE-1729: exact artifact census through the SESSION view —
@@ -607,30 +749,86 @@ mod seam {
 
     /// ONE-1728: simulated crash after witness population — drop every
     /// session handle WITHOUT close, then reopen the vault from disk.
-    pub(super) fn crash_and_reopen(
-        _dir: &std::path::Path,
-        _vault: &Vault,
-        _session: SessionVault<'_>,
-    ) -> Result<Vault> {
-        unimplemented!("armed by ONE-1728: witness-backed crash evaporation")
+    ///
+    /// Takes the vault BY VALUE: the single-open registry refuses a second
+    /// open of a live root (`DuplicateOpenRoot`), so the crashed handle must
+    /// be dropped before the reopen, and the caller rebinds the return.
+    ///
+    /// The caller drops its `SessionVault` WITHOUT `close()` before calling —
+    /// that drop IS the simulated crash. Nothing runs the close path, so any
+    /// residue the reopen finds is residue a real crash would have left.
+    /// The session borrows the vault, so it could not have outlived this
+    /// call anyway: the by-value signature makes the ordering a type fact.
+    pub(super) fn crash_and_reopen(dir: &std::path::Path, vault: Vault) -> Result<Vault> {
+        drop(vault);
+        Vault::open(dir, VaultConfig::default())
     }
 
     /// ONE-1728: submit a BASE batch containing one op referencing
     /// `overlay_id`; Err = the taint-guard rejection.
+    /// `source` is a PRE-EXISTING base entity supplied by the caller, seeded
+    /// before its census: the atomicity assertion is about the rejected
+    /// batch's rows, and a probe that minted its own source would charge the
+    /// guard for the probe's setup.
     pub(super) fn base_batch_referencing_overlay_id(
-        _vault: &Vault,
-        _overlay_id: &EntityId,
+        vault: &Vault,
+        source: &EntityId,
+        overlay_id: &EntityId,
     ) -> SeamResult<()> {
-        unimplemented!("armed by ONE-1728: taint guard at base batch preflight")
+        // An EDGE whose target is the room's turn: an edge endpoint
+        // materializes nothing, so it is exactly the K4-owned ref class (D5's
+        // door partition) rather than one delegated to the entity door.
+        vault
+            .batch()
+            .edge(source, crate::edge::EdgeKind::PartOf, overlay_id, 1.0)
+            .commit()
+            .map_err(map_taint_error)
+    }
+
+    fn map_taint_error(error: Error) -> SeamError {
+        match error {
+            Error::OffRecordTaintedBaseWrite { .. } => SeamError::TaintedBaseWrite,
+            other => panic!("unexpected base-write error: {other}"),
+        }
+    }
+
+    /// The actor key every ScopedRead probe in this oracle reads under, so
+    /// the base and session halves differ ONLY in their target.
+    pub(super) fn scoped_read_actor_key() -> crate::claim::ScopedReadActorKey {
+        crate::claim::ScopedReadActorKey::new("branch-store-oracle")
+            .expect("oracle scoped-read actor key")
+    }
+
+    /// Counts the claims `read` surfaces whose subject is `subject`.
+    pub(super) fn scoped_read_visible_claim_count(
+        read: &crate::claim::ScopedRead<'_>,
+        subject: &EntityId,
+    ) -> Result<usize> {
+        let mut count = 0_usize;
+        for id in read
+            .vault()
+            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+        {
+            let Some(body) = read.get(&id)? else {
+                continue;
+            };
+            let Ok(body) = crate::claim::decode_claim_body(&body, true) else {
+                continue;
+            };
+            if body.subject == crate::claim::ClaimSubject::Entity(*subject) {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     /// ONE-1728: number of claims a BASE-side ScopedRead surfaces for
     /// `subject` (the ledger's ScopedRead reader family, R10).
     pub(super) fn base_scoped_read_visible_claim_count(
-        _vault: &Vault,
-        _subject: &EntityId,
+        vault: &Vault,
+        subject: &EntityId,
     ) -> Result<usize> {
-        unimplemented!("armed by ONE-1728: ScopedRead composes at the seam")
+        scoped_read_visible_claim_count(&vault.scoped_read(scoped_read_actor_key()), subject)
     }
 
     /// ONE-1730: the crash-matrix sequence, OWNED by the seam end to end:
@@ -967,12 +1165,13 @@ fn direct_substrate_crash_evaporation_leaves_zero_base_residue() -> Result<()> {
 /// §4 master close test: transcript + context receipts deleted, floor
 /// receipts kept (RECEIPTS-FOLLOW-TRANSCRIPT).
 #[test]
-// Attestation: needs ONE-1728 witness_turn/search_text before this can run.
-#[ignore = "armed by ONE-1728"]
 fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let mut session = seam::SessionVault::enter(&vault, "oracle-close").expect("enter session");
+    // The witness door requires a base-resident actor, so bind it BEFORE the
+    // baseline: the room must be charged for its own rows, not for its actor.
+    session.bind_actor()?;
     let base_before = full_db_census(&vault)?;
-    let session = seam::SessionVault::enter(&vault, "oracle-close").expect("enter session");
     let (_turn, _msg, _summary) = session.witness_turn("close me")?;
     let _hits = session.search_text("close", 5)?;
     let (transcript_deleted, context_receipts_deleted, floor_receipts_kept) = session.close()?;
@@ -994,15 +1193,17 @@ fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -
 /// ZERO residue in any of the 28 base databases; the session reads as
 /// not-found after reopen.
 #[test]
-// Attestation: needs ONE-1728 witness_turn/search_text before this can run.
-#[ignore = "armed by ONE-1728"]
 fn crash_evaporation_leaves_zero_base_residue() -> Result<()> {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    let mut session = seam::SessionVault::enter(&vault, "oracle-crash").expect("enter session");
+    session.bind_actor()?;
     let census_before = full_db_census(&vault)?;
-    let session = seam::SessionVault::enter(&vault, "oracle-crash").expect("enter session");
     let (_turn, _msg, _summary) = session.witness_turn("evaporates")?;
-    let reopened = seam::crash_and_reopen(tmp.path(), &vault, session)?;
+    // THE CRASH: the session handle is dropped without `close()`, so no
+    // close path, no evaporation bookkeeping, no receipt census runs.
+    drop(session);
+    let reopened = seam::crash_and_reopen(tmp.path(), vault)?;
     assert_eq!(
         full_db_census(&reopened)?,
         census_before,
@@ -1049,16 +1250,20 @@ fn enter_is_single_shot_per_session_ref() {
 /// edge readers (R7), existence/enumeration + tree walks (R18),
 /// `edge_exists` (R19), ScopedRead reads (R10), telemetry.
 #[test]
-#[ignore = "armed by ONE-1728"]
 fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let base_turn = seed_base_turn(&vault, 1_000);
+    let mut session = seam::SessionVault::enter(&vault, "oracle-sweep").expect("enter session");
+    let actor = session.bind_actor()?;
+    let learned_before: std::collections::BTreeSet<_> = vault
+        .entities_in_learned_range(0, u64::MAX)?
+        .into_iter()
+        .collect();
     let runs_before = vault.store.retrieval_runs(100)?.len();
     let short_id_rows_before = {
         let rtxn = vault.store.env.read_txn()?;
         vault.store.short_ids.len(&rtxn)?
     };
-    let session = seam::SessionVault::enter(&vault, "oracle-sweep").expect("enter session");
     let (turn, message, summary) = session.witness_turn("oraclesweepuniquetoken")?;
 
     // get_raw-class raw reads FIRST (ledger R20 P1: Vault::get_raw).
@@ -1075,10 +1280,21 @@ fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
         vec![base_turn],
         "type enumeration returns exactly the base turn"
     );
+    // Baseline-relative, not absolute: `Vault::open` seeds its own rows (a
+    // POLICY_MANIFEST among them), so the honest assertion is that the room
+    // adds NOTHING to what base held before it — not that base holds some
+    // hardcoded count.
+    let learned: std::collections::BTreeSet<_> = vault
+        .entities_in_learned_range(0, u64::MAX)?
+        .into_iter()
+        .collect();
     assert_eq!(
-        vault.entities_in_learned_range(0, u64::MAX)?.len(),
-        1,
-        "learned-range enumeration counts exactly the base rows"
+        learned, learned_before,
+        "learned-range enumeration is unchanged by the room"
+    );
+    assert!(
+        learned.contains(&actor) && learned.contains(&base_turn),
+        "the baseline itself must still hold the seeded base rows"
     );
 
     // Edge readers + edge existence (ledger R7/R19 families).
@@ -1148,14 +1364,14 @@ fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
 /// job rows (base rows carrying raw text); generalized — no background
 /// attempt rows reference overlay content.
 #[test]
-#[ignore = "armed by ONE-1728"]
 fn no_pe_markers_or_embed_job_rows_for_session_content() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let attempts_before = {
         let rtxn = vault.store.env.read_txn()?;
         vault.store.attempt_records.len(&rtxn)?
     };
-    let session = seam::SessionVault::enter(&vault, "oracle-embed").expect("enter session");
+    let mut session = seam::SessionVault::enter(&vault, "oracle-embed").expect("enter session");
+    session.bind_actor()?;
     let (_turn, _msg, _summary) = session.witness_turn("embed me inline only")?;
     let rtxn = vault.store.env.read_txn()?;
     let mut pe_rows = 0_usize;
@@ -1181,13 +1397,16 @@ fn no_pe_markers_or_embed_job_rows_for_session_content() -> Result<()> {
 /// rejected atomically at the batch preflight (ports the spirit of
 /// `production_summary_batch_rejects_a_live_fenced_source_atomically`).
 #[test]
-#[ignore = "armed by ONE-1728"]
 fn taint_guard_rejects_base_write_referencing_live_overlay_id() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let session = seam::SessionVault::enter(&vault, "oracle-taint").expect("enter session");
+    let mut session = seam::SessionVault::enter(&vault, "oracle-taint").expect("enter session");
+    session.bind_actor()?;
     let (turn, _msg, _summary) = session.witness_turn("tainted")?;
+    // The probe's own source is base setup, seeded before the census so the
+    // census measures ONLY what the rejected batch would have written.
+    let probe_source = seed_base_turn(&vault, 2_000);
     let census_before = full_db_census(&vault)?;
-    let refused = seam::base_batch_referencing_overlay_id(&vault, &turn);
+    let refused = seam::base_batch_referencing_overlay_id(&vault, &probe_source, &turn);
     assert_eq!(
         refused,
         Err(seam::SeamError::TaintedBaseWrite),
@@ -1205,11 +1424,11 @@ fn taint_guard_rejects_base_write_referencing_live_overlay_id() -> Result<()> {
 /// D6: write-path gate decisions for session content stay overlay-local —
 /// the base gate-decision ledger gains zero rows from the room.
 #[test]
-#[ignore = "armed by ONE-1728"]
 fn session_gate_decisions_never_persist_in_base() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let ledger_before = vault.store.gate_decisions(1_000)?.len();
-    let session = seam::SessionVault::enter(&vault, "oracle-gate").expect("enter session");
+    let mut session = seam::SessionVault::enter(&vault, "oracle-gate").expect("enter session");
+    session.bind_actor()?;
     let (_turn, _msg, _summary) = session.witness_turn("gated in-room")?;
     session.close()?;
     assert_eq!(
@@ -1223,10 +1442,10 @@ fn session_gate_decisions_never_persist_in_base() -> Result<()> {
 /// D5 mode flip: earlier off-record turns stay unextractable through base
 /// readers AFTER flipping on-record (reads stay composed in-session only).
 #[test]
-#[ignore = "armed by ONE-1728"]
 fn off_record_turns_stay_unextractable_after_mode_flip() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let session = seam::SessionVault::enter(&vault, "oracle-flip").expect("enter session");
+    let mut session = seam::SessionVault::enter(&vault, "oracle-flip").expect("enter session");
+    session.bind_actor()?;
     let (turn, _msg, _summary) = session.witness_turn("preflipsecret")?;
     session.flip_on_record()?;
     assert_eq!(vault.get(&turn)?, None, "pre-flip turn stays out of base");
