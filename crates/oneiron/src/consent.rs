@@ -1512,15 +1512,21 @@ pub(crate) fn evaluate_consent(
         return ConsentDecision::Auto;
     }
 
-    // 2b. Standing coverage. Both conjuncts must be covered for a mixed op;
-    // a single-domain op needs only its own conjunct.
+    // 2b. Standing coverage. Both conjuncts must be covered for a mixed op; a
+    // single-domain op needs only its own conjunct. An op carrying NO
+    // requirement at all has nothing to be covered — it falls through to the
+    // classifier, so an unattached IRREVERSIBLE write asks (invariant 1's
+    // floor: undo is the net ONLY when the classifier says the effect is
+    // reversible). A vacuous double-`None` is NOT "covered".
+    let has_requirement =
+        effect.disclosure_requirement().is_some() || effect.action_requirement().is_some();
     let disclosure_covered = effect
         .disclosure_requirement()
         .is_none_or(|required| covers(grants, required));
     let action_covered = effect
         .action_requirement()
         .is_none_or(|required| covers(grants, required));
-    if disclosure_covered && action_covered {
+    if has_requirement && disclosure_covered && action_covered {
         return ConsentDecision::Auto;
     }
 

@@ -118,6 +118,30 @@ fn consent_reversible_effect_auto_irreversible_asks() {
     .expect("action requirement");
     assert_eq!(evaluate_consent(&deploy, None, &[]), ConsentDecision::Ask);
 
+    // FIX-4: an op carrying NO requirement still rides the classifier. A bare
+    // deploy-shaped fact set with a publish trigger is irreversible-in-effect;
+    // the evaluator must reach it via the invariant-8 Ask fallback (the
+    // fail-safe domain of an unattached op is Action=head of the write lane),
+    // never resolve Auto off the vacuous both-arms-covered step.
+    let unattached_deploy = ComposedEffect::new(
+        EffectFacts::new("repo.deploy")
+            .expect("facts")
+            .with_publish_trigger(true),
+    );
+    assert_eq!(
+        evaluate_consent(&unattached_deploy, None, &[]),
+        ConsentDecision::Ask,
+        "an unattached write effect must not resolve Auto (FIX-4)"
+    );
+    // And a requirement-free REVERSIBLE op still auto-runs (undo is the net),
+    // so the door is biased-permissive exactly where invariant 6 says to be.
+    let unattached_put = ComposedEffect::new(reversible_facts());
+    assert_eq!(
+        evaluate_consent(&unattached_put, None, &[]),
+        ConsentDecision::Auto,
+        "a requirement-free reversible op still runs automatically"
+    );
+
     // And a ledger-appendable-but-locally-undoable write is NOT pushed to ask
     // merely because it was recorded.
     assert_eq!(
