@@ -1723,3 +1723,59 @@ fn the_manifest_is_not_restricted_to_emit_adjacent_receipts() -> Result<()> {
     );
     Ok(())
 }
+
+/// The stamped ledger is keyed by receipt id, so a fabricated `receipt_ref`
+/// resolves to nothing even while a real receipt sits beside it. Attribution's
+/// evidence door rests on exactly this property.
+#[test]
+fn the_pack_receipt_ledger_resolves_only_ids_it_stamped() -> Result<()> {
+    use crate::attempt_queue::{
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
+    };
+
+    let (_dir, vault) = temp_vault()?;
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "pack".to_owned(),
+        payload: Vec::new(),
+        dedupe_key: None,
+        run_id: None,
+        now: 10,
+    })?
+    else {
+        panic!("a fresh dedupe-free enqueue is never Existing");
+    };
+    queue.append_manifest_entry(
+        attempt.id,
+        ManifestEntry::new(ManifestKind::Skill, "index", "1", 11),
+    )?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("the enqueued attempt is claimable");
+    };
+    queue.complete(CompleteAttempt {
+        id: attempt.id,
+        lease_owner: "worker".to_owned(),
+        attempt_count: leased.attempt_count,
+        now: 13,
+    })?;
+
+    assert!(
+        attempt_pack_receipt(&vault, &attempt_pack_receipt_id(&attempt.id))?.is_some(),
+        "the id the queue stamped resolves"
+    );
+    assert_eq!(
+        attempt_pack_receipt(&vault, "attempt:00000000000000000000000000000000")?,
+        None,
+        "a well-formed but unstamped attempt id resolves to nothing"
+    );
+    assert_eq!(
+        attempt_pack_receipt(&vault, "receipt:fabricated")?,
+        None,
+        "a receipt id from another namespace never resolves here"
+    );
+    Ok(())
+}

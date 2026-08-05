@@ -138,7 +138,7 @@ pub enum AttemptState {
 }
 
 impl AttemptState {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Queued => "queued",
             Self::Leased => "leased",
@@ -1054,6 +1054,12 @@ impl<'a> AttemptQueue<'a> {
                 self.store
                     .attempt_records
                     .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+                crate::receipt::stamp_attempt_pack_receipt_in_txn(
+                    self.store,
+                    &mut wtxn,
+                    &record,
+                    &input.lease_owner,
+                )?;
                 wtxn.commit()?;
                 Ok(CompleteOutcome::Completed(record))
             }
@@ -1102,6 +1108,12 @@ impl<'a> AttemptQueue<'a> {
                 self.store
                     .attempt_records
                     .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+                crate::receipt::stamp_attempt_pack_receipt_in_txn(
+                    self.store,
+                    &mut wtxn,
+                    &record,
+                    &input.lease_owner,
+                )?;
                 wtxn.commit()?;
                 Ok(FailOutcome::Failed(record))
             }

@@ -2134,3 +2134,136 @@ fn interventions_and_manifest_rows_stay_separate_lanes() -> Result<()> {
     );
     Ok(())
 }
+
+// ─── ONE-1737 · terminal pack receipt is stamped BY the queue ───────────
+
+/// Runs one attempt with a two-kind pack manifest to the requested terminal
+/// door, returning its stamped receipt (if any) and its receipt id.
+fn run_packed_attempt(
+    vault: &Vault,
+    terminal: fn(&AttemptQueue<'_>, AttemptId, u32) -> Result<()>,
+) -> Result<(String, Option<crate::ReceiptRecord>)> {
+    let queue = AttemptQueue::new(vault);
+    let attempt = enqueued(&queue, 10)?;
+    queue.append_manifest_entry(attempt.id, skill_entry("index", "1", 11))?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("expected claim");
+    };
+    queue.append_manifest_entry(attempt.id, skill_entry("pdf", "3", 13))?;
+    queue.append_manifest_entry(
+        attempt.id,
+        ManifestEntry::new(ManifestKind::ActorClaim, "claim-a", "2", 13),
+    )?;
+    terminal(&queue, attempt.id, leased.attempt_count)?;
+
+    let receipt_id = crate::receipt::attempt_pack_receipt_id(&attempt.id);
+    let receipt = crate::receipt::attempt_pack_receipt(vault, &receipt_id)?;
+    Ok((receipt_id, receipt))
+}
+
+fn complete_at_14(queue: &AttemptQueue<'_>, id: AttemptId, attempt_count: u32) -> Result<()> {
+    queue.complete(CompleteAttempt {
+        id,
+        lease_owner: "worker".to_owned(),
+        attempt_count,
+        now: 14,
+    })?;
+    Ok(())
+}
+
+fn fail_at_14(queue: &AttemptQueue<'_>, id: AttemptId, attempt_count: u32) -> Result<()> {
+    queue.fail(FailAttempt {
+        id,
+        lease_owner: "worker".to_owned(),
+        attempt_count,
+        reason: "boom".to_owned(),
+        now: 14,
+    })?;
+    Ok(())
+}
+
+/// The terminal transition itself stamps the pack receipt: no caller opts in,
+/// so no execute lane can forget it. The receipt carries the FULL accumulated
+/// manifest, split by kind, in append order.
+#[test]
+fn completing_an_attempt_under_a_pack_stamps_its_terminal_receipt() -> Result<()> {
+    let (_dir, vault) = open_queue();
+
+    let (receipt_id, receipt) = run_packed_attempt(&vault, complete_at_14)?;
+    let receipt = receipt.expect("the terminal transition stamped a pack receipt");
+
+    assert_eq!(receipt.receipt_id, receipt_id);
+    assert_eq!(receipt.outcome, "completed");
+    assert_eq!(receipt.occurred_at, 14, "the receipt is stamped at close");
+    assert_eq!(receipt.actor.as_deref(), Some("worker"));
+    assert_eq!(
+        receipt.pack_manifest_skills(),
+        Some(vec!["index@1".to_owned(), "pdf@3".to_owned()]),
+        "both the t0 index and the mid-run pull are on the terminal receipt"
+    );
+    assert_eq!(
+        receipt.pack_manifest_actor_claims(),
+        Some(vec!["claim-a@2".to_owned()])
+    );
+
+    // …and it is on the RS1 receipt family, not only in its own ledger.
+    let family = vault.receipts(crate::ReceiptQuery::new(16))?;
+    assert_eq!(
+        family
+            .iter()
+            .filter(|row| row.receipt_id == receipt_id)
+            .count(),
+        1,
+        "the stamped receipt projects into the unified receipt family exactly once"
+    );
+    Ok(())
+}
+
+/// A failed execute is attribution's primary input, so the fail door stamps
+/// too — and the outcome distinguishes the two terminals.
+#[test]
+fn failing_an_attempt_under_a_pack_stamps_its_terminal_receipt() -> Result<()> {
+    let (_dir, vault) = open_queue();
+
+    let (_, receipt) = run_packed_attempt(&vault, fail_at_14)?;
+    let receipt = receipt.expect("the fail door stamped a pack receipt");
+
+    assert_eq!(receipt.outcome, "failed");
+    assert_eq!(
+        receipt.pack_manifest_skills(),
+        Some(vec!["index@1".to_owned(), "pdf@3".to_owned()])
+    );
+    Ok(())
+}
+
+/// The manifest IS the reason the receipt exists: an attempt that ran under no
+/// pack mints no row, so the ledger stays the attribution surface rather than
+/// a second copy of the attempt queue.
+#[test]
+fn an_attempt_with_no_pack_stamps_no_receipt() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let attempt = enqueued(&queue, 10)?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".to_owned(),
+        now: 11,
+    })?
+    else {
+        panic!("expected claim");
+    };
+    complete_at_14(&queue, attempt.id, leased.attempt_count)?;
+
+    assert_eq!(
+        crate::receipt::attempt_pack_receipt(
+            &vault,
+            &crate::receipt::attempt_pack_receipt_id(&attempt.id),
+        )?,
+        None
+    );
+    assert!(vault.receipts(crate::ReceiptQuery::new(16))?.is_empty());
+    Ok(())
+}

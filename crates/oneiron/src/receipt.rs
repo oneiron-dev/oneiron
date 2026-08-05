@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::access_grant::{AccessGrant, AccessGrantScope, decode_access_grant_body};
-use crate::attempt_queue::{ManifestEntry, ManifestKind};
+use crate::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::companion::{
     ENTITY_TYPE_COMPANION_REGISTER,
@@ -35,7 +35,7 @@ use crate::registry::{
 };
 use crate::store::{
     ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, GateSystemNoticeRecord,
-    PendingGateConsentRecord, SEND_RECEIPT_RECORD_VERSION,
+    PendingGateConsentRecord, SEND_RECEIPT_RECORD_VERSION, Store,
 };
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
@@ -77,6 +77,11 @@ pub const FIELD_MANIFEST_SKILLS: &str = "manifest.skills";
 /// ARCH-0053 §2 pack manifest: the `actor.*` claim rows the attempt loaded, as
 /// a canonical JSON array string.
 pub const FIELD_MANIFEST_ACTOR_CLAIMS: &str = "manifest.actor_claims";
+/// `vault_meta` keyspace of the attempt PACK RECEIPT ledger. The suffix is the
+/// receipt id itself, so a cited `receipt_ref` point-reads its row.
+const ATTEMPT_PACK_RECEIPT_KEY_PREFIX: &[u8] = b"attempt_receipt:v1:";
+/// `receipt_id` namespace of the same ledger.
+const ATTEMPT_PACK_RECEIPT_ID_PREFIX: &str = "attempt:";
 const FIELD_PARENT_REF: &str = "parent_ref";
 const FIELD_COUNTERPARTY_REF: &str = "counterparty_ref";
 const FIELD_IDENTITY_REF: &str = "identity_ref";
@@ -552,6 +557,112 @@ fn encode_wire_forms(entries: &[String]) -> Result<String> {
 
 fn decode_wire_forms(raw: &str) -> Option<Vec<String>> {
     serde_json::from_str(raw).ok()
+}
+
+/// The stable `receipt_id` of one attempt's terminal PACK RECEIPT.
+///
+/// Attribution evidence cites this string, and the ledger is keyed by it, so
+/// a cited `receipt_ref` resolves with a point-read rather than a scan.
+#[must_use]
+pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
+    format!(
+        "{ATTEMPT_PACK_RECEIPT_ID_PREFIX}{}",
+        hex_lower(attempt_id.as_bytes())
+    )
+}
+
+fn attempt_pack_receipt_key(receipt_id: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(ATTEMPT_PACK_RECEIPT_KEY_PREFIX.len() + receipt_id.len());
+    key.extend_from_slice(ATTEMPT_PACK_RECEIPT_KEY_PREFIX);
+    key.extend_from_slice(receipt_id.as_bytes());
+    key
+}
+
+/// Stamps the terminal pack receipt for an attempt that ran underneath a
+/// skill pack, inside the terminal transition's OWN write transaction.
+///
+/// This is the production call path for [`append_pack_manifest_fields`]:
+/// [`AttemptQueue::complete`] and [`AttemptQueue::fail`] are the two doors
+/// every execute leaves through, so stamping there cannot be forgotten by a
+/// caller and cannot drift per lane. An attempt whose pack loaded nothing
+/// mints no row — the manifest IS the reason this receipt exists.
+///
+/// Atomic with the state seal: a terminal attempt with a manifest and no
+/// receipt (or the reverse) is not a reachable state. The row is written
+/// once, at the transition, and never rewritten — which is what makes
+/// "a closed attempt's manifest is the evidence its receipt already
+/// projected" true rather than aspirational.
+///
+/// [`AttemptQueue::complete`]: crate::attempt_queue::AttemptQueue::complete
+/// [`AttemptQueue::fail`]: crate::attempt_queue::AttemptQueue::fail
+pub(crate) fn stamp_attempt_pack_receipt_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &AttemptRecord,
+    actor: &str,
+) -> Result<()> {
+    if record.manifest().is_empty() {
+        return Ok(());
+    }
+    let mut receipt = ReceiptRecord {
+        receipt_id: attempt_pack_receipt_id(&record.id),
+        receipt_kind: ReceiptKind::Outbound,
+        occurred_at: record.updated_at,
+        actor: Some(actor.to_owned()),
+        on_behalf_of: None,
+        outcome: record.state.as_str().to_owned(),
+        job_ref: record.run_id.clone(),
+        trigger_ref: record.task_ref.clone(),
+        policy_trace: Vec::new(),
+        fields: BTreeMap::new(),
+    };
+    append_pack_manifest_fields(&mut receipt, record.manifest())?;
+    let encoded = rmp_serde::to_vec_named(&receipt)
+        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
+    store.vault_meta.put(
+        wtxn,
+        &attempt_pack_receipt_key(&receipt.receipt_id),
+        &encoded,
+    )?;
+    Ok(())
+}
+
+/// Point-reads the attempt pack receipt named by `receipt_id`.
+///
+/// `Ok(None)` means "no such receipt on the ledger" — the answer attribution
+/// needs to reject a fabricated `receipt_ref`, and the reason this is a
+/// point-read: it runs once per recorded outcome.
+pub fn attempt_pack_receipt(vault: &Vault, receipt_id: &str) -> Result<Option<ReceiptRecord>> {
+    if !receipt_id.starts_with(ATTEMPT_PACK_RECEIPT_ID_PREFIX) {
+        return Ok(None);
+    }
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &attempt_pack_receipt_key(receipt_id))?
+    else {
+        return Ok(None);
+    };
+    decode_attempt_pack_receipt(&raw).map(Some)
+}
+
+fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut receipts = Vec::new();
+    for row in vault
+        .store
+        .vault_meta
+        .prefix_iter(&rtxn, ATTEMPT_PACK_RECEIPT_KEY_PREFIX)?
+    {
+        let (_, raw) = row?;
+        receipts.push(decode_attempt_pack_receipt(&raw)?);
+    }
+    Ok(receipts)
+}
+
+fn decode_attempt_pack_receipt(raw: &[u8]) -> Result<ReceiptRecord> {
+    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("attempt pack receipt row"))
 }
 
 /// Attaches the OF-369 context field-set to an emit-adjacent receipt.
@@ -1883,6 +1994,11 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::Outbound) {
         records.extend(
             durable_send_receipts(vault)?
+                .into_iter()
+                .filter(|receipt| query.matches(receipt)),
+        );
+        records.extend(
+            attempt_pack_receipts(vault)?
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );

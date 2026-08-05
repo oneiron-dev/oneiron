@@ -715,8 +715,9 @@ pub use crate::receipt::{
     ReceiptProjectionRun, ReceiptQuery, ReceiptRecord, ReceiptView, SessionLocalReceiptLog,
     SessionReceiptClose, StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction,
     StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, append_context_receipt_fields,
-    append_pack_manifest_fields, eiri_memory_board_state_ref, outbound_intent_receipt,
-    project_receipts_by_brief, project_receipts_by_counterparty, project_receipts_by_grant,
+    append_pack_manifest_fields, attempt_pack_receipt, attempt_pack_receipt_id,
+    eiri_memory_board_state_ref, outbound_intent_receipt, project_receipts_by_brief,
+    project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,

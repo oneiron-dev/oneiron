@@ -26,12 +26,11 @@ use oneiron::{
     ClaimAttempt, ClaimBody, ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject,
     CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, EntityId,
     HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
-    LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptKind,
-    ReceiptRecord, Result, ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface,
-    SkillContentHash, SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange,
-    Vault, VaultConfig, append_pack_manifest_fields, canonical_skill_tree_hash,
-    cross_check_declared_content_hash, pending_edit_proposals, record_attribution_evidence,
-    run_attribution_projector,
+    LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptQuery, Result,
+    ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillContentHash,
+    SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
+    attempt_pack_receipt_id, canonical_skill_tree_hash, cross_check_declared_content_hash,
+    pending_edit_proposals, record_attribution_evidence, run_attribution_projector,
 };
 use rmpv::Value;
 
@@ -777,9 +776,11 @@ fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
         )
         .expect("tier-2 body appends mid-run");
 
-    // Terminal — close the attempt and project its accumulated manifest into
-    // the terminal receipt.
-    let CompleteOutcome::Completed(closed) = queue
+    // Terminal — closing the attempt STAMPS its accumulated manifest into the
+    // terminal receipt. No test-only projection call: the queue's own terminal
+    // door does it, so this reads the receipt back off the production RS1
+    // receipt family exactly as a host would.
+    let CompleteOutcome::Completed(_closed) = queue
         .complete(CompleteAttempt {
             id: attempt.id,
             lease_owner: "oracle-worker".to_owned(),
@@ -790,20 +791,18 @@ fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
     else {
         panic!("a leased attempt completes exactly once");
     };
-    let mut receipt = ReceiptRecord {
-        receipt_id: format!("attempt:{}", attempt.id.as_bytes()[0]),
-        receipt_kind: ReceiptKind::Outbound,
-        occurred_at: 14,
-        actor: Some("oracle-actor".to_owned()),
-        on_behalf_of: None,
-        outcome: "completed".to_owned(),
-        job_ref: None,
-        trigger_ref: None,
-        policy_trace: Vec::new(),
-        fields: std::collections::BTreeMap::new(),
-    };
-    append_pack_manifest_fields(&mut receipt, closed.manifest())
-        .expect("terminal receipt carries the accumulated manifest");
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    let family = vault
+        .receipts(ReceiptQuery::new(16))
+        .expect("query the receipt family");
+    let receipt = family
+        .into_iter()
+        .find(|row| row.receipt_id == receipt_id)
+        .expect("the terminal transition stamped the pack receipt onto the spine");
+    assert_eq!(
+        receipt.outcome, "completed",
+        "the receipt records the terminal the attempt actually reached"
+    );
 
     // The manifest door refuses a terminal attempt: append-only is not a
     // convention here, it is enforced at the write door.
