@@ -397,17 +397,16 @@ fn select_replays_manifest_anchors_onto_threads() -> Result<()> {
     Ok(())
 }
 
-// Acceptance 5: the standing brief×verb-class grant path is a clearly-marked
-// seam. No settle grant family exists yet, so StandingGrant consent fails
+// Acceptance 5: with no covering DEC-0006 grant, StandingGrant consent fails
 // closed (committing nothing) while owner consent settles the same proposal.
 #[test]
-fn standing_grant_consent_is_seam_stubbed() -> Result<()> {
+fn standing_grant_consent_fails_closed_without_a_covering_grant() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
     let artifact = put_workbook(&vault, actor, 10);
 
-    // The seam reports no standing settle authority.
-    assert!(!vault.settle_standing_grant_authorizes("brief:acme")?);
+    // No grant row exists, so there is no standing settle authority.
+    assert!(!vault.settle_standing_grant_authorizes(actor, "brief:acme")?);
 
     let prop = proposal("run:grant", b"v2 bytes", Vec::new());
     let consent = SettleConsent::StandingGrant {
@@ -435,6 +434,105 @@ fn standing_grant_consent_is_seam_stubbed() -> Result<()> {
         11,
     )?;
     assert_eq!(out.version.version, 2);
+    Ok(())
+}
+
+/// DEC-0006: `settle_standing_grant_authorizes` accepts ONLY a live action
+/// grant covering the acting actor + `artifact.settle` + the exact brief, and
+/// rejects disclosure grants, other actors, wider-target assumptions, revoked
+/// rows, and catastrophe classes.
+#[test]
+fn settle_standing_grant_requires_the_exact_actor_verb_class_and_brief() -> Result<()> {
+    use crate::consent::{
+        ActionClass, ActionEnvelope, ActorBound, AudienceBound, CATASTROPHE_FLOOR_V1,
+        DisclosureClass, DisclosureEnvelope, GrantBound,
+    };
+    use crate::error::ErrorKind;
+    use crate::store::GateDecisionId;
+
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let other = put_actor(&vault, 10);
+    let owner = vault.authenticate_owner(
+        actor.entity_ref(),
+        "principal:owner",
+        true,
+        GateDecisionId::now(),
+    )?;
+
+    let settle_bound = |actor: WriteActor, brief: &str| {
+        GrantBound::action(
+            ActorBound::new(actor.entity_ref().to_hex()).expect("actor"),
+            ActionClass::new(SETTLE_VERB_CLASS).expect("class"),
+            ActionEnvelope::new([brief.to_owned()])
+                .expect("envelope")
+                .with_target(brief)
+                .expect("target"),
+        )
+        .expect("bound")
+    };
+
+    // A DISCLOSURE grant naming the same brief authorizes nothing: the two
+    // domains are disjoint types.
+    vault.create_standing_grant(
+        &owner,
+        GrantBound::disclosure(
+            AudienceBound::singleton("contact:acme").expect("audience"),
+            DisclosureClass::new(SETTLE_VERB_CLASS).expect("class"),
+            DisclosureEnvelope::new(["brief:acme".to_owned()]).expect("envelope"),
+        )
+        .expect("bound"),
+    )?;
+    assert!(!vault.settle_standing_grant_authorizes(actor, "brief:acme")?);
+
+    // ANOTHER ACTOR's settle grant does not authorize this actor.
+    vault.create_standing_grant(&owner, settle_bound(other, "brief:acme"))?;
+    assert!(!vault.settle_standing_grant_authorizes(actor, "brief:acme")?);
+
+    // A grant on a DIFFERENT BRIEF does not cover this one, so a wider-target
+    // assumption cannot be smuggled in.
+    vault.create_standing_grant(&owner, settle_bound(actor, "brief:other"))?;
+    assert!(!vault.settle_standing_grant_authorizes(actor, "brief:acme")?);
+
+    // The exact bound DOES authorize, and the settle then commits.
+    let exact = settle_bound(actor, "brief:acme");
+    vault.create_standing_grant(&owner, exact.clone())?;
+    assert!(vault.settle_standing_grant_authorizes(actor, "brief:acme")?);
+
+    let artifact = put_workbook(&vault, actor, 10);
+    let prop = proposal("run:standing", b"v2 bytes", Vec::new());
+    let consent = SettleConsent::StandingGrant {
+        brief_ref: "brief:acme".to_owned(),
+    };
+    let out =
+        vault.settle_select_edit_proposal(&artifact, &prop, &consent, actor, test_time(11), 11)?;
+    assert_eq!(out.version.version, 2);
+
+    // REVOCATION is immediate: the same consent stops authorizing at once.
+    vault.revoke_consent_grant(&owner, &exact.digest().to_hex())?;
+    assert!(!vault.settle_standing_grant_authorizes(actor, "brief:acme")?);
+    let prop2 = proposal("run:standing-2", b"v3 bytes", Vec::new());
+    let err = vault
+        .settle_select_edit_proposal(&artifact, &prop2, &consent, actor, test_time(12), 12)
+        .expect_err("revoked grant authorizes nothing");
+    assert!(matches!(err, Error::SettleNotAuthorized(_)));
+
+    // A CATASTROPHE class can never become a settle grant in the first place.
+    for catastrophe in CATASTROPHE_FLOOR_V1 {
+        let bound = GrantBound::action(
+            ActorBound::new(actor.entity_ref().to_hex()).expect("actor"),
+            ActionClass::new(catastrophe.as_str()).expect("class"),
+            ActionEnvelope::new(["brief:acme".to_owned()]).expect("envelope"),
+        )
+        .expect("bound");
+        assert_eq!(
+            vault
+                .create_standing_grant(&owner, bound)
+                .expect_err("catastrophe bound")
+                .kind(),
+            ErrorKind::ConsentCatastropheNotRememberable
+        );
+    }
     Ok(())
 }
 

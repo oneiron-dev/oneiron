@@ -62,21 +62,22 @@
 //! When the settle rode an assigning brief, the receipt's `job_ref` joins that
 //! brief's project view (B2 RS4).
 //!
-//! # Standing-grant seam (D6)
+//! # Standing-grant authority (D6)
 //!
 //! D6 lets a standing "agent may edit this workbook" grant authorize a settle
-//! without a per-op consent prompt, modeled as a **brief×verb-class bundle
-//! grant**. The brief×verb-class *scope* vocabulary already exists as
+//! without a per-op consent prompt. The brief×verb-class *scope* vocabulary
+//! also exists as
 //! [`StandingOutboundGrantScope::BriefVerbClass`](crate::outbound_grant::StandingOutboundGrantScope),
-//! but its only carrier is the outbound-*send* grant family, whose capability is
+//! but its carrier is the outbound-*send* grant family, whose capability is
 //! sends-to-counterparties, not artifact writes — honoring one for a settle
 //! would conflate two capabilities. Per the ARTL-4 rule "do not invent a new
-//! grant family", [`Vault::settle_standing_grant_authorizes`] is a clearly
-//! marked seam: it returns "no standing settle authority" (so [`SettleConsent::StandingGrant`]
-//! fails closed) until a dedicated settle/edit verb-class bundle-grant
-//! capability lands, at which point it plugs in behind that one function using
-//! the same [`SETTLE_VERB_CLASS`] scope shape. The owner-driven select/discard
-//! ([`SettleConsent::OwnerConsent`]) is the fully implemented P1 path.
+//! grant family", the authority now comes from the DEC-0006 unified consent
+//! contract instead: [`Vault::settle_standing_grant_authorizes`] requires a
+//! live standing ACTION grant bounding the acting actor × [`SETTLE_VERB_CLASS`]
+//! × the exact brief target. It fails closed — a disclosure grant, another
+//! actor, a wider-target assumption, or a revoked row all authorize nothing.
+//! The owner-driven select/discard ([`SettleConsent::OwnerConsent`]) remains
+//! the P1 path.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -98,6 +99,10 @@ use crate::error::{Error, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::temporal::TimeRange;
+use crate::consent::{
+    ActionClass as ConsentActionClass, ActionEnvelope as ConsentActionEnvelope,
+    ActorBound as ConsentActorBound, GrantBound as ConsentGrantBound,
+};
 use crate::write_envelope::WriteActor;
 
 /// Current settlement-record body schema version.
@@ -334,7 +339,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
         self.ensure_selectable(proposal)?;
-        self.authorize_settle(consent)?;
+        self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key(artifact_id, proposal_ref);
         let manifest_hash = manifest_ref(&proposal.manifest)?;
@@ -436,7 +441,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<SettleDiscardOutcome> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
-        self.authorize_settle(consent)?;
+        self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key(artifact_id, proposal_ref);
 
@@ -516,29 +521,48 @@ impl Vault {
         }))
     }
 
-    /// Seam (OF-368 D6): whether a standing brief×verb-class bundle grant
-    /// authorizes a settle on `brief_ref` without a per-op consent prompt.
+    /// Whether a live DEC-0006 standing ACTION grant authorizes `actor` to
+    /// settle on exactly `brief_ref`, without a per-op consent prompt.
     ///
-    /// The brief×verb-class scope vocabulary exists today only inside the
-    /// outbound-*send* grant family, whose capability is not artifact writes,
-    /// so — per "do not invent a new grant family" — this seam does not reuse
-    /// it and returns `false` (no standing settle authority). A dedicated
-    /// settle/edit verb-class ([`SETTLE_VERB_CLASS`]) bundle-grant capability
-    /// plugs in here when it lands. See the module-level seam note.
-    pub fn settle_standing_grant_authorizes(&self, brief_ref: &str) -> Result<bool> {
-        let _ = brief_ref;
-        Ok(false)
+    /// This is the OF-368 D6 seam, now filled by the unified consent contract
+    /// rather than by the outbound-*send* grant family (whose capability is
+    /// sends-to-counterparties, not artifact writes — honoring one for a settle
+    /// would conflate two capabilities, which is why the seam returned `false`
+    /// until the contract landed).
+    ///
+    /// The required bound is exact on every axis, so each of these is refused:
+    ///
+    /// * a DISCLOSURE grant — wrong domain; the two are disjoint types;
+    /// * another actor's settle grant — the acting `WriteActor` is the subject;
+    /// * a wider-target assumption — the envelope must name this brief, so a
+    ///   target-agnostic or differently-targeted grant does not cover it;
+    /// * a REVOKED row — revocation is immediate;
+    /// * a catastrophe class — non-rememberable, so no such row can exist.
+    ///
+    /// Fails closed: no covering grant means no standing settle authority.
+    pub fn settle_standing_grant_authorizes(
+        &self,
+        actor: WriteActor,
+        brief_ref: &str,
+    ) -> Result<bool> {
+        let required = settle_grant_bound(actor, brief_ref)?;
+        // Only ACTIVE rows are returned, so a revoked grant stops authorizing
+        // the moment it is revoked.
+        Ok(self
+            .active_standing_consent_grants()?
+            .iter()
+            .any(|grant| grant.bound().contains(&required)))
     }
 
-    fn authorize_settle(&self, consent: &SettleConsent) -> Result<()> {
+    fn authorize_settle(&self, consent: &SettleConsent, actor: WriteActor) -> Result<()> {
         match consent {
             SettleConsent::OwnerConsent { .. } => Ok(()),
             SettleConsent::StandingGrant { brief_ref } => {
-                if self.settle_standing_grant_authorizes(brief_ref)? {
+                if self.settle_standing_grant_authorizes(actor, brief_ref)? {
                     Ok(())
                 } else {
                     Err(Error::SettleNotAuthorized(
-                        "no standing brief×verb-class settle grant covers this brief",
+                        "no standing actor×artifact.settle×brief grant covers this settle",
                     ))
                 }
             }
@@ -935,6 +959,23 @@ fn option_str_value(value: Option<&str>) -> Value {
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("blob artifact settlement record")
+}
+
+/// The exact DEC-0006 bound a standing settle must be covered by:
+/// acting actor × [`SETTLE_VERB_CLASS`] × this brief, target-pinned.
+///
+/// Target-pinning is what makes a wider-target assumption fail: a grant whose
+/// envelope does not name this brief does not contain this bound.
+fn settle_grant_bound(actor: WriteActor, brief_ref: &str) -> Result<ConsentGrantBound> {
+    // `brief_ref` is used VERBATIM as both selector and target: the caller's
+    // refs already carry their own namespace (`brief:acme`), and re-prefixing
+    // here would mint a bound no grant can ever match.
+    let brief_ref = brief_ref.trim().to_owned();
+    ConsentGrantBound::action(
+        ConsentActorBound::new(actor.entity_ref().to_hex())?,
+        ConsentActionClass::new(SETTLE_VERB_CLASS)?,
+        ConsentActionEnvelope::new([brief_ref.clone()])?.with_target(brief_ref)?,
+    )
 }
 
 #[cfg(test)]
