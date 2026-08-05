@@ -30,6 +30,9 @@ use crate::attempt_queue::{
 use crate::batch::{
     ApplyOpsGateMode, BatchOp, apply_ops, apply_ops_with_gate_mode, parse_short_id_value,
 };
+use crate::calendar::{
+    CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
+};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     claim_surfaceable,
@@ -59,9 +62,6 @@ use crate::outbound::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
     OutboundIntentDraft, OutboundIntentTrigger, connector_send_attempt_payload,
     outbound_verb_contract, put_connector_send_task_in_txn,
-};
-use crate::calendar::{
-    CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
 };
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::receipt::delivered_send_receipt_for_task;
@@ -3026,7 +3026,8 @@ impl MemoryFacade<'_> {
                 &["Pass an inclusive range with start <= end."],
             ));
         }
-        let union = crate::calendar::freebusy_scoped(&self.calendar_read_lane()?, calendars, range)?;
+        let union =
+            crate::calendar::freebusy_scoped(&self.calendar_read_lane()?, calendars, range)?;
         Ok(union
             .into_iter()
             .map(|interval| CalendarFreebusyIntervalDto {

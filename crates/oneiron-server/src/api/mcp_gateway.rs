@@ -481,7 +481,9 @@ pub(crate) fn execute_mcp_calendar(
     }))
 }
 
-fn calendar_selectors(selectors: Vec<crate::mcp::McpCalendarSelector>) -> Vec<oneiron::CalendarSel> {
+fn calendar_selectors(
+    selectors: Vec<crate::mcp::McpCalendarSelector>,
+) -> Vec<oneiron::CalendarSel> {
     selectors
         .into_iter()
         .map(|selector| oneiron::CalendarSel {

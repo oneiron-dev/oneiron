@@ -1566,10 +1566,7 @@ impl ActorScopedVault {
     /// Reads one calendar EVENT under the bound actor's read scope; `null`
     /// when the id is unknown, unreadable, or not a calendar EVENT.
     #[napi]
-    pub fn calendar_read(
-        &self,
-        event_ref: String,
-    ) -> napi::Result<Option<NapiCalendarEventView>> {
+    pub fn calendar_read(&self, event_ref: String) -> napi::Result<Option<NapiCalendarEventView>> {
         self.facade()?
             .calendar_read(&CalendarReadRequest { event_ref })
             .map_err(facade_error)?
@@ -1800,6 +1797,76 @@ mod tests {
     /// #482c: a non-finite `minWeight` is rejected at the boundary. NaN would
     /// otherwise disable the engine filter silently (every `weight < NaN` is
     /// false) and ±Inf would over-apply it.
+    /// N-API parity: the bridge DTOs mirror the engine calendar DTOs field for
+    /// field, with the same meanings and the same EntityId encoding (hex, only
+    /// where an entity ref is part of the external schema at all).
+    #[test]
+    fn calendar_bridge_dtos_mirror_the_engine_surface() {
+        let engine = CalendarEventView {
+            event_ref: "44444444444444444444444444444444".to_owned(),
+            name: Some("Design review".to_owned()),
+            start_utc: Some(1_000),
+            end_utc: Some(1_099),
+            calendar_systems: vec!["google".to_owned()],
+            blocks_time: true,
+        };
+        let bridged = calendar_event_from_engine(engine.clone()).expect("event crosses");
+        assert_eq!(bridged.event_ref, engine.event_ref);
+        assert_eq!(bridged.name, engine.name);
+        assert_eq!(bridged.start_utc, Some(1_000));
+        assert_eq!(bridged.end_utc, Some(1_099));
+        assert_eq!(bridged.calendar_systems, engine.calendar_systems);
+        assert!(bridged.blocks_time);
+
+        // An unanchored EVENT stays unanchored rather than becoming epoch zero.
+        let unanchored = calendar_event_from_engine(CalendarEventView {
+            start_utc: None,
+            end_utc: None,
+            ..engine
+        })
+        .expect("unanchored event crosses");
+        assert_eq!(unanchored.start_utc, None);
+        assert_eq!(unanchored.end_utc, None);
+
+        // The freebusy interval type carries occupancy only — there is no field
+        // on this side of the bridge that could hold the internal source ref.
+        let interval = NapiCalendarFreebusyInterval {
+            start_utc: 1_000,
+            end_utc: 1_100,
+        };
+        assert_eq!((interval.start_utc, interval.end_utc), (1_000, 1_100));
+
+        // Selectors and ranges convert without inventing values.
+        assert!(calendar_selectors_to_engine(None).is_empty());
+        assert_eq!(
+            calendar_selectors_to_engine(Some(vec![NapiCalendarSel {
+                system: Some("google".to_owned()),
+            }]))[0]
+                .system
+                .as_deref(),
+            Some("google")
+        );
+        assert_eq!(
+            calendar_range_to_engine(Some(NapiCalendarRange { start: 5, end: 9 })).expect("range"),
+            Some(TimeRange { start: 5, end: 9 })
+        );
+        assert!(
+            calendar_range_to_engine(Some(NapiCalendarRange { start: -1, end: 9 })).is_err(),
+            "a negative bridge timestamp is a typed rejection, never a wrap"
+        );
+
+        // The invite method stays a closed set across the boundary.
+        assert_eq!(
+            CalendarInviteSurfaceMethod::parse("REQUEST"),
+            Some(CalendarInviteSurfaceMethod::Request)
+        );
+        assert_eq!(
+            CalendarInviteSurfaceMethod::parse("CANCEL"),
+            Some(CalendarInviteSurfaceMethod::Cancel)
+        );
+        assert_eq!(CalendarInviteSurfaceMethod::parse("REPLY"), None);
+    }
+
     #[test]
     fn boundary_rejects_non_finite_min_weight() {
         assert_eq!(narrow_to_f32(0.5).expect("finite narrows"), 0.5_f32);

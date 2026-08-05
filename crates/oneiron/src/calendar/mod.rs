@@ -125,7 +125,13 @@ pub(crate) mod test_support {
                 )
                 .expect("put calendar event");
 
-            self.put_claim(vault, id, 0, PREDICATE_CALENDAR_ORIGIN, Value::from("imported"));
+            self.put_claim(
+                vault,
+                id,
+                0,
+                PREDICATE_CALENDAR_ORIGIN,
+                Value::from("imported"),
+            );
             self.put_claim(
                 vault,
                 id,

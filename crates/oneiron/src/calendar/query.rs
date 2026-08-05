@@ -159,9 +159,7 @@ impl<'a> CalendarRead<'a> {
     /// admit it.
     fn claim(&self, id: &EntityId) -> Result<Option<ClaimBody>> {
         match self {
-            Self::Vault(vault) => Ok(vault
-                .get_claim(id)?
-                .filter(|body| claim_surfaceable(body))),
+            Self::Vault(vault) => Ok(vault.get_claim(id)?.filter(claim_surfaceable)),
             Self::Scoped(read) => read
                 .get(id)?
                 .map(|raw| decode_claim_body(&raw, true))
@@ -397,16 +395,19 @@ fn search_events_in(
             return Ok(());
         }
         let view = project(vault, &row)?;
-        if needle.as_deref().is_some_and(|needle| !matches_text(&view, needle)) {
+        if needle
+            .as_deref()
+            .is_some_and(|needle| !matches_text(&view, needle))
+        {
             return Ok(());
         }
         matched.push((row.occurred.start, row.occurred.end, row.id, view));
         Ok(())
     })?;
 
-    matched.sort_unstable_by(|left, right| {
-        (left.0, left.1, left.2).cmp(&(right.0, right.1, right.2))
-    });
+    // Deterministic page order: earliest occurrence first, entity id breaking
+    // ties, so `limit` truncates the same rows on every run.
+    matched.sort_unstable_by_key(|(start, end, id, _)| (*start, *end, *id));
     matched.truncate(limit);
     Ok(matched.into_iter().map(|(_, _, _, view)| view).collect())
 }

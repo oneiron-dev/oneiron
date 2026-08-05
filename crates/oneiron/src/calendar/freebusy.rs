@@ -163,7 +163,11 @@ const fn clip(interval: (u64, u64), bounds: (u64, u64)) -> Option<(u64, u64)> {
     } else {
         bounds.1
     };
-    if start < end { Some((start, end)) } else { None }
+    if start < end {
+        Some((start, end))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

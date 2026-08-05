@@ -646,7 +646,11 @@ fn validate_calendar_selectors(
     calendars: &[McpCalendarSelector],
 ) -> Result<(), McpToolValidationError> {
     for selector in calendars {
-        validate_optional_nonblank(tool, "operation.calendars.system", selector.system.as_deref())?;
+        validate_optional_nonblank(
+            tool,
+            "operation.calendars.system",
+            selector.system.as_deref(),
+        )?;
     }
     Ok(())
 }
