@@ -3645,7 +3645,10 @@ fn seed_secret_custody(
         policy_floor_snapshot: crate::secret_custody::SecretCustodyFloor::default(),
     };
     let id = vault.register_secret(rec)?;
-    let raw = vault.get_raw(&id)?.expect("custody row present");
+    // The sealed public `get_raw` denies byte 77 by design; this fixture needs
+    // the on-disk bytes to plant a carrier, so it reads through the same
+    // crate-internal unsealed reader the scrub passes use.
+    let raw = vault.get_raw_unsealed(&id)?.expect("custody row present");
     Ok((id, raw))
 }
 

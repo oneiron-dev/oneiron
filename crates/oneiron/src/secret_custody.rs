@@ -464,7 +464,12 @@ impl SecretCustodyStatus {
 /// `manifest_ref` + `declared_paths` are copied from the manifest entry so
 /// downstream consumers (SECRET-03, snapshot exclusion) have a vault-side
 /// data source.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// No `Serialize`/`Deserialize`: a derived serializer would emit `value_bytes`
+/// into whatever format a caller reached for (JSON log line, receipt, wire
+/// payload) with no door in the way — the same leak `Debug` is hand-rolled to
+/// prevent. The body codec below is the ONE serialization of this type, and it
+/// exists to write the vault-resident body, nothing else.
+#[derive(Clone, PartialEq, Eq)]
 pub struct SecretCustodyRecord {
     /// Body schema version (`SECRET_CUSTODY_SCHEMA_VERSION` at encode).
     pub schema_version: u16,

@@ -853,7 +853,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         let hex_id = id.to_hex();
 
         // Read entity from LMDB
-        let raw = match vault.get_raw(id)? {
+        let raw = match vault.get_raw_unsealed(id)? {
             Some(r) => r,
             None => {
                 // Stale marker — clear it
@@ -2105,7 +2105,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         if vault.is_turn_off_record_fenced(&id)? {
             continue;
         }
-        let Some(raw) = vault.get_raw(&id)? else {
+        let Some(raw) = vault.get_raw_unsealed(&id)? else {
             continue;
         };
         if reverse_remat_skip_policy_manifest_mirror(&raw) {
@@ -2171,7 +2171,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        let Some(raw) = vault.get_raw(id)? else {
+        let Some(raw) = vault.get_raw_unsealed(id)? else {
             continue;
         };
 
@@ -2389,7 +2389,7 @@ fn quarantine_outbound_protected_tombstones(
 }
 
 fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<bool> {
-    let Some(raw) = vault.get_raw(id)? else {
+    let Some(raw) = vault.get_raw_unsealed(id)? else {
         return Ok(false);
     };
     skip_companion_register_sync_mirror(&raw)

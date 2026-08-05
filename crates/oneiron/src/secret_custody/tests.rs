@@ -474,16 +474,32 @@ fn value_read_goes_through_get_secret_value_in_txn_door() {
     assert_eq!(value, b"hunter2");
     wtxn.abort();
 
-    // A generic `Vault::get` returns the *body bytes*, not a decoded record;
-    // decoding it yields a SecretCustodyRecord but its value field is
-    // crate-private — so the only value a caller can produce out-of-crate is
-    // the re-encoded body, never the raw field. Pin that the door path above
-    // (not a field read) is what returned the plaintext.
-    let raw_body = vault.get(&id).expect("get body").expect("body present");
-    let decoded = decode_secret_custody_body(&raw_body).expect("decode body");
-    // Read-only accessor is the binding-door-safe surface for manifest_ref.
-    assert_eq!(decoded.manifest_ref(), "secrets.toml");
-    // (Out-of-crate, `decoded.value_bytes` is a compile error by `pub(crate)`.)
+    // C3 GENERIC-READ SEAL: `pub(crate)` on `value_bytes` only stopped an
+    // out-of-crate FIELD read. The generic doors handed over the whole body —
+    // which IS the plaintext, in MessagePack — so a caller never needed the
+    // field. Both generic doors now deny the byte outright.
+    let err = vault
+        .get(&id)
+        .expect_err("generic Vault::get must deny a custody body");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    let err = vault
+        .get_raw(&id)
+        .expect_err("generic Vault::get_raw must deny a custody row");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+
+    // The value-less projection stays open — it is the sanctioned read for
+    // everything that is not the value.
+    let meta = vault
+        .get_secret_metadata(&id)
+        .expect("metadata read")
+        .expect("record present");
+    assert_eq!(meta.name, "door-only-key");
 }
 
 #[test]

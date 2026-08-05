@@ -118,8 +118,54 @@ Files: `crates/oneiron/src/sync/window.rs`,
 
 ---
 
+## C3 — P2 generic read doors return the custody body incl. `value_bytes`
+
+**Trace (confirmed).** `register_secret` writes the value-bearing record into
+the ENTITIES store; `Vault::get` stripped only the 25-byte header and handed
+back the MessagePack body — which contains `value_bytes` verbatim. `pub(crate)`
+on the field stopped only an out-of-crate FIELD read; no caller needed the
+field, because the plaintext was in the bytes. The mutation run below prints
+the returned body with `hunter2` (`104 117 110 116 101 114 50`) in it.
+
+**Fix.** Typed deny at `Vault::get` and `Vault::get_raw` when the header names
+byte 77. The only sanctioned value read stays the bound door
+`get_secret_value_in_txn`; the value-less `get_secret_metadata` stays open.
+
+**Seal placement (deliberate asymmetry, documented in `vault.rs`).** The seal
+sits on the two PUBLIC doors only. `get_raw_in` (txn-scoped, `pub(crate)`) and
+the new `get_raw_unsealed` wrapper stay unsealed, because `sync::window`'s
+mirror / scrub / rematerialization passes read raw bytes precisely to look at
+the type byte and then refuse, skip, or scrub the row — sealing their reader
+would make them fail closed on the very row they exist to remove and turn one
+custody carrier into a wedged window. The four `sync::window` call sites were
+re-pointed to `get_raw_unsealed`; every other caller keeps the sealed door.
+
+**Serde.** Dropped the `Serialize` derive from `SecretCustodyRecord`: a derived
+serializer would emit `value_bytes` into whatever format a caller reached for,
+with no door in the way — exactly the leak `Debug` is hand-rolled to prevent.
+`Deserialize` went with it (nothing consumes either; the hand-written body
+codec is the one serialization of this type, and it exists to write the
+vault-resident body). Workspace grep confirms no consumer outside
+`secret_custody*`.
+
+**Test (mutation-verified).**
+`secret_custody::tests::value_read_goes_through_get_secret_value_in_txn_door`
+now asserts both generic doors deny with `InvalidSecretCustodyBody` while the
+bound door still returns the value and `get_secret_metadata` still works.
+Mutation: disabling both seals fails the test with the plaintext visible in the
+assertion message.
+
+Files: `crates/oneiron/src/vault.rs`, `crates/oneiron/src/secret_custody.rs`,
+`crates/oneiron/src/secret_custody/tests.rs`,
+`crates/oneiron/src/sync/window.rs`,
+`crates/oneiron/src/sync/window/tests.rs` (the `seed_secret_custody` fixture
+reads through the unsealed reader, with a comment saying why).
+
+---
+
 ## Banked (legitimate maximalism / out-of-packet), one per row
 
 | # | Item | Why banked |
 |---|---|---|
 | B1 | `crates/oneiron/src/calendar/claims.rs` carries ~53 `never used` dead-code warnings on clean `42cb5e6`, so `cargo clippy -- -D warnings` cannot be green on this tree for ANY lane. | Pre-existing, another lane's packet, charged to no lane. Needs its own mechanical cleanup lane. |
+| B2 | Three tests fail on clean `42cb5e6`: `calendar::claims::tests::calendar_claim_validator_rejects_malformed_shapes`, `calendar::claims::tests::calendar_claims_require_event_subjects`, `claim::tests::write_door_validates_calendar_claim_structure`. VERIFIED by stashing this lane's work, checking out `42cb5e6`, and running the three by name — all three FAIL there. Same root as B1: `validate_calendar_claim_structure` is `never used`, i.e. the calendar write door lost its wiring on main. | Pre-existing red on the merged tree, charged to no lane. It IS a real defect on main and should get a ticket, but fixing it here would be an unrelated packet. |
