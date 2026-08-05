@@ -649,6 +649,15 @@ pub enum IdentityTopologyRejection {
         /// Which scope bound the amendment broke.
         reason: &'static str,
     },
+    /// A resolution event lies about what it rules: the park it retires is
+    /// not `Proposed`, or its stamped ramp scope is not the tuple the
+    /// proposal's own row derives. Local rulings can never produce either
+    /// (the door derives both at ruling time); they are how a MALFORMED
+    /// replicated resolution row reads.
+    ResolutionRuleMismatch {
+        /// Which rule the row broke.
+        reason: &'static str,
+    },
 }
 
 /// Full (state, op) transition table over entity lifecycle × op role,
@@ -1389,6 +1398,38 @@ fn reassignment_entry_in_scope(
     item_in_scope && target_in_scope
 }
 
+/// The scope tuple one proposal row derives: op kind, registry class of the
+/// op's primary target, and the PROPOSAL's actor ref. Pure so the wire
+/// check below and the vault stamp share ONE derivation.
+fn proposal_scope_of(record: &StoredIdentityOpEvent, target_class: &str) -> ProposalScope {
+    ProposalScope {
+        op_kind: record.action.kind_str(),
+        target_class: target_class.to_owned(),
+        actor: record.actor.map_or_else(
+            || PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED.to_owned(),
+            |actor| actor.entity_ref().to_hex(),
+        ),
+    }
+}
+
+/// Stateless wire-legality of a resolution row's stamped ramp scope: the
+/// tuple's op kind must be THE PROPOSAL'S recorded action kind, never an
+/// amendable kind claimed about a non-op row (a resolution of an undo row,
+/// say). Needs no store, so it rides the stateless decode path every
+/// admission — local door and sync replay alike — passes through.
+fn validate_resolution_scope_stateless(record: &StoredIdentityOpEvent) -> Result<()> {
+    let StoredIdentityOpAction::ProposalResolution { scope, .. } = &record.action else {
+        return Ok(());
+    };
+    let proposal_is_op = matches!(scope.op_kind, EVENT_KIND_MERGE | EVENT_KIND_SPLIT);
+    if !proposal_is_op {
+        return Err(Error::InvalidIdentityTopologyEventBody(
+            "identity topology proposal resolution scope names a non-op kind",
+        ));
+    }
+    Ok(())
+}
+
 /// The AMENDABLE op kinds: only the two ops whose apply door is armed and
 /// whose subject set is expressible on the wire. A resolution's scope
 /// `op_kind` is one of these by construction (a proposal of an unarmed kind
@@ -1535,6 +1576,7 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
             "rejected identity topology decisions are not stored",
         ));
     }
+    validate_resolution_scope_stateless(record)?;
 
     let IdentityTopologyAction::Apply(op) = record.action.to_fold_action() else {
         return Ok(());
@@ -2695,30 +2737,17 @@ impl Vault {
         let record = self
             .identity_topology_event_in_txn(&*wtxn, proposal)?
             .ok_or(Error::EntityNotFound)?;
-        if record.approval != ClaimApprovalStatus::Proposed {
-            return Err(Error::IdentityTopologyRejected(
-                IdentityTopologyRejection::NotProposed { event: *proposal },
-            ));
-        }
-        let IdentityTopologyAction::Apply(proposed_op) = record.action.to_fold_action() else {
-            // Undo and resolution rows are never `Proposed`-parked ops a
-            // ruling can act on; the approval check above already excludes
-            // them, so this is defence at the type seam.
-            return Err(Error::IdentityTopologyRejected(
-                IdentityTopologyRejection::NotProposed { event: *proposal },
-            ));
-        };
-
-        let fold = fold_identity_topology_log(
-            &self.fold_effective_identity_topology_events_in_txn(&*wtxn)?,
-        );
-        if fold.resolved_proposals.contains_key(proposal) {
-            return Err(Error::IdentityTopologyRejected(
-                IdentityTopologyRejection::ProposalAlreadyResolved {
-                    proposal: *proposal,
-                },
-            ));
-        }
+        // The resolution rule, shared with replicated admission: the park
+        // is still open, the fold has not retired it, and the ruling's own
+        // axis is effective. The replicated replay of the row this door is
+        // about to write re-derives exactly these cells from the ledger.
+        let proposed_op = self.validate_identity_proposal_resolution_in_txn(
+            &*wtxn,
+            proposal,
+            &record,
+            write.approval,
+            None,
+        )?;
 
         // Validate the amendment BEFORE anything is written: an out-of-scope
         // body must leave the park open and untouched.
@@ -2812,14 +2841,82 @@ impl Vault {
             .and_then(entity_type_registry_entry)
             .ok_or(Error::EntityNotFound)?
             .kind;
-        Ok(ProposalScope {
-            op_kind: record.action.kind_str(),
-            target_class: target_class.to_owned(),
-            actor: record.actor.map_or_else(
-                || PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED.to_owned(),
-                |actor| actor.entity_ref().to_hex(),
-            ),
-        })
+        Ok(proposal_scope_of(record, target_class))
+    }
+
+    /// THE proposal-resolution rule, run by BOTH doors a resolution row can
+    /// enter through — the local [`Vault::resolve_identity_proposal_in_txn`]
+    /// ruling and replicated type-76 admission. One validator, never two
+    /// drifting copies: the local door enforces exactly what a remote peer's
+    /// replay of the same row must later re-derive.
+    ///
+    /// All four cells, evaluated in ONE read against the store:
+    /// the named park EXISTS and is still `Proposed` (an op row, never an
+    /// undo or a resolution); the fold has not already retired it; the
+    /// RULING's consent axis is effective — `ruling_approval` is the
+    /// resolution's own axis (`write.approval` at the local door,
+    /// `record.approval` on the wire), because deciding is itself an
+    /// effective act and a resolution authored under a parked or consent-
+    /// rejected axis is no ruling at all; and the stamped ramp scope is
+    /// DERIVED from the proposal's own row, so a row cannot carry a scope
+    /// it was never ruled under. Returns the decoded proposed op (the door
+    /// applies it; replicated admission only checks, never applies).
+    fn validate_identity_proposal_resolution_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        proposal: &EntityId,
+        proposal_record: &StoredIdentityOpEvent,
+        ruling_approval: ClaimApprovalStatus,
+        stamped: Option<&ProposalScope>,
+    ) -> Result<IdentityTopologyOp> {
+        if !matches!(
+            ruling_approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) {
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::ProposalRulingNotEffective,
+            ));
+        }
+        if proposal_record.approval != ClaimApprovalStatus::Proposed {
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::NotProposed { event: *proposal },
+            ));
+        }
+        let IdentityTopologyAction::Apply(proposed_op) = proposal_record.action.to_fold_action()
+        else {
+            // Undo and resolution rows are never `Proposed`-parked ops a
+            // ruling can act on; the approval check above already excludes
+            // them, so this is defence at the type seam.
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::NotProposed { event: *proposal },
+            ));
+        };
+        // The fold a fresh resolution is judged against EXCLUDES the row
+        // being admitted — a replicated event validates against history
+        // alone, and the local door runs this before its own row exists.
+        let fold =
+            fold_identity_topology_log(&self.fold_effective_identity_topology_events_in_txn(rtxn)?);
+        if fold.resolved_proposals.contains_key(proposal) {
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::ProposalAlreadyResolved {
+                    proposal: *proposal,
+                },
+            ));
+        }
+        if let Some(stamped) = stamped {
+            let derived = self.proposal_scope_in_txn(rtxn, proposal_record, &proposed_op)?;
+            if stamped.op_kind != derived.op_kind
+                || stamped.target_class != derived.target_class
+                || stamped.actor != derived.actor
+            {
+                return Err(Error::IdentityTopologyRejected(
+                    IdentityTopologyRejection::ResolutionRuleMismatch {
+                        reason: "stamped ramp scope is not the proposal's derived tuple",
+                    },
+                ));
+            }
+        }
+        Ok(proposed_op)
     }
 
     /// Reads one type-76 ledger event record. `Ok(None)` when the id is
@@ -2947,12 +3044,11 @@ impl Vault {
                     return Err(Error::IdentityTopologyRejected(rejection));
                 }
             }
-            // An undo and a resolution both name a type-76 event and inherit
-            // the participant validity of the event they name.
-            IdentityTopologyAction::Undo { target }
-            | IdentityTopologyAction::ResolveProposal {
-                proposal: target, ..
-            } => {
+            // An undo inherits the participant validity of the event it
+            // names; a resolution must instead satisfy the SAME door rule
+            // the local `resolve_identity_proposal` enforced — replayed
+            // verbatim, never a lighter replay-side pass.
+            IdentityTopologyAction::Undo { target } => {
                 let Some(entity_type) = self.get_entity_type_in_txn(rtxn, &target)? else {
                     return Ok(());
                 };
@@ -2967,6 +3063,46 @@ impl Vault {
                         self.validate_identity_op_participants_in_txn(rtxn, &op)?
                 {
                     return Err(Error::IdentityTopologyRejected(rejection));
+                }
+            }
+            IdentityTopologyAction::ResolveProposal { proposal, .. } => {
+                let StoredIdentityOpAction::ProposalResolution {
+                    scope,
+                    amended_body,
+                    ..
+                } = &record.action
+                else {
+                    return Err(Error::InvariantViolation(
+                        "replicated resolution row desugars to ResolveProposal",
+                    ));
+                };
+                let Some(entity_type) = self.get_entity_type_in_txn(rtxn, &proposal)? else {
+                    return Ok(());
+                };
+                if entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+                    return Err(Error::InvalidEntityType(entity_type));
+                }
+                let proposal_record = self
+                    .identity_topology_event_in_txn(rtxn, &proposal)?
+                    .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+                // Exactly the local door's rule, replayed: the ruling axis
+                // is this row's own consent (`record.approval`), the stamp
+                // must match the tuple the proposal row derives, and an
+                // amended body must stay inside review.
+                let proposed_op = self.validate_identity_proposal_resolution_in_txn(
+                    rtxn,
+                    &proposal,
+                    &proposal_record,
+                    record.approval,
+                    Some(scope),
+                )?;
+                if let Some(amended_body) = amended_body {
+                    let amended_op = decode_identity_op_amendment(amended_body).map_err(|_| {
+                        Error::InvalidIdentityTopologyEventBody(
+                            "identity topology proposal resolution amended body",
+                        )
+                    })?;
+                    assert_amendment_in_scope(&proposed_op, &amended_op)?;
                 }
             }
         }

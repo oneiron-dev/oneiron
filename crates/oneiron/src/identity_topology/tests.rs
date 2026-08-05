@@ -3011,3 +3011,86 @@ fn amendment_scope_includes_reassignment_map() {
         EntityLifecycleState::Active
     );
 }
+
+#[test]
+fn replicated_resolution_is_validated_against_the_same_door_rule() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0xC0);
+    let loser = put_person(&vault, 0xC1);
+
+    // A genuine parked proposal, resolved locally — the fold retires it.
+    let proposal = park_merge_proposal(&vault, vec![loser], survivor, 200);
+    let (outcome, _) = vault
+        .resolve_identity_proposal(&proposal, ProposalRuling::Approve, &ruling_write(), 300)
+        .expect("local ruling resolves the park");
+    assert_eq!(outcome, ProposalOutcome::ApprovedUntouched);
+
+    // A REPLICATED resolution row naming the SAME proposal: whatever a peer
+    // claims, the fold this replay is judged against already resolved it —
+    // the shared rule rejects it typed, never a lighter replay-side pass.
+    let second = StoredIdentityOpEvent {
+        seq: 500,
+        at: 400,
+        actor: None,
+        source: ClaimSource::UserStated,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::ProposalResolution {
+            proposal,
+            outcome: ProposalOutcome::ApprovedUntouched,
+            scope: ProposalScope {
+                op_kind: EVENT_KIND_MERGE,
+                target_class: "PERSON".to_owned(),
+                actor: PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED.to_owned(),
+            },
+            amended_body: None,
+        },
+    };
+    let error = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        vault.validate_replicated_identity_topology_event_in_txn(&rtxn, &second)
+    }
+    .expect_err("a second ruling on a retired park rejects on replay");
+    assert_eq!(
+        expect_rejection(error),
+        IdentityTopologyRejection::ProposalAlreadyResolved { proposal },
+    );
+
+    // A replicated resolution whose stamped scope is NOT the tuple the
+    // proposal row derives: replayed under a scope it was never ruled in —
+    // the same rule rejects it, as mismatch, even while the park named is
+    // an OPEN park.
+    let other_loser = put_person(&vault, 0xC2);
+    let open_park = park_merge_proposal(&vault, vec![other_loser], survivor, 210);
+    let misscoped = StoredIdentityOpEvent {
+        seq: 501,
+        at: 400,
+        actor: None,
+        source: ClaimSource::UserStated,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::ProposalResolution {
+            proposal: open_park,
+            outcome: ProposalOutcome::ApprovedUntouched,
+            scope: ProposalScope {
+                op_kind: EVENT_KIND_SPLIT,
+                target_class: "PERSON".to_owned(),
+                actor: PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED.to_owned(),
+            },
+            amended_body: None,
+        },
+    };
+    let error = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        vault.validate_replicated_identity_topology_event_in_txn(&rtxn, &misscoped)
+    }
+    .expect_err("a mis-stamped scope rejects on replay");
+    assert_eq!(
+        expect_rejection(error),
+        IdentityTopologyRejection::ResolutionRuleMismatch {
+            reason: "stamped ramp scope is not the proposal's derived tuple",
+        },
+    );
+}
