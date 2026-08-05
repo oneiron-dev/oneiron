@@ -194,7 +194,8 @@ proof rather than duplicated:
 | `cargo fmt --all --check` | clean |
 | `cargo clippy -p oneiron -p oneiron-driver --all-targets --all-features -D warnings` | clean |
 | `cargo clippy --workspace --all-targets --all-features -D warnings` | one PRE-EXISTING error, see below |
-| `cargo test -p oneiron --all-features` | see below |
+| `cargo check --workspace --all-targets --all-features` | clean |
+| `cargo test -p oneiron --all-features -- --test-threads=1` | **30 suites, 3431 passed, 0 failed, 25 ignored** (lib alone: 3173 passed, 1372s) |
 
 ### Pre-existing workspace clippy error (NOT from this lane)
 `crates/oneiron-seal/src/native/verify.rs:1280` — `sha1::Sha1::digest(key).as_slice()`
