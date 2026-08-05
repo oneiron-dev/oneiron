@@ -18,6 +18,11 @@ use crate::Vault;
 use crate::error::Result;
 use crate::registry::{StructuralKindRegistration, TypeByteBand};
 
+/// The CRM pack's claim families: `campaign.member`, `crm.fit`, `crm.stage`,
+/// and the CA-owned `comm.do_not_contact` / `comm.bounce` /
+/// `comm.jurisdiction` predicates.
+pub mod claims;
+
 /// Stable short-id namespace for CAMPAIGN entities.
 ///
 /// Two lowercase ASCII letters per the short-id convention; it names CAMPAIGN,
