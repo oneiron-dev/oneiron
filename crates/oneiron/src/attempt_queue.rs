@@ -31,6 +31,16 @@ const MAX_RUN_ID_LEN: usize = 128;
 const MAX_INTERVENTION_ACTOR_LEN: usize = 128;
 const MAX_INTERVENTION_NOTE_LEN: usize = 2048;
 const MAX_ATTEMPT_EVENTS_PER_RECORD: usize = 256;
+/// Defensive cap on [`AttemptRecord::manifest`] rows.
+///
+/// Deliberately NOT the [`MAX_ATTEMPT_EVENTS_PER_RECORD`] semantics: the
+/// events field DRAINS its oldest rows above the cap, which would silently
+/// violate the ARCH-0053 §3 append-only manifest invariant (an attribution
+/// projector cannot tell a dropped skill from one that was never loaded).
+/// The manifest door instead REFUSES at this cap — fail loud, never drain.
+pub const MAX_ATTEMPT_MANIFEST_ENTRIES: usize = 4096;
+const MAX_MANIFEST_REFERENCE_LEN: usize = 512;
+const MAX_MANIFEST_VERSION_LEN: usize = 128;
 const ERR_EMPTY_KIND: &str = "kind must not be empty";
 const ERR_KIND_TOO_LONG: &str = "kind exceeds 128 bytes";
 const ERR_DEDUPE_KEY_EMPTY: &str = "dedupe key must not be empty";
@@ -45,6 +55,11 @@ const ERR_INTERVENTION_ACTOR_EMPTY: &str = "intervention actor must not be empty
 const ERR_INTERVENTION_ACTOR_TOO_LONG: &str = "intervention actor exceeds 128 bytes";
 const ERR_INTERVENTION_NOTE_EMPTY: &str = "intervention note must not be empty";
 const ERR_INTERVENTION_NOTE_TOO_LONG: &str = "intervention note exceeds 2048 bytes";
+const ERR_MANIFEST_REFERENCE_EMPTY: &str = "manifest reference must not be empty";
+const ERR_MANIFEST_REFERENCE_TOO_LONG: &str = "manifest reference exceeds 512 bytes";
+const ERR_MANIFEST_VERSION_EMPTY: &str = "manifest version must not be empty";
+const ERR_MANIFEST_VERSION_TOO_LONG: &str = "manifest version exceeds 128 bytes";
+const ERR_MANIFEST_FULL: &str = "attempt manifest is full; entries are never dropped";
 const ERR_ATTEMPT_ID_LEN: &str = "attempt id must be 16 bytes";
 const ERR_DEDUPE_KIND_MISMATCH: &str = "dedupe index points at a different attempt kind";
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
@@ -123,7 +138,7 @@ pub enum AttemptState {
 }
 
 impl AttemptState {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Queued => "queued",
             Self::Leased => "leased",
@@ -171,6 +186,69 @@ pub struct AttemptEvent {
     pub note: Option<String>,
 }
 
+/// What one [`ManifestEntry`] names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ManifestKind {
+    /// A SKILL pulled into the attempt's pack (`skill_id` + version).
+    Skill,
+    /// An `actor.*` claim row loaded into the attempt's pack.
+    ActorClaim,
+}
+
+impl ManifestKind {
+    /// Returns the stable wire string for this manifest kind.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Skill => "skill",
+            Self::ActorClaim => "actor_claim",
+        }
+    }
+}
+
+/// One append-only row of an attempt's PACK MANIFEST (ARCH-0053 §2/§3).
+///
+/// The pack is alive: the tier-1 index is stamped at `t0` and every mid-run
+/// tier-2 body pull appends its own row WHEN it happens, so the terminal
+/// receipt carries the full accumulated manifest and attribution can name
+/// what was actually loaded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManifestEntry {
+    pub kind: ManifestKind,
+    /// The loaded thing's stable identity (`skill_id`, claim id hex, …).
+    pub reference: String,
+    /// The loaded revision (`SkillRecord::version`, a claim revision, …).
+    pub version: String,
+    /// Unix seconds at which the pack loaded it.
+    pub at: u64,
+}
+
+impl ManifestEntry {
+    /// Builds one manifest row.
+    #[must_use]
+    pub fn new(
+        kind: ManifestKind,
+        reference: impl Into<String>,
+        version: impl Into<String>,
+        at: u64,
+    ) -> Self {
+        Self {
+            kind,
+            reference: reference.into(),
+            version: version.into(),
+            at,
+        }
+    }
+
+    /// The `reference@version` wire form the terminal receipt projects.
+    #[must_use]
+    pub fn wire_form(&self) -> String {
+        format!("{}@{}", self.reference, self.version)
+    }
+}
+
 /// Durable attempt row stored in LMDB.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttemptRecord {
@@ -194,6 +272,20 @@ pub struct AttemptRecord {
     pub updated_at: u64,
     #[serde(default)]
     pub events: Vec<AttemptEvent>,
+    /// ARCH-0053 §2/§3 PACK MANIFEST: append-only, parallel to `events` and
+    /// deliberately NOT folded into it (`AttemptEvent` is the closed
+    /// four-variant intervention record). Rows without the key decode empty,
+    /// so no migration is needed.
+    #[serde(default)]
+    pub manifest: Vec<ManifestEntry>,
+}
+
+impl AttemptRecord {
+    /// The attempt's accumulated pack manifest, in append order.
+    #[must_use]
+    pub fn manifest(&self) -> &[ManifestEntry] {
+        &self.manifest
+    }
 }
 
 /// Input for enqueueing an attempt.
@@ -550,6 +642,7 @@ impl<'a> AttemptQueue<'a> {
             created_at: input.now,
             updated_at: input.now,
             events: Vec::new(),
+            manifest: Vec::new(),
         };
 
         let encoded = encode_record(&record)?;
@@ -961,6 +1054,12 @@ impl<'a> AttemptQueue<'a> {
                 self.store
                     .attempt_records
                     .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+                crate::receipt::stamp_attempt_pack_receipt_in_txn(
+                    self.store,
+                    &mut wtxn,
+                    &record,
+                    &input.lease_owner,
+                )?;
                 wtxn.commit()?;
                 Ok(CompleteOutcome::Completed(record))
             }
@@ -1009,6 +1108,12 @@ impl<'a> AttemptQueue<'a> {
                 self.store
                     .attempt_records
                     .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+                crate::receipt::stamp_attempt_pack_receipt_in_txn(
+                    self.store,
+                    &mut wtxn,
+                    &record,
+                    &input.lease_owner,
+                )?;
                 wtxn.commit()?;
                 Ok(FailOutcome::Failed(record))
             }
@@ -1165,6 +1270,53 @@ impl<'a> AttemptQueue<'a> {
             .put(wtxn, record.id.as_bytes(), &encoded)?;
 
         Ok(InterveneOutcome { effect, record })
+    }
+
+    /// Appends one row to a live attempt's PACK MANIFEST (ARCH-0053 §3).
+    ///
+    /// The pack is alive for the whole attempt, so this door accepts every
+    /// pending state (queued, leased, paused) and refuses the terminal ones:
+    /// a completed/failed/cancelled attempt's manifest is the evidence the
+    /// terminal receipt already projected, and appending to it after the fact
+    /// would rewrite history.
+    ///
+    /// Never drains at the cap (see [`MAX_ATTEMPT_MANIFEST_ENTRIES`]): a full
+    /// manifest is a typed refusal, so append-only cannot be violated
+    /// silently.
+    ///
+    /// `updated_at` is deliberately NOT bumped: it is the lease-expiry clock
+    /// ([`Self::cleanup_leases`]), and turning a pack load into a lease
+    /// heartbeat would silently change reclaim timing for every attempt that
+    /// pulls a skill. Manifest rows carry their own `at`.
+    pub fn append_manifest_entry(
+        &self,
+        id: AttemptId,
+        entry: ManifestEntry,
+    ) -> Result<AttemptRecord> {
+        validate_manifest_entry(&entry)?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let Some(raw_record) = self.store.attempt_records.get(&wtxn, id.as_bytes())? else {
+            return Err(invalid_transition("append_manifest_entry", "missing"));
+        };
+        let mut record = decode_record(&raw_record, id)?;
+        if !record.state.is_pending() {
+            return Err(invalid_transition(
+                "append_manifest_entry",
+                record.state.as_str(),
+            ));
+        }
+        if record.manifest.len() >= MAX_ATTEMPT_MANIFEST_ENTRIES {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_MANIFEST_FULL));
+        }
+        record.manifest.push(entry);
+        let encoded = encode_record(&record)?;
+        self.store
+            .attempt_records
+            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+        wtxn.commit()?;
+
+        Ok(record)
     }
 
     /// Returns expired leases to the ready index under LMDB's single-writer
@@ -1596,6 +1748,38 @@ fn validate_attempt_events(events: &[AttemptEvent]) -> Result<()> {
     Ok(())
 }
 
+fn validate_manifest_entry(entry: &ManifestEntry) -> Result<()> {
+    if entry.reference.is_empty() {
+        return Err(Error::InvalidAttemptQueueRecord(
+            ERR_MANIFEST_REFERENCE_EMPTY,
+        ));
+    }
+    if entry.reference.len() > MAX_MANIFEST_REFERENCE_LEN {
+        return Err(Error::InvalidAttemptQueueRecord(
+            ERR_MANIFEST_REFERENCE_TOO_LONG,
+        ));
+    }
+    if entry.version.is_empty() {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_MANIFEST_VERSION_EMPTY));
+    }
+    if entry.version.len() > MAX_MANIFEST_VERSION_LEN {
+        return Err(Error::InvalidAttemptQueueRecord(
+            ERR_MANIFEST_VERSION_TOO_LONG,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_attempt_manifest(manifest: &[ManifestEntry]) -> Result<()> {
+    if manifest.len() > MAX_ATTEMPT_MANIFEST_ENTRIES {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_MANIFEST_FULL));
+    }
+    for entry in manifest {
+        validate_manifest_entry(entry)?;
+    }
+    Ok(())
+}
+
 fn append_attempt_event(
     record: &mut AttemptRecord,
     kind: AttemptInterventionKind,
@@ -1801,6 +1985,7 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
     validate_optional_run_id(record.run_id.as_deref())?;
     validate_optional_failure_reason(record.last_error.as_deref())?;
     validate_attempt_events(&record.events)?;
+    validate_attempt_manifest(&record.manifest)?;
     if let Some(lease_owner) = record.lease_owner.as_deref() {
         validate_lease_owner(lease_owner)?;
     }
@@ -1941,6 +2126,7 @@ mod one_1695_tests {
             created_at: 10,
             updated_at: 10,
             events: Vec::new(),
+            manifest: Vec::new(),
         }
     }
 
