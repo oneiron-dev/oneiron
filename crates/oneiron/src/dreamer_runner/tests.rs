@@ -2,7 +2,7 @@ use std::sync::Barrier;
 use std::thread;
 
 use crate::attempt_queue::{
-    AttemptInterventionKind, AttemptState, CleanupAttemptLeases, RetryAttempt,
+    AttemptInterventionKind, AttemptState, CleanupAttemptLeases, RetryAttempt, RetryOutcome,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::config::VaultConfig;
@@ -549,13 +549,12 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
     assert_eq!(first.budget.remaining_units, 4);
     assert_eq!(first.reservation.reserved_units, 8);
 
-    queue.retry(RetryAttempt {
-        id: queued.attempt.id,
-        lease_owner: "single-pass-worker".to_owned(),
-        attempt_count: first.status.attempt.attempt_count,
-        backoff_until: 25,
-        last_error: Some("lease_timeout".to_owned()),
+    // Reclaim the SAME try through the lease-timeout path: it keeps the row
+    // identity its per-attempt budget reservation is keyed by. (`retry` now
+    // mints a distinct row, which is a new try, not a resumed one.)
+    queue.cleanup_leases(CleanupAttemptLeases {
         now: 24,
+        lease_timeout_secs: 1,
     })?;
 
     let axes = DreamerTournamentBudgetAxes {
@@ -630,13 +629,11 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
     };
     let first_budget = first.budget.clone();
     let first_reservation = first.reservation.clone();
-    queue.retry(RetryAttempt {
-        id: queued.attempt.id,
-        lease_owner: "single-pass-worker".to_owned(),
-        attempt_count: first.status.attempt.attempt_count,
-        backoff_until: 25,
-        last_error: Some("lease_timeout".to_owned()),
+    // Lease-timeout reclaim keeps the row (and therefore its reservation) so
+    // the re-admission exercises the top-up path.
+    queue.cleanup_leases(CleanupAttemptLeases {
         now: 24,
+        lease_timeout_secs: 1,
     })?;
 
     let axes = DreamerTournamentBudgetAxes {
@@ -710,7 +707,9 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
     else {
         panic!("expected reserved admission");
     };
-    queue.retry(RetryAttempt {
+    // Each retry mints the fresh row that carries the ready entry; the fixture
+    // now tracks those ids rather than the finalized sources.
+    let RetryOutcome::Retried(reserved_retry) = queue.retry(RetryAttempt {
         id: reserved.attempt.id,
         lease_owner: "reserved-worker".to_owned(),
         attempt_count: first.status.attempt.attempt_count,
@@ -731,7 +730,7 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
         panic!("expected to claim stale fixture attempt");
     };
     assert_eq!(stale_claim.id, stale.attempt.id);
-    queue.retry(RetryAttempt {
+    let RetryOutcome::Retried(stale_retry) = queue.retry(RetryAttempt {
         id: stale.attempt.id,
         lease_owner: "stale-prep".to_owned(),
         attempt_count: stale_claim.attempt_count,
@@ -739,7 +738,7 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
         last_error: Some("lease_timeout".to_owned()),
         now: 32,
     })?;
-    rewrite_ready_key(&vault, stale.attempt.id, 1, 0)?;
+    rewrite_ready_key(&vault, stale_retry.id, 1, 0)?;
 
     let axes = DreamerTournamentBudgetAxes {
         fanout_m: 2,
@@ -772,17 +771,13 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
         panic!("expected tournament BudgetTrap for stale ready candidate");
     };
 
-    assert_eq!(trap.attempt_id, stale.attempt.id);
+    assert_eq!(trap.attempt_id, stale_retry.id);
     assert_eq!(trap.budget.remaining_units, 0);
     assert_eq!(trap.budget.reserved_units, 10);
-    let stale_status = runner
-        .status(stale.attempt.id)?
-        .expect("paused stale attempt");
+    let stale_status = runner.status(stale_retry.id)?.expect("paused stale attempt");
     assert_eq!(stale_status.attempt.state, AttemptState::Paused);
-    let reserved_status = runner
-        .status(reserved.attempt.id)?
-        .expect("reserved attempt");
-    assert_eq!(reserved_status.attempt.state, AttemptState::Queued);
+    let reserved_status = runner.status(reserved_retry.id)?.expect("reserved attempt");
+    assert_eq!(reserved_status.attempt.state, AttemptState::Scheduled);
     assert_eq!(
         runner.budget_reservation("wake:micro", reserved.attempt.id)?,
         Some(first.reservation)

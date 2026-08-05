@@ -1075,7 +1075,9 @@ fn attempt_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
         };
         assert_eq!(first_attempt.id, attempt.id);
 
-        let RetryOutcome::Retried(_) = queue.retry(RetryAttempt {
+        // The retry is a fresh row, so the second lease restarts that row's own
+        // generation fence at 1 rather than continuing the source's count.
+        let RetryOutcome::Retried(scheduled) = queue.retry(RetryAttempt {
             id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: first_attempt.attempt_count,
@@ -1091,11 +1093,9 @@ fn attempt_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
         else {
             panic!("expected second attempt");
         };
-        assert_eq!(second_attempt.id, attempt.id);
-        assert_eq!(
-            second_attempt.attempt_count,
-            first_attempt.attempt_count + 1
-        );
+        assert_eq!(second_attempt.id, scheduled.id);
+        assert_ne!(second_attempt.id, attempt.id);
+        assert_eq!(second_attempt.attempt_count, 1);
         Ok(second_attempt)
     }
 
@@ -1196,7 +1196,7 @@ fn attempt_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
 }
 
 #[test]
-fn attempt_queue_transitions_retry_preserves_payload_provenance_and_backoff() -> Result<()> {
+fn attempt_queue_retry_mints_a_new_row_and_leaves_the_source_terminal() -> Result<()> {
     let (_dir, vault) = open_queue();
     let queue = AttemptQueue::new(&vault);
 
@@ -1236,23 +1236,45 @@ fn attempt_queue_transitions_retry_preserves_payload_provenance_and_backoff() ->
         last_error: Some("rate limited".to_owned()),
         now: 30,
     })?;
-    assert_eq!(retried.id, attempt.id);
-    assert_eq!(retried.state, AttemptState::Queued);
+
+    // The retry is a DIFFERENT row that carries the immutable payload and
+    // provenance forward, links back to the try it replaces, and restarts the
+    // per-row lease fence.
+    assert_ne!(retried.id, attempt.id);
+    assert_eq!(retried.retry_of, Some(attempt.id));
+    assert_eq!(retried.state, AttemptState::Scheduled);
     assert_eq!(retried.lease_owner, None);
-    assert_eq!(retried.attempt_count, 1);
-    assert_eq!(retried.backoff_until, Some(100));
-    assert_eq!(retried.last_error.as_deref(), Some("rate limited"));
+    assert_eq!(retried.attempt_count, 0);
+    assert_eq!(retried.scheduled_at, Some(100));
+    assert_eq!(retried.backoff_until, None);
+    assert_eq!(retried.last_error, None);
+    assert_eq!(retried.claimed_at, None);
+    assert_eq!(retried.created_at, 30);
+    assert_eq!(retried.updated_at, 30);
     assert_eq!(retried.payload, b"payload-10");
     assert_eq!(retried.run_id.as_deref(), Some("run-10"));
     assert_eq!(retried.dedupe_key.as_deref(), Some("turn:retry"));
 
+    // The source stays queryable as the failed try and can never be reclaimed.
+    let source = queue.get(attempt.id)?.expect("source stays point-readable");
+    assert_eq!(source.state, AttemptState::Failed);
+    assert_eq!(source.last_error.as_deref(), Some("rate limited"));
+    assert_eq!(source.lease_owner, None);
+    assert_eq!(source.scheduled_at, None);
+    assert_eq!(source.backoff_until, None);
+    assert_eq!(source.retry_of, None);
+    assert_eq!(source.updated_at, 30);
+    assert_eq!(source.attempt_count, 1);
+
+    // The advisory dedupe index followed the newest pending member.
     let EnqueueOutcome::Existing(duplicate_pending) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:retry"), 40))?
     else {
-        panic!("pending dedupe key should coalesce");
+        panic!("pending dedupe key should coalesce onto the scheduled retry");
     };
-    assert_eq!(duplicate_pending.id, attempt.id);
+    assert_eq!(duplicate_pending.id, retried.id);
 
+    // Claimable exactly at `scheduled_at`, never one second early.
     assert_eq!(
         queue.claim(ClaimAttempt {
             lease_owner: "worker-b".to_owned(),
@@ -1266,15 +1288,165 @@ fn attempt_queue_transitions_retry_preserves_payload_provenance_and_backoff() ->
         now: 100,
     })?
     else {
-        panic!("expected claim after backoff");
+        panic!("expected claim at the scheduled instant");
     };
-    assert_eq!(second_attempt.id, attempt.id);
-    assert_eq!(second_attempt.attempt_count, 2);
+    assert_eq!(second_attempt.id, retried.id);
+    assert_eq!(second_attempt.attempt_count, 1);
+    assert_eq!(second_attempt.scheduled_at, None);
     assert_eq!(second_attempt.backoff_until, None);
-    assert_eq!(second_attempt.last_error.as_deref(), Some("rate limited"));
+    assert_eq!(second_attempt.retry_of, Some(attempt.id));
     assert_eq!(second_attempt.payload, b"payload-10");
     assert_eq!(second_attempt.run_id.as_deref(), Some("run-10"));
     assert_eq!(second_attempt.dedupe_key.as_deref(), Some("turn:retry"));
+
+    // The terminal source never re-enters the ready index behind the retry.
+    assert_eq!(
+        queue.claim(ClaimAttempt {
+            lease_owner: "worker-c".to_owned(),
+            now: 1_000,
+        })?,
+        ClaimOutcome::Empty
+    );
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_keeps_every_try_independently_queryable() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:chain"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    let mut chain = vec![root.id];
+    let mut now = 20;
+    for _ in 0..3 {
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now,
+        })?
+        else {
+            panic!("expected claim at {now}");
+        };
+        assert_eq!(claimed.id, *chain.last().expect("chain is never empty"));
+        let RetryOutcome::Retried(next) = queue.retry(RetryAttempt {
+            id: claimed.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: now + 10,
+            last_error: Some(format!("retryable at {now}")),
+            now: now + 1,
+        })?;
+        chain.push(next.id);
+        now += 10;
+    }
+
+    // Three retries produce four distinct rows in an unambiguous parent chain.
+    assert_eq!(chain.len(), 4);
+    let unique: std::collections::HashSet<_> = chain.iter().collect();
+    assert_eq!(unique.len(), 4);
+
+    for (index, id) in chain.iter().enumerate() {
+        let record = queue.get(*id)?.expect("every try stays queryable");
+        assert_eq!(record.retry_of, index.checked_sub(1).map(|prev| chain[prev]));
+        assert_eq!(record.payload, b"payload-10");
+        assert_eq!(record.run_id.as_deref(), Some("run-10"));
+        if index + 1 == chain.len() {
+            assert_eq!(record.state, AttemptState::Scheduled);
+        } else {
+            assert_eq!(record.state, AttemptState::Failed);
+            assert!(record.last_error.is_some());
+        }
+    }
+
+    // Every try is attached to the one run, so the run index tracked each mint.
+    let run = queue.list_run("run-10")?;
+    assert_eq!(run.len(), 4);
+    assert_eq!(
+        run.iter().map(|record| record.id).collect::<Vec<_>>(),
+        chain
+    );
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_omitting_a_reason_stamps_a_stable_token() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(attempt) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:no-reason"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 20,
+    })?
+    else {
+        panic!("expected claim");
+    };
+
+    let RetryOutcome::Retried(retried) = queue.retry(RetryAttempt {
+        id: attempt.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: claimed.attempt_count,
+        backoff_until: 40,
+        last_error: None,
+        now: 30,
+    })?;
+    assert_eq!(retried.state, AttemptState::Scheduled);
+
+    // A `Failed` row must carry a reason; the source is finalized either way.
+    let source = queue.get(attempt.id)?.expect("source stays readable");
+    assert_eq!(source.state, AttemptState::Failed);
+    assert_eq!(source.last_error.as_deref(), Some(RETRY_REASON_UNSPECIFIED));
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_of_a_missing_lease_writes_nothing() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(attempt) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:atomic"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 20,
+    })?
+    else {
+        panic!("expected claim");
+    };
+
+    // A rejected retry must leave neither a half-finalized source nor an
+    // orphan retry row: the whole transition is one transaction.
+    let stale = queue
+        .retry(RetryAttempt {
+            id: attempt.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count + 1,
+            backoff_until: 40,
+            last_error: Some("retryable".to_owned()),
+            now: 30,
+        })
+        .unwrap_err();
+    assert_invalid_transition(stale, "retry", "stale_attempt");
+
+    let records = queue.list()?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, attempt.id);
+    assert_eq!(records[0].state, AttemptState::Leased);
+    assert_eq!(records[0].updated_at, 20);
 
     Ok(())
 }
@@ -1585,7 +1757,9 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
     else {
         panic!("expected claim");
     };
-    let RetryOutcome::Retried(_) = queue.retry(RetryAttempt {
+    // Retrying finalizes `backoff_attempt` as a failed try and mints the
+    // scheduled row that carries the backoff; the pause lands on that new row.
+    let RetryOutcome::Retried(backoff_retry) = queue.retry(RetryAttempt {
         id: backoff_attempt.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: backoff_claim.attempt_count,
@@ -1597,7 +1771,7 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         effect: AttemptInterventionEffect::Paused,
         ..
     } = queue.intervene(InterveneAttempt {
-        id: backoff_attempt.id,
+        id: backoff_retry.id,
         kind: AttemptInterventionKind::Pause,
         actor: "cleanup-test".to_owned(),
         note: None,
@@ -1694,7 +1868,9 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
     })?;
     assert_eq!(report.pending, 3);
     assert_eq!(report.running, 1);
-    assert_eq!(report.failed, 1);
+    // Two failed rows: the terminal `failed_attempt` plus the retried try that
+    // `backoff_attempt` became.
+    assert_eq!(report.failed, 2);
     assert_eq!(report.done, 1);
     assert_eq!(report.stale_requeued, 1);
     assert_eq!(
@@ -1705,6 +1881,14 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         report.retry_reason_count(AttemptQueueRetryReason::RetryBackoff),
         1
     );
+
+    let retried_source = queue
+        .get(backoff_attempt.id)?
+        .expect("retried source persisted");
+    assert_eq!(retried_source.state, AttemptState::Failed);
+    let paused_retry = queue.get(backoff_retry.id)?.expect("retry row persisted");
+    assert_eq!(paused_retry.state, AttemptState::Paused);
+    assert_eq!(paused_retry.scheduled_at, Some(80));
 
     let requeued = queue
         .get(stale_attempt.id)?
