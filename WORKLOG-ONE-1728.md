@@ -32,7 +32,56 @@ parameterization · facade `witness_into_session` + K7 backstop · pipeline
 claim.rs ScopedRead composition · context_pack.rs · oracle arming (7 stubs + seam
 helpers) · tests.
 
+**SEG 1 (done: 719b1db, 4e07b4e)** — batch.rs K4 (`BaseWriteOrigin` +
+`PromoteMemberOf` + in-txn decode-point guard, `apply_ops_with_gate_mode` demoted
+to the Ordinary wrapper over `apply_ops_with_origin`) · facade K7 witness-door
+backstop + `owning_session_ref` + `FACADE_CODE_OFF_RECORD_SESSION_DOOR` ·
+embed.rs K6 pe: routing rule. 8 new tests; full suite green (3157/0).
+
+**SEG 2+ (remaining)** — `alloc_session_short_id` + session short-id namespace ·
+`apply_ops_session` + op-loop write-target parameterization · store.rs
+extract-parameterized writers + `impl SessionStoreView` · bm25/ppr/hnsw
+parameterization · facade `witness_into_session` · pipeline `run_for_pack`
+registration routing · gate.rs threading · claim.rs ScopedRead · context_pack.rs ·
+oracle arming (7 stubs + seam helpers).
+
 ## Decisions
+
+- **D5 — K4 does NOT judge a Put/ClaimCandidate's own materialized id
+  (door partition).** Found by a red test (`entity_put_guard_rejects_live_overlay_membership`),
+  not by inspection. That id already reaches `guard_off_record_entity_put` inside
+  `apply_put` — the landed entity-materialization chokepoint — which rejects the
+  identical condition (live-overlay membership) with the settled
+  `OffRecordFencedTurnWriteRejected`, and additionally covers durable fence state
+  K4 knows nothing about, so it is strictly stronger on that ref. Minting a second
+  error identity for one condition is a REGRESSION, not a hardening:
+  `sync/window.rs:1478` and `sync/quarantine.rs` classify on that typed identity to
+  quarantine-and-continue a replicated window, and an unrecognized reason there
+  fails the window closed. K4 therefore owns exactly the refs that materialize
+  nothing and so structurally cannot reach the entity door: edge endpoints, claim
+  body subject/world, candidate world/subject/actor, hint source/keep, and the
+  vector/text/phonetic/delete ids. Blueprint fidelity is preserved — the guard's
+  enumeration still covers every listed ref; only the id that has a stronger
+  landed judge is delegated rather than double-judged.
+- **D6 — undecodable CLAIM bodies fail closed WITH a live-membership
+  precondition.** The guard returns early when the registry holds zero live
+  overlay entities, so an undecodable body then reaches `apply_put`'s precise
+  `InvalidClaimBody` verdict instead of being relabelled taint. This is not a
+  weakening: with zero overlay entities there is no id the body could reference,
+  so "fail closed" and "fall through" reject identically and the more precise
+  error survives. It also keeps the canonical path from decoding every claim body
+  twice.
+- **D7 — K6 is a `debug_assert!` tripwire, not a filter.** The blueprint says
+  "routing, not filtering"; a production filter on `enqueue_pending_embedding_jobs`
+  would silently absorb a routing bug rather than surface it. The assert names the
+  invariant and dies loudly in dev; production correctness rests on the session
+  path never calling the verb.
+- **D8 — K7 gets its own facade code, not `FORBIDDEN`.** `FORBIDDEN` is the gate
+  family ("your write was refused; change actor/scope/consent"). A witness-door
+  refusal is categorically different — nothing was judged, the room is simply not
+  reachable through this door — so a client that retries with different credentials
+  is chasing the wrong remedy. `FACADE_CODE_OFF_RECORD_SESSION_DOOR` says "use the
+  session handle".
 
 - **D1 — stale-route refusal reuses `OffRecordOverlayLeaseClosed`.** The blueprint
   pins error.rs at exactly TWO new variants and describes the stale-route refusal as
@@ -91,12 +140,39 @@ helpers) · tests.
   defect. Not this lane's to fix; flagged for the wave so a verify leg does not
   mis-attribute it. Everything this segment touches is green.
 
+## Cheap gate — seg 1
+
+`cargo fmt --check` clean; `cargo clippy --all-targets --all-features` clean;
+`cargo clippy --all-targets --features sync` clean (K6's assert is sync-gated);
+`cargo test -p oneiron --all-features`: **3157 passed / 0 failed**. The seg-0
+rotating tracing-subscriber flake did not recur this run — it remains a
+pre-existing parallel-load class charged to no lane (see seg-0 note above).
+
 ## Next-step INTENT
 
-After seg-0 cheap gate + commit: seg 1 opens with batch.rs K4
-(`BaseWriteOrigin` / `apply_ops_with_origin` / in-txn decode-point taint guard),
-because facade `witness_into_session` and the oracle arming both sit downstream of
-the session apply entry.
+Seg 1 landed the three surfaces that had no dependency on the session apply
+entry: K4 (batch.rs), K7 (facade door), K6 (embed rule). Everything remaining is
+downstream of `apply_ops_session`, so seg 2 opens there:
+
+1. `SessionOverlay::alloc_session_short_id` + the session short-id namespace
+   (overlay `ShortIds`/`ShortIdsReverse` only; base `sid_counter:` untouched).
+   `plan_short_id_update`/`apply_short_id_plan` (batch.rs ~4507/~4580) are the
+   base shape to mirror — content hash is `xxh32(data, 0) % 256`.
+2. `apply_ops_session(view, route, ...)` + op-loop write-target parameterization.
+   The op loop touches 16 of the 28 accessors (`store.entities` ×15,
+   `store.edges_out` ×11, `edges_in` ×9, `phonetic_index` ×7 … full census in the
+   seg-2 notes); each becomes target-parameterized against `SessionStoreView`.
+   `route.revalidate()` runs before staging; batch.rs never reads a route field.
+   The op-loop `mark_pending_embedding` call (batch.rs, CLAIM arm) SKIPS for the
+   overlay target (K6: skip, not redirect — no overlay `pe:` keyspace exists).
+3. Then store.rs extract-parameterized writers, and only then facade
+   `witness_into_session` (which needs 1+2) and the oracle arming (which needs 3).
+
+Watch item for seg 2: the same door-partition question D5 settled for K4 will
+recur for `apply_ops_session` — the session path must NOT re-run
+`guard_off_record_entity_put`, which rejects live-overlay membership and would
+refuse the session's own witness writes. The session path never enters the base
+apply, so this is a structural consequence of that separation, not an extra guard.
 
 Seg-0 leaves the route/journal/rearm surfaces `dead_code`-warning-free but
 UNCONSUMED by design — `SessionWriteRoute`, `JournalRole`'s six variants,
