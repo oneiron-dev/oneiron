@@ -206,3 +206,78 @@ Gates after the pass: `cargo check -p oneiron --all-features --lib` clean;
 clippy clean for this diff (the pre-existing `identity_topology/tests.rs:4203`
 redundant-clone on the base is unchanged); `cargo test -p oneiron --all-features
 --lib lens::tests` green (43 passed, 0 failed).
+
+## VERDICT-FIX (on 3976d45)
+
+The verdict leg adjudicated four finder items: two REAL and fixed here, two
+rejected with derivations and deliberately not relitigated — state-schema
+conformance is banked to ONE-1438 (layer 2 on this same stack), and the worklog
+file's presence in the diff is accepted wave convention, not a packet violation.
+
+### F-A — lifecycle-terminality (`lens.rs`, both v2 wire structs)
+
+`GeneratedUiRenderWire` and `GeneratedUiDataModelWire` both carried
+`#[serde(default)]` on `lifecycle`, so a v2 payload that omitted the field parsed
+as `Active`/rev 0. That silently heals a terminal `Archived` card back to live at
+a `deny_unknown_fields` boundary — the one place the schema is supposed to be
+closed — and it departed from the keystone skeleton, which pins `default` on
+`actions` and `$state` but not on `lifecycle`.
+
+Both defaults are removed: an incomplete v2 payload is now rejected at parse.
+`impl Default for GeneratedUiCardLifecycle` went with them — those two attributes
+were its only callers, and it was the mechanism by which "absent means active"
+could reappear. `GeneratedUiCardLifecycle::initial()` remains the explicit,
+named way to mint a fresh lifecycle.
+
+Three hand-written fixtures in `lens/tests.rs` that predate the v2 field were
+synced additively (`"lifecycle": { "phase": "active", "revision": 0 }`) so they
+keep failing for the reason they assert — unsupported wire version, zero
+`nodeCount` — rather than for a missing lifecycle. No assertion was touched.
+
+### F-B — lifecycle-invariant-bypass (`lens.rs`, both `validate()`s)
+
+`GeneratedUiRender::validate` and `GeneratedUiDataModel::validate` never called
+`self.lifecycle.validate()`. With `pub` fields and an `interactive()` constructor
+that accepted any lifecycle, the engine could serialize shapes its own
+deserializer rejects: `Active` + `Some(reason)` emits `archiveReason`, `Archived`
++ `None` omits it, and both fail the reader's `Self::new` in the lifecycle
+`Deserialize`. One line each closes the asymmetry at the chokepoint — the two
+validators every construction and decode path already funnels through — rather
+than at any individual call site.
+
+### Mutation verification
+
+New test `lens::tests::card_lifecycle_is_required_on_the_wire_and_gated_at_validate`.
+It archives a real card, then checks four independent things; each was mutated
+back to the pre-fix code in isolation and the corresponding assertion was
+confirmed to fail:
+
+| Mutation | Assertion that fires |
+|---|---|
+| `#[serde(default)]` restored on `GeneratedUiRenderWire::lifecycle` | archived render with `lifecycle` stripped parses (as `Active`/rev 0) instead of erroring |
+| `#[serde(default)]` restored on `GeneratedUiDataModelWire::lifecycle` | archived data model with `lifecycle` stripped parses instead of erroring |
+| `self.lifecycle.validate()?` removed from `GeneratedUiRender::validate` | render carrying `Active`+`Some(Expired)` validates |
+| `self.lifecycle.validate()?` removed from `GeneratedUiDataModel::validate` | data model carrying `Archived`+`None` validates |
+
+The forged-lifecycle half builds struct literals directly rather than going
+through `interactive()`/`from_value`, so it isolates the `validate()` door
+instead of re-testing the lifecycle `Deserialize` that already rejected those
+shapes.
+
+### Gates
+
+- `rustfmt --edition 2024 --check` on both touched sources — clean.
+- `cargo clippy -p oneiron --lib --all-features --all-targets` — clean for this
+  diff. The same pre-existing `-D clippy::redundant-clone` at
+  `identity_topology/tests.rs:4203` is the only error, and
+  `git log origin/main..HEAD -- <that file>` is empty: inherited from main, not
+  this branch.
+- `cargo test -p oneiron --lib lens` — 47 passed, 0 failed (was 46).
+- `cargo test -p oneiron --lib` — 3032 passed, 0 failed, 17 ignored.
+
+### Known holes / follow-ons
+
+- `cargo fmt -p oneiron --check` is red on `crates/oneiron/src/surface_event/tests.rs:733`
+  (one over-long `assert_eq!` from ONE-1795 / PR #589). Untouched by this lane and
+  `git log origin/main..HEAD` on that file is empty, so it is inherited from main.
+  Charged to no lane; needs a main-side fmt sweep.

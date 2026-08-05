@@ -1229,7 +1229,8 @@ fn generated_ui_rejects_unknown_segment_and_raw_media_url_shapes() {
                 "dataModel": {
                     "root": "root",
                     "nodeCount": 1,
-                    "catalog": "lens_atom_kit"
+                    "catalog": "lens_atom_kit",
+                    "lifecycle": { "phase": "active", "revision": 0 }
                 }
             }
         }),
@@ -1260,7 +1261,8 @@ fn generated_ui_rejects_unknown_segment_and_raw_media_url_shapes() {
                 "dataModel": {
                     "root": "root",
                     "nodeCount": 0,
-                    "catalog": "lens_atom_kit"
+                    "catalog": "lens_atom_kit",
+                    "lifecycle": { "phase": "active", "revision": 0 }
                 }
             }
         }),
@@ -1274,7 +1276,8 @@ fn generated_ui_rejects_unknown_segment_and_raw_media_url_shapes() {
     let zero_node_data_model = json!({
         "root": "root",
         "nodeCount": 0,
-        "catalog": "lens_atom_kit"
+        "catalog": "lens_atom_kit",
+        "lifecycle": { "phase": "active", "revision": 0 }
     });
     assert!(
         serde_json::from_value::<GeneratedUiDataModel>(zero_node_data_model).is_err(),
@@ -2910,6 +2913,88 @@ fn card_lifecycle_transition_table() -> Result<()> {
         GeneratedUiRender::from_segments(&segments)?,
         responded_render
     );
+
+    Ok(())
+}
+
+#[test]
+fn card_lifecycle_is_required_on_the_wire_and_gated_at_validate() -> Result<()> {
+    use GeneratedUiArchiveReason::{Dismissed, Expired};
+    use GeneratedUiCardPhase::{Active, Archived, Responded};
+
+    let render = remind_card()?.render()?;
+    let archived_lifecycle = render
+        .lifecycle
+        .transition(Responded, None)?
+        .transition(Archived, Some(Dismissed))?;
+    let archived = GeneratedUiRender::interactive(
+        render.card_id.clone(),
+        render.catalog,
+        render.root.clone(),
+        render.nodes.clone(),
+        render.actions.clone(),
+        render.state,
+        archived_lifecycle.clone(),
+    )?;
+    let data_model = |lifecycle: GeneratedUiCardLifecycle| GeneratedUiDataModel {
+        root: archived.root.clone(),
+        node_count: archived.nodes.len(),
+        catalog: archived.catalog,
+        actions: archived.actions.clone(),
+        state: archived.state.clone(),
+        lifecycle,
+    };
+    let without_lifecycle = |value: &serde_json::Value| {
+        let mut object = value
+            .as_object()
+            .expect("v2 payloads encode as objects")
+            .clone();
+        object
+            .remove("lifecycle")
+            .expect("lifecycle rides the v2 wire");
+        serde_json::Value::Object(object)
+    };
+
+    // An archived card whose lifecycle is missing must be rejected at parse. Healing it
+    // to active/rev 0 would resurrect a terminal card at a closed-schema boundary.
+    let encoded_render = serde_json::to_value(&archived).expect("render encodes");
+    assert_eq!(encoded_render["lifecycle"]["phase"], json!("archived"));
+    assert!(
+        serde_json::from_value::<GeneratedUiRender>(without_lifecycle(&encoded_render)).is_err(),
+        "a render without a lifecycle must not parse as active/rev 0"
+    );
+    let encoded_model =
+        serde_json::to_value(data_model(archived_lifecycle)).expect("data model encodes");
+    assert!(
+        serde_json::from_value::<GeneratedUiDataModel>(without_lifecycle(&encoded_model)).is_err(),
+        "a data model without a lifecycle must not parse as active/rev 0"
+    );
+
+    // The engine may not emit lifecycles its own reader rejects: both halves of the
+    // phase/reason invariant are gated at validate, not only at parse.
+    for smuggled in [
+        GeneratedUiCardLifecycle {
+            phase: Active,
+            revision: 1,
+            archive_reason: Some(Expired),
+        },
+        GeneratedUiCardLifecycle {
+            phase: Archived,
+            revision: 1,
+            archive_reason: None,
+        },
+    ] {
+        let mut forged_render = archived.clone();
+        forged_render.lifecycle = smuggled.clone();
+        assert!(
+            forged_render.validate().is_err(),
+            "render validate must gate the lifecycle phase/reason invariant"
+        );
+        assert!(
+            data_model(smuggled).validate().is_err(),
+            "data model validate must gate the lifecycle phase/reason invariant"
+        );
+    }
 
     Ok(())
 }

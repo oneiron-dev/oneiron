@@ -1008,12 +1008,6 @@ impl GeneratedUiCardLifecycle {
     }
 }
 
-impl Default for GeneratedUiCardLifecycle {
-    fn default() -> Self {
-        Self::initial()
-    }
-}
-
 impl<'de> Deserialize<'de> for GeneratedUiCardLifecycle {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -1692,6 +1686,7 @@ impl GeneratedUiRender {
                 self.protocol_version
             )));
         }
+        self.lifecycle.validate()?;
         validate_lens_collection_len("generated-ui flat nodes", self.nodes.len())?;
         if self.nodes.is_empty() {
             return Err(Error::InvalidConfig(
@@ -1839,7 +1834,6 @@ impl<'de> Deserialize<'de> for GeneratedUiRender {
             actions: Vec<GeneratedUiActionDeclaration>,
             #[serde(rename = "$state", default)]
             state: GeneratedUiStateSnapshot,
-            #[serde(default)]
             lifecycle: GeneratedUiCardLifecycle,
         }
 
@@ -2086,6 +2080,7 @@ pub struct GeneratedUiDataModel {
 
 impl GeneratedUiDataModel {
     fn validate(&self) -> Result<()> {
+        self.lifecycle.validate()?;
         validate_generated_ui_node_count("generated-ui data model node count", self.node_count)?;
         validate_lens_collection_len("generated-ui action declarations", self.actions.len())?;
         for declaration in &self.actions {
@@ -2110,7 +2105,6 @@ impl<'de> Deserialize<'de> for GeneratedUiDataModel {
             actions: Vec<GeneratedUiActionDeclaration>,
             #[serde(rename = "$state", default)]
             state: GeneratedUiStateSnapshot,
-            #[serde(default)]
             lifecycle: GeneratedUiCardLifecycle,
         }
 
