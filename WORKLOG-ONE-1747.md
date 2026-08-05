@@ -130,3 +130,88 @@ amendment-out-of-scope, bad amended body).
 - [x] recon of identity_topology.rs / receipt.rs / error.rs / oracle
 - [x] flat branch cut
 - [ ] impl (in progress)
+
+## seg0 (cont.) — impl complete, cheap gate GREEN
+
+### Boot state found
+Prior segment left ~818 uncommitted lines mid-impl (lib compiled clean; oracle
+untouched). Committed as WIP `e31facd` FIRST to protect the work, then continued.
+
+### Defects found + fixed in the inherited impl
+
+1. **`source` field leak (REAL, oracle-caught).** The new `proposal_outcome`
+   projector wrote `fields["source"]` — but `source` is one of the SIX
+   ARCH-0056 Δ names `ms05_delta_field_is_reserved_opaque_not_built`
+   forbids. Fixed by minting `FIELD_CLAIM_SOURCE = "claim_source"`; the
+   claim-source axis is real and unrelated, so it gets its own unambiguous
+   key rather than squatting on the reserved one. **Verified the NEG test
+   BITES:** temporarily reverted the fix → test failed with
+   `receipt must not project the ARCH-0056 Δ field "source" yet`; restored.
+2. **Missing `lib.rs` re-exports.** `ProposalRuling`/`ProposalOutcome`/
+   `ProposalScope`/`proposal_outcome_*`/`encode|decode_identity_op_amendment`
+   were `pub` in-module but never re-exported, so the oracle (an integration
+   test, `oneiron::` paths only) could not reach them at all.
+
+### Oracle arming (`tests/merge_split_oracle.rs`)
+
+- 3 × `#[ignore = "armed by ONE-1747"]` removed; **all three green**.
+- Local `ProposalRuling`/`ProposalOutcome` stand-ins DELETED → real
+  `oneiron::` types. Vocabularies identical, so every assert binds unchanged.
+- 4 seam stubs → real APIs; handles `u64` → `EntityId`.
+- `receipt_delta_payload` → `proposal_outcome_amended_body` (per blueprint
+  L62: BOTH payload asserts bind the amended bytes, not the reserved Δ slot).
+- Receipts read back through the PUBLIC `ReceiptQuery` surface, so the
+  oracle also witnesses the "queryable by kind" done-means on every assert.
+- **Fixture adaptation (arming, NOT weakening):** placeholder payloads
+  (`b"narrow-to-work-claims"`, `[0x00,0xFF,0x13,0x37,0x00]`) → real encoded
+  amended bodies, because the ratified amendment-scope pin requires the body
+  to decode to the same op kind with a subject subset — arbitrary bytes are
+  precisely what `AmendmentOutOfScope` must reject. Asserts keep their shape;
+  the NEG test additionally now asserts its fixture is genuinely non-UTF-8,
+  so "byte-exact round-trip" still proves opacity.
+- **ms06 re-armed:** `ms06_streak_offers_standing_grant_never_auto_grants`
+  (and the other three ms06 tests) now bind the REAL `ProposalOutcome`;
+  stays `#[ignore = "armed by ONE-1748"]`, zero asserts touched.
+- **Arming-discipline audit:** ignore census main vs branch — exactly the
+  three 1747 entries removed, 1744/1745/1746/1748/1749 all unchanged.
+  Assert count 68 → 73 (added only). GOV-1606's zone not crossed.
+
+### Unit tests added (`identity_topology/tests.rs`, 7 new, all green)
+
+Cover the done-means the oracle does not reach: amended body applies (not the
+original) + ledger records the applied form · amendment-scope NEG (wrong kind /
+unnamed subject / malformed bytes) each fail-closed with the park left OPEN ·
+reject = zero effects + park retired (re-resolve errors typed, either ruling) ·
+non-proposal + absent + non-effective-ruling rejections · ramp-scope tuple
+stamped on all three outcomes + Δ slot always empty · queryable by kind and
+outcome + the two type-76 receipt kinds do not bleed · amendment codec
+round-trip + unarmed-kind and trailing-byte refusal.
+Seeds 0x73–0x8C, all outside `PINNED_ID_BYTES` (seed-band law).
+
+### Cheap gate
+
+- `cargo fmt --all -- --check` clean.
+- `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` clean.
+- `cargo test -p oneiron --all-features`: **3157 passed / 0 failed** (lib run
+  twice back-to-back, both clean).
+- One FLAKE observed on a full-suite run:
+  `attempt_queue::tests::attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields`.
+  Charged to NO lane: it lives in a module this ticket never touches, passes
+  in isolation and in two full lib runs on this branch, and clean main
+  (probe worktree at `main`) also ran 3150/0. Load-dependent tracing-capture
+  interaction, pre-existing. Flake-guard law applied.
+
+### Status
+- [x] blueprint + CLAIMS read end to end
+- [x] recon
+- [x] flat branch cut
+- [x] impl (resolution door, amendment codec + scope pin, outcome receipt)
+- [x] oracle armed (3 ms05 green; ms06 re-armed, still ignored)
+- [x] unit tests
+- [x] cheap gate green (fmt · clippy -D warnings · full suite)
+- [ ] NOT PUSHED — workers never push; orchestrator owns the gh stack.
+
+### Packet check
+`error.rs`, `identity_topology.rs` (+tests), `lib.rs`, `receipt.rs`,
+`tests/merge_split_oracle.rs` — all within the ticket's claim slice.
+`Cargo.lock` NOT committed. No `git add -A` used.
