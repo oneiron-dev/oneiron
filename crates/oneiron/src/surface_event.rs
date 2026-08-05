@@ -498,7 +498,8 @@ impl SurfaceEventHandoffState {
         match state {
             AttemptState::Queued => Self::Queued,
             AttemptState::Leased => Self::Leased,
-            AttemptState::Paused => Self::Paused,
+            // A deferred retry is not runnable-now, same as a pause.
+            AttemptState::Scheduled | AttemptState::Paused => Self::Paused,
             AttemptState::Completed => Self::Completed,
             AttemptState::Failed => Self::Failed,
             AttemptState::Cancelled => Self::Cancelled,

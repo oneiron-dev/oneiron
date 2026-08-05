@@ -593,6 +593,138 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
 }
 
 #[test]
+fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, AttemptState};
+    use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x6E);
+    put_connector_task_actor(&vault, actor, 200)?;
+    vault.register_connector_key(&entity(0x70), sends_per_day_key(5))?;
+    vault
+        .memory_facade(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&connector_task_draft(
+            "attempt-row-retry:test",
+            "session:attempt-row-retry",
+            200,
+        ))
+        .expect("schedule outbound");
+    let tasks = vault.connector_send_tasks()?;
+    assert_eq!(tasks.len(), 1);
+    let task_ref = tasks[0].task_ref;
+
+    let queue = AttemptQueue::new(&vault);
+    let scheduled = queue
+        .list()?
+        .into_iter()
+        .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
+        .collect::<Vec<_>>();
+    assert_eq!(scheduled.len(), 1);
+    let first_attempt = scheduled[0].id;
+
+    // With no granting manifest the default gate floors this send to Pending,
+    // so the dispatch is Held: retryable, never terminal, and never sent.
+    let mut executor = RecordingExecutor::default();
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 201)
+            .unwrap(),
+        0
+    );
+    assert_eq!(executor.calls.len(), 0);
+
+    // One TASK, two ATTEMPT rows: the try that ran is terminal history and the
+    // next try is a distinct scheduled row linked back to it.
+    assert_eq!(vault.connector_send_tasks()?.len(), 1);
+    let attempts = queue
+        .list()?
+        .into_iter()
+        .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 2);
+    let source = attempts
+        .iter()
+        .find(|attempt| attempt.id == first_attempt)
+        .expect("source try stays point-readable");
+    assert_eq!(source.state, AttemptState::Failed);
+    assert_eq!(source.retry_of, None);
+    let retry = attempts
+        .iter()
+        .find(|attempt| attempt.id != first_attempt)
+        .expect("fresh retry row");
+    assert_eq!(retry.state, AttemptState::Scheduled);
+    assert_eq!(retry.retry_of, Some(first_attempt));
+    assert_eq!(retry.scheduled_at, Some(202));
+    assert_eq!(retry.attempt_count, 0);
+    assert_eq!(retry.payload, source.payload);
+    assert_eq!(retry.task_ref, source.task_ref);
+
+    // The scheduled retry is not claimable before its instant, so the executor
+    // loop terminates instead of spinning on the same task.
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 201)
+            .unwrap(),
+        0
+    );
+    assert_eq!(executor.calls.len(), 0);
+
+    // At the scheduled instant the fresh row runs against the now-granting
+    // manifest, and the ONE logical send is charged exactly once.
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x6F),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    executor.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:attempt-row:ok");
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 202)
+            .unwrap(),
+        1
+    );
+    assert_eq!(executor.calls.len(), 1);
+    assert_eq!(
+        vault
+            .effector_budget_read("email", None)?
+            .expect("budget after the retry")
+            .rows[0]
+            .used,
+        1
+    );
+
+    assert_eq!(vault.connector_send_tasks()?.len(), 1);
+    assert_eq!(
+        vault
+            .connector_send_task(&task_ref)?
+            .expect("task after delivery")
+            .outcome,
+        Some(ConnectorSendTaskOutcome::Delivered)
+    );
+    let final_attempts = queue
+        .list()?
+        .into_iter()
+        .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
+        .collect::<Vec<_>>();
+    assert_eq!(final_attempts.len(), 2);
+    assert_eq!(
+        final_attempts
+            .iter()
+            .filter(|attempt| attempt.state == AttemptState::Completed)
+            .count(),
+        1
+    );
+    assert_eq!(
+        final_attempts
+            .iter()
+            .filter(|attempt| attempt.state == AttemptState::Failed)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
 fn logical_send_is_charged_once_across_fresh_retry_attempts() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
     use crate::facade::BRIDGE_OUTBOUND_ATTEMPT_KIND;

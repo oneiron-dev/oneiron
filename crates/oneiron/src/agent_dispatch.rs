@@ -537,9 +537,12 @@ impl<'a> AgentDispatcher<'a> {
         }
 
         let intervention_kind = match record.state {
-            AttemptState::Queued | AttemptState::Paused | AttemptState::Cancelled => {
-                AttemptInterventionKind::Cancel
-            }
+            // A scheduled child has not started: kill it the same way a queued
+            // one is killed.
+            AttemptState::Queued
+            | AttemptState::Paused
+            | AttemptState::Cancelled
+            | AttemptState::Scheduled => AttemptInterventionKind::Cancel,
             AttemptState::Leased => AttemptInterventionKind::Interrupt,
             AttemptState::Completed | AttemptState::Failed => {
                 return Ok(KillOutcome::AlreadyTerminal);

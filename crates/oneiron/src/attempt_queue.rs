@@ -65,6 +65,8 @@ const ERR_DEDUPE_KIND_MISMATCH: &str = "dedupe index points at a different attem
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
 const ERR_LEASE_TIMEOUT_ZERO: &str = "lease timeout must be > 0";
 const RETRY_REASON_LEASE_TIMEOUT: &str = "lease_timeout";
+/// Stable reason stamped on a retried source row when the caller supplied none.
+const RETRY_REASON_UNSPECIFIED: &str = "retry";
 const ATTEMPT_QUEUE_RETRY_REASON_COUNT: usize = 2;
 static ATTEMPT_QUEUE_CLEANUP_RUNS: AtomicU64 = AtomicU64::new(0);
 static ATTEMPT_QUEUE_CLEANUP_STALE_REQUEUED: AtomicU64 = AtomicU64::new(0);
@@ -135,6 +137,12 @@ pub enum AttemptState {
     Completed,
     Failed,
     Cancelled,
+    // Append-only: persisted unit-enum variants are encoded by index, so a new
+    // variant may only be added AFTER every existing one. Reordering would
+    // silently re-map already-written rows.
+    /// Minted by [`AttemptQueue::retry`]: a fresh try waiting for its
+    /// `scheduled_at` instant. Claimable only once `now >= scheduled_at`.
+    Scheduled,
 }
 
 impl AttemptState {
@@ -146,11 +154,22 @@ impl AttemptState {
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
+            Self::Scheduled => "scheduled",
         }
     }
 
+    /// True while the row can still reach a terminal state, so it still owns
+    /// its advisory dedupe entry.
     const fn is_pending(self) -> bool {
-        matches!(self, Self::Queued | Self::Leased | Self::Paused)
+        matches!(
+            self,
+            Self::Queued | Self::Leased | Self::Paused | Self::Scheduled
+        )
+    }
+
+    /// True for the two states a ready-index row may legitimately sit in.
+    const fn is_ready_indexed(self) -> bool {
+        matches!(self, Self::Queued | Self::Scheduled)
     }
 }
 
@@ -250,6 +269,10 @@ impl ManifestEntry {
 }
 
 /// Durable attempt row stored in LMDB.
+///
+/// One synced TASK owns N node-local ATTEMPT rows. A retry never mutates a
+/// failed try back into a ready one: it finalizes the source and mints a fresh
+/// row linked by [`AttemptRecord::retry_of`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttemptRecord {
     pub id: AttemptId,
@@ -257,9 +280,19 @@ pub struct AttemptRecord {
     pub payload: Vec<u8>,
     pub state: AttemptState,
     pub lease_owner: Option<String>,
+    /// Lease-generation fence WITHIN this one try. It does not count logical
+    /// retries — those are separate rows.
     pub attempt_count: u32,
     #[serde(default)]
     pub claimed_at: Option<u64>,
+    /// Instant a [`AttemptState::Scheduled`] row becomes claimable.
+    #[serde(default)]
+    pub scheduled_at: Option<u64>,
+    /// The try this row retries, when it was minted by [`AttemptQueue::retry`].
+    #[serde(default)]
+    pub retry_of: Option<AttemptId>,
+    /// Legacy read compatibility only. Rows written before ONE-1795 carry their
+    /// readiness instant here; new retry rows use `scheduled_at`.
     #[serde(default)]
     pub backoff_until: Option<u64>,
     #[serde(default)]
@@ -357,19 +390,21 @@ pub enum FailOutcome {
     AlreadyFailed(AttemptRecord),
 }
 
-/// Input for returning a leased attempt to the ready index after a retryable
-/// attempt.
+/// Input for finalizing a leased attempt and scheduling its next try.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetryAttempt {
     pub id: AttemptId,
     pub lease_owner: String,
     pub attempt_count: u32,
+    /// Field spelling is retained for source compatibility; it becomes the new
+    /// row's `scheduled_at`.
     pub backoff_until: u64,
     pub last_error: Option<String>,
     pub now: u64,
 }
 
-/// Typed retry outcome.
+/// Typed retry outcome, carrying the newly scheduled try (not the finalized
+/// source, which stays point-readable by its own id).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RetryOutcome {
@@ -634,6 +669,8 @@ impl<'a> AttemptQueue<'a> {
             lease_owner: None,
             attempt_count: 0,
             claimed_at: None,
+            scheduled_at: None,
+            retry_of: None,
             backoff_until: None,
             last_error: None,
             task_ref,
@@ -730,7 +767,7 @@ impl<'a> AttemptQueue<'a> {
                 continue;
             };
             let record = decode_record(&raw_record, id)?;
-            if record.state != AttemptState::Queued {
+            if !record.state.is_ready_indexed() {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
             }
@@ -798,7 +835,7 @@ impl<'a> AttemptQueue<'a> {
                 continue;
             };
             let record = decode_record(&raw_record, id)?;
-            if record.state != AttemptState::Queued {
+            if !record.state.is_ready_indexed() {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
             }
@@ -858,7 +895,7 @@ impl<'a> AttemptQueue<'a> {
                 return Ok(ClaimKindWriteAttempt::Retry);
             };
             let mut record = decode_record(&raw_record, id)?;
-            if record.state != AttemptState::Queued
+            if !record.state.is_ready_indexed()
                 || ready_at(&record) > input.now
                 || record.kind != kind
             {
@@ -866,17 +903,7 @@ impl<'a> AttemptQueue<'a> {
                 wtxn.commit()?;
                 return Ok(ClaimKindWriteAttempt::Retry);
             }
-            record.state = AttemptState::Leased;
-            record.lease_owner = Some(input.lease_owner.clone());
-            record.attempt_count = record
-                .attempt_count
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("attempt lease count"))?;
-            if record.claimed_at.is_none() {
-                record.claimed_at = Some(input.now);
-            }
-            record.backoff_until = None;
-            record.updated_at = input.now;
+            lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
             claimed = Some((candidate.ready_key.clone(), id, record));
         }
 
@@ -958,7 +985,7 @@ impl<'a> AttemptQueue<'a> {
                 continue;
             };
             let mut record = decode_record(&raw_record, id)?;
-            if record.state != AttemptState::Queued {
+            if !record.state.is_ready_indexed() {
                 stale_ready_keys.push(key.to_vec());
                 continue;
             }
@@ -978,17 +1005,7 @@ impl<'a> AttemptQueue<'a> {
                 }
                 continue;
             }
-            record.state = AttemptState::Leased;
-            record.lease_owner = Some(input.lease_owner.clone());
-            record.attempt_count = record
-                .attempt_count
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("attempt lease count"))?;
-            if record.claimed_at.is_none() {
-                record.claimed_at = Some(input.now);
-            }
-            record.backoff_until = None;
-            record.updated_at = input.now;
+            lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
             claimed = Some((key.to_vec(), id, record));
             break;
         }
@@ -1121,43 +1138,97 @@ impl<'a> AttemptQueue<'a> {
         }
     }
 
-    /// Requeues a leased attempt with explicit backoff state after a retryable
-    /// attempt. The original payload, run id, and advisory dedupe key stay on
-    /// the same durable row.
+    /// Retries a leased attempt by finalizing it and minting a fresh try.
+    ///
+    /// The leased source row becomes terminally [`AttemptState::Failed`] and is
+    /// never claimable again; it stays point-readable for per-try receipts and
+    /// forensics. A new row copies the immutable payload/provenance, links back
+    /// through `retry_of`, and waits in [`AttemptState::Scheduled`] until
+    /// `scheduled_at`. Both rows plus every index move commit as one LMDB
+    /// transaction, so a fault before commit leaves neither a half-finalized
+    /// source nor an orphan retry.
     pub fn retry(&self, input: RetryAttempt) -> Result<RetryOutcome> {
         let mut wtxn = self.store.env.write_txn()?;
         let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
         };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Leased => {
-                validate_lease_owner(&input.lease_owner)?;
-                validate_transition_lease(
-                    &record,
-                    &input.lease_owner,
-                    input.attempt_count,
-                    "retry",
-                )?;
-                validate_optional_failure_reason(input.last_error.as_deref())?;
-                record.state = AttemptState::Queued;
-                record.lease_owner = None;
-                record.backoff_until = Some(input.backoff_until);
-                record.last_error = input.last_error;
-                record.updated_at = input.now;
-                let encoded = encode_record(&record)?;
-                self.store
-                    .attempt_records
-                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-                let ready_key = ready_key(ready_at(&record), record.id);
-                self.store
-                    .attempt_ready
-                    .put(&mut wtxn, &ready_key, record.id.as_bytes())?;
-                wtxn.commit()?;
-                Ok(RetryOutcome::Retried(record))
-            }
-            state => Err(invalid_transition("retry", state.as_str())),
+        let mut source = decode_record(&raw_record, input.id)?;
+        if source.state != AttemptState::Leased {
+            return Err(invalid_transition("retry", source.state.as_str()));
         }
+        validate_lease_owner(&input.lease_owner)?;
+        validate_transition_lease(&source, &input.lease_owner, input.attempt_count, "retry")?;
+        validate_optional_failure_reason(input.last_error.as_deref())?;
+
+        let next = AttemptRecord {
+            id: AttemptId::now(),
+            kind: source.kind.clone(),
+            payload: source.payload.clone(),
+            state: AttemptState::Scheduled,
+            lease_owner: None,
+            attempt_count: 0,
+            claimed_at: None,
+            scheduled_at: Some(input.backoff_until),
+            retry_of: Some(source.id),
+            backoff_until: None,
+            last_error: None,
+            task_ref: source.task_ref.clone(),
+            run_id: source.run_id.clone(),
+            dedupe_key: source.dedupe_key.clone(),
+            created_at: input.now,
+            updated_at: input.now,
+            events: Vec::new(),
+            // A retry is a NEW attempt: its attribution manifest starts empty,
+            // the finalized source keeps the prior try's.
+            manifest: Vec::new(),
+        };
+
+        // A `Failed` row must carry a reason, so an omitted retry cause
+        // normalizes to a stable non-empty token rather than failing the call.
+        source.state = AttemptState::Failed;
+        source.lease_owner = None;
+        source.scheduled_at = None;
+        source.backoff_until = None;
+        source.last_error = Some(
+            input
+                .last_error
+                .unwrap_or_else(|| RETRY_REASON_UNSPECIFIED.to_owned()),
+        );
+        source.updated_at = input.now;
+
+        let encoded_source = encode_record(&source)?;
+        self.store
+            .attempt_records
+            .put(&mut wtxn, source.id.as_bytes(), &encoded_source)?;
+        let encoded_next = encode_record(&next)?;
+        self.store
+            .attempt_records
+            .put(&mut wtxn, next.id.as_bytes(), &encoded_next)?;
+
+        // The source was leased, so it holds no ready entry to retire; only the
+        // new row enters the ready index, at its own scheduled instant.
+        let ready_key = ready_key(ready_at(&next), next.id);
+        self.store
+            .attempt_ready
+            .put(&mut wtxn, &ready_key, next.id.as_bytes())?;
+        self.store.put_attempt_run_index_in_txn(
+            &mut wtxn,
+            next.run_id.as_deref(),
+            next.id.as_bytes(),
+        )?;
+
+        // Only the newest pending member of a dedupe chain owns the advisory
+        // index, so the entry moves off the now-terminal source.
+        self.delete_dedupe_entry_for_record(&mut wtxn, &source)?;
+        if let Some(dedupe_key) = next.dedupe_key.as_deref() {
+            let index_key = dedupe_index_key(&next.kind, dedupe_key);
+            self.store
+                .attempt_dedupe
+                .put(&mut wtxn, &index_key[..], next.id.as_bytes())?;
+        }
+
+        wtxn.commit()?;
+        Ok(RetryOutcome::Retried(next))
     }
 
     /// Applies a durable operator intervention to an attempt row. Pause removes a
@@ -1186,7 +1257,10 @@ impl<'a> AttemptQueue<'a> {
 
         let effect = match input.kind {
             AttemptInterventionKind::Interrupt => match record.state {
-                AttemptState::Queued | AttemptState::Leased | AttemptState::Paused => {
+                AttemptState::Queued
+                | AttemptState::Leased
+                | AttemptState::Paused
+                | AttemptState::Scheduled => {
                     append_attempt_event(
                         &mut record,
                         input.kind,
@@ -1201,7 +1275,9 @@ impl<'a> AttemptQueue<'a> {
             },
             AttemptInterventionKind::Pause => match record.state {
                 AttemptState::Paused => AttemptInterventionEffect::AlreadyPaused,
-                AttemptState::Queued => {
+                // A paused row keeps its readiness instant so resume can restore
+                // the exact schedule instead of pulling the try forward.
+                AttemptState::Queued | AttemptState::Scheduled => {
                     self.delete_ready_entry_for_record(wtxn, &record)?;
                     append_attempt_event(
                         &mut record,
@@ -1227,7 +1303,13 @@ impl<'a> AttemptQueue<'a> {
                         input.note,
                         input.now,
                     )?;
-                    record.state = AttemptState::Queued;
+                    // Restoring a still-deferred row as Queued would render it
+                    // as runnable-now on every read surface; keep it honest.
+                    record.state = if record.scheduled_at.is_some() {
+                        AttemptState::Scheduled
+                    } else {
+                        AttemptState::Queued
+                    };
                     record.lease_owner = None;
                     record.updated_at = input.now;
                     let ready_key = ready_key(ready_at(&record), record.id);
@@ -1236,14 +1318,14 @@ impl<'a> AttemptQueue<'a> {
                         .put(wtxn, &ready_key, record.id.as_bytes())?;
                     AttemptInterventionEffect::Resumed
                 }
-                AttemptState::Queued | AttemptState::Leased => {
+                AttemptState::Queued | AttemptState::Leased | AttemptState::Scheduled => {
                     AttemptInterventionEffect::AlreadyResumed
                 }
                 state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
             },
             AttemptInterventionKind::Cancel => match record.state {
                 AttemptState::Cancelled => AttemptInterventionEffect::AlreadyCancelled,
-                AttemptState::Queued | AttemptState::Paused => {
+                AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
                     self.delete_ready_entry_for_record(wtxn, &record)?;
                     append_attempt_event(
                         &mut record,
@@ -1254,6 +1336,7 @@ impl<'a> AttemptQueue<'a> {
                     )?;
                     record.state = AttemptState::Cancelled;
                     record.lease_owner = None;
+                    record.scheduled_at = None;
                     record.backoff_until = None;
                     record.last_error = None;
                     record.updated_at = input.now;
@@ -1334,15 +1417,9 @@ impl<'a> AttemptQueue<'a> {
             let id = AttemptId::from_bytes(&key)?;
             let record = decode_record(&raw_record, id)?;
             match record.state {
-                AttemptState::Queued => {
+                AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
                     report.pending += 1;
-                    if record.backoff_until.is_some() {
-                        report.increment_retry_reason(AttemptQueueRetryReason::RetryBackoff);
-                    }
-                }
-                AttemptState::Paused => {
-                    report.pending += 1;
-                    if record.backoff_until.is_some() {
+                    if waiting_on_backoff(&record) {
                         report.increment_retry_reason(AttemptQueueRetryReason::RetryBackoff);
                     }
                 }
@@ -1380,8 +1457,12 @@ impl<'a> AttemptQueue<'a> {
                     AttemptState::Leased
                         if lease_expired(&record, input.now, input.lease_timeout_secs) =>
                     {
+                        // A reclaimed lease resumes the SAME try — the row was
+                        // never finalized, so this is a lease-generation reset,
+                        // not a logical retry, and mints no new row.
                         record.state = AttemptState::Queued;
                         record.lease_owner = None;
+                        record.scheduled_at = None;
                         record.backoff_until = None;
                         record.last_error = Some(RETRY_REASON_LEASE_TIMEOUT.to_owned());
                         record.updated_at = input.now;
@@ -1403,17 +1484,10 @@ impl<'a> AttemptQueue<'a> {
                         report.increment_retry_reason(AttemptQueueRetryReason::LeaseTimeout);
                     }
                     AttemptState::Leased => {}
-                    AttemptState::Queued => {
+                    AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.pending += 1;
-                        if record.backoff_until.is_some() {
-                            report.increment_retry_reason(AttemptQueueRetryReason::RetryBackoff);
-                        }
-                    }
-                    AttemptState::Paused => {
-                        mark_rechecked_candidate_not_running(&mut report);
-                        report.pending += 1;
-                        if record.backoff_until.is_some() {
+                        if waiting_on_backoff(&record) {
                             report.increment_retry_reason(AttemptQueueRetryReason::RetryBackoff);
                         }
                     }
@@ -1458,6 +1532,31 @@ impl<'a> AttemptQueue<'a> {
             return Ok(None);
         };
         decode_record(&raw, id).map(Some)
+    }
+
+    /// Reads every row realizing one TASK inside a caller-owned write
+    /// transaction, in deterministic creation order.
+    ///
+    /// Membership is re-DERIVED, never re-read by id: [`Self::retry`] mints a
+    /// NEW row under the same `task_ref` and finalizes its source, so a caller
+    /// holding a pre-transaction id snapshot cannot reach the successor by
+    /// re-reading the ids it already knows.
+    pub(crate) fn list_task_in_write_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        task_ref: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let mut records = Vec::new();
+        for row in self.store.attempt_records.iter(wtxn)? {
+            let (key, raw_record) = row?;
+            let id = AttemptId::from_bytes(&key)?;
+            let record = decode_record(&raw_record, id)?;
+            if record.task_ref.as_deref() == Some(task_ref) {
+                records.push(record);
+            }
+        }
+        records.sort_by(attempt_record_order);
+        Ok(records)
     }
 
     /// Reads all persisted attempt rows in deterministic creation order.
@@ -1718,6 +1817,25 @@ fn validate_cleanup_leases_input(input: &CleanupAttemptLeases) -> Result<()> {
     Ok(())
 }
 
+/// Leases an admitted ready row in place. The readiness instant is consumed by
+/// the lease, so both spellings clear; `attempt_count` advances as this row's
+/// lease-generation fence.
+fn lease_claimed_record(record: &mut AttemptRecord, lease_owner: &str, now: u64) -> Result<()> {
+    record.state = AttemptState::Leased;
+    record.lease_owner = Some(lease_owner.to_owned());
+    record.attempt_count = record
+        .attempt_count
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("attempt lease count"))?;
+    if record.claimed_at.is_none() {
+        record.claimed_at = Some(now);
+    }
+    record.scheduled_at = None;
+    record.backoff_until = None;
+    record.updated_at = now;
+    Ok(())
+}
+
 fn validate_transition_lease(
     record: &AttemptRecord,
     lease_owner: &str,
@@ -1850,8 +1968,18 @@ fn legacy_dedupe_index_key(kind: &str, dedupe_key: &str) -> Vec<u8> {
     key
 }
 
+/// Readiness instant for a ready-indexed row. New rows carry `scheduled_at`;
+/// `backoff_until` is the pre-ONE-1795 spelling and stays readable so a legacy
+/// `Queued + backoff_until` row keeps its exact original readiness instant
+/// without a bulk rewrite.
 fn ready_at(record: &AttemptRecord) -> u64 {
-    record.backoff_until.unwrap_or(0)
+    record.scheduled_at.or(record.backoff_until).unwrap_or(0)
+}
+
+/// True when a pending row is waiting on a retry backoff, in either the new
+/// `scheduled_at` spelling or the legacy `backoff_until` one.
+fn waiting_on_backoff(record: &AttemptRecord) -> bool {
+    record.scheduled_at.is_some() || record.backoff_until.is_some()
 }
 
 fn lease_expired(record: &AttemptRecord, now: u64, lease_timeout_secs: u64) -> bool {
@@ -2000,7 +2128,7 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
                 "leased attempt must have a lease owner",
             ));
         }
-        AttemptState::Leased if record.backoff_until.is_some() => {
+        AttemptState::Leased if waiting_on_backoff(&record) => {
             return Err(Error::InvalidAttemptQueueRecord(
                 "leased attempt must not have backoff state",
             ));
@@ -2008,6 +2136,16 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
         AttemptState::Paused if record.lease_owner.is_some() => {
             return Err(Error::InvalidAttemptQueueRecord(
                 "paused attempt must not have a lease owner",
+            ));
+        }
+        AttemptState::Scheduled if record.lease_owner.is_some() => {
+            return Err(Error::InvalidAttemptQueueRecord(
+                "scheduled attempt must not have a lease owner",
+            ));
+        }
+        AttemptState::Scheduled if record.scheduled_at.is_none() => {
+            return Err(Error::InvalidAttemptQueueRecord(
+                "scheduled attempt must have a scheduled instant",
             ));
         }
         AttemptState::Completed | AttemptState::Failed | AttemptState::Cancelled
@@ -2018,7 +2156,7 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
             ));
         }
         AttemptState::Completed | AttemptState::Failed | AttemptState::Cancelled
-            if record.backoff_until.is_some() =>
+            if waiting_on_backoff(&record) =>
         {
             return Err(Error::InvalidAttemptQueueRecord(
                 "terminal attempt must not have backoff state",
@@ -2118,6 +2256,8 @@ mod one_1695_tests {
             lease_owner: None,
             attempt_count: 0,
             claimed_at: None,
+            scheduled_at: None,
+            retry_of: None,
             backoff_until: None,
             last_error: None,
             task_ref: task_ref.map(str::to_owned),
