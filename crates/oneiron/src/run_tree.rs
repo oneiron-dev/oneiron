@@ -46,6 +46,11 @@ pub struct RunTreeNode {
 }
 
 /// Surface lifecycle status.
+///
+/// A waiting [`AttemptState::Scheduled`] try maps onto the existing `Paused`
+/// token — deferred, not eligible to run now — which the Context Board already
+/// projects as `TaskBoardStatus::Scheduled`. No readiness field or new variant
+/// is added here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunTreeStatus {
@@ -239,6 +244,7 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
             AttemptState::Queued
             | AttemptState::Leased
             | AttemptState::Paused
+            | AttemptState::Scheduled
             | AttemptState::Completed
             | AttemptState::Cancelled => None,
         },
@@ -313,6 +319,13 @@ struct AttemptMetadata {
 }
 
 fn attempt_metadata(record: &AttemptRecord) -> AttemptMetadata {
+    // A retry's parent is the try it replaces — an explicit row link that
+    // outranks the Dreamer payload's spawn lineage, so a retried try renders as
+    // a child of the failed one rather than as a second root.
+    let retry_parent = record
+        .retry_of
+        .map(|source| bytes_to_hex_lower(source.as_bytes()));
+
     if record.kind == DREAMER_RUNNER_ATTEMPT_KIND {
         // Tolerant read (extends the inner-input tolerance below to the OUTER
         // envelope): a malformed dreamer payload — reachable via the public
@@ -322,7 +335,7 @@ fn attempt_metadata(record: &AttemptRecord) -> AttemptMetadata {
         // tasks.
         let Ok(payload) = decode_dreamer_attempt_payload(&record.payload) else {
             return AttemptMetadata {
-                parent_id: None,
+                parent_id: retry_parent,
                 worker_kind: record.kind.clone(),
                 agent_id: None,
             };
@@ -338,16 +351,18 @@ fn attempt_metadata(record: &AttemptRecord) -> AttemptMetadata {
             None
         };
         return AttemptMetadata {
-            parent_id: payload
-                .parent_attempt
-                .map(|parent| bytes_to_hex_lower(parent.as_bytes())),
+            parent_id: retry_parent.or_else(|| {
+                payload
+                    .parent_attempt
+                    .map(|parent| bytes_to_hex_lower(parent.as_bytes()))
+            }),
             worker_kind: payload.attempt_type,
             agent_id,
         };
     }
 
     AttemptMetadata {
-        parent_id: None,
+        parent_id: retry_parent,
         worker_kind: record.kind.clone(),
         agent_id: None,
     }
@@ -423,7 +438,9 @@ fn lifecycle_event(sequence: u64, at: u64, kind: RunTreeEventKind) -> RunTreeEve
 
 fn status_event_kind(state: AttemptState) -> Option<RunTreeEventKind> {
     match state {
-        AttemptState::Queued => None,
+        // A scheduled try has not run yet; `Created` is its only lifecycle
+        // event, exactly as for a queued one.
+        AttemptState::Queued | AttemptState::Scheduled => None,
         AttemptState::Leased => Some(RunTreeEventKind::Claimed),
         AttemptState::Paused => Some(RunTreeEventKind::Paused),
         AttemptState::Completed => Some(RunTreeEventKind::Completed),
@@ -437,7 +454,9 @@ impl From<AttemptState> for RunTreeStatus {
         match state {
             AttemptState::Queued => Self::Queued,
             AttemptState::Leased => Self::Running,
-            AttemptState::Paused => Self::Paused,
+            // Deferred until its scheduled instant: the same "not eligible to
+            // run now" axis the board already renders as Scheduled.
+            AttemptState::Paused | AttemptState::Scheduled => Self::Paused,
             AttemptState::Completed => Self::Completed,
             AttemptState::Failed => Self::Failed,
             AttemptState::Cancelled => Self::Cancelled,

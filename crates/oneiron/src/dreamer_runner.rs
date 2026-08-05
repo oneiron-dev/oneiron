@@ -1458,7 +1458,9 @@ impl<'a> DreamerRunnerStore<'a> {
         match (status.attempt.state, update.state) {
             (AttemptState::Completed, DreamerAttemptProgressState::Done)
             | (AttemptState::Failed, DreamerAttemptProgressState::Failed)
-            | (AttemptState::Queued | AttemptState::Leased, _) => {}
+            // A scheduled try is pre-lease, exactly like a queued one: live
+            // progress keeps flowing on the existing queued/deferred path.
+            | (AttemptState::Queued | AttemptState::Leased | AttemptState::Scheduled, _) => {}
             (
                 AttemptState::Paused
                 | AttemptState::Completed

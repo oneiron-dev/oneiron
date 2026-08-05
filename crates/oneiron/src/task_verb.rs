@@ -529,16 +529,21 @@ impl MemoryFacade<'_> {
                     ));
                 }
 
+                // A `Scheduled` retry is live work waiting on its instant: it
+                // cancels exactly like a queued one. Omitting it would report
+                // the task terminal off its failed source row while the next
+                // try still ran and sent.
                 let terminal_status = terminal_attempt_status(&live_attempts);
-                if !live_attempts.iter().any(|(_, attempt_state)| {
-                    matches!(attempt_state, AttemptState::Queued | AttemptState::Paused)
-                }) {
+                if !live_attempts
+                    .iter()
+                    .any(|(_, attempt_state)| is_cancelable_attempt_state(*attempt_state))
+                {
                     return Ok((decision_ref, decision.outcome(), false, terminal_status));
                 }
 
                 let mut cancelled_count = 0usize;
                 for (attempt_id, attempt_state) in &live_attempts {
-                    if !matches!(attempt_state, AttemptState::Queued | AttemptState::Paused) {
+                    if !is_cancelable_attempt_state(*attempt_state) {
                         continue;
                     }
                     let outcome = queue.intervene_in_txn(
@@ -1138,6 +1143,14 @@ fn attempt_hex(attempt_id: AttemptId) -> String {
         write!(&mut out, "{byte:02x}").expect("fmt::Write for String is infallible");
     }
     out
+}
+
+/// Pre-lease states a task cancel can still stop in its own transaction.
+fn is_cancelable_attempt_state(state: AttemptState) -> bool {
+    matches!(
+        state,
+        AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled
+    )
 }
 
 fn terminal_attempt_status(attempts: &[(AttemptId, AttemptState)]) -> Option<RunTreeStatus> {
