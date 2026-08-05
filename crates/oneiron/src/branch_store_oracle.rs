@@ -394,13 +394,60 @@ mod seam {
 
         /// ONE-1726 test seam: drain leases and drop the overlay. ONE-1727
         /// adds SessionLocalReceiptLog outcome counts.
+        ///
+        /// The third slot is FLOOR SURVIVORS: the K1 crossings still readable
+        /// in base after the room evaporated — egress gate decisions
+        /// (`FloorWrites` op 1/3) plus the REDACTION_AUDIT receipts minted by
+        /// the legacy per-turn deletions (op 2/3). It is counted from BASE
+        /// after close, not from the close path's own report, because "kept"
+        /// is a claim about what SURVIVED, and a close that forgot to spare a
+        /// floor row would still have reported minting it.
         pub(super) fn close(self) -> Result<(usize, usize, usize)> {
-            let outcome = self.session.close()?;
+            let Self { session, vault, .. } = self;
+            let outcome = session.close()?;
+            let floor_receipts_kept =
+                vault.store.gate_decisions(1_000)?.len() + outcome.redaction_receipt_ids.len();
             Ok((
                 outcome.turns_deleted,
                 outcome.context_receipts_deleted + outcome.emit_receipts_deleted,
-                outcome.redaction_receipt_ids.len(),
+                floor_receipts_kept,
             ))
+        }
+
+        /// ONE-1728 (K1 op 1/3): make ONE durable floor crossing while the
+        /// room is live, through the only surface allowed to make one.
+        ///
+        /// Goes through `FloorWrites::append_egress_gate_decision` rather than
+        /// `Store::append_gate_decision_in_txn` directly: the done-means pins
+        /// the FLOOR path, and a probe that wrote the same row through the
+        /// store would prove a row survives close without proving the sealed
+        /// crossing is what put it there.
+        pub(super) fn append_floor_egress_decision(&self) -> Result<()> {
+            let record = crate::store::GateDecisionRecord {
+                version: 0,
+                decision_id: crate::store::GateDecisionId::now(),
+                created_at: 10,
+                outcome: "allow".to_owned(),
+                reason_codes: vec!["gate.policy_model.allow".to_owned()],
+                receipt_reasons: Vec::new(),
+                system_notices: Vec::new(),
+                actor_class: "agent".to_owned(),
+                actor_ref: Some("agent-alpha".to_owned()),
+                content_kind: "outbound_content".to_owned(),
+                policy_manifest_version: "test-policy".to_owned(),
+                // No grant_ref and no claim_id, so this crossing writes
+                // EXACTLY one `vault_meta` row — the census delta below names
+                // that one row rather than an unexplained bump.
+                claim_id: None,
+                grant_ref: None,
+                diff_handle: vec![0xA5],
+                read_frontier_hash: [0xB6; 32],
+                redacted_at: None,
+            };
+            self.vault.with_write_txn(|wtxn| {
+                crate::off_record::FloorWrites::new(&self.vault.store)
+                    .append_egress_gate_decision(wtxn, &record)
+            })
         }
 
         /// ONE-1730: promote exactly one turn; returns the replayed closure
@@ -1328,6 +1375,14 @@ fn direct_substrate_crash_evaporation_leaves_zero_base_residue() -> Result<()> {
 
 /// §4 master close test: transcript + context receipts deleted, floor
 /// receipts kept (RECEIPTS-FOLLOW-TRANSCRIPT).
+///
+/// Both halves of the contract run in ONE room, because they are one
+/// contract: close must delete the transcript AND spare the floor. A room
+/// with no floor crossing proves only that close deletes — a close that
+/// evaporated the floor along with everything else would pass it. So the
+/// room makes exactly one durable crossing (`FloorWrites`, K1 op 1/3)
+/// immediately before close, and the assertion is `floor_receipts_kept == 1`
+/// while the transcript and receipt counts continue to hold.
 #[test]
 fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -1338,17 +1393,38 @@ fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -
     let base_before = full_db_census(&vault)?;
     let (_turn, _msg, _summary) = session.witness_turn("close me")?;
     let _hits = session.search_text("close", 5)?;
+
+    // ONE floor crossing, last thing before close: the row is durable by
+    // design and is exactly what must NOT follow the transcript out.
+    let floor_before = vault.store.gate_decisions(1_000)?.len();
+    session.append_floor_egress_decision()?;
+    assert_eq!(
+        vault.store.gate_decisions(1_000)?.len(),
+        floor_before + 1,
+        "the crossing landed exactly one durable decision row"
+    );
+
     let (transcript_deleted, context_receipts_deleted, floor_receipts_kept) = session.close()?;
     assert_eq!(transcript_deleted, 3, "turn + message + summary evaporate");
     assert_eq!(
         context_receipts_deleted, 1,
         "the retrieval-run receipt follows"
     );
-    assert_eq!(floor_receipts_kept, 0, "no floor crossing happened here");
     assert_eq!(
-        full_db_census(&vault)?,
-        base_before,
-        "close leaves base exactly as it was before the room"
+        floor_receipts_kept, 1,
+        "the floor crossing SURVIVES the close that evaporated the room \
+         around it — receipts follow the transcript, floor rows do not"
+    );
+
+    // Base is the baseline PLUS exactly the floor row: one `vault_meta` row
+    // (this decision carries no grant_ref and no claim_id, so it writes no
+    // index rows). Everything the room itself wrote is gone.
+    let base_after = full_db_census(&vault)?;
+    let mut expected = base_before;
+    expected[11] += 1;
+    assert_eq!(
+        base_after, expected,
+        "close leaves base as it was before the room, plus the one floor row"
     );
     Ok(())
 }
