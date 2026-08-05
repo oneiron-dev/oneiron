@@ -246,3 +246,35 @@ RELAY-ONE-1606-fix-seg0
 
 RELAY-ONE-1606-fix-seg1 — all 12 fix-list items closed; ready for the
 FIX-verify leg.
+
+## ROUND-3 authority-closure receipt
+
+- **FIX13 — approve-once atomic delivery**
+  (`5f979d53dab75e2f834ab5b998d9a2f32efc29d7`): an approve-once marker now
+  has available/spent state and is consumed in the same write transaction as
+  the final production Allow. Policy denial, pending policy, and budget
+  exhaustion do not consume it; production and public evaluation both refuse
+  replay with `ConsentApproveOnceSpent`.
+- **FIX13 proof pin:**
+  `approve_once_not_atomic_is_closed_for_production_and_public_evaluation`.
+- **FIX14 — authenticated GenUI consent actors**
+  (`f76a5cc2cda34c8b86fd9823e8edeeae163a0e85`): consent-card evaluation now
+  requires the FIX2 `AuthenticatedOwner` handle created by store-backed
+  `Vault::authenticate_owner`. Caller-deserialized `SurfaceActor` strings and
+  `VoicePath` booleans cannot mint `ApprovedOnce` or `GrantMintIntent`; a
+  mismatched handle is a typed `ConsentUnauthenticatedActor` refusal.
+- **FIX14 proof pin:**
+  `principal_self_attestation_is_refused_and_store_authenticated_actor_succeeds`.
+  The FIX9 discriminator pin
+  `consent_actor_identity_pin_is_not_a_free_text_claim` also remains green and
+  now explicitly rejects an actor payload without the tagged `identity`
+  variant.
+- **Final gates:** `cargo fmt --all` clean;
+  `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` clean;
+  `cargo test -p oneiron --all-features` clean. The library binary discovered
+  3198 tests: **3174 passed, 0 failed, 24 ignored**; every integration and doc
+  test binary also completed with zero failures.
+
+RELAY-ONE-1606-round3-auth-chain — FIX13 and FIX14 closed together; authority
+is store-attested at both the approve-once spend boundary and the GenUI action
+door.
