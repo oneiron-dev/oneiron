@@ -540,7 +540,23 @@ fn external_effect_action_requirement(
     } else {
         effect.verb.trim()
     };
-    let envelope = crate::consent::ActionEnvelope::new([format!("verb:{verb_class}")]).ok()?;
+    // The envelope's selectors name the verb axis exactly as the legacy
+    // adapter mints it (`verb:<class>`), so a scope-matched grant's fold reads
+    // as containing the effect. The channel axis rides the TARGET pin instead
+    // of the selector set — the selectors must stay verb-shaped or a
+    // verb-class grant (selector `[verb:send]`) would fail subset-containment
+    // against a candidate that also names its channel. Target-pinning to the
+    // channel mirrors the `Channel` dial's target arm, so `Channel{email}`
+    // contains an email-send while a `BriefVerbClass{brief}` grant covers only
+    // its own brief; a verb-class grant with NO target pin covers both.
+    let mut envelope = crate::consent::ActionEnvelope::new([format!("verb:{verb_class}")]).ok()?;
+    let target = effect
+        .brief_ref
+        .as_deref()
+        .unwrap_or_else(|| effect.channel.trim());
+    if !target.is_empty() {
+        envelope = envelope.with_target(target).ok()?;
+    }
     crate::consent::GrantBound::action(
         crate::consent::ActorBound::new(actor_ref).ok()?,
         crate::consent::ActionClass::new(verb_class).ok()?,
@@ -3191,11 +3207,6 @@ pub(crate) fn evaluate_external_effect_policy(
     // honors revocation immediately, and an UNGRANTED irreversible effect is
     // the only one that enters the ask lane (invariant 1).
     let mut consent_grants = crate::consent::load_active_standing_grants(store, wtxn)?;
-    if let Some((_, grant)) = matched_grant.as_ref() {
-        consent_grants.push(crate::consent::StandingConsentGrant::Action(
-            crate::consent::action_grant_from_standing_outbound_grant(grant)?,
-        ));
-    }
     let provisional = hydrated_effect.gate_input(agent_definition_ceiling, None);
     let requirement = external_effect_action_requirement(&hydrated_effect);
     if let (Some(requirement), Some(effect_ctx)) =
@@ -3205,7 +3216,21 @@ pub(crate) fn evaluate_external_effect_policy(
             grant.budget.is_none()
                 && external_effect_grant_matches(grant, &provisional.actor, effect_ctx)
         });
-        if scoped_covers && let Ok(grant) = crate::consent::ActionGrant::new(requirement) {
+        if scoped_covers && let Ok(grant) = crate::consent::ActionGrant::new(requirement.clone()) {
+            consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+        }
+        // A scope-matched `StandingOutboundGrant` resolved on this txn — the
+        // matcher already enforced actor identity, channel/contact/verb-class
+        // scope, and ACTIVE status — is folded as remembered coverage by
+        // ECHOING the requirement as its covering grant. Dial vocabularies
+        // differ per scope kind (channel/contact/brief/scoped-MCP), so the
+        // adapter's normalized bound cannot be trusted to subset-match the
+        // requirement's verb-shaped selectors; the door's own four-axis match
+        // is the authority the echo records. Revocation is honored by the
+        // matcher upstream: a revoked row never reaches this arm.
+        if matched_grant.is_some()
+            && let Ok(grant) = crate::consent::ActionGrant::new(requirement)
+        {
             consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
         }
     }
