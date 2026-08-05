@@ -186,5 +186,115 @@ One full-package run went red on
 Charged to no lane per the flake guard. Candidate known-hole for the wave: serialize or
 `#[serial]`-gate the six `with_default` tests.
 
-NEXT: FIX-SESSION-DOORS order on this same branch (other seat). ⚠ Its brief also names "pipeline.rs
-missing segment arm" — that IS R2, already fixed in `b1021127`; do not double-fix.
+## FIX-SESSION-DOORS — session claim validation · failed-decode surface (seat Opus) — DONE
+
+Two commits on top of the ROUTE leg's tip `23ac997d`, one per fix-order, each carrying its own
+TEST-MUTATION receipt in the commit message:
+
+| commit | order | shape |
+|---|---|---|
+| `c57b62d7` | S1 (P2) | the session write door validates CLAIM bodies |
+| `ea40544a` | S2 (P2) | the oracle's ScopedRead census surfaces an undecodable body |
+
+Files touched: `crates/oneiron/src/batch.rs`, `crates/oneiron/src/batch/tests.rs`,
+`crates/oneiron/src/branch_store_oracle.rs`.
+
+⚠ The brief's third item, "pipeline.rs missing segment arm", is **R2**, already fixed in
+`b1021127`. Confirmed against the diff and NOT double-fixed.
+
+### S1 — the session door judged the type byte, never the body
+
+`apply_ops_session`'s Put arm ran `validate_public_entity_type` and went straight to
+`stage_entity_body_row`; `validate_claim_body_and_decode` never ran. A session CLAIM put with a
+malformed body staged into the overlay, was journaled, and read back through the room's composed
+view. Promote replays that same op through `apply_ops` → `apply_put`, whose D18 arm
+(`batch.rs:3191`) does validate — so the write was fail-closed at PROMOTE and
+wrong-but-evaporating in-room: the room showed its caller a claim that could never land, and the
+refusal arrived a whole session later attached to promote rather than to the write that was wrong.
+
+The arm now runs the full validator before the first staged byte, under **the op's OWN
+`allow_reserved_predicate`** — the same field `apply_put` reads off the same op at promote, so
+in-room admission is byte-exactly promote's admission. Hardcoding `false` would instead refuse
+in-room a body promote WOULD accept: the same divergence facing the other way.
+
+**Red baseline**: the new test's case 1 panicked at `expect_err` — apply returned `Ok`, the
+malformed body staged.
+
+**Mutations** (test: `batch::tests::session_apply_validates_claim_bodies_before_staging`; three
+cases — undecodable bytes / calendar claim with an EDGE subject / calendar claim with an integer
+`tz` value; each asserts `InvalidClaimBody` AND an empty overlay snapshot + empty journal):
+
+1. **M1 arm absent** (the pre-fix shape) → fails on case 1. Guard+call are load-bearing.
+2. **M2 result discarded** (`let _ = validate(..)`) → fails on case 1. The `?` PROPAGATION is
+   load-bearing, not merely the presence of the call.
+3. **M3 `decode_claim_body` substituted** for `validate_claim_body_and_decode` → case 1 PASSES,
+   case 2 FAILS. The family structural chain — including the calendar arm restored by the CAL leg
+   in `24251f18` — is load-bearing, not just the decode. This is the discrimination that makes it
+   the right validator rather than a cheaper one, and it ties the two legs together: the session
+   door now enforces the same fourteen-arm chain the base door does.
+
+### S2 — the census swallow was real in SHAPE, unreachable in FACT
+
+Ordered fix applied: `scoped_read_visible_claim_count`'s
+`let Ok(body) = decode_claim_body(..) else { continue }` became a propagating `?`.
+
+**But the finding's undercount trace does not hold on this codebase, and the change is a
+dead-branch removal rather than a behavior change.** Owning the grep: `ScopedRead::get` →
+`get_entity_parts` → `is_claim_raw_readable_in` → `is_claim_raw_readable_with_policy_in` already
+runs `decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?` at `claim.rs:515` — the SAME
+bytes, the SAME permissive flag — and propagates. A body that reaches the helper has therefore
+already decoded once, so the second decode cannot fail. The one adjacent case, a row of exactly
+header length, is a deleted shell, which `get` reports as `None` and the loop's other arm handles.
+
+**Receipt for the unreachability claim itself**: the new test PASSES on the unmutated pre-fix tree.
+Recorded rather than quietly dropped — a test that would be green anyway is precisely what a
+mutation pass exists to expose.
+
+**Two-level mutation** (upstream `claim.rs:515` rewritten to
+`let Ok(body) = .. else { return Ok(true) }`, making `get` hand back an undecodable body):
+
+- **WITH the fix** → PASSES: the census still refuses.
+- **WITHOUT the fix** → FAILS, returning `1`: the census silently dropped the unreadable row and
+  reported a number it could not justify. Qodo-2's scenario exactly — reachable only once the
+  upstream contract goes lenient.
+
+That pair is what makes the change load-bearing: it is the guard that keeps the census honest if
+`get`'s fail-closed decode is ever relaxed. The reasoning is in the code comment, so the next
+reader does not re-litigate a branch that looks dead without knowing why it is safe.
+
+The test (`branch_store_oracle::scoped_read_claim_census_surfaces_an_undecodable_body`) plants
+rows through a new `plant_raw_claim_row` helper that bypasses every write door — after S1 that is
+the only way left to get an invalid claim body into the store. It asserts a **positive control
+first** (a legal planted claim counts 1), so the refusal cannot pass vacuously on an empty
+enumeration.
+
+### Gates
+
+- `cargo fmt --all -- --check` → clean (exit 0), both commits.
+- `cargo test -p oneiron --lib` → per-commit cheap gate: 2880 then 2881 passed, 0 failed
+  (2879 inherited + 2 new tests).
+- `cargo test -p oneiron` (full package, all targets) → **exit 0**, 33 test-result-ok blocks,
+  lib 2881 passed / 0 failed.
+- `cargo clippy -p oneiron --all-targets --all-features` → the SAME 2 errors both prior legs
+  recorded, both in `crates/oneiron/src/secret_custody/tests.rs`
+  (`field-reassign-with-default`, `items-after-statements`), plus 3 warnings all in that same
+  file. **BASE-RED, L1-SECRET packet**, untouched by this diff. Re-run with only those two lints
+  allowed: zero findings anywhere in this diff.
+
+### Flake, re-attributed and charged to no lane
+
+One full-package run went red on
+`attempt_queue::tests::attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields`
+("cleanup span records=[]") — the SAME test, same shape, the ROUTE leg documented. Flake guard
+applied: the `attempt_queue` module alone → 40 passed / 0 failed; the immediately following full
+lib run → 2881 passed / 0 failed; the final full-package run → exit 0. Two earlier full lib runs
+in this leg were green. This diff touches no `attempt_queue` code, no tracing setup, and installs
+no subscriber.
+
+**Second independent occurrence across two legs** — the ROUTE leg's known-hole candidate
+(serialize or `#[serial]`-gate the six `tracing::subscriber::with_default` tests) is now
+corroborated, not a one-off. Recommend banking it.
+
+NEXT: Cluster A union verdict is COMPLETE on this branch — CAL (`24251f18`), ROUTE R1-R4
+(`ab8bf9d9`, `b1021127`, `1aadaf1b`, `e5752b5c`), SESSION-DOORS S1-S2 (`c57b62d7`, `ea40544a`).
+Orchestrator publishes + merges above main tip `59a430183` after CY. Workers never push.
