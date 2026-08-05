@@ -209,6 +209,59 @@ fn consent_lifetime_types_share_one_receipt_enum_owner_only_standing() {
             .kind(),
         ErrorKind::ConsentOwnerNotAuthenticated
     );
+    // FIX-2: the third-party person used for the cross-actor and merge arms.
+    let third_party = entity(0x63);
+    vault
+        .put_entity(&third_party, ENTITY_TYPE_PERSON, at(1), 1, b"not owner")
+        .expect("put third-party person");
+    // A hex principal_ref binding to ANOTHER actor is cross-actor substitution.
+    assert_eq!(
+        vault
+            .authenticate_owner(
+                owner.actor(),
+                third_party.to_hex().as_str(),
+                true,
+                GateDecisionId::now(),
+            )
+            .expect_err("principal binds to a different actor")
+            .kind(),
+        ErrorKind::ConsentOwnerNotAuthenticated
+    );
+    // A merged-away PERSON shell is registry-inactive, not an owner.
+    let survivor = entity(0x64);
+    vault
+        .put_entity(&survivor, ENTITY_TYPE_PERSON, at(1), 1, b"survivor")
+        .expect("put survivor");
+    let write = crate::identity_topology::IdentityOpWrite {
+        source: crate::claim::ClaimSource::Inferred,
+        approval: crate::claim::ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        actor: None,
+    };
+    vault
+        .apply_identity_topology_op(
+            &crate::identity_topology::IdentityTopologyOp::Merge(
+                crate::identity_topology::MergeOp {
+                    sources: vec![third_party],
+                    survivor,
+                    evidence: crate::identity_topology::IdentityOpEvidence {
+                        refs: Vec::new(),
+                        rationale: "fixture merge".to_owned(),
+                    },
+                    survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+                },
+            ),
+            &write,
+            200,
+        )
+        .expect("apply merge");
+    assert_eq!(
+        vault
+            .authenticate_owner(third_party, "principal:evil", true, GateDecisionId::now())
+            .expect_err("merged shell is registry-inactive")
+            .kind(),
+        ErrorKind::ConsentOwnerNotAuthenticated
+    );
 
     // Approve-and-stop-asking flips exactly ONE row to auto under the SAME
     // owner stamp, and that row is registry-revocable.

@@ -2154,19 +2154,29 @@ fn render_selectors(envelope: &BoundEnvelope) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 impl Vault {
-    /// Produces an [`AuthenticatedOwner`] from the two independent checks that
-    /// DEC-0006 requires: the store-truth human-actor check AND the GenUI
-    /// principal-authentication result.
+    /// Produces an [`AuthenticatedOwner`] from the independent checks DEC-0006
+    /// requires: the store-truth human-actor check, the GenUI
+    /// principal-authentication result, the entity's REGISTRY-ACTIVE state,
+    /// and the principal↔actor binding.
     ///
     /// This is the ONLY constructor of [`AuthenticatedOwner`]. A guard, a
     /// preference, a claim, or a transcript line cannot reach it, so
     /// "owner-only minting" is an engine check rather than a UI promise.
     ///
+    /// The registry-active assertion is load-bearing: a PERSON row that has
+    /// been merged or split away is a redirect shell, not an owner — an
+    /// `AuthenticatedOwner` minted on it would stamp grants on a dead
+    /// identity. [`ActorBound::new`] then verifies the principal ref normalizes
+    /// to a non-empty reference; and a hex principal ref must decode to THIS
+    /// actor, so the ref that authenticated is the actor the grant lands for
+    /// (no cross-actor principal substitution).
+    ///
     /// # Errors
     ///
     /// Returns [`Error::ConsentOwnerNotAuthenticated`] when the principal did
-    /// not authenticate, or when the named actor is not a store-truth human
-    /// entity.
+    /// not authenticate, the principal ref normalizes empty, the named actor
+    /// is not a store-truth human entity, the entity is registry-inactive
+    /// (merged / split shell), or a hex principal ref binds to another actor.
     pub fn authenticate_owner(
         &self,
         actor: EntityId,
@@ -2181,9 +2191,38 @@ impl Vault {
         }
         let principal_ref = normalized_ref("principal_ref", principal_ref.to_owned())
             .map_err(|_| Error::ConsentOwnerNotAuthenticated("principal_ref is empty"))?;
+        // The ActorBound constructor is the lane's principal-shape check: an
+        // unusable principal ref is a rejected authentication, not a stamped
+        // grant on a malformed subject.
+        ActorBound::new(principal_ref.as_str())
+            .map_err(|_| Error::ConsentOwnerNotAuthenticated("principal_ref is unusable"))?;
         if !self.is_store_truth_human_actor(&actor)? {
             return Err(Error::ConsentOwnerNotAuthenticated(
                 "actor is not a store-truth human entity",
+            ));
+        }
+        // Registry-active: a merged or split shell is a redirect, not an
+        // owner. The topology fold fails closed.
+        match self
+            .entity_lifecycle_state(&actor)
+            .map_err(|_| Error::ConsentOwnerNotAuthenticated("actor lifecycle is unreadable"))?
+        {
+            crate::identity_topology::EntityLifecycleState::Active => {}
+            crate::identity_topology::EntityLifecycleState::Merged
+            | crate::identity_topology::EntityLifecycleState::Split => {
+                return Err(Error::ConsentOwnerNotAuthenticated(
+                    "actor is registry-inactive (merged/split shell), not an owner",
+                ));
+            }
+        }
+        // A hex principal ref is an entity reference: it must decode to THIS
+        // actor, or the authenticated principal and the minted grant would
+        // name different actors.
+        if let Ok(principal_id) = EntityId::from_hex(principal_ref.as_str())
+            && principal_id != actor
+        {
+            return Err(Error::ConsentOwnerNotAuthenticated(
+                "principal_ref binds to a different actor entity",
             ));
         }
         Ok(AuthenticatedOwner {
