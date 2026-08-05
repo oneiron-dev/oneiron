@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::access_grant::{AccessGrant, AccessGrantScope, decode_access_grant_body};
+use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::companion::{
     ENTITY_TYPE_COMPANION_REGISTER,
@@ -70,6 +71,12 @@ const FIELD_INTENT_REF: &str = "intent_ref";
 pub const FIELD_TASK_REF: &str = "task_ref";
 /// Durable proof that the connector execution sink was reached successfully.
 pub const FIELD_TRANSPORT_DISPATCHED: &str = "transport_dispatched";
+/// ARCH-0053 §2 pack manifest: the `skill_id@version` rows the attempt loaded,
+/// as a canonical JSON array string.
+pub const FIELD_MANIFEST_SKILLS: &str = "manifest.skills";
+/// ARCH-0053 §2 pack manifest: the `actor.*` claim rows the attempt loaded, as
+/// a canonical JSON array string.
+pub const FIELD_MANIFEST_ACTOR_CLAIMS: &str = "manifest.actor_claims";
 const FIELD_PARENT_REF: &str = "parent_ref";
 const FIELD_COUNTERPARTY_REF: &str = "counterparty_ref";
 const FIELD_IDENTITY_REF: &str = "identity_ref";
@@ -501,6 +508,52 @@ pub fn eiri_memory_board_state_ref(board: &EiriMemoryBoard) -> Result<String> {
     ))
 }
 
+/// Projects an attempt's accumulated PACK MANIFEST into receipt fields
+/// (ARCH-0053 §2 — the manifest is the attribution hinge).
+///
+/// This is a field-set on the RS1 shared spine, NOT a new receipt kind and
+/// NOT a new store: the terminal receipt of an attempt carries what the pack
+/// actually loaded, so an outcome can be attributed to a skill or an actor
+/// without re-deriving the pack. Both keys are always stamped, so an absent
+/// key means "this receipt predates the manifest" while an empty array means
+/// "the pack loaded nothing of that kind".
+///
+/// Order is the manifest's append order — never sorted, never deduped: the
+/// append-only sequence IS the evidence.
+pub fn append_pack_manifest_fields(
+    receipt: &mut ReceiptRecord,
+    manifest: &[ManifestEntry],
+) -> Result<()> {
+    let skills = manifest_wire_forms(manifest, ManifestKind::Skill);
+    let actor_claims = manifest_wire_forms(manifest, ManifestKind::ActorClaim);
+    receipt.fields.insert(
+        FIELD_MANIFEST_SKILLS.to_owned(),
+        encode_wire_forms(&skills)?,
+    );
+    receipt.fields.insert(
+        FIELD_MANIFEST_ACTOR_CLAIMS.to_owned(),
+        encode_wire_forms(&actor_claims)?,
+    );
+    Ok(())
+}
+
+fn manifest_wire_forms(manifest: &[ManifestEntry], kind: ManifestKind) -> Vec<String> {
+    manifest
+        .iter()
+        .filter(|entry| entry.kind == kind)
+        .map(ManifestEntry::wire_form)
+        .collect()
+}
+
+fn encode_wire_forms(entries: &[String]) -> Result<String> {
+    serde_json::to_string(entries)
+        .map_err(|_| Error::InvariantViolation("pack manifest field encode failed"))
+}
+
+fn decode_wire_forms(raw: &str) -> Option<Vec<String>> {
+    serde_json::from_str(raw).ok()
+}
+
 /// Attaches the OF-369 context field-set to an emit-adjacent receipt.
 ///
 /// Non-emit receipts never carry emit context; attaching to one is rejected
@@ -520,6 +573,25 @@ pub fn append_context_receipt_fields(
 }
 
 impl ReceiptRecord {
+    /// Reads the ARCH-0053 §2 pack manifest recorded on this receipt: the
+    /// `skill_id@version` rows the attempt's pack loaded, in append order.
+    ///
+    /// Returns `None` on receipts stamped before the field-set existed —
+    /// distinct from `Some(vec![])`, which records a pack that loaded no
+    /// skills. The values are read from the recorded field alone, never
+    /// recomputed from the live attempt row (record-not-replay).
+    #[must_use]
+    pub fn pack_manifest_skills(&self) -> Option<Vec<String>> {
+        decode_wire_forms(self.fields.get(FIELD_MANIFEST_SKILLS)?)
+    }
+
+    /// Reads the ARCH-0053 §2 pack manifest's `actor.*` claim rows. Same
+    /// absent-versus-empty contract as [`Self::pack_manifest_skills`].
+    #[must_use]
+    pub fn pack_manifest_actor_claims(&self) -> Option<Vec<String>> {
+        decode_wire_forms(self.fields.get(FIELD_MANIFEST_ACTOR_CLAIMS)?)
+    }
+
     /// Reads the OF-369 context field-set recorded on this receipt.
     ///
     /// Returns `None` on non-emit receipt kinds and on emit receipts that

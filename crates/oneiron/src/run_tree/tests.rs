@@ -542,6 +542,7 @@ fn dreamer_record(
         created_at,
         updated_at: created_at,
         events: Vec::new(),
+        manifest: Vec::new(),
     })
 }
 

@@ -22,12 +22,14 @@
 
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
-    HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
-    LocalDirSkillHubAdapter, Result, ScanCompleteness, ScanRiskLevel, ScanVerdict,
-    SkillCapabilitySurface, SkillContentHash, SkillGovernance, SkillLifecycle, SkillRecord,
-    SkillScanReceipt, TimeRange, Vault, VaultConfig, canonical_skill_tree_hash,
-    cross_check_declared_content_hash,
+    AttemptQueue, AttemptRecord, ClaimApprovalStatus, ClaimAttempt, ClaimBody,
+    ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject, CompleteAttempt,
+    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, EntityId, HubDependencyResolution, HubFile,
+    HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy, LocalDirSkillHubAdapter,
+    ManifestEntry, ManifestKind, ReceiptKind, ReceiptRecord, Result, ScanCompleteness,
+    ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillContentHash, SkillGovernance,
+    SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
+    append_pack_manifest_fields, canonical_skill_tree_hash, cross_check_declared_content_hash,
 };
 use rmpv::Value;
 
@@ -716,12 +718,110 @@ fn sk03_provider_audit_verdicts_are_independent_rows_signal_not_gate() -> Result
 /// entries, and the terminal receipt carries the FULL accumulated
 /// manifest. Earlier entries never mutate or disappear.
 #[test]
-#[ignore = "armed by ONE-1737: attempt-alive pack manifest on the effect-spine receipts (needs ES-02+ES-03)"]
 fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
-    // ARM(ONE-1737): start an attempt with a tier-1 pack (index only),
-    // pull one tier-2 body mid-run ("oracle.skill.pdf@3"), then close the
-    // attempt; capture the manifest after each of the three moments.
-    let manifest_snapshots: Vec<Vec<String>> = Vec::new();
+    // ARMED (ONE-1737): an attempt starts with a tier-1 pack (index only),
+    // pulls one tier-2 body mid-run ("oracle.skill.pdf@3"), then closes; the
+    // manifest is captured after each of the three moments. The TERMINAL
+    // snapshot is read back off the receipt's projected field-set, not off
+    // the attempt row — the contract is that the RECEIPT carries the full
+    // accumulated manifest.
+    let (_tmp, vault) = temp_vault();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(attempt) = queue
+        .enqueue(EnqueueAttempt {
+            kind: "oracle.attempt".to_owned(),
+            payload: Vec::new(),
+            dedupe_key: None,
+            run_id: None,
+            now: 10,
+        })
+        .expect("enqueue attempt")
+    else {
+        panic!("a fresh dedupe-free enqueue is never Existing");
+    };
+
+    let wire_forms = |record: &AttemptRecord| -> Vec<String> {
+        record
+            .manifest()
+            .iter()
+            .map(ManifestEntry::wire_form)
+            .collect()
+    };
+
+    // t0 — tier-1 index resident for the whole run.
+    let at_t0 = queue
+        .append_manifest_entry(
+            attempt.id,
+            ManifestEntry::new(ManifestKind::Skill, "oracle.skill.index", "1", 11),
+        )
+        .expect("tier-1 index appends at t0");
+
+    // Mid-run — the attempt is leased and a step matches, pulling a tier-2
+    // body. The pull is stamped WHEN it happens, not at close.
+    let ClaimOutcome::Claimed(leased) = queue
+        .claim(ClaimAttempt {
+            lease_owner: "oracle-worker".to_owned(),
+            now: 12,
+        })
+        .expect("claim the queued attempt")
+    else {
+        panic!("the enqueued attempt is claimable");
+    };
+    let at_mid = queue
+        .append_manifest_entry(
+            attempt.id,
+            ManifestEntry::new(ManifestKind::Skill, "oracle.skill.pdf", "3", 13),
+        )
+        .expect("tier-2 body appends mid-run");
+
+    // Terminal — close the attempt and project its accumulated manifest into
+    // the terminal receipt.
+    let CompleteOutcome::Completed(closed) = queue
+        .complete(CompleteAttempt {
+            id: attempt.id,
+            lease_owner: "oracle-worker".to_owned(),
+            attempt_count: leased.attempt_count,
+            now: 14,
+        })
+        .expect("complete the leased attempt")
+    else {
+        panic!("a leased attempt completes exactly once");
+    };
+    let mut receipt = ReceiptRecord {
+        receipt_id: format!("attempt:{}", attempt.id.as_bytes()[0]),
+        receipt_kind: ReceiptKind::Outbound,
+        occurred_at: 14,
+        actor: Some("oracle-actor".to_owned()),
+        on_behalf_of: None,
+        outcome: "completed".to_owned(),
+        job_ref: None,
+        trigger_ref: None,
+        policy_trace: Vec::new(),
+        fields: std::collections::BTreeMap::new(),
+    };
+    append_pack_manifest_fields(&mut receipt, closed.manifest())
+        .expect("terminal receipt carries the accumulated manifest");
+
+    // The manifest door refuses a terminal attempt: append-only is not a
+    // convention here, it is enforced at the write door.
+    assert!(
+        queue
+            .append_manifest_entry(
+                attempt.id,
+                ManifestEntry::new(ManifestKind::Skill, "oracle.skill.late", "9", 15),
+            )
+            .is_err(),
+        "a closed attempt's manifest is the evidence its receipt already projected"
+    );
+
+    let manifest_snapshots: Vec<Vec<String>> = vec![
+        wire_forms(&at_t0),
+        wire_forms(&at_mid),
+        receipt
+            .pack_manifest_skills()
+            .expect("the terminal receipt stamped the manifest field"),
+    ];
 
     assert_eq!(
         manifest_snapshots.len(),

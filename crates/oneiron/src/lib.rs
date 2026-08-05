@@ -158,7 +158,8 @@ pub use crate::attempt_queue::{
     AttemptQueueCleanupMetricsSnapshot, AttemptQueueCleanupReport, AttemptQueueRetryReason,
     AttemptQueueRetryReasonCount, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
     CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
-    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, RetryAttempt, RetryOutcome,
+    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, MAX_ATTEMPT_MANIFEST_ENTRIES,
+    ManifestEntry, ManifestKind, RetryAttempt, RetryOutcome,
     attempt_queue_cleanup_metrics_snapshot,
 };
 pub use crate::authority::{
@@ -707,12 +708,13 @@ pub use crate::psych_profile::{
     decode_psych_profile_body, encode_psych_profile_body,
 };
 pub use crate::receipt::{
-    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection, FIELD_TASK_REF,
-    FIELD_TRANSPORT_DISPATCHED, GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery,
-    ReceiptKind, ReceiptProjectionIntent, ReceiptProjectionRun, ReceiptQuery, ReceiptRecord,
-    ReceiptView, SessionLocalReceiptLog, SessionReceiptClose, StandingOutboundGrantLensRow,
-    StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery,
-    append_context_receipt_fields, eiri_memory_board_state_ref, outbound_intent_receipt,
+    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection,
+    FIELD_MANIFEST_ACTOR_CLAIMS, FIELD_MANIFEST_SKILLS, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED,
+    GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent,
+    ReceiptProjectionRun, ReceiptQuery, ReceiptRecord, ReceiptView, SessionLocalReceiptLog,
+    SessionReceiptClose, StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction,
+    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, append_context_receipt_fields,
+    append_pack_manifest_fields, eiri_memory_board_state_ref, outbound_intent_receipt,
     project_receipts_by_brief, project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use crate::recovery::{
