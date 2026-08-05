@@ -22,12 +22,16 @@
 
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
+    AttemptOutcome, AttemptQueue, AttemptRecord, AttributionVerdict, ClaimApprovalStatus,
+    ClaimAttempt, ClaimBody, ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject,
+    CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, EntityId,
     HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
-    LocalDirSkillHubAdapter, Result, ScanCompleteness, ScanRiskLevel, ScanVerdict,
-    SkillCapabilitySurface, SkillContentHash, SkillGovernance, SkillLifecycle, SkillRecord,
-    SkillScanReceipt, TimeRange, Vault, VaultConfig, canonical_skill_tree_hash,
-    cross_check_declared_content_hash,
+    LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptQuery, Result,
+    ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillContentHash,
+    SkillEditProposal, SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange,
+    Vault, VaultConfig, attempt_pack_receipt_id, canonical_skill_tree_hash,
+    cross_check_declared_content_hash, pending_edit_proposals, record_attribution_evidence,
+    run_attribution_projector,
 };
 use rmpv::Value;
 
@@ -101,6 +105,41 @@ fn put_active_imported_skill(vault: &Vault, id: &EntityId, skill_id: &str) -> Re
 
 fn put_actor(vault: &Vault, id: &EntityId) -> Result<()> {
     vault.put_entity(id, ENTITY_TYPE_PERSON, t(1), 1, b"oracle actor fixture")
+}
+
+/// Runs one attempt whose pack loaded `skill_id` to its terminal door and
+/// returns the receipt id that close STAMPED. Attribution evidence cites these
+/// — a hand-written receipt string is refused at the evidence door.
+fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
+    let queue = AttemptQueue::new(vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "oracle.attempt".to_owned(),
+        payload: Vec::new(),
+        dedupe_key: None,
+        run_id: None,
+        now: 10,
+    })?
+    else {
+        panic!("a fresh dedupe-free enqueue is never Existing");
+    };
+    queue.append_manifest_entry(
+        attempt.id,
+        ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
+    )?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "oracle-worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("the enqueued attempt is claimable");
+    };
+    queue.complete(CompleteAttempt {
+        id: attempt.id,
+        lease_owner: "oracle-worker".to_owned(),
+        attempt_count: leased.attempt_count,
+        now: 13,
+    })?;
+    Ok(attempt_pack_receipt_id(&attempt.id))
 }
 
 /// All claim rows on `subject` with `predicate`, split (active, superseded).
@@ -716,12 +755,110 @@ fn sk03_provider_audit_verdicts_are_independent_rows_signal_not_gate() -> Result
 /// entries, and the terminal receipt carries the FULL accumulated
 /// manifest. Earlier entries never mutate or disappear.
 #[test]
-#[ignore = "armed by ONE-1737: attempt-alive pack manifest on the effect-spine receipts (needs ES-02+ES-03)"]
 fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
-    // ARM(ONE-1737): start an attempt with a tier-1 pack (index only),
-    // pull one tier-2 body mid-run ("oracle.skill.pdf@3"), then close the
-    // attempt; capture the manifest after each of the three moments.
-    let manifest_snapshots: Vec<Vec<String>> = Vec::new();
+    // ARMED (ONE-1737): an attempt starts with a tier-1 pack (index only),
+    // pulls one tier-2 body mid-run ("oracle.skill.pdf@3"), then closes; the
+    // manifest is captured after each of the three moments. The TERMINAL
+    // snapshot is read back off the receipt's projected field-set, not off
+    // the attempt row — the contract is that the RECEIPT carries the full
+    // accumulated manifest.
+    let (_tmp, vault) = temp_vault();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(attempt) = queue
+        .enqueue(EnqueueAttempt {
+            kind: "oracle.attempt".to_owned(),
+            payload: Vec::new(),
+            dedupe_key: None,
+            run_id: None,
+            now: 10,
+        })
+        .expect("enqueue attempt")
+    else {
+        panic!("a fresh dedupe-free enqueue is never Existing");
+    };
+
+    let wire_forms = |record: &AttemptRecord| -> Vec<String> {
+        record
+            .manifest()
+            .iter()
+            .map(ManifestEntry::wire_form)
+            .collect()
+    };
+
+    // t0 — tier-1 index resident for the whole run.
+    let at_t0 = queue
+        .append_manifest_entry(
+            attempt.id,
+            ManifestEntry::new(ManifestKind::Skill, "oracle.skill.index", "1", 11),
+        )
+        .expect("tier-1 index appends at t0");
+
+    // Mid-run — the attempt is leased and a step matches, pulling a tier-2
+    // body. The pull is stamped WHEN it happens, not at close.
+    let ClaimOutcome::Claimed(leased) = queue
+        .claim(ClaimAttempt {
+            lease_owner: "oracle-worker".to_owned(),
+            now: 12,
+        })
+        .expect("claim the queued attempt")
+    else {
+        panic!("the enqueued attempt is claimable");
+    };
+    let at_mid = queue
+        .append_manifest_entry(
+            attempt.id,
+            ManifestEntry::new(ManifestKind::Skill, "oracle.skill.pdf", "3", 13),
+        )
+        .expect("tier-2 body appends mid-run");
+
+    // Terminal — closing the attempt STAMPS its accumulated manifest into the
+    // terminal receipt. No test-only projection call: the queue's own terminal
+    // door does it, so this reads the receipt back off the production RS1
+    // receipt family exactly as a host would.
+    let CompleteOutcome::Completed(_closed) = queue
+        .complete(CompleteAttempt {
+            id: attempt.id,
+            lease_owner: "oracle-worker".to_owned(),
+            attempt_count: leased.attempt_count,
+            now: 14,
+        })
+        .expect("complete the leased attempt")
+    else {
+        panic!("a leased attempt completes exactly once");
+    };
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    let family = vault
+        .receipts(ReceiptQuery::new(16))
+        .expect("query the receipt family");
+    let receipt = family
+        .into_iter()
+        .find(|row| row.receipt_id == receipt_id)
+        .expect("the terminal transition stamped the pack receipt onto the spine");
+    assert_eq!(
+        receipt.outcome, "completed",
+        "the receipt records the terminal the attempt actually reached"
+    );
+
+    // The manifest door refuses a terminal attempt: append-only is not a
+    // convention here, it is enforced at the write door.
+    assert!(
+        queue
+            .append_manifest_entry(
+                attempt.id,
+                ManifestEntry::new(ManifestKind::Skill, "oracle.skill.late", "9", 15),
+            )
+            .is_err(),
+        "a closed attempt's manifest is the evidence its receipt already projected"
+    );
+
+    let manifest_snapshots: Vec<Vec<String>> = vec![
+        wire_forms(&at_t0),
+        wire_forms(&at_mid),
+        receipt
+            .pack_manifest_skills()
+            .expect("the terminal receipt stamped the manifest field"),
+    ];
 
     assert_eq!(
         manifest_snapshots.len(),
@@ -764,12 +901,26 @@ fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
     );
 }
 
-/// Contract (ARCH-0053 §4, ONE-1737): the attribution projector classifies
-/// BEFORE writing. Skill defect → claim on the SKILL entity (zero on the
-/// actor). Execution lapse → `actor.failure_mode` on the ACTOR (zero new
-/// rows on the skill — a lapse contributes nothing to the skill, §5).
+/// Contract (ARCH-0053 §4, ONE-1737 + ONE-1739): the attribution projector
+/// classifies BEFORE writing. Skill defect → claim on the SKILL entity (zero
+/// on the actor). Execution lapse → `actor.failure_mode` on the ACTOR (zero
+/// new rows on the skill — a lapse contributes nothing to the skill, §5).
+///
+/// RE-POINTED TO ONE-1739 (ONE-1737, deviation-board item). Every assert here
+/// counts CLAIM ROWS, and the claim-write doors plus the `actor.*` predicate
+/// reservation belong to ONE-1739 — the SK stack deliberately splits routing
+/// (1737) from claiming (1738 reliability / 1739 actor rows), so 1737 cannot
+/// satisfy these counts without writing claims its layer must not write. The
+/// counts are untouched, per the arming law.
+///
+/// ONE-1737 landed the routing half and it is green under
+/// `skill_attribution::tests::defect_routes_to_the_skill_and_lapse_routes_to_the_actor`:
+/// the same two fixtures route to `SkillDefect` on the SKILL and
+/// `ExecutionLapse` on the ACTOR, with each verdict citing its receipt and
+/// neither contributing to the other's subject. ONE-1739 replaces the ARM seam
+/// below with the claim writes those judgments drive.
 #[test]
-#[ignore = "armed by ONE-1737: ARCH-0035 attribution projector routing"]
+#[ignore = "armed by ONE-1739: actor.* + skill claim writes over ONE-1737's routed judgments"]
 fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -778,14 +929,30 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     put_actor(&vault, &actor_entity)?;
     let skill_claims_before = total_claims(&vault, &skill_entity)?;
 
-    // ARM(ONE-1737): run the projector over (a) a failed-attempt receipt
-    // judged SKILL DEFECT, then (b) a failed-attempt receipt judged
-    // EXECUTION LAPSE, both with this skill in the manifest and this
-    // actor executing.
-    let projected = false;
+    // ONE-1737's half, live: route (a) a failed-attempt receipt judged SKILL
+    // DEFECT and (b) one judged EXECUTION LAPSE, both with this skill in the
+    // manifest and this actor executing.
+    let failed = |receipt: &str, followed_skill: bool| {
+        OutcomeEvidence::new(receipt, actor_entity, AttemptOutcome::Failed, 30)
+            .with_skill(skill_entity)
+            .with_routing_facts(followed_skill, true)
+    };
+    let defect_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
+    let lapse_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
+    record_attribution_evidence(&vault, &failed(&defect_receipt, true))?;
+    record_attribution_evidence(&vault, &failed(&lapse_receipt, false))?;
+    let judgments = run_attribution_projector(&vault, 0)?;
+    assert_eq!(judgments.len(), 2, "both failures routed");
+    assert_eq!(judgments[0].verdict, AttributionVerdict::SkillDefect);
+    assert_eq!(judgments[0].subject, skill_entity);
+    assert_eq!(judgments[1].verdict, AttributionVerdict::ExecutionLapse);
+    assert_eq!(judgments[1].subject, actor_entity);
+
+    // ARM(ONE-1739): drive the claim writes off those routed judgments.
+    let claims_written = false;
     assert!(
-        projected,
-        "armed by ONE-1737: attribution projector not built yet"
+        claims_written,
+        "armed by ONE-1739: actor.*/skill claim write doors not built yet"
     );
 
     // (a) defect landed on the skill, not the actor.
@@ -820,7 +987,6 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
 /// content) is NOT a claim at all — it becomes a skill EDIT PROPOSAL.
 /// Zero claims land on either entity.
 #[test]
-#[ignore = "armed by ONE-1737: discovery routing to SKILL-OPT edit proposals"]
 fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -829,15 +995,28 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     put_actor(&vault, &actor_entity)?;
     let skill_claims_before = total_claims(&vault, &skill_entity)?;
 
-    // ARM(ONE-1737): run the projector over an outcome judged DISCOVERY
-    // (the skill was missing content the attempt needed); capture how many
-    // edit proposals it minted.
-    let projected = false;
-    let edit_proposals_minted: usize = 0;
+    // ARMED (ONE-1737): the projector runs over an outcome the routing table
+    // judges DISCOVERY — the attempt failed, the actor DID follow the skill,
+    // and the skill did NOT cover the failing step (missing content).
+    let discovery_receipt = stamped_pack_receipt(&vault, "oracle.skill.discovery")?;
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(discovery_receipt, actor_entity, AttemptOutcome::Failed, 20)
+            .with_skill(skill_entity)
+            .with_routing_facts(true, false),
+    )?;
+    let judgments = run_attribution_projector(&vault, 0)?;
+    let projected = judgments.len() == 1
+        && judgments[0].verdict == AttributionVerdict::Discovery
+        && judgments[0].subject == skill_entity;
+    // The proposals are MINTED, PERSISTED rows read back off their own
+    // keyspace — not a filtered view of the judgments, which would have made
+    // this count a restatement of the line above rather than evidence.
+    let edit_proposals: Vec<SkillEditProposal> = pending_edit_proposals(&vault)?;
 
     assert!(
         projected,
-        "armed by ONE-1737: discovery routing not built yet"
+        "the outcome routed to exactly one DISCOVERY verdict"
     );
     assert_eq!(
         total_claims(&vault, &skill_entity)?,
@@ -850,8 +1029,22 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
         "discovery is not a claim on the actor"
     );
     assert_eq!(
-        edit_proposals_minted, 1,
+        edit_proposals.len(),
+        1,
         "discovery = exactly one edit proposal"
+    );
+    let proposal = &edit_proposals[0];
+    assert_eq!(
+        proposal.skill, skill_entity,
+        "the proposal targets the skill whose content was missing"
+    );
+    assert_eq!(
+        proposal.judgment_sequence, judgments[0].sequence,
+        "the proposal cites the judgment that demanded it"
+    );
+    assert_eq!(
+        proposal.evidence_receipts, judgments[0].evidence_receipts,
+        "and carries that judgment's receipts forward as its trace"
     );
     Ok(())
 }

@@ -152,11 +152,13 @@ fn floor_defaults_match_canon() {
 #[test]
 fn floor_merge_is_most_restrictive_per_field() {
     let mut a = SecretCustodyFloor::default();
-    let mut b = SecretCustodyFloor::default();
-    b.portable = TierBand::only(CustodyTier::T0Doored); // narrower than a's T0..T2
-    b.rotation_max_age_secs = Some(86_400);
-    b.env_bindings
-        .insert("prod".to_owned(), "require-lease".to_owned());
+    let b = SecretCustodyFloor {
+        // narrower than a's T0..T2
+        portable: TierBand::only(CustodyTier::T0Doored),
+        rotation_max_age_secs: Some(86_400),
+        env_bindings: BTreeMap::from([("prod".to_owned(), "require-lease".to_owned())]),
+        ..SecretCustodyFloor::default()
+    };
     a.merge(b);
     assert_eq!(a.portable, TierBand::only(CustodyTier::T0Doored));
     assert_eq!(a.rotation_max_age_secs, Some(86_400));
@@ -174,6 +176,137 @@ fn resolve_on_empty_vault_returns_defaults() {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let floor = SecretCustodyFloor::resolve(&vault.store, &rtxn).expect("resolve");
     assert_eq!(floor, SecretCustodyFloor::default());
+}
+
+/// Writes a POLICY_MANIFEST row carrying `rows` as its body, the way the
+/// engine seeder does (store-level put + type-index row) — the custody floor
+/// resolves over exactly these bodies.
+fn put_policy_manifest(vault: &Vault, seed: u8, rows: Vec<(Value, Value)>) {
+    use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(rows)).expect("encode manifest body");
+    let id = EntityId::from_bytes([seed; ENTITY_ID_LEN]).expect("manifest id");
+    let learned_at = 2_u64;
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+    for _ in 0..3 {
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+    }
+    payload.extend_from_slice(&data);
+
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    vault
+        .store
+        .entities
+        .put(&mut wtxn, id.as_bytes(), &payload)
+        .expect("put manifest");
+    let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+    vault
+        .store
+        .type_index
+        .put(&mut wtxn, &type_key, &[])
+        .expect("type index row");
+    wtxn.commit().expect("commit manifest");
+}
+
+#[test]
+fn malformed_floor_row_errors_instead_of_defaulting_open() {
+    // C5 MALFORMED-FLOOR: `decode_floor_keys` mapped a present-but-unreadable
+    // row to None, so `resolve()` handed back the PERMISSIVE default band and
+    // `register_secret` admitted bindings the floor was written to forbid.
+    // A floor may only narrow; silently reverting a declared narrowing is the
+    // one direction it must never fail.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest(
+        &vault,
+        0x6D,
+        vec![(
+            // Intent: pin portable to the door-only tier. Written wrong — a
+            // string where the integer tier grade belongs.
+            Value::from(floor_keys::PORTABLE_MAX),
+            Value::from("0"),
+        )],
+    );
+
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let err = SecretCustodyFloor::resolve(&vault.store, &rtxn)
+        .expect_err("a present-but-malformed floor row must not default open");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    drop(rtxn);
+
+    // The door that consumes the floor refuses too, instead of admitting a T2
+    // binding against the silently-widened default.
+    let rec = record(
+        "portable-t2",
+        CustodyClass::CustodyPortable,
+        b"v",
+        vec![binding("connector:gmail", CustodyTier::T2LocalRegistered)],
+    );
+    let err = vault
+        .register_secret(rec)
+        .expect_err("registration must not proceed on an unreadable floor");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    assert_eq!(
+        vault.resolve_secret_ref("portable-t2").expect("resolve"),
+        None
+    );
+}
+
+#[test]
+fn duplicated_floor_row_errors_because_the_intended_value_is_ambiguous() {
+    // Two rows for one floor key: neither can be called the declared value, so
+    // the floor is unreadable rather than "whichever we happened to see".
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest(
+        &vault,
+        0x6E,
+        vec![
+            (Value::from(floor_keys::CROSS_VAULT_MAX), Value::from(0_u64)),
+            (Value::from(floor_keys::CROSS_VAULT_MAX), Value::from(2_u64)),
+        ],
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let err = SecretCustodyFloor::resolve(&vault.store, &rtxn)
+        .expect_err("a duplicated floor row must not resolve");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn absent_floor_rows_still_take_the_defaults() {
+    // The control for the two tests above: a manifest is PRESENT and readable
+    // but declares no custody floor. Absence is not malformation — it means
+    // "this pack narrows nothing", and the defaults stand.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest(
+        &vault,
+        0x6F,
+        vec![(Value::from("some.other.policy.key"), Value::from(1_u64))],
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let floor = SecretCustodyFloor::resolve(&vault.store, &rtxn).expect("resolve");
+    assert_eq!(floor, SecretCustodyFloor::default());
+    drop(rtxn);
+
+    // And a portable T2 binding still registers under those defaults.
+    let rec = record(
+        "portable-default",
+        CustodyClass::CustodyPortable,
+        b"v",
+        vec![binding("connector:gmail", CustodyTier::T2LocalRegistered)],
+    );
+    vault
+        .register_secret(rec)
+        .expect("default floor still admits a portable T2 binding");
 }
 
 #[test]
@@ -244,6 +377,84 @@ fn raw_put_doors_reject_secret_custody_byte() {
     );
 }
 
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_put_door_rejects_secret_custody_byte() {
+    // C1 APPLY-TIME SEAL: the public raw doors reject byte 77 through the
+    // `Maintenance` classification, but the REPLICATED door opens both admit
+    // bands at once and its type gate listed only POLICY_MANIFEST /
+    // ACCESS_GRANT / OUTBOUND_GRANT — so a peer-authored custody body (with
+    // its plaintext `value_bytes`) reached `apply_put` and landed in LMDB.
+    // Both replicated entry points must now fail typed and store nothing.
+    use crate::temporal::TimeRange;
+
+    let (_tmp, vault) = temp_vault();
+    let rec = record(
+        "replicated",
+        CustodyClass::CustodyPortable,
+        b"hunter2",
+        vec![],
+    );
+    let body = encode_secret_custody_body(&rec).expect("encode");
+    let occurred = TimeRange { start: 1, end: 1 };
+
+    let batch_id = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(&batch_id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
+        .commit()
+        .expect_err("replicated custody put must be denied");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    assert!(
+        vault.get_raw(&batch_id).expect("raw read").is_none(),
+        "rejected replicated put must not leave a stored row"
+    );
+
+    let txn_id = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(&txn_id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
+                .apply(wtxn)
+        })
+        .expect_err("in-txn replicated custody put must be denied");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    assert!(
+        vault.get_raw(&txn_id).expect("raw read").is_none(),
+        "rejected in-txn replicated put must not leave a stored row"
+    );
+
+    // The refusal classifies as a REMOTE rejection so one poisoned custody row
+    // quarantines instead of wedging every other change in the window.
+    assert_eq!(
+        crate::sync::quarantine::remote_rejection_reason(&err).as_deref(),
+        Some("InvalidSecretCustodyBody"),
+    );
+}
+
+/// Decodes a custody body and re-encodes its MessagePack map minus one key.
+fn drop_key(bytes: &[u8], drop: &str) -> Vec<u8> {
+    let mut cursor = std::io::Cursor::new(bytes);
+    let value = rmpv::decode::read_value(&mut cursor).expect("decode");
+    let Value::Map(entries) = value else {
+        panic!("map")
+    };
+    let kept: Vec<(Value, Value)> = entries
+        .into_iter()
+        .filter(|(k, _)| k.as_str() != Some(drop))
+        .collect();
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &Value::Map(kept)).expect("encode");
+    out
+}
+
 #[test]
 fn decode_rejects_missing_required_body_keys() {
     // FIX5 BODY-SCHEMA: every key except rotated_at is required. Build a body
@@ -251,23 +462,6 @@ fn decode_rejects_missing_required_body_keys() {
     // the immediate body-schema reject.
     let rec = record("c", CustodyClass::CustodyPortable, b"v", vec![]);
     let full = encode_secret_custody_body(&rec).expect("encode");
-
-    // Decode the full body and re-encode the MessagePack map minus one key.
-    fn drop_key(bytes: &[u8], drop: &str) -> Vec<u8> {
-        use rmpv::Value;
-        let mut cursor = std::io::Cursor::new(bytes);
-        let value = rmpv::decode::read_value(&mut cursor).expect("decode");
-        let Value::Map(entries) = value else {
-            panic!("map")
-        };
-        let kept: Vec<(Value, Value)> = entries
-            .into_iter()
-            .filter(|(k, _)| k.as_str() != Some(drop))
-            .collect();
-        let mut out = Vec::new();
-        rmpv::encode::write_value(&mut out, &Value::Map(kept)).expect("encode");
-        out
-    }
 
     for key in [
         "bindings",
@@ -394,7 +588,7 @@ fn value_read_goes_through_get_secret_value_in_txn_door() {
     );
     let id = vault.register_secret(rec).expect("register");
 
-    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    let wtxn = vault.store.env.write_txn().expect("write txn");
     // Unbound effector is denied through the door.
     let err = vault
         .get_secret_value_in_txn(&wtxn, &id, "connector:evil")
@@ -411,16 +605,32 @@ fn value_read_goes_through_get_secret_value_in_txn_door() {
     assert_eq!(value, b"hunter2");
     wtxn.abort();
 
-    // A generic `Vault::get` returns the *body bytes*, not a decoded record;
-    // decoding it yields a SecretCustodyRecord but its value field is
-    // crate-private — so the only value a caller can produce out-of-crate is
-    // the re-encoded body, never the raw field. Pin that the door path above
-    // (not a field read) is what returned the plaintext.
-    let raw_body = vault.get(&id).expect("get body").expect("body present");
-    let decoded = decode_secret_custody_body(&raw_body).expect("decode body");
-    // Read-only accessor is the binding-door-safe surface for manifest_ref.
-    assert_eq!(decoded.manifest_ref(), "secrets.toml");
-    // (Out-of-crate, `decoded.value_bytes` is a compile error by `pub(crate)`.)
+    // C3 GENERIC-READ SEAL: `pub(crate)` on `value_bytes` only stopped an
+    // out-of-crate FIELD read. The generic doors handed over the whole body —
+    // which IS the plaintext, in MessagePack — so a caller never needed the
+    // field. Both generic doors now deny the byte outright.
+    let err = vault
+        .get(&id)
+        .expect_err("generic Vault::get must deny a custody body");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    let err = vault
+        .get_raw(&id)
+        .expect_err("generic Vault::get_raw must deny a custody row");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+
+    // The value-less projection stays open — it is the sanctioned read for
+    // everything that is not the value.
+    let meta = vault
+        .get_secret_metadata(&id)
+        .expect("metadata read")
+        .expect("record present");
+    assert_eq!(meta.name, "door-only-key");
 }
 
 #[test]
@@ -433,7 +643,7 @@ fn value_read_requires_binding() {
         vec![binding("door:receive-pack", CustodyTier::T0Doored)],
     );
     let id = vault.register_secret(rec).expect("register");
-    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    let wtxn = vault.store.env.write_txn().expect("write txn");
     // No binding for this effector → typed deny.
     let err = vault
         .get_secret_value_in_txn(&wtxn, &id, "connector:other")
@@ -446,6 +656,53 @@ fn value_read_requires_binding() {
     let value = vault
         .get_secret_value_in_txn(&wtxn, &id, "door:receive-pack")
         .expect("bound read")
+        .expect("value present");
+    assert_eq!(value, b"hunter2");
+    wtxn.abort();
+}
+
+#[test]
+fn value_read_requires_a_read_scope_on_the_matched_binding() {
+    // C4 BINDING-SCOPE: `binding_for` matches the effector STRING only, and no
+    // door read `binding.scopes` — so a binding declared for, say, rotation
+    // ("rotate"), or one with no scope at all, handed over raw plaintext to
+    // anything that named the effector. The scope is the grant; an empty scope
+    // list is not a wildcard.
+    let (_tmp, vault) = temp_vault();
+    let scoped = |effector: &str, scopes: Vec<&str>| SecretBinding {
+        effector: effector.to_owned(),
+        tier_ceiling: CustodyTier::T0Doored,
+        scopes: scopes.into_iter().map(str::to_owned).collect(),
+    };
+    let rec = record(
+        "scoped-key",
+        CustodyClass::CrossVault,
+        b"hunter2",
+        vec![
+            scoped("door:no-scopes", vec![]),
+            scoped("door:rotate-only", vec!["rotate"]),
+            scoped("door:reader", vec!["rotate", "read"]),
+        ],
+    );
+    let id = vault.register_secret(rec).expect("register");
+    let wtxn = vault.store.env.write_txn().expect("write txn");
+
+    // Matched effector, no read grant → the same typed deny an unbound
+    // effector gets. Naming the effector is not the grant.
+    for effector in ["door:no-scopes", "door:rotate-only"] {
+        let err = vault
+            .get_secret_value_in_txn(&wtxn, &id, effector)
+            .expect_err("a binding without a read scope must be denied");
+        assert!(
+            matches!(err, Error::SecretBindingDenied { .. }),
+            "{effector}: got {err:?}"
+        );
+    }
+
+    // A binding that declares `read` alongside other scopes still reads.
+    let value = vault
+        .get_secret_value_in_txn(&wtxn, &id, "door:reader")
+        .expect("read-scoped binding reads")
         .expect("value present");
     assert_eq!(value, b"hunter2");
     wtxn.abort();

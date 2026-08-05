@@ -5,9 +5,14 @@ use crate::claim::{
 };
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
+use crate::identity_topology::{
+    EntityLifecycleState, IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+    SurvivorshipPlan,
+};
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
-    EntityClassification, TypeByteBand, entity_type_registry_entry,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, EntityClassification, TypeByteBand,
+    entity_type_registry_entry,
 };
 use crate::temporal::TimeRange;
 
@@ -483,7 +488,8 @@ fn finding_2_contact_view_is_purely_claim_derived() -> CommResult<()> {
             reason: OPT_OUT_REASON_STOP.to_owned(),
             occurred_at: 12,
         };
-        let new_id = put_comm_claim_in_txn(&vault, wtxn, &replacement, 12)?;
+        let new_id =
+            put_comm_claim_with_id_in_txn(&vault, wtxn, EntityId::now(), &replacement, 12)?;
         vault.supersede_claim_in_txn(wtxn, &new_id, &old_id, 12)?;
         Ok(())
     })?;
@@ -1212,7 +1218,10 @@ fn stale_non_person_cached_party_is_reminted_before_reuse() -> CommResult<()> {
         wtxn.commit()?;
     }
     assert_eq!(vault.get_entity_type(&stale_id)?, Some(ENTITY_TYPE_MACHINE));
-    assert_eq!(resolve_party(&vault, "party-reuse")?, Some(stale_id));
+    // The cache is a shortcut, not truth: a hit naming a non-PERSON row is
+    // rejected and the synced scan finds nothing, so the party reads as absent
+    // rather than as the stale id.
+    assert_eq!(resolve_party(&vault, "party-reuse")?, None);
 
     // A new local record must remint a fresh PERSON and rebind the index rather
     // than mint the event against the stale non-PERSON id.
@@ -1270,10 +1279,9 @@ fn deleted_indexed_party_is_reminted_before_projector_reuse() -> CommResult<()> 
 
     assert!(vault.delete_entity(&deleted_party)?);
     assert_eq!(vault.get_entity_type(&deleted_party)?, None);
-    assert_eq!(
-        resolve_party(&vault, "party-reminted")?,
-        Some(deleted_party)
-    );
+    // A cache hit naming a deleted row is stale, and synced truth holds no
+    // replacement — absent, not the dangling id.
+    assert_eq!(resolve_party(&vault, "party-reminted")?, None);
 
     record_comm_send_receipt(&vault, "party-reminted", "email", 20)?;
     let reminted_party =
@@ -1366,6 +1374,847 @@ fn finding_5_malformed_comm_record_does_not_wedge_family_operations() -> CommRes
     let materialized = materialize_contact_record(&vault, "party-f5")?;
     assert!(!materialized.is_empty());
     assert_eq!(count_contact_record_claim_entries(&vault, "party-f5")?, 1);
+    Ok(())
+}
+
+#[test]
+fn projected_claim_ids_are_derived_from_the_source_event_not_minted() -> CommResult<()> {
+    let party = entity(0x71);
+    let event = entity(0x72);
+    let last_touch = CommClaimValue::LastTouch {
+        party_ref: party,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+
+    // Same inputs → same id, on any device, for any number of replays.
+    assert_eq!(
+        projected_comm_claim_id(event, &last_touch)?,
+        projected_comm_claim_id(event, &last_touch)?
+    );
+
+    // occurred_at is NOT part of the conflict key: the same source event
+    // projecting the same slot converges even if the payload time moves.
+    let same_slot_later = CommClaimValue::LastTouch {
+        party_ref: party,
+        channel_class: "email".to_owned(),
+        occurred_at: 999,
+    };
+    assert_eq!(
+        projected_comm_claim_id(event, &last_touch)?,
+        projected_comm_claim_id(event, &same_slot_later)?
+    );
+
+    // Every other input axis moves the id.
+    let base = projected_comm_claim_id(event, &last_touch)?;
+    let other_event = projected_comm_claim_id(entity(0x73), &last_touch)?;
+    let other_predicate = projected_comm_claim_id(
+        event,
+        &CommClaimValue::OptOut {
+            party_ref: party,
+            channel_class: "email".to_owned(),
+            reason: OPT_OUT_REASON_STOP.to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let other_party = projected_comm_claim_id(
+        event,
+        &CommClaimValue::LastTouch {
+            party_ref: entity(0x74),
+            channel_class: "email".to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let other_channel = projected_comm_claim_id(
+        event,
+        &CommClaimValue::LastTouch {
+            party_ref: party,
+            channel_class: "sms".to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let thread_a = projected_comm_claim_id(
+        event,
+        &CommClaimValue::ThreadMember {
+            party_ref: party,
+            thread_ref: "thread-a".to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let thread_b = projected_comm_claim_id(
+        event,
+        &CommClaimValue::ThreadMember {
+            party_ref: party,
+            thread_ref: "thread-b".to_owned(),
+            occurred_at: 10,
+        },
+    )?;
+    let distinct = std::collections::BTreeSet::from([
+        base,
+        other_event,
+        other_predicate,
+        other_party,
+        other_channel,
+        thread_a,
+        thread_b,
+    ]);
+    assert_eq!(
+        distinct.len(),
+        7,
+        "every input axis must move the derived id"
+    );
+
+    // Length prefixes: ("ab","c") and ("a","bc") must not collide.
+    let split_left = projected_comm_conflict_key(&CommClaimValue::ThreadMember {
+        party_ref: party,
+        thread_ref: "ab-c".to_owned(),
+        occurred_at: 1,
+    });
+    let split_right = projected_comm_conflict_key(&CommClaimValue::ThreadMember {
+        party_ref: party,
+        thread_ref: "a-bc".to_owned(),
+        occurred_at: 1,
+    });
+    assert_ne!(split_left, split_right);
+
+    // The derived id carries the same v7 version/variant nibbles as the
+    // connector actor id, so it is a well-formed entity id.
+    let bytes = base.as_bytes();
+    assert_eq!(bytes[6] & 0xf0, 0x70);
+    assert_eq!(bytes[8] & 0xc0, 0x80);
+    Ok(())
+}
+
+/// Plants a comm-owned PERSON at an EXPLICIT id — the replicated shape, where
+/// two devices hold the same party row rather than each minting their own.
+fn plant_comm_person(vault: &Vault, id: EntityId, party: &str) -> CommResult<()> {
+    let body = crate::comm::encode_value(&Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(COMM_SCHEMA_VERSION),
+        ),
+        (Value::from(KEY_PARTY_KEY), Value::from(party)),
+    ]))?;
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 0, end: 0 },
+        1,
+        &body,
+    )?;
+    point_party_index(vault, party, id)
+}
+
+#[test]
+fn two_vaults_project_one_source_event_to_byte_identical_claim_ids() -> CommResult<()> {
+    // The convergence property: two vaults holding the same COMM_RECORD event
+    // and the same party row project byte-identical claim ids for every slot —
+    // so importing both projections yields ONE physical row per source event
+    // and no require_at_most_one failure.
+    fn project_in_fresh_vault(
+        source_event: EntityId,
+        party_ref: EntityId,
+    ) -> CommResult<Vec<EntityId>> {
+        let (_dir, vault) = open_vault();
+        plant_comm_person(&vault, party_ref, "party-converge")?;
+        // One source event per slot: last-touch, opt-out, and thread membership.
+        for (offset, kind, channel, thread) in [
+            (0_u8, CommEventKind::SendSucceeded, Some("email"), None),
+            (1, CommEventKind::InboundStop, Some("sms"), None),
+            (2, CommEventKind::ThreadJoined, None, Some("thread-c")),
+        ] {
+            let mut bytes = *source_event.as_bytes();
+            bytes[15] ^= offset;
+            let event_id = EntityId::from_bytes(bytes).map_err(CommError::from)?;
+            let event = CommRecord::Event {
+                sequence: u64::from(offset),
+                kind,
+                party_ref,
+                channel_class: channel.map(str::to_owned),
+                thread_ref: thread.map(str::to_owned),
+                occurred_at: 10,
+                projected: false,
+            };
+            vault.try_with_write_txn(|wtxn| {
+                put_comm_record_in_txn(&vault, wtxn, event_id, &event)
+            })?;
+        }
+        run_comm_projector(&vault)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut ids = Vec::new();
+        for (predicate, channel, thread) in [
+            (PREDICATE_COMM_LAST_TOUCH, Some("email"), None),
+            (PREDICATE_COMM_OPT_OUT, Some("sms"), None),
+            (PREDICATE_COMM_THREAD_MEMBER, None, Some("thread-c")),
+        ] {
+            let claims =
+                matching_claims_in_txn(&vault, &rtxn, party_ref, predicate, channel, thread, true)?;
+            assert_eq!(claims.len(), 1, "{predicate} has exactly one standing head");
+            ids.push(claims[0].0);
+        }
+        Ok(ids)
+    }
+
+    let source_event = entity(0x75);
+    let party_ref = entity(0x79);
+    let left = project_in_fresh_vault(source_event, party_ref)?;
+    let right = project_in_fresh_vault(source_event, party_ref)?;
+    assert_eq!(
+        left, right,
+        "independent projections of one event agree on every claim id"
+    );
+    // The three slots are still distinct rows within a vault.
+    assert_eq!(
+        std::collections::BTreeSet::from_iter(left.iter().copied()).len(),
+        3
+    );
+    Ok(())
+}
+
+#[test]
+fn replaying_an_identical_event_is_a_no_op_without_self_supersession() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-replay")?;
+    let source_event = entity(0x76);
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+    run_comm_projector(&vault)?;
+    let first = standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_LAST_TOUCH, "email")?;
+
+    // Re-arm the very same source event (the cross-device replay shape) and
+    // project again: the row must be recognized, not rewritten, and no
+    // self-supersession edge may be attempted.
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+    run_comm_projector(&vault)?;
+
+    assert_eq!(
+        standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_LAST_TOUCH, "email")?,
+        first
+    );
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-replay", "email")?,
+        1
+    );
+    assert_eq!(
+        count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, "party-replay", "email")?,
+        1,
+        "replay must not add a history row"
+    );
+    Ok(())
+}
+
+#[test]
+fn derived_id_collision_with_a_foreign_row_fails_closed() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-collide")?;
+    let source_event = entity(0x77);
+    let value = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+    let derived = projected_comm_claim_id(source_event, &value)?;
+
+    // Squat the derived id with a foreign (non-CLAIM) row.
+    vault.put_entity(
+        &derived,
+        ENTITY_TYPE_MACHINE,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"machine",
+    )?;
+
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+
+    let error = run_comm_projector(&vault).expect_err("resident foreign row fails closed");
+    assert!(matches!(error, CommError::InvalidRecord));
+    // The squatter is untouched — nothing was overwritten.
+    assert_eq!(vault.get_entity_type(&derived)?, Some(ENTITY_TYPE_MACHINE));
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-collide", "email")?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn derived_id_collision_with_a_different_claim_body_fails_closed() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-collide-claim")?;
+    let source_event = entity(0x78);
+    let value = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+    let derived = projected_comm_claim_id(source_event, &value)?;
+
+    // Squat the derived id with a CLAIM whose decoded body differs (a
+    // different channel — i.e. a different standing-state slot).
+    let foreign = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "sms".to_owned(),
+        occurred_at: 10,
+    };
+    vault.try_with_write_txn(|wtxn| {
+        put_comm_claim_with_id_in_txn(&vault, wtxn, derived, &foreign, 10).map(|_| ())
+    })?;
+
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+
+    let error = run_comm_projector(&vault).expect_err("mismatched resident claim fails closed");
+    assert!(matches!(error, CommError::InvalidRecord));
+    // The resident claim keeps its own body — no overwrite.
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-collide-claim",
+            "sms",
+        )?,
+        1
+    );
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-collide-claim",
+            "email",
+        )?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn derived_id_collision_with_a_rejected_twin_fails_closed() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-collide-rejected")?;
+    let source_event = entity(0x79);
+    let value = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+    let derived = projected_comm_claim_id(source_event, &value)?;
+
+    // Squat the derived id with a claim that decodes to the SAME
+    // CommClaimValue on the SAME subject edge and differs only on the consent
+    // axis. Typed equivalence cannot see that; byte identity must.
+    let mut rejected = value.claim_body();
+    rejected.approval = ClaimApprovalStatus::Rejected;
+    vault.put_claim(&derived, &rejected, TimeRange { start: 10, end: 10 }, 10)?;
+
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+
+    let error = run_comm_projector(&vault).expect_err("rejected resident twin fails closed");
+    assert!(matches!(error, CommError::InvalidRecord));
+    // The event is NOT retired against the rejected row, and no standing state
+    // was invented in its place.
+    assert!(
+        !comm_event_is_projected(&vault, source_event)?,
+        "a fail-closed projection must leave its source event unconsumed"
+    );
+    assert_eq!(
+        count_active_comm_claims(
+            &vault,
+            PREDICATE_COMM_LAST_TOUCH,
+            "party-collide-rejected",
+            "email",
+        )?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn derived_id_with_a_detached_claim_of_edge_fails_closed() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-collide-detached")?;
+    let source_event = entity(0x7a);
+    let value = CommClaimValue::LastTouch {
+        party_ref,
+        channel_class: "email".to_owned(),
+        occurred_at: 10,
+    };
+    let derived = projected_comm_claim_id(source_event, &value)?;
+
+    // Byte-identical body, no live `claim_of` edge: every comm reader resolves
+    // standing state through that edge, so this row is invisible to all of them.
+    vault.try_with_write_txn(|wtxn| {
+        put_comm_claim_with_id_in_txn(&vault, wtxn, derived, &value, 10).map(|_| ())
+    })?;
+    assert!(vault.delete_edge(&derived, EdgeKind::ClaimOf, &party_ref)?);
+
+    let event = CommRecord::Event {
+        sequence: 1,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 10,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
+
+    let error = run_comm_projector(&vault).expect_err("detached resident claim fails closed");
+    assert!(matches!(error, CommError::InvalidRecord));
+    assert!(
+        !comm_event_is_projected(&vault, source_event)?,
+        "an unreadable claim must not retire its source event"
+    );
+    Ok(())
+}
+
+fn comm_event_is_projected(vault: &Vault, event_id: EntityId) -> CommResult<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&rtxn, event_id.as_bytes())?
+        .ok_or(CommError::InvalidRecord)?;
+    match decode_comm_record(&raw[ENTITY_METADATA_HEADER_LEN..])? {
+        CommRecord::Event { projected, .. } => Ok(projected),
+        _ => Err(CommError::InvalidRecord),
+    }
+}
+
+fn clear_party_index(vault: &Vault, party: &str) -> CommResult<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .delete(&mut wtxn, &party_index_key(party))?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+fn point_party_index(vault: &Vault, party: &str, id: EntityId) -> CommResult<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &party_index_key(party), id.as_bytes())?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// Mints a comm-owned PERSON for `party` WITHOUT touching the node-local
+/// shortcut — the offline-twin shape: two devices each minted a party row for
+/// one key while synced truth was unreachable.
+fn mint_comm_person(vault: &Vault, party: &str) -> CommResult<EntityId> {
+    vault.try_with_write_txn(|wtxn| mint_comm_person_in_txn(vault, wtxn, party))
+}
+
+fn count_person_rows(vault: &Vault) -> CommResult<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut count = 0;
+    for entry in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[ENTITY_TYPE_PERSON])?
+    {
+        entry?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+#[test]
+fn cleared_party_index_rebuilds_from_synced_truth_without_minting() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-rebuild", "email", 10)?;
+    run_comm_projector(&vault)?;
+    let synced = resolve_party(&vault, "party-rebuild")?.ok_or(CommError::InvalidRecord)?;
+    let persons_before = count_person_rows(&vault)?;
+
+    // Drop the node-local shortcut, leaving the synced PERSON row intact — the
+    // shape a fresh device sees after replicating a party it never minted.
+    clear_party_index(&vault, "party-rebuild")?;
+
+    assert_eq!(resolve_party(&vault, "party-rebuild")?, Some(synced));
+    assert_eq!(
+        resolve_or_create_comm_party(&vault, "party-rebuild")?,
+        synced
+    );
+    assert_eq!(
+        count_person_rows(&vault)?,
+        persons_before,
+        "rebuild must not mint a PERSON"
+    );
+
+    // The shortcut is repaired, so the next lookup is a plain hit.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .vault_meta
+            .get(&rtxn, &party_index_key("party-rebuild"))?
+            .ok_or(CommError::InvalidRecord)?;
+        assert_eq!(decode_entity_id(&raw)?, synced);
+    }
+
+    // Standing state is unchanged and still reachable through the rebuilt path.
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, "party-rebuild", "email")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn stale_index_entries_are_rejected_and_repaired_before_minting() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-stale", "email", 10)?;
+    run_comm_projector(&vault)?;
+    let synced = resolve_party(&vault, "party-stale")?.ok_or(CommError::InvalidRecord)?;
+    let persons_before = count_person_rows(&vault)?;
+
+    // (a) A hit naming a row that does not exist.
+    point_party_index(&vault, "party-stale", entity(0x81))?;
+    assert_eq!(resolve_party(&vault, "party-stale")?, Some(synced));
+
+    // (b) A hit naming a live NON-PERSON row.
+    let machine = entity(0x82);
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"machine",
+    )?;
+    point_party_index(&vault, "party-stale", machine)?;
+    assert_eq!(resolve_party(&vault, "party-stale")?, Some(synced));
+
+    // (c) A hit naming a PERSON whose party_key is a DIFFERENT party.
+    let other = resolve_or_create_comm_party(&vault, "party-other")?;
+    assert_ne!(other, synced);
+    point_party_index(&vault, "party-stale", other)?;
+    assert_eq!(resolve_party(&vault, "party-stale")?, Some(synced));
+    // The other party's own shortcut is untouched by the repair.
+    assert_eq!(resolve_party(&vault, "party-other")?, Some(other));
+
+    assert_eq!(
+        count_person_rows(&vault)?,
+        persons_before + 1,
+        "only the explicitly created party-other was minted"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cached_merged_shell_is_stale_despite_staying_a_person() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let survivor = resolve_or_create_comm_party(&vault, "party-shell")?;
+    // A second active PERSON carrying the same party_key, then merged away
+    // through MS-01: its type stays PERSON while its identity moved.
+    let shell = mint_comm_person(&vault, "party-shell")?;
+    vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![shell],
+            survivor,
+            evidence: IdentityOpEvidence {
+                refs: vec![shell, survivor],
+                rationale: "test fixture: merged party twin".to_owned(),
+            },
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        100,
+    )?;
+    assert_eq!(
+        vault.get_entity_type(&shell)?,
+        Some(ENTITY_TYPE_PERSON),
+        "a merge leaves a readable PERSON shell, not a tombstone"
+    );
+
+    // Cache the shell: it is a PERSON with the right party_key, yet stale.
+    point_party_index(&vault, "party-shell", shell)?;
+    assert_eq!(resolve_party(&vault, "party-shell")?, Some(survivor));
+    assert_eq!(
+        resolve_or_create_comm_party(&vault, "party-shell")?,
+        survivor
+    );
+    Ok(())
+}
+
+#[test]
+fn malformed_person_bodies_do_not_wedge_party_resolution() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-tolerant", "email", 10)?;
+    run_comm_projector(&vault)?;
+    let synced = resolve_party(&vault, "party-tolerant")?.ok_or(CommError::InvalidRecord)?;
+
+    // A PERSON with undecodable bytes, and one with a valid but unrelated body:
+    // neither is a comm party, and neither may wedge the scan.
+    vault.put_entity(
+        &entity(0x83),
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &[0xC1],
+    )?;
+    let unrelated = crate::comm::encode_value(&Value::Map(vec![(
+        Value::from("display_name"),
+        Value::from("someone"),
+    )]))?;
+    vault.put_entity(
+        &entity(0x84),
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &unrelated,
+    )?;
+
+    clear_party_index(&vault, "party-tolerant")?;
+    assert_eq!(resolve_party(&vault, "party-tolerant")?, Some(synced));
+    assert_eq!(resolve_party(&vault, "party-never-seen")?, None);
+    Ok(())
+}
+
+fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut count = 0;
+    for entry in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+    {
+        entry?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+#[test]
+fn offline_party_twins_converge_on_the_lowest_id_through_ms01() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    // Two devices each minted a PERSON for one party_key while synced truth
+    // was unreachable; both rows land here after replication.
+    let first = mint_comm_person(&vault, "party-twin")?;
+    let second = mint_comm_person(&vault, "party-twin")?;
+    assert_ne!(first, second);
+    let mut sorted = [first, second];
+    sorted.sort_unstable();
+    let [survivor, loser] = sorted;
+    point_party_index(&vault, "party-twin", loser)?;
+
+    run_comm_projector(&vault)?;
+
+    // Lowest id survives; the other becomes an MS-01 Merged redirect shell.
+    assert_eq!(
+        vault.entity_lifecycle_state(&survivor)?,
+        EntityLifecycleState::Active
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        EntityLifecycleState::Merged
+    );
+    // Exactly ONE read-through merge event, and the cache names the survivor.
+    assert_eq!(count_identity_topology_events(&vault)?, 1);
+    assert_eq!(resolve_party(&vault, "party-twin")?, Some(survivor));
+    assert_eq!(
+        resolve_or_create_comm_party(&vault, "party-twin")?,
+        survivor
+    );
+    // The shell body is still readable — a merge is a redirect, not a delete.
+    assert_eq!(vault.get_entity_type(&loser)?, Some(ENTITY_TYPE_PERSON));
+
+    // A second pass writes no additional topology event: the group is no longer
+    // a group, because the shell is no longer active.
+    run_comm_projector(&vault)?;
+    assert_eq!(count_identity_topology_events(&vault)?, 1);
+    assert_eq!(resolve_party(&vault, "party-twin")?, Some(survivor));
+    Ok(())
+}
+
+#[test]
+fn twin_merge_records_sorted_evidence_and_the_stable_rationale_token() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let first = mint_comm_person(&vault, "party-evidence")?;
+    let second = mint_comm_person(&vault, "party-evidence")?;
+    let mut expected_refs = vec![first, second];
+    expected_refs.sort_unstable();
+
+    run_comm_projector(&vault)?;
+
+    let event_id = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut ids = Vec::new();
+        for entry in vault
+            .store
+            .type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+        {
+            let (key, _) = entry?;
+            ids.push(entity_id_from_type_index_key(&key)?);
+        }
+        assert_eq!(ids.len(), 1);
+        ids[0]
+    };
+    let event = vault
+        .identity_topology_event(&event_id)?
+        .ok_or(CommError::InvalidRecord)?;
+    let evidence = event.evidence.ok_or(CommError::InvalidRecord)?;
+    assert_eq!(evidence.refs, expected_refs);
+    assert_eq!(evidence.rationale, PARTY_KEY_TWIN_RATIONALE);
+    Ok(())
+}
+
+#[test]
+fn parties_with_different_keys_are_never_merged() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    record_comm_send_receipt(&vault, "party-alpha", "email", 10)?;
+    record_comm_send_receipt(&vault, "party-beta", "email", 11)?;
+    run_comm_projector(&vault)?;
+
+    let alpha = resolve_party(&vault, "party-alpha")?.ok_or(CommError::InvalidRecord)?;
+    let beta = resolve_party(&vault, "party-beta")?.ok_or(CommError::InvalidRecord)?;
+    assert_ne!(alpha, beta);
+
+    run_comm_projector(&vault)?;
+
+    // Distinct keys are distinct parties. Deciding otherwise is cross-channel
+    // identity judgment, which this projector deliberately does not do.
+    assert_eq!(count_identity_topology_events(&vault)?, 0);
+    assert_eq!(
+        vault.entity_lifecycle_state(&alpha)?,
+        EntityLifecycleState::Active
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&beta)?,
+        EntityLifecycleState::Active
+    );
+    assert_eq!(resolve_party(&vault, "party-alpha")?, Some(alpha));
+    assert_eq!(resolve_party(&vault, "party-beta")?, Some(beta));
+    Ok(())
+}
+
+#[test]
+fn twin_merge_keeps_claims_on_their_own_subjects_and_reads_through() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    // Each twin carries its own projected standing state before reconciliation.
+    let first = mint_comm_person(&vault, "party-readthrough")?;
+    let second = mint_comm_person(&vault, "party-readthrough")?;
+    let mut sorted = [first, second];
+    sorted.sort_unstable();
+    let [survivor, loser] = sorted;
+
+    for (party_ref, channel, at) in [(survivor, "email", 10), (loser, "sms", 11)] {
+        let event = CommRecord::Event {
+            sequence: 0,
+            kind: CommEventKind::SendSucceeded,
+            party_ref,
+            channel_class: Some(channel.to_owned()),
+            thread_ref: None,
+            occurred_at: at,
+            projected: false,
+        };
+        vault.try_with_write_txn(|wtxn| {
+            put_comm_record_in_txn(&vault, wtxn, EntityId::now(), &event)
+        })?;
+    }
+    run_comm_projector(&vault)?;
+
+    // MS-01 owns the redirect: the loser's claim stays on the loser's subject.
+    let rtxn = vault.store.env.read_txn()?;
+    let on_shell = matching_claims_in_txn(
+        &vault,
+        &rtxn,
+        loser,
+        PREDICATE_COMM_LAST_TOUCH,
+        Some("sms"),
+        None,
+        true,
+    )?;
+    assert_eq!(on_shell.len(), 1, "claims are not reparented by a merge");
+    let on_survivor = matching_claims_in_txn(
+        &vault,
+        &rtxn,
+        survivor,
+        PREDICATE_COMM_LAST_TOUCH,
+        Some("sms"),
+        None,
+        true,
+    )?;
+    assert!(
+        on_survivor.is_empty(),
+        "read-through is a read-time union, not a rewrite"
+    );
+    drop(rtxn);
+
+    // The redirect edge is the door's, authored exactly once.
+    assert_eq!(count_identity_topology_events(&vault)?, 1);
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        EntityLifecycleState::Merged
+    );
+    // Contact materialization reads the canonical party.
+    assert!(!materialize_contact_record(&vault, "party-readthrough")?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn three_way_twins_converge_in_one_pass() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let mut twins = [
+        mint_comm_person(&vault, "party-triple")?,
+        mint_comm_person(&vault, "party-triple")?,
+        mint_comm_person(&vault, "party-triple")?,
+    ];
+    twins.sort_unstable();
+
+    run_comm_projector(&vault)?;
+
+    // One N→1 merge event, not a chain of pairwise merges.
+    assert_eq!(count_identity_topology_events(&vault)?, 1);
+    assert_eq!(
+        vault.entity_lifecycle_state(&twins[0])?,
+        EntityLifecycleState::Active
+    );
+    for loser in &twins[1..] {
+        assert_eq!(
+            vault.entity_lifecycle_state(loser)?,
+            EntityLifecycleState::Merged
+        );
+    }
+    assert_eq!(resolve_party(&vault, "party-triple")?, Some(twins[0]));
     Ok(())
 }
 

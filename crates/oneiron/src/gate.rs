@@ -3721,12 +3721,13 @@ fn hydrate_external_effect_contact(
     effect: &ExternalEffectGateInput,
 ) -> Result<ExternalEffectGateInput> {
     let mut hydrated = effect.clone();
-    let (Some(identity_ref), Some(counterparty)) =
-        (effect.channel_identity_ref, effect.counterparty.as_deref())
-    else {
+    let Some(counterparty) = effect.counterparty.as_deref() else {
         return Ok(hydrated);
     };
-    if let Some(record) = counterparty_contact_for_send(store, txn, &identity_ref, counterparty)? {
+    if let Some(identity_ref) = effect.channel_identity_ref
+        && let Some(record) =
+            counterparty_contact_for_send(store, txn, &identity_ref, counterparty)?
+    {
         hydrated.counterparty_first_touch = Some(record.first_touch);
         if record.first_touch == CounterpartyFirstTouch::Public
             && hydrated.policy_risk == ExternalEffectPolicyRisk::Normal
@@ -3738,6 +3739,20 @@ fn hydrate_external_effect_contact(
             .opt_out
             .map(super::counterparty_contact::CounterpartyOptOut::receipt_reason);
     }
+    // CA-01 do-not-contact leg. `comm.do_not_contact` is campaign- AND
+    // identity-independent, so it runs for every counterparty — including the
+    // ones with no channel identity and no contact record, which is exactly
+    // where the type-132 read above contributes nothing. The fold is monotonic
+    // (`|=`): this leg can only ADD suppression, never clear an opt-out another
+    // source already established. ONE-1868 owns completing the hydration so no
+    // shipping path can answer a false "no".
+    hydrated.counterparty_opted_out |= crate::campaign::claims::counterparty_do_not_contact_in_txn(
+        store,
+        txn,
+        counterparty,
+        Some(effect.channel.as_str()),
+        &effect.verb,
+    )?;
     Ok(hydrated)
 }
 
