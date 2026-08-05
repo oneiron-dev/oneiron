@@ -2484,7 +2484,9 @@ fn amend_then_approve_applies_the_amended_body_not_the_original() {
         EntityLifecycleState::Merged
     );
     assert_eq!(
-        vault.entity_lifecycle_state(&dropped).expect("dropped state"),
+        vault
+            .entity_lifecycle_state(&dropped)
+            .expect("dropped state"),
         EntityLifecycleState::Active,
         "the amended-away subject must keep its topology untouched"
     );
@@ -2637,9 +2639,7 @@ fn reject_leaves_zero_effects_and_retires_the_park() {
             .expect_err("a resolved proposal cannot be re-resolved");
         assert_eq!(
             expect_rejection(error),
-            IdentityTopologyRejection::ProposalAlreadyResolved {
-                proposal: *&proposal
-            }
+            IdentityTopologyRejection::ProposalAlreadyResolved { proposal }
         );
     }
 }
@@ -2727,7 +2727,10 @@ fn outcome_receipt_stamps_ramp_scope_on_all_three_outcomes() {
         // MS-06 (ONE-1748) rebuilds per-scope ramp stats from receipts ALONE:
         // without the DEC-0006 scope tuple stamped here, that is unsatisfiable.
         assert_eq!(receipt.fields.get("op_kind"), Some(&"merge".to_owned()));
-        assert_eq!(receipt.fields.get("target_class"), Some(&"PERSON".to_owned()));
+        assert_eq!(
+            receipt.fields.get("target_class"),
+            Some(&"PERSON".to_owned())
+        );
         assert!(receipt.fields.contains_key("actor"));
         assert!(receipt.fields.contains_key("proposal_ref"));
         // The reserved Δ slot is never written at this ticket.

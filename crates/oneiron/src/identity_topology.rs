@@ -1223,7 +1223,11 @@ fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<StoredIdentityOpA
                 ));
             }
             Ok(StoredIdentityOpAction::Merge {
-                sources: decode_ids_field(map, BODY_KEY_SOURCES, "identity topology event sources")?,
+                sources: decode_ids_field(
+                    map,
+                    BODY_KEY_SOURCES,
+                    "identity topology event sources",
+                )?,
                 survivor: decode_id_field(
                     map,
                     BODY_KEY_SURVIVOR,
@@ -1305,9 +1309,9 @@ fn proposal_scope_target(op: &IdentityTopologyOp) -> Result<EntityId> {
     match op {
         IdentityTopologyOp::Merge(merge) => Ok(merge.survivor),
         IdentityTopologyOp::Split(split) => Ok(split.entity),
-        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => Err(
-            Error::IdentityTopologyUnarmed("resolution of this op kind"),
-        ),
+        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
+            Err(Error::IdentityTopologyUnarmed("resolution of this op kind"))
+        }
     }
 }
 
@@ -2265,8 +2269,9 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
         // A resolution shells nothing of its own: an approving ruling's
         // effects ride the applied op's OWN event, which induces its own
         // sources when evicted.
-        StoredIdentityOpAction::Undo { .. }
-        | StoredIdentityOpAction::ProposalResolution { .. } => BTreeSet::new(),
+        StoredIdentityOpAction::Undo { .. } | StoredIdentityOpAction::ProposalResolution { .. } => {
+            BTreeSet::new()
+        }
     }))
 }
 
@@ -2621,7 +2626,8 @@ impl Vault {
         now: u64,
     ) -> Result<(ProposalOutcome, EntityId)> {
         let mut wtxn = self.store.env.write_txn()?;
-        let resolved = self.resolve_identity_proposal_in_txn(&mut wtxn, proposal, ruling, write, now)?;
+        let resolved =
+            self.resolve_identity_proposal_in_txn(&mut wtxn, proposal, ruling, write, now)?;
         wtxn.commit()?;
         Ok(resolved)
     }
@@ -2659,7 +2665,9 @@ impl Vault {
             ));
         };
 
-        let fold = fold_identity_topology_log(&self.fold_effective_identity_topology_events_in_txn(&*wtxn)?);
+        let fold = fold_identity_topology_log(
+            &self.fold_effective_identity_topology_events_in_txn(&*wtxn)?,
+        );
         if fold.resolved_proposals.contains_key(proposal) {
             return Err(Error::IdentityTopologyRejected(
                 IdentityTopologyRejection::ProposalAlreadyResolved {
@@ -2672,8 +2680,9 @@ impl Vault {
         // body must leave the park open and untouched.
         let amended = match ruling {
             ProposalRuling::AmendThenApprove(body) => {
-                let amended_op = decode_identity_op_amendment(body)
-                    .map_err(|_| Error::IdentityProposalAmendmentOutOfScope("amended body is malformed"))?;
+                let amended_op = decode_identity_op_amendment(body).map_err(|_| {
+                    Error::IdentityProposalAmendmentOutOfScope("amended body is malformed")
+                })?;
                 assert_amendment_in_scope(&proposed_op, &amended_op)?;
                 Some((amended_op, body.to_vec()))
             }
