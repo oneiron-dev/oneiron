@@ -461,13 +461,13 @@ impl Vault {
         // can never delete a concurrently-created live turn. A later sole opener
         // (or the peer itself, on its next clean open) recovers the orphans
         // instead. The empty closed-fence markers never block export.
+        // ONE-1728 (K8) deleted the companion context-receipt sweep: a session's
+        // retrieval-run receipts no longer reach a durable row at all — they are
+        // written into the session's own overlay `VaultMeta` keyspace, so a
+        // crash evaporates them with the rest of the room and leaves nothing for
+        // an open-time sweep to recover.
         if sole_opener {
             vault.sweep_orphaned_off_record_fences()?;
-            // Companion recovery leg: evaporate orphaned off-record context
-            // receipts (retrieval runs whose result_ids are activated-memory
-            // ids) whose in-process registration was lost to a crash. Runs
-            // under the same sole-ownership + still-exclusive open lock.
-            vault.sweep_orphaned_off_record_receipts()?;
         }
         // Recovery is complete: downgrade the exclusive open lock to SHARED (a
         // no-op for a non-sole opener) so concurrent shared openers — parked on

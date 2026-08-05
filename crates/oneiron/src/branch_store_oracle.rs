@@ -38,7 +38,22 @@ mod seam {
     use crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES;
     use crate::error::Error;
     use crate::overlay_db::OverlayDb;
-    use crate::session_overlay::{JournalScope, OverlayKeyspace, SessionOverlay};
+    use crate::session_overlay::{
+        JournalEntry, JournalRole, JournalScope, OverlayKeyspace, SessionOverlay,
+    };
+    use crate::temporal::TimeRange;
+
+    /// A typed journal entry for the substrate-level oracles, which assert
+    /// journal ATOMICITY and byte accounting rather than role semantics.
+    pub(super) fn seam_journal_entry(scope: JournalScope, op: BatchOp) -> JournalEntry {
+        JournalEntry {
+            scope,
+            role: JournalRole::TurnOwnedArtifact,
+            learned_at: 1,
+            occurred: TimeRange { start: 1, end: 1 },
+            op,
+        }
+    }
 
     /// Session write-overlay handle (ONE-1726 owns the real substrate type;
     /// ONE-1727 owns the vault-level session handle that wraps it).
@@ -383,12 +398,12 @@ mod seam {
         let view = session.session.read_view()?;
         apply_view_script(&view.entities, &mut wtxn, script)?;
         let scope = JournalScope::new(EntityId::now(), EntityId::now());
-        overlay.stage_journal(
+        overlay.stage_journal_entry(seam_journal_entry(
             scope,
             BatchOp::Delete {
                 id: EntityId::now(),
             },
-        )?;
+        ))?;
         drop(segment);
         drop(wtxn);
 
@@ -431,8 +446,8 @@ mod seam {
             turn_a.as_bytes(),
             b"session-only text",
         )?;
-        overlay.stage_journal(scope, BatchOp::Delete { id: turn_a })?;
-        overlay.stage_journal(scope, BatchOp::Delete { id: turn_b })?;
+        overlay.stage_journal_entry(seam_journal_entry(scope, BatchOp::Delete { id: turn_a }))?;
+        overlay.stage_journal_entry(seam_journal_entry(scope, BatchOp::Delete { id: turn_b }))?;
         segment.commit()?;
 
         let snapshot = overlay.snapshot()?;

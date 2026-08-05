@@ -17,6 +17,7 @@ use arc_swap::ArcSwap;
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::temporal::TimeRange;
 
 /// Write-transaction entry points that a session write path must wrap.
 ///
@@ -193,14 +194,45 @@ impl KeyspaceState {
     }
 }
 
+/// Semantic ownership tag on a typed journal entry (ARCH-0052 D4, K3).
+///
+/// This is the ONLY legal closure source for promotion (ONE-1730): promote
+/// selects by role, never by inferring ownership from a type-index,
+/// text-posting, short-id, temporal, or edge-index key. Index keys are shared
+/// between turns by construction, so key-shaped selection drags siblings.
+///
+/// Role assignment is CLOSED — every staged op maps to exactly one role:
+///
+/// | role | staged op |
+/// |---|---|
+/// | [`Self::ConversationShell`] | the conversation shell put |
+/// | [`Self::TurnPut`] | the TURN entity put |
+/// | [`Self::MessagePartOf`] | each MESSAGE put and its `PartOf` edge |
+/// | [`Self::SummaryDerivedFrom`] | the SUMMARY put and its `DerivedFrom` edge |
+/// | [`Self::AttributionEdge`] | the `AuthoredBy` and `BelongsTo` edges |
+/// | [`Self::TurnOwnedArtifact`] | every other turn-scoped op (BM25 `content` text ops, vector/HNSW rows) |
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JournalRole {
+    TurnPut,
+    MessagePartOf,
+    SummaryDerivedFrom,
+    AttributionEdge,
+    ConversationShell,
+    TurnOwnedArtifact,
+}
+
+/// One typed journal operation.
+///
+/// `scope` carries the owning conversation + turn; `learned_at` and `occurred`
+/// are preserved from the witnessing write and never restamped, so promote
+/// replays into the correct month window (ARCH-0052 D4).
 #[derive(Clone)]
-struct JournalEntry {
-    #[allow(
-        dead_code,
-        reason = "typed journal selection is consumed by ONE-1730 promotion"
-    )]
-    scope: JournalScope,
-    op: BatchOp,
+pub(crate) struct JournalEntry {
+    pub(crate) scope: JournalScope,
+    pub(crate) role: JournalRole,
+    pub(crate) learned_at: u64,
+    pub(crate) occurred: TimeRange,
+    pub(crate) op: BatchOp,
 }
 
 #[derive(Clone)]
@@ -289,6 +321,13 @@ enum OverlayLifecycleState {
 struct Lifecycle {
     state: OverlayLifecycleState,
     generation: u64,
+    /// Monotonic counter bumped by every MODE publication — `seal_writes`
+    /// (Live -> Sealed, the flip on-record) and `rearm` (Sealed -> Live, the
+    /// K10 flip-back). A [`SessionWriteRoute`] records the value it was minted
+    /// under and [`SessionWriteRoute::revalidate`] refuses a mismatch, so a
+    /// route minted before the most recent flip can never stage or commit.
+    /// Distinct from `generation`, which stamps LEASES and bumps at close.
+    mode_generation: u64,
     leases: usize,
     segment_active: bool,
 }
@@ -310,6 +349,77 @@ impl Drop for Lease {
                 self.overlay.lease_drained.notify_all();
             }
         }
+    }
+}
+
+/// Which store a session write lands in for the session's CURRENT mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RouteTarget {
+    /// `OffRecord` — rows stage into the overlay and evaporate at close.
+    Overlay,
+    /// `OnRecord` (post-flip) — rows take the ordinary base apply under the
+    /// session's on-record continuation shell.
+    Base,
+}
+
+/// The mode-aware write route (ARCH-0052 D5, K10).
+///
+/// Minted by `OffRecordSession::write_route()` under the session state lock, so
+/// the target and the mode generation it records are the same publication.
+/// Every apply route on the session write path carries the route it was
+/// constructed with and revalidates it before staging or committing.
+///
+/// Fields are private to this module: `batch.rs` receives a route and NEVER
+/// reads its fields — the route revalidates itself. That is why `revalidate`
+/// lives here, in the fields' owner module, rather than at the call site.
+pub(crate) struct SessionWriteRoute {
+    overlay: Arc<SessionOverlay>,
+    target: RouteTarget,
+    mode_generation: u64,
+}
+
+impl SessionWriteRoute {
+    /// Mints a route recording the overlay's currently published mode
+    /// generation. Callers hold the session state lock across mint + the mode
+    /// read so target and generation cannot disagree.
+    pub(crate) fn mint(overlay: &Arc<SessionOverlay>, target: RouteTarget) -> Result<Self> {
+        Ok(Self {
+            overlay: overlay.clone(),
+            target,
+            mode_generation: overlay.mode_generation()?,
+        })
+    }
+
+    /// Refuses with the typed stale-route family if this route was minted
+    /// before the most recent mode publication (flip to `OnRecord`, or the
+    /// K10 flip-back rearm). Read under the overlay's own state lock against
+    /// freshly published state, so a route that survives this check is the
+    /// route the current mode authorizes.
+    ///
+    /// The refusal reuses [`Error::OffRecordOverlayLeaseClosed`], carrying the
+    /// route's recorded mode generation: a stale route names a mode epoch that
+    /// no longer accepts writes, exactly as a stale lease names a closed
+    /// overlay generation.
+    pub(crate) fn revalidate(&self) -> Result<()> {
+        if self.overlay.mode_generation()? == self.mode_generation {
+            return Ok(());
+        }
+        Err(Error::OffRecordOverlayLeaseClosed {
+            generation: self.mode_generation,
+        })
+    }
+
+    /// Narrow query arm: which store this route resolves to. `batch.rs` may
+    /// branch through this method, never through a field read.
+    pub(crate) const fn target(&self) -> RouteTarget {
+        self.target
+    }
+
+    /// The overlay this route stages into. Crate-private and used only by the
+    /// session apply entry, which must stage through the same overlay the
+    /// route was minted against.
+    pub(crate) const fn overlay(&self) -> &Arc<SessionOverlay> {
+        &self.overlay
     }
 }
 
@@ -481,6 +591,62 @@ impl OverlaySnapshot {
         self.merge_rows(keyspace, Vec::new()).len()
     }
 
+    /// Live overlay rows in `keyspace` whose key satisfies `include_key`.
+    ///
+    /// Tombstones are excluded: a masked base row is not an overlay row. Used
+    /// by close's PRE-close census, which must count what is about to
+    /// evaporate while it is still observable.
+    pub(crate) fn live_row_count(
+        &self,
+        keyspace: OverlayKeyspace,
+        include_key: impl Fn(&[u8]) -> bool,
+    ) -> usize {
+        self.merge_plan(keyspace, include_key)
+            .rows
+            .iter()
+            .filter(|row| match row {
+                SnapshotMergeRow::Single { value, .. } => value.is_some(),
+                SnapshotMergeRow::Duplicate { present, .. } => present.is_some(),
+            })
+            .count()
+    }
+
+    /// Journal entries staging a TRANSCRIPT entity put — the turn, its
+    /// messages, and its summary. Close reports these as `turns_deleted`
+    /// alongside the legacy fenced-base PolicyDelete count, because an
+    /// overlay-witnessed turn stops existing at close exactly as a
+    /// hard-deleted fenced one does.
+    ///
+    /// Edge-only entries under the same roles do not count: a `PartOf` or
+    /// `DerivedFrom` edge is not an entity that stopped existing.
+    pub(crate) fn transcript_entity_put_count(&self) -> usize {
+        self.state
+            .journal
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.role,
+                    JournalRole::TurnPut
+                        | JournalRole::MessagePartOf
+                        | JournalRole::SummaryDerivedFrom
+                ) && matches!(entry.op, BatchOp::Put { .. })
+            })
+            .count()
+    }
+
+    /// Read view of the typed journal, in staging order.
+    ///
+    /// This is ONE-1730's promote input: selection logic (which entries form a
+    /// turn's closure) lives there, not here. K2 arms the accessor; no
+    /// `plan_promotion` or promote selection may land on this type in P4a.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730's plan_promotion is the first lib-target consumer; the P4a oracle covers it now"
+    )]
+    pub(crate) fn journal_entries(&self) -> &[JournalEntry] {
+        &self.state.journal
+    }
+
     #[cfg(test)]
     pub(crate) fn journal_ops(&self, scope: JournalScope) -> Vec<BatchOp> {
         self.state
@@ -533,6 +699,7 @@ impl SessionOverlay {
             lifecycle: Mutex::new(Lifecycle {
                 state: OverlayLifecycleState::Live,
                 generation: NEXT_OVERLAY_GENERATION.fetch_add(1, Ordering::Relaxed),
+                mode_generation: 0,
                 leases: 0,
                 segment_active: false,
             }),
@@ -583,9 +750,23 @@ impl SessionOverlay {
             .any(|value| matches!(value, OverlayValue::Present(_))))
     }
 
-    /// Permanently seals the overlay write path while leaving composed reads
-    /// available. The transition first blocks new segment installers, then
-    /// drains the one permitted active writer before publishing `Sealed`.
+    /// The currently published mode generation, read under the state lock.
+    /// [`SessionWriteRoute`] is the only consumer.
+    fn mode_generation(&self) -> Result<u64> {
+        Ok(self
+            .lifecycle
+            .lock()
+            .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?
+            .mode_generation)
+    }
+
+    /// Seals the overlay write path while leaving composed reads available.
+    /// The transition first blocks new segment installers, then drains the one
+    /// permitted active writer before publishing `Sealed`.
+    ///
+    /// The seal is permanent EXCEPT for the K10 flip-back: [`Self::rearm`]
+    /// transitions `Sealed` -> `Live` when a session flips back to
+    /// `OffRecord`. Every other state stays terminal.
     pub(crate) fn seal_writes(self: &Arc<Self>) -> Result<()> {
         let holds_active_segment = ACTIVE_SEGMENT.with(|slot| {
             slot.borrow()
@@ -622,6 +803,34 @@ impl SessionOverlay {
             })?;
         }
         lifecycle.state = OverlayLifecycleState::Sealed;
+        lifecycle.mode_generation = next_mode_generation(lifecycle.mode_generation)?;
+        Ok(())
+    }
+
+    /// K10 flip-back: re-enables overlay writes when a session returns to
+    /// `OffRecord` mode. The ONLY legal transition is `Sealed` -> `Live`
+    /// (`Live` IS the landed write-enabled state — no `Armed` variant exists;
+    /// K10's "armed" prose names `Live`). Every other state — including a
+    /// `Live` overlay that was never sealed — is refused, so rearm can never
+    /// resurrect a closing or closed overlay.
+    ///
+    /// Publishing bumps the mode generation, so any [`SessionWriteRoute`]
+    /// minted before the flip-back is refused by [`SessionWriteRoute::revalidate`]
+    /// before it can stage. The room's earlier turns stay visible in-session
+    /// and unextractable through base: rearm reopens the write door only, and
+    /// touches no row.
+    pub(crate) fn rearm(self: &Arc<Self>) -> Result<()> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
+        if lifecycle.state != OverlayLifecycleState::Sealed {
+            return Err(Error::OffRecordOverlayLeaseClosed {
+                generation: lifecycle.generation,
+            });
+        }
+        lifecycle.state = OverlayLifecycleState::Live;
+        lifecycle.mode_generation = next_mode_generation(lifecycle.mode_generation)?;
         Ok(())
     }
 
@@ -760,14 +969,14 @@ impl SessionOverlay {
         self.stage_mutation(mutation)
     }
 
-    #[allow(
-        dead_code,
-        reason = "typed journal staging is consumed by ONE-1730 promotion"
-    )]
-    pub(crate) fn stage_journal(self: &Arc<Self>, scope: JournalScope, op: BatchOp) -> Result<()> {
-        let incoming_bytes = std::mem::size_of::<JournalEntry>()
-            .checked_add(batch_op_payload_bytes(&op))
-            .ok_or(Error::ArithmeticOverflow("overlay journal byte cost"))?;
+    /// Stages one typed, role-tagged journal op into the active txn segment.
+    ///
+    /// The ONLY journal staging surface: every staged op carries its
+    /// [`JournalRole`] and the witnessing write's own `learned_at`/`occurred`,
+    /// so promote can never fall back on inferring ownership from index keys
+    /// or on restamping the room clock.
+    pub(crate) fn stage_journal_entry(self: &Arc<Self>, entry: JournalEntry) -> Result<()> {
+        let incoming_bytes = entry.byte_size();
         ACTIVE_SEGMENT.with(|slot| {
             let mut slot = slot.borrow_mut();
             let Some(segment) = slot.as_mut() else {
@@ -786,7 +995,7 @@ impl SessionOverlay {
                 .checked_add(segment.journal_bytes)
                 .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
             self.ensure_budget(current_bytes, incoming_bytes)?;
-            segment.journal.push(JournalEntry { scope, op });
+            segment.journal.push(entry);
             segment.journal_bytes = segment.journal_bytes.checked_add(incoming_bytes).ok_or(
                 Error::ArithmeticOverflow("overlay staged journal byte count"),
             )?;
@@ -1075,6 +1284,14 @@ impl SessionOverlay {
     }
 }
 
+/// Advances the mode-publication counter. Overflow is a hard error rather than
+/// a wrap: a wrapped counter could make a stale route revalidate.
+fn next_mode_generation(current: u64) -> Result<u64> {
+    current
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("session overlay mode generation"))
+}
+
 fn project_mutation(state: &OverlayState, mutation: &OverlayMutation) -> Result<OverlayState> {
     let mut projected = state.clone();
     apply_mutation(&mut projected, mutation)?;
@@ -1290,6 +1507,18 @@ mod tests {
             allow_maintenance: false,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
+        }
+    }
+
+    /// A journal entry carrying the role and timestamps a witness write would
+    /// preserve; the budget/atomicity tests care about bytes, not the tag.
+    fn journal_entry(scope: JournalScope, role: JournalRole, op: BatchOp) -> JournalEntry {
+        JournalEntry {
+            scope,
+            role,
+            learned_at: 1,
+            occurred: TimeRange { start: 1, end: 1 },
+            op,
         }
     }
 
@@ -1965,7 +2194,11 @@ mod tests {
         let segment = overlay.install_txn_segment()?;
         let scope = JournalScope::new(EntityId::now(), EntityId::now());
 
-        match overlay.stage_journal(scope, put_op(vec![0_u8; budget + 1])) {
+        match overlay.stage_journal_entry(journal_entry(
+            scope,
+            JournalRole::TurnPut,
+            put_op(vec![0_u8; budget + 1]),
+        )) {
             Err(Error::OffRecordOverlayFull { budget_bytes, .. }) => {
                 assert_eq!(budget_bytes, budget);
             }
@@ -1985,7 +2218,11 @@ mod tests {
         let overlay = SessionOverlay::new(4096);
         let segment = overlay.install_txn_segment()?;
         let scope = JournalScope::new(EntityId::now(), EntityId::now());
-        overlay.stage_journal(scope, put_op(vec![7_u8; 128]))?;
+        overlay.stage_journal_entry(journal_entry(
+            scope,
+            JournalRole::TurnPut,
+            put_op(vec![7_u8; 128]),
+        ))?;
         drop(segment);
 
         let snapshot = overlay.snapshot()?;
@@ -1999,12 +2236,13 @@ mod tests {
         let overlay = SessionOverlay::new(4096);
         let scope = JournalScope::new(EntityId::now(), EntityId::now());
 
-        match overlay.stage_journal(
+        match overlay.stage_journal_entry(journal_entry(
             scope,
+            JournalRole::TurnPut,
             BatchOp::Delete {
                 id: EntityId::now(),
             },
-        ) {
+        )) {
             Err(Error::InvariantViolation(message)) => assert_eq!(
                 message,
                 "session overlay write requires an active txn segment"

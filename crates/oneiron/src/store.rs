@@ -273,7 +273,11 @@ const _: () =
 const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 1;
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
-const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
+/// Crate-visible so the off-record close census can count the session's own
+/// retrieval-run receipt rows in the overlay `VaultMeta` keyspace immediately
+/// before they evaporate (ONE-1728 K8). The key FORMAT is owned here; the
+/// census only tests the prefix.
+pub(crate) const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
 const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
 const RETRIEVAL_TRACE_FORK_KEY_PREFIX: &[u8] = b"retr_trace_fork:v0:";
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";

@@ -276,6 +276,8 @@ pub enum ErrorKind {
     OffRecordTurnNotFenced,
     OffRecordPromoteUnauthenticated,
     OffRecordFencedTurnWriteRejected,
+    OffRecordTaintedBaseWrite,
+    OffRecordWitnessDoorRejected,
     OffRecordTalkOnly,
     OffRecordExportRefused,
     #[cfg(feature = "sync")]
@@ -1401,6 +1403,26 @@ pub enum Error {
         "off-record fenced turn {turn_ref} cannot be written: its session is closed or closing"
     )]
     OffRecordFencedTurnWriteRejected { turn_ref: String },
+    /// ARCH-0052 D2 (ONE-1728, K4): an ORDINARY base write transaction decoded
+    /// an op referencing an entity that is a live session-overlay member. The
+    /// check runs INSIDE the applying transaction at the op-decode point, so
+    /// the membership read and the write it authorizes see the same state and
+    /// the whole batch aborts atomically — no base row is written. Only a
+    /// promote-replay transaction may reference overlay ids, and only those of
+    /// the session whose promote it is.
+    #[error("base write rejected: {entity_ref} is a live off-record overlay member")]
+    OffRecordTaintedBaseWrite { entity_ref: String },
+    /// ARCH-0052 D2 backstop (a) (ONE-1728, K7): the canonical-handle witness
+    /// door resolved a conversation that belongs to a live session overlay.
+    /// Session-owned rooms are witnessed through the session handle only;
+    /// the base door refuses before any write.
+    #[error(
+        "witness rejected: conversation {conversation_ref} belongs to live off-record session {session_ref}"
+    )]
+    OffRecordWitnessDoorRejected {
+        session_ref: String,
+        conversation_ref: String,
+    },
     /// OF-326 talk-only: the intent originated from a session currently in
     /// off-record mode, where outbound/commitment verbs are disabled. Exit
     /// prompt semantics — wanting the action means exiting off-record mode.
@@ -1722,6 +1744,8 @@ impl Error {
             Self::OffRecordFencedTurnWriteRejected { .. } => {
                 ErrorKind::OffRecordFencedTurnWriteRejected
             }
+            Self::OffRecordTaintedBaseWrite { .. } => ErrorKind::OffRecordTaintedBaseWrite,
+            Self::OffRecordWitnessDoorRejected { .. } => ErrorKind::OffRecordWitnessDoorRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             Self::OffRecordExportRefused { .. } => ErrorKind::OffRecordExportRefused,
             #[cfg(feature = "sync")]
