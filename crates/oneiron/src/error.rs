@@ -183,6 +183,15 @@ pub enum ErrorKind {
     InvalidCommRecordBody,
     InvalidDisclosureScope,
     DisclosureClampViolation,
+    InvalidConsentBound,
+    InvalidConsentGrantRow,
+    InvalidConsentEffectFacts,
+    ConsentOwnerNotAuthenticated,
+    ConsentUnauthenticatedActor,
+    ConsentCatastropheNotRememberable,
+    ConsentGrantNotFound,
+    ConsentGrantRevoked,
+    ConsentApproveOnceSpent,
     InvalidTaskBody,
     CorruptedIndex,
     ContextPackValidation,
@@ -276,6 +285,8 @@ pub enum ErrorKind {
     OffRecordTurnNotFenced,
     OffRecordPromoteUnauthenticated,
     OffRecordFencedTurnWriteRejected,
+    OffRecordTaintedBaseWrite,
+    OffRecordWitnessDoorRejected,
     OffRecordTalkOnly,
     OffRecordExportRefused,
     #[cfg(feature = "sync")]
@@ -288,12 +299,18 @@ pub enum ErrorKind {
     ReceiptLeaseRevoked,
     IdentityTopologyRejected,
     IdentityTopologyUnarmed,
+    IdentityProposalAmendmentOutOfScope,
     InvalidIdentityTopologyEventBody,
     ReservedEdgeKind,
     #[cfg(feature = "sync")]
     IdentityTopologyEventDivergence,
     AuthorityLogAppendOnlyViolation,
     AuthorityLogStoreKeyMismatch,
+    InvalidSecretCustodyBody,
+    SecretNameInUse,
+    SecretCustodyNotActive,
+    SecretBindingDenied,
+    ManifestWidensFloor,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -943,6 +960,49 @@ pub enum Error {
     /// pack build FAILS rather than leaks (OF-365 fail-closed sweep).
     #[error("disclosure clamp violation: {0}")]
     DisclosureClampViolation(&'static str),
+    /// A DEC-0006 consent bound failed normalization: an empty/oversized ref,
+    /// an empty envelope, or — the load-bearing case — a triple that crosses
+    /// the disclosure and action domains (invariant 4). Nothing was written.
+    #[error("invalid consent bound: {0}")]
+    InvalidConsentBound(&'static str),
+    /// A persisted standing consent-grant row failed pinned structural
+    /// validation. Nothing was written.
+    #[error("invalid consent grant row: {0}")]
+    InvalidConsentGrantRow(&'static str),
+    /// The engine-owned write facts required to classify a composed effect
+    /// were malformed or absent, so no reversibility verdict can be produced.
+    /// The caller takes the invariant-8 domain fail-safe.
+    #[error("invalid consent effect facts: {0}")]
+    InvalidConsentEffectFacts(&'static str),
+    /// A consent minting door was reached without an authenticated owner.
+    /// Standing grants are created ONLY by the authenticated owner — never
+    /// inferred from a preference, a claim, a transcript line, or a guard
+    /// hunch (DEC-0006 invariant 2). Nothing was written.
+    #[error("consent owner not authenticated: {0}")]
+    ConsentOwnerNotAuthenticated(&'static str),
+    /// A GenUI consent action reached evaluation without a store-authenticated
+    /// owner handle bound to both the card principal and the claimed actor.
+    /// Caller-deserialized actor text and voice booleans are never authority.
+    #[error("consent actor is not authenticated: {0}")]
+    ConsentUnauthenticatedActor(&'static str),
+    /// A standing-grant mint named a catastrophe-floor class. The closed floor
+    /// is non-rememberable at ANY trust level (DEC-0006 invariant 7): the
+    /// owner may approve the op in the moment, but never make it automatic.
+    /// Nothing was written.
+    #[error("catastrophe floor is non-rememberable: {0}")]
+    ConsentCatastropheNotRememberable(&'static str),
+    /// A consent registry operation named a grant row that does not exist.
+    #[error("consent grant not found")]
+    ConsentGrantNotFound,
+    /// A standing grant was used after revocation. Revocation is immediate.
+    #[error("consent grant is revoked")]
+    ConsentGrantRevoked,
+    /// An approve-once digest was replayed: either the owner tried to mint a
+    /// second approve-once over it, or the evaluator matched a receipt whose
+    /// effect already ran. Approve-once authorizes this op, NOW, exactly once
+    /// (DEC-0006 invariant 2). Nothing was written.
+    #[error("approve-once digest already spent: {0}")]
+    ConsentApproveOnceSpent(&'static str),
     /// A TASK record failed pinned role-field validation. Nothing was written.
     #[error("invalid TASK body: {0}")]
     InvalidTaskBody(&'static str),
@@ -1401,6 +1461,26 @@ pub enum Error {
         "off-record fenced turn {turn_ref} cannot be written: its session is closed or closing"
     )]
     OffRecordFencedTurnWriteRejected { turn_ref: String },
+    /// ARCH-0052 D2 (ONE-1728, K4): an ORDINARY base write transaction decoded
+    /// an op referencing an entity that is a live session-overlay member. The
+    /// check runs INSIDE the applying transaction at the op-decode point, so
+    /// the membership read and the write it authorizes see the same state and
+    /// the whole batch aborts atomically — no base row is written. Only a
+    /// promote-replay transaction may reference overlay ids, and only those of
+    /// the session whose promote it is.
+    #[error("base write rejected: {entity_ref} is a live off-record overlay member")]
+    OffRecordTaintedBaseWrite { entity_ref: String },
+    /// ARCH-0052 D2 backstop (a) (ONE-1728, K7): the canonical-handle witness
+    /// door resolved a conversation that belongs to a live session overlay.
+    /// Session-owned rooms are witnessed through the session handle only;
+    /// the base door refuses before any write.
+    #[error(
+        "witness rejected: conversation {conversation_ref} belongs to live off-record session {session_ref}"
+    )]
+    OffRecordWitnessDoorRejected {
+        session_ref: String,
+        conversation_ref: String,
+    },
     /// OF-326 talk-only: the intent originated from a session currently in
     /// off-record mode, where outbound/commitment verbs are disabled. Exit
     /// prompt semantics — wanting the action means exiting off-record mode.
@@ -1479,6 +1559,14 @@ pub enum Error {
     /// effect.
     #[error("identity topology op is not armed yet: {0}")]
     IdentityTopologyUnarmed(&'static str),
+    /// An ARCH-0055 r7 proposal amendment left the reviewed proposal's scope
+    /// (ONE-1747): a different op kind, a subject the proposal never named,
+    /// or a body that does not decode as an op at all. An amendment narrows
+    /// what the decider reviewed — it is never a capability to substitute
+    /// one operation for another. Fail-closed: nothing is applied and the
+    /// park stays open.
+    #[error("identity proposal amendment is out of scope: {0}")]
+    IdentityProposalAmendmentOutOfScope(&'static str),
     /// An AUTHORITY_LOG row is append-only at its store key (ONE-1604-D1): a
     /// write carried body-divergent bytes for an existing type-122 id. Local
     /// callers get this as a hard error; replicated doors classify it as a
@@ -1498,6 +1586,36 @@ pub enum Error {
         id.to_hex()
     )]
     AuthorityLogStoreKeyMismatch { id: EntityId },
+    /// A SECRET_CUSTODY body failed structural validation (SECRET-01,
+    /// ONE-1919).
+    #[error("invalid secret custody body: {0}")]
+    InvalidSecretCustodyBody(&'static str),
+    /// A live secret name was re-registered while still held by a
+    /// non-revoked record (SECRET-01).
+    #[error("secret name in use: {name}")]
+    SecretNameInUse { name: String },
+    /// A value read was attempted on a non-`Active` custody record.
+    #[error("secret custody record is not active: {name}")]
+    SecretCustodyNotActive { name: String },
+    /// No binding covers `(secret_ref, effector)` — the typed deny for a
+    /// value read or use without a declared binding (SECRET-01; door/lease
+    /// enforcement lands in SECRET-02).
+    #[error("no secret binding for effector `{effector}` on secret `{secret_ref}`")]
+    SecretBindingDenied {
+        effector: String,
+        secret_ref: String,
+    },
+    /// A repo-side manifest asks for more exposure than the vault floor
+    /// permits for the entry's class (ARCH-0069 S2 — narrow-only).
+    #[error(
+        "manifest widens the vault floor for `{secret_ref}` ({class:?}): requested {requested:?} exceeds floor max {floor_max:?}"
+    )]
+    ManifestWidensFloor {
+        secret_ref: String,
+        class: crate::secret_custody::CustodyClass,
+        requested: crate::secret_custody::CustodyTier,
+        floor_max: crate::secret_custody::CustodyTier,
+    },
 }
 
 impl Error {
@@ -1614,6 +1732,17 @@ impl Error {
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDisclosureScope(_) => ErrorKind::InvalidDisclosureScope,
+            Self::InvalidConsentBound(_) => ErrorKind::InvalidConsentBound,
+            Self::InvalidConsentGrantRow(_) => ErrorKind::InvalidConsentGrantRow,
+            Self::InvalidConsentEffectFacts(_) => ErrorKind::InvalidConsentEffectFacts,
+            Self::ConsentOwnerNotAuthenticated(_) => ErrorKind::ConsentOwnerNotAuthenticated,
+            Self::ConsentUnauthenticatedActor(_) => ErrorKind::ConsentUnauthenticatedActor,
+            Self::ConsentCatastropheNotRememberable(_) => {
+                ErrorKind::ConsentCatastropheNotRememberable
+            }
+            Self::ConsentGrantNotFound => ErrorKind::ConsentGrantNotFound,
+            Self::ConsentGrantRevoked => ErrorKind::ConsentGrantRevoked,
+            Self::ConsentApproveOnceSpent(_) => ErrorKind::ConsentApproveOnceSpent,
             Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
@@ -1722,6 +1851,8 @@ impl Error {
             Self::OffRecordFencedTurnWriteRejected { .. } => {
                 ErrorKind::OffRecordFencedTurnWriteRejected
             }
+            Self::OffRecordTaintedBaseWrite { .. } => ErrorKind::OffRecordTaintedBaseWrite,
+            Self::OffRecordWitnessDoorRejected { .. } => ErrorKind::OffRecordWitnessDoorRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             Self::OffRecordExportRefused { .. } => ErrorKind::OffRecordExportRefused,
             #[cfg(feature = "sync")]
@@ -1734,6 +1865,9 @@ impl Error {
             Self::ReceiptLeaseRevoked { .. } => ErrorKind::ReceiptLeaseRevoked,
             Self::IdentityTopologyRejected(_) => ErrorKind::IdentityTopologyRejected,
             Self::IdentityTopologyUnarmed(_) => ErrorKind::IdentityTopologyUnarmed,
+            Self::IdentityProposalAmendmentOutOfScope(_) => {
+                ErrorKind::IdentityProposalAmendmentOutOfScope
+            }
             Self::InvalidIdentityTopologyEventBody(_) => {
                 ErrorKind::InvalidIdentityTopologyEventBody
             }
@@ -1746,6 +1880,11 @@ impl Error {
                 ErrorKind::AuthorityLogAppendOnlyViolation
             }
             Self::AuthorityLogStoreKeyMismatch { .. } => ErrorKind::AuthorityLogStoreKeyMismatch,
+            Self::InvalidSecretCustodyBody(_) => ErrorKind::InvalidSecretCustodyBody,
+            Self::SecretNameInUse { .. } => ErrorKind::SecretNameInUse,
+            Self::SecretCustodyNotActive { .. } => ErrorKind::SecretCustodyNotActive,
+            Self::SecretBindingDenied { .. } => ErrorKind::SecretBindingDenied,
+            Self::ManifestWidensFloor { .. } => ErrorKind::ManifestWidensFloor,
         }
     }
 
