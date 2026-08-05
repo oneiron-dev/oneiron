@@ -298,7 +298,7 @@ fn run_tree_promotes_missing_parent_to_repaired_root() -> Result<()> {
 }
 
 #[test]
-fn run_tree_omits_retry_last_error_until_terminal_failure() -> Result<()> {
+fn run_tree_attaches_a_scheduled_retry_under_its_failed_source() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
     let queued = enqueue(&runner, "retrying-subagent", None, 10, "run-retry")?;
@@ -312,7 +312,7 @@ fn run_tree_omits_retry_last_error_until_terminal_failure() -> Result<()> {
         panic!("expected claim");
     };
     assert_eq!(claimed.id, queued.attempt.id);
-    let RetryOutcome::Retried(_) = queue.retry(RetryAttempt {
+    let RetryOutcome::Retried(retried) = queue.retry(RetryAttempt {
         id: claimed.id,
         lease_owner: "retry-worker".to_owned(),
         attempt_count: claimed.attempt_count,
@@ -320,12 +320,59 @@ fn run_tree_omits_retry_last_error_until_terminal_failure() -> Result<()> {
         last_error: Some("rate limited".to_owned()),
         now: 30,
     })?;
+    assert_ne!(retried.id, queued.attempt.id);
 
     let tree = RunTreeAdapter::new(&vault).read_run("run-retry")?;
 
+    // One root — the failed try — with its next try hanging off `retry_of`,
+    // so per-try history stays legible instead of collapsing into one node.
     assert_eq!(tree.roots.len(), 1);
-    assert_eq!(tree.roots[0].status, RunTreeStatus::Queued);
-    assert_eq!(tree.roots[0].failure, None);
+    assert!(tree.repairs.is_empty());
+    let root = &tree.roots[0];
+    assert_eq!(root.attempt_id, hex(queued.attempt.id));
+    assert_eq!(root.status, RunTreeStatus::Failed);
+    assert_eq!(
+        root.failure,
+        Some(super::RunTreeFailure {
+            reason: "rate limited".to_owned(),
+        })
+    );
+
+    assert_eq!(root.children.len(), 1);
+    let child = &root.children[0];
+    assert_eq!(child.attempt_id, hex(retried.id));
+    assert_eq!(
+        child.parent_id.as_deref(),
+        Some(hex(queued.attempt.id).as_str())
+    );
+    // Scheduled maps onto the existing Paused token — deferred, not runnable
+    // now — which the Context Board already renders as `Scheduled`.
+    assert_eq!(child.status, RunTreeStatus::Paused);
+    assert_eq!(child.failure, None);
+    assert_eq!(event_kinds(child), vec![RunTreeEventKind::Created]);
+
+    Ok(())
+}
+
+/// A pre-ONE-1795 row decodes as `Queued` carrying only `backoff_until`, and
+/// the queue keeps holding it back until that instant. Projecting the bare enum
+/// renders it runnable-now on every read surface — run tree, Context Board,
+/// facade attempt view — while the claim loop refuses to hand it out.
+#[test]
+fn legacy_backoff_row_projects_deferred_not_runnable_now() -> Result<()> {
+    let deferred = legacy_queued_record(0xA1, 10, Some(900));
+    let runnable = legacy_queued_record(0xB2, 20, None);
+
+    let tree = render_run_tree(vec![deferred, runnable])?;
+
+    assert_eq!(tree.roots.len(), 2);
+    // Identical readiness posture to a `Scheduled` retry row, so identical
+    // token: deferred, not eligible to run now.
+    assert_eq!(tree.roots[0].status, RunTreeStatus::Paused);
+    // Deferred is not "paused by an operator" — no Paused event is projected.
+    assert_eq!(event_kinds(&tree.roots[0]), vec![RunTreeEventKind::Created]);
+    // A queued row with no readiness instant stays genuinely runnable now.
+    assert_eq!(tree.roots[1].status, RunTreeStatus::Queued);
 
     Ok(())
 }
@@ -534,6 +581,8 @@ fn dreamer_record(
         lease_owner: None,
         attempt_count: 0,
         claimed_at: None,
+        scheduled_at: None,
+        retry_of: None,
         backoff_until: None,
         last_error: None,
         task_ref: None,
@@ -548,6 +597,31 @@ fn dreamer_record(
 
 fn fixed_attempt_id(byte: u8) -> crate::AttemptId {
     crate::AttemptId::from_bytes(&[byte; 16]).expect("valid fixed attempt id")
+}
+
+/// A version-2 row as written before ONE-1795: `Queued`, with its readiness
+/// instant in the legacy `backoff_until` spelling and no `scheduled_at`.
+fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -> AttemptRecord {
+    AttemptRecord {
+        id: crate::AttemptId::from_bytes(&[seed; 16]).expect("attempt id"),
+        kind: "legacy-worker".to_owned(),
+        payload: Vec::new(),
+        state: AttemptState::Queued,
+        lease_owner: None,
+        attempt_count: 0,
+        claimed_at: None,
+        scheduled_at: None,
+        retry_of: None,
+        backoff_until,
+        last_error: None,
+        task_ref: None,
+        run_id: None,
+        dedupe_key: None,
+        created_at,
+        updated_at: created_at,
+        events: Vec::new(),
+        manifest: Vec::new(),
+    }
 }
 
 fn hex(id: crate::AttemptId) -> String {

@@ -3720,6 +3720,7 @@ const fn attempt_state_str(state: AttemptState) -> &'static str {
         AttemptState::Completed => "completed",
         AttemptState::Failed => "failed",
         AttemptState::Cancelled => "cancelled",
+        AttemptState::Scheduled => "scheduled",
     }
 }
 

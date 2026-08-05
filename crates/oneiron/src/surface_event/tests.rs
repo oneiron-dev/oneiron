@@ -699,7 +699,7 @@ fn surface_event_failure_is_queryable() -> Result<()> {
 }
 
 #[test]
-fn surface_event_retry_reuses_attempt() -> Result<()> {
+fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
     let (_dir, vault, _) = admitting_vault("retry@example.com", 0x1D, 0x5D);
     let ack = accepted(vault.enqueue_inbound_surface_event(
         input(
@@ -719,13 +719,21 @@ fn surface_event_retry_reuses_attempt() -> Result<()> {
     else {
         panic!("expected retry");
     };
-    assert_eq!(retried.attempt_ref, ack.attempt_ref);
-    assert_eq!(retried.state, SurfaceEventHandoffState::Queued);
-    assert_eq!(retried.last_error.as_deref(), Some("downstream busy"));
-    assert_eq!(surface_event_attempt_rows(&vault), 1);
+    // ONE-1795: a retry is a NEW Scheduled row; the source stays behind as
+    // the terminal record of the failed try.
+    assert_ne!(retried.attempt_ref, ack.attempt_ref);
+    assert_eq!(retried.state, SurfaceEventHandoffState::Paused);
+    assert_eq!(retried.last_error, None);
+    assert_eq!(surface_event_attempt_rows(&vault), 2);
 
-    // The row keeps its payload, correlation id, and downstream key.
-    let row = sole_attempt(&vault);
+    // The minted row keeps its payload, correlation id, and downstream key.
+    let row = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .filter(|record| record.kind == SURFACE_EVENT_ATTEMPT_KIND)
+        .find(|record| record.state == crate::AttemptState::Scheduled)
+        .expect("the retry row is scheduled");
+    assert_eq!(row.retry_of.map(|id| SurfaceEventAttemptRef::from_attempt_id(id)), Some(ack.attempt_ref));
     assert_eq!(row.payload, payload_before);
     assert_eq!(row.dedupe_key.as_deref(), Some("evt-retry@example.com"));
     assert_eq!(row.run_id.as_deref(), Some("evt-retry@example.com"));
@@ -733,16 +741,25 @@ fn surface_event_retry_reuses_attempt() -> Result<()> {
     assert_eq!(decoded.dispatch_idempotency_key, "evt-retry@example.com");
     assert_eq!(decoded.event.correlation_id, "evt-retry@example.com");
 
-    // The second attempt completes the same row.
+    // The source row is terminal and carries the retry's reason.
+    let source = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .filter(|record| record.kind == SURFACE_EVENT_ATTEMPT_KIND)
+        .find(|record| record.state == crate::AttemptState::Failed)
+        .expect("the source row finalized as failed");
+    assert_eq!(source.last_error.as_deref(), Some("downstream busy"));
+
+    // The second dispatch claims the Scheduled row and completes it.
     let completing = FakeDispatcher::new(SurfaceEventDispatchDisposition::Complete);
     let SurfaceEventWorkerOutcome::Completed(completed) =
         vault.dispatch_next_surface_event("test-worker", 1_800_003_200, &completing)?
     else {
         panic!("expected completion after retry");
     };
-    assert_eq!(completed.attempt_ref, ack.attempt_ref);
-    assert_eq!(completed.attempt_count, 2);
-    assert_eq!(surface_event_attempt_rows(&vault), 1);
+    assert_eq!(completed.attempt_ref, retried.attempt_ref);
+    assert_eq!(completed.attempt_count, 1);
+    assert_eq!(surface_event_attempt_rows(&vault), 2);
     Ok(())
 }
 
