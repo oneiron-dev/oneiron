@@ -231,6 +231,45 @@ fn raw_put_doors_reject_secret_custody_byte() {
 }
 
 #[test]
+fn register_secret_with_credential_shaped_value_commits() {
+    // FIX3 SCAN-CONFLICT: the batch secret scanner skips the credential-shape
+    // scan for SECRET_CUSTODY Put bodies only. Registering a secret whose
+    // value IS credential-shaped (ghp_ + 36 ASCII) must commit — the custody
+    // record is the safe container, not a leak.
+    let (_tmp, vault) = temp_vault();
+    let token = b"ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+    let rec = record("gh-token", CustodyClass::CrossVault, token, vec![]);
+    let id = vault
+        .register_secret(rec)
+        .expect("custody body with credential-shaped value must commit");
+    let meta = vault.get_secret_metadata(&id).expect("metadata").expect("some");
+    assert_eq!(meta.name, "gh-token");
+}
+
+#[test]
+fn credential_scan_still_rejects_other_entity_types() {
+    use crate::temporal::TimeRange;
+
+    let (_tmp, vault) = temp_vault();
+    let token = b"token=ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+    let id = EntityId::now();
+    let occurred = TimeRange { start: 1, end: 1 };
+    let err = vault
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_TURN,
+            occurred,
+            1,
+            token,
+        )
+        .expect_err("credential-shaped bytes on a non-custody type still reject");
+    assert!(
+        matches!(err, Error::GateWriteRejected { .. }),
+        "got {err:?}"
+    );
+}
+
+#[test]
 fn value_read_goes_through_get_secret_value_in_txn_door() {
     // FIX2 BINDING-DOOR regression: the decode output carries the value, but
     // the ONLY read path for an external effector is the bound door. This test
