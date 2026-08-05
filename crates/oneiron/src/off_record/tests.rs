@@ -512,12 +512,6 @@ fn off_record_fenced_turns_are_unextractable_including_post_flip() {
     vault
         .tag_turn_off_record("sess-fence", &post_flip)
         .expect_err("tagging requires off-record mode");
-    // Post-flip retrieval runs belong to on-record turns whose context
-    // receipts must persist — registering one for delete-at-close is
-    // rejected the same way tagging is.
-    vault
-        .note_off_record_context_receipt("sess-fence", crate::store::RetrievalRunId::now())
-        .expect_err("context receipt registration requires off-record mode");
 }
 
 #[test]
@@ -552,8 +546,19 @@ fn off_record_outbound_rejected_in_mode_with_typed_error() {
     );
 }
 
+/// Close's legacy-fence half: fenced transcript turns hard-delete, emit
+/// receipts drop with the session log, floor receipts survive.
+///
+/// The context-receipt half moved to the SESSION path in ONE-1728 (K8): a
+/// retrieval run is session-local by being registered in the session's own
+/// overlay keyspace, which only a session-handle run does. This vault-level
+/// session has no handle, so its retrieval run is an ordinary base run that
+/// close must NOT touch — asserted below. The `context_receipts_deleted == 1`
+/// contract is owned by the branch-store oracle's
+/// `master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts`,
+/// which drives a real session-handle retrieval.
 #[test]
-fn off_record_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() {
+fn off_record_close_deletes_transcript_keeps_floor_and_base_receipts() {
     let (_tmp, vault) = temp_vault();
     let fenced_a = seed_turn(&vault, 1000);
     let fenced_b = seed_turn(&vault, 1001);
@@ -567,8 +572,9 @@ fn off_record_close_deletes_transcript_and_context_receipts_keeps_floor_receipts
         .tag_turn_off_record("sess-close", &fenced_b)
         .expect("tag b");
 
-    // Emit-adjacent context receipt: a real retrieval run (result_ids =
-    // activated memory ids), registered session-local.
+    // A BASE retrieval run taken while a session is live. It is not session
+    // content — nothing routed it through the session handle — so its receipt
+    // is an ordinary durable row that close must leave alone (K8).
     let telemetry = vault
         .query()
         .search_temporal(900, 1100, 16)
@@ -577,9 +583,6 @@ fn off_record_close_deletes_transcript_and_context_receipts_keeps_floor_receipts
         .run_with_telemetry()
         .expect("retrieval with telemetry");
     let run_id = telemetry.run_id.expect("telemetry run id");
-    vault
-        .note_off_record_context_receipt("sess-close", run_id)
-        .expect("note context receipt");
     assert!(vault.retrieval_run(run_id).expect("run lookup").is_some());
 
     // Emit-adjacent dispatch receipt: rides the session-local log that
@@ -624,7 +627,11 @@ fn off_record_close_deletes_transcript_and_context_receipts_keeps_floor_receipts
         .expect("close");
     assert_eq!(outcome.turns_deleted, 2);
     assert_eq!(outcome.turns_missing, 0);
-    assert_eq!(outcome.context_receipts_deleted, 1);
+    assert_eq!(
+        outcome.context_receipts_deleted, 0,
+        "this session witnessed nothing through its overlay, so it owns zero \
+         session-local retrieval-run receipts"
+    );
     assert_eq!(outcome.emit_receipts_deleted, 1);
     assert_eq!(outcome.fence_rows_retained, 0);
     assert_eq!(outcome.promoted_turns_kept, 0);
@@ -633,8 +640,9 @@ fn off_record_close_deletes_transcript_and_context_receipts_keeps_floor_receipts
     // Transcript gone (ARCH-0038 PolicyDelete hard purge)...
     assert!(vault.get(&fenced_a).expect("read a").is_none());
     assert!(vault.get(&fenced_b).expect("read b").is_none());
-    // ...context receipts gone with it...
-    assert!(vault.retrieval_run(run_id).expect("run lookup").is_none());
+    // ...while the BASE retrieval run stays: close evaporates the session's
+    // own overlay receipts, never an ordinary durable telemetry row.
+    assert!(vault.retrieval_run(run_id).expect("run lookup").is_some());
     // ...floor receipts remain: the gate decision, and the opaque
     // redaction-audit receipts minted by the deletion itself.
     assert!(!vault.gate_decisions(10).expect("gate decisions").is_empty());
@@ -851,10 +859,6 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
             .expect("fence probe"),
         "a closing-rejected promote must leave the fence intact"
     );
-    let note = vault
-        .note_off_record_context_receipt("sess-toctou", crate::store::RetrievalRunId::now())
-        .expect_err("note during close");
-    assert_eq!(note.kind(), ErrorKind::OffRecordSessionClosing);
     let flip = vault
         .set_off_record_session_mode("sess-toctou", OffRecordMode::OnRecord)
         .expect_err("flip during close");
@@ -1083,10 +1087,6 @@ fn off_record_session_ref_bounds_are_enforced_everywhere() {
         .set_off_record_session_mode(&oversized, OffRecordMode::OnRecord)
         .expect_err("oversized flip");
     assert_eq!(flip.kind(), ErrorKind::InvalidConfig);
-    let note = vault
-        .note_off_record_context_receipt(&oversized, crate::store::RetrievalRunId::now())
-        .expect_err("oversized note");
-    assert_eq!(note.kind(), ErrorKind::InvalidConfig);
     let promote = vault
         .promote_off_record_turn(&oversized, &turn, &owner_actor(), OWNER_PRINCIPAL)
         .expect_err("oversized promote");
@@ -1368,53 +1368,6 @@ fn off_record_crash_sweep_is_skipped_when_a_peer_holds_the_open_lock() -> Result
     );
     drop(probe);
     drop(swept);
-    Ok(())
-}
-
-/// A retrieval run registered as an off-record context receipt (its
-/// `result_ids` are the room's activated-memory ids) must not survive a crash
-/// that beats close: its in-process registration is lost, but the open-time
-/// receipt-recovery sweep evaporates the orphaned durable run so
-/// RECEIPTS-FOLLOW-TRANSCRIPT holds across recovery. (`cfg(unix)`: the sweep
-/// only runs where sole-ownership can be proven via `flock`.)
-#[cfg(unix)]
-#[test]
-fn off_record_orphaned_context_receipt_is_swept_on_reopen() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let session_ref = "sess-orphan-receipt";
-    let run_id = {
-        let vault = Vault::open(tmp.path(), VaultConfig::default())?;
-        let _seed = seed_turn(&vault, 1_775_100_000);
-        vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
-        let telemetry = vault
-            .query()
-            .search_temporal(1_775_000_000, 1_775_200_000, 16)
-            .filter_types(&[ENTITY_TYPE_TURN])
-            .limit(16)
-            .run_with_telemetry()
-            .expect("retrieval with telemetry");
-        let run_id = telemetry.run_id.expect("telemetry run id");
-        vault.note_off_record_context_receipt(session_ref, run_id)?;
-        assert!(
-            vault.retrieval_run(run_id)?.is_some(),
-            "the off-record retrieval run is durable before the crash"
-        );
-        // Simulate a crash: drop the handle WITHOUT close, losing the in-process
-        // registry while the durable run and its recovery marker persist.
-        drop(vault);
-        run_id
-    };
-
-    // Sole-opener reopen evaporates the orphaned run (and its marker).
-    let reopened = Vault::open(tmp.path(), VaultConfig::default())?;
-    assert!(
-        reopened.retrieval_run(run_id)?.is_none(),
-        "a crash-orphaned off-record context receipt must be swept on reopen"
-    );
-    drop(reopened);
-    // Idempotent: a second reopen is a clean no-op.
-    let reopened_again = Vault::open(tmp.path(), VaultConfig::default())?;
-    assert!(reopened_again.retrieval_run(run_id)?.is_none());
     Ok(())
 }
 

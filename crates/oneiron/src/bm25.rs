@@ -44,7 +44,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::registry::short_id_prefix;
-use crate::store::Store;
+use crate::store::ManifestDbs;
 
 // === Layout constants ===
 
@@ -157,7 +157,7 @@ fn record_bm25_diagnostic(kind: Bm25DiagnosticKind) {
 }
 
 fn prove_bm25_doc_counted_for_missing_posting_repair(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     expected_lengths: &HashMap<u16, u32>,
@@ -166,7 +166,7 @@ fn prove_bm25_doc_counted_for_missing_posting_repair(
     let mut recomputed_total_docs = 0_u32;
     let mut recomputed_field_stats: BTreeMap<u16, (u32, u64)> = BTreeMap::new();
 
-    for row in store.text_doc_field_lengths.iter(txn)? {
+    for row in store.text_doc_field_lengths().iter(txn)? {
         let (raw_id, raw_lengths) = row?;
         if raw_id.len() != ENTITY_ID_LEN {
             return Err(corrupted("field lengths key has invalid byte length"));
@@ -216,7 +216,7 @@ fn prove_bm25_doc_counted_for_missing_posting_repair(
             ));
         }
     }
-    for row in store.text_bm25_field_stats.iter(txn)? {
+    for row in store.text_bm25_field_stats().iter(txn)? {
         let (raw_fid, raw_stats) = row?;
         if raw_fid.len() != 2 {
             return Err(corrupted("field stats key has invalid byte length"));
@@ -418,7 +418,7 @@ impl Default for Bm25Config {
 // === Indexing ===
 
 pub(crate) fn index_text(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     id: &EntityId,
@@ -426,9 +426,9 @@ pub(crate) fn index_text(
 ) -> Result<()> {
     validate_text_doc_id(id)?;
 
-    match store.text_forward.get(wtxn, id.as_bytes())? {
+    match store.text_forward().get(wtxn, id.as_bytes())? {
         Some(_) => deindex_text(store, wtxn, id)?,
-        None if store.text_meta.get(wtxn, id.as_bytes())?.is_some() => {
+        None if store.text_meta().get(wtxn, id.as_bytes())?.is_some() => {
             return Err(corrupted("missing forward index for indexed document"));
         }
         None => {}
@@ -486,19 +486,21 @@ pub(crate) fn index_text(
     for (term, fields_tf) in &per_term {
         entry_buf.clear();
         encode_posting_entry(id, fields_tf, &mut entry_buf)?;
-        store.text_postings.put(wtxn, term.as_bytes(), &entry_buf)?;
+        store
+            .text_postings()
+            .put(wtxn, term.as_bytes(), &entry_buf)?;
     }
 
     // === Forward index: (term_len, term, field_id) records ===
     let forward_bytes = encode_forward(&per_term)?;
     store
-        .text_forward
+        .text_forward()
         .put(wtxn, id.as_bytes(), &forward_bytes)?;
 
     // === Per-doc field lengths ===
     let field_lengths_bytes = encode_field_lengths(&per_field_len);
     store
-        .text_doc_field_lengths
+        .text_doc_field_lengths()
         .put(wtxn, id.as_bytes(), &field_lengths_bytes)?;
 
     // === Document metadata (doc_len kept for status reporting) ===
@@ -507,7 +509,7 @@ pub(crate) fn index_text(
     let mut doc_meta = [0_u8; DOC_META_LEN];
     doc_meta[..4].copy_from_slice(&doc_len_total.to_le_bytes());
     doc_meta[4..].copy_from_slice(&field_count.to_le_bytes());
-    store.text_meta.put(wtxn, id.as_bytes(), &doc_meta)?;
+    store.text_meta().put(wtxn, id.as_bytes(), &doc_meta)?;
 
     // === Per-field corpus stats ===
     for (&fid, &len) in &per_field_len {
@@ -531,18 +533,22 @@ pub(crate) fn index_text(
     Ok(())
 }
 
-pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+pub(crate) fn deindex_text(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
     validate_text_doc_id(id)?;
 
-    let Some(forward_raw) = store.text_forward.get(wtxn, id.as_bytes())? else {
-        if store.text_meta.get(wtxn, id.as_bytes())?.is_some() {
+    let Some(forward_raw) = store.text_forward().get(wtxn, id.as_bytes())? else {
+        if store.text_meta().get(wtxn, id.as_bytes())?.is_some() {
             return Err(corrupted("missing forward index for indexed document"));
         }
         return Ok(());
     };
     let forward = decode_forward(&forward_raw)?;
 
-    if store.text_meta.get(wtxn, id.as_bytes())?.is_none() {
+    if store.text_meta().get(wtxn, id.as_bytes())?.is_none() {
         return Err(corrupted("missing text metadata for deindex"));
     }
 
@@ -550,7 +556,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     // Without this row, `total_docs--` would fire at the end without the
     // per-field `doc_count` / `total_length` decrements, permanently
     // drifting the corpus.
-    let Some(raw) = store.text_doc_field_lengths.get(wtxn, id.as_bytes())? else {
+    let Some(raw) = store.text_doc_field_lengths().get(wtxn, id.as_bytes())? else {
         return Err(corrupted("missing field lengths for indexed document"));
     };
     let lengths = decode_field_lengths(&raw)?;
@@ -624,7 +630,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         // Exactly one duplicate item is removed; LMDB drops the term key
         // itself once its last duplicate is deleted.
         if !store
-            .text_postings
+            .text_postings()
             .delete_one_duplicate(wtxn, term.as_bytes(), &entry)?
         {
             return Err(corrupted(
@@ -644,7 +650,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
             .ok_or_else(|| corrupted("field total_length underflow during deindex"))?;
         if doc_count == 0 && total_length == 0 {
             store
-                .text_bm25_field_stats
+                .text_bm25_field_stats()
                 .delete(wtxn, &fid.to_be_bytes())?;
         } else {
             write_field_stats(store, wtxn, fid, doc_count, total_length)?;
@@ -657,9 +663,9 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         .ok_or_else(|| corrupted("total_docs underflow during deindex"))?;
     write_total_docs(store, wtxn, total_docs)?;
 
-    store.text_meta.delete(wtxn, id.as_bytes())?;
-    store.text_forward.delete(wtxn, id.as_bytes())?;
-    store.text_doc_field_lengths.delete(wtxn, id.as_bytes())?;
+    store.text_meta().delete(wtxn, id.as_bytes())?;
+    store.text_forward().delete(wtxn, id.as_bytes())?;
+    store.text_doc_field_lengths().delete(wtxn, id.as_bytes())?;
 
     Ok(())
 }
@@ -667,7 +673,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
 // === Scoring ===
 
 fn collect_query_terms(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     config: &Bm25Config,
     query: &str,
@@ -700,7 +706,7 @@ fn collect_query_terms(
 }
 
 fn collect_final_token_prefix_terms(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     trimmed_query_end: usize,
     config: &Bm25Config,
@@ -725,7 +731,7 @@ fn collect_final_token_prefix_terms(
         // bounded by prefix_count * MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS while
         // accepted expansions still share MAX_FINAL_TOKEN_PREFIX_TERMS.
         for (scanned_terms, row) in store
-            .text_postings
+            .text_postings()
             .prefix_iter(rtxn, prefix.as_bytes())?
             .move_between_keys()
             .enumerate()
@@ -758,7 +764,7 @@ fn collect_final_token_prefix_terms(
 }
 
 pub(crate) fn final_token_exact_posting_matches<F>(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -776,7 +782,10 @@ where
     let mut tokens = Vec::new();
     analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
     for term in final_token_prefix_terms(&tokens, trimmed_query_end) {
-        let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+        let Some(dups) = store
+            .text_postings()
+            .get_duplicates(rtxn, term.as_bytes())?
+        else {
             continue;
         };
         for item in dups {
@@ -795,7 +804,7 @@ where
 }
 
 pub(crate) fn final_token_prefix_expansion_has_scoped_and_rejected_postings<F>(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -826,7 +835,7 @@ where
         }
 
         for (scanned_terms, row) in store
-            .text_postings
+            .text_postings()
             .prefix_iter(rtxn, prefix.as_bytes())?
             .move_between_keys()
             .enumerate()
@@ -870,13 +879,16 @@ fn final_token_prefix_candidate(token: &Token, trimmed_query_end: usize) -> bool
 }
 
 fn exact_term_has_scoped_posting(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     config: &Bm25Config,
     term: &str,
     exact_posting_matches_scope: &mut impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<bool> {
-    let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+    let Some(dups) = store
+        .text_postings()
+        .get_duplicates(rtxn, term.as_bytes())?
+    else {
         return Ok(false);
     };
     for item in dups {
@@ -899,13 +911,16 @@ struct TermPostingDecisions {
 }
 
 fn term_posting_decisions(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     config: &Bm25Config,
     term: &str,
     classify_posting: &mut impl FnMut(&EntityId) -> Result<PrefixExpansionPostingDecision>,
 ) -> Result<TermPostingDecisions> {
-    let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+    let Some(dups) = store
+        .text_postings()
+        .get_duplicates(rtxn, term.as_bytes())?
+    else {
         return Ok(TermPostingDecisions::default());
     };
 
@@ -956,7 +971,7 @@ fn insert_query_term(terms: &mut BTreeMap<String, f64>, term: String, weight: f6
 }
 
 fn apply_recency_blend(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     recency: Option<Bm25RecencyConfig>,
     scores: &mut HashMap<EntityId, f64>,
@@ -975,7 +990,7 @@ fn apply_recency_blend(
     let decay = std::f64::consts::LN_2 / seconds_per_half_life;
 
     for (id, score) in scores {
-        let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = store.entities().get(rtxn, id.as_bytes())? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -990,7 +1005,7 @@ fn apply_recency_blend(
 }
 
 pub(crate) fn search_text(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -1001,7 +1016,7 @@ pub(crate) fn search_text(
 }
 
 pub(crate) fn search_text_with_recency(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -1025,7 +1040,7 @@ pub(crate) fn search_text_with_recency(
 }
 
 pub(crate) fn search_text_scoped_with_recency<F>(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     analyzer: &MultilingualAnalyzer,
     config: &Bm25Config,
@@ -1069,7 +1084,7 @@ where
 
     for query_term in query_terms {
         let Some(dups) = store
-            .text_postings
+            .text_postings()
             .get_duplicates(rtxn, query_term.term.as_bytes())?
         else {
             continue;
@@ -1112,7 +1127,7 @@ where
             // that reach a `CountLengthIncrement` branch — otherwise a
             // NoNorm-only match silently skips the corruption guard.
             if let Entry::Vacant(v) = field_length_cache.entry(id) {
-                let raw = store.text_doc_field_lengths.get(rtxn, id.as_bytes())?;
+                let raw = store.text_doc_field_lengths().get(rtxn, id.as_bytes())?;
                 let Some(bytes) = raw else {
                     return Err(corrupted_with_diagnostic(
                         "missing field lengths for scored doc",
@@ -1227,7 +1242,7 @@ where
         .collect())
 }
 
-fn compute_avgdl(store: &Store, rtxn: &RoTxn<'_>, field_id: u16) -> Result<f64> {
+fn compute_avgdl(store: &impl ManifestDbs, rtxn: &RoTxn<'_>, field_id: u16) -> Result<f64> {
     let (doc_count, total_length) = read_field_stats(store, rtxn, field_id)?;
     if doc_count == 0 {
         return Ok(0.0);
@@ -1236,7 +1251,7 @@ fn compute_avgdl(store: &Store, rtxn: &RoTxn<'_>, field_id: u16) -> Result<f64> 
 }
 
 fn collapse_lexical_query_hint_scores(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     scores: &mut HashMap<EntityId, f64>,
 ) -> Result<()> {
@@ -1274,7 +1289,7 @@ enum LexicalQueryHintResolution {
 }
 
 fn resolve_lexical_query_hint_record(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LexicalQueryHintResolution> {
@@ -1284,7 +1299,7 @@ fn resolve_lexical_query_hint_record(
     {
         return Ok(LexicalQueryHintResolution::NonHint);
     }
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = store.entities().get(rtxn, id.as_bytes())? else {
         return Ok(LexicalQueryHintResolution::NonHint);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -1317,11 +1332,11 @@ fn resolve_lexical_query_hint_record(
 }
 
 fn lexical_query_hint_target_is_live_claim(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     target: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(rtxn, target.as_bytes())? else {
+    let Some(raw) = store.entities().get(rtxn, target.as_bytes())? else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -1339,7 +1354,7 @@ fn lexical_query_hint_target_is_live_claim(
 }
 
 fn lexical_query_hint_scope_id(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityId>> {
@@ -1382,12 +1397,12 @@ enum PostingLookup {
 /// duplicate items share one entity prefix — that breaks the
 /// one-dup-per-(term, entity) invariant and would drift `df`.
 fn find_posting_dup(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     term: &str,
     id: &EntityId,
 ) -> Result<PostingLookup> {
-    let Some(dups) = store.text_postings.get_duplicates(txn, term.as_bytes())? else {
+    let Some(dups) = store.text_postings().get_duplicates(txn, term.as_bytes())? else {
         return Ok(PostingLookup::RowMissing);
     };
     let mut found: Option<Vec<u8>> = None;
@@ -1580,9 +1595,13 @@ fn decode_field_lengths(raw: &[u8]) -> Result<HashMap<u16, u32>> {
     Ok(map)
 }
 
-fn read_field_stats(store: &Store, txn: &RoTxn<'_>, field_id: u16) -> Result<(u32, u64)> {
+fn read_field_stats(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    field_id: u16,
+) -> Result<(u32, u64)> {
     let key = field_id.to_be_bytes();
-    let Some(raw) = store.text_bm25_field_stats.get(txn, &key)? else {
+    let Some(raw) = store.text_bm25_field_stats().get(txn, &key)? else {
         return Ok((0, 0));
     };
     if raw.len() != FIELD_STATS_LEN {
@@ -1602,7 +1621,7 @@ fn read_field_stats(store: &Store, txn: &RoTxn<'_>, field_id: u16) -> Result<(u3
 }
 
 fn write_field_stats(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     field_id: u16,
     doc_count: u32,
@@ -1612,12 +1631,12 @@ fn write_field_stats(
     value[..4].copy_from_slice(&doc_count.to_le_bytes());
     value[4..].copy_from_slice(&total_length.to_le_bytes());
     let key = field_id.to_be_bytes();
-    store.text_bm25_field_stats.put(wtxn, &key, &value)?;
+    store.text_bm25_field_stats().put(wtxn, &key, &value)?;
     Ok(())
 }
 
-pub(crate) fn read_total_docs(store: &Store, txn: &RoTxn<'_>) -> Result<u32> {
-    match store.text_meta.get(txn, &TOTAL_DOCS_KEY)? {
+pub(crate) fn read_total_docs(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u32> {
+    match store.text_meta().get(txn, &TOTAL_DOCS_KEY)? {
         Some(raw) => {
             Ok(u32::from_le_bytes(raw.as_ref().try_into().map_err(
                 |_| corrupted("total_docs sentinel has invalid length"),
@@ -1627,9 +1646,9 @@ pub(crate) fn read_total_docs(store: &Store, txn: &RoTxn<'_>) -> Result<u32> {
     }
 }
 
-fn write_total_docs(store: &Store, wtxn: &mut RwTxn<'_>, total_docs: u32) -> Result<()> {
+fn write_total_docs(store: &impl ManifestDbs, wtxn: &mut RwTxn<'_>, total_docs: u32) -> Result<()> {
     store
-        .text_meta
+        .text_meta()
         .put(wtxn, &TOTAL_DOCS_KEY, &total_docs.to_le_bytes())?;
     Ok(())
 }

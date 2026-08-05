@@ -9,14 +9,17 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::rc::Rc;
+use std::str;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use arc_swap::ArcSwap;
+use xxhash_rust::xxh32::xxh32;
 
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::temporal::TimeRange;
 
 /// Write-transaction entry points that a session write path must wrap.
 ///
@@ -34,6 +37,15 @@ pub(crate) const SESSION_WRITE_TXN_ENTRY_POINTS: &[&str] = &[
 ];
 
 const _: () = assert!(!SESSION_WRITE_TXN_ENTRY_POINTS.is_empty());
+
+/// Leading sigil of every session-local short id (ARCH-0052 §7).
+///
+/// Base short ids are `<two lowercase letters><decimal digits>`, which is
+/// exactly what the short-ref parsers accept. `s` is not a legal base prefix
+/// (a base prefix is always two letters), so the room namespace sits OUTSIDE
+/// the base grammar and a session alias can never collide with, or mask, a
+/// durable one.
+const SESSION_SHORT_ID_SIGIL: &str = "s";
 
 /// Manifest slot identifying one of the 28 named databases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,14 +205,52 @@ impl KeyspaceState {
     }
 }
 
+/// Semantic ownership tag on a typed journal entry (ARCH-0052 D4, K3).
+///
+/// This is the ONLY legal closure source for promotion (ONE-1730): promote
+/// selects by role, never by inferring ownership from a type-index,
+/// text-posting, short-id, temporal, or edge-index key. Index keys are shared
+/// between turns by construction, so key-shaped selection drags siblings.
+///
+/// Role assignment is CLOSED — every staged op maps to exactly one role:
+///
+/// | role | staged op |
+/// |---|---|
+/// | [`Self::ConversationShell`] | the conversation shell put |
+/// | [`Self::TurnPut`] | the TURN entity put |
+/// | [`Self::MessagePartOf`] | each MESSAGE put and its `PartOf` edge |
+/// | [`Self::SummaryDerivedFrom`] | the SUMMARY put and its `DerivedFrom` edge |
+/// | [`Self::AttributionEdge`] | the `AuthoredBy` and `BelongsTo` edges |
+/// | [`Self::TurnOwnedArtifact`] | every other turn-scoped op (BM25 `content` text ops, vector/HNSW rows) |
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JournalRole {
+    TurnPut,
+    MessagePartOf,
+    SummaryDerivedFrom,
+    AttributionEdge,
+    ConversationShell,
+    TurnOwnedArtifact,
+}
+
+/// One typed journal operation.
+///
+/// `scope` carries the owning conversation + turn; `learned_at` and `occurred`
+/// are preserved from the witnessing write and never restamped, so promote
+/// replays into the correct month window (ARCH-0052 D4).
 #[derive(Clone)]
-struct JournalEntry {
+pub(crate) struct JournalEntry {
+    /// Read by ONE-1730's `plan_promotion` to cut ONE turn's closure out of
+    /// the journal — the whole reason the scope is recorded at staging time
+    /// rather than reconstructed from index keys later.
     #[allow(
         dead_code,
-        reason = "typed journal selection is consumed by ONE-1730 promotion"
+        reason = "ONE-1730 selects a closure by scope; ONE-1728 stages it and the oracle covers it now"
     )]
-    scope: JournalScope,
-    op: BatchOp,
+    pub(crate) scope: JournalScope,
+    pub(crate) role: JournalRole,
+    pub(crate) learned_at: u64,
+    pub(crate) occurred: TimeRange,
+    pub(crate) op: BatchOp,
 }
 
 #[derive(Clone)]
@@ -267,13 +317,28 @@ pub(crate) struct JournalScope {
     turn: EntityId,
 }
 
-#[allow(
-    dead_code,
-    reason = "typed journal scope construction is consumed by ONE-1730 promotion; ONE-1726 oracle covers it now"
-)]
 impl JournalScope {
     pub(crate) const fn new(conversation: EntityId, turn: EntityId) -> Self {
         Self { conversation, turn }
+    }
+
+    /// The turn this op belongs to. ONE-1730 promotes ONE turn at a time, so
+    /// this is how the closure is cut out of the journal.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730's plan_promotion selects a closure by turn; ONE-1728 stages the scope it reads"
+    )]
+    pub(crate) const fn turn(&self) -> EntityId {
+        self.turn
+    }
+
+    /// The conversation shell owning this op.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730 promotes the turn's shell alongside the turn"
+    )]
+    pub(crate) const fn conversation(&self) -> EntityId {
+        self.conversation
     }
 }
 
@@ -289,6 +354,13 @@ enum OverlayLifecycleState {
 struct Lifecycle {
     state: OverlayLifecycleState,
     generation: u64,
+    /// Monotonic counter bumped by every MODE publication — `seal_writes`
+    /// (Live -> Sealed, the flip on-record) and `rearm` (Sealed -> Live, the
+    /// K10 flip-back). A [`SessionWriteRoute`] records the value it was minted
+    /// under and [`SessionWriteRoute::revalidate`] refuses a mismatch, so a
+    /// route minted before the most recent flip can never stage or commit.
+    /// Distinct from `generation`, which stamps LEASES and bumps at close.
+    mode_generation: u64,
     leases: usize,
     segment_active: bool,
 }
@@ -310,6 +382,77 @@ impl Drop for Lease {
                 self.overlay.lease_drained.notify_all();
             }
         }
+    }
+}
+
+/// Which store a session write lands in for the session's CURRENT mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RouteTarget {
+    /// `OffRecord` — rows stage into the overlay and evaporate at close.
+    Overlay,
+    /// `OnRecord` (post-flip) — rows take the ordinary base apply under the
+    /// session's on-record continuation shell.
+    Base,
+}
+
+/// The mode-aware write route (ARCH-0052 D5, K10).
+///
+/// Minted by `OffRecordSession::write_route()` under the session state lock, so
+/// the target and the mode generation it records are the same publication.
+/// Every apply route on the session write path carries the route it was
+/// constructed with and revalidates it before staging or committing.
+///
+/// Fields are private to this module: `batch.rs` receives a route and NEVER
+/// reads its fields — the route revalidates itself. That is why `revalidate`
+/// lives here, in the fields' owner module, rather than at the call site.
+pub(crate) struct SessionWriteRoute {
+    overlay: Arc<SessionOverlay>,
+    target: RouteTarget,
+    mode_generation: u64,
+}
+
+impl SessionWriteRoute {
+    /// Mints a route recording the overlay's currently published mode
+    /// generation. Callers hold the session state lock across mint + the mode
+    /// read so target and generation cannot disagree.
+    pub(crate) fn mint(overlay: &Arc<SessionOverlay>, target: RouteTarget) -> Result<Self> {
+        Ok(Self {
+            overlay: overlay.clone(),
+            target,
+            mode_generation: overlay.mode_generation()?,
+        })
+    }
+
+    /// Refuses with the typed stale-route family if this route was minted
+    /// before the most recent mode publication (flip to `OnRecord`, or the
+    /// K10 flip-back rearm). Read under the overlay's own state lock against
+    /// freshly published state, so a route that survives this check is the
+    /// route the current mode authorizes.
+    ///
+    /// The refusal reuses [`Error::OffRecordOverlayLeaseClosed`], carrying the
+    /// route's recorded mode generation: a stale route names a mode epoch that
+    /// no longer accepts writes, exactly as a stale lease names a closed
+    /// overlay generation.
+    pub(crate) fn revalidate(&self) -> Result<()> {
+        if self.overlay.mode_generation()? == self.mode_generation {
+            return Ok(());
+        }
+        Err(Error::OffRecordOverlayLeaseClosed {
+            generation: self.mode_generation,
+        })
+    }
+
+    /// Narrow query arm: which store this route resolves to. `batch.rs` may
+    /// branch through this method, never through a field read.
+    pub(crate) const fn target(&self) -> RouteTarget {
+        self.target
+    }
+
+    /// The overlay this route stages into. Crate-private and used only by the
+    /// session apply entry, which must stage through the same overlay the
+    /// route was minted against.
+    pub(crate) const fn overlay(&self) -> &Arc<SessionOverlay> {
+        &self.overlay
     }
 }
 
@@ -481,6 +624,62 @@ impl OverlaySnapshot {
         self.merge_rows(keyspace, Vec::new()).len()
     }
 
+    /// Live overlay rows in `keyspace` whose key satisfies `include_key`.
+    ///
+    /// Tombstones are excluded: a masked base row is not an overlay row. Used
+    /// by close's PRE-close census, which must count what is about to
+    /// evaporate while it is still observable.
+    pub(crate) fn live_row_count(
+        &self,
+        keyspace: OverlayKeyspace,
+        include_key: impl Fn(&[u8]) -> bool,
+    ) -> usize {
+        self.merge_plan(keyspace, include_key)
+            .rows
+            .iter()
+            .filter(|row| match row {
+                SnapshotMergeRow::Single { value, .. } => value.is_some(),
+                SnapshotMergeRow::Duplicate { present, .. } => present.is_some(),
+            })
+            .count()
+    }
+
+    /// Journal entries staging a TRANSCRIPT entity put — the turn, its
+    /// messages, and its summary. Close reports these as `turns_deleted`
+    /// alongside the legacy fenced-base PolicyDelete count, because an
+    /// overlay-witnessed turn stops existing at close exactly as a
+    /// hard-deleted fenced one does.
+    ///
+    /// Edge-only entries under the same roles do not count: a `PartOf` or
+    /// `DerivedFrom` edge is not an entity that stopped existing.
+    pub(crate) fn transcript_entity_put_count(&self) -> usize {
+        self.state
+            .journal
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.role,
+                    JournalRole::TurnPut
+                        | JournalRole::MessagePartOf
+                        | JournalRole::SummaryDerivedFrom
+                ) && matches!(entry.op, BatchOp::Put { .. })
+            })
+            .count()
+    }
+
+    /// Read view of the typed journal, in staging order.
+    ///
+    /// This is ONE-1730's promote input: selection logic (which entries form a
+    /// turn's closure) lives there, not here. K2 arms the accessor; no
+    /// `plan_promotion` or promote selection may land on this type in P4a.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730's plan_promotion is the first lib-target consumer; the P4a oracle covers it now"
+    )]
+    pub(crate) fn journal_entries(&self) -> &[JournalEntry] {
+        &self.state.journal
+    }
+
     #[cfg(test)]
     pub(crate) fn journal_ops(&self, scope: JournalScope) -> Vec<BatchOp> {
         self.state
@@ -533,6 +732,7 @@ impl SessionOverlay {
             lifecycle: Mutex::new(Lifecycle {
                 state: OverlayLifecycleState::Live,
                 generation: NEXT_OVERLAY_GENERATION.fetch_add(1, Ordering::Relaxed),
+                mode_generation: 0,
                 leases: 0,
                 segment_active: false,
             }),
@@ -583,9 +783,23 @@ impl SessionOverlay {
             .any(|value| matches!(value, OverlayValue::Present(_))))
     }
 
-    /// Permanently seals the overlay write path while leaving composed reads
-    /// available. The transition first blocks new segment installers, then
-    /// drains the one permitted active writer before publishing `Sealed`.
+    /// The currently published mode generation, read under the state lock.
+    /// [`SessionWriteRoute`] is the only consumer.
+    fn mode_generation(&self) -> Result<u64> {
+        Ok(self
+            .lifecycle
+            .lock()
+            .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?
+            .mode_generation)
+    }
+
+    /// Seals the overlay write path while leaving composed reads available.
+    /// The transition first blocks new segment installers, then drains the one
+    /// permitted active writer before publishing `Sealed`.
+    ///
+    /// The seal is permanent EXCEPT for the K10 flip-back: [`Self::rearm`]
+    /// transitions `Sealed` -> `Live` when a session flips back to
+    /// `OffRecord`. Every other state stays terminal.
     pub(crate) fn seal_writes(self: &Arc<Self>) -> Result<()> {
         let holds_active_segment = ACTIVE_SEGMENT.with(|slot| {
             slot.borrow()
@@ -622,6 +836,34 @@ impl SessionOverlay {
             })?;
         }
         lifecycle.state = OverlayLifecycleState::Sealed;
+        lifecycle.mode_generation = next_mode_generation(lifecycle.mode_generation)?;
+        Ok(())
+    }
+
+    /// K10 flip-back: re-enables overlay writes when a session returns to
+    /// `OffRecord` mode. The ONLY legal transition is `Sealed` -> `Live`
+    /// (`Live` IS the landed write-enabled state — no `Armed` variant exists;
+    /// K10's "armed" prose names `Live`). Every other state — including a
+    /// `Live` overlay that was never sealed — is refused, so rearm can never
+    /// resurrect a closing or closed overlay.
+    ///
+    /// Publishing bumps the mode generation, so any [`SessionWriteRoute`]
+    /// minted before the flip-back is refused by [`SessionWriteRoute::revalidate`]
+    /// before it can stage. The room's earlier turns stay visible in-session
+    /// and unextractable through base: rearm reopens the write door only, and
+    /// touches no row.
+    pub(crate) fn rearm(self: &Arc<Self>) -> Result<()> {
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
+        if lifecycle.state != OverlayLifecycleState::Sealed {
+            return Err(Error::OffRecordOverlayLeaseClosed {
+                generation: lifecycle.generation,
+            });
+        }
+        lifecycle.state = OverlayLifecycleState::Live;
+        lifecycle.mode_generation = next_mode_generation(lifecycle.mode_generation)?;
         Ok(())
     }
 
@@ -760,14 +1002,102 @@ impl SessionOverlay {
         self.stage_mutation(mutation)
     }
 
-    #[allow(
-        dead_code,
-        reason = "typed journal staging is consumed by ONE-1730 promotion"
-    )]
-    pub(crate) fn stage_journal(self: &Arc<Self>, scope: JournalScope, op: BatchOp) -> Result<()> {
-        let incoming_bytes = std::mem::size_of::<JournalEntry>()
-            .checked_add(batch_op_payload_bytes(&op))
-            .ok_or(Error::ArithmeticOverflow("overlay journal byte cost"))?;
+    /// Allocates this entity's session-local short id and content-hash byte
+    /// (ARCH-0052 §7).
+    ///
+    /// In-room short ids are TEMPORARY PRESENTATION ALIASES. Canonical ids are
+    /// allocated at promote (ONE-1730), so this counter draws from a
+    /// session-scoped namespace held entirely in the overlay `ShortIds` /
+    /// `ShortIdsReverse` keyspaces: the base `sid_counter:<type_byte>` rows and
+    /// the base short-id tables are never read and never written, and every
+    /// alias minted here evaporates at close.
+    ///
+    /// The alias is deliberately NOT format-compatible with a base short id.
+    /// A base alias is `<two lowercase letters><decimal digits>`, and both
+    /// short-ref parsers (`api/core.rs::parse_short_ref_parts`,
+    /// `mcp.rs::validate_short_ref_parts`) accept exactly that shape. Minting
+    /// session aliases in the same space would let a room alias collide with —
+    /// and, through the composed overlay ∪ base read, MASK — a real base
+    /// entity's alias for the length of the session. The `s` sigil puts the
+    /// room namespace outside the base grammar, so a session alias cannot be
+    /// mistaken for a durable one by any existing reader, and a caller that
+    /// leaks one to a base door gets a clean parse rejection rather than a
+    /// silent hit on the wrong entity.
+    ///
+    /// The content-hash byte uses the base scheme (`xxh32(data, 0) % 256`) so
+    /// `Vault::hydrate_short_id`'s `(short_id, content_hash)` pairing behaves
+    /// identically in-session.
+    ///
+    /// Re-allocating an id already aliased in this room returns the existing
+    /// alias with a refreshed content hash, mirroring the base
+    /// `plan_short_id_update` update arm: an alias is stable for the entity's
+    /// lifetime in the room even as its body changes.
+    pub(crate) fn alloc_session_short_id(
+        self: &Arc<Self>,
+        id: &EntityId,
+        data: &[u8],
+    ) -> Result<(String, u8)> {
+        let content_hash = session_short_id_content_hash(data);
+        let snapshot = self.snapshot()?;
+
+        // An id already aliased in this room keeps its alias; only the
+        // content-hash byte (part of the forward KEY) is refreshed, so the
+        // stale forward row is retired first.
+        if let SnapshotLookup::Present(existing) =
+            snapshot.lookup_single(OverlayKeyspace::ShortIdsReverse, id.as_bytes())
+        {
+            let (short_id, old_content_hash) = parse_session_short_id_value(&existing)?;
+            let short_id = short_id.to_owned();
+            if old_content_hash != content_hash {
+                self.delete_with_base_backing(
+                    OverlayKeyspace::ShortIds,
+                    &encode_session_short_id_forward_key(&short_id, old_content_hash),
+                    false,
+                )?;
+            }
+            self.put_session_short_id_rows(id, &short_id, content_hash)?;
+            return Ok((short_id, content_hash));
+        }
+
+        // The room counter is the live alias count, read from the same
+        // snapshot the allocation stages into: reverse rows are one-per-entity
+        // and never deleted mid-room, so the next ordinal cannot collide with
+        // an alias already minted in this segment.
+        let next = snapshot
+            .live_row_count(OverlayKeyspace::ShortIdsReverse, |_| true)
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("session short id counter"))?;
+        let short_id = format!("{SESSION_SHORT_ID_SIGIL}{next}");
+        self.put_session_short_id_rows(id, &short_id, content_hash)?;
+        Ok((short_id, content_hash))
+    }
+
+    /// Stages both session short-id rows, mirroring the base pair: forward
+    /// `(short_id ‖ content_hash)` -> entity id, reverse entity id -> the same
+    /// bytes as the forward key.
+    fn put_session_short_id_rows(
+        self: &Arc<Self>,
+        id: &EntityId,
+        short_id: &str,
+        content_hash: u8,
+    ) -> Result<()> {
+        let forward_key = encode_session_short_id_forward_key(short_id, content_hash);
+        self.put(OverlayKeyspace::ShortIds, &forward_key, id.as_bytes())?;
+        self.put(
+            OverlayKeyspace::ShortIdsReverse,
+            id.as_bytes(),
+            &forward_key,
+        )
+    }
+
+    /// Stages one typed, role-tagged journal op into the active txn segment.
+    ///
+    /// The ONLY journal staging surface: every staged op carries its
+    /// [`JournalRole`] and the witnessing write's own `learned_at`/`occurred`,
+    /// so promote can never fall back on inferring ownership from index keys
+    /// or on restamping the room clock.
+    pub(crate) fn stage_journal_entry(self: &Arc<Self>, entry: JournalEntry) -> Result<()> {
+        let incoming_bytes = entry.byte_size();
         ACTIVE_SEGMENT.with(|slot| {
             let mut slot = slot.borrow_mut();
             let Some(segment) = slot.as_mut() else {
@@ -786,7 +1116,7 @@ impl SessionOverlay {
                 .checked_add(segment.journal_bytes)
                 .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
             self.ensure_budget(current_bytes, incoming_bytes)?;
-            segment.journal.push(JournalEntry { scope, op });
+            segment.journal.push(entry);
             segment.journal_bytes = segment.journal_bytes.checked_add(incoming_bytes).ok_or(
                 Error::ArithmeticOverflow("overlay staged journal byte count"),
             )?;
@@ -1075,6 +1405,42 @@ impl SessionOverlay {
     }
 }
 
+/// Content-hash byte for a session short id — the base scheme
+/// (`xxh32(data, 0) % 256`, batch.rs `plan_short_id_update`), so
+/// `hydrate_short_id`'s `(short_id, content_hash)` pairing is identical
+/// in-session.
+fn session_short_id_content_hash(data: &[u8]) -> u8 {
+    (xxh32(data, 0) % 256) as u8
+}
+
+/// Encodes the session `ShortIds` forward key `(short_id ‖ content_hash)`,
+/// the same byte shape the base tables use — the namespaces are separated by
+/// the sigil inside `short_id`, not by a second key encoding.
+fn encode_session_short_id_forward_key(short_id: &str, content_hash: u8) -> Vec<u8> {
+    let mut key = Vec::with_capacity(short_id.len().saturating_add(1));
+    key.extend_from_slice(short_id.as_bytes());
+    key.push(content_hash);
+    key
+}
+
+/// Splits a session `ShortIdsReverse` value back into `(short_id, content_hash)`.
+fn parse_session_short_id_value(value: &[u8]) -> Result<(&str, u8)> {
+    let Some((&content_hash, short_id_bytes)) = value.split_last() else {
+        return Err(Error::CorruptedIndex("session short id value"));
+    };
+    let short_id = str::from_utf8(short_id_bytes)
+        .map_err(|_| Error::CorruptedIndex("session short id value"))?;
+    Ok((short_id, content_hash))
+}
+
+/// Advances the mode-publication counter. Overflow is a hard error rather than
+/// a wrap: a wrapped counter could make a stale route revalidate.
+fn next_mode_generation(current: u64) -> Result<u64> {
+    current
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("session overlay mode generation"))
+}
+
 fn project_mutation(state: &OverlayState, mutation: &OverlayMutation) -> Result<OverlayState> {
     let mut projected = state.clone();
     apply_mutation(&mut projected, mutation)?;
@@ -1290,6 +1656,18 @@ mod tests {
             allow_maintenance: false,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
+        }
+    }
+
+    /// A journal entry carrying the role and timestamps a witness write would
+    /// preserve; the budget/atomicity tests care about bytes, not the tag.
+    fn journal_entry(scope: JournalScope, role: JournalRole, op: BatchOp) -> JournalEntry {
+        JournalEntry {
+            scope,
+            role,
+            learned_at: 1,
+            occurred: TimeRange { start: 1, end: 1 },
+            op,
         }
     }
 
@@ -1965,7 +2343,11 @@ mod tests {
         let segment = overlay.install_txn_segment()?;
         let scope = JournalScope::new(EntityId::now(), EntityId::now());
 
-        match overlay.stage_journal(scope, put_op(vec![0_u8; budget + 1])) {
+        match overlay.stage_journal_entry(journal_entry(
+            scope,
+            JournalRole::TurnPut,
+            put_op(vec![0_u8; budget + 1]),
+        )) {
             Err(Error::OffRecordOverlayFull { budget_bytes, .. }) => {
                 assert_eq!(budget_bytes, budget);
             }
@@ -1985,7 +2367,11 @@ mod tests {
         let overlay = SessionOverlay::new(4096);
         let segment = overlay.install_txn_segment()?;
         let scope = JournalScope::new(EntityId::now(), EntityId::now());
-        overlay.stage_journal(scope, put_op(vec![7_u8; 128]))?;
+        overlay.stage_journal_entry(journal_entry(
+            scope,
+            JournalRole::TurnPut,
+            put_op(vec![7_u8; 128]),
+        ))?;
         drop(segment);
 
         let snapshot = overlay.snapshot()?;
@@ -1999,12 +2385,13 @@ mod tests {
         let overlay = SessionOverlay::new(4096);
         let scope = JournalScope::new(EntityId::now(), EntityId::now());
 
-        match overlay.stage_journal(
+        match overlay.stage_journal_entry(journal_entry(
             scope,
+            JournalRole::TurnPut,
             BatchOp::Delete {
                 id: EntityId::now(),
             },
-        ) {
+        )) {
             Err(Error::InvariantViolation(message)) => assert_eq!(
                 message,
                 "session overlay write requires an active txn segment"
@@ -2012,5 +2399,107 @@ mod tests {
             Err(other) => panic!("unexpected error: {other}"),
             Ok(()) => panic!("segment-less journal staging unexpectedly succeeded"),
         }
+    }
+
+    /// The namespace-separation contract. A session alias must not parse as a
+    /// base short id, or a room alias could collide with — and, through the
+    /// composed overlay ∪ base read, MASK — a real base entity's alias.
+    /// Mirrors `api/core.rs::parse_short_ref_parts` /
+    /// `mcp.rs::validate_short_ref_parts`: two lowercase letters then digits.
+    fn parses_as_base_short_id(short_id: &str) -> bool {
+        let bytes = short_id.as_bytes();
+        bytes.len() >= 3
+            && bytes[0].is_ascii_lowercase()
+            && bytes[1].is_ascii_lowercase()
+            && bytes[2..].iter().all(u8::is_ascii_digit)
+    }
+
+    #[test]
+    fn session_short_ids_are_unique_and_outside_the_base_namespace() -> Result<()> {
+        let overlay = SessionOverlay::new(4096);
+        let segment = overlay.install_txn_segment()?;
+
+        let mut seen = BTreeSet::new();
+        for index in 0_u8..5 {
+            let id = EntityId::now();
+            let (short_id, content_hash) = overlay.alloc_session_short_id(&id, &[index])?;
+
+            assert!(
+                !parses_as_base_short_id(&short_id),
+                "session alias {short_id} parses as a base short id"
+            );
+            assert!(
+                short_id.starts_with(SESSION_SHORT_ID_SIGIL),
+                "session alias {short_id} lacks the room sigil"
+            );
+            assert_eq!(content_hash, session_short_id_content_hash(&[index]));
+            assert!(
+                seen.insert(short_id.clone()),
+                "session alias {short_id} was allocated twice in one room"
+            );
+
+            // Both rows land, and the forward row resolves back to the entity.
+            let forward_key = encode_session_short_id_forward_key(&short_id, content_hash);
+            let snapshot = overlay.snapshot()?;
+            match snapshot.lookup_single(OverlayKeyspace::ShortIds, &forward_key) {
+                SnapshotLookup::Present(value) => assert_eq!(value, id.as_bytes()),
+                _ => panic!("forward session short-id row missing for {short_id}"),
+            }
+            match snapshot.lookup_single(OverlayKeyspace::ShortIdsReverse, id.as_bytes()) {
+                SnapshotLookup::Present(value) => assert_eq!(value, forward_key),
+                _ => panic!("reverse session short-id row missing for {short_id}"),
+            }
+        }
+
+        drop(segment);
+        Ok(())
+    }
+
+    /// Re-allocating keeps the alias stable and retires the stale forward row:
+    /// the content hash is part of the forward KEY, so a body change would
+    /// otherwise leave a second forward row resolving the same alias.
+    #[test]
+    fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()> {
+        let overlay = SessionOverlay::new(4096);
+        let segment = overlay.install_txn_segment()?;
+
+        let id = EntityId::now();
+        let (first, first_hash) = overlay.alloc_session_short_id(&id, b"body-one")?;
+        let (second, second_hash) = overlay.alloc_session_short_id(&id, b"body-two")?;
+
+        assert_eq!(first, second, "the room alias must be stable for an entity");
+        assert_ne!(
+            first_hash, second_hash,
+            "fixture bodies must hash differently for this test to mean anything"
+        );
+
+        let snapshot = overlay.snapshot()?;
+        // The stale row was overlay-only, so the delete REMOVES it outright
+        // rather than tombstoning it — no wasted budget byte. `Passthrough`
+        // then falls through to base, which by the sigil rule can never hold a
+        // session alias, so the alias genuinely resolves to nothing.
+        assert!(
+            matches!(
+                snapshot.lookup_single(
+                    OverlayKeyspace::ShortIds,
+                    &encode_session_short_id_forward_key(&first, first_hash),
+                ),
+                SnapshotLookup::Passthrough
+            ),
+            "the stale forward row survived a content change"
+        );
+        assert!(
+            matches!(
+                snapshot.lookup_single(
+                    OverlayKeyspace::ShortIds,
+                    &encode_session_short_id_forward_key(&second, second_hash),
+                ),
+                SnapshotLookup::Present(_)
+            ),
+            "the refreshed forward row is missing"
+        );
+
+        drop(segment);
+        Ok(())
     }
 }

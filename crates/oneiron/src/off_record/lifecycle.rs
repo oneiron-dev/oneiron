@@ -22,23 +22,16 @@
 //!   The OF-333 floor still classifies real egress; its gate-decision
 //!   receipts are floor receipts and survive close untouched.
 //! * **RECEIPTS-FOLLOW-TRANSCRIPT** — session-local receipts ride two
-//!   substrates and close covers both. Durable retrieval-run context
-//!   receipts (whose `result_ids` would betray what the room was about) are
-//!   registered via [`Vault::note_off_record_context_receipt`] and deleted
-//!   at close. In-memory emit-adjacent receipts (dispatch emit receipts
-//!   carrying the OF-369/RS9 context field-set) ride the session's
-//!   [`SessionLocalReceiptLog`] — minted via
+//!   substrates and close covers both. Retrieval-run context receipts (whose
+//!   `result_ids` would betray what the room was about) are written into the
+//!   session's own overlay `VaultMeta` keyspace by the retrieval-run
+//!   registration site, so they evaporate with the transcript; close counts
+//!   them in the pre-close census. In-memory emit-adjacent receipts (dispatch
+//!   emit receipts carrying the OF-369/RS9 context field-set) ride the
+//!   session's [`SessionLocalReceiptLog`] — minted via
 //!   [`Vault::off_record_receipt_log`] — which close CONSUMES, so there is
 //!   one close path and no emit receipt can be orphaned. Only floor
 //!   receipts (gate decisions, redaction audits) persist.
-//!
-//!   **MUST (caller discipline):** every retrieval run executed FOR an
-//!   off-record session MUST be registered via
-//!   [`Vault::note_off_record_context_receipt`] with the run id the
-//!   pipeline returned (`run_with_telemetry`). The retrieval-telemetry
-//!   write path has no session ref, so the engine CANNOT auto-register —
-//!   one forgotten call permanently leaks the room's activated-memory ids
-//!   in a durable retrieval-run row.
 //! * **Delete-at-close** — [`Vault::close_off_record_session`] deletes every
 //!   still-fenced turn through the pinned ARCH-0038 contract
 //!   ([`DeleteReason::PolicyDelete`]: CRDT tombstone FIRST, active-store
@@ -64,10 +57,6 @@
 //!   checks the in-process registry before it writes an artifact, returning
 //!   a typed error naming the open session rather than producing a bundle that
 //!   could outlive close with fenced content.
-//! * **Context-receipt registration is caller discipline.** See the MUST
-//!   above — auto-registration needs session plumbing at the
-//!   retrieval-telemetry seam (e.g. a session ref on `PipelineBuilder`)
-//!   that does not exist today.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -77,14 +66,12 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::{ReceiptRecord, SessionLocalReceiptLog};
-use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
-use crate::session_overlay::SessionOverlay;
-use crate::store::{GateDecisionRecord, RetrievalRunId, Store};
+use crate::session_overlay::{OverlayKeyspace, RouteTarget, SessionOverlay, SessionWriteRoute};
+use crate::store::Store;
 
 /// `vault_meta` key prefix for per-entity fence rows (value = session ref).
 const OFF_RECORD_FENCE_KEY_PREFIX: &[u8] = b"offrecord_fence:v0:";
@@ -93,22 +80,12 @@ const OFF_RECORD_FENCE_KEY_PREFIX: &[u8] = b"offrecord_fence:v0:";
 /// so it preserves the closed write door without retaining session metadata.
 pub(super) const OFF_RECORD_CLOSED_FENCE_VALUE: &[u8] = b"";
 
-/// `vault_meta` key prefix for the durable crash-recovery marker of a
-/// session-local off-record context receipt (value = session ref). The
-/// retrieval-run record it names holds the room's activated-memory ids in its
-/// `result_ids`; because the session record is in-process only, this marker is
-/// the sole durable trace that lets the open-time sweep delete an orphaned run
-/// after a crash, so RECEIPTS-FOLLOW-TRANSCRIPT holds across recovery too.
-const OFF_RECORD_RECEIPT_KEY_PREFIX: &[u8] = b"offrecord_receipt:v0:";
-
 const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
 
 /// Longest accepted caller-supplied opaque session ref, in bytes.
 const OFF_RECORD_SESSION_REF_MAX_LEN: usize = 256;
 /// Hard cap on fenced turns tracked by one session record.
 const OFF_RECORD_MAX_FENCED_TURNS: usize = 65_536;
-/// Hard cap on session-local context receipts tracked by one session record.
-const OFF_RECORD_MAX_CONTEXT_RECEIPTS: usize = 65_536;
 
 /// Current tagging mode of an off-record session.
 ///
@@ -147,10 +124,8 @@ pub struct OffRecordSessionRecord {
     pub fenced_turns: Vec<[u8; 16]>,
     /// Turns promoted out of the fence; close keeps them.
     pub promoted_turns: Vec<[u8; 16]>,
-    /// Session-local context receipts (retrieval runs) deleted at close.
-    pub context_receipt_runs: Vec<RetrievalRunId>,
     /// Set by the first close transaction. While `true`, every mutator
-    /// (tag, promote, note-context-receipt, mode flip) rejects with
+    /// (tag, promote, mode flip) rejects with
     /// [`Error::OffRecordSessionClosing`] — close's multi-transaction
     /// deletion pass must never race a record mutation (a stale snapshot
     /// could hard-delete a just-promoted, user-consented turn).
@@ -161,12 +136,19 @@ pub struct OffRecordSessionRecord {
 /// What close deleted and what it kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OffRecordCloseOutcome {
-    /// Fenced turns hard-deleted through the ARCH-0038 PolicyDelete path.
+    /// Transcript turns that stopped existing at close: the legacy fenced-base
+    /// turns hard-deleted through the ARCH-0038 PolicyDelete path PLUS the
+    /// overlay-witnessed transcript entity puts that evaporated with the room
+    /// (journal roles `TurnPut`, `MessagePartOf`, `SummaryDerivedFrom`),
+    /// counted in the same pre-close census.
     pub turns_deleted: usize,
     /// Fenced turn ids with no stored entity (tag-before-write where the
     /// write never landed); nothing to delete.
     pub turns_missing: usize,
-    /// Session-local retrieval-run context receipts removed.
+    /// Session-local retrieval-run context receipts evaporated: the count of
+    /// retrieval-run receipt rows present in the overlay `VaultMeta` keyspace
+    /// immediately BEFORE the overlay closes (the rows are unobservable after,
+    /// and evaporation is what deletes them).
     pub context_receipts_deleted: usize,
     /// Emit-adjacent receipts dropped with the session's
     /// [`SessionLocalReceiptLog`] (RECEIPTS-FOLLOW-TRANSCRIPT).
@@ -181,62 +163,6 @@ pub struct OffRecordCloseOutcome {
     /// REDACTION_AUDIT receipt ids minted by the per-turn deletions (floor
     /// receipts: they persist).
     pub redaction_receipt_ids: Vec<EntityId>,
-}
-
-mod floor_writes_seal {
-    pub(super) struct Seal;
-}
-
-/// The only durable writer surface made available to session lifecycle code.
-/// Its constructor and seal are crate-private, and it exposes exactly the
-/// three floor operations allowed by ARCH-0052.
-pub(crate) struct FloorWrites<'store> {
-    pub(super) store: &'store Store,
-    _seal: floor_writes_seal::Seal,
-}
-
-impl<'store> FloorWrites<'store> {
-    pub(crate) fn new(store: &'store Store) -> Self {
-        Self {
-            store,
-            _seal: floor_writes_seal::Seal,
-        }
-    }
-
-    /// Floor operation 1/3: append one evaluated egress gate decision.
-    pub(crate) fn append_egress_gate_decision(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        record: &GateDecisionRecord,
-    ) -> Result<()> {
-        self.store.append_gate_decision_in_txn(wtxn, record)
-    }
-
-    /// Floor operation 2/3: append one REDACTION_AUDIT entity and its exact
-    /// ordinary entity-index footprint.
-    pub(crate) fn append_redaction_audit(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        receipt_id: &EntityId,
-        learned_at: u64,
-        body: &[u8],
-    ) -> Result<()> {
-        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-        payload.extend_from_slice(&crate::deletion::receipt_envelope_header(learned_at));
-        payload.extend_from_slice(body);
-        self.store
-            .entities
-            .put(wtxn, receipt_id.as_bytes(), &payload)?;
-
-        let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, receipt_id);
-        self.store.type_index.put(wtxn, &type_key, &[])?;
-        let temporal_key = Store::encode_temporal_key(learned_at, receipt_id);
-        self.store
-            .temporal_occurred_start
-            .put(wtxn, &temporal_key, &[])?;
-        self.store.temporal_learned.put(wtxn, &temporal_key, &[])?;
-        Ok(())
-    }
 }
 
 /// Vault-scoped, in-process source of truth for live off-record sessions.
@@ -257,6 +183,22 @@ pub(super) struct OffRecordSessionEntryState {
     pub(super) receipt_log: Option<SessionLocalReceiptLog>,
     pub(super) overlay_closed: bool,
     pub(super) gone: bool,
+    /// The room's conversation shell, allocated on the first witness and
+    /// reused for every later turn so a session reads as ONE conversation.
+    /// In-memory only: it evaporates with the process, like the room.
+    pub(super) overlay_shell: Option<EntityId>,
+    /// Whether the overlay shell's own `Put` has been staged. Allocating the
+    /// id and staging its row are separate moments — the id is minted before
+    /// the write transaction opens — so a second witness must not re-put the
+    /// shell it already created.
+    pub(super) overlay_shell_staged: bool,
+    /// The BASE conversation shell used while on record (K10). A fresh
+    /// conversation allocated on the first post-flip witness and reused until
+    /// flip-back. It is deliberately NOT the overlay shell: reusing that id
+    /// would write a base row whose conversation is an overlay member — the
+    /// taint the K4 guard exists to reject — and would link on-record turns to
+    /// a room that is supposed to be invisible from base.
+    pub(super) continuation_shell: Option<EntityId>,
 }
 
 impl Default for OffRecordSessionRegistry {
@@ -302,7 +244,6 @@ impl OffRecordSessionRegistry {
             entered_at: crate::unix_seconds_now(),
             fenced_turns: Vec::new(),
             promoted_turns: Vec::new(),
-            context_receipt_runs: Vec::new(),
             closing: false,
         };
         let entry = Arc::new(OffRecordSessionEntry {
@@ -312,6 +253,9 @@ impl OffRecordSessionRegistry {
                 receipt_log: Some(SessionLocalReceiptLog::off_record(session_ref)),
                 overlay_closed: false,
                 gone: false,
+                overlay_shell: None,
+                overlay_shell_staged: false,
+                continuation_shell: None,
             }),
             published_record: ArcSwapOption::from(Some(Arc::new(record))),
         });
@@ -346,6 +290,27 @@ impl OffRecordSessionRegistry {
             }
         }
         Ok(false)
+    }
+
+    /// The live session that owns `id` as an overlay member, if any (K7).
+    ///
+    /// Ownership is unique by construction: conversation shells are allocated
+    /// by the session that opens the room, so no id can be a member of two
+    /// live overlays. Should a race expose more than one live match anyway, the
+    /// first in registry iteration order wins — the door only needs to know
+    /// THAT the id is session-owned, and naming any live owner refuses it.
+    ///
+    /// [`Self::contains_entity`] answers the same membership question for the
+    /// fence probes, which need only a bool; the witness door reports the
+    /// owning session in its typed refusal, so it needs the ref.
+    pub(crate) fn owning_session_ref(&self, id: &EntityId) -> Result<Option<String>> {
+        let sessions = self.published.load();
+        for (session_ref, entry) in sessions.iter() {
+            if entry.published_record.load().is_some() && entry.overlay.contains_entity(id)? {
+                return Ok(Some(session_ref.clone()));
+            }
+        }
+        Ok(None)
     }
 
     pub(crate) fn has_overlay_entities(&self) -> Result<bool> {
@@ -384,13 +349,6 @@ pub(super) fn off_record_fence_key(id: &EntityId) -> Vec<u8> {
     let mut key = Vec::with_capacity(OFF_RECORD_FENCE_KEY_PREFIX.len() + 16);
     key.extend_from_slice(OFF_RECORD_FENCE_KEY_PREFIX);
     key.extend_from_slice(id.as_bytes());
-    key
-}
-
-fn off_record_receipt_key(run_id: RetrievalRunId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(OFF_RECORD_RECEIPT_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(OFF_RECORD_RECEIPT_KEY_PREFIX);
-    key.extend_from_slice(&run_id.as_bytes());
     key
 }
 
@@ -589,27 +547,210 @@ impl OffRecordSession<'_> {
         Ok(session_entry_state(&self.entry)?.record.backend)
     }
 
-    /// Captures one snapshot for all 28 accessors. The returned view borrows
+    /// Captures one snapshot for all 28 accessors, so a multi-step composed
+    /// read never sees a torn overlay-base union. The returned view borrows
     /// this handle, so `close(self)` is unavailable until the view is dropped.
-    #[allow(
-        dead_code,
-        reason = "ONE-1727 completes the session view contract; ONE-1728 witness/retrieval is its first lib-target caller"
-    )]
     pub(crate) fn read_view(&self) -> Result<crate::store::SessionStoreView<'_>> {
         self.vault.store.session_view(self.entry.overlay.clone())
     }
 
-    #[allow(
-        dead_code,
-        reason = "ONE-1726 oracle access; production overlay writes arrive with ONE-1728 witness"
-    )]
     pub(crate) fn overlay(&self) -> Arc<SessionOverlay> {
         self.entry.overlay.clone()
+    }
+
+    /// Mints the current mode-aware write route (K10): `Overlay` while
+    /// `OffRecord`, `Base` after a flip to `OnRecord`.
+    ///
+    /// The mode read and the mint happen under ONE hold of the session state
+    /// lock — the same lock `set_off_record_session_mode` holds across the
+    /// seal/rearm and the record publication — so a route can never pair a
+    /// pre-flip target with a post-flip generation. A concurrent flip that
+    /// lands after the mint is caught by `SessionWriteRoute::revalidate`.
+    ///
+    /// On a `Base` route, session witness writes under the registry-held
+    /// on-record continuation shell, never the overlay conversation id.
+    pub(crate) fn write_route(&self) -> Result<SessionWriteRoute> {
+        let state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            });
+        }
+        let target = match state.record.mode {
+            OffRecordMode::OffRecord => RouteTarget::Overlay,
+            OffRecordMode::OnRecord => RouteTarget::Base,
+        };
+        SessionWriteRoute::mint(&self.entry.overlay, target)
+    }
+
+    /// The room's conversation shell, allocated on first use.
+    ///
+    /// One shell per room, so an in-session reader sees one conversation
+    /// rather than a turn-per-conversation shred. The id lives only on the
+    /// in-memory record — no durable session row — so it evaporates with the
+    /// process exactly as the room does.
+    pub(crate) fn overlay_conversation_shell(&self) -> Result<EntityId> {
+        let mut state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            });
+        }
+        Ok(*state.overlay_shell.get_or_insert_with(EntityId::now))
+    }
+
+    /// Claims the right to STAGE the overlay shell's `Put`, exactly once per
+    /// room. Returns `true` to the first caller and `false` to every later
+    /// one, so a second witness reuses the shell instead of overwriting it.
+    pub(crate) fn claim_overlay_conversation_shell(&self) -> Result<bool> {
+        let mut state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            });
+        }
+        Ok(!std::mem::replace(&mut state.overlay_shell_staged, true))
+    }
+
+    /// The base conversation shell this session witnesses under while ON
+    /// RECORD (K10), allocated on the first post-flip witness and reused until
+    /// flip-back.
+    ///
+    /// Deliberately distinct from the overlay shell: witnessing an on-record
+    /// turn under the overlay conversation id would write a BASE row
+    /// referencing an overlay member — precisely the taint K4 rejects — and
+    /// would make the private room reachable from base by following the edge.
+    /// The two mode's transcripts stay separate conversations, which is what
+    /// "pre-flip turns remain base-invisible" means structurally.
+    pub(crate) fn on_record_continuation_shell(&self) -> Result<EntityId> {
+        let mut state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            });
+        }
+        if state.record.mode != OffRecordMode::OnRecord {
+            return Err(Error::InvariantViolation(
+                "the on-record continuation shell is only reachable while on record",
+            ));
+        }
+        Ok(*state.continuation_shell.get_or_insert_with(EntityId::now))
+    }
+
+    /// In-room BM25 retrieval over the composed union (ARCH-0052 §7).
+    ///
+    /// This is the session sibling of `Vault::search_text_with_telemetry` and
+    /// mirrors it exactly: the same generalized `bm25::search_text` body, the
+    /// same `VaultSearch` telemetry shape. Only the target differs — scoring
+    /// reads overlay ∪ base, and the retrieval-run row registers into the
+    /// room's overlay `VaultMeta`, so the base telemetry ledger gains nothing
+    /// (K10) and the row evaporates at close, where the pre-close census
+    /// counts it as a deleted context receipt (K8).
+    ///
+    /// ONE view serves the whole run. Constructing a view snapshots the
+    /// overlay, so a walk that built a view per step could see a torn union
+    /// if a concurrent stage landed between them; scoring and registration
+    /// therefore share this one.
+    #[allow(
+        dead_code,
+        reason = "ONE-1728 drives it from the branch-store oracle; the host-facing caller is \
+                  ONE-1729's session retrieval binding"
+    )]
+    pub(crate) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<EntityId>> {
+        let route = self.write_route()?;
+        let view = self.read_view()?;
+        let search = self.vault.search_text_scored(
+            &view,
+            query,
+            limit,
+            &crate::config::Bm25RankProfile::default(),
+        )?;
+        drop(view);
+
+        let record = Vault::vault_search_retrieval_run_record(
+            crate::store::RetrievalSignal::Text,
+            search.started_at,
+            search.started,
+            &search.scores,
+            limit,
+        );
+        match route.target() {
+            RouteTarget::Overlay => {
+                let segment = self.entry.overlay.install_txn_segment()?;
+                // The view above was taken BEFORE the segment installed, so it
+                // cannot see this run's own staged row; the registration needs
+                // a segment-aware view to stage into.
+                let staging = self.vault.store.session_view(self.entry.overlay.clone())?;
+                self.vault.with_write_txn(|wtxn| {
+                    route.revalidate()?;
+                    staging.record_retrieval_run_in_txn(wtxn, &record)
+                })?;
+                drop(staging);
+                segment.commit()?;
+            }
+            // Post-flip the room is on record: telemetry, like every other
+            // write, routes to base ordinarily (K10).
+            RouteTarget::Base => self.vault.store.record_retrieval_run(&record)?,
+        }
+
+        Ok(search.scores.into_iter().map(|scored| scored.id).collect())
+    }
+
+    /// Mode-aware VaultMeta write (ONE-1728 K10): the overlay keyspace while
+    /// `OffRecord`, the base `vault_meta` while `OnRecord`.
+    ///
+    /// The route revalidates before anything is staged, so a write minted
+    /// against a mode epoch that a concurrent flip has replaced is refused
+    /// rather than landing in the wrong place. The base half runs inside this
+    /// module's private vault access; no vault getter escapes.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730 inherits the route-carrying VaultMeta pair (pinned by the P4a blueprint)"
+    )]
+    pub(crate) fn vault_meta_put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let route = self.write_route()?;
+        route.revalidate()?;
+        match route.target() {
+            RouteTarget::Overlay => {
+                let overlay = self.entry.overlay.clone();
+                let segment = overlay.install_txn_segment()?;
+                let view = self.vault.store.session_view(overlay)?;
+                self.vault.with_write_txn(|wtxn| {
+                    route.revalidate()?;
+                    view.vault_meta_put_in_txn(wtxn, key, value)
+                })?;
+                drop(view);
+                segment.commit()
+            }
+            RouteTarget::Base => self.vault.with_write_txn(|wtxn| {
+                route.revalidate()?;
+                self.vault.store.vault_meta.put(wtxn, key, value)
+            }),
+        }
+    }
+
+    /// Composed VaultMeta read over overlay ∪ base.
+    #[allow(
+        dead_code,
+        reason = "ONE-1730 inherits the route-carrying VaultMeta pair (pinned by the P4a blueprint)"
+    )]
+    pub(crate) fn vault_meta_get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let view = self.read_view()?;
+        let rtxn = self.vault.store.env.read_txn()?;
+        view.vault_meta_get_in_txn(&rtxn, key)
     }
 
     pub fn flip_on_record(&self) -> Result<()> {
         self.vault
             .set_off_record_session_mode(&self.session_ref, OffRecordMode::OnRecord)?;
+        Ok(())
+    }
+
+    /// K10 flip-back: returns the session to `OffRecord`, rearming the overlay
+    /// so new writes stage there again. Pre-flip turns stay base-invisible.
+    pub fn flip_off_record(&self) -> Result<()> {
+        self.vault
+            .set_off_record_session_mode(&self.session_ref, OffRecordMode::OffRecord)?;
         Ok(())
     }
 
@@ -742,51 +883,6 @@ impl Vault {
         Ok(())
     }
 
-    /// Companion crash-recovery sweep for orphaned off-record context receipts.
-    /// A crash mid-session leaves durable `offrecord_receipt:v0:` markers naming
-    /// retrieval runs whose `result_ids` are the room's activated-memory ids,
-    /// with no live registry entry to delete them at close. Run at
-    /// [`Vault::open`] under sole ownership (the in-process registry is empty at
-    /// open, so EVERY marker is orphaned), AND while the open lock is still held
-    /// EXCLUSIVELY, so no peer can register a fresh receipt mid-sweep. Delete
-    /// each named retrieval run and THEN its marker (run first, so an
-    /// interrupted sweep re-processes the marker instead of leaking a
-    /// marker-less run). Idempotent and a no-op when there are zero orphans.
-    pub(crate) fn sweep_orphaned_off_record_receipts(&self) -> Result<()> {
-        let orphans: Vec<RetrievalRunId> = {
-            let rtxn = self.store.env.read_txn()?;
-            let mut ids = Vec::new();
-            for entry in self
-                .store
-                .vault_meta
-                .prefix_iter(&rtxn, OFF_RECORD_RECEIPT_KEY_PREFIX)?
-            {
-                let (key, _value) = entry?;
-                let suffix = &key[OFF_RECORD_RECEIPT_KEY_PREFIX.len()..];
-                let bytes: [u8; 16] = suffix.try_into().map_err(|_| {
-                    Error::InvariantViolation("malformed off-record receipt key at open")
-                })?;
-                ids.push(RetrievalRunId::from_bytes(bytes));
-            }
-            ids
-        };
-        if orphans.is_empty() {
-            return Ok(());
-        }
-        for run_id in &orphans {
-            // `delete_retrieval_run` opens its own write txn (it refuses to run
-            // inside one), so it is called outside the marker-delete txn below.
-            self.store.delete_retrieval_run(*run_id)?;
-            self.with_write_txn(|wtxn| {
-                self.store
-                    .vault_meta
-                    .delete(wtxn, &off_record_receipt_key(*run_id))?;
-                Ok(())
-            })?;
-        }
-        Ok(())
-    }
-
     /// Explicitly enters off-record mode for `session_ref` (OF-326: enter is
     /// never implicit). Errors with [`Error::OffRecordSessionAlreadyExists`]
     /// while a record for the ref exists — a closed session's ref may be
@@ -839,9 +935,22 @@ impl Vault {
         Ok(self.store.off_record_sessions.record(session_ref))
     }
 
-    /// Flips the session's tagging mode (e.g. back on-record mid-session).
-    /// Fence rows on already-tagged turns are untouched: THE FENCE holds
+    /// Flips the session's tagging mode, in either direction (ARCH-0052 D5 /
+    /// K10). Fence rows on already-tagged turns are untouched: THE FENCE holds
     /// across the flip.
+    ///
+    /// * `OffRecord -> OnRecord` seals the overlay write path. New writes —
+    ///   telemetry included — route to base ordinarily, under the session's
+    ///   on-record continuation shell; reads stay composed, so the room's
+    ///   earlier turns remain visible in-session.
+    /// * `OnRecord -> OffRecord` REARMS the overlay (`Sealed` -> `Live`). New
+    ///   writes route to the overlay again. Pre-flip turns stay overlay-only
+    ///   and base-invisible throughout; rearm reopens the write door and
+    ///   touches no row.
+    ///
+    /// Both directions publish a fresh overlay mode generation under the held
+    /// state lock, so a `SessionWriteRoute` minted before the flip is refused
+    /// by `SessionWriteRoute::revalidate` before it can stage or commit.
     pub fn set_off_record_session_mode(
         &self,
         session_ref: &str,
@@ -866,13 +975,11 @@ impl Vault {
         if state.record.mode == mode {
             return Ok(state.record.clone());
         }
-        if state.record.mode == OffRecordMode::OnRecord {
-            return Err(Error::InvariantViolation(
-                "a sealed off-record overlay cannot be reopened for writes",
-            ));
+        match mode {
+            OffRecordMode::OnRecord => entry.overlay.seal_writes()?,
+            OffRecordMode::OffRecord => entry.overlay.rearm()?,
         }
-        entry.overlay.seal_writes()?;
-        state.record.mode = OffRecordMode::OnRecord;
+        state.record.mode = mode;
         entry.publish_state(&state);
         Ok(state.record.clone())
     }
@@ -1044,57 +1151,6 @@ impl Vault {
         off_record_fence_active(&self.store, &rtxn, id)
     }
 
-    /// Registers one emit-adjacent context receipt (a retrieval-run record —
-    /// its `result_ids` are the activated memory ids) as session-local:
-    /// RECEIPTS-FOLLOW-TRANSCRIPT, so close deletes it with the transcript.
-    pub fn note_off_record_context_receipt(
-        &self,
-        session_ref: &str,
-        run_id: RetrievalRunId,
-    ) -> Result<()> {
-        vet_off_record_session_ref(session_ref)?;
-        let entry = live_session_entry(&self.store, session_ref)?;
-        let mut state = session_entry_state(&entry)?;
-        if state.record.closing || state.gone {
-            return Err(Error::OffRecordSessionClosing {
-                session_ref: session_ref.to_owned(),
-            });
-        }
-        // After a flip, telemetry routes to base and must not be registered
-        // for deletion with the pre-flip overlay.
-        if state.record.mode != OffRecordMode::OffRecord {
-            return Err(Error::InvariantViolation(
-                "off-record context receipt requires the session to be in off-record mode",
-            ));
-        }
-        if state.record.context_receipt_runs.contains(&run_id) {
-            return Ok(());
-        }
-        if state.record.context_receipt_runs.len() >= OFF_RECORD_MAX_CONTEXT_RECEIPTS {
-            return Err(Error::InvariantViolation(
-                "off-record session context-receipt capacity exceeded",
-            ));
-        }
-        // Hold the per-session state lock across the durable receipt-marker write
-        // AND the in-process record update (Option-A), so the marker and the
-        // registry entry commit atomically against close — close cannot freeze a
-        // stale snapshot between the two and strand an orphan marker. The marker
-        // is the crash-recovery trace for this retrieval run (its `result_ids`
-        // are the room's activated-memory ids): close deletes it, and the
-        // open-time sweep evaporates it if a crash beats close. Deadlock-safe:
-        // the write txn never locks `entry.state`.
-        self.with_write_txn(|wtxn| {
-            self.store.vault_meta.put(
-                wtxn,
-                &off_record_receipt_key(run_id),
-                session_ref.as_bytes(),
-            )
-        })?;
-        state.record.context_receipt_runs.push(run_id);
-        entry.publish_state(&state);
-        Ok(())
-    }
-
     /// Opens the session-local emit receipt log bound to a live off-record
     /// session. One log per session: dispatch-emitted receipts are recorded
     /// into it, and [`Vault::close_off_record_session`] consumes it so no
@@ -1120,10 +1176,12 @@ impl Vault {
     /// active-store hard purge, opaque REDACTION_AUDIT receipt,
     /// historical-carrier sweep — the receipts are deletion provenance and
     /// persist as floor receipts). Session-local receipts follow the
-    /// transcript: the durable retrieval-run context receipts are deleted,
-    /// and the session's [`SessionLocalReceiptLog`] is consumed here — the
-    /// one close path — so its emit-adjacent receipts drop with the room.
-    /// Promoted turns and their promote receipts are kept.
+    /// transcript: the session's retrieval-run context receipts and its
+    /// witnessed transcript rows live in the overlay and evaporate with it —
+    /// close censuses them immediately BEFORE the overlay closes, because they
+    /// are unobservable after — and the session's [`SessionLocalReceiptLog`]
+    /// is consumed here, the one close path, so its emit-adjacent receipts
+    /// drop with the room. Promoted turns and their promote receipts are kept.
     ///
     /// Concurrency contract: the FIRST transaction stamps `closing` on the
     /// record, after which every mutator rejects with
@@ -1169,6 +1227,22 @@ impl Vault {
             state.record.closing = true;
             entry.publish_state(&state);
             (state.record.clone(), !state.overlay_closed)
+        };
+        // PRE-CLOSE CENSUS (K8). Session-local retrieval-run receipts and
+        // witnessed transcript entities live in the overlay, so close does not
+        // delete them — the overlay's evaporation does. They are unobservable
+        // the instant `close()` returns, so the counts the outcome reports must
+        // be captured HERE, while the rows are still readable.
+        let (context_receipts_deleted, overlay_transcript_deleted) = if close_overlay {
+            let snapshot = entry.overlay.snapshot()?;
+            (
+                snapshot.live_row_count(OverlayKeyspace::VaultMeta, |key| {
+                    key.starts_with(crate::store::RETRIEVAL_RUN_KEY_PREFIX)
+                }),
+                snapshot.transcript_entity_put_count(),
+            )
+        } else {
+            (0, 0)
         };
         if close_overlay {
             // Session handles lend composed views from `&self`, so safe
@@ -1241,23 +1315,12 @@ impl Vault {
             }
         }
 
-        for run_id in &record.context_receipt_runs {
-            self.store.delete_retrieval_run(*run_id)?;
-        }
-        // Remove the durable crash-recovery markers LAST (after the runs) so a
-        // close interrupted mid-way leaves the marker to be re-swept on the next
-        // open rather than orphaning a still-present run with no marker.
-        if !record.context_receipt_runs.is_empty() {
-            self.with_write_txn(|wtxn| {
-                for run_id in &record.context_receipt_runs {
-                    self.store
-                        .vault_meta
-                        .delete(wtxn, &off_record_receipt_key(*run_id))?;
-                }
-                Ok(())
-            })?;
-        }
-        let context_receipts_deleted = record.context_receipt_runs.len();
+        // Overlay-witnessed transcript entities stopped existing when the
+        // overlay evaporated; they are `turns_deleted` on the same footing as
+        // the legacy fenced-base deletions above (K8).
+        let turns_deleted = turns_deleted
+            .checked_add(overlay_transcript_deleted)
+            .ok_or(Error::ArithmeticOverflow("off-record deleted turn count"))?;
 
         // Final cleanup validates the frozen in-process record, removes only
         // legacy fence rows, then drops the registry entry. The session
