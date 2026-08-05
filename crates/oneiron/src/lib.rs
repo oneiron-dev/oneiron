@@ -62,6 +62,7 @@ pub mod graph_fs;
 pub mod habit;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
+pub mod identity_redirect;
 pub mod identity_reputation;
 pub mod identity_topology;
 pub mod inbox;
@@ -100,6 +101,7 @@ pub mod session_lifecycle;
 pub(crate) mod session_overlay;
 pub mod settings;
 pub mod skill;
+pub mod skill_attribution;
 pub mod skill_hub;
 pub mod speculative;
 pub mod store;
@@ -164,7 +166,8 @@ pub use crate::attempt_queue::{
     AttemptQueueCleanupMetricsSnapshot, AttemptQueueCleanupReport, AttemptQueueRetryReason,
     AttemptQueueRetryReasonCount, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
     CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
-    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, RetryAttempt, RetryOutcome,
+    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, MAX_ATTEMPT_MANIFEST_ENTRIES,
+    ManifestEntry, ManifestKind, RetryAttempt, RetryOutcome,
     attempt_queue_cleanup_metrics_snapshot,
 };
 pub use crate::authority::{
@@ -549,6 +552,7 @@ pub use crate::graph_fs::{
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile,
     GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
+pub use crate::identity_redirect::REDIRECT_CARRIER_CLASS;
 pub use crate::identity_reputation::{
     CONSTRAINED_REPUTATION_DAILY_CAP, DEGRADED_REPUTATION_DAILY_CAP, EmailReputationWebhookSignal,
     IDENTITY_REPUTATION_CLAIM_PREDICATES, IDENTITY_REPUTATION_SCHEMA_VERSION,
@@ -742,14 +746,16 @@ pub use crate::psych_profile::{
     decode_psych_profile_body, encode_psych_profile_body,
 };
 pub use crate::receipt::{
-    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection, FIELD_TASK_REF,
-    FIELD_TRANSPORT_DISPATCHED, GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery,
-    ReceiptKind, ReceiptProjectionIntent, ReceiptProjectionRun, ReceiptQuery, ReceiptRecord,
-    ReceiptView, SessionLocalReceiptLog, SessionReceiptClose, StandingOutboundGrantLensRow,
-    StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery,
-    append_context_receipt_fields, eiri_memory_board_state_ref, outbound_intent_receipt,
-    project_receipts_by_brief, project_receipts_by_counterparty, project_receipts_by_grant,
-    proposal_outcome_amended_body, proposal_outcome_delta,
+    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection,
+    FIELD_MANIFEST_ACTOR_CLAIMS, FIELD_MANIFEST_SKILLS, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED,
+    GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent,
+    ReceiptProjectionRun, ReceiptQuery, ReceiptRecord, ReceiptView, SessionLocalReceiptLog,
+    SessionReceiptClose, StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction,
+    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, append_context_receipt_fields,
+    append_pack_manifest_fields, attempt_pack_receipt, attempt_pack_receipt_id,
+    eiri_memory_board_state_ref, outbound_intent_receipt, project_receipts_by_brief,
+    project_receipts_by_counterparty, project_receipts_by_grant, proposal_outcome_amended_body,
+    proposal_outcome_delta,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
@@ -802,6 +808,15 @@ pub use crate::skill::{
     SkillLifecycle, SkillRecord, canonical_skill_tree_hash, cross_check_declared_content_hash,
     decode_skill_record, encode_skill_record,
 };
+pub use crate::skill_attribution::{
+    ATTRIBUTION_CALL_PURPOSE_NAME, AttemptOutcome, AttributionAuditReport, AttributionJudge,
+    AttributionJudgment, AttributionVerdict, AuditFixture, OutcomeEvidence, RuleAttributionJudge,
+    SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal, attribution_audit_reports,
+    attribution_call_purpose, attribution_judgments, held_out_audit_fixtures,
+    pending_edit_proposals, read_attribution_cursor, record_attribution_evidence,
+    run_attribution_audit, run_attribution_audit_with_judge, run_attribution_projector,
+    run_attribution_projector_with_judge,
+};
 pub use crate::skill_hub::{
     GitSkillHubAdapter, HUB_PIN_KEYS, HUB_REF_KEYS, HttpIndexSkillHubAdapter,
     HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef,
@@ -825,8 +840,14 @@ pub use crate::store::{
 };
 pub use crate::surface_event::{
     INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
-    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
-    SurfaceCounterpartyStamp, SurfaceEvent,
+    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_ATTEMPT_KIND,
+    SURFACE_EVENT_SCHEMA_VERSION, SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAck,
+    SurfaceEventAction, SurfaceEventAdmission, SurfaceEventAttemptPayload, SurfaceEventAttemptRef,
+    SurfaceEventDispatchDisposition, SurfaceEventDispatchRequest, SurfaceEventDispatchRoute,
+    SurfaceEventDispatcher, SurfaceEventHandoffState, SurfaceEventHandoffStatus,
+    SurfaceEventSource, SurfaceEventWorkerOutcome, SurfaceInteractionKind, SurfaceSourceApp,
+    decode_surface_event_attempt_payload, encode_surface_event_attempt_payload,
+    surface_event_run_id,
 };
 pub use crate::task_verb::{
     DEFAULT_TASK_CANCEL_MODE, TASKS_VERBS, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt,

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use axum::extract::Extension;
 use axum::http::header::SET_COOKIE;
 use axum::middleware;
-use axum::routing::post;
+use axum::routing::{MethodRouter, post};
 use axum::{Json, Router};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -44,6 +44,18 @@ async fn counted_handler(
     Json(json!({ "count": count }))
 }
 
+/// Fails the first call and succeeds afterwards, standing in for any route
+/// whose verdict depends on state the caller can go fix between attempts.
+async fn rejecting_once_handler(Extension(counter): Extension<Arc<AtomicUsize>>) -> Response {
+    let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
+    let status = if count == 1 {
+        StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        StatusCode::OK
+    };
+    (status, Json(json!({ "count": count }))).into_response()
+}
+
 async fn spawn_counted_app(
     store: IdempotencyStore,
     counter: Arc<AtomicUsize>,
@@ -64,13 +76,22 @@ async fn spawn_counted_app_with_config(
     counter: Arc<AtomicUsize>,
     config: SyncServerConfig,
 ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    spawn_app_with_config(store, counter, config, post(counted_handler)).await
+}
+
+async fn spawn_app_with_config(
+    store: IdempotencyStore,
+    counter: Arc<AtomicUsize>,
+    config: SyncServerConfig,
+    route: MethodRouter,
+) -> (SocketAddr, tokio::task::JoinHandle<()>) {
     let server = Arc::new(SyncServer::new(store.vault.clone(), config).unwrap());
     let state = IdempotencyLayerState { server, store };
     let app = Router::new()
-        .route("/mutate", post(counted_handler))
+        .route("/mutate", route.clone())
         // Same handler on a core-auth path: that prefix is what switches the
         // middleware from the owner-grade fallback to CoreAuth partitioning.
-        .route("/v1/core/mutate", post(counted_handler))
+        .route("/v1/core/mutate", route)
         .layer(Extension(counter))
         .route_layer(middleware::from_fn_with_state(
             state,
@@ -166,6 +187,40 @@ async fn replay_short_circuits_handler_and_returns_byte_identical_body() {
     assert_eq!(status(&second), 200);
     assert_eq!(body(&first), body(&second));
     assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+    handle.abort();
+}
+
+/// A failed response is never cached, so the same key and body retried after
+/// the caller fixes the underlying state reaches the handler and gets the
+/// fresh verdict — not the day-old rejection replayed back at it.
+#[tokio::test]
+async fn failed_response_is_not_replayed_after_the_condition_clears() {
+    let store = test_store(Arc::new(SystemClock));
+    let counter = Arc::new(AtomicUsize::new(0));
+    let (addr, handle) = spawn_app_with_config(
+        store.store.clone(),
+        counter.clone(),
+        SyncServerConfig {
+            allow_unauthenticated: true,
+            ..Default::default()
+        },
+        post(rejecting_once_handler),
+    )
+    .await;
+
+    let rejected = http_post(addr, r#"{"value":1}"#, "retry-key", None).await;
+    assert_eq!(status(&rejected), 422);
+
+    let retried = http_post(addr, r#"{"value":1}"#, "retry-key", None).await;
+    assert_eq!(status(&retried), 200);
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+    // The success that did land is cached, so the effect still runs once.
+    let replayed = http_post(addr, r#"{"value":1}"#, "retry-key", None).await;
+    assert_eq!(status(&replayed), 200);
+    assert_eq!(body(&replayed), body(&retried));
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
 
     handle.abort();
 }

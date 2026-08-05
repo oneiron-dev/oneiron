@@ -363,18 +363,28 @@ pub(crate) async fn idempotency_middleware(
         }
     };
     let response_body = body.to_vec();
-    let cached = CachedHttpResponse {
-        status: parts.status,
-        headers: parts.headers.clone(),
-        body: response_body.clone(),
-    };
 
-    if let Err(error) = state.store.insert(&store_key, request_body, cached) {
-        tracing::error!(error = %error, "failed to persist idempotency response");
-        return api_error_response(
-            ApiError::internal_server_error("failed to persist idempotency response"),
-            is_core_auth_route,
-        );
+    // Only a successful outcome is durable enough to replay for the TTL. A
+    // failure is a verdict about state the caller can fix — a route rejection
+    // on an identity that is still provisioning, a downstream that was briefly
+    // unavailable — and caching it pins that verdict for a day: the retry that
+    // would now succeed replays the stale error instead, and the caller's only
+    // escape is inventing a new key, which defeats the header. Replaying is a
+    // promise not to run the effect twice, not a promise to freeze a refusal.
+    if parts.status < StatusCode::BAD_REQUEST {
+        let cached = CachedHttpResponse {
+            status: parts.status,
+            headers: parts.headers.clone(),
+            body: response_body.clone(),
+        };
+
+        if let Err(error) = state.store.insert(&store_key, request_body, cached) {
+            tracing::error!(error = %error, "failed to persist idempotency response");
+            return api_error_response(
+                ApiError::internal_server_error("failed to persist idempotency response"),
+                is_core_auth_route,
+            );
+        }
     }
 
     Response::from_parts(parts, Body::from(response_body))

@@ -1,6 +1,6 @@
 //! Communication standing-state claims and the ARCH-0035 projector.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -16,6 +16,10 @@ use crate::claim::{
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::identity_topology::{
+    EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
+    IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+};
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
@@ -51,6 +55,9 @@ const KEY_OPTED_OUT: &str = "opted_out";
 const KEY_JOINED: &str = "joined";
 const KEY_REACHABLE: &str = "reachable";
 const KEY_REASON: &str = "reason";
+/// Synced-truth field on a comm-owned PERSON body. `PARTY_INDEX_PREFIX` caches
+/// the lookup; THIS is what the cache is a cache of.
+const KEY_PARTY_KEY: &str = "party_key";
 
 const COMM_RECORD_KEYS: [&str; 15] = [
     "schema_version",
@@ -81,6 +88,16 @@ const OPT_OUT_CLEAR_APPROVED: &str = "comm_opt_out_clear_approved";
 const PARTY_INDEX_PREFIX: &[u8] = b"comm.party.v1:";
 const EVENT_SEQUENCE_KEY: &[u8] = b"comm.event_sequence.v1";
 const MAX_KEY_BYTES: usize = 512;
+
+/// Stable machine rationale recorded on the MS-01 ledger event when the
+/// projector reconciles offline-minted twins of one `party_key`.
+const PARTY_KEY_TWIN_RATIONALE: &str = "comm.party_key_offline_twin";
+
+/// Domain separator for projector-derived `comm.*` CLAIM ids. A deterministic
+/// projector derives its row ids from its inputs, so replaying one source event
+/// — or projecting it independently on two devices — converges on ONE physical
+/// row instead of racing two random ids into the same conflict key.
+const PROJECTED_COMM_CLAIM_ID_DOMAIN: &[u8] = b"oneiron.comm.projected_claim.v1\0";
 
 /// Typed error for communication projector and consent operations.
 #[derive(Debug, thiserror::Error)]
@@ -652,7 +669,57 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
             Err(error) => return Err(error),
         }
     }
+    reconcile_comm_party_twins(vault, crate::unix_seconds_now())?;
     Ok(())
+}
+
+/// Converges offline-minted twins of one `party_key` onto a single canonical
+/// party, returning how many twins were merged away.
+///
+/// Identity created while synced truth was unreachable reconciles by MERGE, not
+/// by prevention: two devices that each minted a party row for one key are both
+/// right about the party and simply disagree about its id. Each group's lowest
+/// id survives (a total order every node computes identically) and the rest go
+/// through the ARCH-0055 MS-01 door as read-through merges — that door owns the
+/// shell edges, the maintenance-band ledger, and undo. No claim subject is
+/// rewritten and no `merged_into` edge is authored here.
+///
+/// Different `party_key` values are never merged. Deciding that two keys name
+/// one human is cross-channel identity judgment and belongs to the Dreamer tier.
+fn reconcile_comm_party_twins(vault: &Vault, now: u64) -> CommResult<usize> {
+    let twin_groups: Vec<(String, Vec<EntityId>)> = {
+        let rtxn = vault.store.env.read_txn()?;
+        active_comm_persons_by_party_key_in_txn(vault, &rtxn)?
+            .into_iter()
+            .filter(|(_, ids)| ids.len() > 1)
+            .collect()
+    };
+    let mut merged = 0;
+    for (party_key, twins) in twin_groups {
+        // The door takes its own write transaction, so it runs outside the
+        // PERSON scan's read transaction.
+        let (survivor, sources) = twins.split_first().ok_or(CommError::InvalidRecord)?;
+        let outcome = vault.apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: sources.to_vec(),
+                survivor: *survivor,
+                evidence: IdentityOpEvidence {
+                    refs: twins.clone(),
+                    rationale: PARTY_KEY_TWIN_RATIONALE.to_owned(),
+                },
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            now,
+        )?;
+        if matches!(outcome, IdentityOpOutcome::Applied { .. }) {
+            merged += sources.len();
+        }
+        vault.try_with_write_txn(|wtxn| {
+            put_party_index_in_txn(vault, wtxn, &party_key, *survivor)
+        })?;
+    }
+    Ok(merged)
 }
 
 /// Counts active claims by the full `(predicate, party, channel_class)` key.
@@ -1014,11 +1081,14 @@ fn project_event(vault: &Vault, event_id: EntityId) -> CommResult<()> {
         apply_projector_rule_in_txn(
             vault,
             wtxn,
-            *rule,
-            party_ref,
-            channel_class.as_deref(),
-            thread_ref.as_deref(),
-            occurred_at,
+            &ProjectedCommEvent {
+                rule: *rule,
+                source_event_id: event_id,
+                party_ref,
+                channel_class: channel_class.as_deref(),
+                thread_ref: thread_ref.as_deref(),
+                occurred_at,
+            },
         )?;
         let consumed = CommRecord::Event {
             sequence,
@@ -1034,15 +1104,32 @@ fn project_event(vault: &Vault, event_id: EntityId) -> CommResult<()> {
     })
 }
 
+/// One source COMM_RECORD event, resolved to the projector rule it fires.
+/// Bundled so the deterministic id's source event travels with the inputs it is
+/// derived from rather than as one more positional argument.
+#[derive(Debug, Clone, Copy)]
+struct ProjectedCommEvent<'a> {
+    rule: ProjectorRule,
+    source_event_id: EntityId,
+    party_ref: EntityId,
+    channel_class: Option<&'a str>,
+    thread_ref: Option<&'a str>,
+    occurred_at: u64,
+}
+
 fn apply_projector_rule_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    rule: ProjectorRule,
-    party_ref: EntityId,
-    channel_class: Option<&str>,
-    thread_ref: Option<&str>,
-    occurred_at: u64,
+    event: &ProjectedCommEvent<'_>,
 ) -> CommResult<()> {
+    let &ProjectedCommEvent {
+        rule,
+        source_event_id,
+        party_ref,
+        channel_class,
+        thread_ref,
+        occurred_at,
+    } = event;
     match rule.action {
         ProjectorAction::UpsertLastTouch => {
             let channel = channel_class.ok_or(CommError::InvalidRecord)?;
@@ -1061,8 +1148,13 @@ fn apply_projector_rule_in_txn(
                 channel_class: channel.to_owned(),
                 occurred_at,
             };
-            let new_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
-            if let Some((old_head_id, old_head)) = active.into_iter().next() {
+            let (new_id, minted) =
+                put_projected_comm_claim_in_txn(vault, wtxn, source_event_id, &value, occurred_at)?;
+            if !minted {
+                return Ok(());
+            }
+            if let Some((old_head_id, old_head)) = active.into_iter().find(|(id, _)| *id != new_id)
+            {
                 let head_at = old_head.valid_from.unwrap_or(occurred_at);
                 let close_at = occurred_at.max(head_at);
                 if occurred_at >= head_at {
@@ -1102,8 +1194,16 @@ fn apply_projector_rule_in_txn(
                     reason: OPT_OUT_REASON_STOP.to_owned(),
                     occurred_at,
                 };
-                let claim_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
-                if let Some(boundary) = latest_transition.filter(|boundary| occurred_at < *boundary)
+                let (claim_id, minted) = put_projected_comm_claim_in_txn(
+                    vault,
+                    wtxn,
+                    source_event_id,
+                    &value,
+                    occurred_at,
+                )?;
+                if minted
+                    && let Some(boundary) =
+                        latest_transition.filter(|boundary| occurred_at < *boundary)
                 {
                     vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
                 }
@@ -1167,13 +1267,20 @@ fn apply_projector_rule_in_txn(
                     thread_ref: thread.to_owned(),
                     occurred_at,
                 };
-                let claim_id = put_comm_claim_in_txn(vault, wtxn, &value, occurred_at)?;
+                let (claim_id, minted) = put_projected_comm_claim_in_txn(
+                    vault,
+                    wtxn,
+                    source_event_id,
+                    &value,
+                    occurred_at,
+                )?;
                 // Deterministic tie-breaker: at equal occurred_at a join loses to
                 // the boundary (a same-time leave/transition), so equal-time
                 // opposing thread events converge to non-membership regardless of
                 // projection order (restrictive-wins-tie, symmetric with LeaveThread).
-                if let Some(boundary) =
-                    latest_transition.filter(|boundary| occurred_at <= *boundary)
+                if minted
+                    && let Some(boundary) =
+                        latest_transition.filter(|boundary| occurred_at <= *boundary)
                 {
                     vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
                 }
@@ -1211,15 +1318,127 @@ fn apply_projector_rule_in_txn(
     }
 }
 
-fn put_comm_claim_in_txn(
+/// Canonical conflict key for one projected `comm.*` value: the tuple that
+/// makes two claims the SAME standing-state slot. Length-prefixed so
+/// `("ab", "c")` and `("a", "bc")` can never hash alike.
+fn projected_comm_conflict_key(value: &CommClaimValue) -> Vec<u8> {
+    let mut key = Vec::new();
+    let mut push = |bytes: &[u8]| {
+        key.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        key.extend_from_slice(bytes);
+    };
+    match value {
+        CommClaimValue::OptOut {
+            party_ref,
+            channel_class,
+            ..
+        }
+        | CommClaimValue::LastTouch {
+            party_ref,
+            channel_class,
+            ..
+        }
+        | CommClaimValue::ReachableVia {
+            party_ref,
+            channel_class,
+            ..
+        } => {
+            push(party_ref.as_bytes());
+            push(channel_class.as_bytes());
+        }
+        CommClaimValue::ThreadMember {
+            party_ref,
+            thread_ref,
+            ..
+        } => {
+            push(party_ref.as_bytes());
+            push(thread_ref.as_bytes());
+        }
+    }
+    key
+}
+
+/// Derives the deterministic CLAIM id for one projector-created `comm.*` claim
+/// from `(source event, predicate, conflict key)`. Version/variant nibbles are
+/// stamped exactly as [`crate::outbound::connector_actor_id`] so the result is
+/// a well-formed v7-shaped id.
+fn projected_comm_claim_id(
+    source_event_id: EntityId,
+    value: &CommClaimValue,
+) -> CommResult<EntityId> {
+    let predicate = value.claim_body().predicate;
+    let conflict_key = projected_comm_conflict_key(value);
+    let mut hash = blake3::Hasher::new();
+    hash.update(PROJECTED_COMM_CLAIM_ID_DOMAIN);
+    hash.update(source_event_id.as_bytes());
+    hash.update(&(predicate.len() as u64).to_le_bytes());
+    hash.update(predicate.as_bytes());
+    hash.update(&(conflict_key.len() as u64).to_le_bytes());
+    hash.update(&conflict_key);
+    let mut bytes = [0_u8; ENTITY_ID_LEN];
+    bytes.copy_from_slice(&hash.finalize().as_bytes()[..ENTITY_ID_LEN]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    EntityId::from_bytes(bytes).map_err(CommError::from)
+}
+
+/// Writes one projector-created `comm.*` claim at its derived id.
+///
+/// Returns `(id, minted)`. A resident row at the derived id is recognized as a
+/// replay — skip the write, `minted = false` — only when it is BYTE-IDENTICAL
+/// to the body this projection authors AND is still reachable from the party
+/// through a live `claim_of` edge. Anything else is a deterministic-id
+/// collision and fails closed rather than overwriting the resident row.
+///
+/// Both halves are load-bearing, because `minted = false` is exactly what tells
+/// [`project_event`] to stamp the source COMM_RECORD `projected`:
+///
+/// * Byte identity, not typed `CommClaimValue` equality. The encoded body
+///   carries the whole governance envelope — `appr`, `life`, and the
+///   elided-when-false `stale` marker all live in those bytes, and
+///   [`CommClaimValue::claim_body`] pins them to `auto` / `active` / absent. A
+///   rejected, supplanted, retracted, or staleness-marked row therefore cannot
+///   pass as "already projected" the way decoded-value equality let it, which
+///   would have retired the source event against a row that no longer says what
+///   the projector meant — silently dropping standing state a `STOP` depends on.
+/// * The live edge. The body names its subject, but only the `claim_of` edge
+///   makes the claim reachable from the party, and every comm reader walks that
+///   edge. A row carrying the right bytes with no live edge is standing state
+///   nothing can see.
+fn put_projected_comm_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
+    source_event_id: EntityId,
+    value: &CommClaimValue,
+    occurred_at: u64,
+) -> CommResult<(EntityId, bool)> {
+    let id = projected_comm_claim_id(source_event_id, value)?;
+    if let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+        let header = EntityMetadataHeader::parse(&raw).ok_or(CommError::InvalidRecord)?;
+        let projected_body = encode_claim_body(&value.claim_body())?;
+        if header.entity_type != ENTITY_TYPE_CLAIM
+            || raw[ENTITY_METADATA_HEADER_LEN..] != projected_body[..]
+            || !vault
+                .claims_for_subject_in_txn(&*wtxn, &value.party_ref())?
+                .contains(&id)
+        {
+            return Err(CommError::InvalidRecord);
+        }
+        return Ok((id, false));
+    }
+    put_comm_claim_with_id_in_txn(vault, wtxn, id, value, occurred_at)?;
+    Ok((id, true))
+}
+
+fn put_comm_claim_with_id_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: EntityId,
     value: &CommClaimValue,
     occurred_at: u64,
 ) -> CommResult<EntityId> {
     let body = value.claim_body();
     let data = encode_claim_body(&body)?;
-    let id = EntityId::now();
     let subject = value.party_ref();
     // A comm.* claim's subject must be a PERSON party. A replicated event can
     // name any existing entity as party_ref; a subject that is absent or not a
@@ -1485,6 +1704,138 @@ fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
     vault.try_with_write_txn(|wtxn| resolve_or_create_party_in_txn(vault, wtxn, party))
 }
 
+/// Reads the `party_key` of `id` if — and only if — it is an ACTIVE comm-owned
+/// PERSON row. `None` covers every way an id can fail to be synced truth for a
+/// party: absent, non-PERSON, undecodable or unrelated body, or a merge shell
+/// (whose type stays PERSON while its identity has moved to the survivor).
+///
+/// Single validator for both the cache check and the synced scan, so the
+/// shortcut can never disagree with the truth it is a shortcut for.
+fn active_comm_party_key_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> CommResult<Option<String>> {
+    let Some(raw) = vault.store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_PERSON {
+        return Ok(None);
+    }
+    if vault.entity_lifecycle_state_in_txn(rtxn, &id)? != EntityLifecycleState::Active {
+        return Ok(None);
+    }
+    let mut cursor = Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
+    let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
+        return Ok(None);
+    };
+    let Ok(entries) = value_map(&value) else {
+        return Ok(None);
+    };
+    Ok(required_string(entries, KEY_PARTY_KEY)
+        .ok()
+        .map(str::to_owned))
+}
+
+/// Every active comm-owned PERSON row, grouped by its exact `party_key`, ids
+/// ascending. This is the synced truth the node-local index caches.
+fn active_comm_persons_by_party_key_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> CommResult<BTreeMap<String, Vec<EntityId>>> {
+    let mut groups: BTreeMap<String, Vec<EntityId>> = BTreeMap::new();
+    for entry in vault
+        .store
+        .type_index
+        .prefix_iter(rtxn, &[ENTITY_TYPE_PERSON])?
+    {
+        let (key, _) = entry?;
+        let id = entity_id_from_type_index_key(&key)?;
+        if let Some(party_key) = active_comm_party_key_in_txn(vault, rtxn, id)? {
+            groups.entry(party_key).or_default().push(id);
+        }
+    }
+    for ids in groups.values_mut() {
+        ids.sort_unstable();
+    }
+    Ok(groups)
+}
+
+/// What synced truth says about one party, and whether the node-local shortcut
+/// agrees with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PartyLookup {
+    /// The shortcut names the canonical row; nothing to repair.
+    Fresh(EntityId),
+    /// Synced truth names this row, but the shortcut disagrees.
+    Repairable(EntityId),
+    /// No active comm-owned PERSON carries this `party_key`.
+    Absent,
+}
+
+/// Resolves one party against synced truth, read-only.
+///
+/// `PARTY_INDEX_PREFIX` is node-local cache state; the synced truth is the
+/// PERSON body's `party_key`. A cache miss therefore means "look again", not
+/// "absent" — treating it as absence is what mints a twin for a party that
+/// already synced in. On a stale or missing hit this scans the type-4 rows and,
+/// when several active rows share the key, picks the lexicographically smallest
+/// id so every node converges on the same one.
+fn lookup_party_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    party_key: &str,
+) -> CommResult<PartyLookup> {
+    if let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(rtxn, &party_index_key(party_key))?
+    {
+        let id = decode_entity_id(&raw)?;
+        if active_comm_party_key_in_txn(vault, rtxn, id)?.as_deref() == Some(party_key) {
+            return Ok(PartyLookup::Fresh(id));
+        }
+    }
+    Ok(active_comm_persons_by_party_key_in_txn(vault, rtxn)?
+        .remove(party_key)
+        .and_then(|ids| ids.into_iter().next())
+        .map_or(PartyLookup::Absent, PartyLookup::Repairable))
+}
+
+/// Points the node-local shortcut at `id`.
+fn put_party_index_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party_key: &str,
+    id: EntityId,
+) -> CommResult<()> {
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, &party_index_key(party_key), id.as_bytes())?;
+    Ok(())
+}
+
+/// Transaction-composable party resolution: repairs the shortcut from synced
+/// truth on a miss and never mints.
+fn resolve_party_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party_key: &str,
+) -> CommResult<Option<EntityId>> {
+    match lookup_party_in_txn(vault, &*wtxn, party_key)? {
+        PartyLookup::Fresh(id) => Ok(Some(id)),
+        PartyLookup::Repairable(id) => {
+            put_party_index_in_txn(vault, wtxn, party_key, id)?;
+            Ok(Some(id))
+        }
+        PartyLookup::Absent => Ok(None),
+    }
+}
+
 /// Resolves (or mints) the PERSON party for `party` inside an existing write
 /// transaction, so a caller can make party creation atomic with the write that
 /// references it (e.g. recording an event). Doing the resolve in a separate
@@ -1496,31 +1847,28 @@ fn resolve_or_create_party_in_txn(
     party: &str,
 ) -> CommResult<EntityId> {
     validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
-    let index_key = party_index_key(party);
-    if let Some(raw) = vault.store.vault_meta.get(&*wtxn, &index_key)? {
-        let id = decode_entity_id(&raw)?;
-        // Only reuse the cached party id if it still resolves to a PERSON row.
-        // If the entity was deleted (or its explicit id reused by another entity
-        // type), the cache is stale — fall through to remint and rebind,
-        // otherwise new comm events would be minted against a non-PERSON subject
-        // and wedge at the projector's PERSON check.
-        let cached_is_person = vault
-            .store
-            .entities
-            .get(&*wtxn, id.as_bytes())?
-            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
-            == Some(ENTITY_TYPE_PERSON);
-        if cached_is_person {
-            return Ok(id);
-        }
+    if let Some(id) = resolve_party_in_txn(vault, wtxn, party)? {
+        return Ok(id);
     }
+    let id = mint_comm_person_in_txn(vault, wtxn, party)?;
+    put_party_index_in_txn(vault, wtxn, party, id)?;
+    Ok(id)
+}
+
+/// Mints one comm-owned PERSON row carrying `party_key`. The caller decides
+/// whether the node-local shortcut should name it.
+fn mint_comm_person_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party: &str,
+) -> CommResult<EntityId> {
     let id = EntityId::now();
     let body = encode_value(&Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(COMM_SCHEMA_VERSION),
         ),
-        (Value::from("party_key"), Value::from(party)),
+        (Value::from(KEY_PARTY_KEY), Value::from(party)),
     ]))?;
     apply_ops(
         &vault.store,
@@ -1543,24 +1891,27 @@ fn resolve_or_create_party_in_txn(
         false,
         true,
     )?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &index_key, id.as_bytes())?;
     Ok(id)
 }
 
+/// Read-side party lookup. Answers from synced truth, and repairs the node-local
+/// shortcut when it disagrees — a read-side miss must not report a party that
+/// exists as absent (which would let the next write mint a twin for it). Only a
+/// repair takes a write transaction; the fresh and absent cases stay read-only.
 fn resolve_party(vault: &Vault, party: &str) -> CommResult<Option<EntityId>> {
     validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
-    let rtxn = vault.store.env.read_txn()?;
-    vault
-        .store
-        .vault_meta
-        .get(&rtxn, &party_index_key(party))?
-        .as_deref()
-        .map(decode_entity_id)
-        .transpose()
-        .map_err(CommError::from)
+    let lookup = {
+        let rtxn = vault.store.env.read_txn()?;
+        lookup_party_in_txn(vault, &rtxn, party)?
+    };
+    match lookup {
+        PartyLookup::Fresh(id) => Ok(Some(id)),
+        PartyLookup::Repairable(id) => {
+            vault.try_with_write_txn(|wtxn| put_party_index_in_txn(vault, wtxn, party, id))?;
+            Ok(Some(id))
+        }
+        PartyLookup::Absent => Ok(None),
+    }
 }
 
 fn party_index_key(party: &str) -> Vec<u8> {
