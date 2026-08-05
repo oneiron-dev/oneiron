@@ -1420,3 +1420,86 @@ fn duplicate_sensitivity_still_ambiguous() {
     ]);
     assert_eq!(claim_sensitivity_band(&band_probe_body(Some(scope))), None);
 }
+
+/// The `calendar.*` family reaches the same central local-write validator that
+/// sync replay reaches, so a malformed calendar claim is rejected at the write
+/// door rather than at a calendar-specific read. Value-shape coverage lives in
+/// `calendar::claims`; this pins the chokepoint wiring.
+#[test]
+fn write_door_validates_calendar_claim_structure() -> Result<()> {
+    let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let subject = EntityId::now();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_EVENT,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"event",
+    )?;
+
+    let calendar_body = |value: Value| {
+        ClaimBody::new(
+            crate::calendar::claims::PREDICATE_CALENDAR_STATUS,
+            ClaimSubject::Entity(subject),
+            value,
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+    };
+    let status_value = |status: &str| {
+        Value::Map(vec![
+            (Value::from("status"), Value::from(status)),
+            (Value::from("basis"), Value::from("owner")),
+            (Value::from("recorded_at"), Value::from(1_754_400_000_u64)),
+        ])
+    };
+
+    // The canonical shape stores through the public claim door.
+    vault.put_claim(
+        &EntityId::now(),
+        &calendar_body(status_value("confirmed")),
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+
+    // An invalid closed-set token is rejected at that same door.
+    assert_matches!(
+        vault.put_claim(
+            &EntityId::now(),
+            &calendar_body(status_value("tentative")),
+            TimeRange { start: 3, end: 3 },
+            3,
+        ),
+        Err(Error::InvalidClaimBody(_))
+    );
+
+    // So is a wholly wrong value type, proving the branch is not shape-blind.
+    assert_matches!(
+        vault.put_claim(
+            &EntityId::now(),
+            &calendar_body(Value::from("cancelled")),
+            TimeRange { start: 4, end: 4 },
+            4,
+        ),
+        Err(Error::InvalidClaimBody(_))
+    );
+
+    // An unknown `calendar.*` predicate is NOT interpreted as a family member:
+    // the matcher is exact-table membership, so it stores as an ordinary claim.
+    let unknown = ClaimBody::new(
+        "calendar.unknown",
+        ClaimSubject::Entity(subject),
+        Value::from("free-form"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(
+        &EntityId::now(),
+        &unknown,
+        TimeRange { start: 5, end: 5 },
+        5,
+    )?;
+    Ok(())
+}
