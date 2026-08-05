@@ -48,6 +48,10 @@ pub const ATTRIBUTION_CALL_PURPOSE_NAME: &str = "skill_attribution";
 const EVIDENCE_PREFIX: &[u8] = b"skill_attribution:evidence:v1:"; // + sequence(8 BE)
 const JUDGMENT_PREFIX: &[u8] = b"skill_attribution:judgment:v1:"; // + sequence(8 BE)
 const AUDIT_PREFIX: &[u8] = b"skill_attribution:audit:v1:"; // + at(8 BE) + seq(8 BE)
+// + judgment sequence(8 BE): one proposal per discovery judgment, so a
+// re-projection of the same evidence re-mints the same key rather than a
+// duplicate proposal.
+const EDIT_PROPOSAL_PREFIX: &[u8] = b"skill_attribution:edit_proposal:v1:";
 const EVIDENCE_SEQUENCE_KEY: &[u8] = b"skill_attribution:evidence_sequence:v1";
 const CURSOR_KEY: &[u8] = b"skill_attribution:cursor:v1";
 
@@ -242,6 +246,24 @@ pub struct AttributionJudgment {
     pub at: u64,
 }
 
+/// One minted skill EDIT PROPOSAL: the durable consequence of a DISCOVERY
+/// verdict (§4 — discovery is never a claim).
+///
+/// The proposal names the skill that lacked content and CITES the judgment
+/// that demanded it, so the gated apply can re-read the routing decision
+/// rather than trusting the proposal's own word for why it exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillEditProposal {
+    /// The [`AttributionJudgment::sequence`] this proposal was minted from.
+    pub judgment_sequence: u64,
+    /// The SKILL entity whose content the attempt found missing.
+    pub skill: EntityId,
+    /// RS1 receipt ids the originating judgment rested on.
+    pub evidence_receipts: Vec<String>,
+    /// Unix seconds of the outcome that produced it.
+    pub at: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Classification
 // ---------------------------------------------------------------------------
@@ -405,6 +427,14 @@ pub fn run_attribution_projector_with_judge(
                 &sequenced_key(JUDGMENT_PREFIX, judgment.sequence),
                 &encoded?,
             )?;
+            if let Some(proposal) = edit_proposal_for(judgment) {
+                let encoded = encode_value(&encode_edit_proposal(&proposal))?;
+                vault.store.vault_meta.put(
+                    wtxn,
+                    &sequenced_key(EDIT_PROPOSAL_PREFIX, proposal.judgment_sequence),
+                    &encoded,
+                )?;
+            }
         }
         if highest > since_cursor {
             vault
@@ -430,15 +460,39 @@ pub fn attribution_judgments(vault: &Vault) -> Result<Vec<AttributionJudgment>> 
     Ok(out)
 }
 
-/// The judgments that mint gated skill EDIT PROPOSALS rather than claims
-/// (§4 discovery routing). The proposal lands through the gated write path
-/// (`dreamer_promotion` envelope precedent / `supersede_skill_record` archive
-/// law); this projector only names which judgments demand one.
-pub fn pending_edit_proposals(vault: &Vault) -> Result<Vec<AttributionJudgment>> {
-    Ok(attribution_judgments(vault)?
-        .into_iter()
-        .filter(|judgment| judgment.verdict.mints_edit_proposal())
-        .collect())
+/// Every minted skill EDIT PROPOSAL awaiting the gated apply, in mint order.
+///
+/// These are PERSISTED rows, not a filtered view of the judgments: a
+/// discovery's consequence is a durable artifact that survives this process,
+/// so the surface that applies it (the `dreamer_promotion` envelope precedent
+/// / `supersede_skill_record` archive law) has something to pick up. Minting
+/// is not applying — ONE-1737 stops at the proposal.
+pub fn pending_edit_proposals(vault: &Vault) -> Result<Vec<SkillEditProposal>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = Vec::new();
+    for row in vault
+        .store
+        .vault_meta
+        .prefix_iter(&rtxn, EDIT_PROPOSAL_PREFIX)?
+    {
+        let (_, raw) = row?;
+        out.push(decode_edit_proposal(&raw)?);
+    }
+    Ok(out)
+}
+
+/// The proposal a judgment mints, or `None` when its verdict routes to a
+/// claim instead (§4: only discovery becomes an edit proposal).
+fn edit_proposal_for(judgment: &AttributionJudgment) -> Option<SkillEditProposal> {
+    judgment
+        .verdict
+        .mints_edit_proposal()
+        .then(|| SkillEditProposal {
+            judgment_sequence: judgment.sequence,
+            skill: judgment.subject,
+            evidence_receipts: judgment.evidence_receipts.clone(),
+            at: judgment.at,
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -814,20 +868,7 @@ fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
             KEY_SEQUENCE => sequence = value.as_u64(),
             KEY_VERDICT => verdict = value.as_str().and_then(AttributionVerdict::parse),
             KEY_SUBJECT => subject = Some(decode_entity(value)?),
-            KEY_EVIDENCE_RECEIPTS => {
-                let rows = value
-                    .as_array()
-                    .ok_or(invalid("attribution judgment evidence must be an array"))?;
-                let mut receipts = Vec::with_capacity(rows.len());
-                for row in rows {
-                    receipts.push(
-                        row.as_str()
-                            .ok_or(invalid("attribution judgment evidence must be strings"))?
-                            .to_owned(),
-                    );
-                }
-                evidence_receipts = Some(receipts);
-            }
+            KEY_EVIDENCE_RECEIPTS => evidence_receipts = Some(decode_receipt_array(value)?),
             KEY_AT => at = value.as_u64(),
             _ => return Err(invalid("attribution judgment key is not pinned")),
         }
@@ -839,6 +880,76 @@ fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
         evidence_receipts: evidence_receipts
             .ok_or(invalid("attribution judgment missing evidence"))?,
         at: at.ok_or(invalid("attribution judgment missing timestamp"))?,
+    })
+}
+
+fn decode_receipt_array(value: &Value) -> Result<Vec<String>> {
+    let rows = value
+        .as_array()
+        .ok_or(invalid("attribution evidence citation must be an array"))?;
+    let mut receipts = Vec::with_capacity(rows.len());
+    for row in rows {
+        receipts.push(
+            row.as_str()
+                .ok_or(invalid("attribution evidence citation must be strings"))?
+                .to_owned(),
+        );
+    }
+    Ok(receipts)
+}
+
+fn encode_edit_proposal(proposal: &SkillEditProposal) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(SKILL_ATTRIBUTION_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_SEQUENCE),
+            Value::from(proposal.judgment_sequence),
+        ),
+        (
+            Value::from(KEY_SUBJECT),
+            Value::Binary(proposal.skill.as_bytes().to_vec()),
+        ),
+        (
+            Value::from(KEY_EVIDENCE_RECEIPTS),
+            Value::Array(
+                proposal
+                    .evidence_receipts
+                    .iter()
+                    .map(|receipt| Value::from(receipt.as_str()))
+                    .collect(),
+            ),
+        ),
+        (Value::from(KEY_AT), Value::from(proposal.at)),
+    ])
+}
+
+fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
+    let value = decode_value(raw)?;
+    let entries = expect_map(&value)?;
+    let mut judgment_sequence = None;
+    let mut skill = None;
+    let mut evidence_receipts = None;
+    let mut at = None;
+    for (key, value) in entries {
+        match expect_key(key)? {
+            KEY_SCHEMA_VERSION => require_schema_version(value)?,
+            KEY_SEQUENCE => judgment_sequence = value.as_u64(),
+            KEY_SUBJECT => skill = Some(decode_entity(value)?),
+            KEY_EVIDENCE_RECEIPTS => evidence_receipts = Some(decode_receipt_array(value)?),
+            KEY_AT => at = value.as_u64(),
+            _ => return Err(invalid("skill edit proposal key is not pinned")),
+        }
+    }
+    Ok(SkillEditProposal {
+        judgment_sequence: judgment_sequence
+            .ok_or(invalid("skill edit proposal missing judgment sequence"))?,
+        skill: skill.ok_or(invalid("skill edit proposal missing skill"))?,
+        evidence_receipts: evidence_receipts
+            .ok_or(invalid("skill edit proposal missing evidence"))?,
+        at: at.ok_or(invalid("skill edit proposal missing timestamp"))?,
     })
 }
 

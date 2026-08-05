@@ -195,7 +195,18 @@ fn discovery_routes_to_an_edit_proposal_not_a_claim() -> Result<()> {
         judgments[0].verdict.mints_edit_proposal(),
         "discovery mints a proposal, never a claim"
     );
-    assert_eq!(pending_edit_proposals(&vault)?.len(), 1);
+    let proposals = pending_edit_proposals(&vault)?;
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(
+        proposals[0],
+        SkillEditProposal {
+            judgment_sequence: judgments[0].sequence,
+            skill,
+            evidence_receipts: judgments[0].evidence_receipts.clone(),
+            at: judgments[0].at,
+        },
+        "the minted proposal names the skill and cites the judgment that demanded it"
+    );
     assert_eq!(
         vault.claims_for_subject(&skill)?.len(),
         0,
@@ -337,6 +348,69 @@ fn persisted_judgments_round_trip() -> Result<()> {
     let minted = run_attribution_projector(&vault, 0)?;
 
     assert_eq!(attribution_judgments(&vault)?, minted);
+    Ok(())
+}
+
+/// A proposal is a PERSISTED artifact, so it outlives the pass that minted it
+/// and a re-projection of the same evidence does not duplicate it (the key is
+/// the source judgment's sequence).
+#[test]
+fn minted_proposals_persist_and_a_re_projection_does_not_duplicate_them() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x41, 0x43)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    record_attribution_evidence(
+        &vault,
+        &evidence(&receipt, actor, skill, AttemptOutcome::Failed, true, false),
+    )?;
+
+    run_attribution_projector(&vault, 0)?;
+    let after_first = pending_edit_proposals(&vault)?;
+    // Re-projecting from cursor 0 re-routes the same evidence to the same
+    // verdict, which must re-mint the same proposal, not a second one.
+    run_attribution_projector(&vault, 0)?;
+    let after_second = pending_edit_proposals(&vault)?;
+
+    assert_eq!(after_first.len(), 1);
+    assert_eq!(
+        after_second, after_first,
+        "one discovery = one proposal, however many passes route it"
+    );
+    Ok(())
+}
+
+/// Only DISCOVERY mints: a defect and a lapse are claims-to-be, not proposals.
+#[test]
+fn defect_and_lapse_verdicts_mint_no_proposal() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x44, 0x45)?;
+    let defect_receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    let lapse_receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    record_attribution_evidence(
+        &vault,
+        &evidence(
+            &defect_receipt,
+            actor,
+            skill,
+            AttemptOutcome::Failed,
+            true,
+            true,
+        ),
+    )?;
+    record_attribution_evidence(
+        &vault,
+        &evidence(
+            &lapse_receipt,
+            actor,
+            skill,
+            AttemptOutcome::Failed,
+            false,
+            true,
+        ),
+    )?;
+
+    assert_eq!(run_attribution_projector(&vault, 0)?.len(), 2);
+    assert_eq!(pending_edit_proposals(&vault)?.len(), 0);
     Ok(())
 }
 

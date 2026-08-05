@@ -773,10 +773,10 @@ pub use crate::skill::{
 pub use crate::skill_attribution::{
     ATTRIBUTION_CALL_PURPOSE_NAME, AttemptOutcome, AttributionAuditReport, AttributionJudge,
     AttributionJudgment, AttributionVerdict, AuditFixture, OutcomeEvidence, RuleAttributionJudge,
-    SKILL_ATTRIBUTION_SCHEMA_VERSION, attribution_audit_reports, attribution_call_purpose,
-    attribution_judgments, held_out_audit_fixtures, pending_edit_proposals,
-    read_attribution_cursor, record_attribution_evidence, run_attribution_audit,
-    run_attribution_audit_with_judge, run_attribution_projector,
+    SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal, attribution_audit_reports,
+    attribution_call_purpose, attribution_judgments, held_out_audit_fixtures,
+    pending_edit_proposals, read_attribution_cursor, record_attribution_evidence,
+    run_attribution_audit, run_attribution_audit_with_judge, run_attribution_projector,
     run_attribution_projector_with_judge,
 };
 pub use crate::skill_hub::{

@@ -28,9 +28,10 @@ use oneiron::{
     HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
     LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptQuery, Result,
     ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillContentHash,
-    SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
-    attempt_pack_receipt_id, canonical_skill_tree_hash, cross_check_declared_content_hash,
-    pending_edit_proposals, record_attribution_evidence, run_attribution_projector,
+    SkillEditProposal, SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange,
+    Vault, VaultConfig, attempt_pack_receipt_id, canonical_skill_tree_hash,
+    cross_check_declared_content_hash, pending_edit_proposals, record_attribution_evidence,
+    run_attribution_projector,
 };
 use rmpv::Value;
 
@@ -1008,7 +1009,10 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     let projected = judgments.len() == 1
         && judgments[0].verdict == AttributionVerdict::Discovery
         && judgments[0].subject == skill_entity;
-    let edit_proposals_minted: usize = pending_edit_proposals(&vault)?.len();
+    // The proposals are MINTED, PERSISTED rows read back off their own
+    // keyspace — not a filtered view of the judgments, which would have made
+    // this count a restatement of the line above rather than evidence.
+    let edit_proposals: Vec<SkillEditProposal> = pending_edit_proposals(&vault)?;
 
     assert!(
         projected,
@@ -1025,8 +1029,22 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
         "discovery is not a claim on the actor"
     );
     assert_eq!(
-        edit_proposals_minted, 1,
+        edit_proposals.len(),
+        1,
         "discovery = exactly one edit proposal"
+    );
+    let proposal = &edit_proposals[0];
+    assert_eq!(
+        proposal.skill, skill_entity,
+        "the proposal targets the skill whose content was missing"
+    );
+    assert_eq!(
+        proposal.judgment_sequence, judgments[0].sequence,
+        "the proposal cites the judgment that demanded it"
+    );
+    assert_eq!(
+        proposal.evidence_receipts, judgments[0].evidence_receipts,
+        "and carries that judgment's receipts forward as its trace"
     );
     Ok(())
 }
