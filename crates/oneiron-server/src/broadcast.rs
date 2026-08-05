@@ -86,7 +86,9 @@ pub(crate) enum BroadcastError {
 }
 
 /// Subscriber that turns broadcast frames into persistent-change notices for
-/// the in-process reactive local reads (ONE-1437, `api::reactive`).
+/// the in-process reactive local reads (ONE-1437, `api::reactive`) — which is
+/// also its only caller, so it inherits that module's dead-code posture in the
+/// non-test build.
 ///
 /// Two things separate it from [`BroadcastSubscriber`], which stays exactly as
 /// it is for WebSocket forwarding:

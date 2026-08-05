@@ -141,8 +141,10 @@ impl<Q: ReactiveLocalQuery> ReactiveLocalRead<Q> {
     /// The ordering is the whole point: subscribing second would drop any write
     /// that landed between the read and the subscribe, and the consumer would
     /// serve that stale value until some unrelated later change happened to
-    /// wake it. Because the read is synchronous and local, no `Loading` state
-    /// is representable and no request leaves the process.
+    /// wake it. This way the same race costs at most one redundant re-read of
+    /// a value already current — the error is biased toward extra work rather
+    /// than toward staleness. Because the read is synchronous and local, no
+    /// `Loading` state is representable and no request leaves the process.
     pub(crate) fn open(
         vault: Arc<oneiron::Vault>,
         tx: &broadcast::Sender<BroadcastPayload>,

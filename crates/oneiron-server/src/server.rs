@@ -913,10 +913,10 @@ impl SyncServer {
 /// Bridges the engine's Observer-A local-update path into `broadcast_tx`.
 ///
 /// Until now only *relayed* writes produced a change notice: a client's update
-/// was re-broadcast by the WebSocket handler, but a write this process made
-/// itself — an HTTP mutation mirrored into a window, a reassertion drain, a
-/// scrub — reached the broadcast channel only where some call site remembered
-/// to publish it. `WindowManager` already funnels every persisted local window
+/// was re-broadcast by the WebSocket handler, but a change this process
+/// committed itself — an LMDB→CRDT mirror, a reassertion drain, a scrub —
+/// reached the broadcast channel only where some call site remembered to
+/// publish it. `WindowManager` already funnels every persisted local window
 /// commit through one shared `OutboundSink` (bridge.rs Observer A), so the
 /// server attaches its own receiver there and re-publishes each update as the
 /// existing WindowSync `UPDATE` frame with `conn_id = 0`, the local/bridge
