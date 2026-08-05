@@ -642,8 +642,7 @@ fn evidence_sequence_from_key(key: &[u8]) -> Result<u64> {
     decode_u64(suffix, "attribution evidence key")
 }
 
-fn decode_u64(raw: &[u8], context: &'static str) -> Result<u64> {
-    let _ = context;
+fn decode_u64(raw: &[u8], _context: &'static str) -> Result<u64> {
     let bytes: [u8; SEQUENCE_LEN] = raw
         .try_into()
         .map_err(|_| invalid("attribution counter must be 8 bytes"))?;
