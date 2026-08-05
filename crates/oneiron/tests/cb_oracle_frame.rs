@@ -34,8 +34,9 @@ mod cb_t {
     /// 1 running task) rendered in RESIDENT mode. Returns the full block.
     fn arm_render_board_block() -> BoardBlockRender {
         use oneiron::context_board::{
-            BoardBlockHeader, BoardSection, TaskBoardStatus, TaskIntentPresence,
-            render_board_block, render_tasks_section,
+            BoardBlockHeader, BoardBudgetRequest, BoardFrame, BoardLegend, BoardSection,
+            SectionPolicy, TaskBoardStatus, TaskIntentPresence, render_board_block,
+            render_tasks_section,
         };
 
         let running_task = TaskIntentPresence {
@@ -46,46 +47,90 @@ mod cb_t {
             realizing_jobs: Vec::new(),
         };
         let tasks = render_tasks_section(&[running_task], &[]);
+        let pinned = SectionPolicy {
+            pinned: true,
+            shed_rank: None,
+        };
         let sections = [
-            BoardSection {
-                name: "WORLDS".to_owned(),
-                rows: vec!["wd_1 active".to_owned()],
-            },
-            BoardSection {
-                name: "MEMORIES".to_owned(),
-                rows: vec!["cl_1 pinned".to_owned()],
-            },
-            BoardSection {
-                name: "TASKS".to_owned(),
-                rows: tasks.rows.iter().map(|row| row.line.clone()).collect(),
-            },
+            BoardSection::new(
+                "WORLDS",
+                vec!["wd_1 active".to_owned()],
+                Vec::new(),
+                Vec::new(),
+                pinned,
+            )
+            .expect("WORLDS fixture is a valid pinned section"),
+            BoardSection::new(
+                "MEMORIES",
+                vec!["cl_1 pinned".to_owned()],
+                Vec::new(),
+                Vec::new(),
+                pinned,
+            )
+            .expect("MEMORIES fixture is a valid pinned section"),
+            BoardSection::new(
+                "TASKS",
+                tasks.rows.iter().map(|row| row.line.clone()).collect(),
+                Vec::new(),
+                Vec::new(),
+                pinned,
+            )
+            .expect("TASKS fixture is a valid pinned section"),
         ];
         let header = BoardBlockHeader {
             epoch: 47,
             scope: "WorldSet(wd_1)".to_owned(),
         };
+        let legend = BoardLegend::canonical();
+        let frame = BoardFrame {
+            header: &header,
+            legend: &legend,
+            sections: &sections,
+        };
         BoardBlockRender {
-            text: render_board_block(&header, &sections),
+            text: render_board_block(
+                &frame,
+                BoardBudgetRequest {
+                    harness_default_tok: 1200,
+                    caller_limit_tok: None,
+                    explicit_override_tok: None,
+                },
+            )
+            .expect("fixture frame renders")
+            .text,
         }
     }
 
-    /// ONE-1694 · 08b §0/§1 (r1) · CB-01 contract: the board render tag is
-    /// `[CONTEXT_BOARD …]`, never `[MEMORY_BOARD …]`. Token-boundary exact:
-    /// a tag like `[CONTEXT_BOARD_EVIL …]` must NOT satisfy this test, and
-    /// the check must fail closed on malformed renders (no slice panics).
+    /// ONE-1797 · ARCH-0067 §8 contract: the board render wrapper is the
+    /// canonical `<memory surface="board" …>` XML fence, never the dead
+    /// `[CONTEXT_BOARD …]` bracket wrapper and never `[MEMORY_BOARD …]`.
+    /// Attribute order is part of the golden output: `surface`, `epoch`,
+    /// `scope`, `budget_tok`. Token-boundary exact: a tag like
+    /// `<memory surface="board_evil" …>` must NOT satisfy this test, and the
+    /// check must fail closed on malformed renders (no slice panics).
+    ///
+    /// The function name predates the wrapper rename and is kept for
+    /// continuity per ONE-1797; its contract is the one above.
     #[test]
     fn board_block_opens_with_context_board_render_tag() {
         let render = arm_render_board_block();
         let first_line = render.text.lines().next().expect("block has a first line");
         assert!(
             first_line
-                .strip_prefix("[CONTEXT_BOARD ")
-                .and_then(|rest| rest.strip_suffix(']'))
+                .strip_prefix("<memory ")
+                .and_then(|rest| rest.strip_suffix('>'))
                 .is_some(),
-            "opening tag must be a complete [CONTEXT_BOARD …] line"
+            "opening tag must be a complete <memory …> line"
         );
-        assert_eq!(render.text.matches("[CONTEXT_BOARD ").count(), 1);
-        assert_eq!(render.text.matches("[/CONTEXT_BOARD]").count(), 1);
+        assert_eq!(
+            first_line,
+            "<memory surface=\"board\" epoch=\"47\" scope=\"WorldSet(wd_1)\" budget_tok=\"1200\">"
+        );
+        assert_eq!(render.text.matches("<memory surface=\"board\" ").count(), 1);
+        assert_eq!(render.text.matches("</memory>").count(), 1);
+        assert_eq!(render.text.matches("surface=\"board_evil\"").count(), 0);
         assert_eq!(render.text.matches("MEMORY_BOARD").count(), 0);
+        assert_eq!(render.text.matches("[CONTEXT_BOARD").count(), 0);
+        assert_eq!(render.text.matches("[/CONTEXT_BOARD]").count(), 0);
     }
 }
