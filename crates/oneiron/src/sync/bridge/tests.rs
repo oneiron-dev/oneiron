@@ -3264,6 +3264,8 @@ fn observer_b_rejects_every_local_impossible_type_76_shape_before_mutation() {
                         target: ReassignmentTarget::Facet { index: 0 },
                     }],
                 },
+                applied_assigned: 0,
+                applied_residue: 0,
             },
         ),
         base(

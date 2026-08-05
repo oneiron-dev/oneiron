@@ -17,10 +17,10 @@
 //! public API.
 
 use oneiron::{
-    ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, HnswConfig, IdentityOpEvidence,
-    IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp, ProposalOutcome,
-    ProposalRuling, ReassignmentMap, ReceiptKind, ReceiptQuery, SplitOp, SurvivorshipPlan, Vault,
-    VaultConfig,
+    ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, FacetOp, FacetSpec, HnswConfig,
+    IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+    ProposalOutcome, ProposalRuling, ReassignmentMap, ReceiptKind, ReceiptQuery, SplitOp,
+    StoredIdentityOpAction, SurvivorshipPlan, Vault, VaultConfig,
 };
 
 fn test_config() -> VaultConfig {
@@ -142,6 +142,35 @@ fn amendment_body(sources: Vec<EntityId>, survivor: EntityId) -> Vec<u8> {
     oneiron::encode_identity_op_amendment(&merge_op(sources, survivor)).expect("encode amendment")
 }
 
+/// A split's reassignment map from `(claim, head)` pairs — `None` is the
+/// explicit residue row (r2), not an absent one.
+fn reassignment_map(assignments: &[(EntityId, Option<EntityId>)]) -> ReassignmentMap {
+    ReassignmentMap {
+        entries: assignments
+            .iter()
+            .map(|(claim, head)| oneiron::ReassignmentEntry {
+                item: ClaimSubject::Entity(*claim),
+                target: head.map_or(oneiron::ReassignmentTarget::Residue, |head| {
+                    oneiron::ReassignmentTarget::Head(head)
+                }),
+            })
+            .collect(),
+    }
+}
+
+/// A facet op's scoping map from `(claim, facet index)` pairs.
+fn facet_reassignment_map(assignments: &[(EntityId, u32)]) -> ReassignmentMap {
+    ReassignmentMap {
+        entries: assignments
+            .iter()
+            .map(|(claim, index)| oneiron::ReassignmentEntry {
+                item: ClaimSubject::Entity(*claim),
+                target: oneiron::ReassignmentTarget::Facet { index: *index },
+            })
+            .collect(),
+    }
+}
+
 /// The propose lane's write: `Proposed` parks with zero topology effects.
 fn proposed_write() -> IdentityOpWrite {
     IdentityOpWrite {
@@ -254,71 +283,141 @@ mod seam {
     }
 
     // ---- ONE-1745 (MS-03): reassignment application + FACET minting ----
+    // ARMED: every stub below is the real engine API.
 
     /// Applies a split whose reassignment map assigns each listed claim to
     /// a head (`None` = explicit residue), and APPLIES the map (r2).
     pub(crate) fn apply_split_with_map(
-        _vault: &Vault,
-        _entity: &EntityId,
-        _heads: &[EntityId],
-        _assignments: &[(EntityId, Option<EntityId>)],
+        vault: &Vault,
+        entity: &EntityId,
+        heads: &[EntityId],
+        assignments: &[(EntityId, Option<EntityId>)],
     ) {
-        unimplemented!("armed by ONE-1745: reassignment-map application")
+        let outcome = vault
+            .apply_identity_topology_op(
+                &super::IdentityTopologyOp::Split(super::SplitOp {
+                    entity: *entity,
+                    heads: heads.to_vec(),
+                    reassignment: super::reassignment_map(assignments),
+                    evidence: super::IdentityOpEvidence {
+                        refs: Vec::new(),
+                        rationale: "oracle fixture split with map".to_owned(),
+                    },
+                }),
+                &super::IdentityOpWrite::auto(super::ClaimSource::Inferred),
+                200,
+            )
+            .expect("apply split with map");
+        assert!(
+            matches!(outcome, IdentityOpOutcome::Applied { .. }),
+            "auto split must apply, got {outcome:?}"
+        );
     }
 
     /// Claims that read through `head` after a split (assigned + residue
     /// read-through per r2).
-    pub(crate) fn count_claims_assigned_to_head(_vault: &Vault, _head: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: per-head claim assignment count")
+    pub(crate) fn count_claims_assigned_to_head(vault: &Vault, head: &EntityId) -> usize {
+        claim_ids_assigned_to_head(vault, head).len()
     }
 
     /// The EXACT claim-id set assigned to `head` (identity, not just count).
-    pub(crate) fn claim_ids_assigned_to_head(_vault: &Vault, _head: &EntityId) -> Vec<EntityId> {
-        unimplemented!("armed by ONE-1745: per-head claim-id set")
+    pub(crate) fn claim_ids_assigned_to_head(vault: &Vault, head: &EntityId) -> Vec<EntityId> {
+        vault.claims_assigned_to(head).expect("claims assigned")
     }
 
     /// Claims still stored on the split original.
-    pub(crate) fn count_claims_on_original(_vault: &Vault, _entity: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: original-entity claim count")
+    ///
+    /// The engine surface is `claims_remaining_on_origin`, not
+    /// `claims_for_subject`: r6 keeps every stored SUBJECT pointing at the
+    /// original forever, so subject-bound membership is the provenance
+    /// reading and stays 3 here. What the split moved is the ASSIGNMENT, and
+    /// this is the query that reports it.
+    pub(crate) fn count_claims_on_original(vault: &Vault, entity: &EntityId) -> usize {
+        vault
+            .claims_remaining_on_origin(entity)
+            .expect("claims remaining on origin")
+            .len()
     }
 
     /// Claims on the original explicitly marked ambiguous residue (r2:
     /// never force-assigned).
-    pub(crate) fn count_ambiguous_residue_claims(_vault: &Vault, _entity: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: ambiguous-residue marker count")
+    pub(crate) fn count_ambiguous_residue_claims(vault: &Vault, entity: &EntityId) -> usize {
+        vault
+            .ambiguous_residue_claims(entity)
+            .expect("ambiguous residue claims")
+            .len()
     }
 
     /// Applies a facet op: mints one FACET entity per label and backfills
     /// `facet_of` scoping per `assignments` (claim id → facet index).
     /// Returns the minted FACET entity ids, in label order.
     pub(crate) fn apply_facet(
-        _vault: &Vault,
-        _entity: &EntityId,
-        _labels: &[&str],
-        _assignments: &[(EntityId, u32)],
+        vault: &Vault,
+        entity: &EntityId,
+        labels: &[&str],
+        assignments: &[(EntityId, u32)],
     ) -> Vec<EntityId> {
-        unimplemented!("armed by ONE-1745: facet minting")
+        let outcome = vault
+            .apply_identity_topology_op(
+                &super::IdentityTopologyOp::Facet(super::FacetOp {
+                    entity: *entity,
+                    facets: labels
+                        .iter()
+                        .map(|label| super::FacetSpec {
+                            label: (*label).to_owned(),
+                        })
+                        .collect(),
+                    reassignment: super::facet_reassignment_map(assignments),
+                    evidence: super::IdentityOpEvidence {
+                        refs: Vec::new(),
+                        rationale: "oracle fixture facet".to_owned(),
+                    },
+                }),
+                &super::IdentityOpWrite::auto(super::ClaimSource::Inferred),
+                200,
+            )
+            .expect("apply facet");
+        let IdentityOpOutcome::Applied { event, .. } = outcome else {
+            panic!("auto facet must apply, got {outcome:?}");
+        };
+        // Minted ids in LABEL ORDER come off the ledger event, which stores
+        // them in the op's spec order — the same order the map's facet
+        // indices address.
+        let record = vault
+            .identity_topology_event(&event)
+            .expect("read facet event")
+            .expect("facet event exists");
+        let super::StoredIdentityOpAction::Facet { facets, .. } = record.action else {
+            panic!("facet op must record a facet action");
+        };
+        facets
     }
 
     /// FACET (type-13) entities attached to `entity`.
-    pub(crate) fn count_facet_entities_of(_vault: &Vault, _entity: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: facet entity count")
+    pub(crate) fn count_facet_entities_of(vault: &Vault, entity: &EntityId) -> usize {
+        vault.facets_of(entity).expect("facets of").len()
     }
 
     /// Behavioral claims scoped to `facet` via `facet_of`.
-    pub(crate) fn count_facet_of_scoped_claims(_vault: &Vault, _facet: &EntityId) -> usize {
-        unimplemented!("armed by ONE-1745: facet_of scoping count")
+    pub(crate) fn count_facet_of_scoped_claims(vault: &Vault, facet: &EntityId) -> usize {
+        claim_ids_scoped_to_facet(vault, facet).len()
     }
 
     /// The EXACT claim-id set scoped to `facet` (membership, not count).
-    pub(crate) fn claim_ids_scoped_to_facet(_vault: &Vault, _facet: &EntityId) -> Vec<EntityId> {
-        unimplemented!("armed by ONE-1745: per-facet claim-id set")
+    ///
+    /// Same engine surface as the head query — `claims_assigned_to` reads a
+    /// facet target through its canonical `facet_of` stamps.
+    pub(crate) fn claim_ids_scoped_to_facet(vault: &Vault, facet: &EntityId) -> Vec<EntityId> {
+        vault.claims_assigned_to(facet).expect("claims scoped")
     }
 
     /// Total entities of one registry type byte (base-id conservation
     /// probe: facet ops mint no non-FACET ids, r6).
-    pub(crate) fn count_entities_of_type(_vault: &Vault, _type_byte: u8) -> usize {
-        unimplemented!("armed by ONE-1745: entity-type census")
+    pub(crate) fn count_entities_of_type(vault: &Vault, type_byte: u8) -> usize {
+        vault
+            .entities_by_type(type_byte)
+            .expect("entities by type")
+            .len()
     }
 
     // ---- ONE-1746 (MS-04): entity.distinct_from + re-proposal suppression ----
@@ -601,7 +700,6 @@ fn ms02_refs_never_rewritten_after_merge() {
 /// r2/§4: the reassignment map assigns each claim of the split entity to a
 /// specific head — exact per-head counts, nothing lost, nothing doubled.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_reassignment_assigns_each_claim_to_a_head() {
     let (_dir, vault) = open_vault();
     let original = put_person(&vault, 0x21);
@@ -644,7 +742,6 @@ fn ms03_reassignment_assigns_each_claim_to_a_head() {
 /// on the original entity marked ambiguous. A force-assign-everything
 /// implementation must fail here.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_reassignment_residue_stays_ambiguous_on_original() {
     let (_dir, vault) = open_vault();
     let original = put_person(&vault, 0x21);
@@ -668,7 +765,6 @@ fn ms03_reassignment_residue_stays_ambiguous_on_original() {
 /// r5/§5: facet(entity, facets[]) mints exactly N ARCH-0022 FACET
 /// (type-13) entities.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_facet_mints_exactly_n_type13_entities() {
     let (_dir, vault) = open_vault();
     let person = put_person(&vault, 0x21);
@@ -682,7 +778,6 @@ fn ms03_facet_mints_exactly_n_type13_entities() {
 /// behavioral claims and mints NO new base entity ids — facet ops touch no
 /// entity ids beyond the FACET entities themselves.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_facet_backfills_scoping_and_mints_no_base_ids() {
     let (_dir, vault) = open_vault();
     let person = put_person(&vault, 0x21);
@@ -709,7 +804,6 @@ fn ms03_facet_backfills_scoping_and_mints_no_base_ids() {
 /// behavioral profiles across masks — a claim scoped to one facet is not
 /// readable as the other facet's profile.
 #[test]
-#[ignore = "armed by ONE-1745"]
 fn ms03_facet_never_blends_profiles_across_masks() {
     let (_dir, vault) = open_vault();
     let person = put_person(&vault, 0x21);
