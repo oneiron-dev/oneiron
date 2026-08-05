@@ -1038,13 +1038,14 @@ fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Va
 }
 
 fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
-    if entries
+    let mut matches = entries
         .iter()
-        .any(|(candidate, _)| candidate.as_str() == Some(key))
-    {
-        return required_value(entries, key).map(Some);
+        .filter_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value));
+    let value = matches.next();
+    if matches.next().is_some() {
+        return Err(invalid_claim("campaign pack value contains duplicate key"));
     }
-    Ok(None)
+    Ok(value)
 }
 
 fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
