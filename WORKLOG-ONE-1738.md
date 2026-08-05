@@ -13,7 +13,7 @@ as #581. Blueprint: `~/.claude-wave5/blueprints/SKILLS/ONE-1738.md`.
 
 ## What landed
 
-**New:** `crates/oneiron/src/skill_reliability.rs` (+ `skill_reliability/tests.rs`, 15 tests).
+**New:** `crates/oneiron/src/skill_reliability.rs` (+ `skill_reliability/tests.rs`, 16 tests).
 **Edited:** `crates/oneiron/src/skill.rs` (+ `skill/tests.rs`, 1 test), `crates/oneiron/src/lib.rs`
 (mod + re-exports), `crates/oneiron/tests/skills_epic_oracle.rs` (3 `sk05_*` arms).
 
@@ -171,7 +171,18 @@ ONE-1739's.
   file.
 - `cargo test -p oneiron --lib skill` — 106 passed.
 - `cargo test -p oneiron --test skills_epic_oracle` — 12 passed, 4 ignored (ONE-1739's).
-- `cargo test -p oneiron --all-features` — green.
+- `cargo test -p oneiron --all-features` — green: **3462 lib passed, 0 failed, 17 ignored**,
+  plus 40 green test binaries.
+
+### One flake observed, quarantined not charged
+`attempt_queue::tests::attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields`
+failed once mid-run (its `TelemetryCapture` found no `attempt_queue_cleanup` span) and passed
+on every subsequent run: two full `--all-features` suites green end to end, plus five isolated
+re-runs of the test itself. `crates/oneiron/src/attempt_queue/` is untouched by this branch
+(zero lines in `git diff --stat origin/main`), and the test captures tracing spans through a
+`with_default` thread-local subscriber — a shape that races under the harness's thread reuse.
+Charged to no lane; noting it because it is in ONE-1795's (#589) freshly-landed territory and
+will re-appear on other lanes' verify legs.
 
 ### Two pre-existing main defects, flagged not fixed
 Neither is in this packet, and both are reproducible on a clean `origin/main` checkout:
