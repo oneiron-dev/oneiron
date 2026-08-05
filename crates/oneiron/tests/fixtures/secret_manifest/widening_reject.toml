@@ -1,0 +1,14 @@
+# SECRET-01 (ONE-1919) widening-reject fixture: the cross-vault entry asks
+# for a binding ceiling above its floor max (T0) — validate_secret_manifest
+# must refuse with ManifestWidensFloor.
+schema_version = 1
+
+[[secrets]]
+name = "door-key"
+class = "cross-vault"
+declared_paths = [".secrets/door.key"]
+
+[[secrets.bindings]]
+effector = "door:receive-pack"
+tier_ceiling = 2
+scopes = ["receive"]

@@ -89,6 +89,8 @@ pub mod registry;
 pub mod repo_mutation;
 pub mod rerank;
 pub mod run_tree;
+pub mod secret_custody;
+pub mod secret_manifest;
 pub mod serialize;
 pub mod session_lifecycle;
 pub(crate) mod session_overlay;

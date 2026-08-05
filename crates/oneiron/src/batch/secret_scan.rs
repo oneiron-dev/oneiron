@@ -1,6 +1,7 @@
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 
 const REASON_DETECTED: &str = "gate.secret_scan.detected";
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
@@ -14,7 +15,21 @@ const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
 pub(crate) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
     for op in ops {
         match op {
-            BatchOp::Put { data, .. } => {
+            BatchOp::Put {
+                entity_type, data, ..
+            } => {
+                // A SECRET_CUSTODY Put body is the *safe container* for a
+                // secret: its `value_bytes` field is exactly credential-shaped
+                // bytes held under the vault DEK plane, name-indexed and
+                // binding-doored by `register_secret`. Running the credential
+                // detector over those bytes would reject the very registration
+                // the custody module is built to hold. Skip the scan for that
+                // one type byte only; every other entity type still scans
+                // (a custody byte on a non-custody path is rejected later by
+                // the apply_ops door regardless).
+                if *entity_type == ENTITY_TYPE_SECRET_CUSTODY {
+                    continue;
+                }
                 let _secrets_nulled = scan_payload(data)?;
             }
             BatchOp::ClaimCandidate {
