@@ -35,8 +35,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::identity_topology::{
-    identity_topology_shell_peers_for_store_in_txn, shell_edge_sources_for_store_in_txn,
-    zero_head_split_shells_for_store_in_txn,
+    identity_topology_shell_peers_for_store_in_txn, note_zero_head_split_in_txn,
+    shell_edge_sources_for_store_in_txn, zero_head_split_shells_for_store_in_txn,
 };
 use crate::store::Store;
 use crate::vault::Vault;
@@ -172,16 +172,19 @@ pub(crate) fn maintain_redirect_projection_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     touched: &BTreeSet<EntityId>,
+    zero_head_shells: &BTreeSet<EntityId>,
 ) -> Result<()> {
     if touched.is_empty() {
         return Ok(());
     }
-    let zero_head_shells = zero_head_split_shells_for_store_in_txn(store, &*wtxn)?;
+    if !zero_head_shells.is_empty() {
+        note_zero_head_split_in_txn(store, wtxn)?;
+    }
     let mut rows = BTreeMap::new();
     for entity in touched {
         rows.insert(
             *entity,
-            derive_redirect_row_in_txn(store, &*wtxn, entity, &zero_head_shells)?,
+            derive_redirect_row_in_txn(store, &*wtxn, entity, zero_head_shells)?,
         );
     }
     for (entity, heads) in rows {
@@ -314,7 +317,12 @@ impl Vault {
         self.drop_redirect_projection()?;
         self.with_write_txn(|wtxn| {
             let candidates = shell_edge_sources_for_store_in_txn(&self.store, &*wtxn)?;
-            maintain_redirect_projection_in_txn(&self.store, wtxn, &candidates)
+            // A rebuild is an explicit maintenance door, so it pays the
+            // UNGATED fold: it must find zero-head shells even on a vault
+            // whose marker was never set (e.g. rebuilt from replicated
+            // history).
+            let zero_head_shells = zero_head_split_shells_for_store_in_txn(&self.store, &*wtxn)?;
+            maintain_redirect_projection_in_txn(&self.store, wtxn, &candidates, &zero_head_shells)
         })
     }
 }

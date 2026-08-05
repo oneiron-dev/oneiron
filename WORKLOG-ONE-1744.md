@@ -178,6 +178,51 @@ APPLIES and shells its entity. The `EmptyHeads` variant itself is DELETED
   **8 passed / 0 failed / 15 ignored** (5 ms02 newly armed + 3 ms05 from
   1747; the 15 ignored are 1745/1746/1748/1749 stubs, untouched).
 
+## seg1 — O(N²) regression found by my own gate, fixed (commit 2)
+
+The full lib suite caught a **real regression I introduced**:
+`receipt::tests::identity_topology_receipt_scan_caps_visited_rows` ran
+>60s and had to be killed at 45 min. Cause: that test applies
+`MAX_RECEIPT_QUERY_SCAN + 1` topology ops in one loop, and my zero-head
+witness folded the whole type-76 event family on EVERY apply — O(N²) over a
+run of N ops. Both the lifecycle read and the maintenance hook paid it.
+
+Fixed on both paths, each with the cheapest sound witness for its position:
+- **Apply/maintenance path — no fold at all.** `write_identity_event_in_txn`
+  already HOLDS the action, so it knows directly whether the op it just wrote
+  is a zero-head split. The witness is now derived from the action and passed
+  into `maintain_redirect_projection_in_txn`.
+- **Lifecycle read — marker-gated fold.**
+  `IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY` is a conservative vault_meta marker,
+  set (never cleared) whenever a zero-head split is recorded. Absent ⇒ none
+  has ever existed ⇒ skip the fold entirely. Set-but-stale only costs one
+  fold returning the empty set; a stale-CLEAR would hide a live shell, which
+  is why it is never cleared. Correctness never depends on the marker, only
+  cost.
+- **Reconcile path keeps the UNGATED fold** — it is the sync-ingest door, so
+  it must DISCOVER a replicated zero-head split (and arm the marker) on a
+  vault that never recorded one locally. It already folds for its own edge
+  derivation, so this is free. The rebuild door likewise stays ungated:
+  a rebuild must find zero-head shells even if the marker was never set.
+
+Result: `identity_topology_receipt_scan_caps_visited_rows` **>60s (killed at
+45min) → 5.4s**. The `sync_reconcile_maintains_the_table_including_the
+_zero_head_arm` test already covers the marker-arming path end to end.
+
+### Gate receipts (commit 2, post-fix — the receipts of record)
+- `cargo fmt --all -- --check` — clean.
+- `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` —
+  clean for every file this lane touches; the same 4 `secret_custody`
+  BASE-RED errors remain (see below).
+- `--lib identity_redirect` — **16 passed / 0 failed**.
+- `--lib identity_topology::` — **50 passed / 0 failed**.
+- `--lib receipt::` — **29 passed / 0 failed** (the module that caught it).
+- `--test merge_split_oracle` — **8 passed / 0 failed / 15 ignored**.
+- ⚠ The FULL `--lib` suite has NOT been run to completion on the post-fix
+  tree — worker context ceiling reached. The four scoped suites above cover
+  every module this lane touches plus the one that surfaced the regression.
+  A full nextest run is the remaining gate.
+
 ### Status
 - [x] blueprint + CLAIMS read end to end
 - [x] 1747 worklog read

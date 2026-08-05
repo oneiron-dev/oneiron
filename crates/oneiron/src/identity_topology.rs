@@ -2107,6 +2107,52 @@ fn desired_shell_edges_for_store_entity_in_txn(
 ///
 /// Derived from the EFFECTIVE fold, so an undone or superseded zero-head
 /// split correctly drops out of the set.
+/// Conservative "a zero-head split has been recorded in this vault" marker.
+///
+/// The witness fold below is O(event family), and the apply door needs the
+/// answer for every participant of every op — which would make a run of N
+/// topology ops O(N²). Zero-head splits are RARE, so this marker buys the
+/// common case back: absent means none has ever been recorded, and the fold
+/// is skipped entirely.
+///
+/// It is set, never cleared: an undone or evicted zero-head split leaves it
+/// standing. That direction is the safe one — a stale-SET marker costs one
+/// fold that returns the empty set, while a stale-CLEAR marker would hide a
+/// live shell. Correctness never depends on it, only cost.
+pub(crate) const IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY: &[u8] =
+    b"m:identity_topology_zero_head_seen";
+
+/// Records that a zero-head split exists, arming the witness fold.
+pub(crate) fn note_zero_head_split_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
+    if store
+        .vault_meta
+        .get(&*wtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    store
+        .vault_meta
+        .put(wtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY, &[1])?;
+    Ok(())
+}
+
+/// [`zero_head_split_shells_for_store_in_txn`] behind the marker: skips the
+/// fold outright on a vault that has never recorded a zero-head split.
+pub(crate) fn zero_head_split_shells_if_any_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    if store
+        .vault_meta
+        .get(rtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY)?
+        .is_none()
+    {
+        return Ok(BTreeSet::new());
+    }
+    zero_head_split_shells_for_store_in_txn(store, rtxn)
+}
+
 pub(crate) fn zero_head_split_shells_for_store_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -2350,7 +2396,17 @@ fn reconcile_shell_edges_for_sources_in_txn(
     // otherwise never be written. This is the chokepoint BOTH reconcile
     // paths share (sync ingest and ONE-1604-D1 post-eviction unwind), so
     // hooking it covers both without duplicating the hook.
-    crate::identity_redirect::maintain_redirect_projection_in_txn(store, wtxn, sources)
+    // The reconcile path pays the UNGATED fold: it is the sync-ingest door,
+    // so it must DISCOVER a replicated zero-head split (and arm the marker)
+    // on a vault that has never recorded one locally. It already folds for
+    // its own edge derivation, so this costs nothing extra.
+    let zero_head_shells = zero_head_split_shells_for_store_in_txn(store, &*wtxn)?;
+    crate::identity_redirect::maintain_redirect_projection_in_txn(
+        store,
+        wtxn,
+        sources,
+        &zero_head_shells,
+    )
 }
 
 /// The shell-edge SOURCES a stored type-76 record induces — the entities
@@ -2463,7 +2519,7 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<BTreeSet<EntityId>> {
-        zero_head_split_shells_for_store_in_txn(&self.store, rtxn)
+        zero_head_split_shells_if_any_for_store_in_txn(&self.store, rtxn)
     }
 
     /// Current lifecycle state of `id`, read from its canonical redirect
@@ -3523,10 +3579,21 @@ impl Vault {
             // A parked event moves no topology and maintains nothing.
             let touched: BTreeSet<EntityId> =
                 transitions.iter().map(|(entity, _)| *entity).collect();
+            // The zero-head witness comes from the ACTION, not a fold: this
+            // door already knows whether the op it just wrote is a zero-head
+            // split, and folding the event family here would make a run of N
+            // topology ops O(N²).
+            let zero_head_shells: BTreeSet<EntityId> = match &record.action {
+                StoredIdentityOpAction::Split { entity, heads, .. } if heads.is_empty() => {
+                    BTreeSet::from([*entity])
+                }
+                _ => BTreeSet::new(),
+            };
             crate::identity_redirect::maintain_redirect_projection_in_txn(
                 &self.store,
                 wtxn,
                 &touched,
+                &zero_head_shells,
             )?;
             Ok(IdentityOpOutcome::Applied {
                 event: event_id,
