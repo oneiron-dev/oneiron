@@ -1,8 +1,8 @@
 use super::*;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
+use crate::edge::EdgeActorClass;
 use crate::error::{Error, ErrorKind};
-use crate::genui::ConsentActorIdentity;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchPipeline, OutboundDispatchRequest,
@@ -22,15 +22,51 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
-/// The owner principal every promote test authenticates against.
-const OWNER_PRINCIPAL: &str = "owner-test";
-
-/// A `SurfaceActor` that authenticates [`OWNER_PRINCIPAL`] — the ordinary
-/// authenticated-promote caller. Promote-auth itself is pinned separately.
-fn owner_actor() -> ConsentActorIdentity {
-    ConsentActorIdentity::SurfaceActor {
-        actor_ref: OWNER_PRINCIPAL.to_owned(),
-    }
+/// Witnesses one turn into `session` and promotes it, returning the promoted
+/// turn id.
+///
+/// The witness door requires a base-resident actor, so one is seeded first.
+/// This is the ONLY way to mint a durable promote receipt from ONE-1730 on:
+/// promotion replays a typed-journal closure, so a turn that was never
+/// witnessed into a room has nothing to promote.
+fn witness_and_promote(vault: &Vault, session: &OffRecordSession<'_>) -> Result<EntityId> {
+    let actor = EntityId::now();
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"off-record promote fixture actor",
+    )?;
+    let receipt = vault
+        .memory_facade(actor, EdgeActorClass::Human)
+        .witness_into_session(
+            session,
+            &crate::facade::WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![crate::facade::WitnessMessage {
+                    id: None,
+                    author: crate::facade::WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: "off-record promote fixture".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: 1000,
+            },
+            Some("off-record promote fixture summary"),
+        )
+        .unwrap_or_else(|error| panic!("session witness failed: {error:?}"));
+    let turn = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .ok_or(Error::InvariantViolation("witness receipt names no turn"))?,
+    )?;
+    session.promote_turn(&turn)?;
+    Ok(turn)
 }
 
 fn seed_turn(vault: &Vault, at: u64) -> EntityId {
@@ -674,137 +710,6 @@ fn off_record_close_deletes_transcript_keeps_floor_and_base_receipts() {
     assert_eq!(stale_log.kind(), ErrorKind::OffRecordSessionNotFound);
 }
 
-#[test]
-fn off_record_promote_writes_exactly_one_turn() {
-    let (_tmp, vault) = temp_vault();
-    let kept = seed_turn(&vault, 1000);
-    let dropped_a = seed_turn(&vault, 1001);
-    let dropped_b = seed_turn(&vault, 1002);
-    vault
-        .enter_off_record_session("sess-promote", OffRecordBackendClass::Local)
-        .expect("enter");
-    for id in [&kept, &dropped_a, &dropped_b] {
-        vault.tag_turn_off_record("sess-promote", id).expect("tag");
-    }
-    assert!(surfaced_turns(&vault).is_empty());
-
-    let receipt = vault
-        .promote_off_record_turn("sess-promote", &kept, &owner_actor(), OWNER_PRINCIPAL)
-        .expect("promote");
-    assert_eq!(receipt.turn, *kept.as_bytes());
-    assert_eq!(receipt.session_ref, "sess-promote");
-    assert_eq!(receipt.initiator_ref, OWNER_PRINCIPAL);
-    assert_eq!(receipt.initiator_kind, "surface_actor");
-
-    // Exactly one turn crossed the fence.
-    let record = vault
-        .off_record_session("sess-promote")
-        .expect("session lookup")
-        .expect("session record");
-    assert_eq!(record.fenced_turns.len(), 2);
-    assert_eq!(record.promoted_turns, vec![*kept.as_bytes()]);
-    let surfaced = surfaced_turns(&vault);
-    assert_eq!(surfaced, vec![kept]);
-
-    let repromote = vault
-        .promote_off_record_turn("sess-promote", &kept, &owner_actor(), OWNER_PRINCIPAL)
-        .expect_err("promote lifts one live fence");
-    assert_eq!(repromote.kind(), ErrorKind::OffRecordTurnNotFenced);
-
-    // Re-fencing a promoted turn would let close delete a turn whose
-    // durable promote receipt pins its survival — rejected.
-    let retag = vault
-        .tag_turn_off_record("sess-promote", &kept)
-        .expect_err("re-tag of a promoted turn");
-    assert_eq!(retag.kind(), ErrorKind::InvariantViolation);
-
-    let receipt_log = vault
-        .off_record_receipt_log("sess-promote")
-        .expect("mint receipt log");
-    let outcome = vault
-        .close_off_record_session("sess-promote", receipt_log)
-        .expect("close");
-    assert_eq!(outcome.turns_deleted, 2);
-    assert_eq!(outcome.emit_receipts_deleted, 0);
-    assert_eq!(outcome.promoted_turns_kept, 1);
-
-    // The promoted turn and its user-initiated receipt survive close.
-    assert!(vault.get(&kept).expect("read kept").is_some());
-    assert!(vault.get(&dropped_a).expect("read a").is_none());
-    assert!(vault.get(&dropped_b).expect("read b").is_none());
-    assert_eq!(surfaced_turns(&vault), vec![kept]);
-    let persisted = vault
-        .off_record_promote_receipt(&kept)
-        .expect("receipt lookup")
-        .expect("promote receipt persists");
-    assert_eq!(persisted, receipt);
-}
-
-#[test]
-fn off_record_close_and_promote_are_serialized_by_registry_lock() {
-    let (_tmp, vault) = temp_vault();
-    let turn = seed_turn(&vault, 1000);
-    vault
-        .enter_off_record_session("sess-close-promote", OffRecordBackendClass::Local)
-        .expect("enter");
-    vault
-        .tag_turn_off_record("sess-close-promote", &turn)
-        .expect("tag");
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
-    let (close_result, promote_result) = std::thread::scope(|scope| {
-        let close_barrier = barrier.clone();
-        let close_vault = &vault;
-        let close = scope.spawn(move || {
-            close_barrier.wait();
-            close_vault.close_off_record_session(
-                "sess-close-promote",
-                SessionLocalReceiptLog::off_record("sess-close-promote"),
-            )
-        });
-        let promote_barrier = barrier.clone();
-        let promote_vault = &vault;
-        let promote = scope.spawn(move || {
-            promote_barrier.wait();
-            promote_vault.promote_off_record_turn(
-                "sess-close-promote",
-                &turn,
-                &owner_actor(),
-                OWNER_PRINCIPAL,
-            )
-        });
-        barrier.wait();
-        (
-            close.join().expect("close thread"),
-            promote.join().expect("promote thread"),
-        )
-    });
-    let close = close_result.expect("close must complete");
-    match promote_result {
-        Ok(receipt) => {
-            assert_eq!(receipt.turn, *turn.as_bytes());
-            assert_eq!(close.turns_deleted, 0);
-            assert_eq!(close.promoted_turns_kept, 1);
-            assert!(vault.get(&turn).expect("read promoted").is_some());
-        }
-        Err(error) => {
-            assert!(matches!(
-                error.kind(),
-                ErrorKind::OffRecordSessionClosing | ErrorKind::OffRecordSessionNotFound
-            ));
-            assert_eq!(close.turns_deleted, 1);
-            assert_eq!(close.promoted_turns_kept, 0);
-            assert!(vault.get(&turn).expect("read closed").is_none());
-            assert!(
-                vault
-                    .off_record_promote_receipt(&turn)
-                    .expect("receipt lookup")
-                    .is_none(),
-                "a promote that lost the race to close must leave no orphaned receipt"
-            );
-        }
-    }
-}
-
 /// Simulates close-in-flight by stamping the closing flag exactly as
 /// close's first transaction does, then interleaves every mutator at
 /// the seam. The promote rejection is the load-bearing one: without the
@@ -815,8 +720,11 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
     let (_tmp, vault) = temp_vault();
     let fenced = seed_turn(&vault, 1000);
     let late = seed_turn(&vault, 1001);
-    vault
-        .enter_off_record_session("sess-toctou", OffRecordBackendClass::Local)
+    // Entered through the session handle so the promote mutator — which now
+    // lives on the handle, not the vault — is reachable at the same seam.
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-toctou", OffRecordBackendClass::Local)
         .expect("enter");
     vault
         .tag_turn_off_record("sess-toctou", &fenced)
@@ -838,8 +746,11 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
         .tag_turn_off_record("sess-toctou", &late)
         .expect_err("tag during close");
     assert_eq!(tag.kind(), ErrorKind::OffRecordSessionClosing);
-    let promote = vault
-        .promote_off_record_turn("sess-toctou", &fenced, &owner_actor(), OWNER_PRINCIPAL)
+    // The closing check runs BEFORE the journal is read, so this rejects on the
+    // seam rather than on the turn not being journaled — which is the point:
+    // the flag, not the closure, is what freezes the record.
+    let promote = session
+        .promote_turn(&fenced)
         .expect_err("promote during close");
     assert_eq!(promote.kind(), ErrorKind::OffRecordSessionClosing);
     // A promote rejected because the session is closing must NOT have committed
@@ -1087,10 +998,9 @@ fn off_record_session_ref_bounds_are_enforced_everywhere() {
         .set_off_record_session_mode(&oversized, OffRecordMode::OnRecord)
         .expect_err("oversized flip");
     assert_eq!(flip.kind(), ErrorKind::InvalidConfig);
-    let promote = vault
-        .promote_off_record_turn(&oversized, &turn, &owner_actor(), OWNER_PRINCIPAL)
-        .expect_err("oversized promote");
-    assert_eq!(promote.kind(), ErrorKind::InvalidConfig);
+    // Promote takes no session ref: it hangs off a live session HANDLE, which
+    // only `enter` above can mint — so the bound is enforced upstream of it by
+    // construction rather than re-checked at the verb.
     let log = vault
         .off_record_receipt_log(&oversized)
         .expect_err("oversized log");
@@ -1169,70 +1079,6 @@ fn off_record_fence_blocks_ppr_expansion_and_context_pack_edges() {
     }
 }
 
-/// P1 consent-bypass regression. Tag-before-write lets a turn be fenced with no
-/// entity row; promoting that body-less turn must NOT open the durable write
-/// door. Deleting its fence on promote would let a LATER ordinary `put_entity`
-/// for the same id enter the vault UNFENCED — admitting an off-record body that
-/// never passed the consent gate. Promote must instead retain a closed-fence
-/// marker so the guard stays active for that id, before AND after close.
-#[test]
-fn promote_without_entity_keeps_guard_active_for_late_write() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let session_ref = "sess-promote-bodiless";
-    let id = EntityId::now(); // tag-before-write: the entity row never lands.
-    vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record(session_ref, &id)?;
-    assert!(
-        vault.get_raw(&id)?.is_none(),
-        "the fenced turn has no entity body"
-    );
-
-    // Promote the body-less turn. The fence must NOT be lifted into an open
-    // durable write door.
-    let receipt =
-        vault.promote_off_record_turn(session_ref, &id, &owner_actor(), OWNER_PRINCIPAL)?;
-    assert_eq!(receipt.turn, *id.as_bytes());
-
-    // A later ordinary put_entity for the promoted-but-never-written id must
-    // still be guard-rejected while the session is live.
-    let error = vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_TURN,
-            TimeRange {
-                start: 1000,
-                end: 1000,
-            },
-            1000,
-            b"late off-record body must not sneak past a lifted fence",
-        )
-        .expect_err("a promoted body-less turn must keep the write door shut");
-    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
-    assert!(
-        vault.get_raw(&id)?.is_none(),
-        "the rejected late write leaves no durable entity row"
-    );
-
-    // The closed-fence marker survives close, so the door stays shut after the
-    // session evaporates.
-    let log = vault.off_record_receipt_log(session_ref)?;
-    vault.close_off_record_session(session_ref, log)?;
-    let error = vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_TURN,
-            TimeRange {
-                start: 1000,
-                end: 1000,
-            },
-            1000,
-            b"post-close late body must still be rejected",
-        )
-        .expect_err("the closed-fence marker keeps the door shut after close");
-    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
-    Ok(())
-}
-
 /// A durably-promoted turn's promote receipt outlives its session, but the
 /// in-memory `promoted_turns` list does not. A LATER session starting with an
 /// empty list must still refuse to re-fence the already-promoted turn — else its
@@ -1241,12 +1087,14 @@ fn promote_without_entity_keeps_guard_active_for_late_write() -> Result<()> {
 #[test]
 fn tag_rejects_re_fencing_a_durably_promoted_turn_in_a_later_session() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let id = seed_turn(&vault, 1000); // entity exists, so promote lifts the fence.
-    vault.enter_off_record_session("sess-1", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("sess-1", &id)?;
-    vault.promote_off_record_turn("sess-1", &id, &owner_actor(), OWNER_PRINCIPAL)?;
-    let log = vault.off_record_receipt_log("sess-1")?;
-    vault.close_off_record_session("sess-1", log)?;
+    let id = {
+        let session = vault
+            .off_record_session_vault()
+            .enter("sess-1", OffRecordBackendClass::Local)?;
+        let id = witness_and_promote(&vault, &session)?;
+        session.close()?;
+        id
+    };
     assert!(
         vault.off_record_promote_receipt(&id)?.is_some(),
         "the durable promote receipt survives close"
@@ -1371,106 +1219,3 @@ fn off_record_crash_sweep_is_skipped_when_a_peer_holds_the_open_lock() -> Result
     Ok(())
 }
 
-// ─── ONE-1645 authenticated promote ─────────────────────────────────────────
-
-/// Promote is a widening op, so an actor that does not authenticate the owner
-/// principal is rejected before any state is read. The fence stands, no
-/// receipt is minted, and the turn is still fenced in the session record.
-///
-/// The table covers every way `authenticates_principal` can fail closed,
-/// including an unverified voice path — the bool's ANCHORING is ONE-1647's
-/// leg, but rejecting the false case is this lane's.
-#[test]
-fn promote_requires_authenticated_actor() -> Result<()> {
-    let table: [(&str, ConsentActorIdentity, &str); 4] = [
-        (
-            "actor_ref does not match the principal",
-            ConsentActorIdentity::SurfaceActor {
-                actor_ref: "someone-else".to_owned(),
-            },
-            OWNER_PRINCIPAL,
-        ),
-        (
-            "blank principal",
-            ConsentActorIdentity::SurfaceActor {
-                actor_ref: OWNER_PRINCIPAL.to_owned(),
-            },
-            "   ",
-        ),
-        (
-            "blank actor ref",
-            ConsentActorIdentity::SurfaceActor {
-                actor_ref: String::new(),
-            },
-            OWNER_PRINCIPAL,
-        ),
-        (
-            "unverified voice path",
-            ConsentActorIdentity::VoicePath {
-                speaker_ref: OWNER_PRINCIPAL.to_owned(),
-                owner_voice_print_verified: false,
-            },
-            OWNER_PRINCIPAL,
-        ),
-    ];
-
-    for (label, actor, principal) in table {
-        let (_tmp, vault) = temp_vault();
-        let turn = seed_turn(&vault, 1000);
-        vault.enter_off_record_session("sess-auth", OffRecordBackendClass::Local)?;
-        vault.tag_turn_off_record("sess-auth", &turn)?;
-
-        let err = vault
-            .promote_off_record_turn("sess-auth", &turn, &actor, principal)
-            .expect_err(label);
-        assert_eq!(
-            err.kind(),
-            ErrorKind::OffRecordPromoteUnauthenticated,
-            "{label}"
-        );
-        assert!(
-            vault.off_record_promote_receipt(&turn)?.is_none(),
-            "{label}: an unauthenticated promote must mint no receipt"
-        );
-        assert!(
-            vault.is_turn_off_record_fenced(&turn)?,
-            "{label}: the fence must stand"
-        );
-        let record = vault
-            .off_record_session("sess-auth")?
-            .expect("session record");
-        assert_eq!(
-            record.fenced_turns,
-            vec![*turn.as_bytes()],
-            "{label}: the turn stays fenced in the session record"
-        );
-        assert!(record.promoted_turns.is_empty(), "{label}");
-    }
-    Ok(())
-}
-
-/// A verified voice path authenticates, and the receipt records WHICH
-/// identity variant consented — never a literal.
-#[test]
-fn promote_receipt_records_authenticated_initiator() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let turn = seed_turn(&vault, 1000);
-    vault.enter_off_record_session("sess-voice", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("sess-voice", &turn)?;
-
-    let actor = ConsentActorIdentity::VoicePath {
-        speaker_ref: OWNER_PRINCIPAL.to_owned(),
-        owner_voice_print_verified: true,
-    };
-    let receipt = vault.promote_off_record_turn("sess-voice", &turn, &actor, OWNER_PRINCIPAL)?;
-    assert_eq!(receipt.initiator_ref, OWNER_PRINCIPAL);
-    assert_eq!(receipt.initiator_kind, "voice_path");
-    assert_eq!(receipt.version, 0);
-
-    // The durable row round-trips the same authenticated initiator.
-    let stored = vault
-        .off_record_promote_receipt(&turn)?
-        .expect("durable receipt");
-    assert_eq!(stored, receipt);
-    Ok(())
-}

@@ -5,21 +5,18 @@
 //! is allowed to make goes through one of its operations; a source audit that
 //! finds an overlay -> base write anywhere else is a defect.
 
+use std::collections::BTreeSet;
+
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, TxnBatchBuilder, parse_short_id_value};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::genui::ConsentActorIdentity;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+use crate::session_overlay::PromotePlan;
 use crate::store::{GateDecisionRecord, Store};
-
-use super::lifecycle::{
-    OFF_RECORD_CLOSED_FENCE_VALUE, live_session_entry, off_record_fence_key, session_entry_state,
-    vet_off_record_session_ref,
-};
 
 mod floor_writes_seal {
     pub(super) struct Seal;
@@ -90,32 +87,65 @@ impl<'store> FloorWrites<'store> {
 const OFF_RECORD_PROMOTE_KEY_PREFIX: &[u8] = b"offrecord_promote:v0:";
 const OFF_RECORD_PROMOTE_RECEIPT_VERSION: u8 = 0;
 
+/// `EntityId` carries no serde impls, so the receipt's closure travels as the
+/// raw 16-byte ids the entity tables already key on.
+mod entity_ids_as_bytes {
+    use serde::de::Error as _;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::entity_id::EntityId;
+
+    pub(super) fn serialize<S: Serializer>(
+        ids: &[EntityId],
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        ids.iter()
+            .map(EntityId::as_bytes)
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Vec<EntityId>, D::Error> {
+        Vec::<[u8; 16]>::deserialize(deserializer)?
+            .into_iter()
+            .map(|bytes| EntityId::from_bytes(bytes).map_err(D::Error::custom))
+            .collect()
+    }
+}
+
+/// What ONE promotion did (ARCH-0052 D4, ONE-1730).
+///
+/// `replayed` is the exact closure that entered base — for a witnessed turn
+/// with no artifacts, the TURN, its MESSAGE, its SUMMARY, and the room's fresh
+/// CONVERSATION shell. `short_id_mapping` pairs each in-room alias with the
+/// canonical short id the ordinary apply allocated for the same entity, so a
+/// caller holding a temporary handle can re-address the promoted row.
+///
+/// `PartialEq` is load-bearing: the retry contract is that a second promote of
+/// the same turn returns THIS value, unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromoteOutcome {
+    #[serde(with = "entity_ids_as_bytes")]
+    pub replayed: Vec<EntityId>,
+    pub short_id_mapping: Vec<(String, String)>,
+}
+
 /// Durable, user-initiated receipt minted by promote. It carries opaque ids
 /// only and survives the in-process session record.
 ///
-/// The initiator fields record WHO consented, bound at mint time by
-/// `ConsentActorIdentity::authenticates_principal` (ONE-1645) — never a
-/// literal. A receipt therefore only ever names an actor that authenticated
-/// the owner principal for this promotion.
+/// The receipt is also the RETRY ANSWER: it stores the first call's complete
+/// [`PromoteOutcome`], so a second promote of the same turn reads it back and
+/// returns it unchanged rather than allocating a second short id, restamping
+/// time, duplicating an edge, or emitting a second decision receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OffRecordPromoteReceipt {
     pub version: u8,
     pub session_ref: String,
     pub turn: [u8; 16],
     pub promoted_at: u64,
-    /// The authenticated actor's opaque reference.
-    pub initiator_ref: String,
-    /// The `ConsentActorIdentity` variant that authenticated:
-    /// `"surface_actor"` or `"voice_path"` (the pinned serde tags).
-    pub initiator_kind: String,
-}
-
-/// The `ConsentActorIdentity` serde tag recorded on a promote receipt.
-const fn consent_actor_kind(actor: &ConsentActorIdentity) -> &'static str {
-    match actor {
-        ConsentActorIdentity::SurfaceActor { .. } => "surface_actor",
-        ConsentActorIdentity::VoicePath { .. } => "voice_path",
-    }
+    pub outcome: PromoteOutcome,
 }
 
 pub(super) fn off_record_promote_key(id: &EntityId) -> Vec<u8> {
@@ -134,149 +164,169 @@ fn decode_off_record_promote(bytes: &[u8]) -> Result<OffRecordPromoteReceipt> {
     rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("off-record promote receipt"))
 }
 
+/// The promote transaction's session-membership exemption (ARCH-0052 D2, K4).
+///
+/// Minted ONLY here, inside the promote transaction, out of the closure that
+/// transaction is replaying. It therefore cannot answer `true` for an id the
+/// granting session did not stage: another live session's overlay members are
+/// still rejected by the taint guard and the entity write door, exactly as for
+/// any ordinary base write.
+pub(crate) struct PromoteReplayGrant {
+    members: BTreeSet<EntityId>,
+}
+
+impl PromoteReplayGrant {
+    fn mint(plan: &PromotePlan) -> Self {
+        Self {
+            members: plan.replayed.iter().copied().collect(),
+        }
+    }
+
+    fn exempts(&self, id: &EntityId) -> bool {
+        self.members.contains(id)
+    }
+}
+
 impl FloorWrites<'_> {
-    /// Floor operation 3/3: commit one explicit promotion receipt while
-    /// lifting the legacy fence for the promoted entity.
+    /// Floor operation 3/3 (ARCH-0052 D4, ONE-1730): replay ONE typed-journal
+    /// closure into base and record that it happened — as ONE transaction.
     ///
-    /// This is the FENCE-ERA promote crossing, kept functional through P4a so
-    /// [`Vault::promote_off_record_turn`] keeps working against pre-existing
-    /// fenced turns. **ONE-1730 REPLACES it with `promote`** (typed-journal
-    /// replay in one transaction) rather than adding a fourth operation; its
-    /// durable writes must stay here, never inlined into the `Vault` method.
-    pub(crate) fn commit_promote(
+    /// Everything durable this promotion does lands in the caller's `wtxn`:
+    /// the ordinary subgraph replay (through the standard write door, with the
+    /// standard gates, validators, index maintenance, counters, and decision
+    /// receipts), the [`OffRecordPromoteReceipt`], and the deduplicated `pm:`
+    /// pickup markers. There is no migration transaction, no index-copy
+    /// transaction, and no receipt-after-commit transaction — a crash either
+    /// leaves the whole promotion or none of it.
+    ///
+    /// # Retry
+    ///
+    /// The durable receipt is consulted FIRST. A turn that already has one is
+    /// answered from it verbatim, even after its closure has been retired from
+    /// the overlay — so retry never advances a base counter or writes a row.
+    ///
+    /// # Short ids
+    ///
+    /// Canonical short ids are NOT copied from the overlay. The ordinary
+    /// `apply_put` path allocates them from the base `sid_counter:<type_byte>`
+    /// rows during the replay above; this reads those rows back inside the
+    /// same transaction to pair each in-room alias with its canonical id.
+    pub(crate) fn promote(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        session_ref: &str,
+        plan: &PromotePlan,
+        promoted_at: u64,
+    ) -> Result<PromoteOutcome> {
+        let turn = plan.turn();
+        let receipt_key = off_record_promote_key(&turn);
+        if let Some(stored) = self.store.vault_meta.get(wtxn, &receipt_key)? {
+            let receipt = decode_off_record_promote(&stored)?;
+            tracing::debug!(
+                turn = %turn.to_hex(),
+                replayed = receipt.outcome.replayed.len(),
+                "off-record promote retry answered from the durable receipt"
+            );
+            return Ok(receipt.outcome);
+        }
+
+        // The ordinary write door. `apply_recording_gate_decisions` is the same
+        // terminus every gated batch uses; the only thing promotion adds is the
+        // origin that lets THIS session's overlay ids through the K4 guard.
+        let grant = PromoteReplayGrant::mint(plan);
+        let member_of = |id: &EntityId| grant.exempts(id);
+        TxnBatchBuilder::promotion_replay(vault, plan.ops.clone(), &member_of)
+            .apply_recording_gate_decisions(wtxn)?;
+
+        let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());
+        for (id, temporary) in &plan.temporary_short_ids {
+            let canonical = self
+                .store
+                .short_ids_reverse
+                .get(wtxn, id.as_bytes())?
+                .ok_or(Error::InvariantViolation(
+                    "promotion replay left a promoted entity without a canonical short id",
+                ))?;
+            let (canonical, _content_hash) = parse_short_id_value(&canonical)?;
+            short_id_mapping.push((temporary.clone(), canonical.to_owned()));
+        }
+
+        let outcome = PromoteOutcome {
+            replayed: plan.replayed.clone(),
+            short_id_mapping,
+        };
+        let receipt = OffRecordPromoteReceipt {
+            version: OFF_RECORD_PROMOTE_RECEIPT_VERSION,
+            session_ref: session_ref.to_owned(),
+            turn: *turn.as_bytes(),
+            promoted_at,
+            outcome: outcome.clone(),
+        };
+        self.store
+            .vault_meta
+            .put(wtxn, &receipt_key, &encode_off_record_promote(&receipt)?)?;
+
+        self.write_promote_pickup_markers(wtxn, plan, &turn)?;
+        Ok(outcome)
+    }
+
+    /// One `pm:{window}:{turn}` pickup marker per DISTINCT source window the
+    /// promoted closure spans, derived from the journaled `learned_at` values
+    /// and committed in the promote transaction.
+    ///
+    /// Recovery stays the ordinary path: `sync::window::replay_pending_mirrors`
+    /// and reverse rematerialization pick the marker up once the turn is no
+    /// longer a live overlay member. Promotion adds no CRDT materialization of
+    /// its own.
+    #[cfg(feature = "sync")]
+    fn write_promote_pickup_markers(
         &self,
         wtxn: &mut RwTxn<'_>,
-        turn_id: &EntityId,
-        receipt: &OffRecordPromoteReceipt,
+        plan: &PromotePlan,
+        turn: &EntityId,
     ) -> Result<()> {
-        // CONSENT GATE: only LIFT the fence for a turn whose entity body
-        // actually exists at promote time. Tag-before-write means a fenced turn
-        // can sit in `fenced_turns` with no entity row yet; deleting its fence
-        // would let a LATER ordinary `put_entity` for the same id sail past
-        // `guard_off_record_entity_put` (which keys on the fence row) and enter
-        // the durable vault UNFENCED — admitting an off-record body that was
-        // never present at the time of user consent. For a body-less turn,
-        // retain the sessionless closed-fence marker (empty value) instead of
-        // deleting the row, so the entity write door stays shut for that id.
-        if self.store.entities.get(wtxn, turn_id.as_bytes())?.is_some() {
-            self.store
-                .vault_meta
-                .delete(wtxn, &off_record_fence_key(turn_id))?;
-        } else {
-            self.store.vault_meta.put(
-                wtxn,
-                &off_record_fence_key(turn_id),
-                OFF_RECORD_CLOSED_FENCE_VALUE,
-            )?;
+        // Deduplicated on the marker key itself, which carries the window
+        // label: two journal stamps in the same month produce one marker.
+        let marker_keys: BTreeSet<String> = plan
+            .source_learned_at
+            .iter()
+            .map(|learned_at| {
+                let window = crate::sync::WindowKey::from_timestamp(*learned_at);
+                format!("pm:{window}:{}", turn.to_hex())
+            })
+            .collect();
+        for marker_key in &marker_keys {
+            self.store.sync_state.put(wtxn, marker_key, &[1_u8])?;
         }
-        self.store.vault_meta.put(
-            wtxn,
-            &off_record_promote_key(turn_id),
-            &encode_off_record_promote(receipt)?,
-        )?;
+        tracing::debug!(
+            turn = %turn.to_hex(),
+            markers = marker_keys.len(),
+            "off-record promote staged pickup markers for its source windows"
+        );
+        Ok(())
+    }
+
+    #[cfg(not(feature = "sync"))]
+    fn write_promote_pickup_markers(
+        &self,
+        _wtxn: &mut RwTxn<'_>,
+        _plan: &PromotePlan,
+        _turn: &EntityId,
+    ) -> Result<()> {
         Ok(())
     }
 }
 
 impl Vault {
-    /// Promotes exactly one legacy-fenced turn under the session's
-    /// per-session lock, so close and promote cannot race.
+    /// Refreshes the live sync windows after a committed promotion.
     ///
-    /// Promotion is a widening op (P2): it moves a fenced turn into the
-    /// durable vault, so consent is authenticated once, AT the op, by the same
-    /// actor-identity vocabulary every other consent surface uses. `actor`
-    /// must authenticate `owner_principal_ref` or the call fails closed with
-    /// [`Error::OffRecordPromoteUnauthenticated`] before any state is read;
-    /// the receipt then records that authenticated actor rather than a
-    /// literal.
-    ///
-    /// Seam (ONE-1647): the engine does not verify voice-print anchoring here.
-    /// `ConsentActorIdentity` is consumed as-is, so when the voice-print bool
-    /// becomes engine-anchored this path inherits the hardening unchanged.
-    /// Promote must not grow its own voice logic.
-    pub fn promote_off_record_turn(
-        &self,
-        session_ref: &str,
-        turn_id: &EntityId,
-        actor: &ConsentActorIdentity,
-        owner_principal_ref: &str,
-    ) -> Result<OffRecordPromoteReceipt> {
-        // Authenticate BEFORE any state read: an unauthenticated promote must
-        // not even learn whether the turn is fenced. Blank refs on either side
-        // are rejected by `authenticates_principal` itself.
-        if !actor.authenticates_principal(owner_principal_ref) {
-            return Err(Error::OffRecordPromoteUnauthenticated {
-                session_ref: session_ref.to_owned(),
-                actor_ref: actor.actor_ref().to_owned(),
-            });
-        }
-        vet_off_record_session_ref(session_ref)?;
-        let entry = live_session_entry(&self.store, session_ref)?;
-        // Hold the per-session state lock across the closing/gone check, the
-        // durable promote commit, AND the in-process record update. This
-        // serializes promote against close: close stamps `closing` under the
-        // same lock, so it cannot freeze a stale `fenced_turns` snapshot in the
-        // middle of a promote and then PolicyDelete a turn whose durable promote
-        // receipt was just written (which would both lose user-consented data
-        // and orphan a receipt for a deleted turn). Either promote fully commits
-        // before close stamps closing (close then sees the turn already promoted
-        // and keeps it), or promote observes closing first and bails BEFORE
-        // committing. Deadlock-safe: nothing inside the write txn locks
-        // `entry.state`.
-        let receipt = {
-            let mut state = session_entry_state(&entry)?;
-            if state.record.closing || state.gone {
-                return Err(Error::OffRecordSessionClosing {
-                    session_ref: session_ref.to_owned(),
-                });
-            }
-            let position = state
-                .record
-                .fenced_turns
-                .iter()
-                .position(|bytes| bytes == turn_id.as_bytes())
-                .ok_or_else(|| Error::OffRecordTurnNotFenced {
-                    session_ref: session_ref.to_owned(),
-                    turn_ref: turn_id.to_hex(),
-                })?;
-            let receipt = OffRecordPromoteReceipt {
-                version: OFF_RECORD_PROMOTE_RECEIPT_VERSION,
-                session_ref: session_ref.to_owned(),
-                turn: *turn_id.as_bytes(),
-                promoted_at: crate::unix_seconds_now(),
-                initiator_ref: actor.actor_ref().to_owned(),
-                initiator_kind: consent_actor_kind(actor).to_owned(),
-            };
-            self.with_write_txn(|wtxn| {
-                FloorWrites::new(&self.store).commit_promote(wtxn, turn_id, &receipt)
-            })?;
-            state.record.fenced_turns.remove(position);
-            state.record.promoted_turns.push(*turn_id.as_bytes());
-            entry.publish_state(&state);
-            receipt
-        };
-
-        // The promotion is durably committed here (fence lifted, receipt
-        // written) and close KEEPS promoted turns, so a concurrent close or
-        // record mutation after this point must never be reported as a promote
-        // failure. The live-window refresh below is best-effort — its error is
-        // logged, not surfaced — and we deliberately do NOT re-read the session
-        // record afterward: turning post-commit drift into an error would make
-        // the caller see a failed promote that actually succeeded and is kept.
-        #[cfg(feature = "sync")]
-        if let Err(error) = self.refresh_promoted_turn_in_live_window(turn_id) {
-            tracing::warn!(
-                turn = %turn_id.to_hex(),
-                error = %error,
-                "off-record promotion committed but live-window sync refresh deferred to recovery"
-            );
-        }
-
-        Ok(receipt)
-    }
-
+    /// BEST EFFORT BY CONTRACT: the promote transaction has already committed
+    /// and the promoted subgraph is durable, so a refresh failure must never
+    /// be reported as a failed promote. The caller logs and returns the
+    /// committed outcome.
     #[cfg(feature = "sync")]
-    fn refresh_promoted_turn_in_live_window(&self, turn_id: &EntityId) -> Result<()> {
+    pub(super) fn refresh_promoted_turn_in_live_window(&self, turn_id: &EntityId) -> Result<()> {
         use crate::sync::window::{replay_pending_mirrors, reverse_rematerialize};
 
         for window in self.live_windows() {

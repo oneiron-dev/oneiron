@@ -7,7 +7,7 @@ pub use lifecycle::{
     OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordSession,
     OffRecordSessionRecord, OffRecordSessionVault,
 };
-pub use promote::OffRecordPromoteReceipt;
+pub use promote::{OffRecordPromoteReceipt, PromoteOutcome};
 
 pub(crate) use lifecycle::{
     OffRecordSessionRegistry, guard_off_record_entity_put, off_record_fence_active,
@@ -19,10 +19,10 @@ pub(crate) use lifecycle::{
 pub(crate) use promote::FloorWrites;
 
 /// ONE-1728 (K2) / ONE-1729: downstream cites resolve through `off_record`.
-/// `OverlaySnapshot` is ONE-1730's promote input; `SessionWriteRoute` is
-/// captured by ONE-1729's executor run entry.
+/// `OverlaySnapshot` is promote's input; `SessionWriteRoute` is captured by
+/// ONE-1729's executor run entry.
 #[allow(
     unused_imports,
-    reason = "ONE-1729/ONE-1730 are the first lib-target consumers of these re-exports"
+    reason = "ONE-1729 is the first lib-target consumer of SessionWriteRoute through this path"
 )]
 pub(crate) use crate::session_overlay::{OverlaySnapshot, SessionWriteRoute};

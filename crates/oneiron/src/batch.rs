@@ -894,7 +894,9 @@ fn preflight_gate_decisions_in_txn(
             BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => id,
             _ => continue,
         };
-        crate::off_record::guard_off_record_entity_put(store, &*wtxn, id, false)?;
+        // Gate preflight is an ordinary-write path; a promotion replay carries
+        // no claim put and never reaches it.
+        crate::off_record::guard_off_record_entity_put(store, &*wtxn, id, false, None)?;
     }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {
@@ -992,6 +994,8 @@ pub struct TxnBatchBuilder<'a> {
     vault: &'a Vault,
     ops: Vec<BatchOp>,
     validation_error: Option<Error>,
+    origin: BaseWriteOrigin,
+    promote_member_of: PromoteMemberOf<'a>,
 }
 
 impl<'a> TxnBatchBuilder<'a> {
@@ -1000,6 +1004,34 @@ impl<'a> TxnBatchBuilder<'a> {
             vault,
             ops: Vec::new(),
             validation_error: None,
+            origin: BaseWriteOrigin::Ordinary,
+            promote_member_of: None,
+        }
+    }
+
+    /// The off-record promotion entry (ARCH-0052 D4, ONE-1730).
+    ///
+    /// Takes an already-built replay program rather than growing verb methods:
+    /// the ops come from the typed journal verbatim (only their edge arm is
+    /// re-shaped to carry the journaled `created_at`), so re-deriving them
+    /// through builder verbs would be a chance to drift from what the room
+    /// actually staged.
+    ///
+    /// This is the ONLY constructor that carries a non-`Ordinary` origin. Its
+    /// caller is `off_record::promote`, which mints `promote_member_of` inside
+    /// the promote transaction out of the closure it is replaying — so the
+    /// exemption cannot answer for any other session's overlay ids.
+    pub(crate) fn promotion_replay(
+        vault: &'a Vault,
+        ops: Vec<BatchOp>,
+        promote_member_of: &'a dyn Fn(&EntityId) -> bool,
+    ) -> Self {
+        Self {
+            vault,
+            ops,
+            validation_error: None,
+            origin: BaseWriteOrigin::PromoteReplay,
+            promote_member_of: Some(promote_member_of),
         }
     }
 
@@ -1376,7 +1408,7 @@ impl<'a> TxnBatchBuilder<'a> {
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire)
         };
-        apply_ops_with_gate_mode(
+        apply_ops_with_origin(
             &self.vault.store,
             &self.vault.config,
             &self.vault.analyzer,
@@ -1384,6 +1416,8 @@ impl<'a> TxnBatchBuilder<'a> {
             self.ops,
             text_index_trusted,
             gate_mode,
+            self.origin,
+            self.promote_member_of,
         )
     }
 }
@@ -1744,11 +1778,6 @@ pub(crate) fn apply_ops(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BaseWriteOrigin {
     Ordinary,
-    #[allow(
-        dead_code,
-        reason = "ONE-1730's promote transaction is the only legal constructor; \
-                  the P4a guard defines its semantics and the oracle covers them"
-    )]
     PromoteReplay,
 }
 
@@ -2094,6 +2123,7 @@ pub(crate) fn apply_ops_with_origin(
                     include_source_in_gate_input,
                     claim_gate_prechecked,
                     Some(&companion_retired_histories),
+                    promote_member_of,
                 )?;
                 evicted_shell_sources.extend(applied.evicted_shell_sources);
                 #[cfg(feature = "sync")]
@@ -3071,6 +3101,9 @@ fn apply_claim_candidate(
         include_source_in_gate_input,
         claim_gate_prechecked,
         None,
+        // A claim candidate is never part of a promotion closure: promote
+        // replays the session's typed journal, which stages no candidate op.
+        None,
     )?;
 
     let subject_id = match subject {
@@ -3173,13 +3206,22 @@ fn apply_put(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
+    promote_member_of: PromoteMemberOf<'_>,
 ) -> Result<AppliedPut> {
     // OFRC-2i: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A live
     // fence admits only the local tag-before-write path; replicated writes
     // and closed fences reject before any validation or side effect can mint
-    // an index row, gate receipt, or late entity body.
-    crate::off_record::guard_off_record_entity_put(store, wtxn, &id, replicated)?;
+    // an index row, gate receipt, or late entity body. The one exemption is a
+    // promote-replay transaction rematerializing its OWN session's closure —
+    // carried on the same channel the K4 decode-point guard reads.
+    crate::off_record::guard_off_record_entity_put(
+        store,
+        wtxn,
+        &id,
+        replicated,
+        promote_member_of,
+    )?;
     // The six pinned system-agent actor ids ([0xA1; 16]..[0xA6; 16]) are
     // write-door-reserved (design-pass 2026-07-10 §7a; the sixth, [0xA6; 16], is
     // the always-available default base preset): a definition stored at

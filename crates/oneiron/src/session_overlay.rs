@@ -16,9 +16,10 @@ use std::sync::{Arc, Condvar, Mutex};
 use arc_swap::ArcSwap;
 use xxhash_rust::xxh32::xxh32;
 
-use crate::batch::BatchOp;
+use crate::batch::{BatchOp, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::Store;
 use crate::temporal::TimeRange;
 
 /// Write-transaction entry points that a session write path must wrap.
@@ -239,13 +240,9 @@ pub(crate) enum JournalRole {
 /// replays into the correct month window (ARCH-0052 D4).
 #[derive(Clone)]
 pub(crate) struct JournalEntry {
-    /// Read by ONE-1730's `plan_promotion` to cut ONE turn's closure out of
-    /// the journal — the whole reason the scope is recorded at staging time
-    /// rather than reconstructed from index keys later.
-    #[allow(
-        dead_code,
-        reason = "ONE-1730 selects a closure by scope; ONE-1728 stages it and the oracle covers it now"
-    )]
+    /// Read by [`OverlaySnapshot::plan_promotion`] to cut ONE turn's closure
+    /// out of the journal — the whole reason the scope is recorded at staging
+    /// time rather than reconstructed from index keys later.
     pub(crate) scope: JournalScope,
     pub(crate) role: JournalRole,
     pub(crate) learned_at: u64,
@@ -322,21 +319,13 @@ impl JournalScope {
         Self { conversation, turn }
     }
 
-    /// The turn this op belongs to. ONE-1730 promotes ONE turn at a time, so
+    /// The turn this op belongs to. Promotion moves ONE turn at a time, so
     /// this is how the closure is cut out of the journal.
-    #[allow(
-        dead_code,
-        reason = "ONE-1730's plan_promotion selects a closure by turn; ONE-1728 stages the scope it reads"
-    )]
     pub(crate) const fn turn(&self) -> EntityId {
         self.turn
     }
 
     /// The conversation shell owning this op.
-    #[allow(
-        dead_code,
-        reason = "ONE-1730 promotes the turn's shell alongside the turn"
-    )]
     pub(crate) const fn conversation(&self) -> EntityId {
         self.conversation
     }
@@ -485,6 +474,124 @@ pub(crate) struct SnapshotMergePlan {
     pub(crate) clear_base: bool,
     pub(crate) deleted_keys: BTreeSet<Vec<u8>>,
     pub(crate) rows: Vec<SnapshotMergeRow>,
+}
+
+/// One turn's promotable closure, cut out of the typed journal by
+/// [`OverlaySnapshot::plan_promotion`] (ARCH-0052 D4, ONE-1730).
+///
+/// The plan is pure data: it names WHAT to replay, and the promote
+/// transaction decides how. Selection and durable commit are separate so the
+/// caller can hold the per-session state lock across both and a failed commit
+/// leaves the journal it was cut from untouched.
+pub(crate) struct PromotePlan {
+    /// The replay program, in journal-staging order — the shell put leads, so
+    /// every later op refers to a row the base apply already materialized.
+    pub(crate) ops: Vec<BatchOp>,
+    /// Entity ids the replay materializes, in the same order.
+    pub(crate) replayed: Vec<EntityId>,
+    /// `(id, in-room alias)` for every promoted entity that carries one. The
+    /// canonical half is read back from base after the replay.
+    pub(crate) temporary_short_ids: Vec<(EntityId, String)>,
+    /// Distinct journal `learned_at` values, ascending. These are the SOURCE
+    /// windows the pickup markers are derived from — never a promote-time
+    /// clock.
+    pub(crate) source_learned_at: Vec<u64>,
+    turn: EntityId,
+    conversation: EntityId,
+}
+
+impl PromotePlan {
+    /// The promoted turn — the receipt key and the pickup marker's id.
+    pub(crate) const fn turn(&self) -> EntityId {
+        self.turn
+    }
+}
+
+/// The ONE closure-membership predicate, shared by selection and retirement so
+/// the rows that were promoted are exactly the rows that retire.
+fn journal_entry_in_closure(
+    entry: &JournalEntry,
+    turn: EntityId,
+    conversation: EntityId,
+) -> bool {
+    match entry.role {
+        JournalRole::ConversationShell => entry.scope.conversation() == conversation,
+        JournalRole::TurnPut
+        | JournalRole::MessagePartOf
+        | JournalRole::SummaryDerivedFrom
+        | JournalRole::AttributionEdge
+        | JournalRole::TurnOwnedArtifact => entry.scope.turn() == turn,
+    }
+}
+
+/// Rebuilds one journaled op as the base apply must see it.
+///
+/// The ENTRY's `occurred`/`learned_at` ride into the rebuilt op — never
+/// `unix_seconds_now()` — so a promoted row lands in the month window the turn
+/// actually happened in. Edges become the timestamped PUBLIC arm for the same
+/// reason: the plain `Edge` arm stamps `created_at` at apply time, which would
+/// restamp the whole attribution set to the promote clock.
+fn promotion_replay_op(entry: &JournalEntry) -> Result<BatchOp> {
+    Ok(match &entry.op {
+        BatchOp::Put {
+            id,
+            entity_type,
+            data,
+            allow_maintenance,
+            allow_reserved_predicate,
+            hub_sync_imported,
+            ..
+        } => BatchOp::Put {
+            id: *id,
+            entity_type: *entity_type,
+            occurred: entry.occurred,
+            learned_at: entry.learned_at,
+            data: data.clone(),
+            allow_maintenance: *allow_maintenance,
+            allow_reserved_predicate: *allow_reserved_predicate,
+            hub_sync_imported: *hub_sync_imported,
+        },
+        BatchOp::Edge {
+            src,
+            kind,
+            tgt,
+            weight,
+            vad,
+        } => BatchOp::PublicEdgeWithCreatedAt {
+            src: *src,
+            kind: *kind,
+            tgt: *tgt,
+            weight: *weight,
+            created_at: entry.learned_at,
+            vad: *vad,
+        },
+        BatchOp::Text { id, fields } => BatchOp::Text {
+            id: *id,
+            fields: fields.clone(),
+        },
+        BatchOp::Vector {
+            id,
+            vector,
+            pending_embedding_token,
+        } => BatchOp::Vector {
+            id: *id,
+            vector: vector.clone(),
+            pending_embedding_token: pending_embedding_token.clone(),
+        },
+        BatchOp::ClaimCandidate { .. }
+        | BatchOp::ReconcileLexicalQueryHints { .. }
+        | BatchOp::Phonetic { .. }
+        | BatchOp::PublicEdgeWithCreatedAt { .. }
+        | BatchOp::EdgeWithCreatedAt { .. }
+        | BatchOp::SetEdgeWeight { .. }
+        | BatchOp::SetEdgeVad { .. }
+        | BatchOp::Delete { .. }
+        | BatchOp::DeleteEdge { .. } => {
+            return Err(Error::InvariantViolation(
+                "promotion replay found a journal op the session write path cannot stage",
+            ));
+        }
+    })
 }
 
 impl OverlaySnapshot {
@@ -668,16 +775,83 @@ impl OverlaySnapshot {
     }
 
     /// Read view of the typed journal, in staging order.
-    ///
-    /// This is ONE-1730's promote input: selection logic (which entries form a
-    /// turn's closure) lives there, not here. K2 arms the accessor; no
-    /// `plan_promotion` or promote selection may land on this type in P4a.
-    #[allow(
-        dead_code,
-        reason = "ONE-1730's plan_promotion is the first lib-target consumer; the P4a oracle covers it now"
-    )]
     pub(crate) fn journal_entries(&self) -> &[JournalEntry] {
         &self.state.journal
+    }
+
+    /// Cuts ONE turn's promotable closure out of the typed journal
+    /// (ARCH-0052 D4, ONE-1730).
+    ///
+    /// Selection reads journal METADATA only — the role tag and the scope the
+    /// witnessing write recorded. It never consults a type-index,
+    /// text-posting, short-id, temporal, or edge-index key: those keys are
+    /// shared between turns by construction, so key-shaped selection would
+    /// drag a sibling turn's rows into a promotion the user consented to for
+    /// exactly one turn.
+    ///
+    /// The closure is: the requested turn's own scoped entries (its
+    /// materialized TURN put, its `PartOf` MESSAGE puts, its `DerivedFrom`
+    /// SUMMARY puts, its attribution edges, and every op explicitly tagged as
+    /// that turn's owned artifact) plus the room's one fresh CONVERSATION
+    /// shell, which is selected by the shell role against the turn's OWN
+    /// conversation. The shell is staged once per room, under the first
+    /// witness's scope, so a later sibling turn would otherwise promote
+    /// `BelongsTo` edges pointing at a conversation with no entity row.
+    ///
+    /// A turn with no materialized TURN put has nothing to promote and is
+    /// refused: promotion replays a subgraph, and a closure with no turn body
+    /// is not one.
+    pub(crate) fn plan_promotion(&self, turn: EntityId) -> Result<PromotePlan> {
+        let conversation = self
+            .journal_entries()
+            .iter()
+            .find(|entry| {
+                entry.role == JournalRole::TurnPut
+                    && entry.scope.turn() == turn
+                    && matches!(&entry.op, BatchOp::Put { id, .. } if *id == turn)
+            })
+            .map(|entry| entry.scope.conversation())
+            .ok_or_else(|| Error::OffRecordTurnNotInJournal {
+                turn_ref: turn.to_hex(),
+            })?;
+
+        let mut ops = Vec::new();
+        let mut replayed = Vec::new();
+        let mut source_learned_at = BTreeSet::new();
+        for entry in self
+            .journal_entries()
+            .iter()
+            .filter(|entry| journal_entry_in_closure(entry, turn, conversation))
+        {
+            if let BatchOp::Put { id, .. } = &entry.op {
+                replayed.push(*id);
+            }
+            source_learned_at.insert(entry.learned_at);
+            ops.push(promotion_replay_op(entry)?);
+        }
+
+        // In-room aliases, read from the overlay's OWN short-id tables. Base
+        // short ids do not exist for these ids yet — the ordinary apply mints
+        // them during the replay — so this half of the mapping can only come
+        // from here.
+        let mut temporary_short_ids = Vec::new();
+        for id in &replayed {
+            if let SnapshotLookup::Present(value) =
+                self.lookup_single(OverlayKeyspace::ShortIdsReverse, id.as_bytes())
+            {
+                let (short_id, _content_hash) = parse_session_short_id_value(&value)?;
+                temporary_short_ids.push((*id, short_id.to_owned()));
+            }
+        }
+
+        Ok(PromotePlan {
+            ops,
+            replayed,
+            temporary_short_ids,
+            source_learned_at: source_learned_at.into_iter().collect(),
+            turn,
+            conversation,
+        })
     }
 
     #[cfg(test)]
@@ -1124,6 +1298,121 @@ impl SessionOverlay {
         })
     }
 
+    /// Retires a promoted closure from the live overlay (ARCH-0052 D4,
+    /// ONE-1730). Called ONLY after the promote transaction commits.
+    ///
+    /// Every retired row is removed OUTRIGHT, never tombstoned. A tombstone
+    /// masks the base row underneath, and the row underneath is now the
+    /// promoted one — masking it would make the room lose sight of the turn it
+    /// just published. Removal is therefore conditional on the key being
+    /// PRESENT in the overlay: a delete of an absent key is exactly what the
+    /// mutation path turns into a mask.
+    ///
+    /// Rows whose overlay copy is byte-identical to the base copy the replay
+    /// just wrote — BM25 postings/stats, vector and HNSW rows — are left in
+    /// place deliberately. Their keys and duplicate identities are the same on
+    /// both sides, so the composed read returns one row either way, and the
+    /// accumulator halves (`total_docs`, per-field lengths) are room-scoped
+    /// counts that must keep answering for the room until it evaporates.
+    ///
+    /// The journal entries go with them, so a later close counts the promoted
+    /// turn as published rather than as transcript that stopped existing.
+    pub(crate) fn retire_promoted_closure(self: &Arc<Self>, plan: &PromotePlan) -> Result<()> {
+        let lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| Error::InvariantViolation("session overlay lifecycle mutex poisoned"))?;
+        if lifecycle.state == OverlayLifecycleState::Gone {
+            return Err(Error::OffRecordOverlayLeaseClosed {
+                generation: lifecycle.generation,
+            });
+        }
+        let mut next = self.state.load_full().as_ref().clone();
+
+        for op in &plan.ops {
+            match op {
+                BatchOp::Put {
+                    id,
+                    entity_type,
+                    occurred,
+                    learned_at,
+                    ..
+                } => {
+                    drop_overlay_row(&mut next, OverlayKeyspace::Entities, id.as_bytes());
+                    drop_overlay_row(
+                        &mut next,
+                        OverlayKeyspace::TypeIndex,
+                        &Store::encode_type_key(*entity_type, id),
+                    );
+                    drop_overlay_row(
+                        &mut next,
+                        OverlayKeyspace::TemporalOccurredStart,
+                        &Store::encode_temporal_key(occurred.start, id),
+                    );
+                    if occurred.start != occurred.end {
+                        drop_overlay_row(
+                            &mut next,
+                            OverlayKeyspace::TemporalOccurredEnd,
+                            &Store::encode_temporal_key(occurred.end, id),
+                        );
+                    }
+                    drop_overlay_row(
+                        &mut next,
+                        OverlayKeyspace::TemporalLearned,
+                        &Store::encode_temporal_key(*learned_at, id),
+                    );
+                    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
+                        drop_overlay_row(
+                            &mut next,
+                            OverlayKeyspace::TemporalLongIntervals,
+                            &Store::encode_temporal_key(occurred.end, id),
+                        );
+                    }
+                }
+                BatchOp::PublicEdgeWithCreatedAt { src, kind, tgt, .. } => {
+                    drop_overlay_row(
+                        &mut next,
+                        OverlayKeyspace::EdgesOut,
+                        &Store::encode_edge_key(src, *kind, tgt),
+                    );
+                    drop_overlay_row(
+                        &mut next,
+                        OverlayKeyspace::EdgesIn,
+                        &Store::encode_edge_key(tgt, *kind, src),
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        // The in-room alias pair. The forward key is stored verbatim as the
+        // reverse row's VALUE, so the pair retires without re-deriving a
+        // content hash that the body may have moved past.
+        for id in &plan.replayed {
+            let forward_key = match next.keyspaces[OverlayKeyspace::ShortIdsReverse.slot()].as_ref()
+            {
+                KeyspaceState::Single { rows, .. } => match rows.get(id.as_bytes().as_slice()) {
+                    Some(OverlayValue::Present(value)) => Some(value.clone()),
+                    Some(OverlayValue::Tombstone) | None => None,
+                },
+                KeyspaceState::DupSort { .. } => None,
+            };
+            if let Some(forward_key) = forward_key {
+                drop_overlay_row(&mut next, OverlayKeyspace::ShortIds, &forward_key);
+                drop_overlay_row(&mut next, OverlayKeyspace::ShortIdsReverse, id.as_bytes());
+            }
+        }
+
+        let turn = plan.turn;
+        let conversation = plan.conversation;
+        Arc::make_mut(&mut next.journal)
+            .retain(|entry| !journal_entry_in_closure(entry, turn, conversation));
+        next.recalculate_bytes();
+        self.state.store(Arc::new(next));
+        drop(lifecycle);
+        Ok(())
+    }
+
     pub(crate) fn close(self: &Arc<Self>) -> Result<()> {
         // A close nested inside this thread's own active segment would wait on a lease
         // that only this stack can release (the guard drops when it unwinds past here).
@@ -1439,6 +1728,23 @@ fn next_mode_generation(current: u64) -> Result<u64> {
     current
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("session overlay mode generation"))
+}
+
+/// Removes one PRESENT overlay row outright, leaving no base mask.
+///
+/// The presence check is the whole point: [`apply_mutation`]'s delete arm
+/// tombstones a key it does not already hold, which is correct for a room
+/// hiding a base row and exactly wrong for retiring a row the room just
+/// published. DUP_SORT keyspaces are not retired here (see
+/// [`SessionOverlay::retire_promoted_closure`]), so this only touches
+/// single-valued state.
+fn drop_overlay_row(state: &mut OverlayState, keyspace: OverlayKeyspace, key: &[u8]) {
+    if let KeyspaceState::Single { rows, .. } =
+        Arc::make_mut(&mut state.keyspaces[keyspace.slot()])
+        && matches!(rows.get(key), Some(OverlayValue::Present(_)))
+    {
+        rows.remove(key);
+    }
 }
 
 fn project_mutation(state: &OverlayState, mutation: &OverlayMutation) -> Result<OverlayState> {
