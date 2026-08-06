@@ -41,7 +41,7 @@ use crate::Vault;
 use crate::actor_claims::register_session_end_distill_in_txn;
 use crate::dreamer_consolidation::{
     ConsolidationPartitionPlan, advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
-    enqueue_partition_attempts_in_txn, read_watermark_in_txn,
+    enqueue_partition_attempts_in_txn, read_watermark_in_txn, register_substitution_mine_in_txn,
 };
 use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore};
 use crate::entity_id::EntityId;
@@ -504,7 +504,9 @@ impl Vault {
     /// * **(d) wake**: the pre-planned SessionEnd → Meso partition attempts are
     ///   enqueued and the Meso watermark advanced in the SAME transaction;
     /// * **(e) distill job**: the CHAT-lane `actor.*` distill job is registered
-    ///   for this sitting (ONE-1739), also in the SAME transaction.
+    ///   for this sitting (ONE-1739), also in the SAME transaction;
+    /// * **(f) substitution mine**: ED-04's recurring-substitution miner pass
+    ///   (ONE-1760) is registered on the same Meso queue, same transaction.
     ///
     /// "Exactly-once wake" is therefore structural: a attempt row exists ⟺ this
     /// end committed, and re-ending an already-ended session is a no-op that
@@ -564,6 +566,15 @@ impl Vault {
             // process's intention. Unconditional — unlike the Meso wake below
             // it plans nothing in advance, so there is no snapshot to fence.
             register_session_end_distill_in_txn(self, wtxn, &id, ended_at)?;
+
+            // (f) ED-04's recurring-substitution miner (ONE-1760), same commit
+            // and for the same reason: a pass registered only in the closing
+            // process's intentions is a pass a crash silently cancels. It rides
+            // the Meso queue the wake below drains, dedupe-keyed per sitting,
+            // and is unconditional — the corrections it mines are amendment
+            // receipts, which have nothing to do with whether this sitting left
+            // dirty turns behind.
+            register_substitution_mine_in_txn(self, wtxn, &id, now)?;
 
             // (d) The durable wake, same commit. Skipped wholesale when the
             // Meso watermark or bounded dirty snapshot moved since the plan

@@ -448,14 +448,14 @@ pub use crate::dreamer_consolidation::{
     ConsolidationBucketPlan, ConsolidationCursor, ConsolidationExecutor, ConsolidationPartitionKey,
     ConsolidationPartitionPlan, ConsolidationSink, ConsolidationWatermark,
     DREAMER_BUCKET_HASH_DOMAIN, DREAMER_EVIDENCE_HASH_DOMAIN, DREAMER_GAP_DECAY_MS,
-    DREAMER_GAP_HASH_DOMAIN, DREAMER_GAP_SCAN_ATTEMPT_TYPE, GapQueueDelta, PriorHead,
-    PromotionCandidate, ReflectionGap, ReflectionGapKind, SwarmChildReturn, SwarmEvidenceRef,
-    TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY, WorkingSetTurn, advance_watermark,
-    collapse_sibling_evidence, corroboration_count, decode_partition_payload, detect_conflicts,
-    enqueue_partition_attempts, entity_ref_from_value, evidence_trust_meet, gap_hash,
-    plan_candidate_buckets, plan_partitions, read_cursor, read_watermark, scan_dirty_turns,
-    scan_reflection_gaps, swarm_evidence_content_hash, turn_trust_class, upsert_gap_queue,
-    validate_child_read_pin, write_cursor,
+    DREAMER_GAP_HASH_DOMAIN, DREAMER_GAP_SCAN_ATTEMPT_TYPE, DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE,
+    GapQueueDelta, PriorHead, PromotionCandidate, ReflectionGap, ReflectionGapKind,
+    SwarmChildReturn, SwarmEvidenceRef, TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY,
+    WorkingSetTurn, advance_watermark, collapse_sibling_evidence, corroboration_count,
+    decode_partition_payload, detect_conflicts, enqueue_partition_attempts, entity_ref_from_value,
+    evidence_trust_meet, gap_hash, plan_candidate_buckets, plan_partitions, read_cursor,
+    read_watermark, scan_dirty_turns, scan_reflection_gaps, swarm_evidence_content_hash,
+    turn_trust_class, upsert_gap_queue, validate_child_read_pin, write_cursor,
 };
 pub use crate::dreamer_promotion::{
     DreamerRunContext, PromotionOutcome, PromotionWriterSink, promote_consolidated_claims,
@@ -538,6 +538,15 @@ pub use crate::edit_distance::graduation::{
     exact_pattern, graduation_policy_for, graduation_policy_rows, guard_evidence,
     is_graduation_answer_receipt, posterior_lower_bound, set_graduation_policy, snooze_state,
     trust_table, unpin_scope,
+};
+pub use crate::edit_distance::miner::{
+    MINER_K_DEFAULT, MINER_K_SETTINGS_KEY, MINER_REJECTION_COOLDOWN_SECS, MinedOutcome,
+    MinedSkillEditDecision, MinedSkillEditProposal, MinedSkillEditVerdict, MinerRun,
+    MinerWatermark, PREDICATE_PREFERENCE_PHRASING, SubstitutionClass, SubstitutionCluster,
+    classify_substitution, mine_substitution_clusters, mined_skill_edit, miner_attempt_input,
+    miner_k, miner_run_id, miner_session_from_input, miner_watermark,
+    pending_substitution_skill_edits, resolve_mined_skill_edit, run_substitution_miner,
+    set_miner_k,
 };
 pub use crate::edit_distance::publisher::{
     CONTENT_HASH_LEN, CountKey, InterviewSession, InterviewState, IssueCategory, IssueSignature,

@@ -109,14 +109,36 @@ fn meso_wake(vault: &Vault) -> SessionEndWake {
     }
 }
 
-/// COUNT of meso consolidation attempts ever created (any state) — never `any()`.
-fn meso_attempt_count(vault: &Vault) -> usize {
+/// Every meso-queue attempt the close created, decoded on the PRODUCTION path
+/// (attempt row → attempt payload), never a bespoke string.
+fn meso_attempt_payloads(vault: &Vault) -> Vec<crate::dreamer_runner::DreamerAttemptPayload> {
     AttemptQueue::new(vault)
         .list()
         .expect("attempt list")
         .into_iter()
         .filter(|attempt| attempt.kind == crate::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
-        .count()
+        .map(|attempt| {
+            decode_dreamer_attempt_payload(&attempt.payload).expect("attempt payload decodes")
+        })
+        .collect()
+}
+
+/// The meso-queue attempts that are PARTITION rounds.
+///
+/// The close also registers ED-04's substitution-mine pass on this queue — a
+/// payload discriminator beside the partition rounds, not one of them — so the
+/// kind alone no longer names a round.
+fn meso_partition_payloads(vault: &Vault) -> Vec<crate::dreamer_runner::DreamerAttemptPayload> {
+    meso_attempt_payloads(vault)
+        .into_iter()
+        .filter(|payload| payload.attempt_type == DreamerConsolidationScope::Meso.as_str())
+        .collect()
+}
+
+/// COUNT of meso consolidation partition attempts ever created (any state) —
+/// never `any()`.
+fn meso_attempt_count(vault: &Vault) -> usize {
+    meso_partition_payloads(vault).len()
 }
 
 #[test]
@@ -299,19 +321,12 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
     assert_eq!(ended.reason, SessionEndReason::Explicit);
     assert_eq!(vault.open_session().expect("open"), None);
 
-    // Exactly one meso attempt, and it decodes on the PRODUCTION executor path
-    // (attempt payload → partition payload), not a bespoke string.
-    let attempts: Vec<_> = AttemptQueue::new(&vault)
-        .list()
-        .expect("attempt list")
-        .into_iter()
-        .filter(|attempt| attempt.kind == crate::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND)
-        .collect();
-    assert_eq!(attempts.len(), 1, "exactly one SessionEnd meso attempt");
-    let payload =
-        decode_dreamer_attempt_payload(&attempts[0].payload).expect("attempt payload decodes");
+    // Exactly one meso partition attempt, and it decodes on the PRODUCTION
+    // executor path (attempt payload → partition payload), not a bespoke string.
+    let partitions = meso_partition_payloads(&vault);
+    assert_eq!(partitions.len(), 1, "exactly one SessionEnd meso round");
     let (partition, turn_ids, watermark) =
-        decode_partition_payload(&payload.input).expect("production partition decode");
+        decode_partition_payload(&partitions[0].input).expect("production partition decode");
     assert_eq!(partition.conversation_ref, conversation);
     assert_eq!(turn_ids, vec![turn]);
     assert_eq!(watermark, 0, "planned against the bootstrap watermark");

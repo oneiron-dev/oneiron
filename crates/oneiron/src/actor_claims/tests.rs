@@ -106,10 +106,15 @@ fn rows(
 
 /// Runs one attempt whose pack loaded `skill_id` to its terminal door and
 /// returns the receipt id close STAMPED.
+///
+/// Claimed BY KIND, like every production worker: a fresh row's ready key is
+/// `(0, attempt_id)`, so an untyped claim takes the oldest row in the whole
+/// vault — including the ones a fixture's session close registers.
 fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
+    const KIND: &str = "sk06.attempt";
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
-        kind: "sk06.attempt".to_owned(),
+        kind: KIND.to_owned(),
         payload: Vec::new(),
         dedupe_key: None,
         run_id: None,
@@ -122,10 +127,13 @@ fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
         attempt.id,
         ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
     )?;
-    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
-        lease_owner: "sk06-worker".to_owned(),
-        now: 12,
-    })?
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        KIND,
+        ClaimAttempt {
+            lease_owner: "sk06-worker".to_owned(),
+            now: 12,
+        },
+    )?
     else {
         panic!("the enqueued attempt is claimable");
     };
