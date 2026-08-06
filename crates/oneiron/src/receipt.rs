@@ -131,6 +131,11 @@ const FIELD_AMENDED_BODY: &str = "amended_body";
 /// (`edit_distance::delta::attach_amendment_deltas`), which is why the key is
 /// `pub(crate)` rather than private to this module.
 pub(crate) const FIELD_AMENDMENT_DELTA: &str = "amendment_delta";
+/// Companion marker to [`FIELD_AMENDMENT_DELTA`]: the Δ for this amendment was
+/// measured and the measurement FAILED. It exists so the two states a reader
+/// would otherwise confuse stay apart — capture failure is non-fatal, but it
+/// is receipted, never silent.
+pub(crate) const FIELD_AMENDMENT_DELTA_UNCAPTURED: &str = "amendment_delta_uncaptured";
 const FIELD_RECEIPT_SCHEMA: &str = "receipt_schema";
 const FIELD_ENGINE_REGISTER: &str = "engine_register";
 const FIELD_CARE_REGISTER: &str = "care_register";

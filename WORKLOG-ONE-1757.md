@@ -180,3 +180,91 @@ Considered and rejected:
 No test assertions, fixtures, or public API touched. Gates after the pass:
 `cargo fmt --check` clean · `cargo clippy -p oneiron --all-features --all-targets` clean ·
 `cargo nextest run -p oneiron --all-features` **3920 passed / 0 failed / 64 skipped**.
+
+## VERDICT-FIX round (Opus, 2026-08-06)
+
+Finder + verdict adjudication on tip `51f2aba18` returned FIX-REQUIRED on two findings; the
+third was rejected-with-derivation and banked. Both fixes are mutation-verified (red before,
+green after) and land at the chokepoint, not the call site.
+
+### F1 (P1) — approve-with-edit atomicity · `crates/oneiron/src/inbox.rs:498`
+
+`approve_inbox_member_with_edit_at` committed the amended claim, the pending-row deletion, the
+decision record, and the Δ side-row inside `with_write_txn`, then opened a **post-commit** read
+txn and ran `attach_amendment_deltas(...)?` to enrich the returned receipt. Any failure there
+returned `Err` on a consent decision that had already landed.
+
+Not a theoretical failure. LMDB refuses a second read txn on a thread that already holds one
+(`BadRslot`), so the obvious caller shape — walk the tray under a read txn, approve with an edit
+— hit it every time. Measured on the pre-fix tip:
+
+```
+PROBE door outcome:   Err(Storage(Mdb(BadRslot)))
+PROBE approval after: Approved  value String("probe")   # the amendment landed
+PROBE pending rows:   0                                  # consent was consumed
+PROBE retry:          Err(EntityNotFound)                # and the retry lies too
+```
+
+**Fix:** the whole door body — accept, receipt projection, Δ enrichment — now runs inside the one
+write txn, so `Err` implies rollback (`with_write_txn` commits on `Ok`, rolls back on `Err`). The
+enrichment still rides the SAME `attach_amendment_deltas` pass every receipt query uses, so the
+door's return and a later query cannot disagree; it just reads through `&*wtxn` (which sees its
+own uncommitted Δ row) instead of a fresh reader. No post-commit work remains.
+
+Test: `inbox::tests::a_read_failure_cannot_refuse_an_amendment_that_already_landed` — holds a read
+txn across the call. Red before (`Storage(Mdb(BadRslot))`), green after.
+
+### F2 (P2) — capture-failure receipt honesty · `crates/oneiron/src/edit_distance/delta.rs`
+
+`identity_amendment_delta` collapsed `capture_delta_best(...).ok()`, so a failed measurement
+returned the same `None` as "this receipt has no measurable pair". The receipt then carried
+neither a Δ nor a marker — indistinguishable from one the projection pass had never visited, and
+permanently so, since the pass only revisits receipts carrying neither field. Blueprint §4
+requires capture failure to be non-fatal but **receipted**; the inbox door honors that via
+`INBOX_REASON_AMEND_DELTA_UNCAPTURED`, the projection pass did not.
+
+**Fix**, all in the existing side-row keyspace:
+
+- `AMENDMENT_DELTA_UNCAPTURED_ROW` — sentinel row value. A Δ row is canonical JSON (always opens
+  `{`), so a bare token cannot be misread as one. Same write-once law as a Δ: the cause is the
+  stored bytes, which do not heal.
+- `attach_amendment_deltas` projects the sentinel as `FIELD_AMENDMENT_DELTA_UNCAPTURED` (receipt.rs,
+  additive const per the ticket's claim), never into the Δ slot. Three receipt states now stay
+  apart: Δ measured · measurement failed · not yet projected (neither field).
+- `identity_amendment_delta` returns `Option<ProjectedDelta>`: `None` still means "no measurable
+  PAIR" (nothing amended, no resolvable proposal — the adjudicator explicitly blessed these early
+  exits, and they stay eligible for a later pass), `Some(Uncaptured)` means both ends existed and
+  the measurement failed. The proposed-side `encode_identity_op_amendment` failure moved to
+  `Uncaptured` for the same reason — past that point the pair exists, so every remaining exit is a
+  measurement outcome, not an absent window.
+- `project_identity_amendment_deltas` skips receipts carrying EITHER marker, so a failed capture is
+  not re-attempted by every later pass.
+- `amendment_delta()` reads the sentinel as `None` rather than `CorruptedIndex`: the accessor
+  answers for the Δ, and there is none — the receipt is where the two facts part company.
+
+Tests: `edit_distance::delta::tests::an_unmeasurable_identity_amendment_projects_as_uncaptured`
+(asserts all three states, including that a decodable body still measures — the marker cannot
+swallow real captures) and `...::attachment_surfaces_a_failed_capture_as_its_own_marker`. Both red
+before under a behavior-only mutation (`Err(_) => return Ok(None)` / attach without the sentinel
+branch), green after.
+
+Reachability, stated plainly: ONE-1747's resolve door round-trips the amendment through
+`encode_identity_op_amendment` before storing it, so an undecodable `amended_body` is not
+reachable through it TODAY. The contract is written for the producers that follow (ED-02's
+reconstructed lane, ED-08's outbound drafts) — a door that is only honest while its inputs are
+perfect is not honest.
+
+### Banked, not fixed
+
+Finder item 3 (delta.rs `attach_amendment_deltas` N-point-lookups vs a "required one-pass
+vault_meta side-row fold") — REJECTED as gold-plating and banked P3 by the adjudicator: the fold
+requirement exists in no spec source, the attach pass filters to `approved_amended` before any
+lookup (so the common query pays zero point-gets), and per-row point lookups are the house idiom
+throughout this file. Not relitigated here.
+
+### Gates
+
+`cargo fmt --all --check` clean · `cargo clippy -p oneiron --all-features --all-targets -D warnings`
+clean · `cargo test -p oneiron --all-features` **all binaries 0 failed** (lib: 3589 passed /
+17 ignored). Diff ⊆ packet: `edit_distance/delta.rs` (+tests), `inbox.rs` (+tests), `receipt.rs`
+(Δ field-key const only). No `Cargo.toml` / `Cargo.lock` touched.

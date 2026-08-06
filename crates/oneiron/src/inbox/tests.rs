@@ -1587,6 +1587,36 @@ fn approve_with_edit_needs_an_open_pending_row() -> Result<()> {
     Ok(())
 }
 
+/// The door's receipt enrichment rides INSIDE the write txn it commits, so
+/// no failure can land the approval and report it as refused.
+///
+/// The failure this pins is ordinary, not exotic: the enrichment used to open
+/// its own read txn AFTER the commit, and LMDB refuses a second reader on a
+/// thread that already holds one (`BadRslot`). A caller iterating the tray
+/// under a read txn — the obvious way to review and approve in one pass —
+/// therefore got `Err` on a consent decision that had ALREADY landed: the
+/// claim was Approved with the amendment, the pending row was gone, and the
+/// retry hit [`Error::EntityNotFound`].
+#[test]
+fn a_read_failure_cannot_refuse_an_amendment_that_already_landed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim_id = amended_proposal(&vault)?;
+    let amended = edited_body(&vault, claim_id, "revised under an open reader")?;
+
+    let held = vault.store.env.read_txn()?;
+    let approval = vault.approve_inbox_member_with_edit_at(&claim_id, &amended, 20)?;
+    drop(held);
+
+    assert_eq!(approval.receipt.outcome, OUTCOME_APPROVED_AMENDED);
+    assert!(
+        crate::receipt::proposal_outcome_delta(&approval.receipt).is_some(),
+        "the reserved slot is filled from inside the txn, not by a later read"
+    );
+    let stored = vault.get_claim(&claim_id)?.expect("approved claim");
+    assert_eq!(stored.value, Value::from("revised under an open reader"));
+    Ok(())
+}
+
 /// The non-fatal contract at its chokepoint: an unmeasurable pair yields no Δ
 /// and a receipt reason saying so — never an error that would refuse the
 /// approval it hangs off.

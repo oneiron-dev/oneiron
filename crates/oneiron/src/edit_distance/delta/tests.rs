@@ -418,3 +418,190 @@ fn attachment_fills_the_reserved_slot_for_amended_outcomes_only() {
         "an unamended outcome has nothing to attach"
     );
 }
+
+/// A capture that FAILED projects its own marker, never a Δ field holding
+/// something that is not a Δ. Three receipt states stay distinguishable: Δ
+/// measured, measurement failed, and not yet projected (neither field).
+#[test]
+fn attachment_surfaces_a_failed_capture_as_its_own_marker() {
+    let (_tmp, vault) = crate::edit_distance::tests::temp_vault();
+    vault
+        .with_write_txn(|wtxn| {
+            put_amendment_row_in_txn(
+                &vault,
+                wtxn,
+                "gate:unmeasured",
+                AMENDMENT_DELTA_UNCAPTURED_ROW,
+            )
+        })
+        .expect("write the uncaptured marker");
+
+    let mut records = vec![
+        amended_record("gate:unmeasured"),
+        amended_record("gate:none"),
+    ];
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    attach_amendment_deltas(&vault, &rtxn, &mut records).expect("attach");
+    drop(rtxn);
+
+    assert_eq!(
+        records[0]
+            .fields
+            .get(FIELD_AMENDMENT_DELTA_UNCAPTURED)
+            .map(String::as_str),
+        Some("true")
+    );
+    assert!(
+        !records[0].fields.contains_key(FIELD_AMENDMENT_DELTA),
+        "the marker is not a Δ, and must never be projected as one"
+    );
+    // An unprojected receipt carries NEITHER field — the distinction the
+    // marker exists to preserve.
+    assert!(records[1].fields.is_empty());
+    // The Δ accessor stays honest about the marker row: there is no Δ to read
+    // and it is not corruption either.
+    assert_eq!(
+        amendment_delta(&vault, "gate:unmeasured").expect("read"),
+        None
+    );
+}
+
+fn amended_record(receipt_id: &str) -> ReceiptRecord {
+    ReceiptRecord {
+        receipt_id: receipt_id.to_owned(),
+        receipt_kind: ReceiptKind::ProposalOutcome,
+        occurred_at: 1,
+        actor: None,
+        on_behalf_of: None,
+        outcome: OUTCOME_APPROVED_AMENDED.to_owned(),
+        job_ref: None,
+        trigger_ref: None,
+        policy_trace: Vec::new(),
+        fields: std::collections::BTreeMap::new(),
+    }
+}
+
+// ─── identity-topology projection ───────────────────────────────────────
+
+/// Parks a `Proposed` merge, handing back its event id and the two persons it
+/// names — the proposal side of an amendment window.
+fn parked_merge_proposal(vault: &Vault) -> (EntityId, EntityId, EntityId) {
+    let survivor = put_person(vault, 0xE4);
+    let source = put_person(vault, 0xE5);
+    let outcome = vault
+        .apply_identity_topology_op(
+            &merge_op(vec![source], survivor),
+            &crate::identity_topology::IdentityOpWrite {
+                approval: crate::claim::ClaimApprovalStatus::Proposed,
+                ..crate::identity_topology::IdentityOpWrite::auto(
+                    crate::claim::ClaimSource::Inferred,
+                )
+            },
+            100,
+        )
+        .expect("park the proposal");
+    match outcome {
+        crate::identity_topology::IdentityOpOutcome::Parked { event } => (event, survivor, source),
+        other => panic!("a Proposed merge must park, got {other:?}"),
+    }
+}
+
+fn put_person(vault: &Vault, byte: u8) -> EntityId {
+    let id = crate::test_util::entity(byte);
+    vault
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"delta projection fixture",
+        )
+        .expect("put person");
+    id
+}
+
+fn merge_op(
+    sources: Vec<EntityId>,
+    survivor: EntityId,
+) -> crate::identity_topology::IdentityTopologyOp {
+    crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
+        sources,
+        survivor,
+        evidence: crate::identity_topology::IdentityOpEvidence {
+            refs: Vec::new(),
+            rationale: "delta projection fixture".to_owned(),
+        },
+        survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+    })
+}
+
+/// The proposal-outcome receipt shape the projection reads, with `amended`
+/// as the producer artifact.
+fn amended_outcome_receipt(proposal: EntityId, amended: &[u8]) -> ReceiptRecord {
+    let mut record = amended_record(&format!("proposal_outcome:{}", proposal.to_hex()));
+    record.trigger_ref = Some(format!("{PROPOSAL_TRIGGER_PREFIX}{}", proposal.to_hex()));
+    record
+        .fields
+        .insert("amended_body".to_owned(), bytes_to_hex_lower(amended));
+    assert_eq!(
+        proposal_outcome_amended_body(&record).as_deref(),
+        Some(amended),
+        "fixture must speak the producer's own field key"
+    );
+    record
+}
+
+/// Once BOTH ends of the window exist, the projection reports what happened
+/// to the MEASUREMENT — never silence.
+///
+/// Silence was the defect: a capture error collapsed to `None`, which is the
+/// same answer this pass gives a receipt it has nothing to measure for. The
+/// resulting receipt carried no Δ and no marker, so it was indistinguishable
+/// from one the pass had never visited — and permanently, since the pass only
+/// revisits receipts carrying neither field.
+///
+/// The corrupt body is not reachable through ONE-1747's resolve door today
+/// (it round-trips the amendment through `encode_identity_op_amendment`
+/// before storing it). The contract is written for the producers that follow
+/// — the blueprint's requirement is that capture failure be non-fatal but
+/// RECEIPTED, and a door that can only be honest while its inputs are perfect
+/// is not honest.
+#[test]
+fn an_unmeasurable_identity_amendment_projects_as_uncaptured() {
+    let (_tmp, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let (proposal, survivor, source) = parked_merge_proposal(&vault);
+
+    // Valid hex, undecodable body: an array header promising an element that
+    // is not there.
+    let undecodable = amended_outcome_receipt(proposal, b"\x91");
+    assert!(
+        matches!(
+            identity_amendment_delta(&vault, &undecodable).expect("project"),
+            Some(ProjectedDelta::Uncaptured)
+        ),
+        "a measurement that failed must be recorded, not dropped"
+    );
+
+    // The positive boundary: a body the field-diff lane CAN read still
+    // measures, so the marker cannot swallow real captures.
+    let narrowed =
+        crate::identity_topology::encode_identity_op_amendment(&merge_op(vec![survivor], source))
+            .expect("encode amendment");
+    assert!(matches!(
+        identity_amendment_delta(&vault, &amended_outcome_receipt(proposal, &narrowed))
+            .expect("project"),
+        Some(ProjectedDelta::Captured(_))
+    ));
+
+    // A receipt with no amendment has no PAIR — still `None`, still eligible
+    // for a later pass. That distinction is what the marker protects.
+    assert!(
+        identity_amendment_delta(&vault, &amended_record("proposal_outcome:none"))
+            .expect("project")
+            .is_none()
+    );
+}
