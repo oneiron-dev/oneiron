@@ -433,26 +433,25 @@ pub(crate) fn off_record_orphaned_live_fence_session_ref(
 /// marker is sessionless, so this guard never needs to surface or preserve an
 /// evaporated session ref.
 ///
-/// `promote_member_of` is the SAME exemption channel the K4 taint guard reads
-/// (`None` for every ordinary write, `Some` only inside a promote-replay
-/// transaction, answering only for the granting session's own closure). Both
-/// doors judge live-overlay membership, so exempting one without the other
-/// would leave promotion unable to materialize the very rows it is replaying —
-/// and exempting more than the granting session's ids at either door would be
-/// the leak both exist to forbid.
+/// `origin` is the SAME exemption the K4 taint guard reads
+/// (`BaseWriteOrigin::Ordinary` for every ordinary write, `PromoteReplay`
+/// carrying a grant only inside a promote-replay transaction, answering only
+/// for the granting session's own closure). Both doors judge live-overlay
+/// membership, so exempting one without the other would leave promotion unable
+/// to materialize the very rows it is replaying — and exempting more than the
+/// granting session's ids at either door would be the leak both exist to
+/// forbid.
 pub(crate) fn guard_off_record_entity_put(
     store: &Store,
     wtxn: &RwTxn<'_>,
     id: &EntityId,
     replicated: bool,
-    promote_member_of: crate::batch::PromoteMemberOf<'_>,
+    origin: crate::batch::BaseWriteOrigin<'_>,
 ) -> Result<()> {
     let rejected = || Error::OffRecordFencedTurnWriteRejected {
         turn_ref: id.to_hex(),
     };
-    if store.off_record_sessions.contains_entity(id)?
-        && !promote_member_of.is_some_and(|member_of| member_of(id))
-    {
+    if store.off_record_sessions.contains_entity(id)? && !origin.exempts(id) {
         return Err(rejected());
     }
     let fence_key = off_record_fence_key(id);

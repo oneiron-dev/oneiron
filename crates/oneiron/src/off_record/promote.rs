@@ -166,11 +166,15 @@ fn decode_off_record_promote(bytes: &[u8]) -> Result<OffRecordPromoteReceipt> {
 
 /// The promote transaction's session-membership exemption (ARCH-0052 D2, K4).
 ///
-/// Minted ONLY here, inside the promote transaction, out of the closure that
-/// transaction is replaying. It therefore cannot answer `true` for an id the
-/// granting session did not stage: another live session's overlay members are
-/// still rejected by the taint guard and the entity write door, exactly as for
-/// any ordinary base write.
+/// This is a CAPABILITY, not a hint: the `members` field and `mint` are
+/// private to this module, so a grant can only come into existence inside the
+/// promote transaction below, out of the closure that transaction is
+/// replaying. `batch::BaseWriteOrigin::PromoteReplay` borrows one — there is
+/// no other way to build that arm, and no predicate riding beside it that
+/// crate code could hand-roll. A grant therefore cannot answer `true` for an
+/// id the granting session did not stage: another live session's overlay
+/// members are still rejected by the taint guard and the entity write door,
+/// exactly as for any ordinary base write.
 pub(crate) struct PromoteReplayGrant {
     members: BTreeSet<EntityId>,
 }
@@ -182,7 +186,9 @@ impl PromoteReplayGrant {
         }
     }
 
-    fn exempts(&self, id: &EntityId) -> bool {
+    /// Readable crate-wide so both membership doors can ASK a grant they were
+    /// handed; minting stays private, which is where the capability lives.
+    pub(crate) fn exempts(&self, id: &EntityId) -> bool {
         self.members.contains(id)
     }
 }
@@ -235,8 +241,7 @@ impl FloorWrites<'_> {
         // terminus every gated batch uses; the only thing promotion adds is the
         // origin that lets THIS session's overlay ids through the K4 guard.
         let grant = PromoteReplayGrant::mint(plan);
-        let member_of = |id: &EntityId| grant.exempts(id);
-        TxnBatchBuilder::promotion_replay(vault, plan.ops.clone(), &member_of)
+        TxnBatchBuilder::promotion_replay(vault, plan.ops.clone(), &grant)
             .apply_recording_gate_decisions(wtxn)?;
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());

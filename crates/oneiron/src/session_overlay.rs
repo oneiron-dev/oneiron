@@ -512,12 +512,41 @@ impl PromotePlan {
 fn journal_entry_in_closure(entry: &JournalEntry, turn: EntityId, conversation: EntityId) -> bool {
     match entry.role {
         JournalRole::ConversationShell => entry.scope.conversation() == conversation,
+        JournalRole::AttributionEdge => {
+            entry.scope.turn() == turn && attribution_edge_is_closure_internal(&entry.op)
+        }
         JournalRole::TurnPut
         | JournalRole::MessagePartOf
         | JournalRole::SummaryDerivedFrom
-        | JournalRole::AttributionEdge
         | JournalRole::TurnOwnedArtifact => entry.scope.turn() == turn,
     }
+}
+
+/// Whether an [`JournalRole::AttributionEdge`] op belongs to the promotable
+/// closure (ARCH-0052 D4, ONE-1730).
+///
+/// ONE-1728 stages TWO kinds under that one role, and they differ in where
+/// they point:
+///
+/// * `BelongsTo(message -> conversation shell)` — the shell is a closure
+///   member, so this edge is internal to the subgraph being published and is
+///   one of the ratified three (`PartOf`, `DerivedFrom`, `BelongsTo`).
+/// * `AuthoredBy(message -> actor)` — the actor is a BASE identity the room
+///   neither staged nor owns. Promoting it would attach the consented subgraph
+///   to an entity outside it, which is exactly the closure boundary promote
+///   exists to hold.
+///
+/// The authorship edge is not discarded: it stays an overlay row and a journal
+/// entry for the rest of the room's life (the in-room view still resolves it)
+/// and evaporates at close with everything else the user did not promote.
+fn attribution_edge_is_closure_internal(op: &BatchOp) -> bool {
+    matches!(
+        op,
+        BatchOp::Edge {
+            kind: crate::edge::EdgeKind::BelongsTo,
+            ..
+        }
+    )
 }
 
 /// Rebuilds one journaled op as the base apply must see it.
@@ -777,10 +806,11 @@ impl OverlaySnapshot {
     ///
     /// The closure is: the requested turn's own scoped entries (its
     /// materialized TURN put, its `PartOf` MESSAGE puts, its `DerivedFrom`
-    /// SUMMARY puts, its attribution edges, and every op explicitly tagged as
-    /// that turn's owned artifact) plus the room's one fresh CONVERSATION
-    /// shell, which is selected by the shell role against the turn's OWN
-    /// conversation. The shell is staged once per room, under the first
+    /// SUMMARY puts, its closure-internal attribution edges — see
+    /// [`attribution_edge_is_closure_internal`] — and every op explicitly
+    /// tagged as that turn's owned artifact) plus the room's one fresh
+    /// CONVERSATION shell, which is selected by the shell role against the
+    /// turn's OWN conversation. The shell is staged once per room, under the first
     /// witness's scope, so a later sibling turn would otherwise promote
     /// `BelongsTo` edges pointing at a conversation with no entity row.
     ///

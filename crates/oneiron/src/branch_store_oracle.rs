@@ -2067,18 +2067,12 @@ fn promote_replays_exactly_one_turn_subgraph() -> Result<()> {
 }
 
 /// §4 exact attribution-edge set: base gains exactly the promoted turn's
-/// journal edges — no extras, none missing.
+/// three ratified attribution edges — no extras, none missing.
 ///
-/// DEVIATION from the ONE-1730 blueprint's pinned count, declared: the
-/// blueprint enumerates three attribution edges (`PartOf`, `DerivedFrom`,
-/// `BelongsTo`), but ONE-1728's witness also journals `AuthoredBy(message ->
-/// actor)` for every non-`System` author, and this fixture — a normal, USER
-/// authored turn — is one. Promotion replays the closure the journal actually
-/// holds, so the set is FOUR. Dropping the authorship edge to reach three
-/// would silently strip provenance from every promoted message; asserting four
-/// with all four endpoint pairs pinned keeps the original claim ("the FULL
-/// attribution-edge set, every edge with exact endpoints — and nothing else")
-/// and strengthens it by one edge.
+/// The room ALSO journals `AuthoredBy(message -> actor)` for a non-`System`
+/// author, and that edge is deliberately NOT promoted: its target is a base
+/// identity the closure does not own, so it points out of the subgraph the
+/// user consented to publish. It stays in the overlay and evaporates at close.
 #[test]
 fn promote_attribution_edge_set_is_exact() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -2100,14 +2094,14 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     // The FULL attribution-edge set, every edge with exact endpoints
     // (codex F9): PartOf(msg -> turn), DerivedFrom(summary -> turn),
-    // BelongsTo(msg -> shell), AuthoredBy(msg -> actor) — and nothing else.
+    // BelongsTo(msg -> shell) — and nothing else.
     assert_eq!(
         vault.store.edges_out.len(&rtxn)? - edges_before,
-        4,
-        "exactly the journal's attribution edges replay — no extras"
+        3,
+        "exactly the ratified attribution edges replay — no extras"
     );
     // Base census delta == exactly the promoted subgraph: 4 entities in,
-    // 4 edges each direction, nothing else entity/edge-shaped.
+    // 3 edges each direction, nothing else entity/edge-shaped.
     assert_eq!(
         vault.store.entities.len(&rtxn)? - entities_before,
         4,
@@ -2115,8 +2109,8 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
     );
     assert_eq!(
         vault.store.edges_in.len(&rtxn)? - edges_before,
-        4,
-        "the reverse-edge mirror carries the same four edges"
+        3,
+        "the reverse-edge mirror carries the same three edges"
     );
     drop(rtxn);
     assert_eq!(
@@ -2132,10 +2126,17 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
         vec![shell],
         "the message belongs to exactly the fresh conversation shell"
     );
-    assert_eq!(
-        vault.targets(&msg, crate::edge::EdgeKind::AuthoredBy, None)?,
-        vec![actor],
-        "the promoted message keeps the authorship the room recorded"
+    assert!(
+        vault
+            .targets(&msg, crate::edge::EdgeKind::AuthoredBy, None)?
+            .is_empty(),
+        "the authorship edge leaves the closure and must not reach base"
+    );
+    assert!(
+        vault
+            .sources(&actor, crate::edge::EdgeKind::AuthoredBy, None)?
+            .is_empty(),
+        "the actor gains no promoted in-edge"
     );
     session.close()?;
     Ok(())

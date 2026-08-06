@@ -28,6 +28,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, ErrorKind, Result};
 use crate::habit::TaskRole;
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
+use crate::off_record::PromoteReplayGrant;
 use crate::ppr;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
@@ -896,7 +897,13 @@ fn preflight_gate_decisions_in_txn(
         };
         // Gate preflight is an ordinary-write path; a promotion replay carries
         // no claim put and never reaches it.
-        crate::off_record::guard_off_record_entity_put(store, &*wtxn, id, false, None)?;
+        crate::off_record::guard_off_record_entity_put(
+            store,
+            &*wtxn,
+            id,
+            false,
+            BaseWriteOrigin::Ordinary,
+        )?;
     }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {
@@ -994,8 +1001,7 @@ pub struct TxnBatchBuilder<'a> {
     vault: &'a Vault,
     ops: Vec<BatchOp>,
     validation_error: Option<Error>,
-    origin: BaseWriteOrigin,
-    promote_member_of: PromoteMemberOf<'a>,
+    origin: BaseWriteOrigin<'a>,
 }
 
 impl<'a> TxnBatchBuilder<'a> {
@@ -1005,7 +1011,6 @@ impl<'a> TxnBatchBuilder<'a> {
             ops: Vec::new(),
             validation_error: None,
             origin: BaseWriteOrigin::Ordinary,
-            promote_member_of: None,
         }
     }
 
@@ -1017,21 +1022,22 @@ impl<'a> TxnBatchBuilder<'a> {
     /// through builder verbs would be a chance to drift from what the room
     /// actually staged.
     ///
-    /// This is the ONLY constructor that carries a non-`Ordinary` origin. Its
-    /// caller is `off_record::promote`, which mints `promote_member_of` inside
-    /// the promote transaction out of the closure it is replaying — so the
-    /// exemption cannot answer for any other session's overlay ids.
+    /// This is the ONLY constructor that carries a non-`Ordinary` origin, and
+    /// it demands the capability itself: a [`PromoteReplayGrant`] can only be
+    /// minted inside `off_record::promote`, out of the closure that promote
+    /// transaction is replaying. Crate code without a grant cannot reach this
+    /// constructor at all, and a grant cannot answer for any other session's
+    /// overlay ids.
     pub(crate) fn promotion_replay(
         vault: &'a Vault,
         ops: Vec<BatchOp>,
-        promote_member_of: &'a dyn Fn(&EntityId) -> bool,
+        grant: &'a PromoteReplayGrant,
     ) -> Self {
         Self {
             vault,
             ops,
             validation_error: None,
-            origin: BaseWriteOrigin::PromoteReplay,
-            promote_member_of: Some(promote_member_of),
+            origin: BaseWriteOrigin::PromoteReplay(grant),
         }
     }
 
@@ -1417,7 +1423,6 @@ impl<'a> TxnBatchBuilder<'a> {
             text_index_trusted,
             gate_mode,
             self.origin,
-            self.promote_member_of,
         )
     }
 }
@@ -1761,8 +1766,7 @@ pub(crate) fn apply_ops(
 }
 
 /// Why a base write transaction is allowed to touch the ids it touches
-/// (ARCH-0052 D2, ONE-1728 K4). Exactly two arms: there is no grant type and
-/// no test-mintable capability anywhere in this design.
+/// (ARCH-0052 D2, ONE-1728 K4). Exactly two arms:
 ///
 /// * [`Self::Ordinary`] — every ordinary base write. An op referencing a live
 ///   session overlay's member is rejected at the decode point.
@@ -1771,25 +1775,31 @@ pub(crate) fn apply_ops(
 ///   whose promote this transaction is; every other live session's ids still
 ///   reject.
 ///
-/// The exemption set is not carried on this type. It rides beside the origin
-/// as the per-call `promote_member_of` channel on [`apply_ops_with_origin`],
-/// whose closed form is supplied by the promote call site out of the session
-/// identity already present in its own parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BaseWriteOrigin {
+/// The exemption set RIDES ON THE ORIGIN, as a borrowed
+/// [`PromoteReplayGrant`]. That type's field and its only constructor are
+/// private to `off_record::promote`, so the exempting arm cannot be built
+/// anywhere else in the crate — the capability is the arm, not a predicate a
+/// caller supplies alongside it. There is no `Fn` channel to hand-roll and no
+/// test-mintable capability anywhere in this design.
+#[derive(Clone, Copy)]
+pub(crate) enum BaseWriteOrigin<'grant> {
     Ordinary,
-    PromoteReplay,
+    PromoteReplay(&'grant PromoteReplayGrant),
 }
 
-/// Session-membership exemption channel carried beside a [`BaseWriteOrigin`].
-///
-/// Option contract (pinned by ONE-1728, bound by ONE-1730): `None` iff the
-/// origin is [`BaseWriteOrigin::Ordinary`]; `Some` iff it is
-/// [`BaseWriteOrigin::PromoteReplay`], in which case the predicate answers
-/// "is this id a member of the session whose promote this transaction is".
-/// Because the `Ordinary` wrapper passes `None` by construction, no state
-/// inside the transaction can exempt another session's ids.
-pub(crate) type PromoteMemberOf<'a> = Option<&'a dyn Fn(&EntityId) -> bool>;
+impl BaseWriteOrigin<'_> {
+    /// Whether this write origin exempts `id` from live-overlay membership
+    /// rejection. Both doors that judge membership — the K4 decode-point taint
+    /// guard here and the entity write door in
+    /// [`crate::off_record::guard_off_record_entity_put`] — ask exactly this,
+    /// so an id is exempt at both or at neither.
+    pub(crate) fn exempts(self, id: &EntityId) -> bool {
+        match self {
+            Self::Ordinary => false,
+            Self::PromoteReplay(grant) => grant.exempts(id),
+        }
+    }
+}
 
 /// The K4 taint guard, run at the decode point of ONE op inside the applying
 /// write transaction (ARCH-0052 D2, ONE-1728).
@@ -1810,8 +1820,7 @@ pub(crate) type PromoteMemberOf<'a> = Option<&'a dyn Fn(&EntityId) -> bool>;
 fn check_decode_point_taint_guard(
     store: &Store,
     op: &BatchOp,
-    origin: BaseWriteOrigin,
-    promote_member_of: PromoteMemberOf<'_>,
+    origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
     // Decode-point membership probe. With zero live overlay entities no id in
     // this op can be a member, so the guard is a no-op and a raw CLAIM body is
@@ -1831,12 +1840,11 @@ fn check_decode_point_taint_guard(
             return Ok(());
         }
         // `PromoteReplay` exempts ONLY the session whose promote this
-        // transaction is. The predicate is minted by the promote call site out
-        // of the session identity in its own parameters, so it has no way to
-        // answer `true` for another live session's ids — and `Ordinary` carries
-        // no predicate at all.
-        if promote_member_of.is_some_and(|member_of| member_of(id)) {
-            debug_assert_eq!(origin, BaseWriteOrigin::PromoteReplay);
+        // transaction is: its grant is minted inside that promote transaction
+        // out of the closure being replayed, so it has no way to answer `true`
+        // for another live session's ids — and `Ordinary` carries no grant at
+        // all.
+        if origin.exempts(id) {
             return Ok(());
         }
         Err(tainted(id))
@@ -1963,7 +1971,6 @@ pub(crate) fn apply_ops_with_gate_mode(
         text_index_trusted,
         gate_mode,
         BaseWriteOrigin::Ordinary,
-        None,
     )
 }
 
@@ -1986,14 +1993,8 @@ pub(crate) fn apply_ops_with_origin(
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
-    origin: BaseWriteOrigin,
-    promote_member_of: PromoteMemberOf<'_>,
+    origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
-    debug_assert_eq!(
-        promote_member_of.is_some(),
-        origin == BaseWriteOrigin::PromoteReplay,
-        "the promote-membership channel is Some iff the origin is PromoteReplay"
-    );
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
@@ -2038,7 +2039,7 @@ pub(crate) fn apply_ops_with_origin(
         // K4: the op-decode point, inside the applying transaction. Every arm
         // below decodes an op that may carry overlay ids, so this is where
         // membership is judged — before the arm can stage a byte.
-        check_decode_point_taint_guard(store, &op, origin, promote_member_of)?;
+        check_decode_point_taint_guard(store, &op, origin)?;
         match op {
             BatchOp::Put {
                 id,
@@ -2123,7 +2124,7 @@ pub(crate) fn apply_ops_with_origin(
                     include_source_in_gate_input,
                     claim_gate_prechecked,
                     Some(&companion_retired_histories),
-                    promote_member_of,
+                    origin,
                 )?;
                 evicted_shell_sources.extend(applied.evicted_shell_sources);
                 #[cfg(feature = "sync")]
@@ -3103,7 +3104,7 @@ fn apply_claim_candidate(
         None,
         // A claim candidate is never part of a promotion closure: promote
         // replays the session's typed journal, which stages no candidate op.
-        None,
+        BaseWriteOrigin::Ordinary,
     )?;
 
     let subject_id = match subject {
@@ -3206,7 +3207,7 @@ fn apply_put(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
-    promote_member_of: PromoteMemberOf<'_>,
+    origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
     // OFRC-2i: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A live
@@ -3214,14 +3215,8 @@ fn apply_put(
     // and closed fences reject before any validation or side effect can mint
     // an index row, gate receipt, or late entity body. The one exemption is a
     // promote-replay transaction rematerializing its OWN session's closure —
-    // carried on the same channel the K4 decode-point guard reads.
-    crate::off_record::guard_off_record_entity_put(
-        store,
-        wtxn,
-        &id,
-        replicated,
-        promote_member_of,
-    )?;
+    // carried on the same write origin the K4 decode-point guard reads.
+    crate::off_record::guard_off_record_entity_put(store, wtxn, &id, replicated, origin)?;
     // The six pinned system-agent actor ids ([0xA1; 16]..[0xA6; 16]) are
     // write-door-reserved (design-pass 2026-07-10 §7a; the sixth, [0xA6; 16], is
     // the always-available default base preset): a definition stored at

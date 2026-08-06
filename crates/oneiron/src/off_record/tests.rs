@@ -1079,18 +1079,19 @@ fn off_record_fence_blocks_ppr_expansion_and_context_pack_edges() {
     }
 }
 
-/// ONE-1730: the promote-replay grant exempts ONLY the granting session's own
-/// closure, and a rejection INSIDE the promote transaction rolls the whole
-/// thing back.
+/// ONE-1730: the promote-replay grant exempts ONLY the closure it was minted
+/// from, and a rejection INSIDE the promote transaction rolls the whole thing
+/// back.
 ///
-/// A second live room holds the ACTOR the promoted message is attributed to.
-/// That id is referenced by the closure but is not part of it, so the K4 taint
-/// guard must still refuse — and it refuses at the `AuthoredBy` edge, several
-/// ops after the shell, turn, and message puts have already staged rows into
-/// the transaction. Zero base delta afterwards is therefore evidence of the
-/// single-transaction contract, not of an early bail; the same closure then
-/// promotes cleanly once the other room is gone, proving a failed promote
-/// leaves the journal and overlay rows intact.
+/// The grant is minted from the PLAN, so the sharpest probe of its scope is a
+/// promote transaction whose op list reaches past that plan's own ids: here a
+/// trailing `AuthoredBy` edge naming a second live room's overlay member —
+/// the same shape the room's real authorship edge has, which is exactly why
+/// that edge is not in the promoted closure. It lands AFTER the shell, turn,
+/// message, and summary puts have already staged rows, so zero base delta
+/// afterwards is evidence of the single-transaction contract, not of an early
+/// bail. The unmodified closure then promotes cleanly, proving a failed
+/// promote leaves the journal and overlay rows intact.
 #[test]
 fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -1133,11 +1134,12 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
             .ok_or(Error::InvariantViolation("witness receipt names no turn"))?,
     )?;
 
-    // A SECOND live room takes the actor into its overlay.
+    // A SECOND live room takes an id into its overlay.
     let other = vault
         .off_record_session_vault()
         .enter("sess-other-room", OffRecordBackendClass::Local)?;
-    put_live_overlay_entity(&other, &actor)?;
+    let foreign = EntityId::now();
+    put_live_overlay_entity(&other, &foreign)?;
 
     let entities_before = {
         let rtxn = vault.store.env.read_txn()?;
@@ -1147,8 +1149,27 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
         let rtxn = vault.store.env.read_txn()?;
         vault.store.edges_out.len(&rtxn)?
     };
-    let refusal = session
-        .promote_turn(&turn)
+    let mut overreaching = session.overlay().snapshot()?.plan_promotion(turn)?;
+    overreaching
+        .ops
+        .push(crate::batch::BatchOp::PublicEdgeWithCreatedAt {
+            src: turn,
+            kind: EdgeKind::AuthoredBy,
+            tgt: foreign,
+            weight: 1.0,
+            created_at: 1000,
+            vad: crate::affect::Vad::NEUTRAL,
+        });
+    let refusal = vault
+        .with_write_txn(|wtxn| {
+            FloorWrites::new(&vault.store).promote(
+                &vault,
+                wtxn,
+                "sess-grant-scope",
+                &overreaching,
+                2000,
+            )
+        })
         .expect_err("another room's overlay id must taint the replay");
     assert_eq!(refusal.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     {
@@ -1169,8 +1190,9 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
         "a rejected promote must persist no receipt"
     );
 
-    // The other room evaporates; the SAME closure is still promotable.
-    other.close()?;
+    // The SAME closure is still promotable through the ordinary path — and
+    // the other room stays live, because a closure that stops at its own
+    // endpoints has nothing to say about anyone else's ids.
     let outcome = session.promote_turn(&turn)?;
     assert_eq!(
         outcome.replayed.len(),
@@ -1180,8 +1202,9 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
     {
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(vault.store.entities.len(&rtxn)? - entities_before, 4);
-        assert_eq!(vault.store.edges_out.len(&rtxn)? - edges_before, 4);
+        assert_eq!(vault.store.edges_out.len(&rtxn)? - edges_before, 3);
     }
+    other.close()?;
     session.close()?;
     Ok(())
 }

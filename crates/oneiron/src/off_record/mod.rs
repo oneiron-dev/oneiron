@@ -17,6 +17,10 @@ pub(crate) use lifecycle::{
 /// the `crate::off_record::FloorWrites` path stable, so the `gate.rs` and
 /// `deletion.rs` call sites are diff-quiet across the move.
 pub(crate) use promote::FloorWrites;
+/// The promote-replay capability `batch.rs` matches on. Only `promote.rs` can
+/// MINT one (private field, private constructor); this path just lets the two
+/// membership doors ask a grant they were handed what it exempts.
+pub(crate) use promote::PromoteReplayGrant;
 
 /// ONE-1728 (K2) / ONE-1729: downstream cites resolve through `off_record`.
 /// `OverlaySnapshot` is promote's input; `SessionWriteRoute` is captured by
