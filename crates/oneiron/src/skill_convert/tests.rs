@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use super::*;
 
 use crate::config::VaultConfig;
+use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
 use crate::facade::{WitnessAuthor, WitnessMessage, WitnessTurn};
@@ -760,6 +761,270 @@ fn source_message_refs_is_silent_off_this_road_and_strict_on_it() -> Result<()> 
             .expect_err("a malformed linkage is corruption, not an absent linkage")
             .kind(),
         ErrorKind::InvalidSkillBody
+    );
+    Ok(())
+}
+
+// ─── ONE-1447: the stale fold ───────────────────────────────────────────
+
+/// A converted skill that has been ADMITTED, plus the source messages it
+/// cites. Admission matters: `active` is the state the lifecycle machine lets
+/// the fold move, and the state whose loss of canon standing is observable.
+fn converted_and_admitted(vault: &Vault, lines: &[&str]) -> (EntityId, Vec<EntityId>) {
+    let turns = witnessed_turns(vault, lines, 1_775_000_000);
+    let refiner = StubRefiner::minting("morning-routine-checklist", tree(REFINED_TREE));
+    let outcome =
+        convert_messages_to_skill(vault, &ConvertRequest::new(turns), &refiner, t(20), 21)
+            .expect("the conversion lands");
+    let ConvertOutcome::Created(skill) = outcome else {
+        panic!("a library with nothing alike in it mints: {outcome:?}");
+    };
+    admit(vault, &skill).expect("the admission gate activates the candidate");
+    let record = vault
+        .get_skill_record(&skill)
+        .expect("read back")
+        .expect("the record landed");
+    let sources = source_message_refs(&record).expect("the linkage reads back");
+    assert_eq!(sources.len(), lines.len(), "one cited message per line");
+    (skill, sources)
+}
+
+/// The whole ticket in one pass: a deleted source takes the skill it grounded
+/// out of canon — visibly, with the cause on the record's note, and without
+/// touching the record itself.
+#[test]
+fn a_deleted_source_stales_the_skill_it_grounded_without_losing_it() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
+    let before = vault.get_skill_record(&skill)?.expect("admitted record");
+    assert_eq!(before.lifecycle_status, SkillLifecycle::Active);
+    assert_eq!(skills_dependent_on_message(&vault, &sources[0])?, [skill]);
+
+    assert!(vault.delete_entity(&sources[0])?, "the source existed");
+
+    let after = vault
+        .get_skill_record(&skill)?
+        .expect("staleness never deletes the skill");
+    assert_eq!(after.lifecycle_status, SkillLifecycle::Stale);
+    assert!(!after.lifecycle_status.loads_as_canon());
+    assert_eq!(
+        SkillRecord {
+            lifecycle_status: SkillLifecycle::Active,
+            ..after
+        },
+        before,
+        "a state flip, not a content revision: nothing else on the record moves"
+    );
+
+    let note = skill_stale_note(&vault, &skill)?.expect("the cause is inspectable");
+    assert_eq!(note.reason, STALE_REASON_SOURCE_MESSAGE_DELETED);
+    assert_eq!(note.deleted_refs, vec![sources[0]]);
+    Ok(())
+}
+
+/// Conservative by design: ANY lost source stales, because a skill standing on
+/// half its evidence is still a skill nobody can check. The surviving source
+/// keeps its index row, so it can stale the record again later.
+#[test]
+fn one_lost_source_of_two_is_enough_and_the_survivor_stays_indexed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
+
+    vault.delete_entity(&sources[0])?;
+
+    assert_eq!(
+        vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
+        Some(SkillLifecycle::Stale)
+    );
+    assert_eq!(
+        skills_dependent_on_message(&vault, &sources[1])?,
+        [skill],
+        "the surviving citation is still live"
+    );
+    Ok(())
+}
+
+/// Deleting something the skill never cited is not evidence loss.
+#[test]
+fn deleting_a_message_the_skill_never_cited_leaves_it_active() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = converted_and_admitted(&vault, &["blinds, kettle"]);
+    let unrelated = witnessed_turns(&vault, &["nothing to do with the morning"], 1_775_100_000);
+    let stranger = vault
+        .edges_in(&unrelated[0])?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::PartOf)
+        .expect("the witness door wrote a message child")
+        .target;
+
+    assert!(skills_dependent_on_message(&vault, &stranger)?.is_empty());
+    vault.delete_entity(&stranger)?;
+
+    assert_eq!(
+        vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
+        Some(SkillLifecycle::Active)
+    );
+    assert_eq!(skill_stale_note(&vault, &skill)?, None);
+    Ok(())
+}
+
+/// The reversal is the owner's, through the ordinary update door — and a
+/// SECOND lost source re-stales, opening a fresh episode whose note names the
+/// deletion that caused THIS one.
+#[test]
+fn the_owner_reverses_the_fold_and_a_later_loss_re_stales() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
+    vault.delete_entity(&sources[0])?;
+
+    let mut revived = vault.get_skill_record(&skill)?.expect("stale record");
+    revived.lifecycle_status = SkillLifecycle::Active;
+    vault.update_skill_record(&skill, &revived, t(40), 41)?;
+    assert_eq!(
+        skill_stale_note(&vault, &skill)?,
+        None,
+        "the reversal ends the episode the note described"
+    );
+
+    vault.delete_entity(&sources[1])?;
+
+    assert_eq!(
+        vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
+        Some(SkillLifecycle::Stale)
+    );
+    let note = skill_stale_note(&vault, &skill)?.expect("a fresh episode, freshly noted");
+    assert_eq!(
+        note.deleted_refs,
+        vec![sources[1]],
+        "the refs of an episode the owner already reversed are history, not causes"
+    );
+    Ok(())
+}
+
+/// A second source lost inside the SAME episode grows the note instead of
+/// re-writing the record: the skill is already out of canon, and re-encoding
+/// an unchanged body would mint a revision that says nothing new.
+#[test]
+fn a_second_loss_in_one_episode_grows_the_note() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
+
+    vault.delete_entity(&sources[0])?;
+    vault.delete_entity(&sources[1])?;
+
+    let note = skill_stale_note(&vault, &skill)?.expect("still stale");
+    assert_eq!(note.deleted_refs, vec![sources[0], sources[1]]);
+    Ok(())
+}
+
+/// The lifecycle table decides who moves. A `candidate` conversion has no
+/// legal move to `stale` (ARCH-0053 §6) and is left exactly as it is — it
+/// never loaded as canon, and the admission gate is where its lost evidence
+/// gets its hearing.
+#[test]
+fn a_candidate_conversion_is_left_to_the_admission_gate() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let turns = witnessed_turns(&vault, &["blinds, kettle"], 1_775_000_000);
+    let refiner = StubRefiner::minting("morning-routine-checklist", tree(REFINED_TREE));
+    let ConvertOutcome::Created(skill) =
+        convert_messages_to_skill(&vault, &ConvertRequest::new(turns), &refiner, t(20), 21)?
+    else {
+        panic!("the conversion mints");
+    };
+    let sources = source_message_refs(&vault.get_skill_record(&skill)?.expect("landed"))?;
+
+    vault.delete_entity(&sources[0])?;
+
+    assert_eq!(
+        vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
+        Some(SkillLifecycle::Candidate)
+    );
+    assert_eq!(skill_stale_note(&vault, &skill)?, None);
+    Ok(())
+}
+
+/// A soft delete scrubs the words just as thoroughly as a hard one, so it
+/// stales too: the fold rides both active-store tear primitives, not one.
+#[test]
+fn a_soft_deleted_source_stales_the_skill_too() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle"]);
+
+    vault.delete_entity_with_reason(&sources[0], DeleteReason::UserDelete)?;
+
+    assert_eq!(
+        vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
+        Some(SkillLifecycle::Stale)
+    );
+    Ok(())
+}
+
+/// The index is a CACHE with an authority: dropped entirely, the rebuild door
+/// reconstructs it to identity from the records, and the delete path works
+/// again afterwards.
+#[test]
+fn the_source_index_rebuilds_to_identity_and_the_delete_path_survives_it() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle", "then priorities"]);
+    let before: Vec<Vec<EntityId>> = sources
+        .iter()
+        .map(|source| skills_dependent_on_message(&vault, source))
+        .collect::<Result<_>>()?;
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    let rows: Vec<Vec<u8>> = vault
+        .store
+        .vault_meta
+        .prefix_iter(&wtxn, SOURCE_INDEX_PREFIX)?
+        .map(|entry| entry.map(|(key, _)| key.to_vec()))
+        .collect::<std::result::Result<_, _>>()?;
+    assert!(!rows.is_empty(), "the conversion indexed its citations");
+    for key in &rows {
+        vault.store.vault_meta.delete(&mut wtxn, key)?;
+    }
+    wtxn.commit()?;
+    assert!(skills_dependent_on_message(&vault, &sources[0])?.is_empty());
+
+    rebuild_skill_source_index(&vault)?;
+    let after: Vec<Vec<EntityId>> = sources
+        .iter()
+        .map(|source| skills_dependent_on_message(&vault, source))
+        .collect::<Result<_>>()?;
+    assert_eq!(after, before, "rebuild is an identity, not a merge");
+
+    rebuild_skill_source_index(&vault)?;
+    assert_eq!(
+        skills_dependent_on_message(&vault, &sources[0])?,
+        [skill],
+        "and it is idempotent"
+    );
+
+    vault.delete_entity(&sources[0])?;
+    assert_eq!(
+        vault.get_skill_record(&skill)?.map(|r| r.lifecycle_status),
+        Some(SkillLifecycle::Stale)
+    );
+    Ok(())
+}
+
+/// A citation row whose skill has left the active store answers for nothing,
+/// so the sweep prunes it as it reads rather than failing on it.
+#[test]
+fn a_citation_row_outliving_its_skill_is_pruned_by_the_sweep() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, sources) = converted_and_admitted(&vault, &["blinds, kettle"]);
+    vault.delete_entity(&skill)?;
+    assert_eq!(
+        skills_dependent_on_message(&vault, &sources[0])?,
+        [skill],
+        "the skill's own delete leaves the citation row behind"
+    );
+
+    vault.delete_entity(&sources[0])?;
+
+    assert!(
+        skills_dependent_on_message(&vault, &sources[0])?.is_empty(),
+        "the sweep prunes what it cannot answer for"
     );
     Ok(())
 }

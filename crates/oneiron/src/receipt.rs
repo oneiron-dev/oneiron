@@ -133,9 +133,16 @@ pub(crate) const FIELD_DEMOTION_REASON: &str = "demotion_reason";
 const FIELD_CLAIM_SOURCE: &str = "claim_source";
 /// The amended op body verbatim (lower hex) — the PRODUCER artifact.
 const FIELD_AMENDED_BODY: &str = "amended_body";
-/// The RESERVED ARCH-0056 Δ slot. Minted here, filled by ED-01 (ONE-1757) —
-/// deliberately never written at this ticket.
-const FIELD_AMENDMENT_DELTA: &str = "amendment_delta";
+/// The ARCH-0056 Δ slot. Minted reserved by ONE-1747; ED-01 (ONE-1757) fills
+/// it from the Δ side-ledger as receipts project
+/// (`edit_distance::delta::attach_amendment_deltas`), which is why the key is
+/// `pub(crate)` rather than private to this module.
+pub(crate) const FIELD_AMENDMENT_DELTA: &str = "amendment_delta";
+/// Companion marker to [`FIELD_AMENDMENT_DELTA`]: the Δ for this amendment was
+/// measured and the measurement FAILED. It exists so the two states a reader
+/// would otherwise confuse stay apart — capture failure is non-fatal, but it
+/// is receipted, never silent.
+pub(crate) const FIELD_AMENDMENT_DELTA_UNCAPTURED: &str = "amendment_delta_uncaptured";
 const FIELD_RECEIPT_SCHEMA: &str = "receipt_schema";
 const FIELD_ENGINE_REGISTER: &str = "engine_register";
 const FIELD_CARE_REGISTER: &str = "care_register";
@@ -2186,6 +2193,13 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
     }
 
+    // ED-01 (ONE-1757): the reserved Δ slot is filled from its own side-ledger
+    // once, HERE, rather than by every projector that can emit an amended
+    // outcome. Receipts are projections, so a Δ has nowhere else to be
+    // stamped; one pass over the collected records keeps the family
+    // projectors ignorant of edit distance.
+    crate::edit_distance::delta::attach_amendment_deltas(vault, &rtxn, &mut records)?;
+
     Ok(records)
 }
 
@@ -3110,6 +3124,11 @@ fn append_access_grant_scope_fields(
             fields.insert("scope".to_owned(), "companion_profile".to_owned());
             fields.insert("person_ref".to_owned(), person_ref.to_hex());
             fields.insert("persona_ref".to_owned(), persona_ref.to_hex());
+        }
+        AccessGrantScope::Calendar { calendar_ref, rung } => {
+            fields.insert("scope".to_owned(), "calendar".to_owned());
+            fields.insert("calendar_ref".to_owned(), calendar_ref.to_hex());
+            fields.insert("rung".to_owned(), rung.as_str().to_owned());
         }
     }
 }

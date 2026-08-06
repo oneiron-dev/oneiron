@@ -98,6 +98,7 @@ pub mod registry;
 pub mod repo_mutation;
 pub mod rerank;
 pub mod run_tree;
+pub mod saved_query;
 pub mod secret_custody;
 pub mod secret_manifest;
 pub mod serialize;
@@ -124,7 +125,8 @@ pub mod write_envelope;
 
 pub use crate::access_grant::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, AccessGrant, AccessGrantCapability,
-    AccessGrantScope, AccessGrantStatus, decode_access_grant_body, encode_access_grant_body,
+    AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow, decode_access_grant_body,
+    encode_access_grant_body,
 };
 pub use crate::actor_claims::{
     ACTOR_CLAIM_LINEAGE_KEY, ACTOR_CLAIM_MAX_CITED_EVIDENCE, ACTOR_DISTILL_CALL_PURPOSE_NAME,
@@ -214,8 +216,10 @@ pub use crate::bm25::{
     bm25_diagnostics_snapshot,
 };
 pub use crate::booking::{
-    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotMask, SlotOracle, SolveRequest,
-    SolveResult,
+    BookingError, BusyBlockRow, CalendarDisclosureDefault, ConstraintObject, DisclosureRung,
+    EventDetailsRow, EventRow, EventTypeKey, RankedSlot, RungProjection, SlotMask, SlotOracle,
+    SolveRequest, SolveResult, SurfaceClass, TitledEventRow, default_disclosure_rung,
+    project_at_rung, project_calendar_grant,
 };
 pub use crate::calendar::{
     BusyInterval, BusyUnion, CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER,
@@ -826,6 +830,15 @@ pub use crate::run_tree::{
     RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
     RunTreeRepair, RunTreeStatus, RunTreeTimestamps, render_run_tree,
 };
+pub use crate::saved_query::{
+    ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, EvaluationOutcome,
+    EvaluationRequest, EvidenceDependencies, FilterAst, MatchDecision, MatchVerdict, MatcherSpec,
+    MembershipCause, MembershipCommitOutcome, MembershipEvent, MembershipTransition,
+    MembershipWritePlan, PackDrift, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,
+    QueryScope, RelevantEvidence, SavedQueryDefinition, SavedQueryDerivationEnvelope,
+    SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryLifecycle, SavedQueryRecord,
+    UpdateSavedQueryRequest, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport,
+};
 pub use crate::session_lifecycle::{
     EndedSession, OpenSession, SessionClosePredicate, SessionEndReason, SessionEndWake,
     SessionLifecycleRecord, SessionMintOutcome,
@@ -861,8 +874,10 @@ pub use crate::skill_convert::{
     CONVERT_RATIONALE_MAX_BYTES, ConvertOutcome, ConvertRequest, ConvertUtterance,
     PROVENANCE_BIRTH_KEY, PROVENANCE_DEDUP_RATIONALE_KEY, PROVENANCE_MERGE_OF_KEY,
     PROVENANCE_SOURCE_MESSAGES_KEY, RefineVerdict, RefinedSkill, SKILL_CONVERT_CALL_PURPOSE_NAME,
-    SkillNeighbor, SkillRefineBrief, SkillRefiner, convert_messages_to_skill,
-    skill_convert_call_purpose, source_message_refs,
+    STALE_NOTE_DELETED_REFS_KEY, STALE_NOTE_REASON_KEY, STALE_REASON_SOURCE_MESSAGE_DELETED,
+    SkillNeighbor, SkillRefineBrief, SkillRefiner, SkillStaleNote, convert_messages_to_skill,
+    rebuild_skill_source_index, skill_convert_call_purpose, skill_stale_note,
+    skills_dependent_on_message, source_message_refs,
 };
 pub use crate::skill_hub::{
     GitSkillHubAdapter, HUB_PIN_KEYS, HUB_REF_KEYS, HttpIndexSkillHubAdapter,
