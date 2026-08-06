@@ -12,8 +12,9 @@
 //!    CAL-02's passport machinery at sequence 0; reschedule and cancel keep that
 //!    UID and increment the sequence exactly once each.
 //! 4. **Credentials are opaque.** Hold, reschedule, and cancel tokens are
-//!    random bearer values that encode nothing and are scoped by the row they
-//!    resolve through — never by the token.
+//!    bearer values that encode nothing and are scoped by the row they resolve
+//!    through — never by the token. A retry is answered with the credentials it
+//!    already has, never with a second authority over the same booking.
 //! 5. **One door.** The transition runs only in the home-node consumer. No
 //!    public API executes a verb directly.
 
@@ -553,7 +554,7 @@ fn hold_token_is_opaque_and_only_digest_is_persisted() {
     // Every credential this lane issues is pure lowercase hex of the same
     // width: there is no field for state to travel in.
     for token in [&confirmed.reschedule_token.0, &confirmed.cancel_token.0] {
-        assert_eq!(token.len(), 64, "32 random bytes, hex encoded");
+        assert_eq!(token.len(), 64, "32 bytes of entropy, hex encoded");
         assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert!(token.bytes().all(|byte| !byte.is_ascii_uppercase()));
     }
@@ -1175,6 +1176,184 @@ fn cancel_keeps_uid_and_increments_sequence_once() {
             .expect("cancel retry"),
     );
     assert_eq!(retry.calendar, revision.calendar);
+}
+
+#[test]
+fn confirm_retry_reissues_the_same_credentials_and_one_booking_cancels_once() {
+    let fixture = Fixture::open();
+    let slot = slot_of(&fixture.offered_slots()[0]);
+    let visitor = session(b"visitor-one");
+    let hold = expect_held(
+        fixture
+            .run(
+                BookingVerbRequest::Hold(hold_spec(&fixture, visitor, slot)),
+                NOW,
+            )
+            .expect("hold"),
+    );
+
+    let first = expect_confirmed(
+        fixture
+            .run(
+                BookingVerbRequest::Confirm(confirm_spec(&fixture, &hold, visitor)),
+                NOW,
+            )
+            .expect("confirm"),
+    );
+    let retry = expect_confirmed(
+        fixture
+            .run(
+                BookingVerbRequest::Confirm(confirm_spec(&fixture, &hold, visitor)),
+                NOW + 30,
+            )
+            .expect("retry"),
+    );
+
+    // A retry is answered with the SAME pair, not a second authority over one
+    // booking: the credentials are derived from the hold token it re-presented.
+    assert_eq!(retry.reschedule_token, first.reschedule_token);
+    assert_eq!(retry.cancel_token, first.cancel_token);
+
+    // And the receipt is keyed by the BOOKING, so even a second credential
+    // cancels the same cancel: one logical cancel, one increment.
+    let cancelled = expect_revision(
+        fixture
+            .run(
+                BookingVerbRequest::Cancel(CancelSpec {
+                    token: retry.cancel_token,
+                    idempotency_key: None,
+                }),
+                NOW + 60,
+            )
+            .expect("cancel"),
+    );
+    assert_eq!(cancelled.calendar.sequence, 1);
+    let again = expect_revision(
+        fixture
+            .run(
+                BookingVerbRequest::Cancel(CancelSpec {
+                    token: first.cancel_token,
+                    idempotency_key: None,
+                }),
+                NOW + 90,
+            )
+            .expect("cancel with the first confirm's credential"),
+    );
+    assert_eq!(again.calendar, cancelled.calendar, "no second increment");
+    assert_eq!(
+        fixture
+            .live_passports(first.calendar.event_ref)
+            .first()
+            .expect("live passport")
+            .last_sequence,
+        1,
+    );
+}
+
+#[test]
+fn reschedule_back_to_an_earlier_slot_is_a_new_move() {
+    let fixture = Fixture::open();
+    let slots = fixture.offered_slots();
+    let confirmed = book(&fixture, session(b"visitor-one"), slot_of(&slots[0]));
+    let middle = slot_of(&slots[4]);
+    let far = slot_of(&slots[6]);
+
+    let move_out = |target: TimeRange, now: u64| {
+        expect_revision(
+            fixture
+                .run(
+                    BookingVerbRequest::Reschedule(oneiron::RescheduleSpec {
+                        token: confirmed.reschedule_token.clone(),
+                        new_slot: target,
+                        visitor_tz: "UTC".to_owned(),
+                        constraint: None,
+                        idempotency_key: None,
+                    }),
+                    now,
+                )
+                .expect("reschedule"),
+        )
+    };
+
+    assert_eq!(move_out(middle, NOW + 60).calendar.sequence, 1);
+    assert_eq!(move_out(far, NOW + 120).calendar.sequence, 2);
+
+    // The booking no longer sits at `middle`, so a request naming it is a fresh
+    // move back — not a retry of the move that put it there two revisions ago.
+    let back = move_out(middle, NOW + 180);
+    assert_eq!(back.calendar.sequence, 3, "a move BACK is a new transition");
+    let view = read_event(
+        &fixture.vault,
+        &oneiron::CalendarReadRequest {
+            event_ref: confirmed.calendar.event_ref.to_hex(),
+        },
+    )
+    .expect("read event")
+    .expect("the booking EVENT is a calendar EVENT");
+    assert_eq!(
+        (view.start_utc, view.end_utc),
+        (Some(middle.start), Some(middle.end - 1)),
+        "the EVENT actually moved back",
+    );
+}
+
+#[test]
+fn a_cancelled_booking_cannot_be_rescheduled() {
+    let fixture = Fixture::open();
+    let slots = fixture.offered_slots();
+    let confirmed = book(&fixture, session(b"visitor-one"), slot_of(&slots[0]));
+    let event_ref = confirmed.calendar.event_ref;
+    let cancelled = expect_revision(
+        fixture
+            .run(
+                BookingVerbRequest::Cancel(CancelSpec {
+                    token: confirmed.cancel_token,
+                    idempotency_key: None,
+                }),
+                NOW + 60,
+            )
+            .expect("cancel"),
+    );
+    assert_eq!(cancelled.calendar.sequence, 1);
+
+    // The reschedule credential outlives the booking it was issued for, so the
+    // transition itself has to rule on the LIVE status: nothing else stands
+    // between a cancelled booking and a Confirmed passport written over it.
+    let target = slot_of(&slots[4]);
+    assert!(matches!(
+        fixture.run(
+            BookingVerbRequest::Reschedule(oneiron::RescheduleSpec {
+                token: confirmed.reschedule_token,
+                new_slot: target,
+                visitor_tz: "UTC".to_owned(),
+                constraint: None,
+                idempotency_key: None,
+            }),
+            NOW + 120,
+        ),
+        Err(BookingError::InvalidConstraint(_))
+    ));
+
+    // Still cancelled, still at sequence 1, and the slot it would have taken is
+    // still free for someone else.
+    let status: BookingStatusValue =
+        decode_only(&fixture.live_claim_values(event_ref, BOOKING_STATUS_PREDICATE));
+    assert_eq!(status.status, BookingStatus::Cancelled);
+    assert_eq!(
+        fixture
+            .live_passports(event_ref)
+            .first()
+            .expect("live passport")
+            .last_sequence,
+        1,
+        "a refused move increments nothing",
+    );
+    assert!(
+        fixture
+            .offered_slots()
+            .iter()
+            .any(|ranked| slot_of(ranked) == target)
+    );
 }
 
 // -------------------------------------------------------------------------

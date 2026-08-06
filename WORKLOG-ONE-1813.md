@@ -59,14 +59,19 @@ every solve to the page's own booking horizon, so this widens the ANSWER and not
 the work bound. `offers_slot` remains exact equality against the held slot.
 
 **D5 — a confirm retry re-issues fresh reschedule/cancel bearer tokens.**
-Two ratified rules collide: "retries return the already-recorded lifecycle
-receipt" and "tokens are opaque bearer values returned once … vault-meta stores
-only their digest and scope". The digest-only rule is the stronger one — it is
-also a named done-means oracle — so a retry cannot replay the original bearer
+**SUPERSEDED — this deviation was the F2 P1 defect. See VERDICT-FIX below; the
+replacement deviation is "revision credentials are derived from the hold token".**
+Original text: two ratified rules collide: "retries return the already-recorded
+lifecycle receipt" and "tokens are opaque bearer values returned once … vault-meta
+stores only their digest and scope". The digest-only rule is the stronger one — it
+is also a named done-means oracle — so a retry cannot replay the original bearer
 strings. Resolution: the durable receipt pins `{event_ref, uid, sequence}` (no
 re-mint, no second EVENT, no increment) and the retry receives fresh credentials
 for the SAME booking. `confirm_retry_returns_same_event_uid_and_sequence` asserts
-exactly the ratified property.
+exactly the ratified property. — What that missed: fresh credentials per retry IS
+a second authority (two cancel tokens cancel twice under token-keyed receipts).
+The third option neither rule forbids is deriving them from the hold token the
+retry re-presents.
 
 **D6 — the family door lives in `lifecycle.rs`, re-exported from `mod.rs`.**
 The blueprint says "extend the booking-family exact validator and local pure-data
@@ -210,7 +215,9 @@ occupying availability.
 - **Receipt identity is never an advisory key.** Confirm keys on the hold token's
   digest; cancel on the token digest; reschedule on `(token digest, requested
   slot)`, because the same token legitimately moves a booking more than once and
-  only a repeat of the SAME move is a retry.
+  only a repeat of the SAME move is a retry. **(Revision half SUPERSEDED — see
+  VERDICT-FIX below: token-keyed revision receipts were the F2/F4 defect; the
+  revision key is now the EVENT plus the transition.)**
 - **UID shape** is `<event-hex>@oneiron.booking` — globally unique, carries no
   booker identity, and mints once at sequence 0.
 
@@ -257,3 +264,107 @@ Every deletion candidate examined and rejected with grounding:
   weakens or touches them.
 
 Net diff of the pass: this worklog row only.
+
+## VERDICT-FIX (Opus, 2026-08-07) — 3 REAL findings fixed at 2 chokepoints + 1 guard
+
+Finder returned 6 items; the verdict leg adjudicated 3 REAL (F2 P1, F4 P2, F5 P2)
+and REJECTED 3 with derivations (F1 cross-node fencing = redesign of the ratified
+`dreamer_runner` mirror, unfixable in-lane; F3 the UID index is CAL-02's
+repairable node-local cache that structurally cannot join the confirm writer; F6
+the opacity contract binds the token STRING, and internal resolution requires
+`event_ref` in the digest-keyed row). Banked items were NOT relitigated — no code
+moved on any of the three.
+
+Diff: `crates/oneiron/src/booking/lifecycle.rs` + `crates/oneiron/tests/booking_lifecycle.rs`.
+No `Cargo.toml`/`Cargo.lock`, no file outside the packet.
+
+### F2 P1 `retry-idempotency` — confirm retry reminted live authority
+
+Trace: the confirm receipt-hit path called `write_revision_tokens`, minting a
+fresh reschedule+cancel pair on EVERY retry, while revision receipts keyed on the
+token digest. Confirm-twice yielded independent cancel tokens C1 and C2; cancel
+with C1 recorded sequence 1 under C1's key, cancel with C2 found nothing under
+C2's key and incremented to 2 — an exact double-SEQ++ on the DESIGNED retry path,
+against the hard law "retries return the recorded receipt (no double mint/
+increment)".
+
+Fix, chokepoint 1 — **the revision credentials are DERIVED, not minted**:
+`revision_token(hold_token, scope) = hex(blake3(REVISION_TOKEN_DOMAIN || scope.tag
+|| hold_token))`. A retry re-presents the hold token (it is already the receipt's
+identity), so it is answered with the SAME pair the first confirm issued rather
+than a second authority; the receipt-hit path now writes NOTHING at all. Authority
+is unchanged (only the hold-token holder can compute them), and the credential
+inherits the hold token's 32 CSPRNG bytes, so it stays 64 lowercase hex chars of
+unguessable opacity — `hold_token_is_opaque_and_only_digest_is_persisted` passes
+untouched (still distinct per scope, still distinct per booking, still encodes no
+EVENT/UID/email/action/clock).
+
+**DEVIATION (owner-visible):** the blueprint says reschedule/cancel tokens are
+"random opaque bearer values returned once". They are now *derived* from a random
+value rather than independently random. This is forced: only digests are
+persisted, so a retry cannot replay the originals, and the only two ways to answer
+a retry are (a) mint fresh — the P1 defect — or (b) derive deterministically. The
+opacity contract the blueprint actually binds (no EVENT id, UID, email, action or
+timestamp in the token; only digest+scope at rest) is preserved verbatim.
+
+### F4 P2 `reschedule-idempotency` + the F2 consequence — receipt identity re-scoped
+
+Trace: reschedule receipts keyed `(token_digest, target_slot)` and returned before
+any look at the booking's live state. A→B recorded `(T,B,seq1)`, B→C recorded
+`(T,C,seq2)`, then a legitimate C→B hit the stale `(T,B)` receipt, returned
+sequence 1 and left the EVENT at C.
+
+Fix, chokepoint 2 — **`revision_receipt_key` is keyed by the EVENT and the
+transition, never by the credential that reached it**: cancel = `(EVENT, cancel)`,
+reschedule = `(EVENT, reschedule, target_slot)`. Token-keying made one booking's
+receipt space as wide as the set of credentials that could reach it; the EVENT is
+what a transition happens to. This alone also kills F2's double-SEQ++ trace
+independently of the derivation fix (belt and suspenders, as the verdict
+prescribed): every cancel credential for one booking now lands on one receipt.
+
+Reschedule additionally verifies the LIVE occurrence on a receipt hit: the
+recorded receipt is returned only while `booking.slot == spec.new_slot`, i.e. only
+while the booking still sits where that receipt put it. Once it has moved on, a
+request naming that target is a fresh move (seq n+1), not a replay.
+
+Ordering consequence: both verbs now resolve the token and read booking facts
+BEFORE the receipt lookup, since the EVENT is the key. Strictly better — an
+unknown or wrongly-scoped token is refused before any receipt is served.
+
+### F5 P2 `lifecycle-state-machine` — live-status guard on reschedule
+
+Trace: `execute_reschedule` read page, event type and occurrence but never live
+`booking.status`/`calendar.status`. After `execute_cancel` marked both cancelled,
+the still-valid reschedule token rewrote the EVENT and attested a `Confirmed`
+passport content hash while the booking stayed cancelled and freebusy kept
+treating it as free.
+
+Fix, one guard: `BookingFacts` gains the live `status` head (read in the same
+claim walk that already yields page and event type — no extra scan), and
+`execute_reschedule` refuses `BookingStatus::Cancelled` before it solves anything.
+The verdict allowed either "reject cancelled" or "atomically reactivate both
+statuses"; reject is the honest one — un-cancelling is a different transition and
+this lane does not have one (banked as such, not smuggled in).
+
+### Mutation verification (red-before / green-after)
+
+Three tests added to `crates/oneiron/tests/booking_lifecycle.rs`. All three
+verified RED against the pre-fix source (`git checkout` of `lifecycle.rs` alone,
+tests held constant) and GREEN after:
+
+| test | red-before failure |
+|---|---|
+| `confirm_retry_reissues_the_same_credentials_and_one_booking_cancels_once` | `left: OpaqueLifecycleToken("4f0dfc30…") right: OpaqueLifecycleToken("4434c05d…")` — retry minted a second authority |
+| `reschedule_back_to_an_earlier_slot_is_a_new_move` | `left: 1 right: 3` — "a move BACK is a new transition" |
+| `a_cancelled_booking_cannot_be_rescheduled` | the `matches!(…, Err(InvalidConstraint))` assert failed: the cancelled booking rescheduled successfully |
+
+`test result: FAILED. 18 passed; 3 failed` before → `ok. 21 passed; 0 failed` after.
+
+### Gates
+
+- `cargo fmt -p oneiron --check` clean.
+- `cargo clippy -p oneiron --all-features --all-targets` — 0 warnings, 0 errors.
+- `cargo test -p oneiron --all-features` — full suite green, 0 failures across all
+  targets (`booking_lifecycle` 21/21).
+- Two worklog docs corrected to match the code: the superseded receipt-identity
+  bullet above, and the "random bearer values" line in the oracle's module header.

@@ -167,6 +167,7 @@ const LEASE_DIGEST_DOMAIN: &[u8] = b"oneiron.booking.checkout_lease.v1\0";
 const SESSION_KEY_DOMAIN: &[u8] = b"oneiron.booking.session_key.v1\0";
 const CONTENT_HASH_DOMAIN: &[u8] = b"oneiron.booking.content.v1\0";
 const RECEIPT_KEY_DOMAIN: &[u8] = b"oneiron.booking.receipt.v1\0";
+const REVISION_TOKEN_DOMAIN: &[u8] = b"oneiron.booking.revision_token.v1\0";
 
 // -------------------------------------------------------------------------
 // Verbs
@@ -217,9 +218,13 @@ pub fn is_booking_lifecycle_claim_predicate(predicate: &str) -> bool {
 // Opaque credentials
 // -------------------------------------------------------------------------
 
-/// A random bearer credential, returned to the caller exactly once. It encodes
-/// nothing: not an EVENT id, a UID, an email address, an action, or a
-/// timestamp. Only its digest is ever persisted.
+/// An opaque bearer credential. It encodes nothing: not an EVENT id, a UID, an
+/// email address, an action, or a timestamp. Only its digest is ever persisted.
+///
+/// A hold token is 32 CSPRNG bytes. The revision credentials one confirm issues
+/// are DERIVED from that hold token ([`revision_token`]) rather than minted
+/// independently, so a confirm retry is answered with the pair it was answered
+/// with the first time instead of a second authority over the same booking.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpaqueLifecycleToken(pub String);
 
@@ -425,6 +430,17 @@ impl SoftHoldRow {
 pub enum LifecycleTokenScope {
     Reschedule,
     Cancel,
+}
+
+impl LifecycleTokenScope {
+    /// The scope's domain tag, so one booking's two credentials can never derive
+    /// to the same value and a reschedule receipt can never alias a cancel one.
+    const fn tag(self) -> &'static [u8] {
+        match self {
+            Self::Reschedule => b"reschedule\0",
+            Self::Cancel => b"cancel\0",
+        }
+    }
 }
 
 /// The digest row a lifecycle token resolves through. The token carries no
@@ -1047,16 +1063,16 @@ fn confirm_in_writer(
         if recorded.session_hash != Some(session_hash) {
             return Err(refused("recorded booking belongs to another session"));
         }
-        // The recorded receipt pins the EVENT, the UID, and the sequence, so
-        // nothing is re-minted and nothing is incremented. The bearer tokens
-        // cannot be replayed from storage — only their digests are persisted —
-        // so a retry is issued fresh credentials for the SAME booking.
-        let event_ref = recorded.event_ref;
-        let (reschedule_token, cancel_token) = write_revision_tokens(vault, wtxn, event_ref)?;
+        // The recorded receipt pins the EVENT, the UID, and the sequence, and
+        // the revision credentials are DERIVED from the hold token this retry
+        // just presented — so the caller is handed back the very pair the first
+        // confirm issued. Nothing is minted and nothing is written: a retry that
+        // minted a second cancel token would hand out a second, independent
+        // authority over one booking, and two authorities cancel twice.
         return Ok(ConfirmOutcome::Booked(ConfirmReceipt {
             calendar: recorded.into_revision(),
-            reschedule_token,
-            cancel_token,
+            reschedule_token: revision_token(&spec.hold_token, LifecycleTokenScope::Reschedule),
+            cancel_token: revision_token(&spec.hold_token, LifecycleTokenScope::Cancel),
         }));
     }
 
@@ -1096,7 +1112,8 @@ fn confirm_in_writer(
     let uid = mint_booking_uid(&event_ref);
     write_booking_event(vault, wtxn, &event_ref, &hold, spec.booker_contact, now_utc)?;
     write_outbound_passport(vault, wtxn, &event_ref, &uid, &hold, now_utc)?;
-    let (reschedule_token, cancel_token) = write_revision_tokens(vault, wtxn, event_ref)?;
+    let (reschedule_token, cancel_token) =
+        write_revision_tokens(vault, wtxn, event_ref, &spec.hold_token)?;
     let revision = CalendarRevision {
         event_ref,
         uid,
@@ -1139,16 +1156,34 @@ pub(crate) fn execute_reschedule(
     spec: &RescheduleSpec,
     now_utc: u64,
 ) -> Result<RevisionReceipt, BookingError> {
-    let receipt_key = revision_receipt_key(&token_digest(&spec.token), Some(spec.new_slot));
     booking_writer(vault, |wtxn| {
-        if let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)? {
+        let event_ref =
+            resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Reschedule)?;
+        let booking = read_booking_facts(vault, &*wtxn, &event_ref)?;
+
+        // A cancelled booking is not a booking sitting at an inconvenient time.
+        // Its slot is already back in the host's availability and its calendar
+        // status says cancelled, so moving it would attest a Confirmed passport
+        // over a cancelled booking and silently re-occupy a slot someone else
+        // may already hold. Un-cancelling is a different transition, and this
+        // lane does not have one.
+        if booking.status == BookingStatus::Cancelled {
+            return Err(refused("a cancelled booking cannot be rescheduled"));
+        }
+
+        // A retry re-presents a move that already happened — which is only true
+        // while the booking still SITS at the target. Once it has moved on, a
+        // request naming that same target is a fresh move back, not a replay:
+        // the old receipt is history, and returning it would report a sequence
+        // the booking left behind while leaving the EVENT where it was.
+        let receipt_key = revision_receipt_key(&event_ref, Some(spec.new_slot));
+        if booking.slot == spec.new_slot
+            && let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)?
+        {
             return Ok(RevisionReceipt {
                 calendar: recorded.into_revision(),
             });
         }
-        let event_ref =
-            resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Reschedule)?;
-        let booking = read_booking_facts(vault, &*wtxn, &event_ref)?;
 
         let solved = oracle.solve(&SolveRequest {
             event_type: booking.event_type.clone(),
@@ -1218,15 +1253,18 @@ pub(crate) fn execute_cancel(
     spec: &CancelSpec,
     now_utc: u64,
 ) -> Result<RevisionReceipt, BookingError> {
-    let receipt_key = revision_receipt_key(&token_digest(&spec.token), None);
     booking_writer(vault, |wtxn| {
+        let event_ref =
+            resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Cancel)?;
+        // Keyed by the BOOKING, so every credential that can cancel it lands on
+        // the same receipt: one logical cancel, one increment, however many
+        // cancel tokens exist.
+        let receipt_key = revision_receipt_key(&event_ref, None);
         if let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)? {
             return Ok(RevisionReceipt {
                 calendar: recorded.into_revision(),
             });
         }
-        let event_ref =
-            resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Cancel)?;
         let booking = read_booking_facts(vault, &*wtxn, &event_ref)?;
 
         supersede_exact_claim(
@@ -1489,6 +1527,9 @@ struct BookingFacts {
     page_ref: EntityId,
     event_type: EventTypeKey,
     slot: TimeRange,
+    /// The LIVE status head, so a transition rules on what the booking is now
+    /// rather than on what its token was issued for.
+    status: BookingStatus,
 }
 
 /// Creates the EVENT and its four exact booking claims.
@@ -1622,6 +1663,7 @@ fn read_booking_facts(
 ) -> Result<BookingFacts, BookingError> {
     let mut page_ref = None;
     let mut event_type = None;
+    let mut status = None;
     for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
         let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, &claim_id) else {
             continue;
@@ -1642,6 +1684,10 @@ fn read_booking_facts(
                         .event_type,
                 );
             }
+            BOOKING_STATUS_PREDICATE => {
+                status =
+                    Some(decode_claim_value::<BookingStatusValue>(&body.value, "status")?.status);
+            }
             _ => {}
         }
     }
@@ -1649,6 +1695,7 @@ fn read_booking_facts(
         page_ref: page_ref.ok_or_else(|| refused("booking carries no source page claim"))?,
         event_type: event_type.ok_or_else(|| refused("booking carries no event type claim"))?,
         slot: occurrence_in(vault, rtxn, event_ref)?,
+        status: status.ok_or_else(|| refused("booking carries no status claim"))?,
     })
 }
 
@@ -1912,14 +1959,35 @@ fn read_token_row(
     read_meta(vault, rtxn, BOOKING_TOKEN_META_PREFIX, &token_digest(token))
 }
 
-/// Mints and records this booking's reschedule and cancel credentials.
+/// Derives one revision credential from the hold token that bought the booking.
+///
+/// Deterministic on purpose. A confirm retry has to answer with the SAME pair
+/// the first confirm issued: it cannot replay them, because only their digests
+/// are persisted, and minting a fresh pair per retry would put two independent
+/// cancel authorities on one booking. Deriving them costs no authority — the
+/// hold token is already the credential confirm demands — and the token inherits
+/// that hold token's 32 CSPRNG bytes, so it stays as unguessable as a minted
+/// one and encodes nothing about the booking it belongs to.
+fn revision_token(
+    hold_token: &OpaqueLifecycleToken,
+    scope: LifecycleTokenScope,
+) -> OpaqueLifecycleToken {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(REVISION_TOKEN_DOMAIN);
+    hasher.update(scope.tag());
+    hasher.update(hold_token.0.as_bytes());
+    OpaqueLifecycleToken(hex_lower(hasher.finalize().as_bytes()))
+}
+
+/// Records this booking's reschedule and cancel credentials.
 fn write_revision_tokens(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     event_ref: EntityId,
+    hold_token: &OpaqueLifecycleToken,
 ) -> Result<(OpaqueLifecycleToken, OpaqueLifecycleToken), BookingError> {
-    let reschedule = OpaqueLifecycleToken(mint_raw_token());
-    let cancel = OpaqueLifecycleToken(mint_raw_token());
+    let reschedule = revision_token(hold_token, LifecycleTokenScope::Reschedule);
+    let cancel = revision_token(hold_token, LifecycleTokenScope::Cancel);
     for (token, scope) in [
         (&reschedule, LifecycleTokenScope::Reschedule),
         (&cancel, LifecycleTokenScope::Cancel),
@@ -2030,26 +2098,33 @@ fn confirm_receipt_key(hold_hash: &[u8; 32]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-/// Receipt identity for a revision.
+/// Receipt identity for a revision: the BOOKING and the transition, never the
+/// credential that reached it.
 ///
-/// Cancel is keyed by the token alone, so cancelling twice is one receipt. A
-/// reschedule is keyed by the token AND the requested slot, because the same
-/// token legitimately moves a booking more than once — only a repeat of the SAME
-/// move is a retry.
-fn revision_receipt_key(token_hash: &[u8; 32], slot: Option<TimeRange>) -> [u8; 32] {
+/// Keying on a token digest made one booking's receipt space as wide as the set
+/// of credentials that could reach it, so two cancel tokens for one booking
+/// recorded two independent cancels and incremented the sequence twice. A
+/// transition happens to the EVENT, so the EVENT is its identity.
+///
+/// Cancel is keyed by the booking alone — it is terminal, so cancelling twice is
+/// one receipt. A reschedule adds its TARGET slot, because one booking
+/// legitimately moves more than once; the caller pairs that with a live
+/// occurrence check, since a move BACK to an earlier target is a new transition
+/// rather than a retry of the old one.
+fn revision_receipt_key(event_ref: &EntityId, target_slot: Option<TimeRange>) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(RECEIPT_KEY_DOMAIN);
-    match slot {
+    match target_slot {
         Some(slot) => {
-            hasher.update(b"reschedule\0");
+            hasher.update(LifecycleTokenScope::Reschedule.tag());
             hasher.update(&slot.start.to_be_bytes());
             hasher.update(&slot.end.to_be_bytes());
         }
         None => {
-            hasher.update(b"cancel\0");
+            hasher.update(LifecycleTokenScope::Cancel.tag());
         }
     }
-    hasher.update(token_hash);
+    hasher.update(event_ref.as_bytes());
     *hasher.finalize().as_bytes()
 }
 
