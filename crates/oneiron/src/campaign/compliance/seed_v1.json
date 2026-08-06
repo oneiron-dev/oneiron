@@ -130,7 +130,7 @@
     },
     {
       "jurisdiction": "JP",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "optout_mechanism",
       "requirement": "Every send carries an opt-out address or URL with an adjacent statement, whether or not an exemption is claimed (Art. 4).",
       "b2b_exemption": "no",
@@ -144,7 +144,7 @@
     },
     {
       "jurisdiction": "JP",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "sender_id",
       "requirement": "The sender's name is displayed and never spoofed (Art. 4).",
       "b2b_exemption": "no",
@@ -158,7 +158,7 @@
     },
     {
       "jurisdiction": "JP",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "physical_address",
       "requirement": "The sender's postal address is displayed in the message (Art. 4).",
       "b2b_exemption": "no",
@@ -172,7 +172,7 @@
     },
     {
       "jurisdiction": "JP",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "optout_deadline",
       "requirement": "A refusal suppresses the address immediately (Art. 3(3)); there is no grace period. Post-send obligation: the dispatch gate records it and the suppression path enforces it.",
       "b2b_exemption": "no",
@@ -358,7 +358,7 @@
     },
     {
       "jurisdiction": "US",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "sender_id",
       "requirement": "No false or misleading header information and no deceptive subject line.",
       "b2b_exemption": "no",
@@ -372,7 +372,7 @@
     },
     {
       "jurisdiction": "US",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "physical_address",
       "requirement": "A valid physical postal address for the sender appears in the message.",
       "b2b_exemption": "no",
@@ -386,7 +386,7 @@
     },
     {
       "jurisdiction": "US",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "optout_mechanism",
       "requirement": "A clear and conspicuous opt-out mechanism is present, with no fee, no login, and no information required beyond the address and an opt-out preference.",
       "b2b_exemption": "no",
@@ -400,7 +400,7 @@
     },
     {
       "jurisdiction": "US",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "content_marking",
       "requirement": "The message is clearly and conspicuously identified as an advertisement.",
       "b2b_exemption": "no",
@@ -414,7 +414,7 @@
     },
     {
       "jurisdiction": "US",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "optout_deadline",
       "requirement": "An opt-out is honored within 10 business days. Post-send obligation: the dispatch gate records it and the suppression path enforces it.",
       "b2b_exemption": "no",
@@ -428,7 +428,7 @@
     },
     {
       "jurisdiction": "US",
-      "channel": "*",
+      "channel": "email",
       "rule_kind": "source_hygiene",
       "requirement": "Address harvesting and dictionary attacks are aggravated violations, so dispatch is refused when the list provenance of the address is unknown, unresolvable, or of a prohibited class.",
       "b2b_exemption": "no",

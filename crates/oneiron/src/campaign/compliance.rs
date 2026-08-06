@@ -1775,6 +1775,30 @@ mod tests {
             Some(ComplianceBlockReason::UnknownLegalForm)
         );
 
+        // A jurisdiction's duties reach only the lanes its own rows claim. The
+        // Act's Art. 4 display duties are scoped to 特定電子メール, so the
+        // platform lane Japan puts outside the Act is not refused for want of
+        // the postal address the Act asks for.
+        let mut jp_dm_no_address = facts(Some("JP"), "linkedin");
+        jp_dm_no_address.physical_address_present = false;
+        assert_eq!(verdict(&jp_dm_no_address), ComplianceVerdict::Allow);
+
+        // Same for CAN-SPAM's harvested-list refusal, which the US platform
+        // row places outside the federal regime along with the rest of it.
+        let mut us_dm_unknown_list = facts(Some("US"), "linkedin");
+        us_dm_unknown_list.list_provenance = None;
+        assert_eq!(verdict(&us_dm_unknown_list), ComplianceVerdict::Allow);
+
+        // And the converse, which is what makes this row-local rather than a
+        // blanket DM carve-out: the UK reads reg 22 onto the platform lane, so
+        // the UK's own cease-address duty follows the DM there.
+        let mut uk_dm_no_optout = facts(Some("UK"), "linkedin");
+        uk_dm_no_optout.optout_mechanism_present = false;
+        assert_eq!(
+            reason(&verdict(&uk_dm_no_optout)),
+            Some(ComplianceBlockReason::MissingRequiredMessageElement)
+        );
+
         // A channel no row covers cannot be evaluated, so it fails closed.
         assert_eq!(
             reason(&verdict(&facts(Some("JP"), "whatsapp"))),
