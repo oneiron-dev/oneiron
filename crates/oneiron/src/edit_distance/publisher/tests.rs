@@ -73,6 +73,8 @@ fn category_tracks_the_attribution_verdict_arm_for_arm() {
         AttributionVerdict::SkillDefect,
         AttributionVerdict::ExecutionLapse,
         AttributionVerdict::Discovery,
+        AttributionVerdict::Environment,
+        AttributionVerdict::PreferenceShift,
     ];
     assert_eq!(verdicts.len(), IssueCategory::ALL.len());
     for verdict in verdicts {
