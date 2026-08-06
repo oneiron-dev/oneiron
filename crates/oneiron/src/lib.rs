@@ -548,6 +548,22 @@ pub use crate::edit_distance::miner::{
     pending_substitution_skill_edits, resolve_mined_skill_edit, run_substitution_miner,
     set_miner_k,
 };
+pub use crate::edit_distance::publisher::{
+    CONTENT_HASH_LEN, CountKey, InterviewSession, InterviewState, IssueCategory, IssueSignature,
+    PUBLISHER_CHANNEL_CLASS, PUBLISHER_ENABLED_COMPILED_DEFAULT, PUBLISHER_ENABLED_KEY,
+    PUBLISHER_INSTALL_DEFAULT_KEY, PUBLISHER_PARTY_KEY, PublisherError, PublisherResult,
+    SendOutcome, SignatureSendState, emit_issue_signature, interview_session, issue_signature,
+    publisher_enabled, publisher_party, send_signatures_if_enabled, set_publisher_enabled,
+    set_publisher_install_default, signature_send_state, submit_interview_for_review,
+    tally_judged_outcomes,
+};
+#[cfg(feature = "sync")]
+pub use crate::edit_distance::publisher::{open_interview, settle_interview_digest};
+pub use crate::edit_distance::routing::{
+    RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint, rebuild_routing_projection,
+    record_judged_amendment, rollout_rung, routing_data_bar, routing_weight_hint,
+    serving_model_version, set_rollout_rung, set_serving_model,
+};
 pub use crate::eiri::{
     EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
     EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,

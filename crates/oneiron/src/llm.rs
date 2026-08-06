@@ -39,7 +39,10 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
+use crate::Vault;
+use crate::edit_distance::routing::{RoutingScopeKey, WeightHint, routing_weight_hint};
 use crate::entity_id::bytes_to_hex_lower;
+use crate::error::Result;
 
 pub type LlmResult<T> = std::result::Result<T, LlmError>;
 pub type LlmGenerateFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<LlmResponse>> + Send + 'a>>;
@@ -582,6 +585,37 @@ impl RoleModelDefaults {
         self.override_for(role)
             .cloned()
             .unwrap_or_else(|| role.default_model_id())
+    }
+
+    /// [`Self::resolve`], plus what ED-07's routing loop
+    /// ([`crate::edit_distance::routing`]) knows about that model in
+    /// `task_class`.
+    ///
+    /// The hint never changes the model returned. This door resolves exactly
+    /// what [`Self::resolve`] resolves and hands the routing signal back
+    /// beside it — the projection informs how a router WEIGHTS a candidate it
+    /// is already willing to use, and there is no shape of hint that takes a
+    /// role's model out of play.
+    ///
+    /// `None` is the default answer: a task class starts on
+    /// [`RolloutRung::Shadow`] and stays there until an owner promotes it, so
+    /// an engine that never touches the ladder routes exactly as it did before
+    /// this door existed.
+    ///
+    /// [`RolloutRung::Shadow`]: crate::edit_distance::routing::RolloutRung::Shadow
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading the routing projection.
+    pub fn resolve_with_routing_hint(
+        &self,
+        vault: &Vault,
+        role: LlmRole,
+        task_class: &str,
+    ) -> Result<(ModelId, Option<WeightHint>)> {
+        let model = self.resolve(role);
+        let hint = routing_weight_hint(vault, &RoutingScopeKey::for_model(&model, task_class))?;
+        Ok((model, hint))
     }
 }
 

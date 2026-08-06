@@ -49,6 +49,8 @@ pub mod miner;
 pub mod myers;
 #[cfg(feature = "sync")]
 pub mod proposal_text;
+pub mod publisher;
+pub mod routing;
 
 use std::io::Cursor;
 

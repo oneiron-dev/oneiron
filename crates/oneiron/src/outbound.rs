@@ -17,8 +17,13 @@ use crate::attempt_queue::{
     RetryAttempt,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::campaign::send_hygiene::{ListUnsubscribeTarget, inject_campaign_email_hygiene_headers};
+use crate::channel_identity::{
+    ChannelIdentityBinding, ChannelIdentityState, decode_channel_identity_body,
+};
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::connector_key::EffectorBudgetRead;
+use crate::counterparty_contact::normalize_channel_class;
 use crate::delivery_window::{
     DeliveryWindowApnsInterruptionLevel, DeliveryWindowContextCondition,
     DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
@@ -38,8 +43,10 @@ use crate::receipt::{
     ContextReceiptFields, ReceiptRecord, SendReceiptOutcome, delivered_send_receipt_for_task,
     outbound_intent_receipt, persist_send_receipt,
 };
-use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
+use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
+use crate::store::Store;
 use crate::temporal::TimeRange;
+use crate::vault::entity_id_from_type_index_key;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
@@ -137,6 +144,23 @@ impl OutboundIntent {
             job_ref: trigger.job_ref,
         }
     }
+}
+
+/// The bytes one outbound effect freezes: the intent, plus the CA-05 send
+/// hygiene headers derived from that same frozen metadata.
+///
+/// Flattened and elided-when-empty, the way every optional field on
+/// [`OutboundIntent`] is: the frozen bytes are what a connector reads and what
+/// the ledger hashes into an intent id, so a send that carries no hygiene
+/// headers says nothing about them rather than freezing an empty map. Ordering
+/// is fixed by the struct's field order and by the [`BTreeMap`], because these
+/// bytes are the retry contract.
+#[derive(Serialize)]
+struct FrozenOutboundPayload<'a> {
+    #[serde(flatten)]
+    intent: &'a OutboundIntent,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    hygiene_headers: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -577,6 +601,11 @@ pub struct OutboundDispatchRequest {
     /// cadence, sweep bans, and kill-switch state cannot be bypassed by an
     /// adapter.
     pub linkedin_sandbox_policy: Option<LinkedInSeatSandboxPolicy>,
+    /// CA-05 unsubscribe target for a campaign email send, frozen with the
+    /// intent. Absent for every send that is not campaign email; present, it
+    /// produces the `List-Unsubscribe` / `List-Unsubscribe-Post` headers that
+    /// ride the frozen payload to the connector.
+    pub campaign_unsubscribe: Option<ListUnsubscribeTarget>,
 }
 
 impl OutboundDispatchRequest {
@@ -611,6 +640,7 @@ impl OutboundDispatchRequest {
             delivery_window_apns_interruption_level: None,
             context_receipt: None,
             linkedin_sandbox_policy: None,
+            campaign_unsubscribe: None,
         }
     }
 
@@ -714,6 +744,13 @@ impl OutboundDispatchRequest {
         self.linkedin_sandbox_policy = Some(policy);
         self
     }
+
+    /// Freezes the CA-05 unsubscribe target for a campaign email send.
+    #[must_use]
+    pub fn campaign_unsubscribe(mut self, target: ListUnsubscribeTarget) -> Self {
+        self.campaign_unsubscribe = Some(target);
+        self
+    }
 }
 
 /// Connector-adapter execution request after resolve, gate, and window stages.
@@ -726,6 +763,10 @@ pub struct OutboundExecutionRequest<'a> {
     pub verb_contract: &'static OutboundVerbContract,
     pub channel_identity_ref: Option<EntityId>,
     pub counterparty_ref: Option<&'a str>,
+    /// CA-05 send-hygiene headers, replayed from the FROZEN payload rather than
+    /// re-derived, so an adapter cannot invent a different unsubscribe target
+    /// per attempt. Empty for every send that froze none.
+    pub hygiene_headers: BTreeMap<String, String>,
 }
 
 /// Adapter execution outcome consumed by the common receipt emitter.
@@ -1065,6 +1106,82 @@ pub fn unsupported_outbound_connector(connector: &str) -> UnsupportedOutboundCap
     unsupported_outbound_capability(normalize_key(connector), None, None)
 }
 
+/// Resolves the OF-347 channel identity a connector key sends through.
+///
+/// ONE-1868 leg 2, pure ENRICHMENT: the opt-out verdict rests on
+/// `(counterparty, channel_class)`, never on this value. Nothing new is minted —
+/// the governing connector key (OF-277) names the sending actor, and the
+/// ChannelIdentity bound to that actor on the connector's channel is the
+/// identity that will carry the send. Missing, unregistered, inactive, or
+/// AMBIGUOUS all resolve to `None`: an arbitrary pick would put a
+/// nondeterministic identity on the receipt, which is worse than none.
+pub(crate) fn resolve_channel_identity_ref_for_connector(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    connector_key: &str,
+    actor_entity_ref: Option<&EntityId>,
+) -> crate::Result<Option<EntityId>> {
+    let connector = normalize_key(connector_key);
+    let Some((_, key_record)) =
+        crate::connector_key::governing_connector_key(store, txn, &connector, actor_entity_ref)?
+    else {
+        return Ok(None);
+    };
+    let Some(bound_actor) = key_record
+        .actor_entity_ref
+        .or_else(|| actor_entity_ref.copied())
+    else {
+        return Ok(None);
+    };
+
+    let channel_class = normalize_channel_class(connector_key);
+    let mut resolved = None;
+    for entry in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
+    {
+        let (key, _) = entry?;
+        let id = entity_id_from_type_index_key(&key)?;
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("channel identity entity row"));
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            return Err(Error::CorruptedIndex("channel identity entity header"));
+        };
+        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+            return Err(Error::CorruptedIndex("channel identity entity type"));
+        }
+        let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if identity.state != ChannelIdentityState::Active
+            || normalize_channel_class(&identity.channel) != channel_class
+            || identity.binding != ChannelIdentityBinding::agent(bound_actor)
+        {
+            continue;
+        }
+        if resolved.is_some() {
+            return Ok(None);
+        }
+        resolved = Some(id);
+    }
+    Ok(resolved)
+}
+
+/// An explicit channel identity always wins; otherwise resolve it cheaply.
+pub(crate) fn enrich_dispatch_channel_identity(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    connector_key: &str,
+    actor_entity_ref: Option<&EntityId>,
+    explicit: Option<EntityId>,
+) -> crate::Result<Option<EntityId>> {
+    match explicit {
+        some @ Some(_) => Ok(some),
+        None => {
+            resolve_channel_identity_ref_for_connector(store, txn, connector_key, actor_entity_ref)
+        }
+    }
+}
+
 impl OutboundDispatchPipeline {
     pub fn dispatch<S: OutboundExecutionSink>(
         self,
@@ -1092,7 +1209,7 @@ impl OutboundDispatchPipeline {
     fn dispatch_inner<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
-        request: OutboundDispatchRequest,
+        mut request: OutboundDispatchRequest,
         sink: &mut S,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
@@ -1111,6 +1228,25 @@ impl OutboundDispatchPipeline {
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
+
+        // ONE-1868 leg 2. Every shipping constructor (facade bridge, connector
+        // task executor, direct dispatch) leaves `channel_identity_ref` unset,
+        // so resolve it ONCE here — the pipeline all three funnel through —
+        // rather than at each call site. Enrichment only: the opt-out verdict
+        // below rests on `(counterparty, channel_class)` either way. The read
+        // txn is scoped to this block so none is open when the stages below
+        // take their write txns.
+        request.channel_identity_ref = {
+            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+            enrich_dispatch_channel_identity(
+                &vault.store,
+                &rtxn,
+                &request.intent.channel,
+                request.actor.actor_entity_ref.as_ref(),
+                request.channel_identity_ref,
+            )?
+        };
+
         let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
         let window_decision =
             outbound_delivery_window_decision_at_door(vault, &request, verb_contract)?;
@@ -1183,7 +1319,22 @@ impl OutboundDispatchPipeline {
             outcome,
             execution,
         ) = if admit_for_execution {
-            let payload = serde_json::to_vec(&request.intent).map_err(|_| {
+            // CA-05: the unsubscribe headers are derived ONCE, here, from the
+            // metadata this send is about to freeze — before the gate runs and
+            // long before any connector sees the call. A retry replays these
+            // bytes instead of re-deriving, which is what makes the headers
+            // byte-identical rather than merely equivalent.
+            let mut hygiene_headers = BTreeMap::new();
+            inject_campaign_email_hygiene_headers(
+                &normalize_key(&request.intent.channel),
+                &mut hygiene_headers,
+                request.campaign_unsubscribe.as_ref(),
+            )?;
+            let payload = serde_json::to_vec(&FrozenOutboundPayload {
+                intent: &request.intent,
+                hygiene_headers,
+            })
+            .map_err(|_| {
                 OutboundDispatchError::Engine(Error::InvariantViolation(
                     "outbound intent freeze failed",
                 ))
@@ -2090,13 +2241,14 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             || call.tool() != self.verb_contract.kind
             || call.resolved_endpoint().is_some()
         {
-            return crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
-                crate::outbound_intent_ledger::OutboundSendFailure {
-                    kind: crate::outbound_intent_ledger::OutboundFailureKind::InvalidRequest,
-                    code: None,
-                },
-            );
+            return invalid_frozen_call();
         }
+        // The last in-process boundary before the connector: the hygiene
+        // headers come out of the frozen bytes, never out of the live request.
+        let Ok(hygiene_headers) = crate::outbound_chokepoint::frozen_call_hygiene_headers(call)
+        else {
+            return invalid_frozen_call();
+        };
         let execution_request = OutboundExecutionRequest {
             intent_ref: &self.request.intent_ref,
             intent: &self.request.intent,
@@ -2112,6 +2264,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             verb_contract: self.verb_contract,
             channel_identity_ref: self.request.channel_identity_ref,
             counterparty_ref: self.request.counterparty_ref.as_deref(),
+            hygiene_headers,
         };
         let execution = self.sink.execute(&execution_request);
         let outcome = match execution.kind {
@@ -2134,6 +2287,16 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         self.execution = Some(execution);
         outcome
     }
+}
+
+/// A frozen call the dispatch transport cannot honor verbatim.
+fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {
+    crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
+        crate::outbound_intent_ledger::OutboundSendFailure {
+            kind: crate::outbound_intent_ledger::OutboundFailureKind::InvalidRequest,
+            code: None,
+        },
+    )
 }
 
 fn outbound_dispatch_attempt_id(

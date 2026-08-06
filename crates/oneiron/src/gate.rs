@@ -27,7 +27,9 @@ use crate::connector_key::{
 };
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_index_key,
-    decode_counterparty_contact_body, decode_counterparty_contact_index_value,
+    counterparty_contact_matches_channel_class, counterparty_contacts_by_party_channel,
+    counterparty_contacts_by_party_full_scan, decode_counterparty_contact_index_value,
+    normalize_channel_class, read_counterparty_contact_in_txn,
 };
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
@@ -44,13 +46,21 @@ use crate::outbound_grant::{
     standing_outbound_grant_principal_index_prefix,
 };
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
+#[cfg(test)]
+use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_POLICY_MANIFEST,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+
+/// Receipt reason for a deny whose only restrictive source is a CA-01
+/// `comm.do_not_contact` head. Inside `store.rs`'s closed `counterparty_*`
+/// receipt-reason family.
+const COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON: &str =
+    "counterparty_opt_out_do_not_contact";
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -3214,7 +3224,7 @@ pub(crate) fn evaluate_external_effect_policy(
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
 ) -> Result<ExternalEffectGovernance> {
-    let mut hydrated_effect = hydrate_external_effect_contact(store, wtxn, effect)?;
+    let mut hydrated_effect = hydrate_external_effect_contact(store, &*wtxn, effect)?;
     hydrated_effect.standing_grant_ref = None;
     let mut scoped_mcp_grant_authorized = false;
     let matched_grant = standing_outbound_grant_for_effect(
@@ -3774,119 +3784,161 @@ fn touch_standing_outbound_grant_in_txn(
     Ok(())
 }
 
+/// Hydrates the counterparty consent facts the external-effect door decides on.
+///
+/// ONE-1868: `counterparty` is the ONLY required input. The lookup key is
+/// `(party_ref, channel_class)` per ARCH-0057 §3, and `channel_identity_ref` is
+/// ENRICHMENT that may add candidates — its absence can never return early,
+/// because every shipping constructor leaves it `None` and the legal-class hard
+/// deny below it was therefore unreachable.
+///
+/// Every restrictive source is OR-folded: type-132 contact records AND CA-01's
+/// `comm.do_not_contact` heads. No leg may clear suppression another leg
+/// established.
 fn hydrate_external_effect_contact(
     store: &Store,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
 ) -> Result<ExternalEffectGateInput> {
     let mut hydrated = effect.clone();
-    let Some(counterparty) = effect.counterparty.as_deref() else {
+    let Some(party_ref) = effect.counterparty.as_deref() else {
         return Ok(hydrated);
     };
-    if let Some(identity_ref) = effect.channel_identity_ref
-        && let Some(record) =
-            counterparty_contact_for_send(store, txn, &identity_ref, counterparty)?
-    {
-        hydrated.counterparty_first_touch = Some(record.first_touch);
+
+    let channel_class = normalize_channel_class(&effect.channel);
+    for record in counterparty_contacts_for_send(
+        store,
+        txn,
+        party_ref,
+        &channel_class,
+        effect.channel_identity_ref.as_ref(),
+    )? {
+        hydrated.counterparty_first_touch = hydrated
+            .counterparty_first_touch
+            .or(Some(record.first_touch));
         if record.first_touch == CounterpartyFirstTouch::Public
             && hydrated.policy_risk == ExternalEffectPolicyRisk::Normal
         {
             hydrated.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
         }
-        hydrated.counterparty_opted_out = record.is_opted_out();
-        hydrated.counterparty_opt_out_receipt_reason = record
-            .opt_out
-            .map(super::counterparty_contact::CounterpartyOptOut::receipt_reason);
+        hydrated.counterparty_opted_out |= record.is_opted_out();
+        if record.is_opted_out() && hydrated.counterparty_opt_out_receipt_reason.is_none() {
+            hydrated.counterparty_opt_out_receipt_reason = record
+                .opt_out
+                .map(super::counterparty_contact::CounterpartyOptOut::receipt_reason);
+        }
     }
-    // CA-01 do-not-contact leg. `comm.do_not_contact` is campaign- AND
-    // identity-independent, so it runs for every counterparty — including the
-    // ones with no channel identity and no contact record, which is exactly
-    // where the type-132 read above contributes nothing. The fold is monotonic
-    // (`|=`): this leg can only ADD suppression, never clear an opt-out another
-    // source already established. ONE-1868 owns completing the hydration so no
-    // shipping path can answer a false "no".
-    hydrated.counterparty_opted_out |= crate::campaign::claims::counterparty_do_not_contact_in_txn(
-        store,
-        txn,
-        counterparty,
-        Some(effect.channel.as_str()),
-        &effect.verb,
-    )?;
+
+    fold_matching_comm_do_not_contact_heads(store, txn, party_ref, &channel_class, &mut hydrated)?;
     Ok(hydrated)
 }
 
-fn counterparty_contact_for_send(
+/// Every contact record that participates in this send's restrictive aggregate.
+///
+/// Three CANDIDATE sources, de-duplicated by contact ref and ordered by it so
+/// the folded first-touch and receipt reason are deterministic:
+///
+/// 1. the identity-independent `(party_ref, channel_class)` index;
+/// 2. the legacy identity+counterparty index, when an identity is known — it may
+///    only ADD candidates;
+/// 3. an unbounded type-132 scan, which is MANDATORY: the party-channel index
+///    cannot prove its own completeness at HEAD, and a bounded fallback that
+///    missed one opted-out row would answer a false "no".
+///
+/// Channel scope is then applied ONCE, here, to the merged set. Sources find
+/// rows for the party; this predicate decides which are in scope for the class.
+/// Keeping it at the single fold point is what makes `channel_identity_ref`
+/// enrichment rather than a verdict input: source 2 is keyed by identity alone,
+/// so a stale or explicitly-pinned cross-class identity would otherwise drag a
+/// foreign-channel opt-out into the aggregate and let enrichment move the
+/// verdict. A per-source predicate is one forgotten call from that bug; this is
+/// zero.
+fn counterparty_contacts_for_send(
     store: &Store,
-    txn: &heed::RwTxn<'_>,
-    identity_ref: &EntityId,
-    counterparty: &str,
-) -> Result<Option<CounterpartyContactRecord>> {
-    if let Some(record) =
-        counterparty_contact_for_send_by_index(store, txn, identity_ref, counterparty)?
+    txn: &heed::RoTxn<'_>,
+    party_ref: &str,
+    channel_class: &str,
+    channel_identity_ref: Option<&EntityId>,
+) -> Result<Vec<CounterpartyContactRecord>> {
+    let mut candidates =
+        counterparty_contacts_by_party_channel(store, txn, party_ref, channel_class)?;
+    if let Some(identity_ref) = channel_identity_ref
+        && let Some(hit) =
+            counterparty_contact_by_identity_index(store, txn, identity_ref, party_ref)?
     {
-        return Ok(Some(record));
+        candidates.push(hit);
     }
+    candidates.extend(counterparty_contacts_by_party_full_scan(
+        store, txn, party_ref,
+    )?);
 
-    for entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
-    {
-        let (key, _) = entry?;
-        let Some(id) = type_index_entity_id(&key, ENTITY_TYPE_COUNTERPARTY_CONTACT) else {
-            return Err(Error::CorruptedIndex("counterparty contact type index key"));
-        };
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-            return Err(Error::CorruptedIndex("counterparty contact entity row"));
-        };
-        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
-            return Err(Error::CorruptedIndex("counterparty contact entity header"));
-        };
-        if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-            return Err(Error::CorruptedIndex("counterparty contact entity type"));
-        }
-        let record =
-            decode_counterparty_contact_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
-        if record.matches_counterparty(identity_ref, counterparty) {
-            return Ok(Some(record));
+    candidates.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
+    candidates.dedup_by(|(left, _), (right, _)| left == right);
+
+    let mut records = Vec::with_capacity(candidates.len());
+    for (_, record) in candidates {
+        if counterparty_contact_matches_channel_class(store, txn, &record, channel_class)? {
+            records.push(record);
         }
     }
-    Ok(None)
+    Ok(records)
 }
 
-fn counterparty_contact_for_send_by_index(
+/// Legacy identity+counterparty index hit, when a channel identity is known.
+fn counterparty_contact_by_identity_index(
     store: &Store,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     identity_ref: &EntityId,
     counterparty: &str,
-) -> Result<Option<CounterpartyContactRecord>> {
+) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
     let key = counterparty_contact_index_key(identity_ref, counterparty)?;
     let Some(raw_id) = store.vault_meta.get(txn, &key)? else {
         return Ok(None);
     };
     let id = decode_counterparty_contact_index_value(&raw_id)?;
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(record) = read_counterparty_contact_in_txn(store, txn, &id)? else {
         return Err(Error::CorruptedIndex(
             "counterparty contact lookup index entity row",
         ));
     };
-    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
-        return Err(Error::CorruptedIndex(
-            "counterparty contact lookup index entity header",
-        ));
-    };
-    if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-        return Err(Error::CorruptedIndex(
-            "counterparty contact lookup index entity type",
-        ));
-    }
-    let record =
-        decode_counterparty_contact_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
     if !record.matches_counterparty(identity_ref, counterparty) {
         return Err(Error::CorruptedIndex(
             "counterparty contact lookup index assignment",
         ));
     }
-    Ok(Some(record))
+    Ok(Some((id, record)))
+}
+
+/// OR-folds CA-01's `comm.do_not_contact` heads into the hydrated effect.
+///
+/// The predicate, the value codec, and the restrictive-wins semantics
+/// (`Proposed` is effective; staleness never clears; only an authorized clear
+/// stamp removes a head) are CA-01's — imported, never redefined here. The fold
+/// is monotonic: it can only ADD suppression.
+fn fold_matching_comm_do_not_contact_heads(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    party_ref: &str,
+    channel_class: &str,
+    hydrated: &mut ExternalEffectGateInput,
+) -> Result<()> {
+    if !crate::campaign::claims::counterparty_do_not_contact_in_txn(
+        store,
+        txn,
+        party_ref,
+        Some(channel_class),
+        &hydrated.verb,
+    )? {
+        return Ok(());
+    }
+    hydrated.counterparty_opted_out = true;
+    // A type-132 reason already folded above wins; otherwise the deny would
+    // reach the receipt with no reason at all.
+    if hydrated.counterparty_opt_out_receipt_reason.is_none() {
+        hydrated.counterparty_opt_out_receipt_reason =
+            Some(COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
