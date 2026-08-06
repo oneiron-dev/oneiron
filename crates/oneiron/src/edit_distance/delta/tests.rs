@@ -137,7 +137,8 @@ fn field_diff_counts_changed_leaves_not_bytes() {
             ins: 2,
             del: 1,
             kept: 2,
-            moved: 0
+            moved: 0,
+            approx: false,
         }
     );
     // (2 + 1) / (3 before-leaves + 4 after-leaves).
@@ -165,7 +166,8 @@ fn field_diff_spans_the_full_normalized_range() {
             ins: 0,
             del: 0,
             kept: 2,
-            moved: 0
+            moved: 0,
+            approx: false,
         }
     );
 
@@ -196,7 +198,8 @@ fn field_diff_charges_whole_subtrees_across_a_type_change() {
             ins: 1,
             del: 3,
             kept: 0,
-            moved: 0
+            moved: 0,
+            approx: false,
         }
     );
 }
@@ -245,7 +248,8 @@ fn recorded_ops_counts_churn_and_endpoint_survivors() {
             ins: 10,
             del: 4,
             kept: 11,
-            moved: 0
+            moved: 0,
+            approx: false,
         }
     );
     // 14 / (11 + 17).
@@ -300,50 +304,135 @@ fn recorded_ops_does_not_overlap_prefix_and_suffix() {
             ins: 2,
             del: 0,
             kept: 3,
-            moved: 0
+            moved: 0,
+            approx: false,
         }
     );
 }
 
 // ─── chooser ────────────────────────────────────────────────────────────
 
-/// The r2 precedence is structural, pinned here so ED-02 rewires no call
-/// site: a context offering BOTH lanes takes the recorded one.
+/// The r2 precedence is structural, pinned here so no caller hand-picks a
+/// lane: a context offering ALL THREE takes the recorded one, and a context
+/// offering the last two takes the field diff.
+///
+/// `moved` is the tell that the Myers lane never ran. It is the only counter
+/// no other producer can fill, and the texts offered here are a pure
+/// relocation — a Δ measuring THEM would carry `moved == 2`.
 #[test]
-fn chooser_prefers_recorded_ops_over_field_diff() {
+fn chooser_prefers_recorded_ops_then_field_diff_over_reconstructed() {
     let window = churned_window();
     let proposed = body(&[("a", Value::from(1))]);
     let amended = body(&[("a", Value::from(2))]);
+    let (before, after) = ("one\ntwo\nthree\nfour", "three\nfour\none\ntwo");
+    assert_eq!(
+        delta_from_reconstructed(before, after).ops_summary.moved,
+        2,
+        "fixture must be a relocation, or it proves nothing about the lane"
+    );
+
     let ctx = DeltaCaptureContext {
         recorded: Some(&window),
         bodies: Some((&proposed, &amended)),
+        texts: Some((before, after)),
     };
-    assert_eq!(
-        capture_delta_best(&ctx).expect("capture").source,
-        DeltaSource::RecordedOps
-    );
+    let recorded = capture_delta_best(&ctx).expect("capture");
+    assert_eq!(recorded.source, DeltaSource::RecordedOps);
+    assert_eq!(recorded, delta_from_recorded_ops(&window));
+    assert_eq!(recorded.ops_summary.moved, 0);
 
-    let bodies_only = DeltaCaptureContext::from_bodies(&proposed, &amended);
+    let without_ops = DeltaCaptureContext {
+        recorded: None,
+        ..ctx
+    };
+    let field = capture_delta_best(&without_ops).expect("capture");
+    assert_eq!(field.source, DeltaSource::FieldDiff);
+    assert_eq!(field.ops_summary.moved, 0);
+
     assert_eq!(
-        capture_delta_best(&bodies_only).expect("capture").source,
-        DeltaSource::FieldDiff
+        capture_delta_best(&DeltaCaptureContext::from_texts(before, after))
+            .expect("capture")
+            .source,
+        DeltaSource::Reconstructed
     );
 }
 
-/// The reconstructed arm is typed, not a string: ED-02 (ONE-1758) fills it,
-/// and until then callers match the error instead of sniffing a message.
+/// A context offering nothing is a typed error, not a Δ of zero: "nothing to
+/// measure with" and "measured, and nothing changed" are different facts.
 #[test]
-fn chooser_reports_reconstructed_as_unavailable() {
+fn chooser_reports_an_empty_context_as_unavailable() {
     let ctx = DeltaCaptureContext {
         recorded: None,
         bodies: None,
+        texts: None,
     };
     assert!(matches!(
         capture_delta_best(&ctx),
         Err(Error::DeltaCaptureUnavailable(_))
     ));
-    // The variant exists from day one so the enum never migrates.
+}
+
+// ─── reconstructed lane ─────────────────────────────────────────────────
+
+/// The out-of-band lane carries verifiable ends (each side's own blake3) and
+/// the source token a consumer reads the refs THROUGH.
+#[test]
+fn reconstructed_lane_carries_content_hashes_of_both_ends() {
+    let (before, after) = ("alpha\nbravo\n", "alpha\nbravo\ncharlie\n");
+    let delta = delta_from_reconstructed(before, after);
+
+    assert_eq!(delta.source, DeltaSource::Reconstructed);
     assert_eq!(DeltaSource::Reconstructed.as_str(), "reconstructed");
+    assert_eq!(
+        delta.proposed_ref,
+        bytes_to_hex_lower(blake3::hash(before.as_bytes()).as_bytes())
+    );
+    assert_eq!(
+        delta.final_ref,
+        bytes_to_hex_lower(blake3::hash(after.as_bytes()).as_bytes())
+    );
+    assert_eq!(
+        delta.ops_summary,
+        OpsSummary {
+            ins: 1,
+            del: 0,
+            kept: 2,
+            moved: 0,
+            approx: false,
+        }
+    );
+}
+
+/// A capped diff says so THROUGH THE PAYLOAD. The flag is the one thing
+/// standing between a consumer and reading a bound as an exact measurement,
+/// so the test reads it back the way a consumer does: off the encoded bytes.
+#[test]
+fn a_capped_reconstructed_diff_decodes_as_approximate() {
+    let wall = |tag: char| {
+        (0..4_000)
+            .map(|line| format!("{tag}{line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let delta = delta_from_reconstructed(&wall('a'), &wall('b'));
+    let decoded = AmendmentDelta::decode(&delta.encode().expect("encode")).expect("decode");
+
+    assert!(decoded.ops_summary.approx, "a capped script must say so");
+    assert_eq!(decoded, delta);
+
+    // The exact path is the control: nothing sets the flag by accident.
+    assert!(!delta_from_reconstructed("a\nb", "a\nc").ops_summary.approx);
+}
+
+/// The `moved` discount reaches `d_norm` through the SHARED formula, not a
+/// number the reconstructed lane computes for itself.
+#[test]
+fn the_move_discount_reaches_d_norm_through_the_pinned_formula() {
+    let delta = delta_from_reconstructed("one\ntwo\nthree\nfour", "three\nfour\none\ntwo");
+    assert_eq!(delta.ops_summary.moved, 2);
+    assert_eq!(delta.d_norm, delta.ops_summary.d_norm(4, 4));
+    // Two relocations cost 0.4 where two rewrites would cost 4.
+    assert!((delta.d_norm - 0.05).abs() < 1e-6, "{}", delta.d_norm);
 }
 
 // ─── side-ledger ────────────────────────────────────────────────────────
