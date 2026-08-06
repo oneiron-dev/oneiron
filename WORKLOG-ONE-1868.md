@@ -220,3 +220,83 @@ Deliberately kept (flagged, not done):
 Gates after the pass: `cargo fmt --check` clean; `cargo clippy -p oneiron
 --all-features` clean; oracle 15/15 pass; scoped lib tests
 (`gate:: counterparty_contact:: outbound::`) 209/209 pass.
+
+## VERDICT-FIX (Opus, on tip 411ef13cc)
+
+One verdict-verified REAL finding fixed; one banked with derivation and not
+relitigated.
+
+### P2 `channel-scope-correctness` — gate.rs `counterparty_contacts_for_send` (CONFIRMED)
+
+`counterparty_contacts_for_send` merged three candidate sources, and only two of
+them applied the channel-class predicate. The legacy identity+counterparty index
+hit was pushed straight into the restrictive aggregate, and that index is keyed
+by identity and party ALONE. A caller-pinned `channel_identity_ref` whose class
+differs from the send's therefore dragged a foreign-channel opt-out row into the
+fold: an email opt-out denied a TELEGRAM send merely because an email identity
+rode along, while the otherwise identical identity-absent send allowed. That
+makes enrichment a deny source of truth — the exact inversion the A9 contract
+("`channel_identity_ref` is enrichment, never a requirement") and the
+`party_channel_scope_does_not_bleed` done-means forbid. Reachable through the
+public builder: `OutboundDispatchRequest::channel_identity_ref` →
+`dispatch_outbound_intent`, where explicit identity wins over connector-key
+resolution by design.
+
+Fixed at the chokepoint, not the call site. Rather than adding the missing
+predicate to the third source — leaving the next source one forgotten call from
+the same bug — the class predicate now runs ONCE over the merged, de-duplicated
+candidate set, and the two per-source filters are deleted:
+
+* `counterparty_contact::counterparty_contacts_by_party_channel` and
+  `counterparty_contacts_by_party_full_scan` re-validate the PARTY only; the
+  full scan's now-unused `channel_class` parameter is gone.
+* `gate::counterparty_contacts_for_send` applies
+  `counterparty_contact_matches_channel_class` after the dedup, to every
+  candidate whatever its source.
+
+Sources find rows for the party; one fold decides which are in scope for the
+class. No source can ship an unscoped row into the aggregate. UNKNOWN class
+still matches every class, so the "never a false negative" law is untouched —
+the fix can only ever remove a row that provably belongs to a different channel.
+
+Mutation-verified both directions:
+
+* Red-before: new oracle test
+  `explicit_cross_channel_identity_never_changes_the_verdict` fails on the
+  pre-fix tip with `["gate.deny.counterparty_opt_out"]` on a telegram send —
+  the finder's trace reproduced exactly. Green after the fix.
+* Predicate is load-bearing: neutralizing the single fold predicate turns BOTH
+  `explicit_cross_channel_identity_never_changes_the_verdict` and the existing
+  `party_channel_scope_does_not_bleed` red (14/16), proving the moved predicate
+  now carries class scoping for all three sources rather than sitting dead
+  beside surviving per-source filters.
+
+Test support: `dispatch` was split into `dispatch` (identity absent, the
+existing behaviour — every prior call site is unchanged) and
+`dispatch_with_identity`, which pins an explicit `channel_identity_ref`. No
+existing assertion or fixture was modified.
+
+### P3 `test-coverage` (task-verb / outbound-consent oracle) — BANKED, no code action
+
+Rejected with derivation by the verdict leg and not relitigated here: no
+counterparty-carrying send constructor exists in `task_verb.rs` (only the
+`tasks.cancel` gate, `counterparty: None`) or `outbound_consent.rs` (only the
+scoped-MCP transport boundary, `counterparty: None` by construction, and the
+blueprint Notes rule anonymous samples non-applicable). All real send doors are
+covered with both the type-132-only and `comm.do_not_contact`-only arms at
+`channel_identity_ref=None`. Builder deviations (facade/task_verb/outbound_consent
+claims unmodified; test-name mapping; enrichment at the `dispatch_inner`
+chokepoint) stay on the GATE-2 deviation board per items 6-7 above.
+
+### Gates
+
+* `cargo fmt -p oneiron --check` clean.
+* `cargo clippy -p oneiron --all-features --all-targets` clean.
+* `cargo test -p oneiron --all-features --test counterparty_opt_out_shipping_paths_oracle`
+  16/16 pass.
+* Full `cargo test -p oneiron --all-features`: 48 test binaries, all `ok`, zero
+  failures (3809 lib tests + integration suites).
+* Diff versus base 9daac87f4 is `gate.rs`, `counterparty_contact.rs`,
+  `outbound.rs`, the oracle test, and this worklog. No `Cargo.toml`/`Cargo.lock`
+  change (the lockfile is touched by cargo during builds and was restored, never
+  staged).
