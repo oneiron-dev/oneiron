@@ -198,3 +198,99 @@ Gate receipt at handoff: `cargo check -p oneiron --all-features` clean; `cargo c
 `cargo test -p oneiron --all-features --lib calendar::` — 56 passed, 0 failed (base-red
 `approx: false` patch applied for the run, reverted; `git status --porcelain` =
 `M Cargo.lock` only, unstaged per law).
+
+## VERDICT-FIX (Opus, on the simplify tip 25a456525)
+
+Finder returned 4 items; adjudication banked item 1 and confirmed three REAL P2s. All
+three fixed at their chokepoint, each red-before/green-after by deleting the fix line and
+re-running the test that names it. Item 1 (`rrule-failure-typing`, the `Ok([])` for
+`FREQ=HOURLY;INTERVAL=2;BYHOUR=10`) is **not relitigated**: it was rejected with
+derivation as valid RFC text truthfully matching nothing, and the demanded
+phase-reachability analysis is exactly the hand-rolled RFC 5545 recurrence semantics
+blueprint bullet 6 forbids.
+
+### V1 — `dst-fold-until-correctness` (P2, REAL): UNTIL is an instant, not a wall clock
+
+`UNTIL=20261025T011500Z` was translated once onto the London wall clock and handed to the
+recurrence engine as its stopping point. Inside the fold that translation is lossy in the
+one direction that matters: the bound reads 01:15 GMT, while the 25th's occurrence stands
+at 01:30 BST — *later* on the clock, and 45 minutes *earlier* as an instant (00:30Z vs
+01:15Z). The engine stopped on the clock and dropped an occurrence the rule's author had
+kept, so a freebusy consumer would show the owner free in an hour they are booked.
+
+Fix: the rule's `UNTIL` becomes a second **instant** bound, next to the window's own end,
+and the series ends at `min(window.end, until_utc)` — the same dual shape the window
+already had (instant for membership and termination, its wall clock only for scoping gap
+errors). The engine still gets a wall bound so it stops walking, but a deliberately loose
+one (`UNTIL_WALL_SLACK_SECS`, a day; no post-epoch IANA transition rewinds a clock that
+far), because no wall time can be equal to the instant inside a fold. Overshoot is cut
+exactly by the instant bound.
+
+Two consequences, both pinned:
+- `expand_window_ends_an_until_series_on_the_utc_instant` — the finder's trace. Was
+  `[1792715400, 1792801800]`, now `[1792715400, 1792801800, 1792888200]`.
+- `expand_window_does_not_report_a_gap_after_the_series_ended` — the gap-error scope
+  follows the *series* end, not the window's: a series that stopped the day before
+  London's spring-forward gap no longer turns a completed expansion into
+  `NonexistentWallTime`. Mutation-verified by restoring `last` to `window.end`.
+
+Regression the slack would otherwise have introduced, caught and closed: the engine's own
+`UntilBeforeStart` validation is now a day loose, so `FREQ=DAILY;UNTIL=<a day before
+DTSTART>` would have returned `Ok([])` — the exact silent-empty class this module exists
+to refuse. The never-fires gate now reads the exact instant and joins it to the
+`INTERVAL=0` / `COUNT=0` arms: three ways to never fire, one verdict. Mutation-verified
+(deleting the clause returns `Ok([])`), pinned as a third case in
+`expand_window_malformed_rule_is_typed_error`.
+
+### V2 — `rrule-validation` (P2, REAL, both arms): a thin input guard on the text
+
+`parse_rule` treated dependency parse + range validation as complete RFC validation. It
+is not, in two ways the finder reproduced:
+
+- **`COUNT` + `UNTIL` co-present.** RFC 5545 makes them mutually exclusive;
+  `FREQ=DAILY;COUNT=2;UNTIL=20260131T090000Z` returned `Ok([1767603600, 1767690000])`. A
+  rule naming two endings names none, and picking one for its author is not this door's
+  call — rejected.
+- **Non-RRULE content lines.** `ContentLineCaptures` reads the property name and
+  `TryFrom<ContentLineCaptures> for RRule` then ignores it, so `DTSTART:FREQ=DAILY`,
+  `EXRULE:FREQ=DAILY`, `EXDATE:FREQ=DAILY` and `RDATE:FREQ=DAILY` all parsed into a
+  fabricated daily series — including `EXDATE`, whose whole job is to *remove*
+  occurrences. The property name is now checked on the text: `RRULE` or nameless, case
+  insensitive per the RFC.
+
+Both are guards on the input string, not recurrence stepping: the vetted validator stays
+the RFC authority for everything it does cover. Pinned by
+`expand_window_rejects_text_the_dependency_alone_accepts`, which also asserts the three
+accepted spellings (`FREQ=…`, `RRULE:FREQ=…`, `rrule:FREQ=…`) still expand. Each arm
+mutation-verified separately.
+
+### V3 — `public-api-surface` (P2, REAL): the crate-root re-export, D1 reversed
+
+The impl leg narrowed the packet and declared it as D1. The relay packet grants "lib.rs
+append re-exports" explicitly and the adjudication confirmed the finding, so D1 is
+withdrawn, not re-argued: `crates/oneiron/src/lib.rs` now appends `SeriesDtStart`,
+`SeriesExceptionKey`, `exception_identity`, `expand_master_window`, `expand_window` and
+`mask_master_exceptions` to the existing `pub use crate::calendar::{…}` block. Append
+only — no existing name moved, no `CalendarError` re-export invented, so the rebase
+surface against ONE-1791/ONE-1786 is one contiguous added line group.
+
+Pinned by `series_surface_is_reachable_from_the_crate_root`, which names each item's
+**signature** at the root path rather than just importing it, so the shared-consumer
+oracle (engine scalars in, `Result<Vec<u64>, CalendarError>` out, no wrapper) is checked
+at the same time. Red-before was a compile error: six `E0425`/`E0412` at the crate root.
+
+### Gate log (VERDICT-FIX)
+
+- `cargo fmt -p oneiron --check` — clean.
+- `cargo clippy -p oneiron --all-features --all-targets` — clean, zero warnings.
+- `cargo test -p oneiron --all-features --lib calendar::series` — 19 passed, 0 failed
+  (15 before, +4 named tests).
+- `cargo test -p oneiron --all-features` — 3809 passed in the lib target plus every
+  integration target, 0 failed.
+- Packet: diff touches `crates/oneiron/src/calendar/series.rs`,
+  `crates/oneiron/src/lib.rs` and this worklog. No `Cargo.toml`, no `Cargo.lock`, no
+  `calendar/claims.rs`, no `edge.rs`, no `registry.rs`.
+- Base red on 98195c3b8 (`OpsSummary::approx`, ONE-1758/ONE-1762 semantic merge skew) is
+  unchanged and still blocks the lib test target on a clean base. Patched locally with
+  `approx: false` for the runs above and reverted; `git diff` contains no
+  `edit_distance` byte.

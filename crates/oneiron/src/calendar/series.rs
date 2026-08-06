@@ -66,6 +66,19 @@ use crate::temporal::TimeRange;
 /// window nor a long fast-forward to it can run away.
 const MAX_EXPANSION_STEPS: usize = 100_000;
 
+/// Wall-clock slack on the `UNTIL` bound the recurrence engine is given.
+///
+/// RFC 5545 pins `UNTIL` to an instant while the engine stops on a wall clock,
+/// and inside a fall-back fold no wall time is equal to that instant: the last
+/// occurrence of the series can stand *later* on the clock than its bound and
+/// still be earlier than it. So the engine gets a bound loose enough that it
+/// cannot end the series early — no post-epoch IANA transition rewinds a clock
+/// by a day — and [`expand_window`] enforces the instant itself.
+const UNTIL_WALL_SLACK_SECS: u64 = 86_400;
+
+/// The one RFC 5545 content-line property this door reads.
+const RRULE_PROPERTY: &str = "RRULE";
+
 /// The two fields a recurrence needs from its master, without the claim.
 ///
 /// Carries exactly `dtstart_utc` and the IANA zone name, borrowed, so callers
@@ -128,9 +141,11 @@ impl<'a> From<&'a CalendarSeriesExceptionValue> for SeriesExceptionKey<'a> {
 ///   answered before any recurrence work. A one-instant window
 ///   (`start == end`) is valid.
 /// - [`CalendarError::InvalidRecurrenceRule`] — the text is not a rule this
-///   engine supports, it can never fire (a zero `INTERVAL` or `COUNT`), or
-///   expanding it over `window` would cost more than the supported number of
-///   steps. A rule that is merely dense is reported, never silently truncated.
+///   engine supports, it is some other content line, it names both `COUNT` and
+///   `UNTIL`, it can never fire (a zero `INTERVAL` or `COUNT`, or an `UNTIL`
+///   before its own start), or expanding it over `window` would cost more than
+///   the supported number of steps. A rule that is merely dense is reported,
+///   never silently truncated.
 /// - [`CalendarError::UnknownTimeZone`] — `dtstart.tz` is not an IANA zone.
 /// - [`CalendarError::NonexistentWallTime`] — an occurrence the window asked
 ///   for falls in a spring-forward gap and has no instant. The caller decides
@@ -151,18 +166,27 @@ pub fn expand_window(
     let tz = dtstart.tz;
     let seed = wall_clock_at(dtstart.dtstart_utc, tz)?;
     let first = wall_clock_at(window.start, tz)?;
-    let last = wall_clock_at(window.end, tz)?;
 
-    let rule = parse_rule(rrule, tz)?
-        .validate(seed)
-        .map_err(|_| invalid_rule(rrule))?;
-    // RFC 5545 makes both of these positive integers, and the engine answers a
-    // zero by finishing before it produces anything. An empty vector is a
-    // statement about the window; a rule that can never fire is a defect in the
-    // rule, and saying so is the whole point of not returning one silently.
-    if rule.get_interval() == 0 || rule.get_count() == Some(0) {
+    let (parsed, until_utc) = parse_rule(rrule, tz)?;
+    let rule = parsed.validate(seed).map_err(|_| invalid_rule(rrule))?;
+    // RFC 5545 makes `INTERVAL` and `COUNT` positive integers and puts `UNTIL`
+    // no earlier than the start, and the engine answers each of these three by
+    // finishing before it produces anything. An empty vector is a statement
+    // about the window; a rule that can never fire is a defect in the rule, and
+    // saying so is the whole point of not returning one silently.
+    if rule.get_interval() == 0
+        || rule.get_count() == Some(0)
+        || until_utc.is_some_and(|until| until < dtstart.dtstart_utc)
+    {
         return Err(invalid_rule(rrule));
     }
+    // The series ends at the earlier of the two instants bounding it: the
+    // caller's window and the rule's own `UNTIL`. Both are instants because
+    // both are stated as instants — translating either onto the wall clock and
+    // stopping there loses a fold's last occurrence, which stands after the
+    // bound on the clock and before it on the timeline.
+    let end = until_utc.map_or(window.end, |until| until.min(window.end));
+    let last = wall_clock_at(end, tz)?;
     let series = RRuleSet::new(seed).rrule(rule).limit();
 
     let mut starts = Vec::new();
@@ -177,7 +201,7 @@ pub fn expand_window(
         if occurrence < first {
             continue;
         }
-        // Inside the window's own wall clock a gap is the caller's verdict to
+        // Inside the series' own wall clock a gap is the caller's verdict to
         // make. Past it the walk only continues because a fold can map a later
         // wall clock onto an earlier instant — and a wall time the zone never
         // observes has no instant at all, so out there it ends the walk instead
@@ -187,9 +211,9 @@ pub fn expand_window(
             Err(error) if occurrence <= last => return Err(error),
             Err(_) => break,
         };
-        // The recovered instants ascend, so the first one past the window is
-        // the last one worth walking to.
-        if start > window.end {
+        // The recovered instants ascend, so the first one past the end is the
+        // last one worth walking to.
+        if start > end {
             break;
         }
         if start >= window.start {
@@ -302,33 +326,49 @@ fn wall_clock_at(utc: u64, tz: &str) -> Result<DateTime<Tz>, CalendarError> {
     wall_clock(wall).ok_or(CalendarError::TimestampOutOfRange { utc })
 }
 
-/// Parses recurrence text and moves its `UNTIL` onto the same wall clock.
+/// Reads recurrence text into a rule the engine steps, plus the instant its
+/// `UNTIL` names.
 ///
-/// RFC 5545 pins `UNTIL` to a UTC instant while the rule itself steps a wall
-/// clock. Since the walk happens in wall time, the bound has to cross the same
-/// border the occurrences do; left untranslated it would end the series at the
-/// zone's offset from where its author put it.
-fn parse_rule(rrule: &str, tz: &str) -> Result<RRule<Unvalidated>, CalendarError> {
+/// Two RFC 5545 verdicts the vetted parser does not reach on its own, both
+/// answered on the text rather than by stepping it. It accepts any content line
+/// and then ignores the property name it read, so `EXDATE:FREQ=DAILY` — a line
+/// whose job is to *remove* occurrences — arrives as a plausible daily series;
+/// only an `RRULE` is a rule. And it accepts `COUNT` and `UNTIL` together,
+/// which the RFC makes mutually exclusive: a rule naming two endings names
+/// none, and choosing one of them for its author is not this door's call.
+///
+/// The `UNTIL` the rule carries away is the engine's stopping wall clock, held
+/// deliberately loose (see [`UNTIL_WALL_SLACK_SECS`]); the exact instant is
+/// returned alongside for [`expand_window`] to end the series on.
+fn parse_rule(rrule: &str, tz: &str) -> Result<(RRule<Unvalidated>, Option<u64>), CalendarError> {
+    if let Some((property, _)) = rrule.split_once(':')
+        && !property.eq_ignore_ascii_case(RRULE_PROPERTY)
+    {
+        return Err(invalid_rule(rrule));
+    }
     let parsed: RRule<Unvalidated> = rrule.parse().map_err(|_| invalid_rule(rrule))?;
     let Some(until) = parsed.get_until() else {
-        return Ok(parsed);
+        return Ok((parsed, None));
     };
+    if parsed.get_count().is_some() {
+        return Err(invalid_rule(rrule));
+    }
     // An `UNTIL` without the `Z` is machine-local, which is both RFC-invalid
     // against a zoned start and environment-dependent. Leave it for validation
     // to reject rather than laundering it into a UTC instant here.
     if until.timezone().is_local() {
-        return Ok(parsed);
+        return Ok((parsed, None));
     }
     let Ok(until_utc) = u64::try_from(until.timestamp()) else {
         // Pre-epoch, so outside the engine's model and before any start it
         // could bound. Validation rejects it as an `UNTIL` before the start.
-        return Ok(parsed);
+        return Ok((parsed, None));
     };
-    let bound = utc_to_wall(until_utc, tz)
+    let bound = utc_to_wall(until_utc.saturating_add(UNTIL_WALL_SLACK_SECS), tz)
         .ok()
         .and_then(wall_clock)
         .ok_or_else(|| invalid_rule(rrule))?;
-    Ok(parsed.until(bound))
+    Ok((parsed.until(bound), Some(until_utc)))
 }
 
 #[cfg(test)]
@@ -390,6 +430,10 @@ mod tests {
     /// `2026-10-25T01:45 Europe/London`, earliest leg (BST). Later on the wall
     /// clock than [`OCT_25_0130_LONDON_LATEST`], earlier as an instant.
     const OCT_25_0145_LONDON_EARLIEST: u64 = 1_792_889_100;
+    /// `2026-10-25T01:15:00Z`. Inside the London fold, so its wall clock reads
+    /// 01:15 GMT — *earlier* on the clock than the fold's 01:30 occurrence and
+    /// 45 minutes *later* than it as an instant.
+    const OCT_25_0115_UTC: u64 = 1_792_890_900;
 
     fn london(dtstart_utc: u64) -> SeriesDtStart<'static> {
         SeriesDtStart {
@@ -602,6 +646,9 @@ mod tests {
             // as a quiet empty calendar rather than as a defect.
             "FREQ=DAILY;INTERVAL=0",
             "FREQ=DAILY;COUNT=0",
+            // Ends a day before it starts, which is the same defect written a
+            // third way.
+            "FREQ=DAILY;UNTIL=20260104T090000Z",
         ] {
             let expanded = expand_window(
                 rule,
@@ -798,6 +845,136 @@ mod tests {
         .expect("bounded weekly series expands");
 
         assert_eq!(starts, vec![MAR_22_0900_LONDON, until]);
+    }
+
+    #[test]
+    fn expand_window_ends_an_until_series_on_the_utc_instant() {
+        // Inside a fold no wall clock equals the UNTIL instant, so translating
+        // the bound onto the clock is not enough. The bound reads 01:15 GMT;
+        // the 25th's occurrence stands an hour later on the clock at 01:30 BST
+        // and 45 minutes *earlier* as an instant, at 00:30Z. It is inside the
+        // series its author bounded, and a walk that ends on the wall clock
+        // drops it — leaving the owner free in an hour they are booked.
+        let rule = "FREQ=DAILY;UNTIL=20261025T011500Z";
+        let starts = expand_window(
+            rule,
+            london(OCT_23_0130_LONDON),
+            TimeRange {
+                start: OCT_23_0130_LONDON,
+                end: OCT_26_0130_LONDON,
+            },
+        )
+        .expect("bounded daily series across the fold expands");
+
+        assert_eq!(
+            starts,
+            vec![
+                OCT_23_0130_LONDON,
+                OCT_24_0130_LONDON,
+                OCT_25_0130_LONDON_EARLIEST,
+            ]
+        );
+
+        // The bound really does read differently on the two clocks: the last
+        // occurrence kept precedes it as an instant and follows it on the same
+        // day's wall clock, while the first one dropped is past it either way.
+        const { assert!(OCT_25_0130_LONDON_EARLIEST < OCT_25_0115_UTC) };
+        const { assert!(OCT_26_0130_LONDON > OCT_25_0115_UTC) };
+        let bound = wall_of(OCT_25_0115_UTC);
+        let kept = wall_of(OCT_25_0130_LONDON_EARLIEST);
+        assert_eq!((bound.d, bound.h, bound.mi), (25, 1, 15));
+        assert_eq!((kept.d, kept.h, kept.mi), (25, 1, 30));
+        assert!((kept.h, kept.mi) > (bound.h, bound.mi));
+    }
+
+    #[test]
+    fn expand_window_does_not_report_a_gap_after_the_series_ended() {
+        // The window reaches past London's spring-forward gap, but the series
+        // stopped a day before it. A gap the series never reaches is not the
+        // caller's skip-vs-shift verdict to make, so it ends the walk instead
+        // of turning a completed series into an error.
+        assert_eq!(
+            expand_window(
+                "FREQ=DAILY;UNTIL=20260328T013000Z",
+                london(MAR_27_0130_LONDON),
+                TimeRange {
+                    start: MAR_27_0130_LONDON,
+                    end: MAR_27_0130_LONDON + 3 * DAY,
+                },
+            ),
+            Ok(vec![MAR_27_0130_LONDON, MAR_28_0130_LONDON])
+        );
+    }
+
+    #[test]
+    fn expand_window_rejects_text_the_dependency_alone_accepts() {
+        for rule in [
+            // RFC 5545 makes COUNT and UNTIL mutually exclusive. A rule naming
+            // two endings names none, and picking one of them for its author
+            // is a guess this door has no standing to make.
+            "FREQ=DAILY;COUNT=2;UNTIL=20260131T090000Z",
+            // Content lines that are not an RRULE. The parser defaults a
+            // nameless line to RRULE and then ignores the name it did read, so
+            // an EXDATE — whose whole job is to *remove* occurrences — arrives
+            // as a plausible daily series and books the owner instead.
+            "DTSTART:FREQ=DAILY",
+            "EXRULE:FREQ=DAILY",
+            "EXDATE:FREQ=DAILY",
+            "RDATE:FREQ=DAILY",
+        ] {
+            assert_eq!(
+                expand_window(
+                    rule,
+                    london(JAN_05_0900_LONDON),
+                    TimeRange {
+                        start: JAN_05_0900_LONDON,
+                        end: JAN_05_0900_LONDON + DAY,
+                    },
+                ),
+                Err(CalendarError::InvalidRecurrenceRule {
+                    rule: rule.to_owned()
+                }),
+                "{rule:?} is not a recurrence rule and must not expand into one"
+            );
+        }
+
+        // The spellings this door does take, including the RFC's
+        // case-insensitive property name.
+        for rule in [
+            "FREQ=DAILY;COUNT=1",
+            "RRULE:FREQ=DAILY;COUNT=1",
+            "rrule:FREQ=DAILY;COUNT=1",
+        ] {
+            assert_eq!(
+                expand_window(
+                    rule,
+                    london(JAN_05_0900_LONDON),
+                    TimeRange {
+                        start: JAN_05_0900_LONDON,
+                        end: JAN_05_0900_LONDON + DAY,
+                    },
+                ),
+                Ok(vec![JAN_05_0900_LONDON]),
+                "{rule:?} is the same rule spelled three ways"
+            );
+        }
+    }
+
+    #[test]
+    fn series_surface_is_reachable_from_the_crate_root() {
+        // Two consumers import this API — CAL-09 freebusy and ONE-1539/CMT-2 —
+        // and they write `oneiron::expand_window`. Naming the signatures rather
+        // than the paths alone also pins the shared-consumer contract: engine
+        // scalars in, `Result<Vec<u64>, CalendarError>` out, no wrapper.
+        let _: fn(&str, SeriesDtStart<'_>, TimeRange) -> Result<Vec<u64>, CalendarError> =
+            crate::expand_window;
+        let _: fn(&CalendarSeriesMasterValue, TimeRange) -> Result<Vec<u64>, CalendarError> =
+            crate::expand_master_window;
+        let _: fn(&CalendarSeriesExceptionValue) -> crate::SeriesExceptionKey<'_> =
+            crate::exception_identity;
+        let _: fn(EntityId, &str, Vec<u64>, &[CalendarSeriesExceptionValue]) -> Vec<u64> =
+            crate::mask_master_exceptions;
+        let _: crate::SeriesDtStart<'_> = london(JAN_05_0900_LONDON);
     }
 
     #[test]

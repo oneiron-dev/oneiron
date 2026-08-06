@@ -232,8 +232,10 @@ pub use crate::calendar::{
     BusyInterval, BusyUnion, CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER,
     CalendarAdmissionRequest, CalendarBodyScreener, CalendarEventView, CalendarInboundBody,
     CalendarRangeDto, CalendarReadRequest, CalendarScreenVerdict, CalendarSearchRequest,
-    CalendarSel, MAX_CALENDAR_SEARCH_LIMIT, Screened, freebusy, freebusy_scoped, read_event,
-    read_event_scoped, screen_then_claim, search_events, search_events_scoped,
+    CalendarSel, MAX_CALENDAR_SEARCH_LIMIT, Screened, SeriesDtStart, SeriesExceptionKey,
+    exception_identity, expand_master_window, expand_window, freebusy, freebusy_scoped,
+    mask_master_exceptions, read_event, read_event_scoped, screen_then_claim, search_events,
+    search_events_scoped,
 };
 pub use crate::channel_identity::{
     CHANNEL_IDENTITY_BODY_KEYS, CHANNEL_IDENTITY_CLAIM_PREDICATES,
