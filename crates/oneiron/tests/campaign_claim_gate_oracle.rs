@@ -84,7 +84,7 @@ fn dispatch(vault: &Vault, intent_ref: &str, sink: &mut RecordingSink) -> Outbou
         OutboundIntentTrigger::agent_immediate("session:campaign-oracle"),
     );
     let request = OutboundDispatchRequest::new(
-        &format!("outbound:{intent_ref}"),
+        format!("outbound:{intent_ref}"),
         intent_ref,
         intent,
         OutboundDispatchActor::agent(test_id(0x73)),

@@ -733,7 +733,10 @@ fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
         .filter(|record| record.kind == SURFACE_EVENT_ATTEMPT_KIND)
         .find(|record| record.state == crate::AttemptState::Scheduled)
         .expect("the retry row is scheduled");
-    assert_eq!(row.retry_of.map(|id| SurfaceEventAttemptRef::from_attempt_id(id)), Some(ack.attempt_ref));
+    assert_eq!(
+        row.retry_of.map(SurfaceEventAttemptRef::from_attempt_id),
+        Some(ack.attempt_ref)
+    );
     assert_eq!(row.payload, payload_before);
     assert_eq!(row.dedupe_key.as_deref(), Some("evt-retry@example.com"));
     assert_eq!(row.run_id.as_deref(), Some("evt-retry@example.com"));
