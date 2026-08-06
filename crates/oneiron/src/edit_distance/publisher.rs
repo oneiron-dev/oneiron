@@ -131,12 +131,22 @@ pub enum IssueCategory {
     ExecutionLapse,
     /// The artifact was missing content the attempt needed.
     Discovery,
+    /// An external fact moved under an artifact that was right when made.
+    Environment,
+    /// The decider's taste moved; the artifact was not wrong.
+    PreferenceShift,
 }
 
 impl IssueCategory {
-    /// Every arm — the closed enum made iterable, so a fourth category cannot
+    /// Every arm — the closed enum made iterable, so a sixth category cannot
     /// be added without every site here seeing it.
-    pub const ALL: [Self; 3] = [Self::SkillDefect, Self::ExecutionLapse, Self::Discovery];
+    pub const ALL: [Self; 5] = [
+        Self::SkillDefect,
+        Self::ExecutionLapse,
+        Self::Discovery,
+        Self::Environment,
+        Self::PreferenceShift,
+    ];
 
     /// The pinned on-disk/wire token.
     #[must_use]
@@ -145,6 +155,8 @@ impl IssueCategory {
             Self::SkillDefect => "skill_defect",
             Self::ExecutionLapse => "execution_lapse",
             Self::Discovery => "discovery",
+            Self::Environment => "environment",
+            Self::PreferenceShift => "preference_shift",
         }
     }
 
@@ -161,6 +173,8 @@ impl IssueCategory {
             AttributionVerdict::SkillDefect => Self::SkillDefect,
             AttributionVerdict::ExecutionLapse => Self::ExecutionLapse,
             AttributionVerdict::Discovery => Self::Discovery,
+            AttributionVerdict::Environment => Self::Environment,
+            AttributionVerdict::PreferenceShift => Self::PreferenceShift,
         }
     }
 }
