@@ -1357,7 +1357,9 @@ impl Vault {
         .map(HubDependencyResolution::Materialized)
     }
 
-    fn skill_entity_for_content_hash_in_txn(
+    /// The holder of these exact canonical bytes, whichever birth path put it
+    /// there — the shared-namespace dedup probe (ONE-1446 reads it too).
+    pub(crate) fn skill_entity_for_content_hash_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         content_hash: SkillContentHash,
