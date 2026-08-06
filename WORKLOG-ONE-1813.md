@@ -223,3 +223,37 @@ occupying availability.
   per derived session key. No IP/email/rate subsystem here.
 - ONE-1821 may attach its soft-confirm hook to `lifecycle.rs`; ONE-1814 and
   ONE-1821 must not be in flight together on this file (CLAIMS.md).
+
+## Simplify pass (K3, 2026-08-07) — NO EDIT WARRANTED
+
+Deletion-biased review of the full lane diff (`lifecycle.rs` 2531 lines, `mod.rs`,
+`lib.rs`) against the blueprint and the landed seam. Baseline re-verified before
+the pass: `cargo fmt -p oneiron -- --check` clean, `cargo clippy -p oneiron
+--all-features --all-targets` clean (0 warnings), `booking_lifecycle` 18/18,
+`booking::lifecycle` unit tests 3/3.
+
+Every deletion candidate examined and rejected with grounding:
+
+- `attempt_failure_reason`'s 512-byte truncation + empty-substitution LOOKS like a
+  defensive branch but is load-bearing: `attempt_queue.rs` rejects failure reasons
+  over 2048 bytes or empty, so an unbounded `BookingError` display would make the
+  `queue.fail` call itself error. Kept.
+- Cross-module dedup of the serde adapters (`time_range_serde`,
+  `entity_ref_serde`, digest adapters) and the `rmp_serde`/`rmpv` codec bridge is
+  blocked by the packet: the identical adapters in `constraint.rs`/`config.rs` are
+  private, and both files are NON-CLAIMs (ONE-1816/ONE-1823). Local copies are the
+  house pattern (`deletion.rs`, `receipt.rs`, `saved_query.rs` each keep their own
+  hex helper). Kept.
+- `ConfirmOutcome` enum, `UnresolvedPageOracle` witness, `at()` point-range
+  constructor: each carries intent at its call site; inlining saves single-digit
+  lines at a legibility cost. Kept.
+- `validate_lifecycle_claim`'s per-arm `claim_value::<T>().map(|_| ()).ok_or(..)`
+  shape: a generic helper would ADD structure without net deletion. Kept.
+- Public surface (`BookingVerb::parse`, `BookingVerbRequest::verb`,
+  `requested_at`, `BookingOracleRequest`) and all test assertions/fixtures:
+  off-limits by simplify law, untouched.
+- The r9 writer serialization, mint-once UID law, digest-only token storage, and
+  receipt-keyed retry idempotency were re-read line-by-line; nothing in this pass
+  weakens or touches them.
+
+Net diff of the pass: this worklog row only.
