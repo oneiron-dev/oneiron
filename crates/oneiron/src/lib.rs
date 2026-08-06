@@ -13,6 +13,7 @@ pub mod authority;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
+pub mod booking;
 pub mod calendar;
 pub mod campaign;
 pub mod channel_identity;
@@ -208,6 +209,10 @@ pub use crate::blob_artifact::{
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
+};
+pub use crate::booking::{
+    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotMask, SlotOracle, SolveRequest,
+    SolveResult,
 };
 pub use crate::calendar::{
     BusyInterval, BusyUnion, CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER,
