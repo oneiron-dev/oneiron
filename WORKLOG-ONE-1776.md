@@ -184,3 +184,25 @@ decoder enforces — not a hand-written field comparison that can drift.
   CA-01 schema change breaks the codec's tests rather than this file's guesses.
 - Sticky sender binds a channel row onto an EXISTING `campaign.member` head and
   never mints membership (CA-03's door); a missing head is `EntityNotFound`.
+
+## SIMPLIFY pass (K3, on d97bf972e)
+
+Deletion-biased review of the whole lane diff. One edit warranted:
+
+- `list_unsubscribe_headers`: dropped the `std::fmt::Write` import and the
+  `let _ = write!(...)` discard-plus-comment idiom in favor of a plain
+  `push_str`/`push` append for the optional mailto segment. Byte-identical
+  output (the oracle pins exact header values); one import, one comment, and
+  the infallible-Result dance gone.
+
+Considered and deliberately NOT touched: `EMAIL_CHANNEL` duplicates
+`channel_identity_provider::EMAIL_CHANNEL` in value, but it is this lane's
+public surface (worklog D-9) and the public-API hard rule applies;
+`MemberHeadReplacement` (two call sites, five-field bundle — earns its keep);
+the verbose law-explaining doc comments (house style, load-bearing for the
+screen). No structure added; no test assertions, fixtures, or public API
+touched; atomicity / byte-identity / restrictive-wins paths unchanged.
+
+Gates after the pass: `cargo fmt --all` clean; `cargo clippy -p oneiron
+--all-features --all-targets` zero warnings; `campaign_send_hygiene_oracle`
+11/11 green; `identity_reputation` lib tests 5/5 green.

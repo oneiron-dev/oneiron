@@ -31,7 +31,6 @@
 //! states-only/restrictive claim-write shape is mirrored, not moved.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
 use rmpv::Value;
 
@@ -375,9 +374,9 @@ pub fn list_unsubscribe_headers(
     let mut value = format!("<{}>", target.https_one_click_uri);
     if let Some(mailto_uri) = &target.mailto_uri {
         validate_unsubscribe_uri(mailto_uri, "mailto:")?;
-        // `write!` into a String is infallible; the Result is discarded the way
-        // the std docs prescribe rather than unwrapped.
-        let _ = write!(value, ", <{mailto_uri}>");
+        value.push_str(", <");
+        value.push_str(mailto_uri);
+        value.push('>');
     }
     Ok(BTreeMap::from([
         (LIST_UNSUBSCRIBE.to_owned(), value),
