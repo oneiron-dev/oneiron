@@ -124,7 +124,21 @@ fn guard_evidence_reads_the_streak_against_every_correction_ever_drawn() {
 fn a_row_must_name_three_axes_a_real_streak_and_a_probability() {
     assert!(ThresholdRow::new(WILDCARD_PATTERN, 5, 0.5).is_ok());
     assert!(ThresholdRow::new("send_email/*/agent-a", 5, 0.0).is_ok());
-    for illegal in ["", "*", "*/*", "*/*/*/*", "send_email//agent-a"] {
+    assert!(ThresholdRow::new(r"send\/email/\*/agent-a", 5, 0.5).is_ok());
+    for illegal in [
+        "",
+        "*",
+        "*/*",
+        "*/*/*/*",
+        "send_email//agent-a",
+        // An escape is only an escape of a RESERVED character; allowing it
+        // anywhere would give one axis two spellings and one meaning two keys.
+        r"send\_email/*/agent-a",
+        // A dangling escape names no character at all.
+        r"send_email/*/agent-a\",
+        // An escaped separator is not an axis boundary, so this is two axes.
+        r"send\/email/agent-a",
+    ] {
         assert!(
             ThresholdRow::new(illegal, 5, 0.5).is_err(),
             "{illegal:?} is not a scope pattern"
@@ -162,6 +176,74 @@ fn a_pattern_matches_on_each_axis_independently() {
         assert!(!row.matches(&scope), "{pattern:?} must not match");
     }
     assert_eq!(exact_pattern(&scope), "send_email/client_followup/agent-a");
+}
+
+#[test]
+fn a_scope_field_carrying_a_reserved_character_still_names_exactly_itself() {
+    let (_dir, vault) = open_vault();
+    // A `RampScope` field is arbitrary text — trimmed, non-empty, length-capped
+    // and nothing else — so both characters this grammar reserves appear in
+    // perfectly valid MS-06 scope tuples.
+    let slashed = RampScope::new("send/email", "client_followup", "agent-a").expect("scope");
+    let starred = RampScope::new("send_email", "*", "agent-a").expect("scope");
+    let plain = scope();
+
+    for scope in [&slashed, &starred] {
+        let row = ThresholdRow::new(exact_pattern(scope), 5, 0.5)
+            .expect("every scope has an exact pattern, or `exact_pattern` is a lie");
+        assert!(row.matches(scope));
+        assert!(
+            !row.matches(&plain),
+            "exact means exactly one scope: {:?} must govern nothing else",
+            row.scope_pattern
+        );
+        assert_eq!(
+            row.specificity(),
+            3,
+            "an escaped literal is a literal, not a wildcard"
+        );
+    }
+    // The wildcard still wildcards, including over a field that IS a star.
+    assert!(
+        ThresholdRow::new(WILDCARD_PATTERN, 5, 0.5)
+            .expect("row")
+            .matches(&starred)
+    );
+    assert!(
+        ThresholdRow::new(r"send\/email/*/*", 5, 0.5)
+            .expect("row")
+            .matches(&slashed),
+        "the owner can spell the same literal by hand"
+    );
+    assert!(
+        !ThresholdRow::new("send/email/*", 5, 0.5)
+            .expect("row")
+            .matches(&slashed),
+        "an UNescaped separator is still an axis boundary"
+    );
+
+    // And MS-06's per-scope dial keeps working across the whole scope domain,
+    // rather than writing a row that no later read can rebuild.
+    vault.set_ramp_streak_floor(&slashed, 4).expect("set floor");
+    record_history(&vault, &slashed, 4, 0);
+    assert_eq!(
+        graduation_policy_for(&vault, &slashed)
+            .expect("policy")
+            .required_streak,
+        4
+    );
+    assert_eq!(
+        vault.ramp_scope_state(&slashed).expect("state"),
+        RampState::Offered
+    );
+    assert_eq!(
+        graduation_policy_for(&vault, &plain)
+            .expect("policy")
+            .required_streak,
+        DEFAULT_GRADUATION_STREAK_FLOOR,
+        "one scope's dial governs one scope"
+    );
+    assert_eq!(trust_table(&vault).expect("trust table").len(), 1);
 }
 
 #[test]
@@ -241,6 +323,53 @@ fn a_row_written_twice_replaces_itself() {
     let rows = graduation_policy_rows(&vault).expect("rows");
     assert_eq!(rows.len(), 1, "one pattern is one row");
     assert_eq!(rows[0].required_streak, 7);
+}
+
+#[test]
+fn the_write_door_re_validates_a_row_the_caller_assembled_by_hand() {
+    let (_dir, vault) = open_vault();
+    let scope = scope();
+    record_history(&vault, &scope, 3, 0);
+
+    // The fields are `pub` (the keystone shape), so a struct literal is a door
+    // around `ThresholdRow::new` — and a row that reached storage that way is
+    // unreadable on the way back out, which would take every policy read in the
+    // vault down rather than failing the one write that was wrong.
+    for illegal in [
+        ThresholdRow {
+            scope_pattern: WILDCARD_PATTERN.to_owned(),
+            required_streak: 0,
+            posterior_guard: 0.0,
+        },
+        ThresholdRow {
+            scope_pattern: "send_email/client_followup".to_owned(),
+            required_streak: 5,
+            posterior_guard: 0.5,
+        },
+        ThresholdRow {
+            scope_pattern: WILDCARD_PATTERN.to_owned(),
+            required_streak: 5,
+            posterior_guard: 1.5,
+        },
+    ] {
+        assert!(
+            matches!(
+                set_graduation_policy(&vault, &illegal).expect_err("hand-assembled row"),
+                Error::InvalidConsentBound(_)
+            ),
+            "{illegal:?} must be refused at the write door, not on every later read"
+        );
+    }
+
+    // Nothing landed, so the policy in force is still the one that was in force.
+    assert!(graduation_policy_rows(&vault).expect("rows").is_empty());
+    assert_eq!(
+        graduation_policy_for(&vault, &scope)
+            .expect("policy")
+            .required_streak,
+        DEFAULT_GRADUATION_STREAK_FLOOR
+    );
+    assert!(vault.ramp_scope_state(&scope).is_ok());
 }
 
 #[test]
@@ -639,6 +768,59 @@ fn the_owner_may_accept_a_snoozed_offer_because_suppression_binds_the_engine() {
 }
 
 #[test]
+fn ms06s_own_acceptance_door_answers_the_offer_exactly_as_this_ones_does() {
+    let (_dir, vault) = open_vault();
+    let scope = scope();
+    let owner = owner(&vault);
+    earn_an_offer(&vault, &scope);
+    pin_the_scope(&vault, &scope);
+
+    // The same owner act through MS-06's method — the door its own tests and
+    // the merge/split oracle call — must leave the same durable state as
+    // `answer_graduation_offer(.., GoAuto)`. Two public doors onto one act that
+    // disagree about the answer log are two different state machines.
+    vault
+        .accept_graduation_offer(&owner, &scope)
+        .expect("the owner accepts through MS-06's door");
+
+    let receipts = answer_receipts(&vault);
+    assert_eq!(
+        receipts.len(),
+        4,
+        "three declines and the acceptance that answered them"
+    );
+    assert_eq!(
+        receipts
+            .iter()
+            .filter(|receipt| receipt.outcome == "go_auto")
+            .count(),
+        1
+    );
+    assert_eq!(
+        snooze_state(&vault, &scope).expect("snooze"),
+        SnoozeState::None,
+        "saying yes supersedes every earlier not-now, whichever door it arrived through"
+    );
+
+    // Which is the whole point: a pin that outlived the acceptance would
+    // suppress this scope forever the moment a correction took the grant away
+    // and the scope re-earned its threshold.
+    vault
+        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::Rejected)
+        .expect("a correction demotes the graduated scope");
+    record_history(&vault, &scope, DEFAULT_GRADUATION_STREAK_FLOOR * 4, 0);
+    assert_eq!(
+        vault.ramp_scope_state(&scope).expect("state"),
+        RampState::Offered
+    );
+    assert_eq!(
+        vault.graduation_offers().expect("offers"),
+        vec![scope],
+        "the re-earned offer is asked about again"
+    );
+}
+
+#[test]
 fn an_unbuildable_scope_never_leaves_an_answer_behind() {
     let (_dir, vault) = open_vault();
     let unbuildable = RampScope {
@@ -670,6 +852,81 @@ fn a_malformed_answer_row_is_a_typed_error_never_a_silently_dropped_decline() {
         Error::CorruptedIndex(_)
     ));
     assert!(vault.graduation_offers().is_err());
+}
+
+#[test]
+fn a_capped_answer_scan_keeps_the_newest_transitions_not_the_oldest() {
+    // The answer log persists for the life of the vault and `unpin_scope`
+    // appends unconditionally, so its growth is bounded by nothing. Past the
+    // family work cap the walk answers from a PREFIX — and the half worth
+    // keeping is the recent one: an oldest-first cap would make the owner's
+    // latest decision permanently unprojectable.
+    let mut config = crate::test_util::embedding_test_config();
+    // A cap-sized log outgrows the default test map.
+    config.map_size = 256 * 1024 * 1024;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let scope = scope();
+
+    let answer_id = |index: u32| {
+        let mut bytes = [0_u8; ENTITY_ID_LEN];
+        bytes[..4].copy_from_slice(&index.to_be_bytes());
+        // The index leads the id, so key order is the write order this fixture
+        // is asserting about.
+        bytes[4] = 1;
+        EntityId::from_bytes(bytes).expect("16 bytes is a well-formed entity id")
+    };
+    let cap = u32::try_from(crate::receipt::MAX_RECEIPT_QUERY_SCAN).expect("the cap fits in u32");
+    let row = StoredAnswer {
+        v: ROW_VERSION,
+        op_kind: scope.op_kind.clone(),
+        target_class: scope.target_class.clone(),
+        actor: scope.actor.clone(),
+        answer: ANSWER_NOT_NOW.to_owned(),
+        at: 0,
+    };
+    let data = encode_row(&row, ANSWER_ROW_LABEL).expect("encode");
+    // Exactly ONE row past the cap: the smallest log that must truncate.
+    vault
+        .with_write_txn(|wtxn| {
+            for index in 0..=cap {
+                vault
+                    .store
+                    .vault_meta
+                    .put(wtxn, &answer_key(&scope, &answer_id(index)), &data)?;
+            }
+            Ok(())
+        })
+        .expect("plant a cap-sized answer log");
+
+    reset_answer_scan_capped();
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let projected = answer_receipts_in_txn(&vault.store, &rtxn, &ReceiptQuery::default())
+        .expect("answer receipts");
+
+    assert_eq!(
+        projected.len(),
+        crate::receipt::MAX_RECEIPT_QUERY_SCAN,
+        "the scan terminates at the family work cap instead of walking the log"
+    );
+    assert_eq!(
+        answer_scan_capped(),
+        1,
+        "a truncated scan raises the cap signal exactly once"
+    );
+    let projected_ids = |id: &EntityId| {
+        let receipt_id = format!("{ANSWER_RECEIPT_PREFIX}{}", id.to_hex());
+        projected
+            .iter()
+            .any(|receipt| receipt.receipt_id == receipt_id)
+    };
+    assert!(
+        projected_ids(&answer_id(cap)),
+        "the cap keeps the newest transition"
+    );
+    assert!(
+        !projected_ids(&answer_id(0)),
+        "and drops the oldest one, which is the half nobody is asking about"
+    );
 }
 
 // ---------------------------------------------------------------------------

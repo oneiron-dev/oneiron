@@ -1191,6 +1191,11 @@ impl Vault {
     /// demoted to graduated with no ruling in between — the exact silence this
     /// module exists to prevent.
     ///
+    /// Answering here and answering through
+    /// [`crate::edit_distance::graduation::answer_graduation_offer`] are the
+    /// same act and leave the same durable state: both record the go-auto
+    /// answer, which clears whatever snooze or pin the scope was carrying.
+    ///
     /// # Errors
     ///
     /// [`Error::InvalidConsentBound`] when the scope is not on the ramp at all,
@@ -1202,7 +1207,8 @@ impl Vault {
         owner: &AuthenticatedOwner,
         scope: &RampScope,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|wtxn| accept_graduation_offer_in_txn(self, wtxn, owner, scope))
+        let at = crate::unix_seconds_now();
+        self.with_write_txn(|wtxn| accept_graduation_offer_in_txn(self, wtxn, owner, scope, at))
     }
 
     /// Demotes a scope back to the propose lane: revokes its standing grant if
@@ -1415,16 +1421,22 @@ impl Vault {
     }
 }
 
-/// [`Vault::accept_graduation_offer`] inside the caller's write txn.
+/// [`Vault::accept_graduation_offer`] inside the caller's write txn, at `at`.
 ///
-/// The whole door, checks included, so ED-05 — which records the owner's ANSWER
-/// in the same transaction that mints the grant — cannot end up enforcing a
-/// looser version of it. The public method is this function plus a transaction.
+/// The whole door, checks included, so ED-05 — which routes its own `go-auto`
+/// answer through here — cannot end up enforcing a looser version of it. The
+/// public method is this function plus a transaction.
+///
+/// The ANSWER is recorded here rather than by either caller, for the same
+/// reason: this is the only code path both public acceptance doors share, so it
+/// is the only place that can guarantee they leave identical state. See
+/// [`crate::edit_distance::graduation::record_go_auto_answer_in_txn`].
 pub(crate) fn accept_graduation_offer_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     owner: &AuthenticatedOwner,
     scope: &RampScope,
+    at: u64,
 ) -> Result<ConsentReceipt> {
     scope.validate()?;
     if !scope.is_graduatable() {
@@ -1438,6 +1450,7 @@ pub(crate) fn accept_graduation_offer_in_txn(
             "this scope is not offering graduation; a retracted offer cannot be accepted",
         ));
     }
+    crate::edit_distance::graduation::record_go_auto_answer_in_txn(vault, wtxn, scope, at)?;
     vault.create_standing_grant_in_txn(wtxn, owner, bound)
 }
 

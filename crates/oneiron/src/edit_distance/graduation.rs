@@ -112,10 +112,31 @@ const ANSWER_ROW_LABEL: &str = "graduation answer row";
 /// The pattern segment that matches any value on its axis.
 const PATTERN_WILDCARD: &str = "*";
 
-/// The pattern axis separator. A scope field containing it can only ever be
-/// matched by [`PATTERN_WILDCARD`] on that axis, since a pattern segment is by
-/// construction separator-free.
+/// The pattern axis separator.
 const PATTERN_SEPARATOR: char = '/';
+
+/// The character a lone [`PATTERN_WILDCARD`] axis is spelled with.
+const PATTERN_WILDCARD_CHAR: char = '*';
+
+/// Escapes the next character, so a pattern axis can spell a scope field that
+/// contains a reserved one.
+///
+/// A [`RampScope`] field is arbitrary text — MS-06 trims it, rejects empty and
+/// caps its length, and nothing more — so `op_kind = "send/email"` and
+/// `target_class = "*"` are ordinary valid scopes. Without an escape,
+/// [`exact_pattern`] would produce four axes for the first and a wildcard for
+/// the second: a pattern that no row can be built from, and a pattern that
+/// governs every scope on that axis. Either would make `exact_pattern` a lie
+/// over part of the domain it accepts.
+const PATTERN_ESCAPE: char = '\\';
+
+/// Whether `ch` must be escaped to appear literally in a pattern axis.
+const fn is_pattern_reserved(ch: char) -> bool {
+    matches!(
+        ch,
+        PATTERN_ESCAPE | PATTERN_SEPARATOR | PATTERN_WILDCARD_CHAR
+    )
+}
 
 /// The catch-all pattern: every scope matches it, which is what makes the
 /// compiled table total.
@@ -147,7 +168,9 @@ const COMPILED_POLICY: &[(&str, u32, f32)] = &[(
 /// streak they owe, and how strong that streak has to be as evidence.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThresholdRow {
-    /// `op_kind/target_class/actor`, each axis either a literal or `*`.
+    /// `op_kind/target_class/actor`, each axis either a literal or `*`, with
+    /// `\` escaping a reserved character inside a literal ([`exact_pattern`]
+    /// writes those; the owner rarely needs to).
     pub scope_pattern: String,
     /// Consecutive clean rulings before the scope may be offered graduation.
     pub required_streak: u32,
@@ -161,8 +184,9 @@ impl ThresholdRow {
     /// # Errors
     ///
     /// [`Error::InvalidConsentBound`] when the pattern is not three non-empty
-    /// `/`-separated axes, when the streak is zero (a threshold nothing has to
-    /// clear), or when the guard is not a real number in `[0, 1]`.
+    /// `/`-separated axes with well-formed escapes, when the streak is zero (a
+    /// threshold nothing has to clear), or when the guard is not a real number
+    /// in `[0, 1]`.
     pub fn new(
         scope_pattern: impl Into<String>,
         required_streak: u32,
@@ -200,7 +224,7 @@ impl ThresholdRow {
         let fields = [&scope.op_kind, &scope.target_class, &scope.actor];
         axes.iter()
             .zip(fields)
-            .all(|(axis, field)| *axis == PATTERN_WILDCARD || *axis == field.as_str())
+            .all(|(axis, field)| axis_matches(axis, field))
     }
 
     /// Whether a history of `streak` clean rulings and `corrections`
@@ -243,23 +267,87 @@ impl ThresholdRow {
     }
 }
 
-/// The three axes of a pattern, or `None` when it is not three non-empty ones.
+/// The three axes of a pattern — still escaped — or `None` when it is not
+/// three well-formed non-empty ones.
+///
+/// Splits on UNESCAPED separators only, and rejects an escape that names
+/// nothing or escapes an unreserved character. The second half is what keeps
+/// the encoding canonical: one axis has exactly one spelling, so one pattern
+/// has exactly one [`pattern_key`], and two rows can never mean the same thing
+/// under two keys.
 fn pattern_axes(pattern: &str) -> Option<[&str; 3]> {
-    let mut parts = pattern.split(PATTERN_SEPARATOR);
-    let axes = [parts.next()?, parts.next()?, parts.next()?];
-    if parts.next().is_some() || axes.iter().any(|axis| axis.is_empty()) {
+    let mut axes = [""; 3];
+    let mut filled = 0;
+    let mut start = 0;
+    let mut escaped = false;
+    for (idx, ch) in pattern.char_indices() {
+        if escaped {
+            if !is_pattern_reserved(ch) {
+                return None;
+            }
+            escaped = false;
+        } else if ch == PATTERN_ESCAPE {
+            escaped = true;
+        } else if ch == PATTERN_SEPARATOR {
+            *axes.get_mut(filled)? = pattern.get(start..idx)?;
+            filled += 1;
+            start = idx + ch.len_utf8();
+        }
+    }
+    if escaped {
+        return None;
+    }
+    *axes.get_mut(filled)? = pattern.get(start..)?;
+    if filled != 2 || axes.iter().any(|axis| axis.is_empty()) {
         return None;
     }
     Some(axes)
 }
 
-/// The pattern that names exactly one scope and nothing else.
+/// Whether one escaped pattern axis governs one scope field.
+///
+/// Compares against the unescaped axis without materializing it — the axis is
+/// well-formed by [`pattern_axes`], so a walk in lockstep with the field is the
+/// whole comparison.
+fn axis_matches(axis: &str, field: &str) -> bool {
+    if axis == PATTERN_WILDCARD {
+        return true;
+    }
+    let mut field = field.chars();
+    let mut escaped = false;
+    for ch in axis.chars() {
+        if !escaped && ch == PATTERN_ESCAPE {
+            escaped = true;
+            continue;
+        }
+        escaped = false;
+        if field.next() != Some(ch) {
+            return false;
+        }
+    }
+    field.next().is_none()
+}
+
+/// The pattern that names exactly one scope and nothing else — for every scope
+/// [`RampScope::new`] accepts, reserved characters included.
 #[must_use]
 pub fn exact_pattern(scope: &RampScope) -> String {
-    format!(
-        "{}{PATTERN_SEPARATOR}{}{PATTERN_SEPARATOR}{}",
-        scope.op_kind, scope.target_class, scope.actor
-    )
+    let mut pattern = String::new();
+    for (index, field) in [&scope.op_kind, &scope.target_class, &scope.actor]
+        .into_iter()
+        .enumerate()
+    {
+        if index > 0 {
+            pattern.push(PATTERN_SEPARATOR);
+        }
+        for ch in field.chars() {
+            if is_pattern_reserved(ch) {
+                pattern.push(PATTERN_ESCAPE);
+            }
+            pattern.push(ch);
+        }
+    }
+    pattern
 }
 
 // ---------------------------------------------------------------------------
@@ -610,15 +698,26 @@ pub fn graduation_policy_rows(vault: &Vault) -> Result<Vec<ThresholdRow>> {
 
 /// Writes one runtime threshold row, replacing any row on the same pattern.
 ///
-/// The row is validated by [`ThresholdRow::new`] before it is built, so a
-/// malformed threshold is a typed error at this door and the policy already in
-/// force — compiled or otherwise — simply stays in force. Nothing here can
-/// leave a scope governed by a threshold of zero.
+/// The row is re-validated HERE rather than trusted from its constructor. A
+/// [`ThresholdRow`]'s fields are `pub`, so [`ThresholdRow::new`] is a door and
+/// not a gate: a caller may assemble a threshold of zero, or a pattern that is
+/// not three axes, without ever passing through it. Since every read re-parses
+/// the stored row and fails CLOSED on one it cannot rebuild, an unvalidated
+/// write would not corrupt this scope's policy — it would take every policy
+/// read in the vault down until the row was deleted. So the check belongs at
+/// the one door bytes get in through: a malformed threshold is a typed error
+/// here, and the policy already in force stays in force.
 ///
 /// # Errors
 ///
-/// Storage failures. (The row was validated when it was constructed.)
+/// [`Error::InvalidConsentBound`] when the row's fields are not a legal
+/// threshold, plus storage failures.
 pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
+    let row = ThresholdRow::new(
+        row.scope_pattern.clone(),
+        row.required_streak,
+        row.posterior_guard,
+    )?;
     let stored = StoredThresholdRow {
         v: ROW_VERSION,
         scope_pattern: row.scope_pattern.clone(),
@@ -755,9 +854,10 @@ pub(crate) fn answer_graduation_offer_at(
         }
         match answer {
             OfferAnswer::GoAuto(owner) => {
-                append_answer_in_txn(vault, wtxn, scope, ANSWER_GO_AUTO, at)?;
+                // The go-auto row is appended by the grant door itself, not
+                // here — see [`record_go_auto_answer_in_txn`].
                 let receipt = crate::consent_graduation::accept_graduation_offer_in_txn(
-                    vault, wtxn, owner, scope,
+                    vault, wtxn, owner, scope, at,
                 )?;
                 Ok(OfferAnswerOutcome::Graduated(receipt))
             }
@@ -794,6 +894,26 @@ pub fn unpin_scope(vault: &Vault, scope: &RampScope) -> Result<()> {
 pub(crate) fn unpin_scope_at(vault: &Vault, scope: &RampScope, at: u64) -> Result<()> {
     scope.validate()?;
     vault.with_write_txn(|wtxn| append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at))
+}
+
+/// Records an accepted offer, called by MS-06's grant door inside the
+/// transaction that mints the grant.
+///
+/// The answer belongs to the ACT, not to the API it arrived through.
+/// [`Vault::accept_graduation_offer`] and [`answer_graduation_offer`] are two
+/// public doors onto one owner decision, and only the grant door is common to
+/// both — so recording it anywhere else would let the two doors leave different
+/// durable state. Concretely: a pin that survived an acceptance would suppress
+/// the scope forever the next time a correction took the grant away and the
+/// scope re-earned its threshold, since [`replay_snooze`] would still see three
+/// declines and no answer.
+pub(crate) fn record_go_auto_answer_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: &RampScope,
+    at: u64,
+) -> Result<()> {
+    append_answer_in_txn(vault, wtxn, scope, ANSWER_GO_AUTO, at)
 }
 
 /// Appends one answer row. The row is the state AND the receipt — there is no
@@ -833,22 +953,59 @@ pub fn is_graduation_answer_receipt(record: &ReceiptRecord) -> bool {
     record.receipt_kind == ReceiptKind::Gate && record.receipt_id.starts_with(ANSWER_RECEIPT_PREFIX)
 }
 
+/// Names the first key past the answer-log family, so the reverse walk has the
+/// explicit half-open range `OverlayDb` needs (it exposes no reverse prefix
+/// iterator). The prefix is an ASCII literal, so bumping its final byte is the
+/// exclusive bound.
+fn answer_key_range_end() -> Vec<u8> {
+    let mut end = ANSWER_KEY_PREFIX.to_vec();
+    if let Some(last) = end.last_mut() {
+        *last = last.saturating_add(1);
+    }
+    end
+}
+
 /// Projects the answer log as `Gate` receipts, on the caller's read txn.
 ///
 /// Called from `consent_graduation::ramp_receipts`, which is what is registered
 /// in `receipt::collect_receipt_records`: the ramp's receipt families share one
 /// registration and one transaction rather than opening a second, nested one.
+///
+/// Walks the family NEWEST-FIRST under [`crate::receipt::MAX_RECEIPT_QUERY_SCAN`],
+/// as `receipt::attempt_pack_receipts` does and for the same reason. Direction
+/// is the whole point of the cap: these rows never drain — [`unpin_scope`]
+/// appends unconditionally and the log is the state — so an oldest-first cap
+/// would permanently hide the owner's RECENT decisions behind their oldest
+/// ones, which is the opposite of what any receipt query wants. The key is
+/// scope-major and time-minor, so this is newest-first within each scope, with
+/// the bound spent on the scopes at the far end of the digest order.
+///
+/// Above the cap the answer is a bounded prefix of the family rather than the
+/// family, which [`note_answer_scan_capped`] says out loud instead of
+/// truncating in silence.
 pub(crate) fn answer_receipts_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
+    let end = answer_key_range_end();
+    let bounds = (
+        std::ops::Bound::Included(ANSWER_KEY_PREFIX),
+        std::ops::Bound::Excluded(&end[..]),
+    );
     let mut out = Vec::new();
-    for entry in store
+    // One row PAST the cap is reached and never decoded: it is what separates a
+    // log holding exactly the cap from one the cap truncated.
+    for (scanned, entry) in store
         .vault_meta
-        .prefix_iter(txn, ANSWER_KEY_PREFIX)?
-        .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
+        .rev_range(txn, &bounds)?
+        .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN + 1)
+        .enumerate()
     {
+        if scanned == crate::receipt::MAX_RECEIPT_QUERY_SCAN {
+            note_answer_scan_capped();
+            break;
+        }
         let (key, raw) = entry?;
         let row: StoredAnswer = decode_row(&raw, ANSWER_ROW_LABEL)?;
         if row.v != ROW_VERSION {
@@ -860,6 +1017,35 @@ pub(crate) fn answer_receipts_in_txn(
         }
     }
     Ok(out)
+}
+
+/// Surfaces an answer-log scan that stopped at the work cap.
+///
+/// The discarded remainder is unbounded by construction, so it is never
+/// counted — the signal is that the cap FIRED, which is the fact an operator
+/// (or a test) needs to know the query answered from a prefix.
+fn note_answer_scan_capped() {
+    tracing::warn!(
+        scan_cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN,
+        "graduation answer scan hit the receipt-family work cap; older rows were not projected"
+    );
+    #[cfg(test)]
+    ANSWER_SCAN_CAPPED.with(|fired| fired.set(fired.get() + 1));
+}
+
+#[cfg(test)]
+thread_local! {
+    static ANSWER_SCAN_CAPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn answer_scan_capped() -> usize {
+    ANSWER_SCAN_CAPPED.get()
+}
+
+#[cfg(test)]
+fn reset_answer_scan_capped() {
+    ANSWER_SCAN_CAPPED.set(0);
 }
 
 fn answer_receipt_record(id: &EntityId, row: &StoredAnswer) -> ReceiptRecord {

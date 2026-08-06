@@ -220,3 +220,105 @@ Gates after the pass: `cargo fmt --all` clean · `cargo clippy -p oneiron
 --all-targets --all-features -j 6 -- -D warnings` clean · `cargo test -p
 oneiron --all-features --lib -j 6 graduation` 42/42 (24 new + 18 MS-06,
 unedited).
+
+## VERDICT-FIX round (Opus, on 2978dc497)
+
+Four findings, all ruled REAL with verified traces by the verdict leg; nothing
+banked, nothing relitigated. Each fixed at its chokepoint and mutation-verified
+(red-before / green-after).
+
+### F1 — P1 `input-validation`: `set_graduation_policy` trusted its argument
+
+`ThresholdRow`'s fields are `pub` by the keystone skeleton, so `ThresholdRow::new`
+is a door and not a gate: a struct literal reaches `set_graduation_policy`
+unvalidated. Because every read re-parses the stored row through
+`threshold_row_parts` and fails CLOSED on one it cannot rebuild, a single bad
+write did not corrupt one scope's policy — it took `graduation_policy_for`,
+`ramp_streak_floor`, `ramp_scope_state`, `graduation_offers`, `scope_stats`,
+`trust_table` and `record_proposal_outcome_for_ramp`'s post-write derive down
+vault-wide, contradicting the done-mean "malformed row → typed error + compiled
+fallback".
+
+Fix: `set_graduation_policy` re-runs `ThresholdRow::new` on the row it was handed
+and returns the typed `InvalidConsentBound` at the write door. Public field shape
+unchanged.
+
+Red-before: `the_write_door_re_validates_a_row_the_caller_assembled_by_hand`
+panicked on `expect_err` (three hand-assembled illegal rows all persisted).
+
+### F2 — P1 `state-machine-bypass`: two acceptance doors, two state machines
+
+`Vault::accept_graduation_offer` called `accept_graduation_offer_in_txn`
+directly and appended no answer row, while `answer_graduation_offer(.., GoAuto)`
+appended one first. `replay_snooze` treats `go_auto` as ladder-clearing, so the
+old door minted the grant while leaving `ManualPinned` standing: once a later
+correction demoted the grant and the scope re-earned its threshold,
+`graduation_offers` suppressed it indefinitely with only `unpin_scope` as the way
+out. The old door is live — MS-06's tests and `merge_split_oracle` both call it.
+
+Fix at the shared chokepoint: `accept_graduation_offer_in_txn` — the only path
+both public doors traverse — now appends the `go_auto` row itself, through a new
+`pub(crate) record_go_auto_answer_in_txn` in `graduation.rs`, inside the same
+write transaction that mints the grant. `answer_graduation_offer_at` dropped its
+own append; the acceptance clock is passed in so the caller's `at` still governs.
+No fixture sync was needed: every MS-06 and oracle receipt count filters on
+`is_ramp_demotion_receipt` / `is_ramp_outcome_receipt`.
+
+Red-before: `ms06s_own_acceptance_door_answers_the_offer_exactly_as_this_ones_does`
+saw 3 answer receipts instead of 4.
+
+### F3 — P2 `scope-encoding`: `exact_pattern` was not exact
+
+`RampScope` fields are arbitrary text (trim, non-empty, length cap), so
+`op_kind = "send/email"` and `target_class = "*"` are valid MS-06 tuples. The
+pattern grammar reserved `/` and `*` without a way to spell them, so
+`exact_pattern` produced a four-axis string for the first (making
+`for_dialed_streak` unbuildable — any `set_ramp_streak_floor` on such a scope
+poisoned every later policy read) and a wildcard for the second (a "exact" row
+governing every scope on that axis). Both are regressions against a landed MS-06
+dial.
+
+Fix at the encoding chokepoint rather than at one write door: `\` now escapes a
+reserved character inside an axis. `pattern_axes` splits on UNESCAPED separators
+and rejects a dangling escape or an escape of an unreserved character — so one
+axis has exactly one spelling, one pattern exactly one `pattern_key`, and no two
+rows can mean the same thing under two keys. `axis_matches` compares against the
+unescaped axis without materializing it; `exact_pattern` escapes as it builds.
+A lone `*` axis is still the wildcard, `\*` is a literal star, and `specificity`
+counts an escaped literal as a literal. Rejecting `/` in `RampScope` itself stayed
+out of scope — that would change MS-06's scope domain.
+
+Red-before: `a_scope_field_carrying_a_reserved_character_still_names_exactly_itself`
+failed at `ThresholdRow::new(exact_pattern(&slashed), ..)`; the extended
+`a_row_must_name_three_axes_a_real_streak_and_a_probability` failed on the
+well-formed escaped pattern.
+
+### F4 — P2 `receipt-pagination`: an oldest-first cap hid recent decisions
+
+`answer_receipts_in_txn` walked `prefix_iter` ascending under
+`MAX_RECEIPT_QUERY_SCAN` with no cap-fired signal. The answer log persists for the
+life of the vault and `unpin_scope` appends unconditionally, so growth is bounded
+by nothing: past the cap the newest transitions became permanently unprojectable
+and a time-bounded query for the latest one could return empty — the exact shape
+`receipt.rs:736-747` documents and rejects for `attempt_pack_receipts`.
+
+Fix mirrors that house pattern: an explicit half-open range over the family
+(`OverlayDb` has no reverse prefix iterator), a `rev_range` walk capped at
+`MAX_RECEIPT_QUERY_SCAN` with one row past the cap reached and never decoded, and
+`note_answer_scan_capped` warning when the cap fires. The key is scope-major and
+time-minor, so the doc says plainly that this is newest-first WITHIN each scope
+rather than globally.
+
+Mutation-verified: with the walk flipped back to `range` (forward),
+`a_capped_answer_scan_keeps_the_newest_transitions_not_the_oldest` fails on
+"the cap keeps the newest transition"; restored, it passes.
+
+### Gates
+
+`cargo fmt --all -- --check` clean · `cargo clippy -p oneiron --all-features
+--all-targets -j 6 -- -D warnings` clean · `cargo test -p oneiron --all-features
+-j 6` exit 0, 3609 lib tests + every integration suite green, zero failures.
+
+Diff against the pre-fix tip is exactly `edit_distance/graduation.rs`,
+`edit_distance/graduation/tests.rs` and the declared `consent_graduation.rs`
+handoff. No `Cargo.toml`, no `Cargo.lock`, `settings.rs` untouched.
