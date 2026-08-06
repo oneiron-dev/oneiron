@@ -24,12 +24,12 @@ use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON
 use oneiron::{
     ActiveHoldSource, BOOKING_EVENT_TYPE_META_PREFIX, BOOKING_EVENT_TYPE_SCHEMA_VERSION,
     BookingError, BookingEventTypeClaimValue, BookingSolver, ClaimApprovalStatus, ClaimCandidate,
-    ClaimSource, ClaimSubject, ConstraintObject, DEFAULT_INTRO_DURATION_MIN, DisclosureRung,
-    EdgeActorClass, EntityId, EventDetailsRow, EventRow, EventTypeConfig, EventTypeKey,
-    HostAvailabilityConfig, NoActiveHolds, RoutingMode, RungProjection, SlotOracle, SolveRequest,
-    SolveResult, SurfaceClass, TimeRange, Vault, VaultConfig, WeeklyWallWindow, WriteActor,
-    WriteEnvelope, WriteProvenance, encode_event_type_claim_value, event_type_index_key,
-    is_booking_claim_predicate, project_at_rung, slot_mask,
+    ClaimLifecycleStatus, ClaimSource, ClaimSubject, ConstraintObject, DEFAULT_INTRO_DURATION_MIN,
+    DisclosureRung, EdgeActorClass, EntityId, EventDetailsRow, EventRow, EventTypeConfig,
+    EventTypeKey, HostAvailabilityConfig, NoActiveHolds, RoutingMode, RungProjection, SlotOracle,
+    SolveRequest, SolveResult, SurfaceClass, TimeRange, Vault, VaultConfig, WeeklyWallWindow,
+    WriteActor, WriteEnvelope, WriteProvenance, encode_event_type_claim_value,
+    event_type_index_key, is_booking_claim_predicate, project_at_rung, slot_mask,
 };
 use rmpv::Value;
 
@@ -79,21 +79,6 @@ const fn monday() -> TimeRange {
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
-    (dir, vault)
-}
-
-/// An unseeded vault: keeps the claim write door open without a policy fixture,
-/// so the configuration oracles measure BK-00's lookup rather than the missing
-/// `booking.` rule in the default policy manifest — the hole
-/// [`booking_claims_are_gate_pending_under_the_default_policy_manifest`] pins,
-/// whose fix lives in `gate.rs`, a lane-wide BK non-claim.
-fn unseeded_vault() -> (tempfile::TempDir, Vault) {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let mut config = VaultConfig::device();
-    config.map_size = 16 * 1024 * 1024;
-    config.dimensions = 4;
-    config.embedding_model = None;
-    let vault = Vault::open_unseeded_for_test(dir.path(), config).expect("open vault");
     (dir, vault)
 }
 
@@ -755,54 +740,56 @@ fn synthetic_config_bypasses_page_lookup() {
     assert!(matches!(mismatch, Err(BookingError::InvalidConfig(_))));
 }
 
-/// KNOWN HOLE, inherited and not owned by BK-00.
+/// PACKET_AMEND (ONE-1823, `crates/oneiron/src/gate.rs`).
 ///
-/// `gate::default_policy_manifest()` carries a `calendar.` rule but no
-/// `booking.` one, so every booking-family claim falls to the manifest's
-/// `critical` default and is gate-pending on write. The fix is one rule in
-/// `crates/oneiron/src/gate.rs`, a lane-wide BK non-claim — exactly the shape
-/// `tests/calendar_surface_oracle.rs` pinned for `calendar.` before CAL closed
-/// it. Pinned here so the hole is measured rather than discovered later.
+/// `gate::default_policy_manifest()` resolves criticality from an allow-list of
+/// predicate prefixes and defaults everything else to `critical`. It carried a
+/// `calendar.` rule but no `booking.` one, so every booking-family claim fell to
+/// that default and was gate-pending on write — the production page-editor path
+/// for a `booking.event_type` configuration was dead, and a claim-backed solve
+/// was reachable only from a gate-free fixture vault. The fix is the one prefix
+/// rule CAL landed for `calendar.`, pinned here exactly as
+/// `tests/calendar_surface_oracle.rs` pins it there.
 #[test]
-fn booking_claims_are_gate_pending_under_the_default_policy_manifest() {
+fn booking_claims_resolve_normal_criticality_under_the_default_policy_manifest() {
     let (_dir, vault) = temp_vault();
     let actor = booking_actor(&vault);
     let page = booking_page(&vault);
-    let value = BookingEventTypeClaimValue {
-        schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+
+    // The ordinary page-editor write door, on a STOCK vault with no manifest
+    // edit: the `booking.` prefix rule resolves criticality `normal`, so the
+    // floor does not pend an approved configuration write.
+    store_event_type_claim(&vault, actor, page, 9, oracle_config());
+    let stored = vault
+        .get_claim(&claim_id(PAGE_SEED, 9))
+        .expect("claim row")
+        .expect("the claim-candidate door stored a row");
+    assert_eq!(stored.predicate, BOOKING_EVENT_TYPE_PREDICATE);
+    assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+
+    // ...and what the door admitted is what the solver reads: the production
+    // configuration path is live, not merely storable.
+    let calendars = vec![(
+        test_id(HOST_A_SEED),
+        vec![oneiron::CalendarSel { system: None }],
+    )];
+    let solved = BookingSolver {
+        vault: &vault,
         page_ref: page,
-        config: oracle_config(),
-    };
-    let rejection = vault
-        .batch()
-        .claim_candidate(
-            &claim_id(PAGE_SEED, 9),
-            ClaimCandidate::new(
-                BOOKING_EVENT_TYPE_PREDICATE,
-                ClaimSubject::Entity(page),
-                encode_event_type_claim_value(&value).expect("encode configuration"),
-                1.0,
-            ),
-            &WriteEnvelope::new(
-                WriteActor::new(actor, EdgeActorClass::Human),
-                ClaimSource::UserStated,
-                WriteProvenance::new(Value::from("one-1823-oracle")).expect("provenance"),
-                ClaimApprovalStatus::Approved,
-            ),
-            at(1),
-            1,
-        )
-        .commit()
-        .expect_err("the booking family has no policy rule yet");
-    assert!(
-        format!("{rejection:?}").contains("criticality_floor"),
-        "the hole is the missing `booking.` rule, not the claim body: {rejection:?}"
-    );
+        calendars_by_host: &calendars,
+        holds: &NoActiveHolds,
+        now_utc: NOW,
+        synthetic_config: None,
+    }
+    .solve(&request(None))
+    .expect("the page claim configures the solve on a stock vault");
+    assert!(slot_hours(&solved).contains(&SURVIVOR_MORNING));
 }
 
 #[test]
 fn booking_event_type_index_uses_canonical_prefix() {
-    let (_dir, vault) = unseeded_vault();
+    let (_dir, vault) = temp_vault();
     let page = booking_page(&vault);
 
     let key = EventTypeKey("intro-call".to_owned());
@@ -858,7 +845,7 @@ fn booking_event_type_index_uses_canonical_prefix() {
     );
 
     // A claim for another event type is not this one's configuration.
-    let (_other_dir, other_vault) = unseeded_vault();
+    let (_other_dir, other_vault) = temp_vault();
     let other_actor = booking_actor(&other_vault);
     let other_page = booking_page(&other_vault);
     let mut other_key = oracle_config();
