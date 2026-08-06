@@ -1390,3 +1390,225 @@ fn duplicate_rows_keep_exception_surfacing() -> Result<()> {
     assert_eq!(groups[0].members[0].claim_id, original.to_hex());
     Ok(())
 }
+
+// ===== ONE-1757 (ED-01) — approve-with-edit =====
+
+/// Builds the decider's edited body from the stored proposal.
+fn edited_body(vault: &Vault, claim_id: EntityId, value: &str) -> Result<Vec<u8>> {
+    let mut body = vault.get_claim(&claim_id)?.expect("proposal stored");
+    body.value = Value::from(value);
+    body.confidence = 0.5;
+    crate::claim::encode_claim_body(&body)
+}
+
+fn amended_proposal(vault: &Vault) -> Result<EntityId> {
+    let claim_id = entity(0xB4);
+    write_dreamer_proposal(
+        vault,
+        claim_id,
+        entity(0xB5),
+        entity(0xB6),
+        "core.role",
+        "draft",
+        "run-amend",
+        10,
+        &[REASON_CHECKER],
+    )?;
+    Ok(claim_id)
+}
+
+/// The CRITICAL fix: before this door the bulk verbs re-encoded the EXISTING
+/// body, so a decider's edit was silently discarded. The amended body is what
+/// lands, and the receipt says so — `approved_amended` plus a Δ carrying all
+/// six ARCH-0056 §2 fields.
+#[test]
+fn approve_with_edit_persists_the_amended_body_and_receipts_the_delta() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim_id = amended_proposal(&vault)?;
+    let amended = edited_body(&vault, claim_id, "revised by the owner")?;
+
+    let approval = vault.approve_inbox_member_with_edit_at(&claim_id, &amended, 20)?;
+
+    // Read-back differs from what was proposed and matches the amendment.
+    let stored = vault.get_claim(&claim_id)?.expect("approved claim");
+    assert_eq!(stored.value, Value::from("revised by the owner"));
+    assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(stored.predicate, "core.role");
+
+    assert_eq!(approval.receipt.outcome, OUTCOME_APPROVED_AMENDED);
+    assert!(
+        approval
+            .receipt
+            .policy_trace
+            .contains(&INBOX_REASON_AMEND_ACCEPT.to_owned())
+    );
+    // No capture-failure marker: the Δ was measured.
+    assert!(
+        !approval
+            .receipt
+            .policy_trace
+            .contains(&INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned())
+    );
+
+    let delta = approval.delta.expect("amended approval carries a delta");
+    assert_eq!(
+        delta.source,
+        crate::edit_distance::delta::DeltaSource::FieldDiff
+    );
+    assert!((0.0..=1.0).contains(&delta.d_norm) && delta.d_norm > 0.0);
+    assert!(delta.ops_summary.ins > 0 && delta.ops_summary.del > 0);
+    assert!(delta.ops_summary.kept > 0, "an edit is not a replacement");
+    assert_eq!(delta.engine_ver, env!("CARGO_PKG_VERSION"));
+    assert_ne!(delta.proposed_ref, delta.final_ref);
+
+    // The Δ rides the receipt's reserved slot, byte-identical to the door's.
+    let carried = crate::receipt::proposal_outcome_delta(&approval.receipt)
+        .expect("receipt carries the reserved delta slot");
+    assert_eq!(
+        crate::edit_distance::delta::AmendmentDelta::decode(&carried)?,
+        delta
+    );
+
+    // The member is resolved: no open row survives the approval.
+    assert!(vault.inbox_groups(InboxQuery::at(30, 10))?.is_empty());
+    Ok(())
+}
+
+/// The Δ is not a courtesy of the door's own return value: a later receipt
+/// query projects it too, from the same side-ledger.
+#[test]
+fn a_receipt_query_projects_the_delta_the_door_recorded() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim_id = amended_proposal(&vault)?;
+    let amended = edited_body(&vault, claim_id, "revised")?;
+    let approval = vault.approve_inbox_member_with_edit_at(&claim_id, &amended, 20)?;
+
+    let queried = vault
+        .receipts(ReceiptQuery::new(50))?
+        .into_iter()
+        .find(|receipt| receipt.receipt_id == approval.receipt.receipt_id)
+        .expect("resolution receipt is queryable");
+    assert_eq!(queried.fields, approval.receipt.fields);
+    assert!(queried.fields.contains_key("amendment_delta"));
+    Ok(())
+}
+
+/// The untouched path is unchanged: an unamended approval has no Δ, because
+/// nothing was edited to measure.
+#[test]
+fn an_untouched_approval_carries_no_delta() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim_id = amended_proposal(&vault)?;
+
+    let resolution =
+        vault.resolve_inbox_group_at("run-amend", InboxBulkVerb::AcceptAll, None, 20)?;
+    let receipt = resolution
+        .item_receipts
+        .first()
+        .expect("per-item receipt")
+        .clone();
+    assert_eq!(receipt.outcome, "approved");
+    assert!(!receipt.fields.contains_key("amendment_delta"));
+    assert_eq!(
+        vault
+            .get_claim(&claim_id)?
+            .expect("approved claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    Ok(())
+}
+
+/// An amendment NARROWS the review it belongs to. Moving the predicate or the
+/// subject would land a claim under exception classes and a consent binding
+/// that were derived from the ORIGINAL pair — a substitution wearing an
+/// edit's clothes. Both are refused with the proposal left open.
+#[test]
+fn an_amendment_may_not_move_the_reviewed_predicate_or_subject() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim_id = amended_proposal(&vault)?;
+
+    let mut swapped_predicate = vault.get_claim(&claim_id)?.expect("proposal");
+    swapped_predicate.predicate = "core.alias".to_owned();
+    let swapped_predicate = crate::claim::encode_claim_body(&swapped_predicate)?;
+    assert!(matches!(
+        vault.approve_inbox_member_with_edit_at(&claim_id, &swapped_predicate, 20),
+        Err(Error::InvalidClaimBody(_))
+    ));
+
+    let mut swapped_subject = vault.get_claim(&claim_id)?.expect("proposal");
+    swapped_subject.subject = ClaimSubject::Entity(entity(0xB7));
+    let swapped_subject = crate::claim::encode_claim_body(&swapped_subject)?;
+    assert!(matches!(
+        vault.approve_inbox_member_with_edit_at(&claim_id, &swapped_subject, 20),
+        Err(Error::InvalidClaimBody(_))
+    ));
+
+    // Fail-closed: nothing landed and the row is still open for review.
+    let stored = vault.get_claim(&claim_id)?.expect("proposal");
+    assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(stored.value, Value::from("draft"));
+    assert_eq!(vault.inbox_groups(InboxQuery::at(30, 10))?.len(), 1);
+    Ok(())
+}
+
+/// A body that does not decode as a claim is refused by the SAME strict
+/// decode the original rode — the amendment door is not a second, looser way
+/// into the claim store.
+#[test]
+fn an_undecodable_amendment_is_refused_by_the_claim_body_decode() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim_id = amended_proposal(&vault)?;
+    assert!(
+        vault
+            .approve_inbox_member_with_edit_at(&claim_id, b"\x91", 20)
+            .is_err()
+    );
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    Ok(())
+}
+
+/// The door redeems CONSENT, so a claim with no open pending row has nothing
+/// to redeem — an edit is not its own authority to write.
+#[test]
+fn approve_with_edit_needs_an_open_pending_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim_id = amended_proposal(&vault)?;
+    let amended = edited_body(&vault, claim_id, "revised")?;
+    vault.approve_inbox_member_with_edit_at(&claim_id, &amended, 20)?;
+
+    assert!(matches!(
+        vault.approve_inbox_member_with_edit_at(&claim_id, &amended, 21),
+        Err(Error::EntityNotFound)
+    ));
+    Ok(())
+}
+
+/// The non-fatal contract at its chokepoint: an unmeasurable pair yields no Δ
+/// and a receipt reason saying so — never an error that would refuse the
+/// approval it hangs off.
+#[test]
+fn an_unmeasurable_pair_records_the_gap_instead_of_raising() {
+    let (delta, reasons) = captured_amendment_delta(b"\x91", b"\x91");
+    assert!(delta.is_none());
+    assert_eq!(
+        reasons,
+        vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]
+    );
+
+    let good = crate::claim::encode_claim_body(&ClaimBody::new(
+        "core.role",
+        ClaimSubject::Entity(entity(0xB8)),
+        Value::from("v"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    ))
+    .expect("encode body");
+    let (delta, reasons) = captured_amendment_delta(&good, &good);
+    assert!(delta.is_some());
+    assert!(reasons.is_empty());
+}

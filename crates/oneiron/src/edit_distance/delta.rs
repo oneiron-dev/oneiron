@@ -385,7 +385,12 @@ fn diff_values(before: &Value, after: &Value, depth: u32, counts: &mut LeafCount
     }
 }
 
-fn diff_maps(left: &[(Value, Value)], right: &[(Value, Value)], depth: u32, counts: &mut LeafCounts) {
+fn diff_maps(
+    left: &[(Value, Value)],
+    right: &[(Value, Value)],
+    depth: u32,
+    counts: &mut LeafCounts,
+) {
     for (key, value) in left {
         match right.iter().find(|(other, _)| other == key) {
             Some((_, other)) => diff_values(value, other, depth + 1, counts),
@@ -416,14 +421,12 @@ fn diff_arrays(left: &[Value], right: &[Value], depth: u32, counts: &mut LeafCou
 /// no field, and charging it as change would score a no-op body rewrite.
 fn leaf_count(value: &Value) -> u32 {
     match value {
-        Value::Map(entries) => entries
-            .iter()
-            .fold(0, |total: u32, (_, value)| {
-                total.saturating_add(leaf_count(value))
-            }),
-        Value::Array(values) => values
-            .iter()
-            .fold(0, |total: u32, value| total.saturating_add(leaf_count(value))),
+        Value::Map(entries) => entries.iter().fold(0, |total: u32, (_, value)| {
+            total.saturating_add(leaf_count(value))
+        }),
+        Value::Array(values) => values.iter().fold(0, |total: u32, value| {
+            total.saturating_add(leaf_count(value))
+        }),
         _ => 1,
     }
 }

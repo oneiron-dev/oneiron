@@ -496,14 +496,7 @@ impl Vault {
         now: u64,
     ) -> Result<InboxAmendedApproval> {
         let accepted = self.with_write_txn(|wtxn| {
-            accept_member_with_amendment_in_txn(
-                self,
-                wtxn,
-                claim_id,
-                None,
-                now,
-                Some(amended_body),
-            )
+            accept_member_with_amendment_in_txn(self, wtxn, claim_id, None, now, Some(amended_body))
         })?;
         let accepted = accepted.ok_or(Error::EntityNotFound)?;
         let mut receipt = gate_decision_receipt(&accepted.record);
@@ -1201,19 +1194,21 @@ fn accept_member_with_amendment_in_txn(
         return Err(Error::GateConsentStale { claim_id: *id });
     }
 
-    // Both bodies are normalized to Approved before anything is compared or
-    // written, so the Δ measures the DECIDER's edit and not the approval flip
-    // the door performs on every accept.
-    let proposed = approved_body(&reviewed)?;
     let amended = amended_body
         .map(|body| amended_claim_body(&reviewed, body))
         .transpose()?;
-    let approved = match &amended {
-        Some(amended) => approved_body(amended)?,
-        None => proposed.clone(),
+    let amended_approval = amended.is_some();
+    // Both sides are normalized to Approved before the Δ is measured, so it
+    // reports the DECIDER's edit and not the approval flip this door performs
+    // on every accept.
+    let approved = approved_body(amended.as_ref().unwrap_or(&reviewed))?;
+    let (delta, receipt_reasons) = if amended_approval {
+        captured_amendment_delta(&approved_body(&reviewed)?, &approved)
+    } else {
+        (None, Vec::new())
     };
 
-    if amended.is_some() || reviewed.approval != ClaimApprovalStatus::Approved {
+    if amended_approval || reviewed.approval != ClaimApprovalStatus::Approved {
         apply_ops(
             &vault.store,
             &vault.config,
@@ -1227,7 +1222,7 @@ fn accept_member_with_amendment_in_txn(
                     end: header.occurred_end,
                 },
                 learned_at: header.learned_at,
-                data: approved.clone(),
+                data: approved,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
@@ -1240,14 +1235,6 @@ fn accept_member_with_amendment_in_txn(
         )?;
     }
 
-    // Δ capture is telemetry hanging off an approval that has already
-    // happened: a failure is stamped on the receipt and the approval stands.
-    // Blocking here would let a measurement bug refuse a decision.
-    let delta = amended.is_some().then(|| {
-        capture_delta_best(&DeltaCaptureContext::from_bodies(&proposed, &approved)).ok()
-    });
-    let capture_failed = matches!(delta, Some(None));
-
     // The gated rewrite may already have redeemed and removed the tray row;
     // the delete is idempotent either way.
     vault.store.delete_pending_gate_consent_in_txn(wtxn, id)?;
@@ -1255,24 +1242,20 @@ fn accept_member_with_amendment_in_txn(
         version: GATE_DECISION_LEDGER_VERSION,
         decision_id: GateDecisionId::now(),
         created_at: now,
-        outcome: if amended.is_some() {
+        outcome: if amended_approval {
             OUTCOME_APPROVED_AMENDED.to_owned()
         } else {
             "approved".to_owned()
         },
         reason_codes: vec![
-            if amended.is_some() {
+            if amended_approval {
                 INBOX_REASON_AMEND_ACCEPT
             } else {
                 INBOX_REASON_BUNDLE_ACCEPT
             }
             .to_owned(),
         ],
-        receipt_reasons: if capture_failed {
-            vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]
-        } else {
-            Vec::new()
-        },
+        receipt_reasons,
         system_notices: Vec::new(),
         actor_class: original.actor_class,
         actor_ref: original.actor_ref,
@@ -1286,11 +1269,33 @@ fn accept_member_with_amendment_in_txn(
     };
     vault.store.append_gate_decision_in_txn(wtxn, &record)?;
 
-    let delta = delta.flatten();
     if let Some(delta) = delta.as_ref() {
-        put_amendment_delta_in_txn(vault, wtxn, &gate_decision_receipt(&record).receipt_id, delta)?;
+        put_amendment_delta_in_txn(
+            vault,
+            wtxn,
+            &gate_decision_receipt(&record).receipt_id,
+            delta,
+        )?;
     }
     Ok(Some(AcceptedMember { record, delta }))
+}
+
+/// Measures the amendment Δ, returning the receipt reasons that record a
+/// capture failure.
+///
+/// Δ capture is TELEMETRY hanging off an approval that has already happened,
+/// so a measurement failure is stamped on the receipt and the decision
+/// stands. Blocking here would let a telemetry bug refuse a decision the
+/// decider already made — and a receipt that says its Δ is missing is worth
+/// more than one that silently has none.
+fn captured_amendment_delta(
+    proposed: &[u8],
+    approved: &[u8],
+) -> (Option<AmendmentDelta>, Vec<String>) {
+    match capture_delta_best(&DeltaCaptureContext::from_bodies(proposed, approved)) {
+        Ok(delta) => (Some(delta), Vec::new()),
+        Err(_) => (None, vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]),
+    }
 }
 
 /// The claim body as the door will persist it. Approval is the ENGINE's to

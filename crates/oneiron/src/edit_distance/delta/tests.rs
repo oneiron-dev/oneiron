@@ -91,12 +91,16 @@ fn encoded_delta_projects_the_six_arch_0056_names_and_round_trips() {
 /// identically regardless of how their maps were built.
 #[test]
 fn encoding_is_byte_stable_for_equal_deltas() {
-    let left =
-        delta_from_field_diff(&body(&[("a", Value::from(1))]), &body(&[("a", Value::from(2))]))
-            .expect("left");
-    let right =
-        delta_from_field_diff(&body(&[("a", Value::from(1))]), &body(&[("a", Value::from(2))]))
-            .expect("right");
+    let left = delta_from_field_diff(
+        &body(&[("a", Value::from(1))]),
+        &body(&[("a", Value::from(2))]),
+    )
+    .expect("left");
+    let right = delta_from_field_diff(
+        &body(&[("a", Value::from(1))]),
+        &body(&[("a", Value::from(2))]),
+    )
+    .expect("right");
     assert_eq!(left.encode().expect("left"), right.encode().expect("right"));
 }
 
