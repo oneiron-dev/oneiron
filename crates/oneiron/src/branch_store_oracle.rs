@@ -562,6 +562,20 @@ mod seam {
             self.run_executor_verb(verb).map_err(map_executor_error)
         }
 
+        /// ONE-1729: the same dispatch, reported as the PRODUCTION error kind.
+        ///
+        /// Once the room is on record these verbs take the ordinary path, and
+        /// the ordinary path's answer is the write GATE's — which is not an
+        /// off-record concern and must not be folded into a [`SeamError`] that
+        /// would blur it with one. The post-flip claim is about which check
+        /// spoke, so the kind is exactly the right resolution.
+        pub(super) fn executor_verb_error_kind(
+            &self,
+            verb: &str,
+        ) -> Option<crate::error::ErrorKind> {
+            self.run_executor_verb(verb).err().map(|error| error.kind())
+        }
+
         fn run_executor_verb(&self, verb: &str) -> Result<()> {
             match verb {
                 "GuestTurnRef" => self
@@ -574,7 +588,7 @@ mod seam {
                 "Speak" => self.run_executor_artifact_round(),
                 _ => crate::code_run::SelfDispatcher::dispatch(
                     &self.session_dispatcher("oracle-executor-run")?,
-                    self.executor_memory_call(verb),
+                    self.executor_memory_call(verb, EntityId::now()),
                 )
                 .map(|_| ()),
             }
@@ -598,7 +612,19 @@ mod seam {
         /// One durable-memory-write call per verb name. Bodies are minimal on
         /// purpose: off record the policy refuses before any of this is read,
         /// and on record the ordinary path validates it like any other write.
-        fn executor_memory_call(&self, verb: &str) -> crate::SelfCall {
+        /// ONE-1729: the ungated fixture write, reporting the claim id it
+        /// used so a caller can prove THAT row reached base rather than
+        /// counting rows other verbs may also have moved.
+        pub(super) fn dispatch_fixture_write(&self) -> Result<EntityId> {
+            let id = EntityId::now();
+            crate::code_run::SelfDispatcher::dispatch(
+                &self.session_dispatcher("oracle-fixture-write")?,
+                self.executor_memory_call("MemoryWriteFixture", id),
+            )?;
+            Ok(id)
+        }
+
+        fn executor_memory_call(&self, verb: &str, id: EntityId) -> crate::SelfCall {
             use crate::{
                 ClaimCandidate, ClaimSubject, SelfCall, SelfMemoryPutClaimCall,
                 SelfMemoryPutEdgeCall, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
@@ -616,16 +642,16 @@ mod seam {
             let occurred = TimeRange { start: 3, end: 3 };
             match verb {
                 "MemoryPutClaim" => SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
-                    EntityId::now(),
+                    id,
                     candidate(),
                     occurred,
                     4,
                 )),
                 "MemoryWriteFixture" => SelfCall::MemoryWriteFixture(
-                    SelfMemoryWriteFixtureCall::new(EntityId::now(), candidate(), occurred, 4),
+                    SelfMemoryWriteFixtureCall::new(id, candidate(), occurred, 4),
                 ),
                 "MemorySupersedeClaim" => SelfCall::MemorySupersedeClaim(
-                    SelfMemorySupersedeClaimCall::new(EntityId::now(), EntityId::now(), 5),
+                    SelfMemorySupersedeClaimCall::new(id, EntityId::now(), 5),
                 ),
                 "MemoryPutEdge" => SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
                     subject,
@@ -2371,33 +2397,37 @@ fn durable_memory_write_verbs_take_the_ordinary_path_after_flip() -> Result<()> 
     let actor = session.bind_actor()?;
     session.flip_on_record()?;
 
-    // `MemoryPutClaim` and `MemoryWriteFixture` land; the supersede and edge
-    // verbs reach their ordinary validation instead of the policy refusal,
-    // which is the claim under test — the policy is gone, not the gate.
+    // NOT ONE of the four still meets the effect policy. What answers now is
+    // whatever the ORDINARY path answers — for the three gated verbs that is
+    // the write gate, whose verdict is not an off-record concern and must not
+    // be read as one.
     let claims_before = vault
         .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
         .len();
-    for verb in ["MemoryPutClaim", "MemoryWriteFixture"] {
-        assert_eq!(
-            session.dispatch_executor_verb(verb),
-            Ok(()),
-            "{verb} must follow the ordinary allowed path once the room is on record"
-        );
-    }
-    assert_eq!(
-        vault
-            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
-            .len(),
-        claims_before + 2,
-        "both on-record writes landed in base, one claim each"
-    );
-    for verb in ["MemorySupersedeClaim", "MemoryPutEdge"] {
+    for verb in DURABLE_MEMORY_WRITE_VERBS {
         assert_ne!(
-            session.dispatch_executor_verb(verb),
-            Err(seam::SeamError::PolicyMemoryWrite),
+            session.executor_verb_error_kind(verb),
+            Some(crate::error::ErrorKind::OffRecordTalkOnly),
             "{verb} must no longer meet the off-record effect policy on record"
         );
     }
+    // `MemoryWriteFixture` takes the ungated batch path, so it is the verb
+    // that shows the ordinary route COMPLETING through the bound Session
+    // storage rather than through `self.vault`. Asserted by IDENTITY, not by
+    // a count: the gated verbs above also moved rows, and a count would let
+    // one of them stand in for the row actually under test.
+    let fixture_claim = session.dispatch_fixture_write()?;
+    assert!(
+        vault.get_claim(&fixture_claim)?.is_some(),
+        "the on-record fixture write landed in base through the bound storage"
+    );
+    assert!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+            .len()
+            > claims_before,
+        "and the base claim table grew rather than staying ephemeral"
+    );
     assert!(
         vault.get(&actor)?.is_some(),
         "the bound actor is a base row throughout"

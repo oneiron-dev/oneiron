@@ -1402,6 +1402,69 @@ impl SessionBinding<'_> {
             actor,
         )
     }
+
+    fn get_replay_record(&self, run_id: &EntityId) -> Result<Option<CodeRunReplayRecord>> {
+        self.session
+            .vault_meta_get(&code_run_replay_record_key(run_id))?
+            .map(|raw| decode_code_run_replay_record(&raw))
+            .transpose()
+    }
+
+    /// Compare-and-set against the SAME composed view it will update.
+    ///
+    /// A failed comparison writes neither overlay nor base — the refusal
+    /// returns before the put. `expected` is the replay record's own
+    /// generation protocol, a separate concern from the mode-flip route: the
+    /// number says "no one else appended", the route says "the room is still
+    /// the room you bound".
+    fn put_replay_record_if_generation(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+    ) -> Result<CodeRunReplayGeneration> {
+        let encoded = encode_code_run_replay_record(record)?;
+        let next_generation = record.generation()?;
+        let key = code_run_replay_record_key(&record.run_id);
+        let current_generation = self
+            .get_replay_record(&record.run_id)?
+            .as_ref()
+            .map(CodeRunReplayRecord::generation)
+            .transpose()?;
+        if current_generation != expected {
+            return Err(Error::ConcurrentWrite(
+                "code-run replay record changed; retry executor",
+            ));
+        }
+        self.session
+            .vault_meta_put_routed(&self.route, &key, &encoded)?;
+        Ok(next_generation)
+    }
+
+    fn put_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
+        if CodeRunRawOutput::from_bytes(output.path.clone(), raw)? != *output {
+            return Err(invalid_code_run_replay(
+                "raw output metadata does not match bytes",
+            ));
+        }
+        self.session
+            .vault_meta_put_routed(&self.route, &code_run_raw_output_key(output), raw)
+    }
+
+    fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
+        validate_raw_output(output)?;
+        let Some(raw) = self
+            .session
+            .vault_meta_get(&code_run_raw_output_key(output))?
+        else {
+            return Ok(None);
+        };
+        if CodeRunRawOutput::from_bytes(output.path.clone(), &raw)? != *output {
+            return Err(invalid_code_run_replay(
+                "stored raw output bytes drifted from metadata",
+            ));
+        }
+        Ok(Some(raw))
+    }
 }
 
 /// Where one code run's storage lives: the canonical vault, or a live
@@ -1474,51 +1537,21 @@ impl<'a> ExecutorStorage<'a> {
     ) -> Result<Option<CodeRunReplayRecord>> {
         match self {
             Self::Canonical(vault) => vault.get_code_run_replay_record(run_id),
-            Self::Session(binding) => binding
-                .session
-                .vault_meta_get(&code_run_replay_record_key(run_id))?
-                .map(|raw| decode_code_run_replay_record(&raw))
-                .transpose(),
+            Self::Session(binding) => binding.get_replay_record(run_id),
         }
     }
 
-    /// Compare-and-set against the SAME composed view this will update.
-    ///
-    /// A failed comparison writes neither overlay nor base: the refusal
-    /// returns before the put. `expected` is the replay record's own
-    /// generation protocol (ONE-1727) — a separate concern from the mode-flip
-    /// route, which protects this write from landing in the wrong store.
     pub(crate) fn put_code_run_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
     ) -> Result<CodeRunReplayGeneration> {
-        let binding = match self {
+        match self {
             Self::Canonical(vault) => {
-                return vault.put_code_run_replay_record_if_generation(record, expected);
+                vault.put_code_run_replay_record_if_generation(record, expected)
             }
-            Self::Session(binding) => binding,
-        };
-        let encoded = encode_code_run_replay_record(record)?;
-        let next_generation = record.generation()?;
-        let key = code_run_replay_record_key(&record.run_id);
-        let current_generation = binding
-            .session
-            .vault_meta_get(&key)?
-            .map(|raw| decode_code_run_replay_record(&raw))
-            .transpose()?
-            .as_ref()
-            .map(CodeRunReplayRecord::generation)
-            .transpose()?;
-        if current_generation != expected {
-            return Err(Error::ConcurrentWrite(
-                "code-run replay record changed; retry executor",
-            ));
+            Self::Session(binding) => binding.put_replay_record_if_generation(record, expected),
         }
-        binding
-            .session
-            .vault_meta_put_routed(&binding.route, &key, &encoded)?;
-        Ok(next_generation)
     }
 
     pub(crate) fn put_code_run_raw_output(
@@ -1528,18 +1561,7 @@ impl<'a> ExecutorStorage<'a> {
     ) -> Result<()> {
         match self {
             Self::Canonical(vault) => vault.put_code_run_raw_output(output, raw),
-            Self::Session(binding) => {
-                if CodeRunRawOutput::from_bytes(output.path.clone(), raw)? != *output {
-                    return Err(invalid_code_run_replay(
-                        "raw output metadata does not match bytes",
-                    ));
-                }
-                binding.session.vault_meta_put_routed(
-                    &binding.route,
-                    &code_run_raw_output_key(output),
-                    raw,
-                )
-            }
+            Self::Session(binding) => binding.put_raw_output(output, raw),
         }
     }
 
@@ -1549,21 +1571,7 @@ impl<'a> ExecutorStorage<'a> {
     ) -> Result<Option<Vec<u8>>> {
         match self {
             Self::Canonical(vault) => vault.get_code_run_raw_output(output),
-            Self::Session(binding) => {
-                validate_raw_output(output)?;
-                let Some(raw) = binding
-                    .session
-                    .vault_meta_get(&code_run_raw_output_key(output))?
-                else {
-                    return Ok(None);
-                };
-                if CodeRunRawOutput::from_bytes(output.path.clone(), &raw)? != *output {
-                    return Err(invalid_code_run_replay(
-                        "stored raw output bytes drifted from metadata",
-                    ));
-                }
-                Ok(Some(raw))
-            }
+            Self::Session(binding) => binding.get_raw_output(output),
         }
     }
 }
