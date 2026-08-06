@@ -15,10 +15,12 @@ use crate::batch::BatchOp;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
 use crate::batch::apply_ops;
+use crate::booking::DisclosureRung;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::temporal::TimeRange;
+use crate::vault::entity_id_from_type_index_key;
 
 /// Current AccessGrant body schema version.
 pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 1;
@@ -47,8 +49,11 @@ const KEY_STATUS: &str = ACCESS_GRANT_BODY_KEYS[4];
 const KEY_CREATED_AT: &str = ACCESS_GRANT_BODY_KEYS[5];
 const KEY_REVOKED_AT: &str = ACCESS_GRANT_BODY_KEYS[6];
 
-const SCOPE_KEYS: [&str; 3] = ["kind", "person_ref", "persona_ref"];
+const SCOPE_KEY_KIND: &str = "kind";
+const SCOPE_KEYS_COMPANION_PROFILE: [&str; 3] = ["kind", "person_ref", "persona_ref"];
+const SCOPE_KEYS_CALENDAR: [&str; 3] = ["kind", "calendar_ref", "rung"];
 const SCOPE_KIND_COMPANION_PROFILE: &str = "companion_profile";
+const SCOPE_KIND_CALENDAR: &str = "calendar";
 
 /// Scope addressed by an AccessGrant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,6 +65,20 @@ pub enum AccessGrantScope {
         person_ref: EntityId,
         /// Persona/profile record being addressed.
         persona_ref: EntityId,
+    },
+    /// Calendar disclosure at one rung (ARCH-0062 R1).
+    ///
+    /// DEC-0006 binds calendar disclosure per `(calendar × audience)`. The
+    /// audience is the record's own `principal_ref` — the same field
+    /// [`crate::consent::disclosure_grant_from_access_grant`] already lifts
+    /// into the unified registry's singleton audience bound — so the scope
+    /// carries the calendar and the rung and nothing that could disagree with
+    /// it.
+    Calendar {
+        /// Calendar whose events may be projected.
+        calendar_ref: EntityId,
+        /// Highest rung the audience may read, before any surface ceiling.
+        rung: DisclosureRung,
     },
 }
 
@@ -73,6 +92,12 @@ impl AccessGrantScope {
         }
     }
 
+    /// Constructs a calendar disclosure scope.
+    #[must_use]
+    pub const fn calendar(calendar_ref: EntityId, rung: DisclosureRung) -> Self {
+        Self::Calendar { calendar_ref, rung }
+    }
+
     /// Returns whether this scope exactly names the supplied companion profile.
     #[must_use]
     pub fn matches_companion_profile(self, person_ref: &EntityId, persona_ref: &EntityId) -> bool {
@@ -84,6 +109,7 @@ impl AccessGrantScope {
                 grant_person_ref.as_bytes() == person_ref.as_bytes()
                     && grant_persona_ref.as_bytes() == persona_ref.as_bytes()
             }
+            Self::Calendar { .. } => false,
         }
     }
 
@@ -95,6 +121,19 @@ impl AccessGrantScope {
                 person_ref,
                 persona_ref,
             } => Some((person_ref, persona_ref)),
+            Self::Calendar { .. } => None,
+        }
+    }
+
+    /// Returns the granted rung when this scope names the supplied calendar.
+    #[must_use]
+    pub fn calendar_rung(self, calendar_ref: &EntityId) -> Option<DisclosureRung> {
+        match self {
+            Self::Calendar {
+                calendar_ref: grant_calendar_ref,
+                rung,
+            } if grant_calendar_ref.as_bytes() == calendar_ref.as_bytes() => Some(rung),
+            Self::Calendar { .. } | Self::CompanionProfile { .. } => None,
         }
     }
 }
@@ -105,6 +144,8 @@ impl AccessGrantScope {
 pub enum AccessGrantCapability {
     /// Read one companion profile.
     CompanionProfileRead,
+    /// Read one calendar as a rung projection, never as raw event rows.
+    CalendarDisclosureRead,
 }
 
 impl AccessGrantCapability {
@@ -113,6 +154,7 @@ impl AccessGrantCapability {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::CompanionProfileRead => "companion_profile.read",
+            Self::CalendarDisclosureRead => "calendar.disclosure_read",
         }
     }
 
@@ -121,6 +163,7 @@ impl AccessGrantCapability {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "companion_profile.read" => Some(Self::CompanionProfileRead),
+            "calendar.disclosure_read" => Some(Self::CalendarDisclosureRead),
             _ => None,
         }
     }
@@ -193,6 +236,27 @@ impl AccessGrant {
         }
     }
 
+    /// Constructs an active calendar-disclosure grant.
+    ///
+    /// `principal_ref` is the audience: DEC-0006 binds one standing grant per
+    /// `(calendar × audience)`, and this record is that binding.
+    #[must_use]
+    pub const fn calendar_disclosure(
+        principal_ref: EntityId,
+        calendar_ref: EntityId,
+        rung: DisclosureRung,
+        created_at: u64,
+    ) -> Self {
+        Self {
+            principal_ref,
+            scope: AccessGrantScope::calendar(calendar_ref, rung),
+            capability: AccessGrantCapability::CalendarDisclosureRead,
+            status: AccessGrantStatus::Active,
+            created_at,
+            revoked_at: None,
+        }
+    }
+
     /// Returns a revoked version of this grant.
     pub fn revoked(self, revoked_at: u64) -> Result<Self> {
         let grant = Self {
@@ -233,6 +297,40 @@ impl AccessGrant {
                 .scope
                 .matches_companion_profile(person_ref, persona_ref)
     }
+
+    /// Returns the rung this grant discloses of `calendar_ref` to
+    /// `principal_ref`, or `None` when it authorizes no such read.
+    ///
+    /// Revoked grants, other principals, other calendars, and non-calendar
+    /// capabilities all return `None` — the caller's fail-safe is
+    /// [`DisclosureRung::Nothing`].
+    #[must_use]
+    pub fn calendar_disclosure_rung(
+        &self,
+        principal_ref: &EntityId,
+        calendar_ref: &EntityId,
+    ) -> Option<DisclosureRung> {
+        if self.status != AccessGrantStatus::Active
+            || self.capability != AccessGrantCapability::CalendarDisclosureRead
+            || self.principal_ref.as_bytes() != principal_ref.as_bytes()
+        {
+            return None;
+        }
+        self.scope.calendar_rung(calendar_ref)
+    }
+}
+
+/// One row of the calendar-grant registry view.
+///
+/// The pair, not the bare grant: `grant_ref` is the handle
+/// [`Vault::revoke_calendar_access_grant`] takes, so a listed row is directly
+/// revocable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CalendarAccessGrantRow {
+    /// Entity id of the grant record.
+    pub grant_ref: EntityId,
+    /// The grant itself.
+    pub grant: AccessGrant,
 }
 
 /// Encodes an AccessGrant body in canonical MessagePack field order.
@@ -331,14 +429,28 @@ fn encode_scope(scope: AccessGrantScope) -> Value {
             persona_ref,
         } => Value::Map(vec![
             (
-                Value::from(SCOPE_KEYS[0]),
+                Value::from(SCOPE_KEYS_COMPANION_PROFILE[0]),
                 Value::from(SCOPE_KIND_COMPANION_PROFILE),
             ),
-            (Value::from(SCOPE_KEYS[1]), Value::from(person_ref.to_hex())),
             (
-                Value::from(SCOPE_KEYS[2]),
+                Value::from(SCOPE_KEYS_COMPANION_PROFILE[1]),
+                Value::from(person_ref.to_hex()),
+            ),
+            (
+                Value::from(SCOPE_KEYS_COMPANION_PROFILE[2]),
                 Value::from(persona_ref.to_hex()),
             ),
+        ]),
+        AccessGrantScope::Calendar { calendar_ref, rung } => Value::Map(vec![
+            (
+                Value::from(SCOPE_KEYS_CALENDAR[0]),
+                Value::from(SCOPE_KIND_CALENDAR),
+            ),
+            (
+                Value::from(SCOPE_KEYS_CALENDAR[1]),
+                Value::from(calendar_ref.to_hex()),
+            ),
+            (Value::from(SCOPE_KEYS_CALENDAR[2]), Value::from(rung.as_str())),
         ]),
     }
 }
@@ -347,19 +459,39 @@ fn decode_scope(value: &Value) -> Result<AccessGrantScope> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    validate_keys(entries, &SCOPE_KEYS)?;
 
-    let kind = required_value(entries, SCOPE_KEYS[0])?
+    // The kind selects the key set, so each scope shape validates against its
+    // own pinned keys and no shape can borrow another's.
+    let kind = required_value(entries, SCOPE_KEY_KIND)?
         .as_str()
         .ok_or_else(invalid_grant)?;
-    if kind != SCOPE_KIND_COMPANION_PROFILE {
-        return Err(invalid_grant());
-    }
 
-    Ok(AccessGrantScope::CompanionProfile {
-        person_ref: decode_entity_ref(required_value(entries, SCOPE_KEYS[1])?)?,
-        persona_ref: decode_entity_ref(required_value(entries, SCOPE_KEYS[2])?)?,
-    })
+    match kind {
+        SCOPE_KIND_COMPANION_PROFILE => {
+            validate_keys(entries, &SCOPE_KEYS_COMPANION_PROFILE)?;
+            Ok(AccessGrantScope::CompanionProfile {
+                person_ref: decode_entity_ref(required_value(
+                    entries,
+                    SCOPE_KEYS_COMPANION_PROFILE[1],
+                )?)?,
+                persona_ref: decode_entity_ref(required_value(
+                    entries,
+                    SCOPE_KEYS_COMPANION_PROFILE[2],
+                )?)?,
+            })
+        }
+        SCOPE_KIND_CALENDAR => {
+            validate_keys(entries, &SCOPE_KEYS_CALENDAR)?;
+            Ok(AccessGrantScope::Calendar {
+                calendar_ref: decode_entity_ref(required_value(entries, SCOPE_KEYS_CALENDAR[1])?)?,
+                rung: required_value(entries, SCOPE_KEYS_CALENDAR[2])?
+                    .as_str()
+                    .and_then(DisclosureRung::parse)
+                    .ok_or_else(invalid_grant)?,
+            })
+        }
+        _ => Err(invalid_grant()),
+    }
 }
 
 fn decode_entity_ref(value: &Value) -> Result<EntityId> {
@@ -453,6 +585,50 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// Lists every access grant whose scope names `calendar_ref`, revoked rows
+    /// included, so the registry can show and un-share in one view.
+    pub fn list_calendar_access_grants(
+        &self,
+        calendar_ref: &EntityId,
+    ) -> Result<Vec<CalendarAccessGrantRow>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_ACCESS_GRANT])?
+        {
+            let (key, _) = entry?;
+            let grant_ref = entity_id_from_type_index_key(&key)?;
+            let Some(raw) = self.store.entities.get(&rtxn, grant_ref.as_bytes())? else {
+                return Err(Error::CorruptedIndex("access grant entity row"));
+            };
+            let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if grant.scope.calendar_rung(calendar_ref).is_some() {
+                rows.push(CalendarAccessGrantRow { grant_ref, grant });
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Revokes a calendar disclosure grant through the calendar surface.
+    ///
+    /// Fails closed on a grant that is not a calendar grant: the calendar
+    /// registry must not be a general revoke door for other scopes.
+    pub fn revoke_calendar_access_grant(
+        &self,
+        grant_ref: &EntityId,
+        revoked_at: u64,
+    ) -> Result<AccessGrant> {
+        let grant = self.get_access_grant(grant_ref)?.ok_or(Error::EntityNotFound)?;
+        if !matches!(grant.scope, AccessGrantScope::Calendar { .. }) {
+            return Err(Error::InvalidAccessGrantBody(
+                "grant is not a calendar disclosure grant",
+            ));
+        }
+        self.revoke_access_grant(grant_ref, revoked_at)
     }
 
     fn write_access_grant_body(&self, id: &EntityId, learned_at: u64, data: &[u8]) -> Result<()> {

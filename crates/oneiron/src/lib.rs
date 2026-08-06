@@ -123,7 +123,8 @@ pub mod write_envelope;
 
 pub use crate::access_grant::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, AccessGrant, AccessGrantCapability,
-    AccessGrantScope, AccessGrantStatus, decode_access_grant_body, encode_access_grant_body,
+    AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow, decode_access_grant_body,
+    encode_access_grant_body,
 };
 pub use crate::actor_claims::{
     ACTOR_CLAIM_LINEAGE_KEY, ACTOR_CLAIM_MAX_CITED_EVIDENCE, ACTOR_DISTILL_CALL_PURPOSE_NAME,
@@ -213,8 +214,10 @@ pub use crate::bm25::{
     bm25_diagnostics_snapshot,
 };
 pub use crate::booking::{
-    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotMask, SlotOracle, SolveRequest,
-    SolveResult,
+    BookingError, BusyBlockRow, CalendarDisclosureDefault, ConstraintObject, DisclosureRung,
+    EventDetailsRow, EventRow, EventTypeKey, RankedSlot, RungProjection, SlotMask, SlotOracle,
+    SolveRequest, SolveResult, SurfaceClass, TitledEventRow, default_disclosure_rung,
+    project_at_rung, project_calendar_grant,
 };
 pub use crate::calendar::{
     BusyInterval, BusyUnion, CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER,

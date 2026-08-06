@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Error, Result,
+    booking::DisclosureRung,
     consent::AuthenticatedOwner,
     lens::{
         ButtonControl, CollectionAtom, GeneratedLens, LensAtom, LensAtomId, LensNode, LensText,
@@ -1189,6 +1190,45 @@ pub enum GrantMintIntentScope {
         brief_ref: String,
         verb_class: String,
     },
+    /// One calendar shared at one rung with the intent's `principal_ref`.
+    Calendar {
+        calendar_ref: String,
+        rung: DisclosureRung,
+    },
+}
+
+/// Converts one bounded calendar-sharing sentence into exactly one
+/// [`GrantMintIntent`].
+///
+/// The agent-facing input is a sentence — "share my work calendar fully with
+/// Yura" — already resolved upstream to typed refs and a rung. This seam turns
+/// that into a single `(calendar_ref, audience, rung)` grant intent, where the
+/// audience is the intent's `principal_ref`. It never fans the sentence out
+/// into a settings matrix: one sentence mints one scope, or it errors.
+pub fn calendar_grant_mint_intent(
+    principal_ref: &str,
+    origin_component_id: &str,
+    origin_action_id: &str,
+    origin_receipt_ref: Option<&str>,
+    calendar_ref: &str,
+    rung: DisclosureRung,
+) -> Result<GrantMintIntent> {
+    Ok(GrantMintIntent {
+        principal_ref: non_empty("calendar grant principal_ref", principal_ref.to_owned())?,
+        origin_component_id: non_empty(
+            "calendar grant origin_component_id",
+            origin_component_id.to_owned(),
+        )?,
+        origin_action_id: non_empty(
+            "calendar grant origin_action_id",
+            origin_action_id.to_owned(),
+        )?,
+        origin_receipt_ref: origin_receipt_ref.map(str::to_owned),
+        scope: GrantMintIntentScope::Calendar {
+            calendar_ref: non_empty("calendar grant calendar_ref", calendar_ref.to_owned())?,
+            rung,
+        },
+    })
 }
 
 fn append_eirispec_actions(

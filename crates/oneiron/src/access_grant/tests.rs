@@ -30,15 +30,15 @@ fn valid_entries() -> Vec<(Value, Value)> {
             Value::from(KEY_SCOPE),
             Value::Map(vec![
                 (
-                    Value::from(SCOPE_KEYS[0]),
+                    Value::from(SCOPE_KEYS_COMPANION_PROFILE[0]),
                     Value::from(SCOPE_KIND_COMPANION_PROFILE),
                 ),
                 (
-                    Value::from(SCOPE_KEYS[1]),
+                    Value::from(SCOPE_KEYS_COMPANION_PROFILE[1]),
                     Value::from(entity(0xB1).to_hex()),
                 ),
                 (
-                    Value::from(SCOPE_KEYS[2]),
+                    Value::from(SCOPE_KEYS_COMPANION_PROFILE[2]),
                     Value::from(entity(0xC1).to_hex()),
                 ),
             ]),
@@ -124,7 +124,7 @@ fn access_grant_decode_fails_closed_for_malformed_bodies() {
         .find(|(key, _)| key.as_str() == Some(KEY_SCOPE))
     {
         for (key, value) in scope {
-            if key.as_str() == Some(SCOPE_KEYS[1]) {
+            if key.as_str() == Some(SCOPE_KEYS_COMPANION_PROFILE[1]) {
                 *value = Value::from("not-an-entity");
             }
         }
@@ -164,4 +164,186 @@ fn access_grant_type_registration_is_stable() {
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
     assert_eq!(entry.band, TypeByteBand::InducedDynamicMaintenance);
+}
+
+// ---------------------------------------------------------------------------
+// ONE-1812 [BK-01] — the calendar disclosure scope (ARCH-0062 R1)
+// ---------------------------------------------------------------------------
+
+fn calendar_grant() -> AccessGrant {
+    AccessGrant::calendar_disclosure(entity(0x52), entity(0xB2), DisclosureRung::Titles, 42)
+}
+
+#[test]
+fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
+    // The pre-existing companion-profile encoding is byte-identical after the
+    // append: same keys, same kind tag, same order.
+    let companion = test_grant();
+    assert_eq!(
+        encode_access_grant_body(&companion)?,
+        grant_map(valid_entries())
+    );
+    assert_eq!(decode_access_grant_body(&grant_map(valid_entries()))?, companion);
+
+    // And the new scope round-trips on its own pinned key set.
+    let grant = calendar_grant();
+    let encoded = encode_access_grant_body(&grant)?;
+    validate_access_grant_body_bytes(&encoded)?;
+    assert_eq!(decode_access_grant_body(&encoded)?, grant);
+
+    let scope = encode_scope(grant.scope);
+    let Value::Map(entries) = &scope else {
+        panic!("scope encodes as a map");
+    };
+    let keys: Vec<&str> = entries
+        .iter()
+        .map(|(key, _)| key.as_str().expect("string key"))
+        .collect();
+    assert_eq!(keys, SCOPE_KEYS_CALENDAR);
+    assert_eq!(
+        entries[0].1.as_str(),
+        Some(SCOPE_KIND_CALENDAR),
+        "the kind tag selects the key set"
+    );
+    assert_eq!(entries[2].1.as_str(), Some("titles"));
+
+    // A scope may not borrow the other kind's keys.
+    let hybrid = grant_map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(ACCESS_GRANT_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_PRINCIPAL_REF),
+            Value::from(entity(0x52).to_hex()),
+        ),
+        (
+            Value::from(KEY_SCOPE),
+            Value::Map(vec![
+                (Value::from(SCOPE_KEY_KIND), Value::from(SCOPE_KIND_CALENDAR)),
+                (
+                    Value::from(SCOPE_KEYS_COMPANION_PROFILE[1]),
+                    Value::from(entity(0xB2).to_hex()),
+                ),
+                (
+                    Value::from(SCOPE_KEYS_COMPANION_PROFILE[2]),
+                    Value::from(entity(0xC2).to_hex()),
+                ),
+            ]),
+        ),
+        (
+            Value::from(KEY_CAPABILITY),
+            Value::from("calendar.disclosure_read"),
+        ),
+        (Value::from(KEY_STATUS), Value::from("active")),
+        (Value::from(KEY_CREATED_AT), Value::from(42_u64)),
+        (Value::from(KEY_REVOKED_AT), Value::Nil),
+    ]);
+    assert_eq!(
+        decode_access_grant_body(&hybrid)
+            .expect_err("mismatched scope keys")
+            .kind(),
+        ErrorKind::InvalidAccessGrantBody
+    );
+    Ok(())
+}
+
+#[test]
+fn calendar_grant_reuses_access_grant_entity_type_128() {
+    // No new entity byte: the calendar scope rides ACCESS_GRANT = 128.
+    assert_eq!(ENTITY_TYPE_ACCESS_GRANT, 128);
+    let entry =
+        entity_type_registry_entry(ENTITY_TYPE_ACCESS_GRANT).expect("ACCESS_GRANT registry row");
+    assert_eq!(entry.kind, "ACCESS_GRANT");
+
+    let grant = calendar_grant();
+    assert_eq!(
+        grant.capability,
+        AccessGrantCapability::CalendarDisclosureRead
+    );
+    assert_eq!(
+        grant.calendar_disclosure_rung(&entity(0x52), &entity(0xB2)),
+        Some(DisclosureRung::Titles)
+    );
+    // Wrong principal, wrong calendar, and the companion capability all deny.
+    assert_eq!(
+        grant.calendar_disclosure_rung(&entity(0x53), &entity(0xB2)),
+        None
+    );
+    assert_eq!(
+        grant.calendar_disclosure_rung(&entity(0x52), &entity(0xB3)),
+        None
+    );
+    assert_eq!(
+        test_grant().calendar_disclosure_rung(&entity(0x51), &entity(0xB1)),
+        None
+    );
+    // The calendar scope is not a companion-profile scope.
+    assert!(
+        !grant
+            .scope
+            .matches_companion_profile(&entity(0xB2), &entity(0xC2))
+    );
+    assert_eq!(grant.scope.companion_profile_refs(), None);
+}
+
+#[test]
+fn calendar_grant_registry_lists_and_revokes() {
+    use crate::booking::{RungProjection, SurfaceClass, project_calendar_grant};
+    use crate::test_util::{embedding_test_config, open_test_vault_with};
+
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let calendar = entity(0xB2);
+    let reader = entity(0x52);
+    let grant_ref = entity(0x63);
+
+    let grant = AccessGrant::calendar_disclosure(reader, calendar, DisclosureRung::Full, 42);
+    vault
+        .create_access_grant(&grant_ref, &grant)
+        .expect("mint calendar grant");
+
+    // Listed as a typed calendar row, keyed by a revocable handle.
+    let rows = vault
+        .list_calendar_access_grants(&calendar)
+        .expect("list calendar grants");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].grant_ref, grant_ref);
+    assert_eq!(rows[0].grant, grant);
+    assert!(
+        vault
+            .list_calendar_access_grants(&entity(0xB3))
+            .expect("list other calendar")
+            .is_empty()
+    );
+
+    // Revoke through the calendar surface; the next read discloses Nothing.
+    let revoked = vault
+        .revoke_calendar_access_grant(&grant_ref, 99)
+        .expect("revoke calendar grant");
+    assert_eq!(revoked.status, AccessGrantStatus::Revoked);
+    assert_eq!(
+        project_calendar_grant(
+            &revoked,
+            &reader,
+            &calendar,
+            &[],
+            SurfaceClass::CrossVault,
+            None
+        )
+        .expect("post-revoke projection"),
+        RungProjection::Nothing
+    );
+
+    // The calendar door is not a general revoke door.
+    let companion_ref = entity(0x64);
+    vault
+        .create_access_grant(&companion_ref, &test_grant())
+        .expect("mint companion grant");
+    assert_eq!(
+        vault
+            .revoke_calendar_access_grant(&companion_ref, 99)
+            .expect_err("companion grant is not revocable here")
+            .kind(),
+        ErrorKind::InvalidAccessGrantBody
+    );
 }
