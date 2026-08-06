@@ -53,6 +53,14 @@ const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_HUB_PACKAGE_FILES: usize = 4096;
 const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 const MAX_HUB_SKILL_SCAN_ENTRIES: usize = 100_000;
+/// How far a scanner's clock may run ahead of this node's ingest clock before
+/// its declared `scannedAt` is treated as skew and clamped (ONE-1892).
+///
+/// Without the clamp, one receipt stamped a century out would pin the active
+/// slot for its `(content_hash, provider)` key against every later legitimate
+/// scan — newest-wins turned into a denial-of-update primitive. Five minutes is
+/// generous for ordinary clock drift and useless as a pin.
+const SCAN_TIMESTAMP_FUTURE_SKEW_SECS: u64 = 300;
 
 /// Generic adapter kind stored on a SKILL_HUB record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -778,7 +786,12 @@ impl ScanVerdict {
 }
 
 /// Scanner-reported risk level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Ordered least-to-most severe, and the derived `Ord` IS that severity order:
+/// the activation dial (`skill_scan`) compares stored risks against a threshold
+/// with `>=`, so the variant sequence here is a wire-facing decision, not a
+/// cosmetic one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScanRiskLevel {
     None,
     Low,
@@ -788,13 +801,26 @@ pub enum ScanRiskLevel {
 }
 
 impl ScanRiskLevel {
-    const fn as_str(self) -> &'static str {
+    /// The pinned on-disk string for this level.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
             Self::Critical => "critical",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "none" => Some(Self::None),
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "critical" => Some(Self::Critical),
+            _ => None,
         }
     }
 }
@@ -1011,6 +1037,18 @@ impl Vault {
             occurred,
             learned_at,
         )?;
+        // ONE-1892: the ONE producer hook for the import family — the two
+        // public import doors and the dependency-materialization door all
+        // delegate here, so imported bytes carry a scanner receipt without any
+        // caller remembering to ask for one.
+        self.scan_and_ingest_on_import_in_txn(
+            &mut wtxn,
+            &entity,
+            content_hash,
+            package,
+            occurred,
+            learned_at,
+        )?;
         wtxn.commit()?;
         Ok(entity)
     }
@@ -1173,6 +1211,19 @@ impl Vault {
                 learned_at,
             )?;
         }
+        // ONE-1892: the update door's half of the producer. Unconditional
+        // rather than gated on `content_hash_changed` because the guard that
+        // matters is content-keyed — an unchanged hash that already carries a
+        // static receipt is a no-op here, while a hash that never got one
+        // (bytes born through a non-hub path) is scanned on this pass.
+        self.scan_and_ingest_on_import_in_txn(
+            &mut wtxn,
+            entity,
+            content_hash,
+            package,
+            occurred,
+            learned_at,
+        )?;
         wtxn.commit()?;
         Ok(HubSyncDisposition::Applied)
     }
@@ -1222,6 +1273,7 @@ impl Vault {
         // claim door requires the subject entity) and dedup against the single
         // anchor rather than looping over every current holder.
         let anchor = self.ensure_skill_content_anchor_in_txn(wtxn, content_hash, learned_at)?;
+        let scanned_at = clamp_scan_timestamp(receipt.scanned_at, learned_at);
         let mut prior_rows = Vec::new();
         for (id, body, occurred_start) in
             self.active_claims_for_predicate_in_txn(&*wtxn, &anchor, PREDICATE_SKILL_SCAN_VERDICT)?
@@ -1229,49 +1281,121 @@ impl Vault {
             if map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
                 && map_text(&body.value, "provider") == Some(receipt.provider.as_str())
             {
-                prior_rows.push((id, occurred_start));
+                prior_rows.push((id, occurred_start, scan_verdict_row_scanned_at(&body)?));
             }
         }
 
         let claim_id = EntityId::now();
+        let mut value = vec![
+            (Value::from("contentHash"), Value::from(hash_hex)),
+            (
+                Value::from("provider"),
+                Value::from(receipt.provider.as_str()),
+            ),
+            (Value::from("scannedAt"), Value::from(scanned_at)),
+            (
+                Value::from("verdict"),
+                Value::from(receipt.verdict.as_str()),
+            ),
+            (
+                Value::from("riskLevel"),
+                Value::from(receipt.risk_level.as_str()),
+            ),
+            (
+                Value::from("completeness"),
+                Value::from(receipt.completeness.as_str()),
+            ),
+            (
+                Value::from("governance"),
+                Value::from(receipt.governance.as_str()),
+            ),
+        ];
+        if scanned_at != receipt.scanned_at {
+            // The clamp is RECEIPTED, not silent: the row reports the time the
+            // comparison used plus what the provider actually declared, so a
+            // skewed scanner is diagnosable from the ledger alone.
+            value.push((
+                Value::from("scannedAtDeclared"),
+                Value::from(receipt.scanned_at),
+            ));
+        }
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_SCAN_VERDICT,
             ClaimSubject::Entity(anchor),
-            Value::Map(vec![
-                (Value::from("contentHash"), Value::from(hash_hex)),
-                (
-                    Value::from("provider"),
-                    Value::from(receipt.provider.as_str()),
-                ),
-                (Value::from("scannedAt"), Value::from(receipt.scanned_at)),
-                (
-                    Value::from("verdict"),
-                    Value::from(receipt.verdict.as_str()),
-                ),
-                (
-                    Value::from("riskLevel"),
-                    Value::from(receipt.risk_level.as_str()),
-                ),
-                (
-                    Value::from("completeness"),
-                    Value::from(receipt.completeness.as_str()),
-                ),
-                (
-                    Value::from("governance"),
-                    Value::from(receipt.governance.as_str()),
-                ),
-            ]),
+            Value::Map(value),
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         );
         body.source = Some(ClaimSource::Observed);
         self.put_reserved_claim_in_txn(wtxn, &claim_id, &body, occurred, learned_at)?;
-        for (prior_id, prior_start) in prior_rows {
+
+        // F5 newest-wins (ONE-1892): the ACTIVE verdict for a
+        // `(content_hash, provider)` key is the one with the latest SCAN time,
+        // not the one ingested last. A late-arriving older scan is real
+        // evidence and is kept — it lands as a row and is closed under the
+        // newer one in the same transaction, so it stays auditable without ever
+        // holding the active slot. Ties go to the later call: two scans of the
+        // same bytes at the same second are the same finding, and the fresher
+        // ingest is the one whose provenance the caller just asserted.
+        let newest_prior = prior_rows
+            .iter()
+            .max_by_key(|(_, _, prior_scanned_at)| *prior_scanned_at)
+            .copied();
+        if let Some((newest_id, newest_start, newest_scanned_at)) = newest_prior
+            && scanned_at < newest_scanned_at
+        {
+            let superseded_at = learned_at.max(occurred.start).max(newest_start);
+            self.supersede_reserved_claim_in_txn(wtxn, &newest_id, &claim_id, superseded_at)?;
+            return Ok(claim_id);
+        }
+        for (prior_id, prior_start, _) in prior_rows {
             let superseded_at = learned_at.max(prior_start);
             self.supersede_reserved_claim_in_txn(wtxn, &claim_id, &prior_id, superseded_at)?;
         }
         Ok(claim_id)
+    }
+
+    /// Runs the engine's own static scan over an incoming package and ingests
+    /// its receipt (ONE-1892) — the production PRODUCER behind
+    /// [`Vault::ingest_skill_scan_verdict`].
+    ///
+    /// Idempotent on the CONTENT, not on the caller: the static pass is a pure
+    /// function of the package bytes, so bytes that already carry an active
+    /// receipt from this provider are left alone. Re-running would mint a row
+    /// identical but for its timestamp and supersede the row it duplicates —
+    /// churn with no new evidence in it. That also means a second hub alias
+    /// over known bytes adds no verdict, while bytes first seen through a
+    /// non-hub birth path get scanned the moment they arrive at this door.
+    pub(crate) fn scan_and_ingest_on_import_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        content_hash: SkillContentHash,
+        package: &HubPackage,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<Option<EntityId>> {
+        let already_scanned = self
+            .skill_scan_verdicts_for_content_hash_in_txn(&*wtxn, content_hash)?
+            .iter()
+            .any(|body| {
+                map_text(&body.value, "provider")
+                    == Some(crate::skill_scan::SCAN_PROVIDER_STATIC_V1)
+            });
+        if already_scanned {
+            return Ok(None);
+        }
+        let receipt = crate::skill_scan::run_static_skill_scan(package, learned_at)?;
+        self.ingest_skill_scan_verdict_in_txn(
+            wtxn,
+            entity,
+            content_hash,
+            &receipt,
+            occurred,
+            learned_at,
+        )
+        .map(Some)
     }
 
     /// Ingests independent provider receipts as content-keyed audit signals.
@@ -1313,11 +1437,23 @@ impl Vault {
         content_hash: SkillContentHash,
     ) -> Result<Vec<ClaimBody>> {
         let rtxn = self.store.env.read_txn()?;
+        self.skill_scan_verdicts_for_content_hash_in_txn(&rtxn, content_hash)
+    }
+
+    /// [`Vault::skill_scan_verdicts_for_content_hash`] inside the caller's
+    /// transaction — the activation consult reads from inside the write
+    /// transaction that performs the activation, so no verdict can land in
+    /// between the consult and the write it governs.
+    pub(crate) fn skill_scan_verdicts_for_content_hash_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        content_hash: SkillContentHash,
+    ) -> Result<Vec<ClaimBody>> {
         let hash_hex = content_hash.to_hex();
         let anchor = skill_content_anchor_entity_id(content_hash)?;
         let mut rows = Vec::new();
         for (_, body, _) in
-            self.active_claims_for_predicate_in_txn(&rtxn, &anchor, PREDICATE_SKILL_SCAN_VERDICT)?
+            self.active_claims_for_predicate_in_txn(rtxn, &anchor, PREDICATE_SKILL_SCAN_VERDICT)?
         {
             // Defense in depth: every row on this anchor is for `content_hash`
             // by construction, but the exact-hash filter keeps discovery precise
@@ -1615,6 +1751,14 @@ impl Vault {
     /// it must exist before the reserved put runs (the claim door requires the
     /// subject entity). The anchor body carries the 32-byte content hash so the
     /// record is self-describing.
+    ///
+    /// An entity already sitting at the derived id must BE an anchor (ONE-1892).
+    /// The pre-existence check is what makes the mint idempotent, so without a
+    /// type assert any entity that landed on the derived id first would be
+    /// silently adopted as the subject of every verdict for those bytes — a
+    /// squat the verdict reader could never see. The id is a domain-separated
+    /// digest, so this is a corruption guard, not a policy gate; it fails
+    /// closed and writes nothing.
     fn ensure_skill_content_anchor_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1622,12 +1766,14 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         let anchor = skill_content_anchor_entity_id(content_hash)?;
-        if self
-            .store
-            .entities
-            .get(&*wtxn, anchor.as_bytes())?
-            .is_some()
-        {
+        if let Some(raw) = self.store.entities.get(&*wtxn, anchor.as_bytes())? {
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_SKILL_CONTENT_ANCHOR {
+                return Err(Error::SkillContentAnchorTypeMismatch {
+                    existing: header.entity_type,
+                });
+            }
             return Ok(anchor);
         }
         apply_ops(
@@ -1916,6 +2062,37 @@ pub(crate) fn backfill_content_hash_index_if_needed(vault: &Vault) -> Result<()>
     Ok(())
 }
 
+/// Clamps a provider-declared scan time to this node's ingest clock when it
+/// runs further ahead than [`SCAN_TIMESTAMP_FUTURE_SKEW_SECS`].
+fn clamp_scan_timestamp(scanned_at: u64, learned_at: u64) -> u64 {
+    if scanned_at > learned_at.saturating_add(SCAN_TIMESTAMP_FUTURE_SKEW_SECS) {
+        learned_at
+    } else {
+        scanned_at
+    }
+}
+
+/// The (already clamped) scan time a stored verdict row reports.
+///
+/// A row missing the field is corruption rather than an implicit zero: the
+/// ingest door writes it on every path, and reading damage as "oldest possible"
+/// would let a corrupt row lose the newest-wins comparison silently.
+fn scan_verdict_row_scanned_at(body: &ClaimBody) -> Result<u64> {
+    map_value(&body.value, "scannedAt")
+        .and_then(Value::as_u64)
+        .ok_or(Error::CorruptedIndex("skill scan verdict scannedAt"))
+}
+
+/// The risk level a stored verdict row reports.
+///
+/// Same fail-closed reading as [`scan_verdict_row_scanned_at`]: a damaged row
+/// must not read as harmless to the activation dial.
+pub(crate) fn scan_verdict_row_risk(body: &ClaimBody) -> Result<ScanRiskLevel> {
+    map_text(&body.value, "riskLevel")
+        .and_then(ScanRiskLevel::parse)
+        .ok_or(Error::CorruptedIndex("skill scan verdict riskLevel"))
+}
+
 fn validate_skill_scan_receipt(receipt: &SkillScanReceipt) -> Result<()> {
     validate_text(
         &receipt.provider,
@@ -2168,6 +2345,29 @@ mod tests {
         Ok((local_entity, imported_entity))
     }
 
+    /// Active verdict rows for `content_hash`, minus the engine's OWN static
+    /// receipt.
+    ///
+    /// ONE-1892 wired a producer into the import/sync doors, so every hub
+    /// import now mints an `oneiron.static.v1` row for the bytes it lands.
+    /// These assertions are about the third-party providers the test ingests,
+    /// and counting the engine's own row alongside them would measure the
+    /// producer instead of the contract under test (the producer has its own
+    /// coverage in `skill_scan::tests`).
+    fn third_party_verdicts(
+        vault: &Vault,
+        content_hash: SkillContentHash,
+    ) -> Result<Vec<ClaimBody>> {
+        Ok(vault
+            .skill_scan_verdicts_for_content_hash(content_hash)?
+            .into_iter()
+            .filter(|body| {
+                map_text(&body.value, "provider")
+                    != Some(crate::skill_scan::SCAN_PROVIDER_STATIC_V1)
+            })
+            .collect())
+    }
+
     fn scan_verdict_body(subject: EntityId, provider: &str, scanned_at: u64) -> ClaimBody {
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_SCAN_VERDICT,
@@ -2367,7 +2567,7 @@ mod tests {
         );
         // ONE-1741: audit verdicts anchor to the content bytes, discovered by
         // content hash rather than the submitting holder's subject edges.
-        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
+        let rows = third_party_verdicts(&vault, fixture_hash())?;
         assert_eq!(rows.len(), 3);
         let providers = rows
             .iter()
@@ -2505,11 +2705,7 @@ mod tests {
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.vault_meta.get(&rtxn, &key)?.is_none());
         drop(rtxn);
-        assert!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .is_empty()
-        );
+        assert!(third_party_verdicts(&vault, fixture_hash())?.is_empty());
         Ok(())
     }
 
@@ -2561,12 +2757,7 @@ mod tests {
             SkillGovernance::Recommended,
         )?;
         vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(5), 6)?;
-        assert_eq!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .len(),
-            1
-        );
+        assert_eq!(third_party_verdicts(&vault, fixture_hash())?.len(), 1);
         Ok(())
     }
 
@@ -2664,12 +2855,7 @@ mod tests {
             vault.get_claim(&prior)?.expect("prior receipt").lifecycle,
             ClaimLifecycleStatus::Superseded
         );
-        assert_eq!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .len(),
-            1
-        );
+        assert_eq!(third_party_verdicts(&vault, fixture_hash())?.len(), 1);
         Ok(())
     }
 
@@ -2704,12 +2890,7 @@ mod tests {
         );
 
         // Exactly one active alpha row plus one superseded, both on the anchor.
-        assert_eq!(
-            vault
-                .active_claims_for_predicate(&anchor, PREDICATE_SKILL_SCAN_VERDICT)?
-                .len(),
-            1
-        );
+        assert_eq!(third_party_verdicts(&vault, fixture_hash())?.len(), 1);
         let mut anchor_superseded = 0;
         for claim_id in vault.claims_for_subject(&anchor)? {
             let Some(body) = vault.get_claim(&claim_id)? else {
@@ -2722,7 +2903,7 @@ mod tests {
             }
         }
         assert_eq!(anchor_superseded, 1);
-        let hash_rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
+        let hash_rows = third_party_verdicts(&vault, fixture_hash())?;
         assert_eq!(hash_rows.len(), 1);
         assert_eq!(map_text(&hash_rows[0].value, "provider"), Some("alpha"));
 
@@ -2735,7 +2916,7 @@ mod tests {
             SkillGovernance::Discouraged,
         )?;
         vault.ingest_skill_scan_verdict(&local_entity, fixture_hash(), &beta, t(9), 10)?;
-        let hash_rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
+        let hash_rows = third_party_verdicts(&vault, fixture_hash())?;
         assert_eq!(hash_rows.len(), 2);
         let providers = hash_rows
             .iter()
@@ -3736,7 +3917,9 @@ mod tests {
         vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(3), 4)?;
         vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &receipt, t(2), 2)?;
         // Same (content_hash, provider) supersedes on the anchor: one active row.
-        let rows = vault.active_claims_for_predicate(&anchor, PREDICATE_SKILL_SCAN_VERDICT)?;
+        // Equal `scannedAt` is the TIE case newest-wins leaves to the later
+        // call (ONE-1892) — both ingests carry `scanned_at = 3`.
+        let rows = third_party_verdicts(&vault, fixture_hash())?;
         assert_eq!(rows.len(), 1);
         let mut superseded = 0;
         for id in vault.claims_for_subject(&anchor)? {
@@ -3750,6 +3933,149 @@ mod tests {
             }
         }
         assert_eq!(superseded, 1);
+        Ok(())
+    }
+
+    // ═══ ONE-1892 — newest-wins ingest + anchor type guard ══════════════════
+
+    fn scan_receipt_at(provider: &str, scanned_at: u64) -> Result<SkillScanReceipt> {
+        SkillScanReceipt::new(
+            provider,
+            scanned_at,
+            ScanVerdict::Clean,
+            ScanRiskLevel::Low,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )
+    }
+
+    #[test]
+    fn older_scan_ingested_after_a_newer_one_never_takes_the_active_slot() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        vault.put_skill_record(&entity, &candidate("fixture.newest-wins"), t(1), 2)?;
+
+        let newer = vault.ingest_skill_scan_verdict(
+            &entity,
+            fixture_hash(),
+            &scan_receipt_at("provider-a", 500)?,
+            t(500),
+            501,
+        )?;
+        let older = vault.ingest_skill_scan_verdict(
+            &entity,
+            fixture_hash(),
+            &scan_receipt_at("provider-a", 100)?,
+            t(600),
+            601,
+        )?;
+
+        let rows = third_party_verdicts(&vault, fixture_hash())?;
+        assert_eq!(rows.len(), 1, "one active row per (hash, provider)");
+        assert_eq!(
+            map_value(&rows[0].value, "scannedAt").and_then(Value::as_u64),
+            Some(500),
+            "the LATEST-SCANNED verdict holds the active slot, not the last ingested"
+        );
+        assert_eq!(
+            vault.get_claim(&newer)?.expect("newer row").lifecycle,
+            ClaimLifecycleStatus::Active
+        );
+        assert_eq!(
+            vault.get_claim(&older)?.expect("older row").lifecycle,
+            ClaimLifecycleStatus::Superseded,
+            "the late-arriving older scan is kept as history, never dropped"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_far_future_scan_cannot_pin_the_active_slot() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        vault.put_skill_record(&entity, &candidate("fixture.future-clamp"), t(1), 2)?;
+
+        vault.ingest_skill_scan_verdict(
+            &entity,
+            fixture_hash(),
+            &scan_receipt_at("provider-a", u64::MAX)?,
+            t(500),
+            501,
+        )?;
+        let rows = third_party_verdicts(&vault, fixture_hash())?;
+        assert_eq!(
+            map_value(&rows[0].value, "scannedAt").and_then(Value::as_u64),
+            Some(501),
+            "a scan time beyond now+skew is clamped to ingest time"
+        );
+        assert_eq!(
+            map_value(&rows[0].value, "scannedAtDeclared").and_then(Value::as_u64),
+            Some(u64::MAX),
+            "the clamp is receipted on the row, not silent"
+        );
+
+        // A later, ordinary scan now wins on merit instead of losing to a
+        // timestamp no clock will ever reach.
+        let normal = vault.ingest_skill_scan_verdict(
+            &entity,
+            fixture_hash(),
+            &scan_receipt_at("provider-a", 600)?,
+            t(600),
+            601,
+        )?;
+        let rows = third_party_verdicts(&vault, fixture_hash())?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            map_value(&rows[0].value, "scannedAt").and_then(Value::as_u64),
+            Some(600)
+        );
+        assert_eq!(
+            vault.get_claim(&normal)?.expect("normal row").lifecycle,
+            ClaimLifecycleStatus::Active
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_non_anchor_entity_squatting_the_anchor_id_is_refused() -> Result<()> {
+        let (_temp, vault) = open_vault();
+        let entity = EntityId::now();
+        vault.put_skill_record(&entity, &candidate("fixture.anchor-squat"), t(1), 2)?;
+
+        // Pre-seed a foreign entity at the derived anchor id.
+        let anchor_id = skill_content_anchor_entity_id(fixture_hash())?;
+        vault.put_entity(
+            &anchor_id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            t(1),
+            2,
+            b"squatter",
+        )?;
+
+        let error = vault
+            .ingest_skill_scan_verdict(
+                &entity,
+                fixture_hash(),
+                &scan_receipt_at("provider-a", 5)?,
+                t(5),
+                6,
+            )
+            .expect_err("a squatted anchor id must not be silently adopted");
+        assert!(
+            matches!(
+                error,
+                Error::SkillContentAnchorTypeMismatch {
+                    existing: crate::registry::ENTITY_TYPE_PERSON
+                }
+            ),
+            "expected a typed anchor mismatch, got {error:?}"
+        );
+        assert!(
+            vault
+                .skill_scan_verdicts_for_content_hash(fixture_hash())?
+                .is_empty(),
+            "the refused ingest wrote nothing"
+        );
         Ok(())
     }
 
@@ -3777,11 +4103,11 @@ mod tests {
     fn ingest_creates_content_anchor_entity_carrying_the_hash() -> Result<()> {
         let (_temp, vault) = open_vault();
         let entity = EntityId::now();
-        let imported = package(
-            candidate("fixture.anchor-create"),
-            SkillCapabilitySurface::default(),
-        );
-        vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &imported, entity, t(1), 2)?;
+        // Born through the local put door, NOT the hub import door: the import
+        // door now ingests its own scan (ONE-1892), which would mint the anchor
+        // before this test could observe it missing. The contract under test is
+        // that INGEST mints it, so the fixture reaches ingest with no anchor.
+        vault.put_skill_record(&entity, &candidate("fixture.anchor-create"), t(1), 2)?;
         let anchor = skill_content_anchor_entity_id(fixture_hash())?;
         assert_eq!(
             vault.get(&anchor)?,
@@ -3829,9 +4155,7 @@ mod tests {
         // Ingested via one holder while two hold the shared bytes.
         vault.ingest_skill_scan_verdict(&imported_entity, fixture_hash(), &receipt, t(5), 6)?;
         let discoverable = |vault: &Vault| -> Result<usize> {
-            Ok(vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .len())
+            Ok(third_party_verdicts(vault, fixture_hash())?.len())
         };
         assert_eq!(discoverable(&vault)?, 1);
 
@@ -3868,7 +4192,7 @@ mod tests {
         );
 
         // The surviving row still carries its original provider and hash.
-        let rows = vault.skill_scan_verdicts_for_content_hash(fixture_hash())?;
+        let rows = third_party_verdicts(&vault, fixture_hash())?;
         assert_eq!(map_text(&rows[0].value, "provider"), Some("immortal"));
         assert_eq!(
             map_text(&rows[0].value, "contentHash"),
@@ -3894,12 +4218,7 @@ mod tests {
         )?;
         vault.ingest_skill_scan_verdict(&imported, fixture_hash(), &receipt, t(5), 6)?;
         let anchor_id = skill_content_anchor_entity_id(fixture_hash())?;
-        assert_eq!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .len(),
-            1
-        );
+        assert_eq!(third_party_verdicts(&vault, fixture_hash())?.len(), 1);
 
         // Targeted delete door refuses the anchor; the verdict survives.
         assert!(
@@ -3910,9 +4229,7 @@ mod tests {
             "targeted delete of the content anchor must be refused"
         );
         assert_eq!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .len(),
+            third_party_verdicts(&vault, fixture_hash())?.len(),
             1,
             "verdict survives a targeted anchor-delete attempt"
         );
@@ -3926,9 +4243,7 @@ mod tests {
             "batch delete of the content anchor must be refused"
         );
         assert_eq!(
-            vault
-                .skill_scan_verdicts_for_content_hash(fixture_hash())?
-                .len(),
+            third_party_verdicts(&vault, fixture_hash())?.len(),
             1,
             "verdict survives a batch anchor-delete attempt"
         );

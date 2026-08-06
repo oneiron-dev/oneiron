@@ -1221,7 +1221,6 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let data = encode_skill_record(record)?;
         let mut wtxn = self.store.env.write_txn()?;
         let existing = self.read_skill_record_in_txn(&wtxn, id)?;
         if record.lifecycle_status == SkillLifecycle::Superseded
@@ -1232,6 +1231,14 @@ impl Vault {
             ));
         }
         validate_skill_update(&existing, record)?;
+        // ONE-1892: activation admission consult, read from INSIDE this write
+        // transaction. A scan verdict at or above the risk dial escalates the
+        // consent stamp on an activating record from `auto` to `proposed`; it
+        // never refuses the update and never touches any other axis, so the
+        // skill still activates — the owner just taps it through.
+        let record =
+            crate::skill_scan::consult_activation_scan_gate_in_txn(self, &wtxn, &existing, record)?;
+        let data = encode_skill_record(&record)?;
         self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?;
         wtxn.commit()?;
         Ok(())

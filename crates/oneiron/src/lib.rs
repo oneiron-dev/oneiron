@@ -109,6 +109,7 @@ pub mod skill_attribution;
 pub mod skill_convert;
 pub mod skill_hub;
 pub mod skill_reliability;
+pub mod skill_scan;
 pub mod speculative;
 pub mod store;
 pub mod surface_event;
@@ -877,6 +878,11 @@ pub use crate::skill_reliability::{
     record_skill_contributing_win, set_skill_reliability_floor, skill_provenance_trust_class,
     skill_reliability_floor, skill_reliability_posterior, skill_reliability_prior,
     skill_selection_score,
+};
+pub use crate::skill_scan::{
+    ActivationPosture, DEFAULT_ACTIVATION_RISK_THRESHOLD, SCAN_PROVIDER_STATIC_V1,
+    SKILL_SCAN_ACTIVATION_RISK_THRESHOLD_KEY, run_static_skill_scan, scan_gate_for_activation,
+    set_skill_scan_activation_risk_threshold, skill_scan_activation_risk_threshold,
 };
 pub use crate::speculative::{
     SPECULATIVE_FIRE_CAP_DEFAULT, SPECULATIVE_FIRE_LIMIT_DEFAULT, SpeculativeFinal,

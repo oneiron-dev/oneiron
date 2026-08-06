@@ -240,6 +240,26 @@ fn map_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(|(_, v)| v.as_str())
 }
 
+/// Active scan verdicts for `content_hash`, minus the engine's own static
+/// receipt (ONE-1892 PACKET_AMEND).
+///
+/// The hub import door now runs a deterministic static pass and ingests its
+/// receipt, so bytes that entered through a hub always carry an
+/// `oneiron.static.v1` row. The SK-02/SK-03 verdict contracts are about
+/// INDEPENDENT PROVIDER rows keyed on `(content_hash, provider)`; counting the
+/// engine's own row into those arities would assert the producer's existence
+/// rather than the contract.
+fn third_party_scan_verdicts(
+    vault: &Vault,
+    content_hash: SkillContentHash,
+) -> Result<Vec<ClaimBody>> {
+    Ok(vault
+        .skill_scan_verdicts_for_content_hash(content_hash)?
+        .into_iter()
+        .filter(|body| map_str(&body.value, "provider") != Some(oneiron::SCAN_PROVIDER_STATIC_V1))
+        .collect())
+}
+
 // ═══ SK-02 · ONE-1736 — SKILL_HUB entity + adapters + rug-pull diff ═════
 
 /// Contract (ARCH-0053 §7, ONE-1736): `hub_ref` is STRUCTURED, never a
@@ -486,7 +506,12 @@ fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
 
     // ONE-1741: verdicts anchor to the content bytes, so discovery is by
     // content hash, not by the submitting holder's subject edges.
-    let active = vault.skill_scan_verdicts_for_content_hash(content_hash)?;
+    //
+    // ONE-1892 PACKET_AMEND: the hub import above now produces the engine's own
+    // `oneiron.static.v1` receipt for these bytes. This contract is about the
+    // THIRD-PARTY providers ingested here staying independent rows, so the
+    // engine's own row is filtered out rather than counted into the arity.
+    let active = third_party_scan_verdicts(&vault, content_hash)?;
     assert_eq!(
         active.len(),
         3,
@@ -518,7 +543,7 @@ fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
     );
     // Re-fetch via a second hub added NO rows: verdicts key on the hash,
     // not the ref — 3 stays 3.
-    let after_second_hub = vault.skill_scan_verdicts_for_content_hash(content_hash)?;
+    let after_second_hub = third_party_scan_verdicts(&vault, content_hash)?;
     assert_eq!(
         after_second_hub.len(),
         3,
