@@ -454,6 +454,33 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
     })
 }
 
+/// The generation `delta_receipt`'s amendment was folded under, on the
+/// caller's snapshot — or `None` when nothing folded it.
+///
+/// This is the binding [`record_judged_amendment`] wrote, read back: history,
+/// not [`serving_model_version`], which answers for the model serving NOW and
+/// would re-attribute an old amendment to a generation that never produced it.
+/// A consumer tagging amendments with the model behind them reads THIS.
+///
+/// # Errors
+///
+/// [`Error::CorruptedIndex`] on an undecodable row; storage errors.
+pub(crate) fn folded_model_version_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    delta_receipt: &str,
+) -> Result<Option<String>> {
+    let key = meta_key(MEMBER_KEY_PREFIX, delta_receipt.as_bytes());
+    let Some(raw) = vault.store.vault_meta.get(rtxn, &key)? else {
+        return Ok(None);
+    };
+    let row: StoredModelVersion = decode_row(&raw, MEMBER_ROW_LABEL)?;
+    if row.v != ROW_VERSION {
+        return Err(Error::CorruptedIndex(MEMBER_ROW_LABEL));
+    }
+    Ok(Some(row.model_version))
+}
+
 /// One judgment's contribution: its edit mass, and whether it was sound.
 #[derive(Debug, Clone, Copy)]
 struct Fold {

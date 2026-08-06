@@ -429,7 +429,9 @@ pub fn amendment_evidence(vault: &Vault, receipt_id: &str) -> Result<Option<Amen
     amendment_evidence_in_txn(vault, &rtxn, receipt_id)
 }
 
-fn amendment_evidence_in_txn(
+/// Transaction-composable [`amendment_evidence`], for a reader that must see
+/// the evidence ledger on the SAME snapshot as the rows it is tagging.
+pub(crate) fn amendment_evidence_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     receipt_id: &str,

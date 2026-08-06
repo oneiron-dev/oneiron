@@ -2235,6 +2235,13 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
         records.extend(outbound_grant_receipts(vault, &rtxn, query)?);
+        // ED-09 (ONE-1765): the reservoir export. Same kind, own store, own
+        // field class — an export IS a scoped read that left the vault, so it
+        // mints no kind of its own, exactly as ONE-1762's escalations project
+        // into `Gate`.
+        records.extend(crate::edit_distance::reservoir::reservoir_export_receipts(
+            vault, &rtxn, query,
+        )?);
     }
     if query.includes_kind(ReceiptKind::Share) {
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
