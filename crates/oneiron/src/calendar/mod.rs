@@ -21,10 +21,20 @@
 //! windowed by the caller's [`crate::temporal::TimeRange`]. Master, exception
 //! and successor stay claims-on-EVENT there too, so a recurring meeting adds
 //! no edge and no byte either.
+//!
+//! CAL-02 adds the ICS ingest adapter: [`ics`] parses RFC 5545 feeds into
+//! calendar-owned rows, [`passport`] keeps the UID-first cross-calendar index
+//! and the per-`(system × UID)` diff, and [`ingest`] runs the secret-URL poll
+//! — custody-ref payloads, door-scoped URL injection, Gate-backed imported
+//! admission behind the CAL-09 safeguard hook, and the multi-source absence
+//! law.
 
 pub mod claims;
 pub mod freebusy;
+pub mod ics;
+pub mod ingest;
 pub mod outcome;
+pub mod passport;
 pub mod query;
 pub mod safeguard;
 pub mod series;
@@ -74,6 +84,41 @@ pub enum CalendarError {
     /// window whose start is past its end is a caller bug, not an empty answer.
     #[error("invalid recurrence window")]
     InvalidRecurrenceWindow,
+    /// The feed body is not a complete, parseable RFC 5545 `VCALENDAR`. A
+    /// parse failure is never interpreted as feed content or event removal.
+    #[error("ICS feed parse failure: {reason}")]
+    IcsParse {
+        /// What failed, without feed content.
+        reason: String,
+    },
+    /// The conditional HTTP fetch failed. The reason never carries the
+    /// resolved feed URL.
+    #[error("ICS feed HTTP fetch failure: {reason}")]
+    IcsFetch {
+        /// What failed, URL-scrubbed.
+        reason: String,
+    },
+    /// SECRET custody resolution or the value door refused the read. Carries
+    /// the custody record name, never the resolved URL.
+    #[error("ICS feed credential custody failure: {reason}")]
+    IcsCredential {
+        /// What failed, naming custody refs only.
+        reason: String,
+    },
+    /// The adapter's own state or the store underneath it failed.
+    #[error("ICS ingest failure: {reason}")]
+    IcsIngest {
+        /// What failed.
+        reason: String,
+    },
+}
+
+impl From<crate::Error> for CalendarError {
+    fn from(err: crate::Error) -> Self {
+        Self::IcsIngest {
+            reason: err.to_string(),
+        }
+    }
 }
 
 pub use claims::{
@@ -84,6 +129,14 @@ pub use claims::{
     claim_class_descriptors, is_calendar_claim_predicate,
 };
 pub use freebusy::{BusyInterval, BusyUnion, freebusy, freebusy_scoped};
+pub use ics::{ParsedIcsFeed, ParsedVEvent, parse_ics_feed};
+pub use ingest::{
+    CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, IcsFeedCursorSnapshot, IcsFeedFetcher,
+    IcsFeedPauseException, IcsFeedPollConfig, IcsFeedPollPayload, IcsFeedSource, IcsFetchResponse,
+    IcsHttpResponse, IcsHttpTransport, IcsPollRunState, enqueue_ics_feed_poll,
+    ics_feed_cursor_snapshot, ics_feed_pause_exceptions, ics_feed_poll_dedupe_key,
+    ics_import_actor_id, run_ics_feed_poll, run_ics_feed_poll_with_screener,
+};
 pub use outcome::{
     CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DEFAULT_OUTCOME_GRACE_SECS,
     DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
@@ -92,6 +145,11 @@ pub use outcome::{
     check_in_is_still_due, check_in_recording_artifact_id, is_meeting_class,
     outcome_from_machine_evidence, plan_outcome_check_in, project_event_outcome,
     read_event_outcome, record_event_outcome, resolve_owner_check_in,
+};
+pub use passport::{
+    CALENDAR_PASSPORT_INDEX_PREFIX, PassportDecision, all_live_inbound_passports_absent,
+    classify_passport, index_passport_uid, live_passport_for, live_passports_for_event,
+    resolve_event_by_uid, supersede_calendar_passport,
 };
 pub use query::{
     CalendarEventView, CalendarRangeDto, CalendarRead, CalendarReadRequest, CalendarSearchRequest,
@@ -272,8 +330,9 @@ mod tests {
     #[test]
     fn calendar_error_appends_recurrence_variants_in_owner_module() {
         // One error home for the whole calendar surface, grown by appending.
-        // CAL-00 opened it, CAL-01 added the four timezone verdicts, and CAL-03
-        // adds exactly the two below.
+        // CAL-00 opened it, CAL-01 added the four timezone verdicts, CAL-03
+        // the two recurrence verdicts, and CAL-02 the four ingest variants
+        // below.
         let variants = [
             CalendarError::UnknownTimeZone {
                 tz: "Mars/Olympus_Mons".to_owned(),
@@ -295,6 +354,18 @@ mod tests {
                 rule: "FREQ=NEVER".to_owned(),
             },
             CalendarError::InvalidRecurrenceWindow,
+            CalendarError::IcsParse {
+                reason: "truncated feed".to_owned(),
+            },
+            CalendarError::IcsFetch {
+                reason: "connection refused".to_owned(),
+            },
+            CalendarError::IcsCredential {
+                reason: "no live custody record".to_owned(),
+            },
+            CalendarError::IcsIngest {
+                reason: "store failure".to_owned(),
+            },
         ];
 
         // Exhaustive and wildcard-free on purpose. A later layer that appends a
@@ -309,6 +380,10 @@ mod tests {
                 | CalendarError::TimestampOutOfRange { .. } => {}
                 CalendarError::InvalidRecurrenceRule { .. }
                 | CalendarError::InvalidRecurrenceWindow => {}
+                CalendarError::IcsParse { .. }
+                | CalendarError::IcsFetch { .. }
+                | CalendarError::IcsCredential { .. }
+                | CalendarError::IcsIngest { .. } => {}
             }
         }
 
@@ -317,5 +392,13 @@ mod tests {
             "invalid or unsupported recurrence rule: FREQ=NEVER"
         );
         assert_eq!(variants[5].to_string(), "invalid recurrence window");
+        assert_eq!(
+            variants[6].to_string(),
+            "ICS feed parse failure: truncated feed"
+        );
+        assert_eq!(
+            variants[8].to_string(),
+            "ICS feed credential custody failure: no live custody record"
+        );
     }
 }
