@@ -158,3 +158,23 @@ Untouched, as claimed: `settings.rs`, `gate.rs`, `batch.rs`, `batch/secret_scan.
 - `cargo fmt --all -- --check` — clean
 - `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` — clean
 - `cargo nextest run -p oneiron --all-features` — **3943 passed, 0 failed, 61 skipped**
+
+## SIMPLIFY (K3, deletion-biased pass on 5d0a940)
+
+One edit, no test/assertion/fixture/public-API changes:
+
+- `Vault::scan_and_ingest_on_import_in_txn`: `Result<Option<EntityId>>` → `Result<()>`.
+  Both call sites (import door, sync door) discard the return, and the
+  blueprint skeleton specifies `Result<()>`; the `Option` encoded an
+  already-scanned distinction no consumer reads. Deleted the `.map(Some)` tail
+  and the `Ok(None)` early return.
+
+Considered and rejected: deduplicating the test helpers `row_text`
+(skill_scan/tests.rs) against skill_hub's private `map_text` — the only call
+sites sit inside assertion expressions, which the fixture-sync law puts
+off-limits to this seat. Flagged, not done.
+
+Gates after the pass: `cargo fmt -p oneiron -- --check` clean · `cargo clippy
+-p oneiron --all-features --all-targets` clean · `cargo nextest run -p oneiron
+--all-features` scoped to `skill_scan` + `skill_hub` (57/57) and the
+`skills_epic_oracle` binary (16/16) all green.

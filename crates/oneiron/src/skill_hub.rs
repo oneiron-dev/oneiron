@@ -1375,7 +1375,7 @@ impl Vault {
         package: &HubPackage,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<Option<EntityId>> {
+    ) -> Result<()> {
         let already_scanned = self
             .skill_scan_verdicts_for_content_hash_in_txn(&*wtxn, content_hash)?
             .iter()
@@ -1384,7 +1384,7 @@ impl Vault {
                     == Some(crate::skill_scan::SCAN_PROVIDER_STATIC_V1)
             });
         if already_scanned {
-            return Ok(None);
+            return Ok(());
         }
         let receipt = crate::skill_scan::run_static_skill_scan(package, learned_at)?;
         self.ingest_skill_scan_verdict_in_txn(
@@ -1394,8 +1394,8 @@ impl Vault {
             &receipt,
             occurred,
             learned_at,
-        )
-        .map(Some)
+        )?;
+        Ok(())
     }
 
     /// Ingests independent provider receipts as content-keyed audit signals.
