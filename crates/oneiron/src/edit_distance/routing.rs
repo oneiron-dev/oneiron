@@ -421,13 +421,6 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         return Err(invalid("routing projection cites an unjudged receipt"));
     };
     let member_key = meta_key(MEMBER_KEY_PREFIX, delta_receipt.as_bytes());
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        if vault.store.vault_meta.get(&rtxn, &member_key)?.is_some() {
-            return Ok(());
-        }
-    }
-
     let model_version = serving_model_version(vault)?;
     let fold = fold_of(&judgment)?;
     let scope = RoutingScopeKey::new(model_version.clone(), judgment.scope);
@@ -441,6 +434,14 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
     )?;
 
     vault.with_write_txn(|wtxn| {
+        // The binding is read in the transaction that writes it. An earlier
+        // snapshot could only say the receipt was unfolded THEN, so two folds
+        // of one receipt would both read "absent" and both count it — the
+        // writer serialization below orders those writes without making either
+        // one's decision to write correct.
+        if vault.store.vault_meta.get(&*wtxn, &member_key)?.is_some() {
+            return Ok(());
+        }
         let mut aggregate = match vault.store.vault_meta.get(&*wtxn, &scope_row_key)? {
             Some(raw) => decoded_aggregate(&raw)?,
             None => StoredAggregate::default(),

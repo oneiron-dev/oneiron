@@ -104,6 +104,14 @@ impl<'a> Amendment<'a> {
 /// the edit mass it contributed. Nothing here hands the projection a number:
 /// the mass is measured, the class is judged, and the fold reads both back.
 fn fold(vault: &Vault, actor: EntityId, amendment: &Amendment<'_>) -> Result<f64> {
+    let d_norm = judge(vault, actor, amendment)?;
+    record_judged_amendment(vault, amendment.receipt)?;
+    Ok(d_norm)
+}
+
+/// [`fold`] stopping short of the routing fold — a judged receipt this module
+/// has not folded yet.
+fn judge(vault: &Vault, actor: EntityId, amendment: &Amendment<'_>) -> Result<f64> {
     let (before, after) = artifact(amendment.changed);
     let delta = delta_from_reconstructed(&before, &after);
     let d_norm = delta.d_norm;
@@ -119,7 +127,6 @@ fn fold(vault: &Vault, actor: EntityId, amendment: &Amendment<'_>) -> Result<f64
     }
     record_amendment_evidence(vault, &evidence)?;
     judge_amendment(vault, amendment.receipt)?.expect("fixture amendment judges");
-    record_judged_amendment(vault, amendment.receipt)?;
     Ok(f64::from(d_norm))
 }
 
@@ -214,6 +221,35 @@ fn a_receipt_folds_once_even_across_a_swap() -> Result<()> {
     assert_eq!(rows.len(), 1, "one run, one scope");
     assert_eq!(rows[0].runs, 1);
     assert_eq!(rows[0].key.model_version, "stack:default-v1");
+    Ok(())
+}
+
+#[test]
+fn concurrent_folds_of_one_receipt_still_count_one_run() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    judge(&vault, actor, &Amendment::sound("r1", "prose", 2))?;
+
+    // Both folds reach their binding read while this transaction holds the
+    // writer lock, so neither can see the other's write yet — the interleaving
+    // a first-fold check outside the write transaction cannot survive.
+    // Releasing the lock lets them through one at a time.
+    let gate = vault.store.env.write_txn()?;
+    std::thread::scope(|scope| -> Result<()> {
+        let folds: Vec<_> = (0..2)
+            .map(|_| scope.spawn(|| record_judged_amendment(&vault, "r1")))
+            .collect();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        drop(gate);
+        for handle in folds {
+            handle.join().expect("fold thread")?;
+        }
+        Ok(())
+    })?;
+
+    set_rollout_rung(&vault, "prose", RolloutRung::DataBar)?;
+    let row = stats_for(&vault, &serving_model_version(&vault)?, "prose")?.expect("scope folded");
+    assert_eq!(row.runs, 1, "one receipt is one run, whoever folds it");
     Ok(())
 }
 
