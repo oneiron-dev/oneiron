@@ -1,0 +1,459 @@
+{
+  "pack_id": "crm.compliance.v1",
+  "pack_version": 1,
+  "min_engine_version": "0.1.0",
+  "verified_at_max_age_secs": 31536000,
+  "unknown_jurisdiction_default": "strict_pole",
+  "strict_pole_jurisdiction": "EU/DE",
+  "jurisdiction_confidence_floor_millis": 700,
+  "prohibited_list_provenance_classes": ["harvested", "dictionary_attack"],
+  "conditional_exemption_evidence": [
+    { "jurisdiction": "UK", "evidence": "legal_form" },
+    { "jurisdiction": "JP", "evidence": "publication_context" },
+    { "jurisdiction": "EU", "evidence": "legal_form" },
+    { "jurisdiction": "EU/FR", "evidence": "legal_form" }
+  ],
+  "warning": "Seed dataset, not universal legal coverage. These rows are a starting position drawn from primary sources on the verification date; they are not legal advice and they do not cover every jurisdiction, channel, or campaign shape an operator may reach. Counsel-reviewed row updates are data revisions. A row older than the pack's verification-age dial blocks dispatch mechanically rather than degrading to a warning.",
+  "rows": [
+    {
+      "jurisdiction": "UK",
+      "channel": "email",
+      "rule_kind": "consent_class",
+      "requirement": "Corporate subscribers need no reg-22 consent. Individual subscribers, including sole traders and unincorporated partnerships, need consent or the reg 22(3) soft opt-in. UK GDPR legitimate interests and the absolute Article 21 objection apply to named addresses regardless of subscriber class, so the exemption turns on the recipient's legal form.",
+      "b2b_exemption": "conditional",
+      "source": {
+        "citation": "Privacy and Electronic Communications (EC Directive) Regulations 2003, regs 2, 22",
+        "url": "https://www.legislation.gov.uk/uksi/2003/2426"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Data (Use and Access) Act 2025 penalty uplift effective 2026-02-05 aligns PECR maxima with UK GDPR."
+    },
+    {
+      "jurisdiction": "UK",
+      "channel": "linkedin",
+      "rule_kind": "consent_class",
+      "requirement": "Reg 22 electronic mail reaches a platform direct message sent to an individual subscriber's address, so the corporate-versus-individual subscriber distinction governs the platform lane exactly as it governs email. The exemption still turns on the recipient's legal form.",
+      "b2b_exemption": "conditional",
+      "source": {
+        "citation": "ICO direct marketing guidance, electronic mail",
+        "url": "https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Data (Use and Access) Act 2025 penalty uplift effective 2026-02-05 aligns PECR maxima with UK GDPR."
+    },
+    {
+      "jurisdiction": "UK",
+      "channel": "*",
+      "rule_kind": "sender_id",
+      "requirement": "The sender's identity is never concealed or disguised (reg 23(a)).",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "Privacy and Electronic Communications (EC Directive) Regulations 2003, reg 23(a)",
+        "url": "https://www.legislation.gov.uk/uksi/2003/2426/regulation/23"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Data (Use and Access) Act 2025 penalty uplift effective 2026-02-05 aligns PECR maxima with UK GDPR."
+    },
+    {
+      "jurisdiction": "UK",
+      "channel": "*",
+      "rule_kind": "optout_mechanism",
+      "requirement": "Every message carries a valid address to which the recipient may send a cease request (reg 23(b)).",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "Privacy and Electronic Communications (EC Directive) Regulations 2003, reg 23(b)",
+        "url": "https://www.legislation.gov.uk/uksi/2003/2426/regulation/23"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Data (Use and Access) Act 2025 penalty uplift effective 2026-02-05 aligns PECR maxima with UK GDPR."
+    },
+    {
+      "jurisdiction": "UK",
+      "channel": "*",
+      "rule_kind": "content_marking",
+      "requirement": "The commercial nature of the message is clearly identifiable to the recipient.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "ICO direct marketing guidance, identifying marketing",
+        "url": "https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Data (Use and Access) Act 2025 penalty uplift effective 2026-02-05 aligns PECR maxima with UK GDPR."
+    },
+    {
+      "jurisdiction": "UK",
+      "channel": "*",
+      "rule_kind": "optout_deadline",
+      "requirement": "An objection suppresses the address before the next dispatch. Post-send obligation: the dispatch gate records it and the suppression path enforces it.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "UK GDPR Article 21 objection; PECR reg 22",
+        "url": "https://www.legislation.gov.uk/uksi/2003/2426/regulation/22"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Data (Use and Access) Act 2025 penalty uplift effective 2026-02-05 aligns PECR maxima with UK GDPR."
+    },
+
+    {
+      "jurisdiction": "JP",
+      "channel": "email",
+      "rule_kind": "consent_class",
+      "requirement": "Opt-in is the default. The published-business-address exemption (Art. 3(1)(iv)) requires three machine-checkable facts about the address: it was published BY the recipient, it was published in the course of business, and no statement refusing marketing was attached to it. A stored address without its publication context cannot evaluate this row.",
+      "b2b_exemption": "conditional",
+      "source": {
+        "citation": "特定電子メールの送信の適正化等に関する法律 第三条",
+        "url": "https://elaws.e-gov.go.jp/document?lawid=414AC0000000026"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Spoofed sender information carries a direct criminal penalty; corporate fines apply alongside individual liability."
+    },
+    {
+      "jurisdiction": "JP",
+      "channel": "linkedin",
+      "rule_kind": "consent_class",
+      "requirement": "The Act is scoped to 特定電子メール (electronic mail). A platform direct message falls outside that scope and outside the published-business-address exemption, so no publication context is available to claim; platform terms govern the lane.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "総務省 特定電子メール法 ガイドライン, scope of 特定電子メール",
+        "url": "https://www.soumu.go.jp/main_sosiki/joho_tsusin/d_syohi/m_mail.html"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Spoofed sender information carries a direct criminal penalty; corporate fines apply alongside individual liability."
+    },
+    {
+      "jurisdiction": "JP",
+      "channel": "email",
+      "rule_kind": "optout_mechanism",
+      "requirement": "Every send carries an opt-out address or URL with an adjacent statement, whether or not an exemption is claimed (Art. 4).",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "特定電子メールの送信の適正化等に関する法律 第四条",
+        "url": "https://elaws.e-gov.go.jp/document?lawid=414AC0000000026"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Spoofed sender information carries a direct criminal penalty; corporate fines apply alongside individual liability."
+    },
+    {
+      "jurisdiction": "JP",
+      "channel": "email",
+      "rule_kind": "sender_id",
+      "requirement": "The sender's name is displayed and never spoofed (Art. 4).",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "特定電子メールの送信の適正化等に関する法律 第四条",
+        "url": "https://elaws.e-gov.go.jp/document?lawid=414AC0000000026"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Spoofed sender information carries a direct criminal penalty; corporate fines apply alongside individual liability."
+    },
+    {
+      "jurisdiction": "JP",
+      "channel": "email",
+      "rule_kind": "physical_address",
+      "requirement": "The sender's postal address is displayed in the message (Art. 4).",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "一般財団法人日本データ通信協会 迷惑メール相談センター, 表示義務",
+        "url": "https://www.dekyo.or.jp/soudan/"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Spoofed sender information carries a direct criminal penalty; corporate fines apply alongside individual liability."
+    },
+    {
+      "jurisdiction": "JP",
+      "channel": "email",
+      "rule_kind": "optout_deadline",
+      "requirement": "A refusal suppresses the address immediately (Art. 3(3)); there is no grace period. Post-send obligation: the dispatch gate records it and the suppression path enforces it.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "特定電子メールの送信の適正化等に関する法律 第三条第三項",
+        "url": "https://elaws.e-gov.go.jp/document?lawid=414AC0000000026"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Spoofed sender information carries a direct criminal penalty; corporate fines apply alongside individual liability."
+    },
+
+    {
+      "jurisdiction": "EU",
+      "channel": "email",
+      "rule_kind": "consent_class",
+      "requirement": "Directive floor: consent for natural persons, soft opt-in for existing customers on similar products. Legal-person treatment is national, so the floor cannot be applied without knowing the recipient's legal form; where a country row is missing, the strict pole applies.",
+      "b2b_exemption": "conditional",
+      "source": {
+        "citation": "Directive 2002/58/EC art. 13 (consolidated)",
+        "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02002L0058-20091219"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "National transpositions set their own penalties; several member states add private enforcement on top of the supervisory authority."
+    },
+    {
+      "jurisdiction": "EU",
+      "channel": "linkedin",
+      "rule_kind": "consent_class",
+      "requirement": "The art. 13 floor is technology-neutral for unsolicited direct marketing communications, so a platform direct message inherits the same natural-person consent rule and the same national legal-person question.",
+      "b2b_exemption": "conditional",
+      "source": {
+        "citation": "Directive 2002/58/EC art. 13 (consolidated)",
+        "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02002L0058-20091219"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "National transpositions set their own penalties; several member states add private enforcement on top of the supervisory authority."
+    },
+    {
+      "jurisdiction": "EU",
+      "channel": "*",
+      "rule_kind": "sender_id",
+      "requirement": "The identity of the sender is never concealed or disguised (art. 13(4)).",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "Directive 2002/58/EC art. 13(4)",
+        "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02002L0058-20091219"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "National transpositions set their own penalties; several member states add private enforcement on top of the supervisory authority."
+    },
+    {
+      "jurisdiction": "EU",
+      "channel": "*",
+      "rule_kind": "optout_mechanism",
+      "requirement": "Every message carries a valid address to which the recipient may send a cease request (art. 13(4)).",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "Directive 2002/58/EC art. 13(4)",
+        "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02002L0058-20091219"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "National transpositions set their own penalties; several member states add private enforcement on top of the supervisory authority."
+    },
+    {
+      "jurisdiction": "EU",
+      "channel": "*",
+      "rule_kind": "content_marking",
+      "requirement": "The commercial nature of the communication is identifiable as such (art. 13(4) read with e-Commerce Directive art. 6).",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "Directive 2000/31/EC art. 6",
+        "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32000L0031"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "National transpositions set their own penalties; several member states add private enforcement on top of the supervisory authority."
+    },
+
+    {
+      "jurisdiction": "EU/DE",
+      "channel": "email",
+      "rule_kind": "consent_class",
+      "requirement": "UWG §7 requires prior express opt-in for both B2B and B2C advertising email. There is no business-recipient exemption; double opt-in is the evidentiary standard German courts expect.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "Gesetz gegen den unlauteren Wettbewerb §7",
+        "url": "https://www.gesetze-im-internet.de/uwg_2004/__7.html"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Private Abmahnung enforcement makes a single unlawful send actionable by competitors, independent of any supervisory fine."
+    },
+    {
+      "jurisdiction": "EU/DE",
+      "channel": "linkedin",
+      "rule_kind": "consent_class",
+      "requirement": "UWG §7(1) covers unzumutbare Belästigung by any advertising channel, so a platform direct message carries the same prior-opt-in requirement as email. No business-recipient exemption is available.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "Gesetz gegen den unlauteren Wettbewerb §7(1)",
+        "url": "https://www.gesetze-im-internet.de/uwg_2004/__7.html"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Private Abmahnung enforcement makes a single unlawful send actionable by competitors, independent of any supervisory fine."
+    },
+    {
+      "jurisdiction": "EU/DE",
+      "channel": "*",
+      "rule_kind": "records",
+      "requirement": "Retain the double-opt-in evidence for each address; the sender carries the burden of proving consent. Post-send obligation: retention is enforced by the evidence path, not by the dispatch gate.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "Gesetz gegen den unlauteren Wettbewerb §7; BGH double-opt-in case law",
+        "url": "https://www.gesetze-im-internet.de/uwg_2004/__7.html"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Private Abmahnung enforcement makes a single unlawful send actionable by competitors, independent of any supervisory fine."
+    },
+
+    {
+      "jurisdiction": "EU/FR",
+      "channel": "email",
+      "rule_kind": "consent_class",
+      "requirement": "CPCE L.34-5 with CNIL guidance tolerates B2B opt-out prospection when the message is professionally relevant to the recipient's role, the recipient was informed at collection, and a working opt-out is present. Generic role addresses sit outside the consent regime entirely, so the recipient's legal form decides which branch applies.",
+      "b2b_exemption": "conditional",
+      "source": {
+        "citation": "CNIL, prospection commerciale B2B; Code des postes et des communications électroniques L.34-5",
+        "url": "https://www.cnil.fr/fr/la-prospection-commerciale-par-courrier-electronique"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "CNIL sanctions under the ePrivacy transposition are assessed independently of the GDPR one-stop-shop."
+    },
+    {
+      "jurisdiction": "EU/FR",
+      "channel": "linkedin",
+      "rule_kind": "consent_class",
+      "requirement": "CNIL applies the same professional-relevance test to platform direct messages addressed to a professional, so the B2B opt-out branch remains conditional on the recipient's legal form.",
+      "b2b_exemption": "conditional",
+      "source": {
+        "citation": "CNIL, prospection commerciale B2B",
+        "url": "https://www.cnil.fr/fr/la-prospection-commerciale-par-courrier-electronique"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "CNIL sanctions under the ePrivacy transposition are assessed independently of the GDPR one-stop-shop."
+    },
+
+    {
+      "jurisdiction": "US",
+      "channel": "email",
+      "rule_kind": "consent_class",
+      "requirement": "CAN-SPAM is an opt-out regime: no prior consent is required, and business-to-business email is fully in scope. Federal preemption makes this the single US row set for truthful commercial mail; deception re-activates state statutes.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "15 U.S.C. §7704, §7707(b)",
+        "url": "https://www.law.cornell.edu/uscode/text/15/7704"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Up to $53,088 per email (2025 civil-penalty figure, held for 2026); aggravated violations stack."
+    },
+    {
+      "jurisdiction": "US",
+      "channel": "linkedin",
+      "rule_kind": "consent_class",
+      "requirement": "CAN-SPAM is scoped to electronic mail messages, so a platform direct message is governed by platform terms and state UDAP law rather than the federal opt-out regime. No prior consent is required by this row.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "15 U.S.C. §7702(6) definition of electronic mail message",
+        "url": "https://www.law.cornell.edu/uscode/text/15/7702"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Up to $53,088 per email (2025 civil-penalty figure, held for 2026); aggravated violations stack."
+    },
+    {
+      "jurisdiction": "US",
+      "channel": "email",
+      "rule_kind": "sender_id",
+      "requirement": "No false or misleading header information and no deceptive subject line.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "15 U.S.C. §7704(a)(1)-(a)(2)",
+        "url": "https://www.law.cornell.edu/uscode/text/15/7704"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Up to $53,088 per email (2025 civil-penalty figure, held for 2026); aggravated violations stack."
+    },
+    {
+      "jurisdiction": "US",
+      "channel": "email",
+      "rule_kind": "physical_address",
+      "requirement": "A valid physical postal address for the sender appears in the message.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "15 U.S.C. §7704(a)(5)(A)(iii); 16 CFR 316",
+        "url": "https://www.law.cornell.edu/uscode/text/15/7704"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Up to $53,088 per email (2025 civil-penalty figure, held for 2026); aggravated violations stack."
+    },
+    {
+      "jurisdiction": "US",
+      "channel": "email",
+      "rule_kind": "optout_mechanism",
+      "requirement": "A clear and conspicuous opt-out mechanism is present, with no fee, no login, and no information required beyond the address and an opt-out preference.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "15 U.S.C. §7704(a)(3); 16 CFR 316.5",
+        "url": "https://www.law.cornell.edu/uscode/text/15/7704"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Up to $53,088 per email (2025 civil-penalty figure, held for 2026); aggravated violations stack."
+    },
+    {
+      "jurisdiction": "US",
+      "channel": "email",
+      "rule_kind": "content_marking",
+      "requirement": "The message is clearly and conspicuously identified as an advertisement.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "15 U.S.C. §7704(a)(5)(A)(i)",
+        "url": "https://www.law.cornell.edu/uscode/text/15/7704"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Up to $53,088 per email (2025 civil-penalty figure, held for 2026); aggravated violations stack."
+    },
+    {
+      "jurisdiction": "US",
+      "channel": "email",
+      "rule_kind": "optout_deadline",
+      "requirement": "An opt-out is honored within 10 business days. Post-send obligation: the dispatch gate records it and the suppression path enforces it.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "15 U.S.C. §7704(a)(4)",
+        "url": "https://www.law.cornell.edu/uscode/text/15/7704"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Up to $53,088 per email (2025 civil-penalty figure, held for 2026); aggravated violations stack."
+    },
+    {
+      "jurisdiction": "US",
+      "channel": "email",
+      "rule_kind": "source_hygiene",
+      "requirement": "Address harvesting and dictionary attacks are aggravated violations, so dispatch is refused when the list provenance of the address is unknown, unresolvable, or of a prohibited class.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "15 U.S.C. §7704(b)(1)",
+        "url": "https://www.law.cornell.edu/uscode/text/15/7704"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "Up to $53,088 per email (2025 civil-penalty figure, held for 2026); aggravated violations stack."
+    },
+
+    {
+      "jurisdiction": "none",
+      "channel": "*",
+      "rule_kind": "consent_class",
+      "requirement": "Disposition row for an absent or low-confidence jurisdiction. Evaluation proceeds under the strictest seeded pole named by the pack rather than denying automatically, so facts that satisfy that pole allow and a requirement the pole states blocks. This row states the disposition; it never contributes a requirement of its own.",
+      "b2b_exemption": "no",
+      "source": {
+        "citation": "ARCH-0059 §8 unknown-jurisdiction disposition",
+        "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02002L0058-20091219"
+      },
+      "verified_at": 1784505600,
+      "version": 1,
+      "penalty_note": "The pole's own penalty exposure applies; the disposition adds none of its own."
+    }
+  ]
+}

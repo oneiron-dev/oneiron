@@ -30,6 +30,13 @@ pub mod claims;
 /// legs that turn a detected SAVED_QUERY transition into durable effects.
 pub mod enrollment;
 
+/// CA-06's compliance pack: the versioned, vault-resident legal rule rows, the
+/// hydrated-evidence dispatch evaluator the external-effect gate enforces, and
+/// the tighten-auto / loosen-owner-stamp amendment transaction. Law lives in
+/// `compliance/seed_v1.json` as data; this module never spells a jurisdiction's
+/// rule in Rust.
+pub mod compliance;
+
 /// Stable short-id namespace for CAMPAIGN entities.
 ///
 /// Two lowercase ASCII letters per the short-id convention; it names CAMPAIGN,
