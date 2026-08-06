@@ -33,6 +33,7 @@ pub mod companion;
 pub mod config;
 pub mod connector_key;
 pub mod consent;
+pub mod consent_graduation;
 pub mod context_board;
 pub mod context_pack;
 pub mod counterparty_contact;
@@ -376,6 +377,10 @@ pub use crate::consent::{
     action_grant_from_standing_outbound_grant, bound_catastrophe_class, decode_consent_grant_row,
     disclosure_grant_from_access_grant, disclosure_grant_from_disclosure_scope,
     encode_consent_grant_row,
+};
+pub use crate::consent_graduation::{
+    DEFAULT_GRADUATION_STREAK_FLOOR, DemotionReason, RampScope, RampState, ScopeOutcomeStats,
+    is_ramp_demotion_receipt, is_ramp_outcome_receipt, op_kind_is_ramp_eligible,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
