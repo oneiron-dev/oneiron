@@ -271,8 +271,11 @@ impl SlotOracle for BookingSolver<'_> {
 impl BookingSolver<'_> {
     /// Asks CAL for one busy union per host.
     ///
-    /// A host with no selector binding is a wiring defect, not a free host: an
-    /// absent projection must never read as "available all day".
+    /// An unbound host is a wiring defect, not a free host: an absent projection
+    /// must never read as "available all day". A binding that resolved to NO
+    /// selectors is the same defect and is refused the same way — an empty
+    /// selector slice asks `freebusy` for the unfiltered all-calendar union, so
+    /// accepting it would make every event in the vault that host's busy time.
     fn busy_by_host(
         &self,
         config: &EventTypeConfig,
@@ -287,6 +290,7 @@ impl BookingSolver<'_> {
                     .iter()
                     .find(|(id, _)| *id == host.host_ref)
                     .map(|(_, selectors)| selectors.as_slice())
+                    .filter(|selectors| !selectors.is_empty())
                     .ok_or_else(|| {
                         BookingError::InvalidConfig(format!(
                             "host {} has no calendar selector binding",

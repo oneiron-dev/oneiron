@@ -806,6 +806,52 @@ fn booking_claims_resolve_normal_criticality_under_the_default_policy_manifest()
     assert!(slot_hours(&solved).contains(&SURVIVOR_MORNING));
 }
 
+/// A host binding that resolved to no selectors is the same wiring defect as a
+/// host with no binding at all — and the more dangerous one, because an empty
+/// selector slice asks CAL for the unfiltered all-calendar union.
+#[test]
+fn an_empty_calendar_selector_binding_is_a_wiring_defect() {
+    let (_dir, vault) = temp_vault();
+    let actor = booking_actor(&vault);
+    let page = booking_page(&vault);
+    seed_busy_hour(&vault, actor);
+
+    // The oracle's own proof of what an empty slice means to CAL: every event in
+    // the vault, whoever it belongs to.
+    assert!(
+        !oneiron::freebusy(&vault, &[], monday())
+            .expect("freebusy")
+            .is_empty()
+    );
+
+    let solve = |calendars: &[(EntityId, Vec<oneiron::CalendarSel>)]| {
+        BookingSolver {
+            vault: &vault,
+            page_ref: page,
+            calendars_by_host: calendars,
+            holds: &NoActiveHolds,
+            now_utc: NOW,
+            synthetic_config: Some(oracle_config()),
+        }
+        .solve(&request(None))
+    };
+    // An absent binding is already typed...
+    assert!(matches!(solve(&[]), Err(BookingError::InvalidConfig(_))));
+    // ...and so is a present but empty one: an unbound host must never read as
+    // "busy with everything in the vault" any more than as "free all day".
+    assert!(matches!(
+        solve(&[(test_id(HOST_A_SEED), Vec::new())]),
+        Err(BookingError::InvalidConfig(_))
+    ));
+    assert!(
+        solve(&[(
+            test_id(HOST_A_SEED),
+            vec![oneiron::CalendarSel { system: None }]
+        )])
+        .is_ok()
+    );
+}
+
 /// Approval and lifecycle are independent axes, and the engine's read gate
 /// admits only surfaceable claims. A configuration claim that did not clear that
 /// gate must not drive public availability.
