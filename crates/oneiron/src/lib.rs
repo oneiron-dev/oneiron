@@ -539,6 +539,17 @@ pub use crate::edit_distance::graduation::{
     is_graduation_answer_receipt, posterior_lower_bound, set_graduation_policy, snooze_state,
     trust_table, unpin_scope,
 };
+pub use crate::edit_distance::publisher::{
+    CONTENT_HASH_LEN, CountKey, InterviewSession, InterviewState, IssueCategory, IssueSignature,
+    PUBLISHER_CHANNEL_CLASS, PUBLISHER_ENABLED_COMPILED_DEFAULT, PUBLISHER_ENABLED_KEY,
+    PUBLISHER_INSTALL_DEFAULT_KEY, PUBLISHER_PARTY_KEY, PublisherError, PublisherResult,
+    SendOutcome, SignatureSendState, emit_issue_signature, interview_session, issue_signature,
+    publisher_enabled, publisher_party, send_signatures_if_enabled, set_publisher_enabled,
+    set_publisher_install_default, signature_send_state, submit_interview_for_review,
+    tally_judged_outcomes,
+};
+#[cfg(feature = "sync")]
+pub use crate::edit_distance::publisher::{open_interview, settle_interview_digest};
 pub use crate::edit_distance::routing::{
     RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint, rebuild_routing_projection,
     record_judged_amendment, rollout_rung, routing_data_bar, routing_weight_hint,
