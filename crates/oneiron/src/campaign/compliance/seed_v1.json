@@ -2,7 +2,7 @@
   "pack_id": "crm.compliance.v1",
   "pack_version": 1,
   "min_engine_version": "0.1.0",
-  "verified_at_max_age_secs": 15552000,
+  "verified_at_max_age_secs": 31536000,
   "unknown_jurisdiction_default": "strict_pole",
   "strict_pole_jurisdiction": "EU/DE",
   "jurisdiction_confidence_floor_millis": 700,

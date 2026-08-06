@@ -346,15 +346,25 @@ pub enum ComplianceBlockReason {
 
 impl ComplianceBlockReason {
     /// The receipt reason the gate records alongside the deny.
+    ///
+    /// `store.rs` owns a CLOSED receipt-reason vocabulary and admits only the
+    /// `counterparty_` / `connector_key_` / `effector_budget_` / `charter_`
+    /// families. These walls are counterparty-scoped legal facts — what may
+    /// lawfully be sent to THIS recipient — so they ride the `counterparty_`
+    /// family rather than minting a fifth one in a file this lane does not own.
     #[must_use]
     pub const fn receipt_reason(self) -> &'static str {
         match self {
-            Self::UnknownLegalForm => "campaign_compliance_unknown_legal_form",
-            Self::UnknownListProvenance => "campaign_compliance_unknown_list_provenance",
-            Self::MissingPublicationContext => "campaign_compliance_missing_publication_context",
-            Self::MissingRequiredMessageElement => "campaign_compliance_missing_message_element",
-            Self::StaleRule => "campaign_compliance_stale_rule",
-            Self::RuleViolation => "campaign_compliance_rule_violation",
+            Self::UnknownLegalForm => "counterparty_compliance_unknown_legal_form",
+            Self::UnknownListProvenance => "counterparty_compliance_unknown_list_provenance",
+            Self::MissingPublicationContext => {
+                "counterparty_compliance_missing_publication_context"
+            }
+            Self::MissingRequiredMessageElement => {
+                "counterparty_compliance_missing_message_element"
+            }
+            Self::StaleRule => "counterparty_compliance_stale_rule",
+            Self::RuleViolation => "counterparty_compliance_rule_violation",
         }
     }
 }
@@ -973,6 +983,15 @@ fn has_active_claim_in_txn(
     Ok(!active_claim_bodies_in_txn(store, txn, subject, predicate)?.is_empty())
 }
 
+/// Live claim heads of `predicate` on `subject`.
+///
+/// Lifecycle is the filter; approval status deliberately is NOT. Requiring an
+/// APPROVED evidence claim would put a human approval in front of every
+/// compliant send — precisely the blanket review step this gate exists to
+/// avoid — and it would do so on the permissive side only, which is where a
+/// stall is most expensive and least protective. This matches CA-01's stated
+/// posture for the enforcement-read families. Superseding or retracting a head
+/// is the way to withdraw it.
 fn active_claim_bodies_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -1515,7 +1534,10 @@ mod tests {
     fn campaign_compliance_seed_rows_match_arch_0059() {
         let pack = pack();
         assert_eq!(pack.pack_id, CAMPAIGN_COMPLIANCE_PACK_ID);
-        assert!(!pack.warning.trim().is_empty(), "the caveat ships with the pack");
+        assert!(
+            !pack.warning.trim().is_empty(),
+            "the caveat ships with the pack"
+        );
         for jurisdiction in ["UK", "JP", "EU", "EU/DE", "EU/FR", "US", JURISDICTION_NONE] {
             assert!(
                 pack.rows.iter().any(|row| row.jurisdiction == jurisdiction),
@@ -1633,7 +1655,10 @@ mod tests {
         );
 
         // An unseeded token and a below-floor confidence take the same road.
-        assert_eq!(verdict(&facts(Some("ZZ"), "email")), ComplianceVerdict::Allow);
+        assert_eq!(
+            verdict(&facts(Some("ZZ"), "email")),
+            ComplianceVerdict::Allow
+        );
         let mut low_confidence = facts(Some("US"), "email");
         low_confidence.jurisdiction_confidence_millis = Some(100);
         low_confidence.list_provenance = None;
@@ -1699,12 +1724,18 @@ mod tests {
                 rule_kind: Some(ComplianceRuleKind::ConsentClass),
             }
         );
-        assert_eq!(verdict(&facts(Some("UK"), "email")), ComplianceVerdict::Allow);
+        assert_eq!(
+            verdict(&facts(Some("UK"), "email")),
+            ComplianceVerdict::Allow
+        );
     }
 
     #[test]
     fn campaign_compliance_jp_publication_exemption_requires_context() {
-        assert_eq!(verdict(&facts(Some("JP"), "email")), ComplianceVerdict::Allow);
+        assert_eq!(
+            verdict(&facts(Some("JP"), "email")),
+            ComplianceVerdict::Allow
+        );
         for spoil in 0..3usize {
             let mut partial = facts(Some("JP"), "email");
             let publication = partial.jp_publication.as_mut().expect("seeded publication");
@@ -1748,7 +1779,8 @@ mod tests {
 
     #[test]
     fn campaign_compliance_required_message_elements_block() {
-        let axes: [(fn(&mut DispatchComplianceFacts), ComplianceRuleKind); 4] = [
+        type SpoilOneAxis = fn(&mut DispatchComplianceFacts);
+        let axes: [(SpoilOneAxis, ComplianceRuleKind); 4] = [
             (
                 |facts| facts.sender_identity_present = false,
                 ComplianceRuleKind::SenderId,
@@ -1792,7 +1824,7 @@ mod tests {
         );
 
         // One second earlier the same row is still fresh.
-        let mut fresh = stale.clone();
+        let mut fresh = stale;
         fresh.now_utc = SEED_VERIFIED_AT + pack.verified_at_max_age_secs;
         assert_eq!(
             evaluate_dispatch_compliance(&pack, &fresh),
@@ -1806,7 +1838,10 @@ mod tests {
         // send. They ship as data and are never a dispatch wall.
         assert!(!ComplianceRuleKind::OptoutDeadline.is_dispatch_enforced());
         assert!(!ComplianceRuleKind::Records.is_dispatch_enforced());
-        assert_eq!(verdict(&facts(Some("US"), "email")), ComplianceVerdict::Allow);
+        assert_eq!(
+            verdict(&facts(Some("US"), "email")),
+            ComplianceVerdict::Allow
+        );
         assert_eq!(
             verdict(&facts(Some("EU/DE"), "email")),
             ComplianceVerdict::Allow
@@ -2061,7 +2096,9 @@ mod tests {
             }
         );
         assert_eq!(
-            load_active_compliance_pack(&vault).expect("active").pack_version,
+            load_active_compliance_pack(&vault)
+                .expect("active")
+                .pack_version,
             2
         );
         let notices = compliance_amendment_notices(&vault).expect("notices");
@@ -2104,7 +2141,9 @@ mod tests {
             panic!("a row deletion must not auto-apply");
         };
         assert_eq!(
-            load_active_compliance_pack(&vault).expect("active").pack_version,
+            load_active_compliance_pack(&vault)
+                .expect("active")
+                .pack_version,
             1,
             "nothing activates before the stamp"
         );
@@ -2117,9 +2156,13 @@ mod tests {
         other_version.pack_version = 3;
         let other_version_hash = compliance_proposal_hash(&other_version).expect("hash");
         assert_ne!(other_version_hash, proposal_hash);
-        assert!(stamp_compliance_amendment(&vault, entity(ACTOR_SEED), other_version_hash).is_err());
+        assert!(
+            stamp_compliance_amendment(&vault, entity(ACTOR_SEED), other_version_hash).is_err()
+        );
         assert_eq!(
-            load_active_compliance_pack(&vault).expect("active").pack_version,
+            load_active_compliance_pack(&vault)
+                .expect("active")
+                .pack_version,
             1
         );
 
@@ -2144,7 +2187,9 @@ mod tests {
         // guessed safe — even one that reads stricter to a human.
         let mut reworded = base.clone();
         reworded.pack_version = 2;
-        reworded.rows[0].requirement.push_str(" This is now mandatory.");
+        reworded.rows[0]
+            .requirement
+            .push_str(" This is now mandatory.");
         assert_eq!(
             classify_compliance_amendment(&base, &reworded).expect("classified"),
             ComplianceAmendmentClass::LooseningOrAmbiguous
@@ -2154,7 +2199,9 @@ mod tests {
             ComplianceAmendmentOutcome::PendingOwnerStamp { .. }
         ));
         assert_eq!(
-            load_active_compliance_pack(&vault).expect("active").pack_version,
+            load_active_compliance_pack(&vault)
+                .expect("active")
+                .pack_version,
             1
         );
 
