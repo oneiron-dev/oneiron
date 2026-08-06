@@ -46,6 +46,7 @@ pub mod dreamer_runner;
 pub mod dreamer_tournament;
 pub mod dreamer_wake;
 pub mod edge;
+pub mod edit_distance;
 pub mod edit_roundtrip;
 pub mod edit_settle;
 pub mod eiri;

@@ -39,6 +39,22 @@ use loro::{CommitOptions, ExportMode, LoroDoc, LoroMap, Subscription, VersionVec
 
 const HISTORY_FREE_WINDOW_PREFIX: &str = "hfs:w:";
 
+/// Reserved prefix for Loro commit MESSAGES written by the edit-distance
+/// proposal-artifact substrate (ED-00, ONE-1756).
+///
+/// Two pieces of Loro commit metadata exist and only one of them is durable:
+/// `CommitOptions::origin` is local event metadata (the [`BRIDGE_ORIGIN`]
+/// live-event filter above is its only consumer, and it does NOT survive
+/// snapshot/reopen), while `CommitOptions::commit_msg` is persisted in the
+/// `Change` record and replicates. Proposal-artifact writes therefore stamp
+/// their actor into the commit MESSAGE, under this prefix so a message written
+/// by any other layer can never be mistaken for one.
+///
+/// Declared here beside the origin convention so a sync-layer author sees both
+/// reservations in one place; the grammar and its parser live in
+/// [`crate::edit_distance::proposal_text`].
+pub(crate) const PROPOSAL_TEXT_COMMIT_MSG_PREFIX: &str = "oneiron.edit_distance.v1";
+
 /// A loaded window Doc with its observer subscriptions.
 pub struct LoadedWindow {
     /// The Loro Doc for this window.
