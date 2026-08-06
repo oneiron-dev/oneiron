@@ -1566,6 +1566,11 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::delivery_window::validate_delivery_window_claim_structure(&body)?;
     } else if crate::calendar::claims::is_calendar_claim_predicate(&body.predicate) {
         crate::calendar::claims::validate_calendar_claim_structure(&body)?;
+    } else if crate::booking::config::is_booking_claim_predicate(&body.predicate) {
+        // EXACT-predicate membership, like every arm above: a `booking.` prefix
+        // would silently adopt every future booking predicate into the
+        // event-type validator.
+        crate::booking::config::validate_event_type_claim(&body)?;
     }
     Ok(body)
 }
