@@ -105,3 +105,21 @@ comment-stripped source for any definition keyword). ONE-1823 adds `solver.rs` i
 The fixture oracle is `#[cfg(test)] pub(crate) mod fixture` inside `constraint.rs` — plain cfg(test),
 no `test-hooks`, no `test-support`. `booking_constraint_fixture_oracle_is_deterministic` asserts the
 lane contains no `feature = ` gate of any kind, which forecloses both by construction.
+
+## K3 SIMPLIFY pass
+
+One deletion, nothing else warranted:
+
+- `agent_front.rs`: deleted the one-use `surface_error` helper and routed `card()` through
+  `surface()` directly (`GeneratedUiCard::card` returns `Result<_, Error>`, the exact shape
+  `surface()` wraps). Net −4 lines, zero behavior change.
+- Surveyed and deliberately KEPT: the `TimeRangeWire` `From` adapter impls (the idiomatic form of
+  the serde-with layer; inlining struct literals at four sites is not an elegance win), the separate
+  `validate_visitor_tz` / `validate_session_ref` charset validators (merging would ADD a
+  parameterized helper), `ConstraintFrontCopy::validate` (declared D4 decision), and
+  `top_ranked_slots` (the two-pass index sort is what preserves the oracle's relative order among
+  the rendered top three). No test file, seam type, or public API touched.
+
+Gates after the pass: `cargo fmt -p oneiron -- --check` clean; `cargo clippy -p oneiron
+--all-features --all-targets` zero warnings; `cargo test -p oneiron --all-features --lib
+booking_constraint` 12/12.

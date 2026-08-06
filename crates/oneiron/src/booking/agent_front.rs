@@ -253,11 +253,10 @@ fn deflect_card(
 }
 
 fn card(session_ref: &str, root: LensNode) -> Result<GeneratedUiCard, BookingError> {
-    GeneratedUiCard::card(
+    surface(GeneratedUiCard::card(
         surface(LensRenderId::new(format!("booking-{session_ref}")))?,
         root,
-    )
-    .map_err(surface_error)
+    ))
 }
 
 fn voice_node(copy: &ConstraintFrontCopy, line: &str) -> Result<LensNode, BookingError> {
@@ -297,9 +296,5 @@ fn slot_button_node(index: usize, slot: &RankedSlot) -> Result<LensNode, Booking
 }
 
 fn surface<T>(result: Result<T, Error>) -> Result<T, BookingError> {
-    result.map_err(surface_error)
-}
-
-fn surface_error(error: Error) -> BookingError {
-    BookingError::Surface(error.to_string())
+    result.map_err(|error| BookingError::Surface(error.to_string()))
 }
