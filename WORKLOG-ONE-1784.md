@@ -186,5 +186,10 @@ cancel path). Unit tests live in `calendar/ics.rs` (7) and
 - `cargo clippy -p oneiron --all-features [--tests]`: clean under workspace
   denies.
 - `cargo fmt -p oneiron`: applied.
-- `cargo test -p oneiron --all-features`: FULL SUITE RESULT PENDING AT COMMIT
-  TIME — updated before final commit.
+- `cargo test -p oneiron --all-features`: FULL SUITE GREEN (EXIT=0, all 48
+  targets, doctests included). Note: an earlier run showed
+  `batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once`
+  failing on a one-second wall-clock inversion (`migrated 1786026525` vs
+  `observed_before` one second later — NTP-slew-shaped); it passes in
+  isolation and in the final full run, and this lane touches nothing in
+  batch/authority/sync. Pre-existing flake class, charged to no lane.
