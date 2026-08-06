@@ -1144,7 +1144,7 @@ fn emit_preference_claim(
     .with_scope(edit_cost_scope(&cluster.scope))
     .with_validity(Some(cluster.at), None);
     let mark = encode_row(
-        &StoredMintMark::new(MARK_KIND_PREFERENCE, &claim_id, cluster),
+        &StoredMintMark::new(MARK_KIND_PREFERENCE, &claim_id),
         MINT_MARK_ROW_LABEL,
     )?;
     let mark_key = mint_mark_key(handle);
@@ -1196,7 +1196,7 @@ fn emit_skill_edit(
         SKILL_EDIT_ROW_LABEL,
     )?;
     let mark = encode_row(
-        &StoredMintMark::new(MARK_KIND_SKILL_EDIT, &proposal_id, cluster),
+        &StoredMintMark::new(MARK_KIND_SKILL_EDIT, &proposal_id),
         MINT_MARK_ROW_LABEL,
     )?;
     let row_key = meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes());
@@ -1434,28 +1434,23 @@ fn advance_watermark_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, at: u64) 
 // Stored rows
 // ---------------------------------------------------------------------------
 
+/// A dedup POINTER, not a content record: what was proposed already lives in
+/// the claim body or the skill-edit row the reference names, so the mark stores
+/// nothing but where to look.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredMintMark {
     v: u8,
     kind: String,
     /// Hex of the claim or proposal this cluster minted.
     reference: String,
-    scope: String,
-    from: String,
-    to: String,
-    at: u64,
 }
 
 impl StoredMintMark {
-    fn new(kind: &str, reference: &EntityId, cluster: &SubstitutionCluster) -> Self {
+    fn new(kind: &str, reference: &EntityId) -> Self {
         Self {
             v: ROW_VERSION,
             kind: kind.to_owned(),
             reference: reference.to_hex(),
-            scope: cluster.scope.clone(),
-            from: cluster.from.clone(),
-            to: cluster.to.clone(),
-            at: cluster.at,
         }
     }
 }

@@ -159,3 +159,18 @@ the claim VALUE map and the proposal ROW, which is the durable record a reader q
 - [x] Runs as a consolidation-scope job on the landed SessionEnd wake inlet; zero writes outside the
       gate (the skill-edit row is a proposal, never an application)
 - [x] fmt · clippy `-D warnings` · `cargo test -p oneiron --all-features`
+
+## SIMPLIFY (K3, tip after impl leg)
+
+One deletion, no additions: `StoredMintMark` shed its `scope` / `from` / `to` / `at` fields. They
+were written on every emission and read by NO consumer — the dedup/hysteresis path reads `kind` +
+`reference` only (miner.rs `cluster_is_eligible`; tests assert the same two), and the cluster content
+the fields duplicated is already durably stored in the claim body (`from`/`to`/`class`/`rationale`) or
+the skill-edit row (`scope`/`from`/`to`/`evidence_receipts`). Stored redundancy = speculative
+generality; the mark is now what the law needs it to be: a dedup POINTER. Constructor dropped the
+`cluster` param; both call sites shortened. Same-txn watermark/mint-mark atomicity, hysteresis,
+public API, tests: untouched.
+
+Gates re-run: `cargo fmt -p oneiron --check` clean · `cargo clippy -p oneiron --all-features
+--all-targets` clean · `cargo nextest run -p oneiron --all-features edit_distance::miner` 28/28 ·
+full `cargo nextest run -p oneiron --all-features` green.
