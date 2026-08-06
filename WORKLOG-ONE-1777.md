@@ -254,3 +254,114 @@ Everything else was read and left: the hydration/evidence machinery is
 load-bearing fail-closed code, the `comm.party.v1:` mirror is a declared
 PACKET_AMEND candidate, and the remaining helpers earn their names. Re-ran
 fmt, clippy, the 16 inline tests, and the 4 oracle tests — all green.
+
+## VERDICT-FIX pass (Opus, post-simplify)
+
+Four verdict-verified REAL findings, each fixed at its chokepoint and each
+mutation-verified red-before / green-after. The fifth (P2 packet-regression,
+`gate.rs:2442`) was adjudicated REJECTED and is not relitigated; the
+independent re-grep is recorded at the bottom.
+
+### 1. P1 `amendment-auto-loosening` — `compliance.rs`, `classify_row_delta`
+
+`classify_row_delta` counted ANY added row key as `tightened`, so a proposal
+that only adds rows auto-activated with no owner stamp. Row addition is not
+monotone in the selected requirement set: `trusted_jurisdiction` trusts any
+token the pack seeds a row for, so a lone added `ZZ/email/consent_class` row
+takes `ZZ` out of the unknown disposition, satisfies the consent-class
+coverage guard, and hands the send the one permissive row the proposal wrote
+instead of the `EU/DE` strict pole it used to clear.
+
+FIX: an added row counts as tightening only under a jurisdiction the CURRENT
+pack already seeds. A row seeding a new token is unorderable and waits for the
+stamp. Additions under seeded jurisdictions stay additive, so the ordinary
+tighten-auto path is untouched.
+
+RED-BEFORE: `campaign_compliance_new_jurisdiction_rows_wait_for_owner_stamp`
+— `left: Tightening, right: LooseningOrAmbiguous`. The test also spells the
+escape out in the evaluator: the same facts block under the base pack and
+allow under the widened one.
+
+### 2. P1 `staleness-bypass` — `compliance.rs`, `CompliancePack::is_stale`
+
+Staleness tested only the CLOSING edge of the trust window, and saturated on
+the way there, so `verified_at = u64::MAX` made a row immortal. Moving
+`verified_at` is provenance, so the classifier reads it as a `MetadataRefresh`
+and auto-activates: one forward-dated field (a millisecond mistype is enough)
+disabled the stale-row hard deny with no owner stamp — the same trust-window
+widening `classify_dial_delta` already flags as loosening via the dial.
+
+FIX: the window has two edges. It OPENS when a human verified the row and
+closes one dial-width later; `row.verified_at > now_utc` is stale. Nothing
+verifies a row after now, so this fails closed on a forward date rather than
+trusting it forever. Placed in the evaluator, not the classifier, because it
+then holds for the seed, for owner-stamped packs, and for any future writer.
+
+RED-BEFORE: `campaign_compliance_future_verified_at_is_not_verification` —
+`left: None, right: Some(StaleRule)`. The test also pins that the classifier
+calls the same proposal a `MetadataRefresh`, which is why the wall belongs
+where it now is.
+
+### 3. P1 `claim-head-selection` — `compliance.rs`, evidence + element readers
+
+`dispatch_evidence_in_txn` and `message_elements_in_txn` took the first live
+claim head in `edges_in` storage order. Two live heads are reachable — the
+sibling `jurisdiction_observation_in_txn` says so in terms and resolves them
+deterministically — but an evidence body carries no `observed_at` to order by,
+so storage order decided which facts the gate believed, always on the
+permissive side, since these bodies only ever ADD evidence.
+
+FIX: one chokepoint reader, `sole_active_claim_body_in_txn`, used by both.
+Heads that disagree hydrate as nothing and the strict path applies; identical
+twins (re-import, offline-minted duplicate) are one truth and still hydrate,
+so the wall costs no false deny.
+
+RED-BEFORE: `campaign_compliance_disagreeing_evidence_heads_take_the_strict_path`
+— two live heads, one carrying `legal_form` and no provenance, the other the
+provenance and no legal form. Exactly one hydrates under the old reader
+whichever way storage runs, so the pair of assertions is red-before
+independent of iteration order (`left: Some("corporate"), right: None`).
+
+### 4. P2 `channel-scope` — `compliance/seed_v1.json`
+
+The JP and US platform rows declared their statutes out of scope for platform
+DMs while the same jurisdictions' `channel: "*"` rows enforced those statutes
+on every channel. A DM was refused for want of the Art. 4 postal address the
+Act does not ask of it, and for want of the CAN-SPAM list provenance the US
+platform row had just placed outside the federal regime. The seed contradicted
+itself, in the over-blocking direction.
+
+FIX: every JP and US row citing an email statute now carries `channel:
+"email"`. The UK, EU, and EU/DE wildcards stay wildcards on purpose — those
+rows read their instruments onto the platform lane in terms (PECR reg 22
+reaches electronic mail to an individual subscriber, art. 13 is
+technology-neutral, UWG §7(1) covers any advertising channel). That contrast
+is what makes the posture row-local rather than a blanket DM carve-out.
+
+RED-BEFORE: `campaign_compliance_platform_dm_scope_is_row_local` gained three
+arms — JP DM with no postal address, US DM with unknown provenance, and the UK
+DM whose cease-address duty DOES follow it. The first failed with
+`Block { MissingRequiredMessageElement, JP, PhysicalAddress }`; the third
+guards against over-scoping the fix.
+
+### Banked / rejected — not relitigated
+
+P2 `packet-regression` (`gate.rs:2442`), REJECTED by the verdict as a
+stale-base two-dot artifact. Re-verified independently rather than taken on
+trust: `"booking."` is ABSENT at the branch's merge-base `00536ae92`, present
+on current `origin/main` at `gate.rs:2432`, and absent at HEAD only because
+HEAD predates the commit that added it. This branch's three-dot patch touches
+`gate.rs` at ~123, ~725, ~826, and ~3302 only, and
+`git merge-tree --write-tree origin/main HEAD` returns a clean tree with no
+conflict. The blueprint-mandated pre-merge rebase carries the row in. No
+action.
+
+### Gates
+
+- `cargo fmt -p oneiron -- --check` — clean, per commit.
+- `cargo clippy -p oneiron --all-features --all-targets` — clean, per commit.
+- `cargo test -p oneiron --all-features` — 46 binaries, 3766 lib + all
+  integration tests, 0 failures. 19 inline compliance tests (3 new) + 4 oracle
+  tests unchanged and green.
+- Diff stays inside the packet: `compliance.rs` + `seed_v1.json` only in this
+  pass. `Cargo.lock` remains modified-but-unstaged and is NOT committed.
