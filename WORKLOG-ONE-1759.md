@@ -153,3 +153,31 @@ passes untouched, which is the evidence that the generalization is behaviour-pre
 - `git merge-tree HEAD origin/main` (now `98195c3b8`, ONE-1823 [BK-00] landed after this
   branch was cut): **no textual conflict**. Base drift is textually clean, `claim.rs` is
   the only file both touch and the regions are far apart. Rebase stays script-owned.
+
+## SIMPLIFY pass (K3, on tip)
+
+Three deletions, no additions, no test/assertion/public-API touches:
+
+1. **`attribution.rs`: deleted `cost_scope_name` + `skill_cost_scope`** — exact duplicates
+   of the helpers this lane itself added to `actor_claims.rs` (`edit_cost_scope_name`,
+   `edit_cost_scope`). Those two are now `pub(crate)` (visibility only; no signature or
+   behaviour change) and `attribution.rs` imports them. The scope-map reader/writer for
+   `*.edit_cost` rows now has ONE home, in the module that owns the row shape. The
+   "one scope entry, duplicated key reads as none" rationale moved onto the shared
+   helper's doc.
+2. **`attribution.rs`: dropped the intermediate `PreferenceProposal` construction** in
+   `judge_amendment_with` — it was built only to be immediately re-destructured into
+   `StoredPreference`; the stored row is now built directly. `PreferenceProposal` stays
+   as the READ type (`pending_preference_proposals`), which is its only real use.
+3. Considered and REJECTED: folding `attribution::normalized_scope` into
+   `escalation`'s same-named helper — escalation's returns `Error::InvalidConsentBound`,
+   this module's returns `Error::InvalidClaimBody`; unifying would change a landed error
+   variant on an error path for ~8 lines. Not worth it.
+
+Net: -52/+22 across the two files (incl. doc moves). Gates after the pass: `cargo fmt
+-p oneiron` clean · `cargo clippy -p oneiron --all-features --all-targets -- -D warnings`
+clean · `cargo test -p oneiron --all-features --lib` **3784/3784 ok**. One unrelated
+wall-clock flake (`batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once`,
+"first-seen must be the local observation, not learned_at") fired once mid-sweep, passed
+in isolated re-run and in the confirming full lib run; batch authority-fold shares no
+code with this diff — charged to no lane, noted for the flake ledger.

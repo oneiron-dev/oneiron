@@ -338,7 +338,11 @@ fn skill_fit_scope(skill: &EntityId) -> Value {
     )])
 }
 
-fn edit_cost_scope(scope: &str) -> Value {
+/// The `{scope}` pair map of an `*.edit_cost` row — the writer both the
+/// `actor.*` door and the `skill.*` door in
+/// [`crate::edit_distance::attribution`] share, so one row shape means one
+/// conflict-set key lane-wide.
+pub(crate) fn edit_cost_scope(scope: &str) -> Value {
     Value::Map(vec![(
         Value::from(ACTOR_EDIT_COST_SCOPE_KEY),
         Value::from(scope),
@@ -1483,9 +1487,12 @@ fn skill_fit_scope_skill(scope: Option<&Value>) -> Option<EntityId> {
     found
 }
 
-/// The SCOPE an `actor.edit_cost` scope map names, or `None` when it names
-/// none — [`skill_fit_scope_skill`]'s sibling, duplicated-key rule included.
-fn edit_cost_scope_name(scope: Option<&Value>) -> Option<&str> {
+/// The SCOPE an `*.edit_cost` scope map names, or `None` when it names none —
+/// [`skill_fit_scope_skill`]'s sibling, duplicated-key rule included. Shared
+/// with [`crate::edit_distance::attribution`]'s reads: a row's scope map also
+/// carries the lineage meet, so a read matches on the ONE scope entry rather
+/// than on the whole map.
+pub(crate) fn edit_cost_scope_name(scope: Option<&Value>) -> Option<&str> {
     let Some(Value::Map(entries)) = scope else {
         return None;
     };

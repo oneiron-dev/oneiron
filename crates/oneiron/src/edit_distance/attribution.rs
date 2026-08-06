@@ -50,7 +50,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::actor_claims::{ActorClaimEvidence, ActorClaimRow, write_actor_claim};
+use crate::actor_claims::{
+    ActorClaimEvidence, ActorClaimRow, edit_cost_scope, edit_cost_scope_name, write_actor_claim,
+};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST,
@@ -519,21 +521,14 @@ pub fn judge_amendment_with(
     };
     let encoded = encode_row(&row, JUDGMENT_ROW_LABEL)?;
     let judgment_key = meta_key(JUDGMENT_KEY_PREFIX, receipt_id.as_bytes());
-    let preference = (class == AmendmentClass::PreferenceShift).then(|| PreferenceProposal {
-        receipt_id: receipt_id.to_owned(),
-        scope: judgment.scope.clone(),
-        evidence_receipts: judgment.evidence_receipts.clone(),
-        at: judgment.at,
-    });
-    let preference_row = preference
-        .as_ref()
-        .map(|proposal| {
+    let preference_row = (class == AmendmentClass::PreferenceShift)
+        .then(|| {
             encode_row(
                 &StoredPreference {
                     v: ROW_VERSION,
-                    scope: proposal.scope.clone(),
-                    evidence_receipts: proposal.evidence_receipts.clone(),
-                    at: proposal.at,
+                    scope: judgment.scope.clone(),
+                    evidence_receipts: judgment.evidence_receipts.clone(),
+                    at: judgment.at,
                 },
                 PREFERENCE_ROW_LABEL,
             )
@@ -795,7 +790,7 @@ fn write_skill_edit_cost(
             ClaimLifecycleStatus::Active,
         );
         body.evidence = Some(evidence.clone());
-        body.scope = Some(skill_cost_scope(&scope));
+        body.scope = Some(edit_cost_scope(&scope));
         body.valid_from = Some(at);
         body.source = Some(ClaimSource::Observed);
         vault.put_reserved_claim_in_txn(
@@ -832,7 +827,7 @@ fn active_skill_cost_heads_in_txn(
         };
         if body.predicate != PREDICATE_SKILL_EDIT_COST
             || body.lifecycle != ClaimLifecycleStatus::Active
-            || cost_scope_name(body.scope.as_ref()) != Some(scope)
+            || edit_cost_scope_name(body.scope.as_ref()) != Some(scope)
         {
             continue;
         }
@@ -863,7 +858,7 @@ pub fn edit_cost_for(vault: &Vault, subject: &EntityId, scope: &str) -> Result<O
             body.predicate.as_str(),
             PREDICATE_SKILL_EDIT_COST | PREDICATE_ACTOR_EDIT_COST
         ) || body.lifecycle != ClaimLifecycleStatus::Active
-            || cost_scope_name(body.scope.as_ref()) != Some(scope)
+            || edit_cost_scope_name(body.scope.as_ref()) != Some(scope)
         {
             continue;
         }
@@ -1143,38 +1138,6 @@ fn normalized_scope(scope: &str) -> Result<&str> {
         ));
     }
     Ok(trimmed)
-}
-
-fn skill_cost_scope(scope: &str) -> rmpv::Value {
-    rmpv::Value::Map(vec![(
-        rmpv::Value::from(crate::actor_claims::ACTOR_EDIT_COST_SCOPE_KEY),
-        rmpv::Value::from(scope),
-    )])
-}
-
-/// The scope an `*.edit_cost` row names, or `None` when it names none.
-///
-/// One reader for both predicates: an `actor.edit_cost` scope map also carries
-/// the `actor.*` ledger's lineage meet, so a read matches on the ONE scope
-/// entry rather than on the whole map — the [`crate::actor_claims::skill_fit_for`]
-/// rule. A DUPLICATED key reads as none: two answers to one question is no
-/// answer, and a head whose pair is undefined must not silently join a
-/// conflict set.
-fn cost_scope_name(scope: Option<&rmpv::Value>) -> Option<&str> {
-    let rmpv::Value::Map(entries) = scope? else {
-        return None;
-    };
-    let mut found = None;
-    for (key, value) in entries {
-        if key.as_str() != Some(crate::actor_claims::ACTOR_EDIT_COST_SCOPE_KEY) {
-            continue;
-        }
-        if found.is_some() {
-            return None;
-        }
-        found = Some(value.as_str()?);
-    }
-    found
 }
 
 fn next_audit_sequence_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
