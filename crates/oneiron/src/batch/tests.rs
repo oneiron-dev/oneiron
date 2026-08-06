@@ -201,6 +201,259 @@ fn habit_with_checkins_cannot_change_role() -> Result<()> {
     Ok(())
 }
 
+/// `day * 86_400 + offset` — the check-in timestamp whose UTC day bucket is
+/// `day`. The offset proves the reducer buckets rather than compares seconds.
+fn checkin_at(day: u64, offset: u64) -> u64 {
+    day * 86_400 + offset
+}
+
+fn stored_task_body(vault: &Vault, id: &EntityId) -> Result<Vec<(Value, Value)>> {
+    let raw = vault.get_raw(id)?.expect("entity row must exist");
+    let mut cursor = std::io::Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
+    let value = rmpv::decode::read_value(&mut cursor).expect("stored TASK body must decode");
+    Ok(value.as_map().expect("stored TASK body is a map").to_vec())
+}
+
+fn stored_streak_field(vault: &Vault, id: &EntityId, key: &str) -> Result<Option<u64>> {
+    Ok(stored_task_body(vault, id)?
+        .iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value.as_u64().expect("streak counters are unsigned integers")))
+}
+
+/// The stored `(currentStreak, longestStreak)` pair.
+fn stored_streak(vault: &Vault, id: &EntityId) -> Result<(u64, u64)> {
+    Ok((
+        stored_streak_field(vault, id, "currentStreak")?.expect("currentStreak must be stored"),
+        stored_streak_field(vault, id, "longestStreak")?.expect("longestStreak must be stored"),
+    ))
+}
+
+fn habit_body_with_streak(current: u64, longest: u64) -> Vec<u8> {
+    let value = Value::Map(vec![
+        (
+            Value::from(crate::habit::TASK_BODY_ROLE_KEY),
+            Value::from(TaskRole::Habit.role_byte()),
+        ),
+        (Value::from("currentStreak"), Value::from(current)),
+        (Value::from("longestStreak"), Value::from(longest)),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value).expect("encode habit fixture body");
+    bytes
+}
+
+#[test]
+fn habit_streak_is_derived_from_checkin_children() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let habit = EntityId::now();
+    let checkin_body = crate::habit::task_body_for_test(TaskRole::HabitCheckin);
+
+    vault.put_entity(
+        &habit,
+        ENTITY_TYPE_TASK,
+        test_time_range(checkin_at(10, 0), checkin_at(10, 0)),
+        checkin_at(10, 0),
+        &crate::habit::task_body_for_test(TaskRole::Habit),
+    )?;
+    // A Habit with no children carries the empty pair, not a missing field.
+    assert_eq!(stored_streak(&vault, &habit)?, (0, 0));
+
+    // Days 10, 11 (twice — two separate entities, one streak day), then a gap
+    // to day 14. `longest` is the 10-11 run; `current` is the run ending at
+    // the NEWEST child day, which is the lone day 14.
+    let checkins: Vec<(EntityId, u64)> = [
+        checkin_at(11, 7_200),
+        checkin_at(10, 3_600),
+        checkin_at(14, 100),
+        checkin_at(11, 60),
+    ]
+    .into_iter()
+    .map(|occurred| (EntityId::now(), occurred))
+    .collect();
+    for (checkin, occurred) in &checkins {
+        vault.put_habit_checkin(
+            &habit,
+            checkin,
+            test_time_range(*occurred, *occurred),
+            *occurred,
+            &checkin_body,
+        )?;
+    }
+
+    assert_eq!(stored_streak(&vault, &habit)?, (1, 2));
+    assert_eq!(
+        vault.sources(&habit, EdgeKind::ChildOf, None)?.len(),
+        checkins.len(),
+        "same-day check-ins stay separate append-only entities"
+    );
+    // A check-in body never gains counters of its own.
+    for (checkin, _) in &checkins {
+        assert_eq!(stored_streak_field(&vault, checkin, "currentStreak")?, None);
+        assert_eq!(stored_streak_field(&vault, checkin, "longestStreak")?, None);
+    }
+
+    // Re-running the recompute over an unchanged child set is byte-idempotent
+    // — the metadata header included.
+    let before = vault.get_raw(&habit)?.expect("habit row");
+    let (last, occurred) = checkins.last().copied().expect("check-in fixture");
+    vault.put_habit_checkin(
+        &habit,
+        &last,
+        test_time_range(occurred, occurred),
+        occurred,
+        &checkin_body,
+    )?;
+    assert_eq!(vault.get_raw(&habit)?, Some(before));
+    Ok(())
+}
+
+#[test]
+fn habit_body_edit_keeps_the_derived_streak_and_a_non_habit_task_never_gains_one() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let habit = EntityId::now();
+    let checkin = EntityId::now();
+    let plain_task = EntityId::now();
+    let occurred = checkin_at(10, 3_600);
+
+    vault.put_entity(
+        &habit,
+        ENTITY_TYPE_TASK,
+        test_time_range(occurred, occurred),
+        occurred,
+        &crate::habit::task_body_for_test(TaskRole::Habit),
+    )?;
+    vault.put_habit_checkin(
+        &habit,
+        &checkin,
+        test_time_range(occurred, occurred),
+        occurred,
+        &crate::habit::task_body_for_test(TaskRole::HabitCheckin),
+    )?;
+    assert_eq!(stored_streak(&vault, &habit)?, (1, 1));
+
+    // A later body edit carries no counters (the public door forbids them);
+    // the derived pair must survive it rather than being dropped.
+    let renamed = {
+        let value = Value::Map(vec![
+            (
+                Value::from(crate::habit::TASK_BODY_ROLE_KEY),
+                Value::from(TaskRole::Habit.role_byte()),
+            ),
+            (Value::from("title"), Value::from("morning pages")),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &value).expect("encode renamed habit body");
+        bytes
+    };
+    vault.put_entity(
+        &habit,
+        ENTITY_TYPE_TASK,
+        test_time_range(occurred, occurred),
+        occurred,
+        &renamed,
+    )?;
+    assert_eq!(stored_streak(&vault, &habit)?, (1, 1));
+    assert_eq!(
+        stored_task_body(&vault, &habit)?
+            .iter()
+            .find(|(name, _)| name.as_str() == Some("title"))
+            .map(|(_, value)| value.as_str().expect("title is a string").to_owned()),
+        Some("morning pages".to_owned()),
+        "the rewrite must preserve every unrelated body field"
+    );
+
+    // Non-Habit TASK rows are not touched by the recompute at all.
+    vault.put_entity(
+        &plain_task,
+        ENTITY_TYPE_TASK,
+        test_time_range(occurred, occurred),
+        occurred,
+        &crate::habit::task_body_for_test(TaskRole::Task),
+    )?;
+    assert_eq!(
+        stored_streak_field(&vault, &plain_task, "currentStreak")?,
+        None
+    );
+    assert_eq!(
+        stored_streak_field(&vault, &plain_task, "longestStreak")?,
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn public_task_put_carrying_streak_fields_is_rejected() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let habit = EntityId::now();
+    let checkin = EntityId::now();
+    let occurred = checkin_at(10, 3_600);
+
+    vault.put_entity(
+        &habit,
+        ENTITY_TYPE_TASK,
+        test_time_range(occurred, occurred),
+        occurred,
+        &crate::habit::task_body_for_test(TaskRole::Habit),
+    )?;
+    vault.put_habit_checkin(
+        &habit,
+        &checkin,
+        test_time_range(occurred, occurred),
+        occurred,
+        &crate::habit::task_body_for_test(TaskRole::HabitCheckin),
+    )?;
+    let original = vault.get_raw(&habit)?.expect("habit row");
+
+    for body in [
+        habit_body_with_streak(41, 41),
+        // Either key alone is enough to reject.
+        {
+            let value = Value::Map(vec![
+                (
+                    Value::from(crate::habit::TASK_BODY_ROLE_KEY),
+                    Value::from(TaskRole::Habit.role_byte()),
+                ),
+                (Value::from("longestStreak"), Value::from(41_u64)),
+            ]);
+            let mut bytes = Vec::new();
+            rmpv::encode::write_value(&mut bytes, &value).expect("encode forged habit body");
+            bytes
+        },
+    ] {
+        let err = vault
+            .put_entity(
+                &habit,
+                ENTITY_TYPE_TASK,
+                test_time_range(occurred, occurred),
+                occurred,
+                &body,
+            )
+            .expect_err("a caller-supplied streak counter must be rejected");
+        assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
+        assert_eq!(vault.get_raw(&habit)?, Some(original.clone()));
+    }
+
+    // The transactional builder shares the door.
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put(
+                    &habit,
+                    ENTITY_TYPE_TASK,
+                    test_time_range(occurred, occurred),
+                    occurred,
+                    &habit_body_with_streak(41, 41),
+                )
+                .apply(wtxn)
+        })
+        .expect_err("the txn builder must reject the same body");
+    assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
+    assert_eq!(vault.get_raw(&habit)?, Some(original));
+    Ok(())
+}
+
 fn first_party_eiri_connector_actor_id() -> Result<EntityId> {
     EntityId::from_bytes(crate::gate::FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
         .map_err(|_| Error::InvariantViolation("invalid first-party Eiri actor fixture id"))
