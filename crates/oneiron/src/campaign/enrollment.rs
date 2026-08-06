@@ -282,7 +282,9 @@ pub fn elect_campaign_home_node_designation(
 /// # Errors
 ///
 /// Storage errors propagate; a malformed row is [`Error::CorruptedIndex`].
-pub fn campaign_home_node_designation(vault: &Vault) -> Result<Option<CampaignHomeNodeDesignation>> {
+pub fn campaign_home_node_designation(
+    vault: &Vault,
+) -> Result<Option<CampaignHomeNodeDesignation>> {
     read_meta(vault, CAMPAIGN_HOME_NODE_META_KEY)?
         .map(|raw| decode_designation(&raw))
         .transpose()
@@ -418,9 +420,12 @@ pub fn campaign_enrollment_event(
     vault: &Vault,
     event_ref: EntityId,
 ) -> Result<Option<CampaignEnrollmentEvent>> {
-    read_meta(vault, &keyed(ENROLLMENT_EVENT_PREFIX, &[event_ref.as_bytes()]))?
-        .map(|raw| decode_event(event_ref, &raw))
-        .transpose()
+    read_meta(
+        vault,
+        &keyed(ENROLLMENT_EVENT_PREFIX, &[event_ref.as_bytes()]),
+    )?
+    .map(|raw| decode_event(event_ref, &raw))
+    .transpose()
 }
 
 /// What a detection pass concluded.
@@ -467,8 +472,7 @@ pub async fn detect_enrollment(
     let vault = evaluator.vault;
     let record =
         read_saved_query(vault, owner_actor, input.query_ref)?.ok_or(Error::EntityNotFound)?;
-    let scope_digest =
-        effective_scope_digest(&record.definition.scope, evaluator.owner_grants);
+    let scope_digest = effective_scope_digest(&record.definition.scope, evaluator.owner_grants);
     let definition_version = record.definition.definition_version;
     let cause = derive_cause(
         vault,
@@ -564,7 +568,7 @@ fn effective_scope_digest(declared: &QueryScope, grants: &QueryScope) -> [u8; 32
             for world in &worlds {
                 hasher.update(world);
             }
-            let mut facets = scope.facets.clone();
+            let mut facets = scope.facets;
             facets.sort_unstable();
             hasher.update((facets.len() as u64).to_be_bytes());
             for facet in &facets {
@@ -755,9 +759,7 @@ pub fn encode_enrollment_attempt_payload(
 /// # Errors
 ///
 /// [`Error::CorruptedIndex`] for any malformed payload.
-pub fn decode_enrollment_attempt_payload(
-    bytes: &[u8],
-) -> Result<CampaignEnrollmentAttemptPayload> {
+pub fn decode_enrollment_attempt_payload(bytes: &[u8]) -> Result<CampaignEnrollmentAttemptPayload> {
     const CONTEXT: &str = "campaign enrollment attempt payload";
     let row: AttemptPayloadRow = from_row(bytes, CONTEXT)?;
     pin_schema(row.schema_version, CONTEXT)?;
@@ -795,6 +797,10 @@ pub fn enrollment_dedupe_key(
 // ---------------------------------------------------------------------------
 
 /// Outcome of a home-gated claim.
+// Carrying the queue's own outcome verbatim is the point — a second vocabulary
+// for "claimed / empty" would drift from it. `ClaimOutcome` takes the same
+// allow at its definition for the same reason.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CampaignEnrollmentClaim {
     /// The local node took (or found nothing to take from) the queue.
@@ -966,19 +972,15 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             ),
         };
         let outbound_intent = enrollment_intent_id(record.id, &step)?;
-        Ok(
-            match commit_membership_plan(self.vault, &plan, now)? {
-                MembershipCommitOutcome::Applied => {
-                    EnrollmentExecution::Applied { outbound_intent }
-                }
-                MembershipCommitOutcome::AlreadyApplied => {
-                    EnrollmentExecution::AlreadyApplied { outbound_intent }
-                }
-                MembershipCommitOutcome::RejectedStaleEpoch { current_epoch } => {
-                    EnrollmentExecution::RejectedStaleEpoch { current_epoch }
-                }
-            },
-        )
+        Ok(match commit_membership_plan(self.vault, &plan, now)? {
+            MembershipCommitOutcome::Applied => EnrollmentExecution::Applied { outbound_intent },
+            MembershipCommitOutcome::AlreadyApplied => {
+                EnrollmentExecution::AlreadyApplied { outbound_intent }
+            }
+            MembershipCommitOutcome::RejectedStaleEpoch { current_epoch } => {
+                EnrollmentExecution::RejectedStaleEpoch { current_epoch }
+            }
+        })
     }
 
     /// Re-derives the saved-query result under the query's OWN owner actor and
@@ -1315,16 +1317,12 @@ fn put_event_with_context(vault: &Vault, event: &CampaignEnrollmentEvent) -> Res
     let event_key = keyed(ENROLLMENT_EVENT_PREFIX, &[event.event_ref.as_bytes()]);
     let context_key = context_key(event.query_ref, event.entity_ref);
     vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &event_key, &event_bytes)?;
         vault
             .store
             .vault_meta
-            .put(wtxn, &event_key, &event_bytes)
-            .map_err(Error::from)?;
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &context_key, &context_bytes)
-            .map_err(Error::from)
+            .put(wtxn, &context_key, &context_bytes)?;
+        Ok(())
     })
 }
 
@@ -1391,15 +1389,12 @@ fn encode_program_step(step: &CampaignProgramStep) -> Result<Vec<u8>> {
         channel: step.channel.clone(),
         sender_ref: step.sender_ref.to_hex(),
         basis_evidence: step.basis_evidence.to_hex(),
-        outbound: step
-            .outbound
-            .as_ref()
-            .map(|outbound| ProgramOutboundRow {
-                call_seq: outbound.call_seq,
-                verb: outbound.verb.clone(),
-                payload: hex_lower(&outbound.payload),
-                idempotency_supported: outbound.idempotency_supported,
-            }),
+        outbound: step.outbound.as_ref().map(|outbound| ProgramOutboundRow {
+            call_seq: outbound.call_seq,
+            verb: outbound.verb.clone(),
+            payload: hex_lower(&outbound.payload),
+            idempotency_supported: outbound.idempotency_supported,
+        }),
     })
 }
 
@@ -1441,7 +1436,8 @@ fn context_key(query_ref: EntityId, entity_ref: EntityId) -> Vec<u8> {
 }
 
 fn keyed(prefix: &[u8], parts: &[&[u8]]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + parts.iter().map(|part| part.len()).sum::<usize>());
+    let mut key =
+        Vec::with_capacity(prefix.len() + parts.iter().map(|part| part.len()).sum::<usize>());
     key.extend_from_slice(prefix);
     for part in parts {
         key.extend_from_slice(part);
@@ -1516,11 +1512,8 @@ fn read_meta(vault: &Vault, key: &[u8]) -> Result<Option<Vec<u8>>> {
 
 fn put_meta(vault: &Vault, key: &[u8], value: &[u8]) -> Result<()> {
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, key, value)
-            .map_err(Error::from)
+        vault.store.vault_meta.put(wtxn, key, value)?;
+        Ok(())
     })
 }
 
@@ -1578,7 +1571,10 @@ mod tests {
             ),
         ]);
         let manifest = rmpv::Value::Map(vec![
-            (rmpv::Value::from("schema_version"), rmpv::Value::from("1.1")),
+            (
+                rmpv::Value::from("schema_version"),
+                rmpv::Value::from("1.1"),
+            ),
             (
                 rmpv::Value::from("pack_id"),
                 rmpv::Value::from("campaign-enrollment-test"),
@@ -1595,17 +1591,17 @@ mod tests {
                         rmpv::Value::from("criticality"),
                         rmpv::Value::from("normal"),
                     ),
-                    (rmpv::Value::from("sensitivity"), rmpv::Value::from("normal")),
+                    (
+                        rmpv::Value::from("sensitivity"),
+                        rmpv::Value::from("normal"),
+                    ),
                 ]),
             ),
             (rmpv::Value::from("rules"), rmpv::Value::Array(Vec::new())),
             (
                 rmpv::Value::from("actor_ceilings"),
                 rmpv::Value::Array(vec![rmpv::Value::Map(vec![
-                    (
-                        rmpv::Value::from("actor_class"),
-                        rmpv::Value::from("agent"),
-                    ),
+                    (rmpv::Value::from("actor_class"), rmpv::Value::from("agent")),
                     (
                         rmpv::Value::from("actor_ref"),
                         rmpv::Value::from(sender_ref.to_hex()),
@@ -1832,10 +1828,7 @@ mod tests {
 
         // An empty candidate set clears the row rather than freezing a leader
         // that no longer exists.
-        assert_eq!(
-            elect_campaign_home_node_designation(&vault, &[], 43)?,
-            None
-        );
+        assert_eq!(elect_campaign_home_node_designation(&vault, &[], 43)?, None);
         assert_eq!(campaign_home_node_designation(&vault)?, None);
         Ok(())
     }
@@ -1859,7 +1852,9 @@ mod tests {
             Err(Error::CorruptedIndex(_))
         ));
         assert!(matches!(
-            decode_designation(br#"{"schema_version":1,"node_id":0,"class":"cloud_attached","elected_at":1}"#),
+            decode_designation(
+                br#"{"schema_version":1,"node_id":0,"class":"cloud_attached","elected_at":1}"#
+            ),
             Err(Error::CorruptedIndex(_))
         ));
     }
@@ -1919,9 +1914,10 @@ mod tests {
         let authority = OutboundBindingAuthority::for_vault(&vault)?;
         let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
 
-        let dispatch = run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
-            .expect("outbound leg")
-            .expect("the step declares an outward leg");
+        let dispatch =
+            run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
+                .expect("outbound leg")
+                .expect("the step declares an outward leg");
 
         assert_eq!(transport.ledger_rows_at_send, vec![1]);
         assert_eq!(dispatch.state, Some(IntentState::Done));
@@ -1959,9 +1955,10 @@ mod tests {
 
         let authority = OutboundBindingAuthority::for_vault(&vault)?;
         let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
-        let dispatch = run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
-            .expect("outbound leg")
-            .expect("the step declares an outward leg");
+        let dispatch =
+            run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
+                .expect("outbound leg")
+                .expect("the step declares an outward leg");
         assert_eq!(dispatch.intent_id, Some(derived));
 
         let request = derive_enrollment_outbound_request(
@@ -1985,10 +1982,9 @@ mod tests {
         let authority = OutboundBindingAuthority::for_vault(&vault)?;
 
         let mut first = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Ambiguous);
-        let ambiguous =
-            run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut first, 50)
-                .expect("outbound leg")
-                .expect("the step declares an outward leg");
+        let ambiguous = run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut first, 50)
+            .expect("outbound leg")
+            .expect("the step declares an outward leg");
         assert_eq!(ambiguous.state, Some(IntentState::Pending));
 
         // The recovery path re-enters with the SAME attempt row. It must reuse
@@ -2046,13 +2042,17 @@ mod tests {
         let authority = OutboundBindingAuthority::for_vault(&vault)?;
         let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
 
-        let dispatch = run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
-            .expect("outbound leg")
-            .expect("the step declares an outward leg");
+        let dispatch =
+            run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
+                .expect("outbound leg")
+                .expect("the step declares an outward leg");
 
         assert_eq!(dispatch.state, None);
         assert_eq!(dispatch.send_outcome, None);
-        assert!(transport.sent_intents.is_empty(), "no connector was reached");
+        assert!(
+            transport.sent_intents.is_empty(),
+            "no connector was reached"
+        );
         assert!(
             intent_ledger_records(&vault).expect("ledger").is_empty(),
             "a refused effect leaves no frozen intent behind"
@@ -2115,7 +2115,7 @@ mod tests {
     }
 
     #[test]
-    fn enqueue_refuses_an_unresolvable_membership_ref() -> Result<()> {
+    fn enqueue_refuses_an_unresolvable_membership_ref() {
         let (_dir, vault) = vault_fixture();
         let runner = CampaignEnrollmentRunner::new(&vault);
         assert!(matches!(
@@ -2130,7 +2130,6 @@ mod tests {
             ),
             Err(Error::EntityNotFound)
         ));
-        Ok(())
     }
 
     #[test]
