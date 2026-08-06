@@ -17,8 +17,12 @@ use crate::attempt_queue::{
     RetryAttempt,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::channel_identity::{
+    ChannelIdentityBinding, ChannelIdentityState, decode_channel_identity_body,
+};
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::connector_key::EffectorBudgetRead;
+use crate::counterparty_contact::normalize_channel_class;
 use crate::delivery_window::{
     DeliveryWindowApnsInterruptionLevel, DeliveryWindowContextCondition,
     DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
@@ -38,8 +42,10 @@ use crate::receipt::{
     ContextReceiptFields, ReceiptRecord, SendReceiptOutcome, delivered_send_receipt_for_task,
     outbound_intent_receipt, persist_send_receipt,
 };
-use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
+use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
+use crate::store::Store;
 use crate::temporal::TimeRange;
+use crate::vault::entity_id_from_type_index_key;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
@@ -1065,6 +1071,82 @@ pub fn unsupported_outbound_connector(connector: &str) -> UnsupportedOutboundCap
     unsupported_outbound_capability(normalize_key(connector), None, None)
 }
 
+/// Resolves the OF-347 channel identity a connector key sends through.
+///
+/// ONE-1868 leg 2, pure ENRICHMENT: the opt-out verdict rests on
+/// `(counterparty, channel_class)`, never on this value. Nothing new is minted —
+/// the governing connector key (OF-277) names the sending actor, and the
+/// ChannelIdentity bound to that actor on the connector's channel is the
+/// identity that will carry the send. Missing, unregistered, inactive, or
+/// AMBIGUOUS all resolve to `None`: an arbitrary pick would put a
+/// nondeterministic identity on the receipt, which is worse than none.
+pub(crate) fn resolve_channel_identity_ref_for_connector(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    connector_key: &str,
+    actor_entity_ref: Option<&EntityId>,
+) -> crate::Result<Option<EntityId>> {
+    let connector = normalize_key(connector_key);
+    let Some((_, key_record)) =
+        crate::connector_key::governing_connector_key(store, txn, &connector, actor_entity_ref)?
+    else {
+        return Ok(None);
+    };
+    let Some(bound_actor) = key_record
+        .actor_entity_ref
+        .or_else(|| actor_entity_ref.copied())
+    else {
+        return Ok(None);
+    };
+
+    let channel_class = normalize_channel_class(connector_key);
+    let mut resolved = None;
+    for entry in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
+    {
+        let (key, _) = entry?;
+        let id = entity_id_from_type_index_key(&key)?;
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("channel identity entity row"));
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            return Err(Error::CorruptedIndex("channel identity entity header"));
+        };
+        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+            return Err(Error::CorruptedIndex("channel identity entity type"));
+        }
+        let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if identity.state != ChannelIdentityState::Active
+            || normalize_channel_class(&identity.channel) != channel_class
+            || identity.binding != ChannelIdentityBinding::agent(bound_actor)
+        {
+            continue;
+        }
+        if resolved.is_some() {
+            return Ok(None);
+        }
+        resolved = Some(id);
+    }
+    Ok(resolved)
+}
+
+/// An explicit channel identity always wins; otherwise resolve it cheaply.
+pub(crate) fn enrich_dispatch_channel_identity(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    connector_key: &str,
+    actor_entity_ref: Option<&EntityId>,
+    explicit: Option<EntityId>,
+) -> crate::Result<Option<EntityId>> {
+    match explicit {
+        some @ Some(_) => Ok(some),
+        None => {
+            resolve_channel_identity_ref_for_connector(store, txn, connector_key, actor_entity_ref)
+        }
+    }
+}
+
 impl OutboundDispatchPipeline {
     pub fn dispatch<S: OutboundExecutionSink>(
         self,
@@ -1092,7 +1174,7 @@ impl OutboundDispatchPipeline {
     fn dispatch_inner<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
-        request: OutboundDispatchRequest,
+        mut request: OutboundDispatchRequest,
         sink: &mut S,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
@@ -1111,6 +1193,25 @@ impl OutboundDispatchPipeline {
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
+
+        // ONE-1868 leg 2. Every shipping constructor (facade bridge, connector
+        // task executor, direct dispatch) leaves `channel_identity_ref` unset,
+        // so resolve it ONCE here — the pipeline all three funnel through —
+        // rather than at each call site. Enrichment only: the opt-out verdict
+        // below rests on `(counterparty, channel_class)` either way. The read
+        // txn is scoped to this block so none is open when the stages below
+        // take their write txns.
+        request.channel_identity_ref = {
+            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+            enrich_dispatch_channel_identity(
+                &vault.store,
+                &rtxn,
+                &request.intent.channel,
+                request.actor.actor_entity_ref.as_ref(),
+                request.channel_identity_ref,
+            )?
+        };
+
         let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
         let window_decision =
             outbound_delivery_window_decision_at_door(vault, &request, verb_contract)?;
