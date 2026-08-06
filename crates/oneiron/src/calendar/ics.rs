@@ -100,9 +100,16 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
         .map_err(|message| ics_parse(&format!("feed body did not parse: {message}")))?;
 
     let mut events = Vec::new();
+    let mut seen_uids = std::collections::HashSet::new();
     for component in &calendar.components {
         if component.name.as_str() == "VEVENT" {
-            events.push(parse_vevent(component)?);
+            let event = parse_vevent(component)?;
+            // A duplicated UID would attach two live passports for the same
+            // (system, uid) — the one-live law fails closed at parse.
+            if !seen_uids.insert(event.uid.clone()) {
+                return Err(ics_parse("feed carries a duplicate VEVENT UID"));
+            }
+            events.push(event);
         }
     }
     Ok(ParsedIcsFeed { events })
@@ -412,6 +419,18 @@ mod tests {
         let a = parse_ics_feed(FEED.as_bytes()).expect("parse a");
         let b = parse_ics_feed(restamped.as_bytes()).expect("parse b");
         assert_eq!(a.events[0].content_hash, b.events[0].content_hash);
+    }
+
+    #[test]
+    fn duplicate_uid_fails_closed() {
+        let duplicated = FEED.replace(
+            "END:VEVENT\r\n",
+            "END:VEVENT\r\nBEGIN:VEVENT\r\nUID:uid-1@example.com\r\nDTSTART:20260807T140000Z\r\nEND:VEVENT\r\n",
+        );
+        assert!(matches!(
+            parse_ics_feed(duplicated.as_bytes()),
+            Err(CalendarError::IcsParse { .. })
+        ));
     }
 
     #[test]
