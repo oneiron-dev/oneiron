@@ -50,8 +50,8 @@ const KEY_CREATED_AT: &str = ACCESS_GRANT_BODY_KEYS[5];
 const KEY_REVOKED_AT: &str = ACCESS_GRANT_BODY_KEYS[6];
 
 const SCOPE_KEY_KIND: &str = "kind";
-const SCOPE_KEYS_COMPANION_PROFILE: [&str; 3] = ["kind", "person_ref", "persona_ref"];
-const SCOPE_KEYS_CALENDAR: [&str; 3] = ["kind", "calendar_ref", "rung"];
+const SCOPE_KEYS_COMPANION_PROFILE: [&str; 3] = [SCOPE_KEY_KIND, "person_ref", "persona_ref"];
+const SCOPE_KEYS_CALENDAR: [&str; 3] = [SCOPE_KEY_KIND, "calendar_ref", "rung"];
 const SCOPE_KIND_COMPANION_PROFILE: &str = "companion_profile";
 const SCOPE_KIND_CALENDAR: &str = "calendar";
 

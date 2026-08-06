@@ -348,8 +348,8 @@ mod entity_refs_serde {
         deserializer: D,
     ) -> Result<Vec<EntityId>, D::Error> {
         Vec::<String>::deserialize(deserializer)?
-            .iter()
-            .map(|hex| EntityId::from_hex(hex).map_err(serde::de::Error::custom))
+            .into_iter()
+            .map(|hex| EntityId::from_hex(&hex).map_err(serde::de::Error::custom))
             .collect()
     }
 }

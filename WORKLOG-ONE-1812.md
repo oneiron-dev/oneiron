@@ -201,3 +201,27 @@ passed in every run. Treated as a load-induced flake under the flake guard
 - The `Slots` arm needs a solver-produced `SlotMask`; ONE-1823's `BookingSolver`
   supplies it. `project_at_rung` returns `BookingError::Surface` rather than an
   empty mask when the caller has none.
+
+## Simplify pass (K3, on impl tip 3e37a0d11)
+
+Deletion-biased review of the full impl diff. The implementation was already
+tight — no dead helpers, no speculative layers, no duplicated doors
+(`calendar_grant_mint_intent` is the only mint-intent constructor;
+`list_calendar_access_grants` is the first grant-listing door, nothing to
+dedup against). Near NO-EDIT; two micro-dedups applied:
+
+- `access_grant.rs`: the two scope-key arrays re-pinned their leading `"kind"`
+  literal — they now reference `SCOPE_KEY_KIND` (one literal, three uses).
+- `disclosure_rung.rs`: `entity_refs_serde::deserialize` consumed the owned
+  `Vec<String>` by reference — now `into_iter()`.
+
+Deliberately kept (checked, not deletion candidates): `RungProjection::rung()`
+(test-consumed public API), `validate_slot_mask` (done-means `[start,end)`
+validation), the `rung:` consent selector (registry projection contract),
+the defensive `CorruptedIndex` header checks in `list_calendar_access_grants`
+(mirrors the codebase's fail-closed corruption posture). No test assertion,
+fixture, or public API touched.
+
+Gates after the pass: `cargo test -p oneiron --lib` green (3153 passed,
+0 failed), `cargo clippy -p oneiron --all-features` zero warnings,
+`cargo fmt -p oneiron -- --check` clean.
