@@ -45,10 +45,12 @@ pub mod attribution;
 pub mod delta;
 pub mod escalation;
 pub mod graduation;
+pub mod miner;
 pub mod myers;
 #[cfg(feature = "sync")]
 pub mod proposal_text;
 pub mod publisher;
+pub mod reservoir;
 pub mod routing;
 
 use std::io::Cursor;

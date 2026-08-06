@@ -631,6 +631,36 @@ fn amendment_delta_in_txn(
         .map(std::borrow::Cow::into_owned))
 }
 
+/// Whether this engine recorded an AMENDMENT against `receipt_id` — the
+/// durable mark that a decider approved-and-changed, on the caller's snapshot.
+///
+/// Both row shapes answer `true`: a measured Δ and an
+/// [`FIELD_AMENDMENT_DELTA_UNCAPTURED`] marker differ on whether the
+/// measurement succeeded, not on whether the amendment happened. Every writer
+/// of either row is gated on an `approved_amended` outcome
+/// ([`project_identity_amendment_deltas`], `inbox`'s amend-accept), so the
+/// presence of a row is the engine's own record that the outcome was
+/// adjudicated — which is why [`record_amendment_evidence`] refuses a receipt
+/// without one, and why a projection over amendments can gate on it rather
+/// than re-deriving adjudication from receipt fields.
+///
+/// [`record_amendment_evidence`]: super::attribution::record_amendment_evidence
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn amendment_recorded_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    receipt_id: &str,
+) -> Result<bool> {
+    Ok(vault
+        .store
+        .vault_meta
+        .get(rtxn, &amendment_delta_key(receipt_id))?
+        .is_some())
+}
+
 /// Folds recorded Δs into the reserved `amendment_delta` slot of every
 /// amended receipt in `records`, and a failed capture into its own
 /// [`FIELD_AMENDMENT_DELTA_UNCAPTURED`] marker.
