@@ -1038,7 +1038,7 @@ pub enum ReasoningEffort {
     XHigh,
 }
 
-fn canonical_json_bytes<T: Serialize>(
+pub(crate) fn canonical_json_bytes<T: Serialize>(
     value: &T,
 ) -> std::result::Result<Vec<u8>, serde_json::Error> {
     let value = serde_json::to_value(value)?;

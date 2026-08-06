@@ -41,6 +41,10 @@ use crate::claim::{
 #[cfg(test)]
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
+use crate::edit_distance::delta::{
+    AmendmentDelta, DeltaCaptureContext, OUTCOME_APPROVED_AMENDED, attach_amendment_deltas,
+    capture_delta_best, put_amendment_delta_in_txn,
+};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::GateReasonCode;
@@ -69,6 +73,11 @@ pub const INBOX_GROUP_DOOR_PREFIX: &str = "dreamer_run:";
 const INBOX_BUNDLE_REF_PREFIX: &str = "bundle:";
 const INBOX_REASON_BUNDLE_ACCEPT: &str = "gate.consent.bundle_accept";
 const INBOX_REASON_BUNDLE_REJECT: &str = "gate.consent.bundle_reject";
+/// ED-01 (ONE-1757) approve-with-edit: the decider approved an edited body.
+const INBOX_REASON_AMEND_ACCEPT: &str = "gate.consent.amend_accept";
+/// Stamped when the approval landed but its Δ could not be measured — the
+/// telemetry gap is receipted rather than hidden, and never blocks.
+const INBOX_REASON_AMEND_DELTA_UNCAPTURED: &str = "gate.consent.amend.delta_uncaptured";
 const INBOX_BUNDLE_ACTOR_CLASS: &str = "owner";
 const INBOX_BUNDLE_CONTENT_KIND: &str = "inbox_bundle";
 const INBOX_REVIEW_DIAL_KEY: &[u8] = b"settings:inbox:v1:review_dial";
@@ -288,6 +297,18 @@ pub struct InboxBundleResolution {
     pub review_items: Vec<String>,
 }
 
+/// Outcome of one approve-with-edit (ED-01, ONE-1757).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InboxAmendedApproval {
+    pub claim_id: String,
+    /// The `approved_amended` resolution receipt, Δ slot already filled.
+    pub receipt: ReceiptRecord,
+    /// The measured Δ. `None` means capture failed — the approval still
+    /// landed, and the receipt carries the marker saying so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<AmendmentDelta>,
+}
+
 /// RS3 door result: the group behind a bundle receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboxGroupReopen {
@@ -436,6 +457,64 @@ impl Vault {
             bundle_receipt: gate_decision_receipt(&bundle_record),
             item_receipts: item_records.iter().map(gate_decision_receipt).collect(),
             review_items,
+        })
+    }
+
+    /// Approves ONE pending member with the decider's edit (ED-01,
+    /// ONE-1757): the AMENDED body is what lands, and the receipt records
+    /// both that fact (`approved_amended`) and the ARCH-0056 Δ between what
+    /// was proposed and what was approved.
+    ///
+    /// Without this door an approve-with-edit surface has nowhere to put the
+    /// edit — the bulk verbs re-encode the EXISTING body, so every amendment
+    /// was silently discarded and no edit ever reached a receipt.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] when the claim has no open pending row,
+    /// [`Error::GateConsentStale`] when the reviewed content or policy floor
+    /// drifted, and [`Error::InvalidClaimBody`] when the amendment does not
+    /// decode or leaves the reviewed claim's predicate/subject.
+    pub fn approve_inbox_member_with_edit(
+        &self,
+        claim_id: &EntityId,
+        amended_body: &[u8],
+    ) -> Result<InboxAmendedApproval> {
+        self.approve_inbox_member_with_edit_at(claim_id, amended_body, crate::unix_seconds_now())
+    }
+
+    /// Testable variant of [`Vault::approve_inbox_member_with_edit`] with an
+    /// explicit event time.
+    ///
+    /// # Errors
+    ///
+    /// As [`Vault::approve_inbox_member_with_edit`].
+    pub fn approve_inbox_member_with_edit_at(
+        &self,
+        claim_id: &EntityId,
+        amended_body: &[u8],
+        now: u64,
+    ) -> Result<InboxAmendedApproval> {
+        let accepted = self.with_write_txn(|wtxn| {
+            accept_member_with_amendment_in_txn(
+                self,
+                wtxn,
+                claim_id,
+                None,
+                now,
+                Some(amended_body),
+            )
+        })?;
+        let accepted = accepted.ok_or(Error::EntityNotFound)?;
+        let mut receipt = gate_decision_receipt(&accepted.record);
+        // The Δ rides the same attach pass every receipt query uses, so the
+        // door's own return and a later query cannot disagree about it.
+        let rtxn = self.store.env.read_txn()?;
+        attach_amendment_deltas(self, &rtxn, std::slice::from_mut(&mut receipt))?;
+        Ok(InboxAmendedApproval {
+            claim_id: claim_id.to_hex(),
+            receipt,
+            delta: accepted.delta,
         })
     }
 
@@ -1059,10 +1138,7 @@ fn explicit_inbox_group(vault: &Vault, group_ref: &str, now: u64) -> Result<Opti
     Ok(finish_group_draft(draft))
 }
 
-/// Redeems bundle consent on one member: verifies the content-addressed
-/// binding (stale on content or policy-floor drift), flips the stored claim
-/// to Approved through the one claim door (`apply_ops`), and emits the
-/// per-item resolution receipt.
+/// Redeems bundle consent on one member with no amendment.
 fn accept_member_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1070,6 +1146,37 @@ fn accept_member_in_txn(
     bundle_ref: &str,
     now: u64,
 ) -> Result<Option<GateDecisionRecord>> {
+    accept_member_with_amendment_in_txn(vault, wtxn, id, Some(bundle_ref), now, None)
+        .map(|accepted| accepted.map(|accepted| accepted.record))
+}
+
+/// One accepted member: the resolution decision plus the Δ its amendment
+/// measured (`None` on the untouched path, which has nothing to measure).
+struct AcceptedMember {
+    record: GateDecisionRecord,
+    delta: Option<AmendmentDelta>,
+}
+
+/// Redeems consent on one member: verifies the content-addressed binding
+/// (stale on content or policy-floor drift), persists the approved body
+/// through the one claim door (`apply_ops`), and emits the resolution
+/// receipt.
+///
+/// `amended_body` is the approve-with-EDIT arm (ED-01, ONE-1757). The binding
+/// is checked against the body the decider REVIEWED — consent was given on
+/// that content, and the edit is the decider's own — after which the amended
+/// body replaces it. Amendment lives entirely on the receipt
+/// (`approved_amended` + the ARCH-0056 Δ): [`ClaimApprovalStatus`] gains no
+/// `Amended` variant, so the claim's four-status enum and every reader of it
+/// stay exactly as they were.
+fn accept_member_with_amendment_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    bundle_ref: Option<&str>,
+    now: u64,
+    amended_body: Option<&[u8]>,
+) -> Result<Option<AcceptedMember>> {
     let Some(pending) = vault.store.pending_gate_consent_in_txn(wtxn, id)? else {
         return Ok(None);
     };
@@ -1086,17 +1193,27 @@ fn accept_member_in_txn(
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
     }
-    let mut body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let reviewed = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
 
     let (diff_handle, read_frontier_hash) =
-        crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &body)?;
+        crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &reviewed)?;
     if diff_handle != pending.diff_handle || read_frontier_hash != pending.read_frontier_hash {
         return Err(Error::GateConsentStale { claim_id: *id });
     }
 
-    if body.approval != ClaimApprovalStatus::Approved {
-        body.approval = ClaimApprovalStatus::Approved;
-        let data = crate::claim::encode_claim_body(&body)?;
+    // Both bodies are normalized to Approved before anything is compared or
+    // written, so the Δ measures the DECIDER's edit and not the approval flip
+    // the door performs on every accept.
+    let proposed = approved_body(&reviewed)?;
+    let amended = amended_body
+        .map(|body| amended_claim_body(&reviewed, body))
+        .transpose()?;
+    let approved = match &amended {
+        Some(amended) => approved_body(amended)?,
+        None => proposed.clone(),
+    };
+
+    if amended.is_some() || reviewed.approval != ClaimApprovalStatus::Approved {
         apply_ops(
             &vault.store,
             &vault.config,
@@ -1110,7 +1227,7 @@ fn accept_member_in_txn(
                     end: header.occurred_end,
                 },
                 learned_at: header.learned_at,
-                data,
+                data: approved.clone(),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
@@ -1123,6 +1240,14 @@ fn accept_member_in_txn(
         )?;
     }
 
+    // Δ capture is telemetry hanging off an approval that has already
+    // happened: a failure is stamped on the receipt and the approval stands.
+    // Blocking here would let a measurement bug refuse a decision.
+    let delta = amended.is_some().then(|| {
+        capture_delta_best(&DeltaCaptureContext::from_bodies(&proposed, &approved)).ok()
+    });
+    let capture_failed = matches!(delta, Some(None));
+
     // The gated rewrite may already have redeemed and removed the tray row;
     // the delete is idempotent either way.
     vault.store.delete_pending_gate_consent_in_txn(wtxn, id)?;
@@ -1130,22 +1255,75 @@ fn accept_member_in_txn(
         version: GATE_DECISION_LEDGER_VERSION,
         decision_id: GateDecisionId::now(),
         created_at: now,
-        outcome: "approved".to_owned(),
-        reason_codes: vec![INBOX_REASON_BUNDLE_ACCEPT.to_owned()],
-        receipt_reasons: Vec::new(),
+        outcome: if amended.is_some() {
+            OUTCOME_APPROVED_AMENDED.to_owned()
+        } else {
+            "approved".to_owned()
+        },
+        reason_codes: vec![
+            if amended.is_some() {
+                INBOX_REASON_AMEND_ACCEPT
+            } else {
+                INBOX_REASON_BUNDLE_ACCEPT
+            }
+            .to_owned(),
+        ],
+        receipt_reasons: if capture_failed {
+            vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]
+        } else {
+            Vec::new()
+        },
         system_notices: Vec::new(),
         actor_class: original.actor_class,
         actor_ref: original.actor_ref,
         content_kind: original.content_kind,
         policy_manifest_version: original.policy_manifest_version,
         claim_id: Some(pending.claim_id),
-        grant_ref: Some(bundle_ref.to_owned()),
+        grant_ref: bundle_ref.map(str::to_owned),
         diff_handle: pending.diff_handle,
         read_frontier_hash: pending.read_frontier_hash,
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(wtxn, &record)?;
-    Ok(Some(record))
+
+    let delta = delta.flatten();
+    if let Some(delta) = delta.as_ref() {
+        put_amendment_delta_in_txn(vault, wtxn, &gate_decision_receipt(&record).receipt_id, delta)?;
+    }
+    Ok(Some(AcceptedMember { record, delta }))
+}
+
+/// The claim body as the door will persist it. Approval is the ENGINE's to
+/// set: a submitted body asserting its own approval decides nothing.
+fn approved_body(body: &ClaimBody) -> Result<Vec<u8>> {
+    let mut approved = body.clone();
+    approved.approval = ClaimApprovalStatus::Approved;
+    crate::claim::encode_claim_body(&approved)
+}
+
+/// Validates a decider's edit against the proposal it amends.
+///
+/// The body rides the SAME strict claim-body decode the original rode, and
+/// must keep the proposal's IDENTITY — same predicate, same subject. That
+/// pair is not decoration: `classify_member` derives the exception classes
+/// from it (manifest-critical, supersedes-user_stated) and
+/// `claim_consent_binding_parts` binds consent to it. An amendment that moved
+/// either one would land a claim under a classification that never described
+/// it, which is a substitution wearing an edit's clothes. Everything else —
+/// value, confidence, validity, scope — is exactly what an edit is for.
+fn amended_claim_body(reviewed: &ClaimBody, amended_body: &[u8]) -> Result<ClaimBody> {
+    let amended = crate::claim::decode_claim_body(amended_body, true)?;
+    if amended.predicate != reviewed.predicate {
+        return Err(Error::InvalidClaimBody(
+            "amendment changes the reviewed claim's predicate",
+        ));
+    }
+    if amended.subject != reviewed.subject {
+        return Err(Error::InvalidClaimBody(
+            "amendment changes the reviewed claim's subject",
+        ));
+    }
+    Ok(amended)
 }
 
 fn append_bundle_decision_in_txn(
