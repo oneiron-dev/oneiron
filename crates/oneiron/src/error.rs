@@ -1882,9 +1882,7 @@ impl Error {
             }
             Self::OffRecordTaintedBaseWrite { .. } => ErrorKind::OffRecordTaintedBaseWrite,
             Self::OffRecordWitnessDoorRejected { .. } => ErrorKind::OffRecordWitnessDoorRejected,
-            Self::OffRecordGuestTurnRefRejected { .. } => {
-                ErrorKind::OffRecordGuestTurnRefRejected
-            }
+            Self::OffRecordGuestTurnRefRejected { .. } => ErrorKind::OffRecordGuestTurnRefRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             Self::OffRecordExportRefused { .. } => ErrorKind::OffRecordExportRefused,
             #[cfg(feature = "sync")]

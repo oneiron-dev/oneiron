@@ -1378,6 +1378,32 @@ pub(crate) struct SessionBinding<'a> {
     container: EntityId,
 }
 
+impl SessionBinding<'_> {
+    /// Records one executor turn through the session-side witness entry.
+    ///
+    /// Supplies the run's captured shell and route so the executor never sees
+    /// either, and passes `turn_ref: None` — the only value that entry
+    /// accepts. Widening this to admit a caller-supplied turn ref would be a
+    /// visible API change, which is the point of the typed refusal behind it.
+    pub(crate) fn witness_executor_turn(
+        &self,
+        kind: crate::off_record::ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        actor: WriteActor,
+    ) -> Result<crate::facade::WitnessReceipt> {
+        self.session.witness_executor_turn(
+            &self.container,
+            kind,
+            text,
+            occurred_at,
+            None,
+            &self.route,
+            actor,
+        )
+    }
+}
+
 /// Where one code run's storage lives: the canonical vault, or a live
 /// off-record session.
 ///
@@ -1413,14 +1439,6 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    /// The session-owned conversation shell this run's turns ride.
-    pub(crate) fn session_container_id(&self) -> Option<&EntityId> {
-        match self {
-            Self::Canonical(_) => None,
-            Self::Session(binding) => Some(&binding.container),
-        }
-    }
-
     /// Whether the off-record effect policy applies to THIS dispatch.
     ///
     /// Reads the room's LIVE mode, not the captured route: the policy is
@@ -1430,9 +1448,7 @@ impl<'a> ExecutorStorage<'a> {
     pub(crate) fn off_record_policy_active(&self) -> Result<bool> {
         match self {
             Self::Canonical(_) => Ok(false),
-            Self::Session(binding) => {
-                Ok(binding.session.mode()? == OffRecordMode::OffRecord)
-            }
+            Self::Session(binding) => Ok(binding.session.mode()? == OffRecordMode::OffRecord),
         }
     }
 
@@ -1636,15 +1652,15 @@ impl<'a> HostSelfDispatcher<'a> {
     /// the session machinery at session ENTRY (one shell per live session,
     /// enforced there — R-20260807-02 rider 1) and read from the session's
     /// in-memory registry entry. Never minted per bind; never `session_ref`.
+    #[allow(
+        dead_code,
+        reason = "the identity pin's consumer is the branch-store oracle; an executor turn takes \
+                  the container from the binding it already holds, never through a second lookup"
+    )]
     pub(crate) fn session_container_id(&self) -> Option<&EntityId> {
-        self.storage.session_container_id()
-    }
-
-    /// The session binding, when this run has one.
-    pub(crate) fn session_binding(&self) -> Option<&SessionBinding<'a>> {
         match &self.storage {
             ExecutorStorage::Canonical(_) => None,
-            ExecutorStorage::Session(binding) => Some(binding),
+            ExecutorStorage::Session(binding) => Some(&binding.container),
         }
     }
 
@@ -1675,11 +1691,7 @@ impl<'a> HostSelfDispatcher<'a> {
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::MemoryWriteFixture => Err(Error::OffRecordTalkOnly {
-                session_ref: self
-                    .storage
-                    .session_ref()
-                    .unwrap_or_default()
-                    .to_owned(),
+                session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
             }),
             SelfEffect::MemorySearch
             | SelfEffect::AskHuman

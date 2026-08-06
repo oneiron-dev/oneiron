@@ -13,10 +13,12 @@ use serde_json::json;
 
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayGeneration,
-    CodeRunReplayRecord, CodeRunStepCheckpoint, encode_code_run_replay_value,
+    CodeRunReplayRecord, CodeRunStepCheckpoint, ExecutorStorage, encode_code_run_replay_value,
 };
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_legibility};
+use crate::facade::WitnessReceipt;
 use crate::llm::BudgetGuard;
+use crate::off_record::{ExecutorUtterance, OffRecordSession};
 use crate::{
     BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error,
     FinishReason, GatedActorWrite, LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
@@ -38,6 +40,9 @@ pub const ENGINE_EXECUTOR_FALLBACK_NAME: &str = "engine_native_js_executor_v1";
 
 const CHECKPOINT_DOMAIN: &[u8] = b"oneiron:engine-executor-repl-step:v1";
 const CONFIG_HASH_DOMAIN: &[u8] = b"oneiron:engine-executor-config:v1";
+/// Storage-binding tags folded into the config marker (ONE-1729).
+const CONFIG_BINDING_CANONICAL_TAG: &[u8] = b"storage:canonical";
+const CONFIG_BINDING_SESSION_TAG: &[u8] = b"storage:off-record-session";
 const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
 const TEXT_OUTPUT_PREFIX: &[u8] = b"oneiron-engine-executor-text-output-v1\n";
 const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
@@ -328,7 +333,7 @@ struct StoredDurableWait {
 
 /// Engine-native executor driver.
 pub struct EngineNativeExecutor<'a> {
-    vault: &'a Vault,
+    storage: ExecutorStorage<'a>,
     backend: &'a dyn LlmBackend,
     lease: &'a BudgetLease,
     runtime: &'a mut dyn JsCodeModeRuntime,
@@ -346,13 +351,43 @@ impl<'a> EngineNativeExecutor<'a> {
         gated_write: &'a GatedActorWrite<'a>,
     ) -> Self {
         Self {
-            vault,
+            storage: ExecutorStorage::Canonical(vault),
             backend,
             lease,
             runtime,
             gated_write,
             legibility: None,
         }
+    }
+
+    /// Binds a run to an already-acquired live off-record session
+    /// (ONE-1729/P4b).
+    ///
+    /// Every artifact this run produces — replay record, config and terminal
+    /// markers, generated scripts, observations, runtime outputs, raw output
+    /// bytes, and its turns — follows the session's mode-aware route: the
+    /// overlay while the room is off record, ordinary base storage after the
+    /// same live session flips on record. There is no executor-specific base
+    /// bypass and no durable session row.
+    ///
+    /// The run's [`crate::off_record::SessionWriteRoute`] is captured HERE,
+    /// at run entry (R-20260807-02 rider 2), which is why this constructor is
+    /// fallible where the canonical one is not.
+    pub fn for_off_record_session(
+        session: &'a OffRecordSession<'a>,
+        backend: &'a dyn LlmBackend,
+        lease: &'a BudgetLease,
+        runtime: &'a mut dyn JsCodeModeRuntime,
+        gated_write: &'a GatedActorWrite<'a>,
+    ) -> EngineExecutorResult<Self> {
+        Ok(Self {
+            storage: ExecutorStorage::for_session(session)?,
+            backend,
+            lease,
+            runtime,
+            gated_write,
+            legibility: None,
+        })
     }
 
     /// Configures the wake-pass legibility context: every subsequent
@@ -363,10 +398,67 @@ impl<'a> EngineNativeExecutor<'a> {
         self
     }
 
+    /// Records ONE executor turn.
+    ///
+    /// This is a CALL SITE, not a transcript surface: the turn event is
+    /// formed by ONE-1728's facade witness door, the one place conversation
+    /// identity, container resolution, role tags, and session routing are
+    /// decided. Nothing here mints a message schema, a `BatchOp` program, or
+    /// a guest-facing transcript input, and `turn_ref` is not a parameter the
+    /// executor has — turn identity comes from the session.
+    ///
+    /// A CANONICAL run materializes no transcript (`Ok(None)`); on-record
+    /// executor transcripts are not this ticket's work, which is what keeps
+    /// the of060 fitness pin at zero diff.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the session's typed refusals, including the stale-route
+    /// family when the room flipped mode after this run's entry.
+    pub fn witness_turn(
+        &self,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+    ) -> EngineExecutorResult<Option<WitnessReceipt>> {
+        let ExecutorStorage::Session(binding) = &self.storage else {
+            return Ok(None);
+        };
+        Ok(Some(binding.witness_executor_turn(
+            kind,
+            text,
+            occurred_at,
+            self.gated_write.actor(),
+        )?))
+    }
+
+    /// Refuses a mismatched storage/dispatcher pair before ANY read or write.
+    ///
+    /// Correctness must not rest on a caller having picked the matching
+    /// constructor pair, so both dimensions are checked: the session ref, and
+    /// the OWNING STORE. The store check is what catches two vaults whose
+    /// refs compare equal — `None == None` for a pair of canonical runs, or
+    /// the same session ref entered in two different vaults.
+    fn verify_storage_dispatcher_binding(&self) -> EngineExecutorResult<()> {
+        if self.storage.session_ref() != self.gated_write.session_ref()
+            || !std::ptr::eq(
+                self.storage.store_identity(),
+                self.gated_write.store_identity(),
+            )
+        {
+            return Err(Error::InvalidConfig(
+                "executor storage/dispatcher binding mismatch".to_owned(),
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     pub async fn run(
         &mut self,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<EngineExecutorOutcome> {
+        self.verify_storage_dispatcher_binding()?;
         config.validate()?;
         let boundary = executor_boundary_contract()?;
         let loaded = self.load_or_create_record(config)?;
@@ -405,7 +497,7 @@ impl<'a> EngineNativeExecutor<'a> {
             let response = self.backend.generate(request, self.lease).await?;
             let script = extract_plain_js(&response)?;
             record_text_output(
-                self.vault,
+                &self.storage,
                 &mut record,
                 script_output_path(completed_steps),
                 &script,
@@ -512,7 +604,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 };
             record.bridge_calls.extend(host.bridge_calls);
             record_text_output(
-                self.vault,
+                &self.storage,
                 &mut record,
                 observation_output_path(completed_steps),
                 &step_outcome.observation,
@@ -521,7 +613,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 .into_iter()
                 .zip(step_outcome.outputs.iter())
             {
-                record_output(self.vault, &mut record, path, &output.bytes)?;
+                record_output(&self.storage, &mut record, path, &output.bytes)?;
             }
             let terminal_status = host
                 .durable_wait
@@ -535,7 +627,7 @@ impl<'a> EngineNativeExecutor<'a> {
                     }
                 });
             if let Some(status) = &terminal_status {
-                record_terminal_output(self.vault, &mut record, completed_steps, status)?;
+                record_terminal_output(&self.storage, &mut record, completed_steps, status)?;
             }
 
             let checkpoint = CodeRunStepCheckpoint::new(
@@ -556,7 +648,7 @@ impl<'a> EngineNativeExecutor<'a> {
             )?;
             record.step_checkpoints.push(checkpoint);
             let next_generation = self
-                .vault
+                .storage
                 .put_code_run_replay_record_if_generation(&record, expected_generation)?;
             steps_run += 1;
 
@@ -591,14 +683,14 @@ impl<'a> EngineNativeExecutor<'a> {
         record.bridge_calls.extend(bridge_calls);
         let failed_outcome = JsCodeModeStepOutcome::pending(observation);
         record_text_output(
-            self.vault,
+            &self.storage,
             record,
             observation_output_path(completed_steps),
             &failed_outcome.observation,
         )?;
         let terminal_status = durable_wait.map(EngineExecutorStatus::Waiting);
         if let Some(status) = &terminal_status {
-            record_terminal_output(self.vault, record, completed_steps, status)?;
+            record_terminal_output(&self.storage, record, completed_steps, status)?;
         }
         let checkpoint = CodeRunStepCheckpoint::new(
             completed_steps,
@@ -617,7 +709,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 .saturating_add(completed_steps),
         )?;
         record.step_checkpoints.push(checkpoint);
-        self.vault
+        self.storage
             .put_code_run_replay_record_if_generation(record, expected_generation)?;
         Ok(terminal_status)
     }
@@ -626,16 +718,16 @@ impl<'a> EngineNativeExecutor<'a> {
         &self,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<LoadedReplayRecord> {
-        if let Some(record) = self.vault.get_code_run_replay_record(&config.run_id)? {
+        if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
             if record.determinism != config.determinism {
                 return Err(Error::InvalidConfig(
                     "engine executor determinism changed for existing run".to_owned(),
                 )
                 .into());
             }
-            validate_executor_config_marker(self.vault, &record, config)?;
+            validate_executor_config_marker(&self.storage, &record, config)?;
             let generation = Some(record.generation()?);
-            let terminal_status = load_terminal_status(self.vault, &record)?;
+            let terminal_status = load_terminal_status(&self.storage, &record)?;
             return Ok(LoadedReplayRecord {
                 record,
                 generation,
@@ -643,7 +735,7 @@ impl<'a> EngineNativeExecutor<'a> {
             });
         }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
-        record_config_marker(self.vault, &mut record, config)?;
+        record_config_marker(&self.storage, &mut record, config)?;
         Ok(LoadedReplayRecord {
             record,
             generation: None,
@@ -680,7 +772,7 @@ impl<'a> EngineNativeExecutor<'a> {
             messages.push(LlmMessage {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
-                    text: load_utf8_output(self.vault, record, &script_output_path(seq))?,
+                    text: load_utf8_output(&self.storage, record, &script_output_path(seq))?,
                 }],
             });
             messages.push(LlmMessage {
@@ -688,7 +780,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 content: vec![ContentPart::Text {
                     text: format!(
                         "Observation after durable step {seq}:\n{}",
-                        load_utf8_output(self.vault, record, &observation_output_path(seq))?
+                        load_utf8_output(&self.storage, record, &observation_output_path(seq))?
                     ),
                 }],
             });
@@ -919,24 +1011,24 @@ fn previous_state_hash(record: &CodeRunReplayRecord) -> [u8; 32] {
 }
 
 fn record_config_marker(
-    vault: &Vault,
+    storage: &ExecutorStorage<'_>,
     record: &mut CodeRunReplayRecord,
     config: &EngineExecutorConfig,
 ) -> EngineExecutorResult<()> {
     let marker = ExecutorConfigMarker {
         schema_version: REPLAY_METADATA_SCHEMA_VERSION,
-        config_hash: executor_config_hash_hex(config),
+        config_hash: executor_config_hash_hex(storage, config),
     };
     let text = serde_json::to_string(&marker)?;
-    record_text_output(vault, record, CONFIG_OUTPUT_PATH.to_owned(), &text)
+    record_text_output(storage, record, CONFIG_OUTPUT_PATH.to_owned(), &text)
 }
 
 fn validate_executor_config_marker(
-    vault: &Vault,
+    storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
     config: &EngineExecutorConfig,
 ) -> EngineExecutorResult<()> {
-    let marker = load_config_marker(vault, record)?.ok_or_else(|| {
+    let marker = load_config_marker(storage, record)?.ok_or_else(|| {
         Error::InvalidConfig("engine executor replay missing config marker".to_owned())
     })?;
     if marker.schema_version != REPLAY_METADATA_SCHEMA_VERSION {
@@ -945,7 +1037,7 @@ fn validate_executor_config_marker(
         )
         .into());
     }
-    if marker.config_hash != executor_config_hash_hex(config) {
+    if marker.config_hash != executor_config_hash_hex(storage, config) {
         return Err(Error::InvalidConfig(
             "engine executor config changed for existing run".to_owned(),
         )
@@ -955,7 +1047,7 @@ fn validate_executor_config_marker(
 }
 
 fn load_config_marker(
-    vault: &Vault,
+    storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
 ) -> EngineExecutorResult<Option<ExecutorConfigMarker>> {
     if !record
@@ -965,19 +1057,42 @@ fn load_config_marker(
     {
         return Ok(None);
     }
-    let text = load_utf8_output(vault, record, CONFIG_OUTPUT_PATH)?;
+    let text = load_utf8_output(storage, record, CONFIG_OUTPUT_PATH)?;
     serde_json::from_str(&text)
         .map(Some)
         .map_err(|_| Error::CorruptedIndex("executor replay config marker").into())
 }
 
-fn executor_config_hash_hex(config: &EngineExecutorConfig) -> String {
-    bytes_to_hex_lower(&executor_config_hash(config))
+fn executor_config_hash_hex(
+    storage: &ExecutorStorage<'_>,
+    config: &EngineExecutorConfig,
+) -> String {
+    bytes_to_hex_lower(&executor_config_hash(storage, config))
 }
 
-fn executor_config_hash(config: &EngineExecutorConfig) -> [u8; 32] {
+/// Binds replay identity to the STORAGE BINDING as well as the config, without
+/// widening [`EngineExecutorConfig`].
+///
+/// Wherever the bound storage can see an existing replay record — the session
+/// view is overlay ∪ base, the canonical view is base — a run under a
+/// different binding refuses before it writes an output or a replay row. The
+/// canonical and session tags are length-prefixed through
+/// [`hash_bytes`], so a session literally named `canonical` cannot collide
+/// with a canonical run.
+///
+/// A record that lived only in an overlay evaporates at close, so a later run
+/// under any binding starts fresh. That is BY DESIGN: evaporation is the
+/// absence of history, not a resumable identity.
+fn executor_config_hash(storage: &ExecutorStorage<'_>, config: &EngineExecutorConfig) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hash_bytes(&mut hasher, CONFIG_HASH_DOMAIN);
+    match storage.session_ref() {
+        None => hash_bytes(&mut hasher, CONFIG_BINDING_CANONICAL_TAG),
+        Some(session_ref) => {
+            hash_bytes(&mut hasher, CONFIG_BINDING_SESSION_TAG);
+            hash_str(&mut hasher, session_ref);
+        }
+    }
     hash_str(&mut hasher, &config.run_id.to_hex());
     hash_str(&mut hasher, &config.task);
     hash_str(&mut hasher, config.model.as_str());
@@ -998,7 +1113,7 @@ fn model_locality_str(locality: ModelLocality) -> &'static str {
 }
 
 fn record_terminal_output(
-    vault: &Vault,
+    storage: &ExecutorStorage<'_>,
     record: &mut CodeRunReplayRecord,
     seq: u64,
     status: &EngineExecutorStatus,
@@ -1008,11 +1123,11 @@ fn record_terminal_output(
         status: StoredTerminalStatus::from_executor_status(status)?,
     };
     let text = serde_json::to_string(&marker)?;
-    record_text_output(vault, record, terminal_output_path(seq), &text)
+    record_text_output(storage, record, terminal_output_path(seq), &text)
 }
 
 fn load_terminal_status(
-    vault: &Vault,
+    storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
 ) -> EngineExecutorResult<Option<EngineExecutorStatus>> {
     let Some(output) = record
@@ -1023,7 +1138,7 @@ fn load_terminal_status(
     else {
         return Ok(None);
     };
-    let text = load_utf8_output(vault, record, &output.path)?;
+    let text = load_utf8_output(storage, record, &output.path)?;
     let marker: ExecutorTerminalMarker = serde_json::from_str(&text)
         .map_err(|_| Error::CorruptedIndex("executor replay terminal marker"))?;
     if marker.schema_version != REPLAY_METADATA_SCHEMA_VERSION {
@@ -1276,7 +1391,7 @@ fn looks_like_plain_js(text: &str) -> bool {
 }
 
 fn record_output(
-    vault: &Vault,
+    storage: &ExecutorStorage<'_>,
     record: &mut CodeRunReplayRecord,
     path: String,
     raw: &[u8],
@@ -1285,7 +1400,7 @@ fn record_output(
         return Err(Error::InvalidClaimBody("duplicate executor output path").into());
     }
     let output = CodeRunRawOutput::from_bytes(path, raw)?;
-    vault.put_code_run_raw_output(&output, raw)?;
+    storage.put_code_run_raw_output(&output, raw)?;
     record.outputs.push(output);
     Ok(())
 }
@@ -1311,13 +1426,13 @@ fn validate_runtime_outputs(
 }
 
 fn record_text_output(
-    vault: &Vault,
+    storage: &ExecutorStorage<'_>,
     record: &mut CodeRunReplayRecord,
     path: String,
     text: &str,
 ) -> EngineExecutorResult<()> {
     let raw = text_output_bytes(&path, text);
-    record_output(vault, record, path, &raw)
+    record_output(storage, record, path, &raw)
 }
 
 fn text_output_bytes(path: &str, text: &str) -> Vec<u8> {
@@ -1342,7 +1457,7 @@ fn decode_text_output(path: &str, raw: Vec<u8>) -> EngineExecutorResult<String> 
 }
 
 fn load_utf8_output(
-    vault: &Vault,
+    storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
     path: &str,
 ) -> EngineExecutorResult<String> {
@@ -1351,7 +1466,7 @@ fn load_utf8_output(
         .iter()
         .find(|output| output.path == path)
         .ok_or(Error::CorruptedIndex("executor replay output path"))?;
-    let raw = vault
+    let raw = storage
         .get_code_run_raw_output(output)?
         .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
     decode_text_output(path, raw)

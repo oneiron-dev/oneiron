@@ -975,6 +975,11 @@ impl OffRecordSession<'_> {
     /// The shell is the session's own (rider 1); the door re-resolves it from
     /// the session on both arms, so `container` cannot redirect the turn — it
     /// states, at the call site, the identity the door will use.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every parameter is a distinct binding the refusal or the door needs; folding \
+                  them into a struct would hide which one the typed refusal reads"
+    )]
     pub(crate) fn witness_executor_turn(
         &self,
         container: &EntityId,
@@ -1027,10 +1032,7 @@ impl OffRecordSession<'_> {
     /// different conversation so a base row never references an overlay
     /// member. Either way the session machinery owns it — the executor reads
     /// it, never mints it.
-    pub(crate) fn routed_conversation_shell(
-        &self,
-        route: &SessionWriteRoute,
-    ) -> Result<EntityId> {
+    pub(crate) fn routed_conversation_shell(&self, route: &SessionWriteRoute) -> Result<EntityId> {
         match route.target() {
             RouteTarget::Overlay => self.overlay_conversation_shell(),
             RouteTarget::Base => self.on_record_continuation_shell(),
@@ -1124,16 +1126,17 @@ impl OffRecordSession<'_> {
         edge_gate_id: EntityId,
         edge_gate_body: &crate::ClaimBody,
     ) -> Result<()> {
-        self.base_write_vault(route)?.supersede_claim_for_code_run_trap(
-            new_id,
-            old_id,
-            now,
-            envelope,
-            claim_gate_id,
-            claim_gate_body,
-            edge_gate_id,
-            edge_gate_body,
-        )
+        self.base_write_vault(route)?
+            .supersede_claim_for_code_run_trap(
+                new_id,
+                old_id,
+                now,
+                envelope,
+                claim_gate_id,
+                claim_gate_body,
+                edge_gate_id,
+                edge_gate_body,
+            )
     }
 
     /// `self.memory.put_edge` on a session-bound run.
@@ -1152,9 +1155,8 @@ impl OffRecordSession<'_> {
         gate_id: EntityId,
         gate_body: &crate::ClaimBody,
     ) -> Result<()> {
-        self.base_write_vault(route)?.put_edge_for_code_run_trap(
-            src, kind, tgt, weight, envelope, gate_id, gate_body,
-        )
+        self.base_write_vault(route)?
+            .put_edge_for_code_run_trap(src, kind, tgt, weight, envelope, gate_id, gate_body)
     }
 }
 
