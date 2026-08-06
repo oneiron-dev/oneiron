@@ -227,9 +227,10 @@ the cap was replaced with, across both families in one shared buffer.
 
 - `cargo fmt -p oneiron` — clean.
 - `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` — clean.
-- `cargo test -p oneiron --all-features` — **exit 0**; lib `3717 passed; 0
+- `cargo test -p oneiron --all-features` — **exit 0**; lib `3719 passed; 0
   failed; 17 ignored`, every integration target and both doctests green.
-- 20 new unit tests in `edit_distance::escalation::tests`, all green.
+  (Post-VERDICT-FIX run; 3717 → 3719 is exactly the two F1 regression tests.)
+- 22 unit tests in `edit_distance::escalation::tests`, all green.
 
 ### Flake note (charged to no lane)
 
