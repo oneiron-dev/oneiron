@@ -63,7 +63,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use rmpv::Value;
 
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -655,7 +657,9 @@ fn distinct_claim_value(pair: (EntityId, EntityId)) -> Value {
 /// normalized two-id map is not a distinct assertion.
 fn decode_distinct_claim_pair(value: &Value) -> Result<(EntityId, EntityId)> {
     const PAIR_CONTEXT: &str = "entity.distinct_from claim value must be a normalized id pair";
-    let map = value.as_map().ok_or(Error::InvalidClaimBody(PAIR_CONTEXT))?;
+    let map = value
+        .as_map()
+        .ok_or(Error::InvalidClaimBody(PAIR_CONTEXT))?;
     let id = |key| {
         let bytes: [u8; ENTITY_ID_LEN] = map_field(map, key)
             .and_then(Value::as_slice)
@@ -1389,15 +1393,13 @@ impl StoredIdentityOpAction {
                 reassignment: reassignment.clone(),
                 evidence: IdentityOpEvidence::default(),
             })),
-            Self::AssertDistinct { a, b, .. } => {
-                IdentityTopologyAction::Apply(IdentityTopologyOp::AssertDistinct(
-                    AssertDistinctOp {
-                        a: *a,
-                        b: *b,
-                        reason: String::new(),
-                    },
-                ))
-            }
+            Self::AssertDistinct { a, b, .. } => IdentityTopologyAction::Apply(
+                IdentityTopologyOp::AssertDistinct(AssertDistinctOp {
+                    a: *a,
+                    b: *b,
+                    reason: String::new(),
+                }),
+            ),
             Self::Undo { target } => IdentityTopologyAction::Undo { target: *target },
             Self::ProposalResolution {
                 proposal, outcome, ..
@@ -3729,8 +3731,7 @@ impl Vault {
             .active_distinct_claims_in_txn(&*wtxn, &pair.0)?
             .into_iter()
             .find(|row| {
-                row.pair == pair
-                    && (!write.is_effective() || is_effective_approval(row.approval))
+                row.pair == pair && (!write.is_effective() || is_effective_approval(row.approval))
             });
         if let Some(row) = reusable {
             return Ok(row.claim);
@@ -3772,9 +3773,10 @@ impl Vault {
         b: &EntityId,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let resolved =
-            fold_identity_topology_log(&self.fold_effective_identity_topology_events_in_txn(&rtxn)?)
-                .resolved_proposals;
+        let resolved = fold_identity_topology_log(
+            &self.fold_effective_identity_topology_events_in_txn(&rtxn)?,
+        )
+        .resolved_proposals;
         let mut open = Vec::new();
         for event in self.identity_topology_events_in_txn(&rtxn)? {
             let IdentityTopologyAction::Apply(IdentityTopologyOp::Merge(merge)) = &event.action
@@ -3912,7 +3914,8 @@ impl Vault {
             // a public CLAIM whose own lifecycle (supersede / retract) lifts
             // suppression. Unwinding it from here would need a second,
             // shadow retraction path over the same row.
-            StoredIdentityOpAction::Facet { .. } | StoredIdentityOpAction::AssertDistinct { .. } => {
+            StoredIdentityOpAction::Facet { .. }
+            | StoredIdentityOpAction::AssertDistinct { .. } => {
                 return Err(Error::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
                 ));
