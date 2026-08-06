@@ -287,15 +287,20 @@ pub fn rebuild_reservoir_index(vault: &Vault) -> Result<()> {
         .map(|pair| Ok((candidate_key(pair.receipt_ref), encode_candidate(pair)?)))
         .collect::<Result<BTreeMap<Vec<u8>, Vec<u8>>>>()?;
 
+    // Errors are collected BEFORE the staleness filter, never through it: a
+    // filter over `Result`s drops the `Err` arm as "not stale" and swallows the
+    // storage failure that produced it.
     let stale = {
         let rtxn = vault.store.env.read_txn()?;
-        vault
+        let keys = vault
             .store
             .vault_meta
             .prefix_iter(&rtxn, CANDIDATE_KEY_PREFIX)?
             .map(|entry| Ok(entry?.0.to_vec()))
-            .filter(|key| key.as_ref().is_ok_and(|key| !rebuilt.contains_key(key)))
-            .collect::<Result<Vec<_>>>()?
+            .collect::<Result<Vec<_>>>()?;
+        keys.into_iter()
+            .filter(|key| !rebuilt.contains_key(key))
+            .collect::<Vec<_>>()
     };
 
     vault.with_write_txn(|wtxn| {
