@@ -634,7 +634,9 @@ fn record_outcome_for_scope_in_txn(
         && active_grant_ref_in_txn(vault, &*wtxn, scope)?.is_some()
     {
         append_demotion_in_txn(vault, wtxn, scope, reason, at)?;
-        counters = read_counters_in_txn(&vault.store, &*wtxn, scope)?;
+        // The demotion folded exactly this into the store: our own counters,
+        // demoted. No re-read needed.
+        counters.apply_demotion(at);
     }
     Ok(counters)
 }

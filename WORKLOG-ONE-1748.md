@@ -175,3 +175,32 @@ contain none.
 - `crates/oneiron/tests/merge_split_oracle.rs` (arming + 1 additive test)
 
 `Cargo.lock` not committed. No `git add -A`. No push, no merge.
+
+## SIMPLIFY (K3, 2026-08-06)
+
+Deletion-biased pass over the impl tip (939845c7d). One edit, no structural
+additions, no test/assertion/public-API touches:
+
+- `record_outcome_for_scope_in_txn`: dropped the redundant counters re-read
+  after `append_demotion_in_txn`. The append helper folds exactly
+  `counters.apply_demotion(at)` into the row this fn had just written, so the
+  local fold is byte-identical to the re-read. One store round-trip deleted.
+- Examined and KEPT: the `record_ramp_outcome_in_txn` discard-wrapper (deleting
+  it would force `Counters` visibility wider — an addition, not a deletion);
+  the post-commit read txn in `record_proposal_outcome_for_ramp` (read-what-you-
+  committed is the conservative house pattern); all docs (load-bearing doctrine).
+- Observation for the finder, NOT changed here (out of simplify scope):
+  `ramp_fold_events` decodes `StoredDemotion` without the `row.v` version check
+  that `demotion_receipts` performs — inconsistent, benign at v1.
+- PACKET_AMENDs already declared by the implementer stand: consent.rs (+2
+  pub(crate) doors needing consent.rs's private grant-row codec) and store.rs
+  untouched (prefix consts live in consent_graduation.rs per the
+  identity_redirect precedent). No new packet surface introduced by this pass.
+
+Gates after the edit: `cargo fmt --all -- --check` clean ·
+`cargo clippy -p oneiron --all-features --all-targets -- -D warnings` clean ·
+`nextest --lib consent_graduation` 14/14 · `nextest --test merge_split_oracle`
+21 passed / 3 skipped (pre-existing ms07 parks). Demotion-path tests
+(`an_amendment_in_a_graduated_scope_demotes_it_receipted`,
+`a_rejection_demotes_and_a_clean_approval_does_not`, both ms06 demotion
+oracles) green against the edit.
