@@ -132,6 +132,23 @@ lookup. No semantic change; every existing caller is unaffected.
 - ONE-1447 consumes `PROVENANCE_SOURCE_MESSAGES_KEY` + `source_message_refs()`; the
   reverse index over that key is 1447's `store.rs` claim, not built here.
 
+## SIMPLIFY (K3, post-impl)
+
+One edit, deletion-biased: `utterance` and `message_order` each carried the same
+read-txn → fetch-raw → slice-header → decode-map prelude (~16 lines twice).
+Extracted one private `body_entries(vault, id)` helper; both readers now sit on it.
+Behavior is arm-for-arm identical (missing/truncated/undecodable/non-map all fall to
+the same `None`/`0` as before). No public API change, no test touched, nothing added
+"for safety". The banked cross-module extraction (shared turn-text reader with
+`actor_claims.rs`, post-wave cleanup) is unaffected — it would replace this helper
+wholesale. Considered and rejected: sharing one read txn across `resolve_selection` /
+`witnessed_words` (adds plumbing for a ≤64-message gesture; not deletion), and
+const-interpolating the validation error strings (signature change for no deletion).
+
+Gates after the edit: `cargo fmt --check -p oneiron` clean ·
+`cargo clippy -p oneiron --all-features --all-targets` clean ·
+`cargo test -p oneiron --all-features` green (3520 lib + all bins, 0 failed).
+
 ## PR note (OF-206)
 
 Registry OF-206 / ARCH-0017 is stamped **`proposed`**, not ratified. Built anyway per the

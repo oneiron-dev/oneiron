@@ -540,6 +540,24 @@ fn entity_type(vault: &Vault, id: &EntityId) -> Result<u8> {
         .ok_or(Error::EntityNotFound)
 }
 
+/// The decoded body map of an entity, or `None` when it is absent, truncated,
+/// or not a map. The one decode prelude every body read in this module shares.
+fn body_entries(vault: &Vault, id: &EntityId) -> Result<Option<Vec<(Value, Value)>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(None);
+    };
+    Ok(
+        match rmpv::decode::read_value(&mut std::io::Cursor::new(body)) {
+            Ok(Value::Map(entries)) => Some(entries),
+            _ => None,
+        },
+    )
+}
+
 /// Reads one utterance from an entity body, or `None` when it carries no words.
 ///
 /// Both documented spellings of each key are accepted (`spkr`/`speaker`,
@@ -551,23 +569,17 @@ fn utterance(
     speaker_key: &str,
     text_key: &str,
 ) -> Result<Option<ConvertUtterance>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())? else {
-        return Ok(None);
-    };
-    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+    let Some(entries) = body_entries(vault, id)? else {
         return Ok(None);
     };
     let mut speaker = None;
     let mut text = None;
-    if let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut std::io::Cursor::new(body)) {
-        for (key, value) in entries {
-            let Some(key) = key.as_str() else { continue };
-            if (key == speaker_key || key == "speaker") && speaker.is_none() {
-                speaker = value.as_str().map(str::to_owned);
-            } else if (key == text_key || key == "text") && text.is_none() {
-                text = value.as_str().map(str::to_owned);
-            }
+    for (key, value) in entries {
+        let Some(key) = key.as_str() else { continue };
+        if (key == speaker_key || key == "speaker") && speaker.is_none() {
+            speaker = value.as_str().map(str::to_owned);
+        } else if (key == text_key || key == "text") && text.is_none() {
+            text = value.as_str().map(str::to_owned);
         }
     }
     Ok(
@@ -606,14 +618,7 @@ fn witnessed_words(vault: &Vault, turn: &EntityId) -> Result<Vec<ConvertUtteranc
 
 /// A witnessed message's position inside its turn; absent reads as first.
 fn message_order(vault: &Vault, message: &EntityId) -> Result<u64> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.entities.get(&rtxn, message.as_bytes())? else {
-        return Ok(0);
-    };
-    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
-        return Ok(0);
-    };
-    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut std::io::Cursor::new(body)) else {
+    let Some(entries) = body_entries(vault, message)? else {
         return Ok(0);
     };
     Ok(entries
