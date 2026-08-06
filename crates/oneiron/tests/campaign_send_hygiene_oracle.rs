@@ -447,6 +447,11 @@ fn unsubscribe_is_honored_before_handler_returns() -> Result<()> {
         receipt.bounce_claim_ref.is_none(),
         "an unsubscribe is not a bounce"
     );
+    assert!(
+        receipt.member_claim_ref.is_none(),
+        "an inbound signal naming no campaign supersedes no membership; the \
+         campaign-independent suppression is what refuses the send"
+    );
     // The enforcement claim cites the inbound evidence it derives from, so the
     // suppression and its reason landed together rather than the claim landing
     // alone.
@@ -729,6 +734,10 @@ fn degraded_identity_clamps_and_rest_reenters_warmup() -> Result<()> {
         DEGRADED_REPUTATION_DAILY_CAP
     );
     assert!(projection.clamp.rotate_proposal_required);
+    assert!(
+        projection.suppression.is_none(),
+        "a complaint is a reputation fact, not a permanent suppression"
+    );
 
     // No parallel health state machine: the projection's clamp IS the existing
     // per-identity clamp, not a second computation that can disagree with it.

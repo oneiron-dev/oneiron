@@ -149,10 +149,12 @@ impl OutboundIntent {
 /// The bytes one outbound effect freezes: the intent, plus the CA-05 send
 /// hygiene headers derived from that same frozen metadata.
 ///
-/// Flattened and elided-when-empty on purpose. The ledger derives intent ids
-/// and payload hashes FROM these bytes, so a send carrying no hygiene headers
-/// must freeze byte-for-byte what it froze before this field existed — an
-/// unconditional key would re-identify every in-flight send in the ledger.
+/// Flattened and elided-when-empty, the way every optional field on
+/// [`OutboundIntent`] is: the frozen bytes are what a connector reads and what
+/// the ledger hashes into an intent id, so a send that carries no hygiene
+/// headers says nothing about them rather than freezing an empty map. Ordering
+/// is fixed by the struct's field order and by the [`BTreeMap`], because these
+/// bytes are the retry contract.
 #[derive(Serialize)]
 struct FrozenOutboundPayload<'a> {
     #[serde(flatten)]
