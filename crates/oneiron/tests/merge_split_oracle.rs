@@ -19,8 +19,8 @@
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, FacetOp, FacetSpec, HnswConfig,
     IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
-    ProposalOutcome, ProposalRuling, ReassignmentMap, ReceiptKind, ReceiptQuery, SplitOp,
-    StoredIdentityOpAction, SurvivorshipPlan, Vault, VaultConfig,
+    ProposalOutcome, ProposalRuling, RampScope, ReassignmentMap, ReceiptKind, ReceiptQuery,
+    SplitOp, StoredIdentityOpAction, SurvivorshipPlan, Vault, VaultConfig,
 };
 
 fn test_config() -> VaultConfig {
@@ -213,7 +213,8 @@ fn outcome_receipt(vault: &Vault, receipt: EntityId) -> oneiron::ReceiptRecord {
 mod seam {
     use super::{
         ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, IdentityOpOutcome,
-        IdentityOpWrite, IdentityTopologyOp, ProposalOutcome, ProposalRuling, Vault,
+        IdentityOpWrite, IdentityTopologyOp, ProposalOutcome, ProposalRuling, RampScope,
+        ReceiptKind, ReceiptQuery, Vault,
     };
 
     // ---- ONE-1744 (MS-02): redirect projection + read-time resolution ----
@@ -529,27 +530,37 @@ mod seam {
     }
 
     // ---- ONE-1748 (MS-06): consent-graduation ramp ----
+    // ARMED: the handle is the real `RampScope` tuple, not the u64
+    // placeholder, and every stub below is the real engine door.
 
     /// Resolves the ramp scope handle for the exact tuple
     /// (op kind × target class × skill/agent) — a DEC-0006 bound.
     pub(crate) fn ramp_scope(
-        _vault: &Vault,
-        _op_kind: &str,
-        _target_class: &str,
-        _agent: &str,
-    ) -> u64 {
-        unimplemented!("armed by ONE-1748: ramp scope tuple")
+        vault: &Vault,
+        op_kind: &str,
+        target_class: &str,
+        agent: &str,
+    ) -> RampScope {
+        vault
+            .ramp_scope(op_kind, target_class, agent)
+            .expect("resolve ramp scope")
     }
 
     /// Records one outcome receipt on a propose-lane scope.
-    pub(crate) fn record_outcome_receipt(_vault: &Vault, _scope: u64, _outcome: ProposalOutcome) {
-        unimplemented!("armed by ONE-1748: per-scope outcome receipts")
+    pub(crate) fn record_outcome_receipt(
+        vault: &Vault,
+        scope: &RampScope,
+        outcome: ProposalOutcome,
+    ) {
+        vault
+            .record_proposal_outcome_for_ramp(scope, outcome)
+            .expect("record ramp outcome");
     }
 
     /// Standing graduation OFFERS currently surfaced (proposed
     /// `create_standing_grant(bound)` rows — DEC-0006 invariant 5).
-    pub(crate) fn count_graduation_offers(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1748: graduation offers")
+    pub(crate) fn count_graduation_offers(vault: &Vault) -> usize {
+        vault.graduation_offers().expect("graduation offers").len()
     }
 
     /// Standing grants actually in force.
@@ -565,35 +576,66 @@ mod seam {
     }
 
     /// The owner taps the surfaced graduation offer.
-    pub(crate) fn accept_graduation_offer(_vault: &Vault) {
-        unimplemented!("armed by ONE-1748: one-tap graduation")
+    ///
+    /// ARMED with the [`AuthenticatedOwner`] the engine door demands: a tap is
+    /// an owner act, and the type system is where DEC-0006 invariant 5 is
+    /// enforced — a seam that could accept without one would document a door
+    /// the engine deliberately does not have.
+    pub(crate) fn accept_graduation_offer(
+        vault: &Vault,
+        owner: &oneiron::AuthenticatedOwner,
+        scope: &RampScope,
+    ) {
+        vault
+            .accept_graduation_offer(owner, scope)
+            .expect("accept graduation offer");
     }
 
     /// The agent self-demotes an auto scope back to propose (r7: its own
     /// judgment, said out loud, receipted).
-    pub(crate) fn demote_scope_to_propose(_vault: &Vault, _scope: u64) {
-        unimplemented!("armed by ONE-1748: transparent self-demotion")
+    pub(crate) fn demote_scope_to_propose(vault: &Vault, scope: &RampScope) {
+        vault
+            .demote_scope_to_propose(scope, oneiron::DemotionReason::AgentJudgment)
+            .expect("self-demote scope");
     }
 
     /// Receipts recorded for self-demotions (never silent).
-    pub(crate) fn count_demotion_receipts(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1748: demotion receipts")
+    ///
+    /// Read back through the PUBLIC [`ReceiptQuery`] surface, so the count also
+    /// witnesses that the demotion projector is REGISTERED in the `Gate`
+    /// receipt family rather than reachable only through a private door.
+    pub(crate) fn count_demotion_receipts(vault: &Vault) -> usize {
+        vault
+            .receipts(ReceiptQuery::default().with_kind(ReceiptKind::Gate))
+            .expect("query gate receipts")
+            .iter()
+            .filter(|record| oneiron::is_ramp_demotion_receipt(record))
+            .count()
     }
 
     /// The scope's current consent posture (pinned wire strings, e.g.
     /// "auto" / "proposed").
-    pub(crate) fn scope_state(_vault: &Vault, _scope: u64) -> String {
-        unimplemented!("armed by ONE-1748: scope consent-state read")
+    pub(crate) fn scope_state(vault: &Vault, scope: &RampScope) -> String {
+        vault
+            .ramp_scope_state(scope)
+            .expect("ramp scope state")
+            .as_str()
+            .to_owned()
     }
 
     /// Whether an op kind's scopes sit on the propose→auto ramp at all.
-    pub(crate) fn scope_is_on_ramp(_vault: &Vault, _op_kind: &str) -> bool {
-        unimplemented!("armed by ONE-1748: ramp membership probe")
+    pub(crate) fn scope_is_on_ramp(_vault: &Vault, op_kind: &str) -> bool {
+        oneiron::op_kind_is_ramp_eligible(op_kind)
     }
 
     /// Pending ramp proposal rows for an op kind.
-    pub(crate) fn count_ramp_proposals_for(_vault: &Vault, _op_kind: &str) -> usize {
-        unimplemented!("armed by ONE-1748: pending ramp proposals")
+    pub(crate) fn count_ramp_proposals_for(vault: &Vault, op_kind: &str) -> usize {
+        vault
+            .graduation_offers()
+            .expect("graduation offers")
+            .iter()
+            .filter(|scope| scope.op_kind == op_kind)
+            .count()
     }
 
     // ---- ONE-1749 (MS-07): redirect-aware HardErase ----
@@ -1006,7 +1048,6 @@ fn ms05_delta_field_is_reserved_opaque_not_built() {
 /// (op kind × target class × skill/agent) — two scopes differing only in
 /// agent are distinct; identical tuples resolve to the same scope.
 #[test]
-#[ignore = "armed by ONE-1748"]
 fn ms06_ramp_scope_keys_on_op_class_agent_tuple() {
     let (_dir, vault) = open_vault();
     let scope_a = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
@@ -1112,18 +1153,54 @@ fn ms06_streak_offers_standing_grant_never_auto_grants() {
 /// agent — said out loud and receipted, never a silent capability
 /// reduction.
 #[test]
-#[ignore = "armed by ONE-1748"]
 fn ms06_self_demotion_is_receipted_never_silent() {
     let (_dir, vault) = open_vault();
     let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
     for _ in 0..3 {
-        seam::record_outcome_receipt(&vault, scope, ProposalOutcome::ApprovedAmended);
+        seam::record_outcome_receipt(&vault, &scope, ProposalOutcome::ApprovedAmended);
     }
     assert_eq!(seam::count_demotion_receipts(&vault), 0);
-    seam::demote_scope_to_propose(&vault, scope);
+    seam::demote_scope_to_propose(&vault, &scope);
     assert_eq!(seam::count_demotion_receipts(&vault), 1);
     // The demotion actually moved the scope's consent posture.
-    assert_eq!(seam::scope_state(&vault, scope), "proposed");
+    assert_eq!(seam::scope_state(&vault, &scope), "proposed");
+}
+
+/// r7/§7 companion to the above, added by ONE-1748 (additive, no assert
+/// weakened): the demotion that matters is the one taken from a GRADUATED
+/// scope, and it must take the standing grant with it. The parked contract
+/// could not express this — `create_standing_grant` did not exist when it was
+/// authored — so the transition assert lands here rather than by loosening
+/// anything above.
+#[test]
+fn ms06_demotion_from_graduated_revokes_the_standing_grant() {
+    use oneiron::store::GateDecisionId;
+
+    let (_dir, vault) = open_vault();
+    let owner_id = put_person(&vault, 0x25);
+    let owner = vault
+        .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
+        .expect("authenticate owner");
+    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+
+    for _ in 0..oneiron::DEFAULT_GRADUATION_STREAK_FLOOR {
+        seam::record_outcome_receipt(&vault, &scope, ProposalOutcome::ApprovedUntouched);
+    }
+    assert_eq!(seam::count_graduation_offers(&vault), 1);
+    assert_eq!(seam::count_standing_grants(&vault), 0);
+
+    seam::accept_graduation_offer(&vault, &owner, &scope);
+    assert_eq!(seam::count_standing_grants(&vault), 1);
+    assert_eq!(seam::scope_state(&vault, &scope), "auto");
+
+    seam::demote_scope_to_propose(&vault, &scope);
+    assert_eq!(seam::scope_state(&vault, &scope), "proposed");
+    assert_eq!(
+        seam::count_standing_grants(&vault),
+        0,
+        "a demotion that leaves the grant standing is a silent non-demotion"
+    );
+    assert_eq!(seam::count_demotion_receipts(&vault), 1);
 }
 
 /// [NEG] r7: merge/split are AUTO day one — they are never placed on the
@@ -1131,7 +1208,6 @@ fn ms06_self_demotion_is_receipted_never_silent() {
 /// honestly start at propose (external effects, cross-person, tinkerer
 /// dials). A ramp-everything implementation must fail here.
 #[test]
-#[ignore = "armed by ONE-1748"]
 fn ms06_merge_split_never_gated_by_ramp() {
     let (_dir, vault) = open_vault();
     let survivor = put_person(&vault, 0x21);

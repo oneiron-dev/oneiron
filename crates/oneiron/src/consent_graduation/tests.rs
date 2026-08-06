@@ -5,11 +5,11 @@
 //! off the ramp.
 
 use super::*;
-use crate::store::GateDecisionId;
 use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
     ProposalRuling, SurvivorshipPlan,
 };
+use crate::store::GateDecisionId;
 use crate::{ClaimApprovalStatus, ClaimSource};
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -205,7 +205,10 @@ fn the_owner_tap_is_what_creates_the_grant() {
         .accept_graduation_offer(&owner, &scope)
         .expect("owner accepts");
     assert_eq!(
-        vault.active_standing_consent_grants().expect("grants").len(),
+        vault
+            .active_standing_consent_grants()
+            .expect("grants")
+            .len(),
         1
     );
     assert_eq!(
@@ -324,7 +327,11 @@ fn demotion_of_an_ungraduated_scope_is_still_said_out_loud() {
         "there was no grant to name"
     );
     assert_eq!(
-        vault.scope_stats(&scope).expect("stats").expect("row").untouched_streak,
+        vault
+            .scope_stats(&scope)
+            .expect("stats")
+            .expect("row")
+            .untouched_streak,
         0
     );
 }
@@ -357,9 +364,7 @@ fn a_floor_survives_the_rebuild_that_drops_the_stats() {
     let (_dir, vault) = open_vault();
     let scope = eligible_scope();
     vault.set_ramp_streak_floor(&scope, 3).expect("set floor");
-    vault
-        .rebuild_ramp_stats_from_receipts()
-        .expect("rebuild");
+    vault.rebuild_ramp_stats_from_receipts().expect("rebuild");
     assert_eq!(vault.ramp_streak_floor(&scope).expect("floor"), 3);
 }
 
@@ -373,19 +378,12 @@ fn stats_persist_across_reopen_and_rebuild_reproduces_them_exactly() {
         .expect("encode amendment");
 
     let before = {
-        let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config())
-            .expect("open vault");
+        let vault =
+            Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("open vault");
         put_person(&vault, 0x21);
         put_person(&vault, 0x22);
         put_person(&vault, 0x23);
-        park_and_rule(
-            &vault,
-            survivor,
-            loser,
-            ProposalRuling::Approve,
-            200,
-            300,
-        );
+        park_and_rule(&vault, survivor, loser, ProposalRuling::Approve, 200, 300);
         park_and_rule(
             &vault,
             survivor,
@@ -398,12 +396,15 @@ fn stats_persist_across_reopen_and_rebuild_reproduces_them_exactly() {
         assert_eq!(before.len(), 1, "both rulings share one merge scope");
         assert_eq!(before[0].amended, 1);
         assert_eq!(before[0].untouched_streak, 0, "the amendment reset it");
-        assert_eq!(before[0].last_outcome, Some(ProposalOutcome::ApprovedAmended));
+        assert_eq!(
+            before[0].last_outcome,
+            Some(ProposalOutcome::ApprovedAmended)
+        );
         before
     };
 
-    let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config())
-        .expect("reopen vault");
+    let vault =
+        Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("reopen vault");
     assert_eq!(all_stats(&vault), before, "stats must survive a reopen");
 
     vault
@@ -445,9 +446,7 @@ fn the_rebuild_folds_demotions_not_only_rulings() {
     vault
         .demote_scope_to_propose(&merge_scope, DemotionReason::AgentJudgment)
         .expect("demote");
-    vault
-        .rebuild_ramp_stats_from_receipts()
-        .expect("rebuild");
+    vault.rebuild_ramp_stats_from_receipts().expect("rebuild");
     assert_eq!(
         vault
             .scope_stats(&merge_scope)

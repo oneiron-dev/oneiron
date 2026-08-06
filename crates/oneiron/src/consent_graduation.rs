@@ -528,12 +528,10 @@ fn active_grant_ref_in_txn(
     scope: &RampScope,
 ) -> Result<Option<String>> {
     let grant_ref = scope.grant_ref()?;
-    Ok(crate::consent::standing_grant_is_active_in_txn(
-        &vault.store,
-        txn,
-        &grant_ref,
-    )?
-    .then_some(grant_ref))
+    Ok(
+        crate::consent::standing_grant_is_active_in_txn(&vault.store, txn, &grant_ref)?
+            .then_some(grant_ref),
+    )
 }
 
 /// Derives the posture from the two things that actually decide it: whether a
@@ -583,9 +581,8 @@ fn append_demotion_in_txn(
     at: u64,
 ) -> Result<()> {
     let grant_ref = scope.grant_ref()?;
-    let grant_ref =
-        crate::consent::revoke_standing_grant_in_txn(&vault.store, wtxn, &grant_ref)?
-            .then_some(grant_ref);
+    let grant_ref = crate::consent::revoke_standing_grant_in_txn(&vault.store, wtxn, &grant_ref)?
+        .then_some(grant_ref);
     let row = StoredDemotion {
         v: RAMP_ROW_VERSION,
         op_kind: scope.op_kind.clone(),
@@ -703,7 +700,10 @@ pub(crate) fn demotion_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<V
 
 fn demotion_receipt_record(id: &EntityId, row: &StoredDemotion) -> ReceiptRecord {
     let mut fields = std::collections::BTreeMap::new();
-    fields.insert(crate::receipt::FIELD_OP_KIND.to_owned(), row.op_kind.clone());
+    fields.insert(
+        crate::receipt::FIELD_OP_KIND.to_owned(),
+        row.op_kind.clone(),
+    );
     fields.insert(
         crate::receipt::FIELD_TARGET_CLASS.to_owned(),
         row.target_class.clone(),
@@ -717,7 +717,10 @@ fn demotion_receipt_record(id: &EntityId, row: &StoredDemotion) -> ReceiptRecord
         row.reason.clone(),
     );
     if let Some(grant_ref) = row.grant_ref.as_ref() {
-        fields.insert(crate::receipt::FIELD_GRANT_REF.to_owned(), grant_ref.clone());
+        fields.insert(
+            crate::receipt::FIELD_GRANT_REF.to_owned(),
+            grant_ref.clone(),
+        );
     }
 
     ReceiptRecord {
@@ -747,12 +750,7 @@ impl Vault {
     /// # Errors
     ///
     /// [`Error::InvalidConsentBound`] when a tuple field is empty or oversized.
-    pub fn ramp_scope(
-        &self,
-        op_kind: &str,
-        target_class: &str,
-        actor: &str,
-    ) -> Result<RampScope> {
+    pub fn ramp_scope(&self, op_kind: &str, target_class: &str, actor: &str) -> Result<RampScope> {
         RampScope::new(op_kind, target_class, actor)
     }
 
@@ -871,11 +869,7 @@ impl Vault {
     /// # Errors
     ///
     /// Storage failures.
-    pub fn demote_scope_to_propose(
-        &self,
-        scope: &RampScope,
-        reason: DemotionReason,
-    ) -> Result<()> {
+    pub fn demote_scope_to_propose(&self, scope: &RampScope, reason: DemotionReason) -> Result<()> {
         let at = crate::unix_seconds_now();
         self.with_write_txn(|wtxn| append_demotion_in_txn(self, wtxn, scope, reason, at))
     }
@@ -995,7 +989,10 @@ fn ramp_scope_from_receipt_fields(receipt: &ReceiptRecord) -> Option<RampScope> 
             .fields
             .get(crate::receipt::FIELD_TARGET_CLASS)?
             .clone(),
-        receipt.fields.get(crate::receipt::FIELD_SCOPE_ACTOR)?.clone(),
+        receipt
+            .fields
+            .get(crate::receipt::FIELD_SCOPE_ACTOR)?
+            .clone(),
     )
     .ok()
 }

@@ -4203,7 +4203,11 @@ impl Vault {
             Vec::new(),
         )?;
         crate::consent_graduation::record_ramp_outcome_in_txn(
-            self, wtxn, &ramp_scope, outcome, now,
+            self,
+            wtxn,
+            &ramp_scope,
+            outcome,
+            now,
         )?;
         let IdentityOpOutcome::Applied {
             event: event_id, ..
