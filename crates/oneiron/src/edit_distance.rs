@@ -41,6 +41,7 @@
 //! `edit_distance` — textual edit distance over proposal artifacts. They are
 //! unrelated.
 
+pub mod attribution;
 pub mod delta;
 pub mod escalation;
 pub mod graduation;
