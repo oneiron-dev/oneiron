@@ -181,3 +181,24 @@ Carry BANK-3 forward to whichever lane touches that seam.
 - [x] Consent rail via the rail's own door (grant → export succeeds; revoke → immediate refusal)
 - [x] Rebuild-index identity + stale-row deletion
 - [x] fmt · clippy -D warnings · full `-p oneiron --all-features`
+
+## SIMPLIFY pass (K3, post-impl)
+
+Deletion-biased, one bounded pass over `reservoir.rs` (+9/−11). Public API, tests, the tripwire
+and the consent rail untouched.
+
+1. **`receipt_model` helper inlined** into `export_models` — a one-line `Option` chain used at one
+   call site does not earn a named fn (`context_receipt_fields().and_then(|f| f.model)`).
+2. **`serialize_opt_entity_hex` collapsed** from a 5-line `match` to
+   `id.as_ref().map(EntityId::to_hex).serialize(serializer)` — `Option<String>` already serializes
+   as `some(string)`/`none(null)`, identical wire shape.
+3. **Unused `Clone` derives dropped** from `StoredExport` / `StoredCandidate` — neither row is ever
+   cloned; speculative generality.
+
+Considered and left alone: the pinned-const table (house style, single-source-of-string), the
+`reservoir_candidates` read door (public API; D7 already flags it for the panel), the write-only
+candidate index (blueprint-mandated CID-7 derived state), module docs (ratified craft voice).
+
+Gates after the pass: `cargo fmt --all` clean · `cargo clippy -p oneiron --all-features
+--all-targets -- -D warnings` exit 0 · `cargo test -p oneiron --all-features` 3895 lib passed,
+0 failed, 17 pre-existing ignored.

@@ -177,14 +177,13 @@ fn serialize_entity_hex<S: serde::Serializer>(
     serializer.serialize_str(&id.to_hex())
 }
 
+/// The optional spelling of the same hex encoding: `None` rides the wire as
+/// `null`, `Some` as the hex string.
 fn serialize_opt_entity_hex<S: serde::Serializer>(
     id: &Option<EntityId>,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {
-    match id {
-        Some(id) => serializer.serialize_some(&id.to_hex()),
-        None => serializer.serialize_none(),
-    }
+    id.as_ref().map(EntityId::to_hex).serialize(serializer)
 }
 
 /// What an export asks for. Both filters are optional; both narrow.
@@ -446,15 +445,14 @@ fn selects(scope: &ReservoirScope, pair: &TrainingPair, observed_at: Option<u64>
 fn export_models(vault: &Vault) -> Result<BTreeMap<String, String>> {
     let mut models = BTreeMap::new();
     for receipt in vault.receipts(ReceiptQuery::new(MAX_RECEIPT_QUERY_SCAN))? {
-        if let Some(model) = receipt_model(&receipt) {
+        if let Some(model) = receipt
+            .context_receipt_fields()
+            .and_then(|fields| fields.model)
+        {
             models.insert(receipt.receipt_id, model);
         }
     }
     Ok(models)
-}
-
-fn receipt_model(receipt: &ReceiptRecord) -> Option<String> {
-    receipt.context_receipt_fields()?.model
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +493,7 @@ fn authorize_export(vault: &Vault) -> Result<()> {
 
 /// What one export recorded. Scope, count and hash — enough to say what left
 /// and to recognize the artifact again, and deliberately not the content.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct StoredExport {
     v: u8,
     pairs: u64,
@@ -645,7 +643,7 @@ fn normalized_scope(scope: ReservoirScope) -> Result<ReservoirScope> {
 /// and a second copy would be a second truth that drifts — the index answers
 /// "which artifacts are candidates and how are they tagged", and the texts are
 /// read from the one place that owns them.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct StoredCandidate {
     v: u8,
     task_class: Option<String>,
