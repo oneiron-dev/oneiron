@@ -300,6 +300,7 @@ pub enum ErrorKind {
     IdentityTopologyRejected,
     IdentityTopologyUnarmed,
     IdentityProposalAmendmentOutOfScope,
+    DeltaCaptureUnavailable,
     InvalidIdentityTopologyEventBody,
     ReservedEdgeKind,
     #[cfg(feature = "sync")]
@@ -1567,6 +1568,12 @@ pub enum Error {
     /// park stays open.
     #[error("identity proposal amendment is out of scope: {0}")]
     IdentityProposalAmendmentOutOfScope(&'static str),
+    /// No ARCH-0056 capture lane covers the offered context (ONE-1757), so no
+    /// amendment Δ could be measured. A Δ is TELEMETRY: every caller records
+    /// this and lands the decision anyway — it is never a reason to refuse an
+    /// approval the decider already made.
+    #[error("no amendment delta capture lane is available: {0}")]
+    DeltaCaptureUnavailable(&'static str),
     /// An AUTHORITY_LOG row is append-only at its store key (ONE-1604-D1): a
     /// write carried body-divergent bytes for an existing type-122 id. Local
     /// callers get this as a hard error; replicated doors classify it as a
@@ -1868,6 +1875,7 @@ impl Error {
             Self::IdentityProposalAmendmentOutOfScope(_) => {
                 ErrorKind::IdentityProposalAmendmentOutOfScope
             }
+            Self::DeltaCaptureUnavailable(_) => ErrorKind::DeltaCaptureUnavailable,
             Self::InvalidIdentityTopologyEventBody(_) => {
                 ErrorKind::InvalidIdentityTopologyEventBody
             }
