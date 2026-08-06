@@ -2509,6 +2509,11 @@ impl Vault {
     ) -> Result<bool> {
         // The content-hash index row is dropped by `deindex_entity` below;
         // ONE-1741 removed the verdict relocation that this hook also carried.
+        //
+        // ONE-1447 runs BEFORE the tear: the stale fold reads the skills that
+        // CITED this id, not this id's own rows, and both acts belong to the
+        // one transaction that destroys the evidence.
+        self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -2565,6 +2570,12 @@ impl Vault {
         // kinds that keep no content-hash index, so the generic delete engine needs
         // no entity-kind branch of its own.
         self.maintain_skill_content_hash_index_on_delete_in_txn(wtxn, id)?;
+        // ONE-1447, the other half of the same question: this id may be the
+        // conversation a SKILL was converted from, and a skill whose evidence
+        // this transaction is erasing must stop loading as canon in that same
+        // transaction. Visible and reversible — never a silent orphan, never a
+        // cascading delete.
+        self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         let mut cleanup = VadAnnotationCleanup::default();
         delete_vad_annotation_metadata_for_type_in_txn(
             &self.store,
