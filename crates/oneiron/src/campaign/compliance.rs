@@ -854,9 +854,7 @@ fn dispatch_evidence_in_txn(
     subject: &EntityId,
 ) -> Result<DispatchEvidence> {
     let Some(body) =
-        active_claim_bodies_in_txn(store, txn, subject, PREDICATE_CRM_COMPLIANCE_EVIDENCE)?
-            .into_iter()
-            .next()
+        sole_active_claim_body_in_txn(store, txn, subject, PREDICATE_CRM_COMPLIANCE_EVIDENCE)?
     else {
         return Ok(DispatchEvidence::default());
     };
@@ -975,14 +973,13 @@ fn message_elements_in_txn(
     let Some(identity) = channel_identity_ref else {
         return Ok(MessageElements::default());
     };
-    let Some(body) = active_claim_bodies_in_txn(
+    let Some(body) = sole_active_claim_body_in_txn(
         store,
         txn,
         &identity,
         PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
     )?
-    .into_iter()
-    .next() else {
+    else {
         return Ok(MessageElements::default());
     };
     let entries = map_entries(&body.value);
@@ -1037,6 +1034,34 @@ fn active_claim_bodies_in_txn(
         }
     }
     Ok(bodies)
+}
+
+/// The one live head of `predicate` on `subject`, or `None` when the substrate
+/// holds no single truth.
+///
+/// Two live heads are as reachable here as they are for `comm.jurisdiction` —
+/// an offline-minted twin, a re-import — but an evidence or message-element
+/// body carries no `observed_at` to order them by, so there is no tie to
+/// break. Taking a head and running would let edge-storage order decide which
+/// facts the gate believes, and it would do so on the permissive side, because
+/// these bodies only ever ADD evidence: the reader would sail past the very
+/// wall the other head refuses to vouch for. A disagreeing pair is therefore
+/// no evidence, and the strict path applies. Twins that say the same thing say
+/// one thing, and hydrate.
+fn sole_active_claim_body_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+    predicate: &str,
+) -> Result<Option<ClaimBody>> {
+    let mut bodies = active_claim_bodies_in_txn(store, txn, subject, predicate)?;
+    let Some(head) = bodies.pop() else {
+        return Ok(None);
+    };
+    Ok(bodies
+        .iter()
+        .all(|body| body.value == head.value)
+        .then_some(head))
 }
 
 fn claim_body_in_txn(
@@ -1523,6 +1548,10 @@ mod tests {
     const FOREIGN_SEED: u8 = 0xCA;
     /// The amendment proposer / owner.
     const ACTOR_SEED: u8 = 0xCB;
+    /// A second live evidence head that contradicts the first.
+    const SECOND_EVIDENCE_SEED: u8 = 0xCC;
+    /// A second live evidence head that agrees with the first.
+    const TWIN_EVIDENCE_SEED: u8 = 0xCD;
 
     /// The seed's verification date; every row shares it.
     const SEED_VERIFIED_AT: u64 = 1_784_505_600;
@@ -2085,6 +2114,68 @@ mod tests {
             })
         );
         assert_eq!(hydrated.legal_form.as_deref(), Some("corporate"));
+    }
+
+    #[test]
+    fn campaign_compliance_disagreeing_evidence_heads_take_the_strict_path() {
+        let (_dir, vault) = test_vault();
+        let subject = put_person(&vault, SUBJECT_SEED);
+        put_claim(
+            &vault,
+            PROVENANCE_SEED,
+            PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE,
+            subject,
+            map(&[("class", Value::from("double_opt_in"))]),
+        );
+
+        // Two live evidence heads that disagree: one carries the legal form
+        // and cites no provenance, the other cites the provenance and states
+        // no legal form. Both are ACTIVE and neither is newer.
+        put_claim(
+            &vault,
+            EVIDENCE_SEED,
+            PREDICATE_CRM_COMPLIANCE_EVIDENCE,
+            subject,
+            map(&[("legal_form", Value::from("corporate"))]),
+        );
+        put_claim(
+            &vault,
+            SECOND_EVIDENCE_SEED,
+            PREDICATE_CRM_COMPLIANCE_EVIDENCE,
+            subject,
+            map(&[(
+                "list_provenance",
+                map(&[
+                    ("ref", Value::from(entity(PROVENANCE_SEED).to_hex())),
+                    ("class", Value::from("double_opt_in")),
+                ]),
+            )]),
+        );
+
+        // Exactly one of these would have hydrated had the reader taken a head
+        // and run — and whichever it took, the surviving fact answers a wall
+        // the other head does not vouch for. Contested evidence is no
+        // evidence, so both walls take the strict path.
+        let contested = hydrate(&vault, subject);
+        assert_eq!(contested.legal_form, None);
+        assert_eq!(contested.list_provenance, None);
+
+        // An identical twin — a re-import, an offline-minted duplicate — is
+        // one truth restated, not a second one, and still hydrates.
+        vault
+            .retract_claim(&entity(SECOND_EVIDENCE_SEED), 2)
+            .expect("retract the contradicting head");
+        put_claim(
+            &vault,
+            TWIN_EVIDENCE_SEED,
+            PREDICATE_CRM_COMPLIANCE_EVIDENCE,
+            subject,
+            map(&[("legal_form", Value::from("corporate"))]),
+        );
+        assert_eq!(
+            hydrate(&vault, subject).legal_form.as_deref(),
+            Some("corporate")
+        );
     }
 
     #[test]
