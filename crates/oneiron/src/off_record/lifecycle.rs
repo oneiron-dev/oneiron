@@ -887,6 +887,16 @@ impl OffRecordSession<'_> {
                     session_ref: self.session_ref.clone(),
                 });
             }
+            // RETRY, ahead of the journal: a promoted turn's closure has
+            // already been retired from the overlay, so planning it again would
+            // fail with "no journaled turn" for a turn that IS promoted. The
+            // durable receipt is the answer, and it stays the answer after
+            // close. `FloorWrites::promote` re-reads it inside the write
+            // transaction, which is where the atomicity of that decision lives;
+            // this read only spares the caller a plan it cannot build.
+            if let Some(receipt) = self.vault.off_record_promote_receipt(turn)? {
+                return Ok(receipt.outcome);
+            }
             // The snapshot is taken under the state lock, so the journal this
             // plan is cut from is the journal the commit below applies against.
             let plan = self.entry.overlay.snapshot()?.plan_promotion(*turn)?;
