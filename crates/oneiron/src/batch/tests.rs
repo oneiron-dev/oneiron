@@ -218,7 +218,11 @@ fn stored_streak_field(vault: &Vault, id: &EntityId, key: &str) -> Result<Option
     Ok(stored_task_body(vault, id)?
         .iter()
         .find(|(name, _)| name.as_str() == Some(key))
-        .map(|(_, value)| value.as_u64().expect("streak counters are unsigned integers")))
+        .map(|(_, value)| {
+            value
+                .as_u64()
+                .expect("streak counters are unsigned integers")
+        }))
 }
 
 /// The stored `(currentStreak, longestStreak)` pair.

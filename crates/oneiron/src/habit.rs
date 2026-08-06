@@ -195,7 +195,10 @@ pub(crate) fn recompute_habit_streak_in_txn(
     habit_id: &EntityId,
 ) -> Result<HabitStreak> {
     let mut days = Vec::new();
-    for entry in store.edges_in.prefix_iter(wtxn, &child_of_prefix(habit_id))? {
+    for entry in store
+        .edges_in
+        .prefix_iter(wtxn, &child_of_prefix(habit_id))?
+    {
         let (key, value) = entry?;
         let child = parse_strict_edge_record(&key, &value)?.target;
         let Some(raw) = store.entities.get(wtxn, child.as_bytes())? else {
@@ -268,7 +271,10 @@ fn rewrite_habit_streak_fields(body: &[u8], streak: HabitStreak) -> Result<Vec<u
 /// counters are derived; a writer who could name them could mint a streak the
 /// check-in children do not support.
 pub(crate) fn reject_public_streak_fields(body: &[u8]) -> Result<()> {
-    if task_body_entries(body)?.iter().any(|(key, _)| is_streak_key(key)) {
+    if task_body_entries(body)?
+        .iter()
+        .any(|(key, _)| is_streak_key(key))
+    {
         return Err(Error::InvalidTaskBody(
             "task streak counters are derived from check-ins",
         ));
@@ -358,7 +364,7 @@ mod tests {
             }
             for i in 0..k {
                 walk(k - 1, buf, out);
-                if k % 2 == 0 {
+                if k.is_multiple_of(2) {
                     buf.swap(i, k - 1);
                 } else {
                     buf.swap(0, k - 1);

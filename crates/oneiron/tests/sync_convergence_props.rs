@@ -200,6 +200,144 @@ fn concurrent_checkins_preserve_count() {
     assert_converged(&a, &b, WINDOW);
 }
 
+/// `day * 86_400 + offset` — a check-in timestamp whose UTC day bucket is
+/// `day`. The offset proves the reducer buckets rather than compares seconds.
+fn checkin_at(day: u64, offset: u64) -> u64 {
+    day * 86_400 + offset
+}
+
+/// The stored `(currentStreak, longestStreak)` pair of a Habit TASK row.
+fn stored_streak(vault: &Vault, id: &EntityId) -> (u64, u64) {
+    let raw = vault
+        .get_raw(id)
+        .expect("habit row read")
+        .expect("habit row must exist");
+    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(&raw[25..]))
+        .expect("stored TASK body must decode");
+    let entries = value.as_map().expect("stored TASK body is a map").to_vec();
+    let field = |name: &str| {
+        let (_, value) = entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .unwrap_or_else(|| panic!("{name} must be stored on a Habit row"));
+        value
+            .as_u64()
+            .expect("streak counters are unsigned integers")
+    };
+    (field("currentStreak"), field("longestStreak"))
+}
+
+/// A Habit body carrying counters a peer minted locally. The replicated door
+/// accepts the envelope; the derived counters must NOT survive it.
+fn forged_habit_body(current: u64, longest: u64) -> Vec<u8> {
+    let body = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("role"),
+            rmpv::Value::from(TaskRole::Habit.role_byte()),
+        ),
+        (
+            rmpv::Value::from("currentStreak"),
+            rmpv::Value::from(current),
+        ),
+        (
+            rmpv::Value::from("longestStreak"),
+            rmpv::Value::from(longest),
+        ),
+    ]);
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &body).expect("encode forged habit body");
+    out
+}
+
+#[test]
+fn two_replicas_same_streak() {
+    let (a, b) = vault_pair();
+    let habit = EntityId::now();
+    let created = checkin_at(20_000, 0);
+    let habit_blob = entity_blob(
+        ENTITY_TYPE_TASK,
+        time_range(created),
+        created,
+        &task_body(TaskRole::Habit),
+    );
+
+    a.put_entity_in_window(WINDOW, &habit, &habit_blob);
+    exchange(&a, &b, WINDOW);
+
+    // OFFLINE on both replicas. Day 20_002 is authored TWICE — once per node,
+    // as two distinct entities — so the merge has to count it once for the
+    // arithmetic while keeping both rows. Day 20_005 is past a gap, so
+    // `current` (1) and `longest` (3) cannot be confused for each other, and
+    // neither can be "the run ending today".
+    let checkins = [
+        (&a, EntityId::now(), checkin_at(20_001, 3_600)),
+        (&a, EntityId::now(), checkin_at(20_002, 60)),
+        (&b, EntityId::now(), checkin_at(20_002, 7_200)),
+        (&b, EntityId::now(), checkin_at(20_003, 45)),
+        (&b, EntityId::now(), checkin_at(20_005, 10)),
+    ];
+    for (node, checkin, occurred) in checkins {
+        let checkin_blob = entity_blob(
+            ENTITY_TYPE_TASK,
+            time_range(occurred),
+            occurred,
+            &task_body(TaskRole::HabitCheckin),
+        );
+        node.put_entity_in_window(WINDOW, &checkin, &checkin_blob);
+        node.put_edge_in_window(
+            WINDOW,
+            &checkin,
+            EdgeKind::ChildOf,
+            &habit,
+            1.0,
+            occurred,
+            oneiron::Vad::NEUTRAL,
+        );
+    }
+
+    // A peer ALSO ships a Habit envelope carrying counters of its own, stamped
+    // late enough to win LWW on the body. Accepting the envelope is fine;
+    // inheriting its arithmetic is not.
+    let forged = created + 1;
+    b.put_entity_in_window(
+        WINDOW,
+        &habit,
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            time_range(forged),
+            forged,
+            &forged_habit_body(99, 99),
+        ),
+    );
+
+    let rounds = exchange(&a, &b, WINDOW);
+    assert!(rounds <= 5, "bounded by the ARCH-0023b convergence cap");
+
+    for (node_name, vault) in [(a.name, &a.vault), (b.name, &b.vault)] {
+        assert_eq!(
+            vault
+                .sources(&habit, EdgeKind::ChildOf, None)
+                .unwrap()
+                .len(),
+            checkins.len(),
+            "{node_name}: every check-in stays its own append-only entity"
+        );
+        assert_eq!(
+            stored_streak(vault, &habit),
+            (1, 3),
+            "{node_name}: the parent counters must be derived from the merged child set"
+        );
+    }
+
+    // Same bytes on both replicas, parent row included — the property this
+    // test exists for.
+    assert_eq!(
+        a.vault.get_raw(&habit).unwrap(),
+        b.vault.get_raw(&habit).unwrap()
+    );
+    assert_converged(&a, &b, WINDOW);
+}
+
 // ─── (b) concurrent same-entity edit → LWW, loser displaced ────────────────
 
 #[test]
