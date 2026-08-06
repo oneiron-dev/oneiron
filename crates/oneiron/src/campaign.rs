@@ -62,5 +62,39 @@ pub fn register_campaign_kind(
     )
 }
 
+/// Every structural kind the CRM pack mints, in registration order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrmPackRegistration {
+    /// CAMPAIGN's vault-scoped registration.
+    pub campaign: StructuralKindRegistration,
+    /// SAVED_QUERY's vault-scoped registration.
+    pub saved_query: StructuralKindRegistration,
+}
+
+/// Registers the whole CRM pack against one vault.
+///
+/// The pack's kinds are registered from ONE entry point so a host cannot
+/// install half a pack: a vault carrying CAMPAIGN but not SAVED_QUERY would let
+/// a cohort exist with no way to name the query that derived it. Both bytes are
+/// caller-assigned from the `Crm` band — this module still owns no byte — and
+/// the first failure aborts, leaving the earlier registration in place for the
+/// operator to inspect rather than silently rolled back.
+///
+/// # Errors
+///
+/// Propagates [`Vault::register_structural_kind`] errors unchanged: band
+/// violations, byte collisions, and prefix collisions all keep their existing
+/// identities.
+pub fn register_crm_pack(
+    vault: &Vault,
+    campaign_type_byte: u8,
+    saved_query_type_byte: u8,
+) -> Result<CrmPackRegistration> {
+    Ok(CrmPackRegistration {
+        campaign: register_campaign_kind(vault, campaign_type_byte)?,
+        saved_query: crate::saved_query::register_saved_query_kind(vault, saved_query_type_byte)?,
+    })
+}
+
 #[cfg(test)]
 mod tests;

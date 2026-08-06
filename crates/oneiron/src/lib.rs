@@ -95,6 +95,7 @@ pub mod registry;
 pub mod repo_mutation;
 pub mod rerank;
 pub mod run_tree;
+pub mod saved_query;
 pub mod secret_custody;
 pub mod secret_manifest;
 pub mod serialize;
@@ -806,6 +807,15 @@ pub use crate::rerank::{RERANK_TOP_N_DEFAULT, RerankCandidate, RerankOptions, Re
 pub use crate::run_tree::{
     RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
     RunTreeRepair, RunTreeStatus, RunTreeTimestamps, render_run_tree,
+};
+pub use crate::saved_query::{
+    ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, EvaluationOutcome,
+    EvaluationRequest, EvidenceDependencies, FilterAst, MatchDecision, MatchVerdict, MatcherSpec,
+    MembershipCause, MembershipCommitOutcome, MembershipEvent, MembershipTransition,
+    MembershipWritePlan, PackDrift, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,
+    QueryScope, RelevantEvidence, SavedQueryDefinition, SavedQueryDerivationEnvelope,
+    SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryLifecycle, SavedQueryRecord,
+    UpdateSavedQueryRequest, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport,
 };
 pub use crate::session_lifecycle::{
     EndedSession, OpenSession, SessionClosePredicate, SessionEndReason, SessionEndWake,
