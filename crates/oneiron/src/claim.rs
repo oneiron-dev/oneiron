@@ -2442,6 +2442,46 @@ impl Vault {
         )
     }
 
+    /// Every stored CLAIM carrying `predicate`, resolved by scanning the type-0
+    /// index — reserved predicates included.
+    ///
+    /// The read door for engine-authored evidence that has no secondary index
+    /// of its own. A local index would be WRITE-side state: a claim that
+    /// arrived by replication materializes its entity and its `claim_of` edge
+    /// but no local index row, so an index-backed reader and a claim-backed
+    /// reader answer differently on a replica. This scan is the one read path
+    /// both can share.
+    pub(crate) fn claims_with_predicate_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        predicate: &str,
+    ) -> Result<Vec<(EntityId, ClaimBody)>> {
+        let mut rows = Vec::new();
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
+        {
+            let (key, _) = entry?;
+            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let raw = self
+                .store
+                .entities
+                .get(rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("claim type index"))?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                return Err(Error::CorruptedIndex("claim type index"));
+            }
+            let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            if body.predicate == predicate {
+                rows.push((id, body));
+            }
+        }
+        Ok(rows)
+    }
+
     pub(crate) fn claim_bodies_for_subjects_matching(
         &self,
         subjects: &[EntityId],

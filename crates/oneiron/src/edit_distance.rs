@@ -100,7 +100,6 @@ const SPAN_KEY_ACTOR: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[8];
 const SPAN_KEY_CLASS: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[9];
 
 const PROPOSAL_ARTIFACT_KEY_PREFIX: &[u8] = b"edit_distance/proposal_artifact/v1\0";
-const PEER_ACTOR_INDEX_PREFIX: &[u8] = b"edit_distance/peer_actor/v1\0";
 
 /// Value-map key carrying the bound peer id on an `actor.peer_binding` claim.
 const PEER_BINDING_VALUE_KEY_PEER: &str = "peer";
@@ -264,12 +263,32 @@ pub struct FinalizedProposalText {
 ///
 /// Called by `ProposalTextArtifact::finalize`; also the door a non-sync build
 /// would use to seed the reservoir from an already-finalized record.
+///
+/// **Write-once, read-before-write.** An artifact ref survives
+/// `from_snapshot`, so two clones of one artifact can each finalize their own
+/// divergent history under the SAME key. Last-writer-wins would swap ED-09's
+/// reservoir pair (proposed, final) for a different history's pair with no
+/// trace, so the divergence is surfaced instead: identical bytes are idempotent
+/// (a retried finalize is not an error), different bytes are an error.
 pub fn put_finalized_proposal_text(vault: &Vault, record: &FinalizedProposalText) -> Result<()> {
     let key = proposal_artifact_key(record.artifact_ref);
     let value = encode_finalized_proposal_text(record)?;
     vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &value)?;
-        Ok(())
+        let stored_matches = vault
+            .store
+            .vault_meta
+            .get(&*wtxn, &key)?
+            .map(|stored| stored == value.as_slice());
+        match stored_matches {
+            Some(true) => Ok(()),
+            Some(false) => Err(Error::InvariantViolation(
+                "proposal artifact is already finalized with a different record",
+            )),
+            None => {
+                vault.store.vault_meta.put(wtxn, &key, &value)?;
+                Ok(())
+            }
+        }
     })
 }
 
@@ -313,10 +332,10 @@ pub fn register_peer_actor(vault: &Vault, peer_id: u64, actor: &WriteActor) -> R
     let now = crate::unix_seconds_now();
     let actor = *actor;
     vault.with_write_txn(|wtxn| {
-        let superseded = peer_binding_rows_in_txn(vault, &*wtxn, peer_id)?
+        let superseded = peer_bindings_in_txn(vault, &*wtxn, peer_id)?
             .into_iter()
-            .filter(|(_, body)| body.lifecycle == ClaimLifecycleStatus::Active)
-            .map(|(id, _)| id)
+            .filter(|binding| binding.lifecycle == ClaimLifecycleStatus::Active)
+            .map(|binding| binding.claim_id)
             .collect::<Vec<_>>();
 
         let claim_id = EntityId::now();
@@ -343,10 +362,6 @@ pub fn register_peer_actor(vault: &Vault, peer_id: u64, actor: &WriteActor) -> R
             },
             now,
         )?;
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &peer_actor_index_key(peer_id, &claim_id), &[])?;
         for old_id in superseded {
             vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, &old_id, now)?;
         }
@@ -355,36 +370,27 @@ pub fn register_peer_actor(vault: &Vault, peer_id: u64, actor: &WriteActor) -> R
 }
 
 /// The actor bound to `peer_id` at `at` (Unix seconds), or `None` when no
-/// binding covers that instant.
+/// binding claims that instant.
 ///
-/// Two bindings whose windows both cover `at` with the same `valid_from` are
-/// AMBIGUOUS and resolve to `None`: a fallback must never pick between two
-/// actors.
+/// Resolution is by CLAIM on the second, never by recency: whenever two
+/// bindings naming different actors both claim `at`, the answer is `None` — a
+/// fallback must not pick between two actors. That covers a tie at `valid_from`
+/// and, because valid time is second-granular while ops are not, the
+/// RE-REGISTRATION SECOND: the row closing at T and the row opening at T both
+/// have a claim on an op stamped T, so charging it to either one is a guess.
 pub fn peer_actor_at(vault: &Vault, peer_id: u64, at: u64) -> Result<Option<WriteActor>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut covering = Vec::new();
-    for (_, body) in peer_binding_rows_in_txn(vault, &rtxn, peer_id)? {
-        if body.lifecycle == ClaimLifecycleStatus::Retracted || !binding_covers(&body, at) {
+    let mut resolved: Option<WriteActor> = None;
+    for binding in peer_bindings_in_txn(vault, &rtxn, peer_id)? {
+        if !binding.claims_second(at) {
             continue;
         }
-        covering.push((body.valid_from.unwrap_or(0), peer_binding_actor(&body)?));
+        match resolved {
+            Some(actor) if actor != binding.actor => return Ok(None),
+            _ => resolved = Some(binding.actor),
+        }
     }
-    let Some(newest) = covering.iter().map(|(from, _)| *from).max() else {
-        return Ok(None);
-    };
-    let mut winners = covering
-        .iter()
-        .filter(|(from, _)| *from == newest)
-        .map(|(_, actor)| *actor);
-    let first = winners.next().ok_or(Error::InvariantViolation(
-        "peer binding window resolution lost its own newest row",
-    ))?;
-    // Two bindings opened in the same second on different actors: ambiguous.
-    Ok(if winners.any(|actor| actor != first) {
-        None
-    } else {
-        Some(first)
-    })
+    Ok(resolved)
 }
 
 /// The peer's currently ACTIVE binding, or `None` when the peer has none.
@@ -394,13 +400,14 @@ pub fn peer_actor_at(vault: &Vault, peer_id: u64, at: u64) -> Result<Option<Writ
 /// is corruption, not ambiguity — so this reports it instead of choosing.
 pub fn active_peer_actor(vault: &Vault, peer_id: u64) -> Result<Option<WriteActor>> {
     let rtxn = vault.store.env.read_txn()?;
-    let active = peer_binding_rows_in_txn(vault, &rtxn, peer_id)?
+    let active = peer_bindings_in_txn(vault, &rtxn, peer_id)?
         .into_iter()
-        .filter(|(_, body)| body.lifecycle == ClaimLifecycleStatus::Active)
+        .filter(|binding| binding.lifecycle == ClaimLifecycleStatus::Active)
+        .map(|binding| binding.actor)
         .collect::<Vec<_>>();
     match active.as_slice() {
         [] => Ok(None),
-        [(_, body)] => peer_binding_actor(body).map(Some),
+        [actor] => Ok(Some(*actor)),
         _ => Err(Error::InvariantViolation(
             "peer has more than one active actor binding",
         )),
@@ -410,21 +417,25 @@ pub fn active_peer_actor(vault: &Vault, peer_id: u64) -> Result<Option<WriteActo
 /// The stamp-trust rule: whether a change authored by `peer_id` at `at` may be
 /// attributed to the actor its commit message names.
 ///
-/// A commit message replicates to every peer that syncs the doc, so honoring a
-/// stamp unconditionally would let a remote peer attribute its own edits to
-/// somebody else's actor. The rule is therefore: **a stamp is honored unless
-/// the stamped actor is bound to a DIFFERENT peer** at commit time.
+/// A commit message replicates to every peer that syncs the doc, and
+/// `WriteActor::new` / `ProposalTextArtifact::edit_as` are public — so a stamp
+/// is an unauthenticated assertion until a binding vouches for it. The rule
+/// (ARCH-0056 §2): **a stamp is honored only when the stamped actor is bound to
+/// THIS peer** at commit time.
 ///
-/// * Actor bound to this peer → honored; the binding vouches for the stamp.
-/// * Actor bound to another peer → rejected; that is exactly the forgery the
-///   rule exists to stop, and the span falls back to this peer's own binding.
-/// * Actor bound to no peer → honored. A device peer hosts more than one
-///   actor (a human and an agent on one machine, two agents on one host), and
-///   that finer-than-peer grain is the whole reason the stamp exists. Under a
-///   stricter "must be bound to this peer" reading, an honored stamp could
-///   only ever repeat what the binding already says — the stamp channel would
-///   carry no information at all, and one-device human-vs-agent attribution,
-///   which ARCH-0056 §2 names, would be unreachable.
+/// * Actor bound to this peer → honored; the binding is the evidence.
+/// * Actor bound to another peer → rejected; that is the forgery the rule
+///   exists to stop, and the span falls back to this peer's own binding.
+/// * Actor bound to NO peer → also rejected. An unregistered actor is not a
+///   weaker claim than a mismatched one, it is the same claim with no evidence
+///   at all: honoring it makes the stamp a write door into attribution, since
+///   any caller can mint a `WriteActor` for an entity it does not speak for.
+///
+/// Consequence, deliberately accepted here: an honored stamp can only agree
+/// with the binding, so co-resident actors on one device peer are
+/// indistinguishable until each is bound. Widening the rule to admit
+/// unregistered actors is a BLUEPRINT amendment, not an implementation choice —
+/// it is banked for the deviation board, not taken in code.
 pub fn peer_actor_stamp_is_honored(
     vault: &Vault,
     peer_id: u64,
@@ -432,26 +443,9 @@ pub fn peer_actor_stamp_is_honored(
     actor: &WriteActor,
 ) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
-    for claim_id in vault.claims_for_subject_in_txn(&rtxn, &actor.entity_ref())? {
-        let Some(body) = vault.get_claim_in_txn(&rtxn, &claim_id)? else {
-            continue;
-        };
-        if body.predicate != PREDICATE_ACTOR_PEER_BINDING
-            || body.lifecycle == ClaimLifecycleStatus::Retracted
-            || !binding_covers(&body, at)
-        {
-            continue;
-        }
-        if peer_binding_peer_id(&body)? != peer_id {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-/// Whether a binding's valid-time window covers `at`.
-fn binding_covers(body: &ClaimBody, at: u64) -> bool {
-    body.valid_from.unwrap_or(0) <= at && body.valid_to.is_none_or(|to| at < to)
+    Ok(peer_bindings_in_txn(vault, &rtxn, peer_id)?
+        .into_iter()
+        .any(|binding| binding.claims_second(at) && binding.actor == *actor))
 }
 
 fn peer_binding_value(peer_id: u64, class: EdgeActorClass) -> Value {
@@ -467,80 +461,91 @@ fn peer_binding_value(peer_id: u64, class: EdgeActorClass) -> Value {
     ])
 }
 
-fn peer_binding_actor(body: &ClaimBody) -> Result<WriteActor> {
-    let ClaimSubject::Entity(entity_ref) = body.subject else {
-        return Err(Error::InvalidClaimBody(
-            "peer binding subject must be an actor entity",
-        ));
-    };
-    let class = binding_field(body, PEER_BINDING_VALUE_KEY_CLASS)?
-        .as_str()
-        .and_then(actor_class_from_token)
-        .ok_or(Error::InvalidClaimBody(
-            "peer binding value must carry a known actor class",
-        ))?;
-    Ok(WriteActor::new(entity_ref, class))
+/// One resolved `actor.peer_binding` row: the actor a peer was bound to, and
+/// the valid-time window that binding speaks for.
+struct PeerBinding {
+    claim_id: EntityId,
+    actor: WriteActor,
+    lifecycle: ClaimLifecycleStatus,
+    valid_from: u64,
+    valid_to: Option<u64>,
 }
 
-fn peer_binding_peer_id(body: &ClaimBody) -> Result<u64> {
-    binding_field(body, PEER_BINDING_VALUE_KEY_PEER)?
-        .as_u64()
-        .ok_or(Error::InvalidClaimBody(
-            "peer binding value must carry a peer id",
-        ))
+impl PeerBinding {
+    /// Reads a binding row bound to `peer_id`.
+    ///
+    /// `None` when the row names another peer, or when its value map is
+    /// malformed — a row that binds nothing is skipped rather than failing
+    /// every attribution read. Skipping can only ever REMOVE evidence (one more
+    /// device-peer fallback), never name a wrong actor, which is the safe
+    /// direction for a predicate that arrives by replication.
+    fn from_row(claim_id: EntityId, body: &ClaimBody, peer_id: u64) -> Option<Self> {
+        if peer_binding_field(body, PEER_BINDING_VALUE_KEY_PEER)?.as_u64()? != peer_id {
+            return None;
+        }
+        let ClaimSubject::Entity(entity_ref) = body.subject else {
+            return None;
+        };
+        let class = actor_class_from_token(
+            peer_binding_field(body, PEER_BINDING_VALUE_KEY_CLASS)?.as_str()?,
+        )?;
+        Some(Self {
+            claim_id,
+            actor: WriteActor::new(entity_ref, class),
+            lifecycle: body.lifecycle,
+            valid_from: body.valid_from.unwrap_or(0),
+            valid_to: body.valid_to,
+        })
+    }
+
+    /// Whether this binding has a claim on second `at`.
+    ///
+    /// Valid time is second-granular; ops are not. Both ends are therefore
+    /// INCLUSIVE: a binding closed at second T still speaks for an op stamped
+    /// T, exactly as its successor opened at T does. Resolving that second by
+    /// the exclusive end would charge pre-switch ops to the actor registered
+    /// after them. A retracted row is withdrawn evidence and claims nothing.
+    const fn claims_second(&self, at: u64) -> bool {
+        !matches!(self.lifecycle, ClaimLifecycleStatus::Retracted)
+            && self.valid_from <= at
+            && match self.valid_to {
+                Some(to) => at <= to,
+                None => true,
+            }
+    }
 }
 
-fn binding_field<'a>(body: &'a ClaimBody, key: &str) -> Result<&'a Value> {
+/// Every `actor.peer_binding` row bound to `peer_id` — the ONE read path both
+/// resolvers share.
+///
+/// Bindings resolve out of the CLAIM substrate itself, which is what
+/// replicates. A local `vault_meta` peer index would be write-side state: a
+/// replica holding a replicated binding claim materializes the claim entity and
+/// its `claim_of` edge but no index row, so an index-backed resolver would
+/// answer "no binding" for a claim that is plainly readable through its
+/// subject. Two read paths that disagree on a replica is the whole failure —
+/// the cost of the shared path is one type-0 scan per resolution, paid at
+/// finalize.
+fn peer_bindings_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    peer_id: u64,
+) -> Result<Vec<PeerBinding>> {
+    Ok(vault
+        .claims_with_predicate_in_txn(rtxn, PREDICATE_ACTOR_PEER_BINDING)?
+        .into_iter()
+        .filter_map(|(claim_id, body)| PeerBinding::from_row(claim_id, &body, peer_id))
+        .collect())
+}
+
+fn peer_binding_field<'a>(body: &'a ClaimBody, key: &str) -> Option<&'a Value> {
     let Value::Map(entries) = &body.value else {
-        return Err(Error::InvalidClaimBody("peer binding value must be a map"));
+        return None;
     };
     entries
         .iter()
         .find(|(entry_key, _)| entry_key.as_str() == Some(key))
         .map(|(_, value)| value)
-        .ok_or(Error::InvalidClaimBody("peer binding value is incomplete"))
-}
-
-fn peer_binding_rows_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    peer_id: u64,
-) -> Result<Vec<(EntityId, ClaimBody)>> {
-    let mut rows = Vec::new();
-    let prefix = peer_actor_index_prefix(peer_id);
-    for entry in vault.store.vault_meta.prefix_iter(rtxn, &prefix)? {
-        let (key, _) = entry?;
-        let claim_id = peer_actor_index_claim_id(&key)?;
-        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
-            continue;
-        };
-        if body.predicate == PREDICATE_ACTOR_PEER_BINDING {
-            rows.push((claim_id, body));
-        }
-    }
-    Ok(rows)
-}
-
-fn peer_actor_index_prefix(peer_id: u64) -> Vec<u8> {
-    let mut prefix = Vec::with_capacity(PEER_ACTOR_INDEX_PREFIX.len() + std::mem::size_of::<u64>());
-    prefix.extend_from_slice(PEER_ACTOR_INDEX_PREFIX);
-    prefix.extend_from_slice(&peer_id.to_be_bytes());
-    prefix
-}
-
-fn peer_actor_index_key(peer_id: u64, claim_id: &EntityId) -> Vec<u8> {
-    let mut key = peer_actor_index_prefix(peer_id);
-    key.extend_from_slice(claim_id.as_bytes());
-    key
-}
-
-fn peer_actor_index_claim_id(key: &[u8]) -> Result<EntityId> {
-    let start = PEER_ACTOR_INDEX_PREFIX.len() + std::mem::size_of::<u64>();
-    let bytes: [u8; ENTITY_ID_LEN] = key
-        .get(start..)
-        .and_then(|tail| tail.try_into().ok())
-        .ok_or(Error::CorruptedIndex("peer actor index key"))?;
-    EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex("peer actor index key"))
 }
 
 /// The pinned wire token for an actor class.

@@ -19,18 +19,22 @@
 //! the very version it names. Instead the opening commit marks itself
 //! ([`StampKind::Open`]) and the window base is derived as the version right
 //! after that change. A reopened artifact therefore needs nothing but its
-//! snapshot bytes.
+//! snapshot bytes. EXACTLY ONE open marker is admissible: the marker is a
+//! commit message, and commit messages replicate, so "the latest open marker
+//! wins" would let a synced peer move the window base forward over earlier
+//! edits. See [`ProposalTextArtifact::finalize`].
 //!
 //! # Trust
 //!
 //! Commit messages replicate, so a remote peer can write any stamp it likes.
-//! A stamp is honored unless the actor it names is bound to a DIFFERENT peer
+//! A stamp is honored only when the actor it names is bound to the WRITING peer
 //! at commit time — see
 //! [`peer_actor_stamp_is_honored`](crate::edit_distance::peer_actor_stamp_is_honored)
-//! for the rule and why it is drawn there. A rejected stamp falls back to the
-//! writing peer's own binding, and failing that to the device peer. No public
-//! door accepts a caller-supplied stamp string — [`ProposalTextArtifact`]
-//! builds every stamp from the authenticated [`WriteActor`] in hand.
+//! for the rule and why it is drawn there. A rejected stamp (mismatched or
+//! unregistered actor) falls back to the writing peer's own binding, and
+//! failing that to the device peer. No public door accepts a caller-supplied
+//! stamp string — [`ProposalTextArtifact`] builds every stamp from the
+//! authenticated [`WriteActor`] in hand.
 
 use std::ops::ControlFlow;
 
@@ -242,25 +246,38 @@ impl ProposalTextArtifact {
     }
 
     /// The version right after the opening commit — the window's lower bound.
+    ///
+    /// Fails closed on a SECOND open marker rather than picking one. The marker
+    /// rides a commit message, which replicates: a peer that syncs the artifact
+    /// can commit its own `open` stamp, and honoring the latest one would move
+    /// the base past every edit before it — dropping them out of the window
+    /// with no trace. Replay-equality cannot catch that, because replay starts
+    /// at the shifted base and reconstructs the final text perfectly from
+    /// there. Two open markers means the artifact's history is not the history
+    /// this engine wrote, so there is nothing to attribute.
     fn window_base(&self) -> Result<Frontiers> {
         let heads = self.doc.oplog_frontiers().to_vec();
-        let mut open_change = None;
+        let mut opens = Vec::new();
         self.doc
             .travel_change_ancestors(&heads, &mut |meta: ChangeMeta| {
                 if matches!(
                     parse_stamp(meta.message.as_deref()),
                     Some((StampKind::Open, _))
                 ) {
-                    open_change = Some(meta);
-                    return ControlFlow::Break(());
+                    opens.push(meta);
                 }
                 ControlFlow::Continue(())
             })
             .map_err(|_| Error::CorruptedIndex("proposal artifact history"))?;
-        let meta = open_change.ok_or(Error::CorruptedIndex(
-            "proposal artifact has no open commit",
-        ))?;
-        Ok(Frontiers::from_id(change_last_op(&meta)?))
+        match opens.as_slice() {
+            [] => Err(Error::CorruptedIndex(
+                "proposal artifact has no open commit",
+            )),
+            [meta] => Ok(Frontiers::from_id(change_last_op(meta)?)),
+            _ => Err(Error::CorruptedIndex(
+                "proposal artifact has more than one open commit",
+            )),
+        }
     }
 
     /// Replays every change in the window into `scratch`, one change at a

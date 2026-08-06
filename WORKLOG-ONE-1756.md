@@ -77,7 +77,12 @@ is green.
    ONE-1739 precedent). CLAIMS.md's `claim.rs` row is unaffected — still one
    additive const, still no registry entry, no collision with 1759's `edit_cost`.
 
-2. **Stamp-trust rule widened** — blueprint: "honored only when the stamped
+2. **~~Stamp-trust rule widened~~ — REVERSED in the VERDICT-FIX round; the
+   landed rule is now the blueprint's.** The reasoning below stands as the
+   PROPOSED AMENDMENT the board rules on (see VERDICT-FIX F1); it is no longer a
+   description of the code. Original entry:
+
+   **Stamp-trust rule widened** — blueprint: "honored only when the stamped
    actor is registered to the change's peer; mismatch OR UNREGISTERED →
    fallback". Landed: **honored unless the stamped actor is bound to a DIFFERENT
    peer at commit time.** The security property is preserved verbatim (a remote
@@ -170,6 +175,12 @@ it compiles with `edit_distance` present and the Loro half cfg'd out.
 
 ## Simplify pass (K3, post-impl)
 
+> Superseded in part by the VERDICT-FIX round below: the peer index helpers
+> (`peer_actor_index_key`/`_prefix`/`_claim_id`) and `peer_actor_at`'s
+> lost-witness `InvariantViolation` no longer exist — F5 replaced the index with
+> a single claim-substrate read path and F4 replaced recency resolution with one
+> window predicate.
+
 **Verdict: NO EDIT WARRANTED.** Deletion-biased pass over the lane diff; every
 candidate was scrutinized and rejected:
 
@@ -196,6 +207,187 @@ Gates re-run at the simplify point: `cargo fmt --check` clean · clippy
 files · 14/14 lane tests green `--all-features`, 5/5 green non-sync (the
 `proposal_text` half correctly cfg'd out).
 
+## VERDICT-FIX (round 1 — 5 verdict-verified REAL findings)
+
+Base `62735dd64`. Four findings were reproduced empirically before the fix
+(scratch harness `/tmp/one1756-repro`, an external crate driving only the public
+API); F5 was verdict-verified by derivation and then reproduced in-crate against
+the pre-fix source. Every fix carries a red-before / green-after receipt.
+
+**Baseline (pre-fix) harness output:**
+
+```
+UNREGISTERED_ATTR=Stamped(WriteActor { .., actor_class: Agent })   # F1 — the VICTIM's actor
+DIVERGENT_FINAL_STORED=draft right                                 # F3 — clone 2 overwrote clone 1
+PRE_SWITCH_EDIT_CHARGED_TO_NEW=true                                # F4
+SHIFTED_PROPOSED_TEXT=seed hidden                                  # F2 — base moved past the edit
+SHIFTED_WINDOW_SPANS=1
+```
+
+**Post-fix, same harness:**
+
+```
+UNREGISTERED_ATTR=Registered(WriteActor { .., actor_class: Human }) # the writing peer's own binding
+DIVERGENT_FINALIZE_REFUSED=true
+DIVERGENT_FINAL_STORED=draft left                                   # first record survives
+PRE_SWITCH_EDIT_CHARGED_TO_NEW=false
+SHIFTED_FINALIZE_REFUSED=true err=corrupted index: proposal artifact has more than one open commit
+```
+
+### F1 (P1) `unregistered-actor-stamp-is-honored` → the blueprint rule
+
+`peer_actor_stamp_is_honored` rejected a stamp only when it found an overlapping
+binding to ANOTHER peer, so an UNREGISTERED stamped actor fell through to
+`Ok(true)`. `WriteActor::new` and `edit_as` are public and `commit_msg`
+replicates, so that was an attribution forgery channel: any caller could mint a
+`WriteActor` for an entity it does not speak for and have the engine record it
+as `Stamped`.
+
+**Fix (chokepoint, `edit_distance.rs`):** the rule is now the ratified blueprint
+line — a stamp is honored ONLY when the stamped actor is bound to THIS peer at
+commit time; mismatch OR unregistered → registration fallback → device peer. The
+rule reads the same binding rows the fallback does (see F5), so the two can no
+longer disagree.
+
+**Deviation-2 (the landed "stamp-trust rule widened") is hereby REVERSED in
+code.** The implementer's grounding — that under the literal rule the stamp
+channel is information-free, and one-device human-vs-agent attribution
+(blueprint §2 / done-means #1) becomes unreachable — is a real argument about
+the SPEC, not about this implementation, and it is **banked as a proposed
+blueprint amendment for the GATE-2 board**:
+
+> *Proposed amendment (needs owner ruling):* admit an unregistered stamped actor
+> when the writing peer has an ACTIVE binding and the stamped actor is
+> co-resident by some positive evidence (e.g. a second binding row for the same
+> peer, or an `actor.*` claim tying the actor to the peer's device). The shape
+> that keeps both properties is "one peer may hold MORE THAN ONE active binding"
+> — then co-resident actors are distinguishable AND every honored stamp still
+> rests on engine-authored evidence. That is a registration-model change
+> (`active_peer_actor`'s one-row invariant, the supersede rule), which is why it
+> belongs to the blueprint and not to a fix round.
+
+Until ruled, co-resident actors on one device peer must each be registered to be
+told apart; the fallback is honest (`Registered`), never a guess.
+
+### F2 (P1) `forged-open-marker-truncates-edit-window` → fail closed
+
+`window_base` traversed from the final heads and stopped at the FIRST (latest)
+commit parsing as `StampKind::Open`. The marker rides a commit MESSAGE, which
+replicates, so a synced peer could commit its own `open` stamp and move
+`proposed_ref` past every earlier edit — and finalize's replay-equality check
+cannot catch it, because replay starts at the shifted base and reconstructs the
+final text perfectly from there (baseline: `proposed_text` became `seed hidden`,
+window collapsed to one span).
+
+**Fix (`proposal_text.rs::window_base`):** exactly-one-open enforcement. The
+traversal no longer breaks early; it collects every open marker and matches on
+the slice — zero → `no open commit` (unchanged), one → the base, more than one →
+`Error::CorruptedIndex("proposal artifact has more than one open commit")`.
+Fail-closed as specified: an artifact whose history is not the history this
+engine wrote has nothing to attribute.
+
+### F3 (P2) `divergent-finalize-silently-overwrites-artifact` → write-once
+
+`put_finalized_proposal_text` was blind last-writer-wins, and `from_snapshot`
+preserves `artifact_ref`, so two clones of one artifact each finalized their own
+history under the same key — silently swapping ED-09's reservoir (proposed,
+final) pair.
+
+**Fix:** read-before-write inside the existing write txn — identical bytes are
+idempotent `Ok(())` (a retried finalize is not an error), different bytes are
+refused and the stored record survives.
+
+*Packet note:* the house pattern for this shape is a dedicated error variant
+(`RedactionReceiptDivergence`, `IdentityTopologyEventDivergence`). `error.rs` is
+outside this fix's packet, so the refusal rides
+`Error::InvariantViolation("proposal artifact is already finalized with a
+different record")`. Promoting it to `ProposalArtifactDivergence { artifact }` is
+a one-line follow-up when the packet allows.
+
+### F4 (P2) `second-granularity switch misattribution` → the switch second is ambiguous
+
+A re-registration writes `valid_to = T` (exclusive) on the old row and
+`valid_from = T` on the new one, so ops stamped exactly T — including ops written
+BEFORE the switch — resolved to the NEW actor. Valid time is second-granular;
+op timestamps are not, so the exclusive end is a tie-break the clock cannot
+justify. (The lane's own re-registration fixture dodged this by pinning
+`switch_at = now + 10`.)
+
+**Fix:** one window predicate, `PeerBinding::claims_second`, with BOTH ends
+inclusive — a row closing at T still speaks for second T, exactly as its
+successor does. `peer_actor_at` then resolves by CLAIM rather than by recency:
+two claimants naming different actors on one second → `None` → `DevicePeer`,
+"never a guess between two actors". This also subsumes the old
+`valid_from`-tie special case, so the max-`valid_from` / lost-witness
+`InvariantViolation` branch is deleted. The stamp rule shares the predicate, so a
+stamp naming EITHER actor that honestly held the peer that second is still
+honored — the stamp resolves the ambiguity it does not create.
+
+### F5 (P2) `replica-invisible binding index` → ONE read path
+
+The peer→binding lookup went through a local `vault_meta` index
+(`edit_distance/peer_actor/v1\0`) while the stamp rule read claims BY SUBJECT
+through `claim_of` edges. Replication materializes claim entities and edges but
+no local index rows, so on a replica the two read paths answered differently for
+the same claim. Reproduced in-crate against the pre-fix source with a binding
+written exactly as replication lands it (claim + edge, no index row):
+
+```
+probe_f5_replicated_binding_read_paths_agree ... FAILED
+  left: (true, None)          # stamp rule sees the binding, peer_actor_at does not
+ right: (true, Some(actor))
+```
+
+**Fix:** the `vault_meta` peer index is DELETED, and both resolvers read the
+CLAIM substrate — which is what replicates — through one helper,
+`peer_bindings_in_txn`, over a new `Vault::claims_with_predicate_in_txn`
+(`claim.rs`, the one out-of-module read the fix needed). One parse site
+(`PeerBinding::from_row`), one window predicate, one candidate set:
+`peer_actor_at`, `active_peer_actor` and `peer_actor_stamp_is_honored` cannot
+diverge because they no longer read different things. Pre-release, the orphaned
+index rows are inert (no-legacy law).
+
+*Cost:* the O(1) index lookup becomes one type-0 (CLAIM) scan per resolution,
+paid at finalize over the artifact's window. Correct-and-shared beats fast-and-
+divergent here; if a profile ever shows it, the fix is a peer→binding index that
+the REPLICATED write path also maintains (a sync-side chokepoint), never a
+second read path bolted onto the local one.
+
+*Known hole (banked):* replicated binding rows are now trusted as evidence, and
+federated admission accepts the reserved predicate. A hostile replica can
+therefore add a second well-formed binding for a peer and force the switch/tie
+ambiguity — i.e. deny attribution (`DevicePeer`), never forge it. Malformed rows
+are skipped rather than poisoning the read, which is the same safe direction.
+Tightening admission for `actor.peer_binding` is an admission-side question
+(`sync/selector.rs`), outside this packet.
+
+### Verification
+
+| gate | feature set | result |
+|---|---|---|
+| repro harness `/tmp/one1756-repro` | `sync` | all 4 markers flipped (above) |
+| in-crate F5 probe on pre-fix source | `--all-features` | FAILED before, green after |
+| `cargo fmt --check` | — | clean |
+| `cargo clippy --all-targets` | `--all-features` | **zero findings** |
+| `cargo build -p oneiron` | default (non-sync) | **green**; only the pre-existing `batch.rs:4348` dead-code warning that is already on main |
+| `cargo test -p oneiron --all-features` | `--all-features` | **green** — 3528 passed / 0 failed / 17 ignored (lib), 3862 passed / 0 failed across all 42 binaries, incl. the full sync suite |
+| lane tests | `--all-features` | 19 (was 14): +5 new, 3 rewritten to the fixed semantics |
+| lane tests | default (non-sync) | 9/9 green (the `proposal_text` half correctly cfg'd out) |
+
+Tests rewritten because they pinned the DEVIATED rule (not because they were in
+the way): `co_resident_actors_on_one_peer_are_distinguished_by_the_stamp` →
+`an_unregistered_stamped_actor_falls_back_to_the_peer_registration`;
+`an_unregistered_peer_falls_back_to_the_device_peer`'s first half now expects
+`DevicePeer`; `a_failed_edit_still_lands_under_its_own_actor` now binds the
+agent to the peer and asserts TWO spans with distinct trust arms (`Stamped` then
+`Registered`), which is the no-fold property it actually exists to pin.
+
+New: `the_reregistration_second_is_ambiguous`,
+`an_unregistered_stamped_actor_is_not_honored`,
+`a_replicated_binding_resolves_through_both_read_paths`,
+`a_divergent_finalize_cannot_overwrite_the_stored_record`,
+`a_second_open_marker_is_refused_rather_than_shifting_the_window`.
+
 ## Seams / notes for ED-01+
 
 - `LoroOpRef` is `Frontiers::encode()` bytes. ED-01's `source=recorded_ops` lane
@@ -206,8 +398,9 @@ files · 14/14 lane tests green `--all-features`, 5/5 green non-sync (the
   O(spans × text) in the record — deliberate at proposal scale (a span handed to
   an ED-04 miner in isolation still describes its own substitution) and worth
   revisiting only if proposal bodies ever grow past human scale.
-- Multi-actor-per-peer attribution now works via the stamp, but an UNSTAMPED
-  out-of-band edit on a shared-peer device still resolves to that peer's single
-  binding. Distinguishing co-resident actors on unstamped ops is ED-02 territory
-  (the ticket names out-of-band edits as exactly that).
+- Co-resident actors on ONE device peer are indistinguishable until each is
+  bound: under the blueprint's stamp rule (restored in VERDICT-FIX F1) an
+  honored stamp can only agree with a binding. Both the stamped and the
+  unstamped shared-peer cases therefore wait on the banked amendment
+  (multi-binding peers) or on ED-02, which owns out-of-band edits.
 - `distance.rs` (embedding cosine) is untouched — the name-collision law holds.

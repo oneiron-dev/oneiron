@@ -93,8 +93,105 @@ fn reregistration_supersedes_and_stays_time_resolvable() {
         Some(human)
     );
     assert_eq!(
-        peer_actor_at(&vault, peer, switch_at).expect("at switch"),
+        peer_actor_at(&vault, peer, switch_at + 1).expect("after switch"),
         Some(agent)
+    );
+}
+
+/// The re-registration SECOND itself resolves to nothing.
+///
+/// Valid time is second-granular while ops are not, so an op stamped with the
+/// switch second may have been written on either side of the switch. Resolving
+/// it by the exclusive window end charges pre-switch ops to the actor that was
+/// registered AFTER them — a guess between two actors, which the fallback is
+/// not allowed to make.
+#[test]
+fn the_reregistration_second_is_ambiguous() {
+    let (_tmp, vault) = temp_vault();
+    let human = put_actor(&vault, EdgeActorClass::Human);
+    let agent = put_actor(&vault, EdgeActorClass::Agent);
+    let peer = 43_u64;
+
+    write_binding_at(&vault, peer, &human, 100, Some(200));
+    write_binding_at(&vault, peer, &agent, 200, None);
+
+    assert_eq!(
+        peer_actor_at(&vault, peer, 199).expect("before"),
+        Some(human)
+    );
+    assert_eq!(
+        peer_actor_at(&vault, peer, 200).expect("switch second"),
+        None
+    );
+    assert_eq!(
+        peer_actor_at(&vault, peer, 201).expect("after"),
+        Some(agent)
+    );
+
+    // The stamp is a second channel, not a guess: it names ONE of the two
+    // actors that held the peer that second, and both held it honestly.
+    for actor in [human, agent] {
+        assert!(
+            peer_actor_stamp_is_honored(&vault, peer, 200, &actor).expect("stamp rule"),
+            "a stamp naming an actor bound that second stays honored"
+        );
+    }
+}
+
+/// A stamp naming an actor bound to NO peer is not evidence.
+///
+/// `WriteActor::new` is public, so an unregistered stamped actor is exactly as
+/// forgeable as a mismatched one — honoring it would make the commit message a
+/// write door into attribution (ARCH-0056 §2 / blueprint line 15: mismatch OR
+/// unregistered → registration fallback, never the stamped actor).
+#[test]
+fn an_unregistered_stamped_actor_is_not_honored() {
+    let (_tmp, vault) = temp_vault();
+    let bound = put_actor(&vault, EdgeActorClass::Human);
+    let unregistered = put_actor(&vault, EdgeActorClass::Agent);
+    let peer = 44_u64;
+
+    write_binding_at(&vault, peer, &bound, 100, None);
+
+    assert!(
+        peer_actor_stamp_is_honored(&vault, peer, 150, &bound).expect("bound actor"),
+        "the peer's own bound actor is vouched for"
+    );
+    assert!(
+        !peer_actor_stamp_is_honored(&vault, peer, 150, &unregistered).expect("unregistered"),
+        "an unregistered stamped actor falls back to the registration"
+    );
+    // Before its binding opens, even the bound actor's stamp is unvouched.
+    assert!(!peer_actor_stamp_is_honored(&vault, peer, 99, &bound).expect("before the window"));
+}
+
+/// Both binding read paths answer from the CLAIM substrate, so a row that
+/// arrived by REPLICATION — claim entity and `claim_of` edge materialized, no
+/// local index bookkeeping — resolves identically through each.
+///
+/// A local secondary index is write-side state: it exists only on the vault
+/// that registered the peer. Indexing the peer→actor lookup while the stamp
+/// rule read claims by subject made the two disagree on every replica.
+#[test]
+fn a_replicated_binding_resolves_through_both_read_paths() {
+    let (_tmp, vault) = temp_vault();
+    let remote = put_actor(&vault, EdgeActorClass::Agent);
+    let peer = 0x5eed_u64;
+
+    // Exactly what a replicated binding claim materializes locally.
+    write_binding_at(&vault, peer, &remote, 100, None);
+
+    assert_eq!(
+        peer_actor_at(&vault, peer, 150).expect("fallback path"),
+        Some(remote)
+    );
+    assert_eq!(
+        active_peer_actor(&vault, peer).expect("active path"),
+        Some(remote)
+    );
+    assert!(
+        peer_actor_stamp_is_honored(&vault, peer, 150, &remote).expect("stamp path"),
+        "the stamp rule must see the same binding the fallback sees"
     );
 }
 
@@ -168,6 +265,48 @@ fn finalized_record_round_trips() {
     );
 }
 
+/// Retention is write-once per artifact ref: re-persisting the same record is
+/// idempotent, a DIFFERENT record under the same ref is refused.
+///
+/// The ref survives `from_snapshot`, so two clones of one artifact each
+/// finalize their own history under the same key. Last-writer-wins would swap
+/// ED-09's reservoir pair for a divergent clone's pair with no trace.
+#[test]
+fn a_divergent_finalize_cannot_overwrite_the_stored_record() {
+    let (_tmp, vault) = temp_vault();
+    let artifact_ref = ProposalArtifactRef::mint();
+    let record = FinalizedProposalText {
+        artifact_ref,
+        proposed_ref: LoroOpRef::from_bytes(vec![1]),
+        final_ref: LoroOpRef::from_bytes(vec![2]),
+        ops_by_actor: Vec::new(),
+        proposed_text: "draft".to_owned(),
+        final_text: "draft left".to_owned(),
+        source_turn_ref: None,
+    };
+
+    put_finalized_proposal_text(&vault, &record).expect("first finalize");
+    put_finalized_proposal_text(&vault, &record).expect("re-finalizing the same bytes is a no-op");
+
+    let divergent = FinalizedProposalText {
+        final_text: "draft right".to_owned(),
+        ..record.clone()
+    };
+    let err = put_finalized_proposal_text(&vault, &divergent)
+        .expect_err("a divergent record must not overwrite");
+    assert!(
+        matches!(err, Error::InvariantViolation(msg) if msg.contains("already finalized")),
+        "{err:?}"
+    );
+    assert_eq!(
+        finalized_proposal_text(&vault, artifact_ref)
+            .expect("read")
+            .expect("present"),
+        record,
+        "the first record survives the refused write"
+    );
+}
+
 /// The class token is a storage ABI, pinned independently of Gate's policy key.
 #[test]
 fn actor_class_tokens_round_trip() {
@@ -188,6 +327,9 @@ fn actor_class_tokens_round_trip() {
 
 /// Writes a binding row with an explicit window, bypassing `unix_seconds_now`
 /// so a test can pin the instants a resolution depends on.
+///
+/// Writes the CLAIM and nothing else — which is also exactly the shape a
+/// REPLICATED binding lands in on a peer vault.
 fn write_binding_at(
     vault: &Vault,
     peer_id: u64,
@@ -219,10 +361,6 @@ fn write_binding_at(
                 },
                 valid_from,
             )?;
-            vault
-                .store
-                .vault_meta
-                .put(wtxn, &peer_actor_index_key(peer_id, &claim_id), &[])?;
             Ok(())
         })
         .expect("write binding");
@@ -234,11 +372,13 @@ fn write_binding_at(
 fn supersede_with_actor_at(vault: &Vault, peer_id: u64, actor: &WriteActor, at: u64) {
     let new_id = write_binding_at(vault, peer_id, actor, at, None);
     let old_ids = vault
-        .with_write_txn(|wtxn| peer_binding_rows_in_txn(vault, &*wtxn, peer_id))
+        .with_write_txn(|wtxn| peer_bindings_in_txn(vault, &*wtxn, peer_id))
         .expect("read rows")
         .into_iter()
-        .filter(|(id, body)| *id != new_id && body.lifecycle == ClaimLifecycleStatus::Active)
-        .map(|(id, _)| id)
+        .filter(|binding| {
+            binding.claim_id != new_id && binding.lifecycle == ClaimLifecycleStatus::Active
+        })
+        .map(|binding| binding.claim_id)
         .collect::<Vec<_>>();
     vault
         .with_write_txn(|wtxn| {

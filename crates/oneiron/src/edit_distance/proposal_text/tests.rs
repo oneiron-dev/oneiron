@@ -69,11 +69,16 @@ fn two_peers_across_a_reopen_attribute_and_replay_exactly() {
     );
 }
 
-/// Two actors on ONE device peer: the peer binding cannot tell them apart, so
-/// the commit-message stamp is the only channel that can — and it is honored
-/// for the unbound co-resident actor while the bound one stays bound.
+/// A stamp naming an UNREGISTERED actor is not honored: it resolves to the
+/// writing peer's own registration, never to the actor the message names.
+///
+/// `WriteActor::new` and `edit_as` are public, so an unregistered stamped actor
+/// is exactly as forgeable as one belonging to another peer — an honored
+/// unregistered stamp would be an attribution write door. Distinguishing
+/// co-resident actors on one device peer therefore requires binding each of
+/// them; widening the rule is a blueprint amendment, banked for the board.
 #[test]
-fn co_resident_actors_on_one_peer_are_distinguished_by_the_stamp() {
+fn an_unregistered_stamped_actor_falls_back_to_the_peer_registration() {
     let (_tmp, vault) = temp_vault();
     let human = put_actor(&vault, EdgeActorClass::Human);
     let agent = put_actor(&vault, EdgeActorClass::Agent);
@@ -97,7 +102,11 @@ fn co_resident_actors_on_one_peer_are_distinguished_by_the_stamp() {
         .collect::<Vec<_>>();
     assert_eq!(
         actors,
-        vec![OpAttribution::Stamped(agent), OpAttribution::Stamped(human)]
+        vec![
+            OpAttribution::Registered(human),
+            OpAttribution::Stamped(human)
+        ],
+        "the agent's stamp is unvouched; the human's is bound to this peer"
     );
     assert_eq!(record.final_text, "draft reviewed.");
 }
@@ -139,11 +148,11 @@ fn an_unregistered_peer_falls_back_to_the_device_peer() {
         .expect("edit");
 
     let record = artifact.finalize(&vault).expect("finalize");
-    // `human` is bound to no peer, so its stamp is honored; the point of the
-    // fixture is that nothing resolves through `elsewhere`.
+    // Nothing vouches for this peer OR for `human`: the span is charged to the
+    // device peer, and in particular nothing resolves through `elsewhere`.
     assert_eq!(
         record.ops_by_actor.last().map(|(a, _)| *a),
-        Some(OpAttribution::Stamped(human))
+        Some(OpAttribution::DevicePeer)
     );
 
     let orphan = put_actor(&vault, EdgeActorClass::System);
@@ -266,8 +275,9 @@ fn stamp_parses_only_our_own_messages() {
     );
 }
 
-/// An edit that fails partway is still committed under the actor that made it:
-/// leaving its ops pending would fold them into the next actor's change.
+/// An edit that fails partway is still committed as its OWN change under its
+/// own stamp: leaving its ops pending would fold them into the next actor's
+/// change, and one change can carry only one attribution.
 #[test]
 fn a_failed_edit_still_lands_under_its_own_actor() {
     let (_tmp, vault) = temp_vault();
@@ -275,6 +285,7 @@ fn a_failed_edit_still_lands_under_its_own_actor() {
     let agent = put_actor(&vault, EdgeActorClass::Agent);
 
     let mut artifact = ProposalTextArtifact::open("base", &human, None).expect("open");
+    register_peer_actor(&vault, artifact.peer_id(), &agent).expect("register the agent");
     let failed = artifact.edit_as(&agent, |text| {
         insert_at(text, 0, "A")?;
         Err(Error::InvariantViolation("fixture failure"))
@@ -285,11 +296,62 @@ fn a_failed_edit_still_lands_under_its_own_actor() {
         .expect("human edit");
 
     let record = artifact.finalize(&vault).expect("finalize");
-    let actors = record
+    let spans = record
         .ops_by_actor
         .iter()
-        .map(|(attribution, _)| attribution.actor())
+        .map(|(attribution, span)| (*attribution, span.after_text.clone()))
         .collect::<Vec<_>>();
-    assert_eq!(actors, vec![Some(agent), Some(human)]);
+    // TWO changes, not one folded change: the failed edit committed under the
+    // agent's own (bound, honored) stamp, and the human's unvouched stamp then
+    // fell back to this peer's registration in a change of its own.
+    assert_eq!(
+        spans,
+        vec![
+            (OpAttribution::Stamped(agent), "Abase".to_owned()),
+            (OpAttribution::Registered(agent), "Abase!".to_owned()),
+        ]
+    );
     assert_eq!(record.final_text, "Abase!");
+}
+
+/// A SECOND `open` marker fails the artifact closed.
+///
+/// The marker rides a commit message, which replicates: a peer that syncs the
+/// artifact can commit its own `open` stamp, and taking the latest one would
+/// move `proposed_ref` past every edit before it. Replay-equality cannot catch
+/// that — replay starts at the shifted base and reconstructs the final text
+/// perfectly, while the earlier edits simply vanish from the window.
+#[test]
+fn a_second_open_marker_is_refused_rather_than_shifting_the_window() {
+    let (_tmp, vault) = temp_vault();
+    let human = put_actor(&vault, EdgeActorClass::Human);
+
+    let opened = ProposalTextArtifact::open("seed", &human, None).expect("open");
+    let snapshot = opened.export_snapshot().expect("snapshot");
+
+    // A synced peer forges a later open marker over its own edit.
+    let peer_doc = doc_from_snapshot(&snapshot).expect("reopen");
+    peer_doc.set_record_timestamp(true);
+    peer_doc
+        .get_text(TEXT_CONTAINER)
+        .insert(4, " hidden")
+        .expect("peer insert");
+    peer_doc.commit_with(CommitOptions::new().commit_msg(&stamp(StampKind::Open, &human)));
+
+    let mut forged =
+        ProposalTextArtifact::from_snapshot(&export_snapshot(&peer_doc).expect("export"))
+            .expect("reopen forged");
+    forged
+        .edit_as(&human, |text| {
+            insert_at(text, text.len_unicode(), " visible")
+        })
+        .expect("later edit");
+
+    let err = forged
+        .finalize(&vault)
+        .expect_err("two open markers must fail closed");
+    assert!(
+        matches!(err, Error::CorruptedIndex(msg) if msg.contains("more than one open commit")),
+        "{err:?}"
+    );
 }
