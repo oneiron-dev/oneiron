@@ -38,9 +38,10 @@
 //!   recurrence accumulates across sittings because nothing ever consumes it.
 //! * **Emissions are marked.** A cluster that emitted records a MINT-MARK, and
 //!   the mark lands in the SAME transaction as the proposal. A crash between
-//!   the two is therefore not a state: either both are there or neither is, so
-//!   a re-run cannot double-propose. The dedup check reads the mark inside that
-//!   same transaction's read view.
+//!   the two is therefore not a reachable state: either both are there or
+//!   neither is, so a replay finds the mark and emits once. (The dedup READ
+//!   precedes that transaction; what makes it sufficient is that the pass is
+//!   single-flight per vault — see "Where the pass runs".)
 //!
 //! # Hysteresis is a dial, not a wall
 //!
@@ -49,6 +50,16 @@
 //! [`MINER_REJECTION_COOLDOWN_SECS`] and may then speak again — the sibling of
 //! `DREAMER_GAP_DECAY_MS`'s escalate-or-let-go rule. Nagging is the failure
 //! mode; permanent silence after one "no" is the other one.
+//!
+//! # A proposal nobody can answer is not a proposal
+//!
+//! Both emissions are PROPOSALS, never applications, so both are worthless
+//! unless a decider can reach them. That makes two things load-bearing rather
+//! than cosmetic: the preference claim's envelope must carry the `Agent`-class
+//! Generated dreamer provenance `gate.rs` derives an INBOX GROUP KEY from, and
+//! it must NOT carry a session tag (see [`miner_envelope`]). [`MinerRun`] is
+//! shaped by that requirement, and the pass refuses rather than landing a
+//! proposal into a tray with no group.
 
 use std::collections::BTreeMap;
 
@@ -289,12 +300,12 @@ const fn invalid(reason: &'static str) -> Error {
 /// receipt id is in this engine (`gate:<hex>`, `proposal_outcome:<hex>`); the
 /// Δ side-ledger and ED-03's judgment ledger key on the same type.
 ///
-/// `actor` and `skill` are part of the bucket rather than derived from it. ARCH-0056
-/// §5 pins the scope as the `op × target class × skill/agent` cross, so a scope
-/// already names one actor — making that explicit is what lets the preference
-/// arm name a SUBJECT without ever guessing between two candidates. `skill` is
-/// the skill every citing amendment named, or `None` when they disagree or none
-/// did.
+/// `actor` is part of the bucket's KEY, not derived from it. ARCH-0056 §5 pins
+/// the scope as the `op × target class × skill/agent` cross, so a scope already
+/// names one actor — keying on it explicitly is what lets the preference arm
+/// name a SUBJECT without ever guessing between two candidates. `skill` IS
+/// derived: it is the skill every citing amendment named, and `None` when they
+/// disagree or none did, so a content arm never edits a skill on a split vote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubstitutionCluster {
     /// The `(op × target class × skill/agent)` axis this bucket lives on.
@@ -307,7 +318,8 @@ pub struct SubstitutionCluster {
     pub actor: EntityId,
     /// The skill every citing amendment rode, when they agree on one.
     pub skill: Option<EntityId>,
-    /// Distinct amendment receipts showing this substitution, oldest first.
+    /// Distinct amendment receipts showing this substitution, in receipt-id
+    /// order so two passes over one ledger cite the same list in the same order.
     pub receipt_refs: Vec<String>,
     /// `receipt_refs.len()` — the recurrence count K is compared against.
     pub count: u32,
