@@ -6,8 +6,8 @@
 //! of them:
 //!
 //! 1. the campaign-local home-node designation, re-checked immediately before
-//!    the consequence write so a node that lost leadership after claiming its
-//!    attempt cannot still write;
+//!    EACH consequence — the cohort write and the outward send — so a node that
+//!    lost leadership after claiming its attempt cannot still act on it;
 //! 2. the attempt lease plus LMDB's single-writer transaction;
 //! 3. ONE-1773's monotonic per-`(query, entity)` epoch watermark, compare-and-set
 //!    inside the commit txn;
@@ -1090,6 +1090,20 @@ pub fn derive_enrollment_outbound_request(
     }))
 }
 
+/// What one run of the outward leg did.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EnrollmentOutboundLeg {
+    /// The effect reached the chokepoint; this is what came back.
+    Dispatched(IntentDispatchResult),
+    /// The program step declares no outward leg.
+    NoOutboundStep,
+    /// Another node holds the designation; nothing was sent.
+    NotHomeNode(CampaignHomeNodeDesignation),
+    /// No node holds it; nothing was sent.
+    NoHomeNode,
+}
+
 /// Runs the outward leg for a claimed enrollment attempt.
 ///
 /// A thin bridge, on purpose. It resolves the same persisted refs the
@@ -1099,11 +1113,16 @@ pub fn derive_enrollment_outbound_request(
 /// never touches a connector, never opens a second ledger, and never mints a
 /// second idempotency scheme.
 ///
-/// The leg is SELF-CONTAINED: it takes only the attempt record, so a process
-/// that crashed after the cohort write and before the intent record resumes by
-/// calling exactly this, and one that crashed after the send replays the frozen
-/// bytes the ledger already holds. `Ok(None)` means the program step declares no
-/// outward leg.
+/// The leg is SELF-CONTAINED: it takes only the attempt record and the local
+/// node, so a process that crashed after the cohort write and before the intent
+/// record resumes by calling exactly this, and one that crashed after the send
+/// replays the frozen bytes the ledger already holds.
+///
+/// Being self-contained is exactly why it re-reads the designation itself. A
+/// node can apply the cohort row while designated, lose the designation, and
+/// come back for the send — no caller sequencing survives a crash and a
+/// handoff, so the leg that reaches TRANSPORT enforces the same leader-only
+/// authority as the leg that reaches the vault.
 ///
 /// # Errors
 ///
@@ -1116,21 +1135,29 @@ pub fn derive_enrollment_outbound_request(
 pub(crate) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
+    local_node_id: u64,
     attempt: &AttemptRecord,
     transport: &mut T,
     now_ms: u64,
-) -> std::result::Result<Option<IntentDispatchResult>, OutboundEffectError> {
+) -> std::result::Result<EnrollmentOutboundLeg, OutboundEffectError> {
     if attempt.kind != CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND {
         return Err(OutboundEffectError::InvalidInput(
             "attempt kind is not campaign.enrollment.macro",
         ));
+    }
+    match require_campaign_home_node(vault, local_node_id)? {
+        CampaignHomeNodeAdmission::Designated(_) => {}
+        CampaignHomeNodeAdmission::NotHomeNode(designation) => {
+            return Ok(EnrollmentOutboundLeg::NotHomeNode(designation));
+        }
+        CampaignHomeNodeAdmission::NoHomeNode => return Ok(EnrollmentOutboundLeg::NoHomeNode),
     }
     let payload = decode_enrollment_attempt_payload(&attempt.payload)?;
     let event = campaign_enrollment_event(vault, payload.membership_event_ref)?
         .ok_or(Error::EntityNotFound)?;
     let step = resolve_program_step(vault, &payload, &event)?;
     let Some(outbound) = step.outbound.as_ref() else {
-        return Ok(None);
+        return Ok(EnrollmentOutboundLeg::NoOutboundStep);
     };
     let prepared = PreparedEffect {
         attempt_id: attempt.id,
@@ -1152,7 +1179,7 @@ pub(crate) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         now_ms,
         transport,
     )?;
-    Ok(Some(result.dispatch))
+    Ok(EnrollmentOutboundLeg::Dispatched(result.dispatch))
 }
 
 /// Gate facts assembled from persisted rows only.
@@ -1537,6 +1564,8 @@ mod tests {
     use crate::test_util::{entity, put_policy_manifest_bytes};
 
     const CHANNEL: &str = "email";
+    const HOME_NODE: u64 = 11;
+    const OTHER_NODE: u64 = 12;
     const VERB: &str = "send";
 
     fn vault_fixture() -> (tempfile::TempDir, Vault) {
@@ -1712,6 +1741,12 @@ mod tests {
             },
         )
         .expect("step row");
+        elect_campaign_home_node_designation(
+            vault,
+            &[CampaignHomeNodeCandidate::always_on_local(HOME_NODE)],
+            1,
+        )
+        .expect("home-node designation");
         Fixture {
             event,
             payload: CampaignEnrollmentAttemptPayload {
@@ -1728,6 +1763,22 @@ mod tests {
             verb: VERB.to_owned(),
             payload: b"enrollment-body".to_vec(),
             idempotency_supported: true,
+        }
+    }
+
+    /// Runs the outward leg as the designated node and unwraps its dispatch.
+    fn dispatch_leg<T: OutboundTransport>(
+        vault: &Vault,
+        authority: &OutboundBindingAuthority,
+        attempt: &AttemptRecord,
+        transport: &mut T,
+        now_ms: u64,
+    ) -> IntentDispatchResult {
+        match run_enrollment_outbound_leg(vault, authority, HOME_NODE, attempt, transport, now_ms)
+            .expect("outbound leg")
+        {
+            EnrollmentOutboundLeg::Dispatched(dispatch) => dispatch,
+            other => panic!("expected a dispatch, got {other:?}"),
         }
     }
 
@@ -1919,10 +1970,7 @@ mod tests {
         let authority = OutboundBindingAuthority::for_vault(&vault)?;
         let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
 
-        let dispatch =
-            run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
-                .expect("outbound leg")
-                .expect("the step declares an outward leg");
+        let dispatch = dispatch_leg(&vault, &authority, &attempt, &mut transport, 50);
 
         assert_eq!(transport.ledger_rows_at_send, vec![1]);
         assert_eq!(dispatch.state, Some(IntentState::Done));
@@ -1960,10 +2008,7 @@ mod tests {
 
         let authority = OutboundBindingAuthority::for_vault(&vault)?;
         let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
-        let dispatch =
-            run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
-                .expect("outbound leg")
-                .expect("the step declares an outward leg");
+        let dispatch = dispatch_leg(&vault, &authority, &attempt, &mut transport, 50);
         assert_eq!(dispatch.intent_id, Some(derived));
 
         let request = derive_enrollment_outbound_request(
@@ -1987,17 +2032,13 @@ mod tests {
         let authority = OutboundBindingAuthority::for_vault(&vault)?;
 
         let mut first = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Ambiguous);
-        let ambiguous = run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut first, 50)
-            .expect("outbound leg")
-            .expect("the step declares an outward leg");
+        let ambiguous = dispatch_leg(&vault, &authority, &attempt, &mut first, 50);
         assert_eq!(ambiguous.state, Some(IntentState::Pending));
 
         // The recovery path re-enters with the SAME attempt row. It must reuse
         // the frozen bytes and identity, never mint a fresh send.
         let mut second = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
-        let replay = run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut second, 60)
-            .expect("outbound leg")
-            .expect("the step declares an outward leg");
+        let replay = dispatch_leg(&vault, &authority, &attempt, &mut second, 60);
         assert!(replay.replayed);
         assert_eq!(replay.intent_id, ambiguous.intent_id);
         assert_eq!(second.sent_intents, first.sent_intents);
@@ -2018,10 +2059,17 @@ mod tests {
         let authority = OutboundBindingAuthority::for_vault(&vault)?;
         let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
 
-        assert!(
-            run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
-                .expect("outbound leg")
-                .is_none()
+        assert_eq!(
+            run_enrollment_outbound_leg(
+                &vault,
+                &authority,
+                HOME_NODE,
+                &attempt,
+                &mut transport,
+                50
+            )
+            .expect("outbound leg"),
+            EnrollmentOutboundLeg::NoOutboundStep
         );
         assert!(transport.sent_intents.is_empty());
         assert!(intent_ledger_records(&vault).expect("ledger").is_empty());
@@ -2047,10 +2095,7 @@ mod tests {
         let authority = OutboundBindingAuthority::for_vault(&vault)?;
         let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
 
-        let dispatch =
-            run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50)
-                .expect("outbound leg")
-                .expect("the step declares an outward leg");
+        let dispatch = dispatch_leg(&vault, &authority, &attempt, &mut transport, 50);
 
         assert_eq!(dispatch.state, None);
         assert_eq!(dispatch.send_outcome, None);
@@ -2065,6 +2110,39 @@ mod tests {
         Ok(())
     }
 
+    /// The outward leg is the crash-recovery entry point, so it cannot borrow
+    /// the membership leg's authority: a node can apply the cohort row while
+    /// designated and come back for the send after losing designation.
+    #[test]
+    fn outward_leg_refuses_a_demoted_node() -> Result<()> {
+        let (_dir, vault) = vault_fixture();
+        let fixture = install_fixture(&vault, Some(outbound_step()));
+        let attempt = queued_attempt(&vault, &fixture);
+        let authority = OutboundBindingAuthority::for_vault(&vault)?;
+        elect_campaign_home_node_designation(
+            &vault,
+            &[CampaignHomeNodeCandidate::always_on_local(OTHER_NODE)],
+            40,
+        )?;
+        let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
+
+        assert!(matches!(
+            run_enrollment_outbound_leg(&vault, &authority, HOME_NODE, &attempt, &mut transport, 50)
+                .expect("outbound leg"),
+            EnrollmentOutboundLeg::NotHomeNode(designation)
+                if designation.node_id == OTHER_NODE
+        ));
+        assert!(
+            transport.sent_intents.is_empty(),
+            "a demoted node must not reach transport"
+        );
+        assert!(
+            intent_ledger_records(&vault).expect("ledger").is_empty(),
+            "and must not freeze an intent on the way there"
+        );
+        Ok(())
+    }
+
     #[test]
     fn outward_leg_refuses_a_foreign_attempt_kind() -> Result<()> {
         let (_dir, vault) = vault_fixture();
@@ -2075,7 +2153,15 @@ mod tests {
         let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
 
         assert!(
-            run_enrollment_outbound_leg(&vault, &authority, &attempt, &mut transport, 50).is_err()
+            run_enrollment_outbound_leg(
+                &vault,
+                &authority,
+                HOME_NODE,
+                &attempt,
+                &mut transport,
+                50
+            )
+            .is_err()
         );
         assert!(transport.sent_intents.is_empty());
         Ok(())
