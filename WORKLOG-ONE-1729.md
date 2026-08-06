@@ -196,3 +196,32 @@ so a write-gate answer can never be misread as an off-record refusal.
 - **No vault getter.** `OffRecordSession::base_write_vault` is module-private; a `&Vault`
   never leaves `lifecycle.rs`, and it is produced only under a revalidated `Base` route.
   `ExecutorStorage` is match-only delegation; `store_identity` projects a bare pointer.
+
+## SIMPLIFY pass (K3, tip of impl leg)
+
+Deletion-biased review of the full packet diff. The impl leg shipped tight; exactly ONE
+edit was warranted:
+
+- **Deleted the stale `#[allow(dead_code)]` on `OffRecordSession::vault_meta_get`**
+  (`off_record/lifecycle.rs`). ONE-1728 minted the allow when the accessor had no caller;
+  this lane's `SessionBinding::{get_replay_record, get_raw_output}` now call it
+  (`code_run.rs:1408`, `code_run.rs:1457`), so the allow and its "ONE-1730 inherits"
+  reason were vestigial. Attribute-only deletion, zero codegen delta. The sibling allow on
+  `vault_meta_put` stays — it still has no caller until ONE-1730.
+
+Considered and deliberately left: the ~12-line generation-compare overlap between
+`Vault::put_code_run_replay_record_if_generation` and
+`SessionBinding::put_replay_record_if_generation` is JUSTIFIED duplication — the canonical
+body is atomic inside one write txn, the session body is atomic through the route/overlay
+machinery, and a shared closure-parameterized helper would obscure two distinct atomicity
+domains while touching the landed public compare protocol. The four match-only delegation
+bodies and the closed `ExecutorStorage` method set are blueprint-pinned shape, not
+duplication. Oracle/tests untouched (assertions/fixtures off-limits; the diff carries no
+test-side cruft worth a rule-bending edit).
+
+Gates after the pass: `cargo fmt -p oneiron --check` clean ·
+`cargo clippy -p oneiron --all-features --all-targets` clean, zero warnings ·
+`cargo test -p oneiron --all-features branch_store_oracle` 27 passed / 0 failed / 8 ignored
+(identical to the impl-leg baseline; full-suite green stands from the impl tip — the delta
+is attribute-only). Zero-diff pins reconfirmed: `of060_fitness.rs`, `gate.rs`,
+`code_run/tests.rs`, `Cargo.toml`, `Cargo.lock` untouched by this pass.

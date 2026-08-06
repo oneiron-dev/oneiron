@@ -857,10 +857,6 @@ impl OffRecordSession<'_> {
     }
 
     /// Composed VaultMeta read over overlay ∪ base.
-    #[allow(
-        dead_code,
-        reason = "ONE-1730 inherits the route-carrying VaultMeta pair (pinned by the P4a blueprint)"
-    )]
     pub(crate) fn vault_meta_get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
