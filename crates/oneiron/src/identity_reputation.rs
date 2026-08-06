@@ -6,6 +6,8 @@
 
 use rmpv::Value;
 
+use crate::Vault;
+use crate::campaign::send_hygiene::{SuppressionCause, SuppressionInput, apply_suppression_in_txn};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -43,10 +45,21 @@ pub const WARMUP_WARMING_DAILY_CAP: u64 = 100;
 pub const CONSTRAINED_REPUTATION_DAILY_CAP: u64 = 50;
 pub const DEGRADED_REPUTATION_DAILY_CAP: u64 = 10;
 
-const COMPLAINT_CONSTRAINED_THRESHOLD: f64 = 0.002;
-const COMPLAINT_DEGRADED_THRESHOLD: f64 = 0.005;
-const BOUNCE_CONSTRAINED_THRESHOLD: f64 = 0.02;
-const BOUNCE_DEGRADED_THRESHOLD: f64 = 0.05;
+/// Complaint rate at or above which an identity is constrained.
+///
+/// These four are the LIVE sender-health dial, and the only one. ARCH-0059's
+/// 2%-cut / 0.3%-complaint bench maps onto the constrained tier
+/// (`0.002 <= rate < 0.005`) rather than introducing a second set of numbers;
+/// retuning them is a one-line follow-up, not a redesign. They are `pub` so a
+/// projector and its oracle can pin the boundaries against the same constants
+/// the status ladder reads.
+pub const COMPLAINT_CONSTRAINED_THRESHOLD: f64 = 0.002;
+/// Complaint rate at or above which an identity is degraded.
+pub const COMPLAINT_DEGRADED_THRESHOLD: f64 = 0.005;
+/// Bounce rate at or above which an identity is constrained.
+pub const BOUNCE_CONSTRAINED_THRESHOLD: f64 = 0.02;
+/// Bounce rate at or above which an identity is degraded.
+pub const BOUNCE_DEGRADED_THRESHOLD: f64 = 0.05;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IdentityWarmupStage {
@@ -384,6 +397,130 @@ pub struct IdentitySendRateClamp {
     pub health_cap: u64,
     pub status: IdentityReputationStatus,
     pub rotate_proposal_required: bool,
+}
+
+/// What one provider webhook says happened to one message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmailDeliveryDisposition {
+    /// The message was accepted by the receiving side.
+    Delivered,
+    /// A transient failure. Health moves; nothing is suppressed.
+    SoftBounce,
+    /// A permanent failure. This is the only disposition that suppresses.
+    HardBounce,
+    /// The recipient marked the message as spam.
+    Complaint,
+}
+
+/// One normalized campaign email webhook.
+///
+/// Provider adapters translate their native payloads into this shape; provider
+/// SDK parsing and provider-specific transport policy stay outside the engine,
+/// and no provider-specific reputation state is kept anywhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CampaignEmailWebhookEvent {
+    /// The sending identity the webhook is about.
+    pub identity_ref: EntityId,
+    /// The recipient PERSON.
+    pub person_ref: EntityId,
+    /// Campaign the send belonged to, when the webhook names one.
+    pub campaign_ref: Option<EntityId>,
+    /// Channel the send went out on.
+    pub channel: String,
+    /// The persisted inbound webhook evidence.
+    pub evidence_ref: EntityId,
+    /// What happened to this message.
+    pub disposition: EmailDeliveryDisposition,
+    /// The identity-wide counters this webhook carries.
+    pub aggregate: EmailReputationWebhookSignal,
+    /// When the webhook was observed.
+    pub observed_at: u64,
+}
+
+/// Everything one campaign email webhook moved.
+///
+/// `reputation` and `clamp` are RETURNED, not persisted: `claim_bodies` and
+/// `clamp_send_rate` have always been pure producers whose callers own
+/// persistence, and quietly writing them from here would make this the second
+/// door that decides when reputation claims land. `suppression` is the opposite
+/// case — it names claims that ARE durable, because a suppression the caller
+/// could forget to write is a suppression that leaks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SenderHealthProjection {
+    /// Reputation after the webhook's counters were folded in.
+    pub reputation: IdentityReputation,
+    /// The resulting per-identity send-rate clamp.
+    pub clamp: IdentitySendRateClamp,
+    /// The suppression a hard bounce wrote, if any.
+    pub suppression: Option<crate::campaign::send_hygiene::SuppressionReceipt>,
+}
+
+/// Projects one campaign email webhook, opening its own transaction.
+///
+/// # Errors
+///
+/// See [`project_campaign_email_webhook_in_txn`].
+pub fn project_campaign_email_webhook(
+    vault: &Vault,
+    current: IdentityReputation,
+    event: &CampaignEmailWebhookEvent,
+    requested_daily_cap: u64,
+) -> Result<SenderHealthProjection> {
+    vault.with_write_txn(|wtxn| {
+        project_campaign_email_webhook_in_txn(vault, wtxn, current, event, requested_daily_cap)
+    })
+}
+
+/// Projects one campaign email webhook inside the caller's transaction.
+///
+/// The flow is the existing one, unchanged: signal → [`IdentityReputation::apply_adapter_signal`]
+/// → [`IdentityReputation::claim_bodies`] → [`IdentityReputation::clamp_send_rate`].
+/// The warm-up stage ladder and the four thresholds above stay the only health
+/// state machine; no second one is introduced here.
+///
+/// Only [`EmailDeliveryDisposition::HardBounce`] suppresses. A soft bounce is a
+/// transient failure and a complaint is a reputation fact — both move health and
+/// the clamp, and neither writes a permanent `comm.do_not_contact` or a
+/// suppressed membership. Suppressing on a transient failure would silently
+/// retire reachable addresses, which no later signal can undo.
+///
+/// # Errors
+///
+/// Propagates signal validation, claim validation, and storage errors;
+/// [`Error::InvalidClaimBody`] when a hard bounce cannot be recorded.
+pub(crate) fn project_campaign_email_webhook_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    current: IdentityReputation,
+    event: &CampaignEmailWebhookEvent,
+    requested_daily_cap: u64,
+) -> Result<SenderHealthProjection> {
+    let mut reputation = current;
+    reputation.apply_adapter_signal(IdentityReputationSignal::EmailWebhook(event.aggregate))?;
+    let clamp = reputation.clamp_send_rate(event.identity_ref, requested_daily_cap);
+    let suppression = match event.disposition {
+        EmailDeliveryDisposition::HardBounce => Some(apply_suppression_in_txn(
+            vault,
+            wtxn,
+            SuppressionCause::HardBounce,
+            &SuppressionInput {
+                person_ref: event.person_ref,
+                campaign_ref: event.campaign_ref,
+                channel: event.channel.clone(),
+                sender_ref: Some(event.identity_ref),
+                evidence_ref: event.evidence_ref,
+                occurred_at: event.observed_at,
+            },
+        )?),
+        EmailDeliveryDisposition::Delivered
+        | EmailDeliveryDisposition::SoftBounce
+        | EmailDeliveryDisposition::Complaint => None,
+    };
+    Ok(SenderHealthProjection {
+        reputation,
+        clamp,
+        suppression,
+    })
 }
 
 #[must_use]

@@ -795,6 +795,27 @@ pub(crate) fn decode_crm_stage_value(value: &Value) -> Result<CrmStageValue> {
     })
 }
 
+/// Encodes a [`CommDoNotContactValue`] into the exact wire map
+/// [`decode_do_not_contact_value`] accepts.
+///
+/// The CA-owned write half of the codec, for the same reason
+/// [`encode_campaign_member_value`] exists: ONE-1776's suppression writer would
+/// otherwise re-spell this module's private key literals, and a second spelling
+/// of one schema is drift with a delay fuse. `channel: None` ELIDES the key
+/// rather than writing a null — absent is what "every channel" means here.
+///
+/// Deliberately infallible: normalization law lives at the write door in
+/// [`validate_campaign_pack_claim_structure`], not in a second authority.
+#[must_use]
+pub fn encode_do_not_contact_value(value: &CommDoNotContactValue) -> Value {
+    let mut entries = Vec::with_capacity(2);
+    if let Some(channel) = &value.channel {
+        entries.push((Value::from(KEY_CHANNEL), Value::from(channel.as_str())));
+    }
+    entries.push((Value::from(KEY_SCOPE), Value::from(value.scope.as_str())));
+    Value::Map(entries)
+}
+
 /// Decodes a `comm.do_not_contact` value.
 pub(crate) fn decode_do_not_contact_value(value: &Value) -> Result<CommDoNotContactValue> {
     let entries = value_map(value)?;
@@ -809,6 +830,27 @@ pub(crate) fn decode_do_not_contact_value(value: &Value) -> Result<CommDoNotCont
         channel: channel.map(str::to_owned),
         scope: scope.to_owned(),
     })
+}
+
+/// Encodes a [`CommBounceValue`] into the exact wire map
+/// [`decode_comm_bounce_value`] accepts.
+///
+/// The CA-owned write half of the codec. ONE-1776's webhook projector composes
+/// the bounce fact through this door instead of re-spelling the key literals.
+#[must_use]
+pub fn encode_comm_bounce_value(value: &CommBounceValue) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_CHANNEL),
+            Value::from(value.channel.as_str()),
+        ),
+        (Value::from(KEY_BOUNCE), Value::from(value.bounce.as_str())),
+        (
+            Value::from(KEY_SENDER_REF),
+            entity_ref_value(&value.sender_ref),
+        ),
+        (Value::from(KEY_OCCURRED_AT), Value::from(value.occurred_at)),
+    ])
 }
 
 /// Decodes a `comm.bounce` value.
@@ -1033,6 +1075,79 @@ pub(crate) fn matching_do_not_contact_in_txn(
         }
     }
     Ok(false)
+}
+
+/// The live `campaign.member` head on `person_ref` scoped to `campaign_ref`.
+///
+/// The membership counterpart of [`other_live_crm_stage_heads_in_txn`], and the
+/// single door ONE-1776's suppression and sticky-sender writers read through:
+/// both must supersede exactly the head they read, in the same txn, or leave two
+/// live memberships behind.
+///
+/// Two live heads for one `(person, campaign)` is a TORN cohort, not a merge
+/// problem — the two rows can disagree about state, channels, and derivation,
+/// and picking one would silently discard the other's provenance. It is rejected
+/// for the same reason `crm.stage` rejects a second head.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] when more than one live head exists; storage and
+/// decode errors propagate.
+pub(crate) fn live_campaign_member_head_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    person_ref: EntityId,
+    campaign_ref: EntityId,
+) -> Result<Option<(EntityId, CampaignMemberValue)>> {
+    let mut head = None;
+    for id in subject_claim_ids_in_txn(store, txn, &person_ref)? {
+        let Some(body) = claim_body_in_txn(store, txn, &id)? else {
+            continue;
+        };
+        if body.predicate != PREDICATE_CAMPAIGN_MEMBER
+            || body.lifecycle != ClaimLifecycleStatus::Active
+        {
+            continue;
+        }
+        let value = decode_campaign_member_value(&body.value)?;
+        if value.campaign != campaign_ref {
+            continue;
+        }
+        if head.is_some() {
+            return Err(invalid_claim("campaign.member has more than one live head"));
+        }
+        head = Some((id, value));
+    }
+    Ok(head)
+}
+
+/// The live CRM-pack claim head on `subject` carrying exactly `predicate` and
+/// `value`.
+///
+/// The replay door. Provider webhooks and unsubscribe callbacks redeliver, so a
+/// writer that always appends would grow one suppression head per redelivery of
+/// the same fact. Equality is on the ENCODED value, so it is the same identity
+/// test the decoder enforces, not a hand-written field comparison that can drift
+/// from the schema.
+pub(crate) fn identical_live_head_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subject: EntityId,
+    predicate: &str,
+    value: &Value,
+) -> Result<Option<EntityId>> {
+    for id in subject_claim_ids_in_txn(store, txn, &subject)? {
+        let Some(body) = claim_body_in_txn(store, txn, &id)? else {
+            continue;
+        };
+        if body.predicate == predicate
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && body.value == *value
+        {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
 }
 
 /// Resolves the PERSON a `comm.do_not_contact` claim would be written against
@@ -1300,6 +1415,18 @@ fn validate_scope(value: &str) -> Result<()> {
         return Err(invalid_claim("campaign pack scope must be normalized"));
     }
     Ok(())
+}
+
+/// Normalizes a channel or scope token to the one spelling these families
+/// store.
+///
+/// Exported so a CA writer normalizes through the SAME rule the validator
+/// enforces. A writer that re-spelled `trim().to_ascii_lowercase()` locally
+/// would keep working until this rule changed, and then write tokens the write
+/// door rejects.
+#[must_use]
+pub fn normalize_campaign_pack_token(value: &str) -> String {
+    normalize_token(value)
 }
 
 fn normalize_token(value: &str) -> String {
