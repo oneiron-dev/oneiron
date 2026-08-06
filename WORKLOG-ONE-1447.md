@@ -195,3 +195,110 @@ at 3869/3869 stands from the impl leg — zero code changed since).
 - The flip preserves the record's `occurred` range and moves only `learned_at`:
   the skill did not happen again, this vault merely learned its evidence is
   gone.
+
+## VERDICT-FIX (round 1) — one CONFIRMED-REAL item, ZERO code changes
+
+The finder returned 4 items; the verdict adjudication confirmed exactly one and
+ruled its remedy a **packet ratification, not a code fix**. This round therefore
+touches no source file: `git diff 525b521..HEAD` is this worklog section alone.
+No mutation-verification receipts, because there is no mutation to
+red-before/green-after.
+
+| finder item | verdict | disposition |
+|---|---|---|
+| **P1** `source-loss-not-durable-before-activation` — a candidate whose source is deleted is never marked, and `Candidate → Active` stays legal | REJECTED against 1447 (out of ratified scope) | banked → **ONE-1449** admission-gate spec; note appended to that blueprint |
+| **P2** `skill-delete-leaves-reverse-index-rows` | REJECTED as P2 → banked **P3** | deliberate D6; prune-on-read self-heals the one functional consumer |
+| **P2** `non-message-delete-can-stale-skill` | REJECTED as P2 → banked **P3** | reachable only via provenance already violating the `source_messages` contract |
+| **P2** `packet-violation-batch-rs-unclaimed` | **CONFIRMED-REAL** (process fact) | PACKET_AMEND drafted below for the owner gate; the code does not move |
+
+### The real item — `batch.rs` PACKET_AMEND, drafted for ratification, NOT self-applied
+
+Mechanical fact, re-verified this round: `git diff --name-only origin/main...HEAD`
+includes `crates/oneiron/src/batch.rs`; `CLAIMS.md:33` lists that shared file for
+SKILLS 1892 and 1739, not 1447; no ratified amendment exists. `diff ⊆ CLAIMS` is
+unmet, and the lane cannot CY-CLOSE while it is.
+
+The verdict re-read the hunk independently and ruled the CODE **correct as placed**
+(D4): extraction to the typed put door would miss raw `put_entity` and sync
+rematerialization, so moving it would be the regression. Amend the packet; leave
+the code.
+
+Hunk shape for the ratifier — 4 hunks, all inside `apply_put`, lines 3447-3633:
+one local widened in place (`previous_skill_content_hash: Option<SkillContentHash>`
+→ `previous_skill_record: Option<SkillRecord>`, so the prior body is decoded ONCE
+and serves both indexes), plus ~11 added lines calling
+`maintain_skill_source_index_for_put` immediately after its content-hash twin.
+Every added line sits inside an existing `entity_type == ENTITY_TYPE_SKILL` /
+`old_type == ENTITY_TYPE_SKILL` arm: a non-SKILL put executes not one new
+instruction.
+
+**Positive amendment — `CLAIMS.md` shared-files table, `batch.rs` row:**
+
+> `crates/oneiron/src/batch.rs` | 1892 (activation consult), 1739 (chokepoint
+> validation if body keys change), **1447 PACKET_AMEND 2026-08-06: reverse
+> source-index maintenance at the existing SKILL put chokepoint in `apply_put`,
+> beside the content-hash index, + `previous_skill_content_hash` widened to
+> `previous_skill_record`. Rationale D4 — the typed put door misses raw
+> `put_entity` and sync remat.** | additive; ⚠ w4 S-AUTH1/S-AUTH4 claim batch.rs
+> — rebase
+
+**Negative amendment (packet SHRINK) — `store.rs` row:** the declared
+`crates/oneiron/src/store.rs` claim is UNUSED by this lane (D2 — the prefix consts
+live in `skill_convert.rs` per the house pattern at `CLAIMS.md:35`). Release it;
+the declared w4 store.rs rebase risk on this lane goes with it.
+
+Both are one-line edits to a file that already carries the in-place amendment
+precedent (`CLAIMS.md:10`, ONE-1737 `run_tree/tests.rs`, 2026-08-06). **Not
+applied by this leg** — a worker ratifying its own packet is exactly what the
+invariant exists to prevent. Routed to the owner/GATE-2 board via this leg's
+return.
+
+**Collision read, verified locally rather than inherited:**
+
+- 1447's hunks occupy `batch.rs` 3447-3633. The sibling SKILLS claims on this file
+  (1892's activation consult, and 1449's admission site — the 1449 blueprint
+  claims `batch.rs` at ~3165 although `CLAIMS.md:33` has not yet been updated to
+  say so) sit ~280 lines away in the `apply_put` signature/validation region.
+  Textually disjoint.
+- Nothing outside the two SKILL arms changed, so no non-skill caller is in the
+  amendment's blast radius.
+- w4 S-AUTH1/S-AUTH4 posture unchanged: the dispatcher's ruled cheap rebase. Same
+  for `deletion.rs` vs w4 ERASE — 2 call statements at an existing maintenance
+  site.
+- Base-drift check this round: `origin/main` moved `8a624d5 → 48ebcbc` since the
+  lane cut. Of this lane's packet only `lib.rs` moved on main (export lines) — the
+  expected trivial rebase class, no semantic overlap.
+
+### Banked, each with the reason it was banked (not relitigated)
+
+1. **→ ONE-1449 (admission gate).** The sweep cannot stale a `Candidate` (no such
+   edge in ARCH-0053 §6), so `mark_dependent_skills_stale_in_txn` `continue`s past
+   it — and does so **before** the note branch, so no stale note is written for a
+   candidate either. A candidate whose cited source was deleted is therefore
+   indistinguishable, from its record alone, from a well-grounded one, while
+   `Candidate → Active` stays legal (`skill.rs:157`) and `update_skill_record` does
+   not re-check cited-source existence. The liveness check belongs to 1449's gate.
+   Recorded in `/Users/olety/.claude-wave5/blueprints/SKILLS/ONE-1449.md` under
+   "Banked into this spec from the ONE-1447 verdict adjudication", including a
+   suggested done-means row.
+2. **P3 hardening.** `skills_dependent_on_message` reports a deleted skill as a
+   dependent until that source is deleted (prune-on-read) or a rebuild runs — the
+   deliberate D6 pin, on an inspection-only door with no production consumer.
+   Optional future: drop outgoing source-index rows in both tear primitives.
+3. **P3 hardening.** The sweep is type-agnostic, matching the house
+   no-kind-branch-in-the-generic-delete-engine pattern, so provenance citing a
+   non-message id (already a `source_messages` contract violation) would stale a
+   canon skill on an unrelated delete. Failure mode is safe-side — visible,
+   reversible, inspectable — never canon corruption. Optional future: type-gate the
+   sweep to turn/message kinds.
+4. **Lane-banked, pre-existing.** The
+   `batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once`
+   flake — see "Gate note" above. Proven pre-existing (HEAD 5/60 vs BASE 3/60,
+   interleaved, n=60), a test defect against raw wall time, out of packet.
+
+### Gates on the unchanged tip
+
+- `cargo fmt --check` — clean
+- `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` — clean
+- `cargo nextest run -p oneiron --all-features` — **3869/3869 passed, 64 skipped,
+  0 failed** (`Summary [282.147s]`). The known flake did not fire this run.
