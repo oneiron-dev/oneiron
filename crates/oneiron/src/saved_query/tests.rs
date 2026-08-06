@@ -67,7 +67,10 @@ fn memo_key_is_prefix_plus_three_fixed_width_components() {
     let prefix = b"saved_query.memo.v1:";
     assert!(encoded.starts_with(prefix));
     assert_eq!(encoded.len(), prefix.len() + 16 + 16 + EVIDENCE_HASH_LEN);
-    assert_eq!(&encoded[prefix.len()..prefix.len() + 16], id(0x24).as_bytes());
+    assert_eq!(
+        &encoded[prefix.len()..prefix.len() + 16],
+        id(0x24).as_bytes()
+    );
     assert_eq!(
         &encoded[prefix.len() + 16..prefix.len() + 32],
         id(0x25).as_bytes()
@@ -192,7 +195,10 @@ fn watermark_rows_round_trip_and_reject_wrong_lengths() {
 /// 1_000_000 floor can still match its own exemplar.
 #[test]
 fn cosine_similarity_saturates_on_identical_vectors() {
-    assert_eq!(cosine_similarity_micros(&[1.0, 2.0], &[1.0, 2.0]), 1_000_000);
+    assert_eq!(
+        cosine_similarity_micros(&[1.0, 2.0], &[1.0, 2.0]),
+        1_000_000
+    );
     assert_eq!(cosine_similarity_micros(&[1.0, 0.0], &[0.0, 1.0]), 0);
     // Anti-correlated clamps to zero rather than recentering onto a positive
     // range that a zero floor would admit.
@@ -251,7 +257,10 @@ fn evidence_hash_covers_relevant_evidence_and_scope() {
 
     let mut moved = base.clone();
     moved.claim_values = vec![("crm.fit".to_owned(), json!("not_fit"))];
-    assert_ne!(hash, compute_evidence_hash(&definition, &moved).expect("hash"));
+    assert_ne!(
+        hash,
+        compute_evidence_hash(&definition, &moved).expect("hash")
+    );
 
     let mut bumped = definition.clone();
     bumped.definition_version += 1;
@@ -264,7 +273,10 @@ fn evidence_hash_covers_relevant_evidence_and_scope() {
     };
     assert_ne!(hash, compute_evidence_hash(&rescoped, &base).expect("hash"));
 
-    assert_eq!(hash, compute_evidence_hash(&definition, &base).expect("hash"));
+    assert_eq!(
+        hash,
+        compute_evidence_hash(&definition, &base).expect("hash")
+    );
 }
 
 /// Length prefixes exist so `("ab", "c")` and `("a", "bc")` cannot collide.

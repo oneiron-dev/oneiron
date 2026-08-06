@@ -686,7 +686,8 @@ pub fn create_saved_query(
     vault.with_write_txn(|wtxn| {
         vault
             .store
-            .vault_meta.put(wtxn, &keys::record(&record.query_ref), &encoded)
+            .vault_meta
+            .put(wtxn, &keys::record(&record.query_ref), &encoded)
     })?;
     Ok(record)
 }
@@ -972,13 +973,15 @@ const MICROS_PER_UNIT: u32 = 1_000_000;
 /// Domain separator for the evidence hash.
 const EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron.saved_query.evidence.v1";
 
-/// Hashes the definition version, effective scope, and relevant evidence.
+/// Hashes the definition version, its scope, and the relevant evidence.
 ///
-/// The effective scope is IN the hash, not merely in the read path: the owner's
-/// reach can change without the definition version moving, and a memo that
-/// survived that change would answer with a verdict the owner is no longer
-/// entitled to. Evidence outside the declared dependency set never reaches this
-/// function, which is what keeps irrelevant movement from invalidating memos.
+/// Callers pass the definition AS EVALUATED — [`SavedQueryEvaluator`] narrows
+/// `scope` to the owner's effective reach before calling. The scope is IN the
+/// hash, not merely in the read path: the owner's reach can change without the
+/// definition version moving, and a memo that survived that change would answer
+/// with a verdict the owner is no longer entitled to. Evidence outside the
+/// declared dependency set never reaches this function, which is what keeps
+/// irrelevant movement from invalidating memos.
 ///
 /// # Errors
 ///
@@ -1058,7 +1061,8 @@ pub fn verdict_memo(vault: &Vault, key: &VerdictMemoKey) -> Result<Option<Verdic
     let rtxn = vault.store.env.read_txn()?;
     let Some(raw) = vault
         .store
-        .vault_meta.get(&rtxn, &keys::memo(key))?
+        .vault_meta
+        .get(&rtxn, &keys::memo(key))?
         .map(|bytes| bytes.to_vec())
     else {
         return Ok(None);
@@ -1076,7 +1080,8 @@ pub fn put_verdict_memo(vault: &Vault, row: &VerdictMemoRow) -> Result<()> {
     vault.with_write_txn(|wtxn| {
         vault
             .store
-            .vault_meta.put(wtxn, &keys::memo(&row.key), &encoded)
+            .vault_meta
+            .put(wtxn, &keys::memo(&row.key), &encoded)
     })
 }
 
@@ -1156,12 +1161,28 @@ impl SavedQueryEvaluator<'_> {
     }
 
     async fn evaluate_staged(&self, request: &EvaluationRequest<'_>) -> Result<StagedOutcome> {
-        let definition = request.definition;
-        if !definition.lifecycle.is_evaluable() {
+        if !request.definition.lifecycle.is_evaluable() {
             return Err(invalid("saved query is not active"));
         }
-        let evidence = self.collect_evidence(definition, request.entity_ref)?;
-        let evidence_hash = compute_evidence_hash(definition, &evidence)?;
+
+        // The authorization gate runs FIRST and is never memoized. A memo caches
+        // a DERIVATION; caching an authorization outcome would let a verdict
+        // outlive the grant that produced it — the owner loses the world, the
+        // memo keeps answering "member".
+        let Some(effective_scope) = request.definition.scope.intersect(self.owner_grants) else {
+            return Self::denied_outcome(request);
+        };
+
+        // Evaluate against the definition AS IT WILL ACTUALLY RUN: the declared
+        // scope narrowed to the owner's reach. That narrowed scope is what the
+        // evidence hash covers, so a grant change the definition version cannot
+        // see still invalidates the memo.
+        let definition = SavedQueryDefinition {
+            scope: effective_scope,
+            ..request.definition.clone()
+        };
+        let evidence = self.collect_evidence(&definition, request.entity_ref)?;
+        let evidence_hash = compute_evidence_hash(&definition, &evidence)?;
         let key = VerdictMemoKey {
             query_ref: request.query_ref,
             entity_ref: request.entity_ref,
@@ -1181,12 +1202,8 @@ impl SavedQueryEvaluator<'_> {
             });
         }
 
-        // Fail closed OUTSIDE the intersection, before any matcher work: a
-        // query the owner can no longer reach matches nothing.
-        let (decision, judge_ran) = if definition.scope.is_closed_against(self.owner_grants) {
-            (no_match("effective scope is closed against owner grants"), false)
-        } else if evaluate_filter(&definition.filter, &evidence) {
-            self.run_stage_two(definition, &evidence).await?
+        let (decision, judge_ran) = if evaluate_filter(&definition.filter, &evidence) {
+            self.run_stage_two(&definition, &evidence).await?
         } else {
             (no_match("stage-1 filter did not match"), false)
         };
@@ -1209,6 +1226,27 @@ impl SavedQueryEvaluator<'_> {
                 memo_hit: false,
             },
             judge_ran,
+        })
+    }
+
+    /// The closed-scope answer: no evidence is read, no memo is touched, and the
+    /// reported hash is the definition over an EMPTY evidence set — an honest
+    /// statement that nothing was examined, and one that cannot collide with the
+    /// hash of a verdict derived while the grant still held.
+    fn denied_outcome(request: &EvaluationRequest<'_>) -> Result<StagedOutcome> {
+        let evidence = RelevantEvidence {
+            entity_ref: request.entity_ref,
+            claim_values: Vec::new(),
+            edge_targets: Vec::new(),
+            semantic_inputs: Vec::new(),
+        };
+        Ok(StagedOutcome {
+            outcome: EvaluationOutcome {
+                decision: no_match("effective scope is closed against owner grants"),
+                evidence_hash: compute_evidence_hash(request.definition, &evidence)?,
+                memo_hit: false,
+            },
+            judge_ran: false,
         })
     }
 
@@ -1458,9 +1496,7 @@ pub async fn run_llm_judge(
             ContentPart::Text { text } => Some(text.as_str()),
             _ => None,
         })
-        .ok_or_else(|| {
-            judge_failure("response carried no text part".to_owned())
-        })?;
+        .ok_or_else(|| judge_failure("response carried no text part".to_owned()))?;
     decode_judge_decision(text)
 }
 
@@ -1591,12 +1627,11 @@ fn evaluate_filter(ast: &FilterAst, evidence: &RelevantEvidence) -> bool {
             cmp,
             value,
         } => evaluate_claim_term(evidence, predicate, *cmp, value),
-        FilterAst::EdgeExists { edge_kind, target } => evidence
-            .edge_targets
-            .iter()
-            .any(|(kind, edge_target)| {
+        FilterAst::EdgeExists { edge_kind, target } => {
+            evidence.edge_targets.iter().any(|(kind, edge_target)| {
                 kind == edge_kind && target.is_none_or(|wanted| wanted == *edge_target)
-            }),
+            })
+        }
     }
 }
 
@@ -1776,12 +1811,11 @@ pub fn next_membership_epoch(
 ) -> Result<u64> {
     let rtxn = vault.store.env.read_txn()?;
     let current = read_watermark(vault, &rtxn, query_ref, entity_ref)?;
-    current
-        .map_or(Ok(1), |(epoch, _)| {
-            epoch
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("membership epoch"))
-        })
+    current.map_or(Ok(1), |(epoch, _)| {
+        epoch
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("membership epoch"))
+    })
 }
 
 /// Commits one membership transition atomically.
@@ -1867,9 +1901,13 @@ fn validate_plan_coherence(plan: &MembershipWritePlan) -> Result<()> {
             "membership plan campaign does not match the event",
         ));
     }
-    let derivation = plan.value.derivation.as_ref().ok_or(Error::InvalidClaimBody(
-        "derived membership requires a derivation",
-    ))?;
+    let derivation = plan
+        .value
+        .derivation
+        .as_ref()
+        .ok_or(Error::InvalidClaimBody(
+            "derived membership requires a derivation",
+        ))?;
     if derivation.source_query != event.query_ref
         || derivation.evidence_hash != event.evidence_hash
         || derivation.epoch != event.epoch
@@ -2026,13 +2064,18 @@ pub enum PackDriftResolution {
 /// # Errors
 ///
 /// Storage errors propagate unchanged.
-pub fn put_pack_migration_map(vault: &Vault, drift: &PackDrift, map: &PackMigrationMap) -> Result<()> {
+pub fn put_pack_migration_map(
+    vault: &Vault,
+    drift: &PackDrift,
+    map: &PackMigrationMap,
+) -> Result<()> {
     let encoded = serde_json::to_vec(map)
         .map_err(|_| Error::InvariantViolation("pack migration map encode failed"))?;
     vault.with_write_txn(|wtxn| {
         vault
             .store
-            .vault_meta.put(wtxn, &keys::migration_map(drift), &encoded)
+            .vault_meta
+            .put(wtxn, &keys::migration_map(drift), &encoded)
     })
 }
 
@@ -2091,12 +2134,6 @@ pub fn repair_pack_drift(
     apply_pack_migration(vault, query_ref, definition, drift, &renames, &notices, now)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the migration write needs the query, its definition, the drift, both \
-              rewrite halves, and the clock; bundling them into a struct would name \
-              a type that exists only to satisfy an arity count"
-)]
 fn apply_pack_migration(
     vault: &Vault,
     query_ref: EntityId,
@@ -2165,7 +2202,8 @@ fn record_repair(
     vault.with_write_txn(|wtxn| {
         vault
             .store
-            .vault_meta.put(wtxn, &keys::repair(&repair_ref), &encoded)
+            .vault_meta
+            .put(wtxn, &keys::repair(&repair_ref), &encoded)
     })?;
     Ok(repair_ref)
 }
@@ -2186,7 +2224,10 @@ fn rewrite_predicates(ast: &FilterAst, renames: &BTreeMap<String, String>) -> Fi
             cmp,
             value,
         } => FilterAst::Claim {
-            predicate: renames.get(predicate).cloned().unwrap_or_else(|| predicate.clone()),
+            predicate: renames
+                .get(predicate)
+                .cloned()
+                .unwrap_or_else(|| predicate.clone()),
             cmp: *cmp,
             value: value.clone(),
         },
@@ -2214,7 +2255,8 @@ fn load_migration_map(vault: &Vault, drift: &PackDrift) -> Result<Option<PackMig
     let rtxn = vault.store.env.read_txn()?;
     let Some(raw) = vault
         .store
-        .vault_meta.get(&rtxn, &keys::migration_map(drift))?
+        .vault_meta
+        .get(&rtxn, &keys::migration_map(drift))?
         .map(|bytes| bytes.to_vec())
     else {
         return Ok(None);
@@ -2244,7 +2286,8 @@ mod keys {
     const MIGRATION_MAP: &[u8] = b"saved_query.packmap.v1:";
 
     fn keyed(prefix: &[u8], parts: &[&[u8]]) -> Vec<u8> {
-        let mut key = Vec::with_capacity(prefix.len() + parts.iter().map(|p| p.len()).sum::<usize>());
+        let mut key =
+            Vec::with_capacity(prefix.len() + parts.iter().map(|p| p.len()).sum::<usize>());
         key.extend_from_slice(prefix);
         for part in parts {
             key.extend_from_slice(part);
@@ -2309,7 +2352,8 @@ fn load_record(vault: &Vault, query_ref: EntityId) -> Result<Option<SavedQueryRe
     let rtxn = vault.store.env.read_txn()?;
     let Some(raw) = vault
         .store
-        .vault_meta.get(&rtxn, &keys::record(&query_ref))?
+        .vault_meta
+        .get(&rtxn, &keys::record(&query_ref))?
         .map(|bytes| bytes.to_vec())
     else {
         return Ok(None);
@@ -2322,7 +2366,8 @@ fn store_record(vault: &Vault, record: &SavedQueryRecord) -> Result<()> {
     vault.with_write_txn(|wtxn| {
         vault
             .store
-            .vault_meta.put(wtxn, &keys::record(&record.query_ref), &encoded)
+            .vault_meta
+            .put(wtxn, &keys::record(&record.query_ref), &encoded)
     })
 }
 
@@ -2334,7 +2379,8 @@ fn read_watermark(
 ) -> Result<Option<(u64, [u8; EVIDENCE_HASH_LEN])>> {
     let Some(raw) = vault
         .store
-        .vault_meta.get(rtxn, &keys::watermark(&query_ref, &entity_ref))?
+        .vault_meta
+        .get(rtxn, &keys::watermark(&query_ref, &entity_ref))?
     else {
         return Ok(None);
     };
@@ -2383,7 +2429,10 @@ fn encode_record(record: &SavedQueryRecord) -> Result<Vec<u8>> {
         "query_ref".to_owned(),
         Value::String(record.query_ref.to_hex()),
     );
-    root.insert("definition".to_owned(), definition_to_json(&record.definition)?);
+    root.insert(
+        "definition".to_owned(),
+        definition_to_json(&record.definition)?,
+    );
     root.insert("created_at".to_owned(), Value::from(record.created_at));
     root.insert("updated_at".to_owned(), Value::from(record.updated_at));
     canonical_json_bytes(&Value::Object(root))
@@ -2838,11 +2887,18 @@ fn rmpv_to_json(value: &rmpv::Value) -> Value {
             .as_i64()
             .map(Value::from)
             .or_else(|| number.as_u64().map(Value::from))
-            .or_else(|| number.as_f64().and_then(serde_json::Number::from_f64).map(Value::Number))
+            .or_else(|| {
+                number
+                    .as_f64()
+                    .and_then(serde_json::Number::from_f64)
+                    .map(Value::Number)
+            })
             .unwrap_or(Value::Null),
         rmpv::Value::F32(number) => json_number(f64::from(*number)),
         rmpv::Value::F64(number) => json_number(*number),
-        rmpv::Value::String(text) => text.as_str().map_or(Value::Null, |text| Value::String(text.to_owned())),
+        rmpv::Value::String(text) => text
+            .as_str()
+            .map_or(Value::Null, |text| Value::String(text.to_owned())),
         rmpv::Value::Binary(bytes) => Value::String(hex_lower(bytes)),
         rmpv::Value::Array(values) => Value::Array(values.iter().map(rmpv_to_json).collect()),
         rmpv::Value::Map(entries) => Value::Object(
