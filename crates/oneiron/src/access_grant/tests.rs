@@ -183,7 +183,10 @@ fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
         encode_access_grant_body(&companion)?,
         grant_map(valid_entries())
     );
-    assert_eq!(decode_access_grant_body(&grant_map(valid_entries()))?, companion);
+    assert_eq!(
+        decode_access_grant_body(&grant_map(valid_entries()))?,
+        companion
+    );
 
     // And the new scope round-trips on its own pinned key set.
     let grant = calendar_grant();
@@ -220,7 +223,10 @@ fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
         (
             Value::from(KEY_SCOPE),
             Value::Map(vec![
-                (Value::from(SCOPE_KEY_KIND), Value::from(SCOPE_KIND_CALENDAR)),
+                (
+                    Value::from(SCOPE_KEY_KIND),
+                    Value::from(SCOPE_KIND_CALENDAR),
+                ),
                 (
                     Value::from(SCOPE_KEYS_COMPANION_PROFILE[1]),
                     Value::from(entity(0xB2).to_hex()),

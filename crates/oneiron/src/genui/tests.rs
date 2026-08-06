@@ -523,7 +523,11 @@ fn grant_mint_intent_calendar_sentence_is_bounded() {
     // Exactly one (calendar_ref, audience, rung) triple on the wire, and no
     // settings grid: the scope object carries three keys and nothing else.
     let json = serde_json::to_value(&intent).expect("serialize intent");
-    let scope = json.get("scope").expect("scope").as_object().expect("object");
+    let scope = json
+        .get("scope")
+        .expect("scope")
+        .as_object()
+        .expect("object");
     let mut keys: Vec<&str> = scope.keys().map(String::as_str).collect();
     keys.sort_unstable();
     assert_eq!(keys, ["calendar_ref", "rung", "scope"]);

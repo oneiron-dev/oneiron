@@ -450,7 +450,10 @@ fn encode_scope(scope: AccessGrantScope) -> Value {
                 Value::from(SCOPE_KEYS_CALENDAR[1]),
                 Value::from(calendar_ref.to_hex()),
             ),
-            (Value::from(SCOPE_KEYS_CALENDAR[2]), Value::from(rung.as_str())),
+            (
+                Value::from(SCOPE_KEYS_CALENDAR[2]),
+                Value::from(rung.as_str()),
+            ),
         ]),
     }
 }
@@ -605,6 +608,11 @@ impl Vault {
             let Some(raw) = self.store.entities.get(&rtxn, grant_ref.as_bytes())? else {
                 return Err(Error::CorruptedIndex("access grant entity row"));
             };
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("access grant entity header"))?;
+            if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
+                return Err(Error::CorruptedIndex("access grant entity type"));
+            }
             let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if grant.scope.calendar_rung(calendar_ref).is_some() {
                 rows.push(CalendarAccessGrantRow { grant_ref, grant });
@@ -622,7 +630,9 @@ impl Vault {
         grant_ref: &EntityId,
         revoked_at: u64,
     ) -> Result<AccessGrant> {
-        let grant = self.get_access_grant(grant_ref)?.ok_or(Error::EntityNotFound)?;
+        let grant = self
+            .get_access_grant(grant_ref)?
+            .ok_or(Error::EntityNotFound)?;
         if !matches!(grant.scope, AccessGrantScope::Calendar { .. }) {
             return Err(Error::InvalidAccessGrantBody(
                 "grant is not a calendar disclosure grant",

@@ -432,13 +432,9 @@ mod tests {
     #[test]
     fn project_full_keeps_title_and_details() {
         let events = vec![event(1)];
-        let projection = project_at_rung(
-            &events,
-            DisclosureRung::Full,
-            SurfaceClass::SameVault,
-            None,
-        )
-        .expect("full projection");
+        let projection =
+            project_at_rung(&events, DisclosureRung::Full, SurfaceClass::SameVault, None)
+                .expect("full projection");
         assert_eq!(projection, RungProjection::Full(events));
     }
 
@@ -491,7 +487,10 @@ mod tests {
             "event_ref",
             "title",
         ] {
-            assert!(!json.contains(leak), "busy projection leaked {leak}: {json}");
+            assert!(
+                !json.contains(leak),
+                "busy projection leaked {leak}: {json}"
+            );
         }
         assert_eq!(
             projection,
@@ -545,14 +544,23 @@ mod tests {
 
     #[test]
     fn slots_projection_without_precomputed_mask_returns_booking_error() {
-        let error = project_at_rung(&[event(1)], DisclosureRung::Full, SurfaceClass::Public, None)
-            .expect_err("public projection without a mask must fail");
+        let error = project_at_rung(
+            &[event(1)],
+            DisclosureRung::Full,
+            SurfaceClass::Public,
+            None,
+        )
+        .expect_err("public projection without a mask must fail");
         assert!(matches!(error, BookingError::Surface(_)), "{error:?}");
 
         // And never a silently empty mask.
-        let error =
-            project_at_rung(&[event(1)], DisclosureRung::Slots, SurfaceClass::SameVault, None)
-                .expect_err("slots projection without a mask must fail");
+        let error = project_at_rung(
+            &[event(1)],
+            DisclosureRung::Slots,
+            SurfaceClass::SameVault,
+            None,
+        )
+        .expect_err("slots projection without a mask must fail");
         assert!(matches!(error, BookingError::Surface(_)), "{error:?}");
     }
 
@@ -652,12 +660,8 @@ mod tests {
         let reader = id(7);
         let calendar = id(9);
         let events = vec![event(1)];
-        let grant =
-            AccessGrant::calendar_disclosure(reader, calendar, DisclosureRung::Busy, 1_700);
-        assert!(matches!(
-            grant.scope,
-            AccessGrantScope::Calendar { .. }
-        ));
+        let grant = AccessGrant::calendar_disclosure(reader, calendar, DisclosureRung::Busy, 1_700);
+        assert!(matches!(grant.scope, AccessGrantScope::Calendar { .. }));
 
         let projection = project_calendar_grant(
             &grant,
@@ -671,7 +675,10 @@ mod tests {
         let json = serde_json::to_string(&projection).expect("serialize projection");
         assert!(json.contains("\"rung\":\"busy\""), "{json}");
         for leak in ["Therapy", "weekly session", "Clinic", &id(0xAA).to_hex()] {
-            assert!(!json.contains(leak), "cross-vault read leaked {leak}: {json}");
+            assert!(
+                !json.contains(leak),
+                "cross-vault read leaked {leak}: {json}"
+            );
         }
     }
 
@@ -696,7 +703,10 @@ mod tests {
 
         let revoked = grant.revoked(1_800).expect("revoke");
         assert_eq!(revoked.status, AccessGrantStatus::Revoked);
-        assert_eq!(project(&revoked, &reader, &calendar), RungProjection::Nothing);
+        assert_eq!(
+            project(&revoked, &reader, &calendar),
+            RungProjection::Nothing
+        );
         assert_eq!(project(&grant, &id(8), &calendar), RungProjection::Nothing);
         assert_eq!(project(&grant, &reader, &id(10)), RungProjection::Nothing);
 
@@ -723,4 +733,3 @@ mod tests {
         }
     }
 }
-
