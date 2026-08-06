@@ -740,6 +740,18 @@ pub(crate) const RESERVED_SKILL_PREDICATE_NAMESPACE: &str = "skill";
 /// `put_reserved_claim_in_txn`, the same exemption `skill.*` uses.
 pub(crate) const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
 
+/// Claim predicate binding a Loro peer id (the device CRDT client id) to the
+/// [`crate::write_envelope::WriteActor`] behind it (ED-00, ONE-1756).
+///
+/// Engine-reserved by construction: it sits in the `actor.*` namespace, so the
+/// generic public Claim API rejects it and
+/// [`crate::edit_distance::register_peer_actor`] — writing through
+/// `put_reserved_claim_in_txn` — is the only author. That is what lets op
+/// replay treat a binding as evidence of who a peer is rather than as a
+/// caller's assertion. Deliberately NOT in [`CLAIM_PREDICATE_REGISTRY`]: the
+/// registry admits only public `core.*`/`companion.*`/`eiri.*` predicates.
+pub const PREDICATE_ACTOR_PEER_BINDING: &str = "actor.peer_binding";
+
 /// Length of an EdgeRef subject encoding: source 16 ‖ kind u8 ‖ target 16.
 pub(crate) const EDGE_REF_LEN: usize = 33;
 
