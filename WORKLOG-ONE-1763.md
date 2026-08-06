@@ -163,9 +163,56 @@ alone; `routing_weight_hint` returns `Option<WeightHint>`, `None` unless `Gradua
 `is_banned`, no exclusion API, no door that removes a model from consideration — asserted by the
 call-site test that the returned `ModelId` is unchanged whether or not a hint exists.
 
+## Merge-in with ONE-1764 (+ a main-red finding for the orchestrator)
+
+Base was `16c125b3e`. While this lane built, main advanced twice, so the lane was merged in
+(merge-in law: merge main INTO the lane, first parent = old tip, no history rewrite, no push).
+
+Two conflicts, both the predicted D9 append collisions, both resolved by keeping BOTH sides in
+alphabetical order (`publisher` then `routing`):
+
+- `crates/oneiron/src/edit_distance.rs` — `pub mod publisher;` / `pub mod routing;`
+- `crates/oneiron/src/lib.rs` — the two ED re-export blocks
+
+### ⚠ FINDING — main was RED, and the shared `origin/main` ref moved mid-merge
+
+The first merge attempt resolved cleanly and then failed to compile, in a file this lane does
+not own:
+
+```
+error[E0004]: non-exhaustive patterns: `AttributionVerdict::Environment` and
+              `AttributionVerdict::PreferenceShift` not covered
+   --> crates/oneiron/src/edit_distance/publisher.rs:160:15
+```
+
+That is **ONE-1764 (#619) × ONE-1759 (#618) semantic merge skew with zero textual conflict** —
+#619's `IssueCategory::from_verdict` was exhaustive over the 3-variant `AttributionVerdict` it
+was cut against; #618 had since taken it to 5. Not caused by this lane, and reproducible on
+`0aab5fa44` alone.
+
+It was already being fixed: `6fb57ca44 HOTFIX: IssueCategory gains Environment/PreferenceShift
+parity arms (#620)` landed **while this merge was in progress**. Because git worktrees share
+`.git/refs`, `origin/main` moved underneath the merge — the merge had captured `0aab5fa44`
+(red), while `git show origin/main:...` was already answering from `6fb57ca44` (green). That
+mismatch is what made the failure look impossible at first read.
+
+Handled by `git merge --abort` and re-merging against the fixed tip. **Nothing was worked around
+and no arm was added by this lane** — the parity arms in the merged tree are #620's.
+
+Process note worth banking: **a worker cannot treat `origin/main` as stable within a single
+turn.** Any lane doing a merge-in should pin the tip (`git rev-parse origin/main`) before
+merging and verify `MERGE_HEAD` against that pin afterwards, or it can silently integrate a red
+tip and spend the debugging budget on someone else's defect.
+
 ## Commits
 
 - `bf3965076` WIP: module + call site
 - `0d6358bdb` routing loop projection — aggregates, ladder, rebuild, 18 tests
+- `08ee389d6` worklog
+- `6aef17807` merge `origin/main` (`6fb57ca44`) into the lane — first parent `08ee389d6`
 
-Not pushed (workers never push; CY orchestrator publishes).
+Gates re-run green on the MERGED tree: fmt clean, clippy `-D warnings` clean,
+`cargo test -p oneiron --all-features` **47/47 binaries, 3880 lib tests, 0 failed**.
+
+Not pushed (workers never push; CY orchestrator publishes). `Cargo.lock` modified in the
+worktree, never staged.
