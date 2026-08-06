@@ -42,6 +42,7 @@
 //! unrelated.
 
 pub mod delta;
+pub mod escalation;
 pub mod graduation;
 pub mod myers;
 #[cfg(feature = "sync")]
