@@ -164,6 +164,23 @@ fixed here — out of packet, and it is a test defect, not a production one.
 skipped`.** `cargo fmt` clean; `cargo clippy -p oneiron --all-features
 --all-targets -- -D warnings` clean.
 
+## Simplify pass (K3, on tip) — NO EDIT WARRANTED
+
+Deletion-biased read of the full diff (skill_convert.rs +366, batch.rs,
+deletion.rs, skill.rs, lib.rs, tests +265) found nothing to cut: every helper
+is used twice or is blueprint-skeleton-mandated (`skills_dependent_on_message`,
+the `Vec<EntityId>` sweep return), the rmpv sidecar codec matches the crate's
+per-module pattern (skill_hub / code_symbol / dreamer_runner — no shared
+helper exists to dedupe against, and minting one would ADD structure), the
+asymmetric strict/lenient posture and the prune-on-read branch are D6/D7
+design decisions pinned by tests, and the narrative comments carry the
+deviation rationale the screener needs. The one single-use private helper
+(`read_stale_note_in_txn`) names a distinct contract (missing note = fresh
+episode default) and inlining it would not delete a layer, only move it.
+Gates re-verified on the unchanged tip: `cargo fmt --check` clean, clippy
+`-D warnings` clean, nextest `skill_convert` filter 21/21 (full-suite green
+at 3869/3869 stands from the impl leg — zero code changed since).
+
 ## Notes for the screener
 
 - The sweep runs BEFORE `deindex_entity` on the purge path: it reads the skills
