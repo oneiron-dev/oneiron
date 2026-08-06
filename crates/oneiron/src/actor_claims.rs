@@ -470,7 +470,12 @@ impl ActorClaimEvidence {
         }
     }
 
-    fn to_value(&self) -> Value {
+    /// The evidence payload the writer stores on the row.
+    ///
+    /// Crate-visible so a projector can ask whether the head already standing
+    /// IS the row it was about to write — the comparison that keeps a replay
+    /// from minting a fresh claim entity per pass (ED-03).
+    pub(crate) fn to_value(&self) -> Value {
         let mut entries = vec![(Value::from(KEY_AT), Value::from(self.at))];
         match &self.lane {
             ActorClaimLane::Task { receipts } => {
@@ -801,7 +806,11 @@ fn active_heads_in_txn(
 /// PERSON covers humans and agent identities, AGENT_DEF is a defined agent,
 /// MACHINE is a system actor). Claiming a lesson against a TURN or an ORG is a
 /// routing bug, and a ledger that accepts it is unreadable by the router.
-fn require_actor_entity(vault: &Vault, actor: &EntityId) -> Result<()> {
+///
+/// Crate-visible so an inlet that FEEDS this door can refuse the same shape at
+/// the point of observation: an evidence row this check would reject is a
+/// projection pass that fails after durable state has already landed (ED-03).
+pub(crate) fn require_actor_entity(vault: &Vault, actor: &EntityId) -> Result<()> {
     match vault.get_entity_type(actor)? {
         Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_AGENT_DEF | ENTITY_TYPE_MACHINE) => Ok(()),
         Some(_) => Err(invalid("actor.* subject must be an actor entity")),

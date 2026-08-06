@@ -181,3 +181,112 @@ wall-clock flake (`batch::tests::authority_fold_backfills_legacy_missing_first_s
 "first-seen must be the local observation, not learned_at") fired once mid-sweep, passed
 in isolated re-run and in the confirming full lib run; batch authority-fold shares no
 code with this diff — charged to no lane, noted for the flake ledger.
+
+## VERDICT-FIX (Opus, on the simplify tip)
+
+Finder returned 5 items; the verdict leg confirmed 4 REAL (1 P1 + 3 P2) and REJECTED 1 as a
+maximalism wall. All 4 fixed at their chokepoints, all inside the lane's own packet
+(`attribution.rs` + two `pub(crate)` visibility lifts in `actor_claims.rs`, no behaviour
+change to 1739-merged code). **Every fix is mutation-verified: the five new tests were
+written FIRST and each failed at its own new assertion on the pre-fix tip
+(`15 passed; 5 failed`), then passed after the fix (`20 passed; 0 failed`).**
+
+### 1. P1 `stale-edit-cost-retraction` — the projector now reconciles before it writes
+
+The judgment ledger is overwrite-by-receipt, but `project_edit_cost_claims` derived its
+targets ONLY from each input judgment's CURRENT `(class, subject, scope)`. Re-judge receipt
+R from `SkillDefect(skill A, scope X)` to `Environment` (or another subject, or another
+scope) and nothing in the new judgment names the old tuple — the active `skill.edit_cost`
+head for `(A, X)` was orphaned forever and `edit_cost_for(A, X)` kept returning a charge no
+persisted judgment supported. Directly contradicted the module's own docstring.
+
+Fix: the projector keeps its landed tuples as their own small ledger
+(`TARGET_KEY_PREFIX`, `StoredTarget`), and every pass now starts with
+`retract_unsupported_targets` — any recorded `(predicate, subject, scope)` whose
+`aggregate_for` over the whole persisted ledger is `None` has its active heads RETRACTED
+(`ClaimLifecycleStatus::Retracted`, `valid_to` stamped) and its tuple forgotten, in one
+transaction. Retraction, not deletion: the row stays readable as history.
+
+Mechanics note for the screener: `Vault::retract_claim` refuses a reserved predicate by
+design (`claim_for_lifecycle_in`, `claim.rs:2568`), and `claim.rs` is const-only in this
+packet, so the closed body is re-put through `put_reserved_claim_in_txn` — the same
+engine-owned door that wrote it, exactly the shape `supersede_reserved_claim_in_txn` uses
+for its own closed body, and the shape `provenance.rs` uses for its namespace's retraction.
+`record_target` runs BEFORE the head it describes (the merged write door owns its own
+transaction, so the two cannot land atomically): a tuple recorded without a head is
+reconciled away harmlessly, a head landed without its tuple would be unreachable forever.
+
+Test: `a_reclassified_receipt_retracts_the_head_it_orphaned`.
+
+### 2. P2 `stale-derived-state-on-abstention` — a withdrawn answer is deleted, not kept
+
+The `classify → None` early return (and the no-subject arm) exited before the write
+transaction, so a re-judging pass whose honest answer was ABSTENTION left the previous
+judgment row AND its preference proposal live and queryable — and the projector could keep
+charging from it. New `withdraw_judgment` deletes the receipt's judgment + preference rows
+in one transaction on every post-evidence-load no-land path (missing Δ, abstention,
+subject-less cost class). It reads first and only opens a write txn if there is something
+to withdraw — abstention is the common case and must not cost a transaction.
+
+Composes with fix 1: withdrawal removes the ledger support, the next projection pass
+retracts the head. Tests: `an_abstaining_re_judgment_withdraws_the_answer_it_replaced`,
+`a_withdrawn_judgment_stops_charging_on_the_next_pass` (the second projects an EMPTY batch
+— reconciliation is not conditional on having something to write).
+
+### 3. P2 `replay-non-idempotence` — an unchanged pass re-returns its own head
+
+Both writers mint `EntityId::now()` and supersede unconditionally, so an identical second
+pass forked a fresh claim entity, superseded the prior head and returned a different id —
+unbounded phantom supersession history and sync traffic despite the docstring's idempotence
+claim. New `write_cost_head` reads the tuple's active heads first: if there is exactly ONE
+and it already carries the same value, the same `valid_from` and the same evidence payload,
+it is returned without a write. TWO active heads is a post-sync fork that must collapse, so
+that case still falls through to the writers on purpose. The check is in `attribution.rs`,
+never in the merged 1739 door.
+
+Test: `a_replayed_pass_re_returns_the_head_it_already_landed` (asserts id equality AND
+`superseded_count == 0`).
+
+**One landed test changed shape, deliberately, and is recorded here rather than quietly.**
+`the_cost_row_supersedes_and_averages_its_judgments` recorded BOTH judgments and only then
+projected twice — but the value is recomputed from the whole ledger, so its first pass
+already landed the final aggregate and its second pass was a genuine replay. Its
+`superseded_count == 1` assertion was therefore only ever passing on the churn this fix
+removes. The test now projects as the judgments ARRIVE (first pass sees one judgment,
+second sees two), which makes the value actually move and exercises the supersession path
+for real. No assertion was weakened or deleted — same four asserts, on a scenario that
+tests what they claim to.
+
+### 4. P2 `evidence-inlet-type-validation` — the door enforces the actor matrix
+
+`record_amendment_evidence` checked actor EXISTENCE only (`get_raw`), so a TURN or MESSAGE
+was accepted, judged `ExecutionLapse`, and persisted — and then `project_edit_cost_claims`
+failed at `require_actor_entity` inside the write door, a persistent wedge on durable state
+the engine had already accepted. The door now asks the downstream door's own question
+(`require_actor_entity`, the D13 matrix), at the point of observation. Chokepoint fix: no
+new wedge can be recorded, so the projector needs no second guard.
+
+Test: `the_evidence_door_refuses_a_subject_that_cannot_act`.
+
+### 5. REJECTED item — banked, not relitigated
+
+P1 `projector-chokepoint-bypass` (`actor_claims.rs:543`) was rejected with derivation by the
+verdict leg: `ActorClaimRow::EditCost` has exactly one construction site tree-wide (inside
+the projector), the blueprint's done-means is an API-shape invariant that HOLDS, and the
+demanded fix would refactor 1739-merged chokepoint semantics (forbidden by packet) and by
+symmetry gut the merged `SkillFit` arm too. No code written for it.
+
+### Packet + gates
+
+Diff is exactly three files: `edit_distance/attribution.rs`,
+`edit_distance/attribution/tests.rs`, and `actor_claims.rs` — the latter carrying ONLY two
+`pub(crate)` visibility lifts with their rationale docs (`require_actor_entity`,
+`ActorClaimEvidence::to_value`), the same additive move CLAIMS.md line 32 already sanctions
+for `llm.rs::canonical_json_bytes`. No `claim.rs`, no `skill_attribution.rs`, no
+`settings.rs`, no `Cargo.toml`; `Cargo.lock` was touched by `--all-features` resolution and
+restored to HEAD twice (never staged).
+
+- `cargo fmt --all` — clean
+- `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` — clean
+- `cargo test -p oneiron --all-features` — **45/45 test-result sections ok, 0 failed**
+  (lib: 3789 passed, 17 ignored; attribution module 20/20)

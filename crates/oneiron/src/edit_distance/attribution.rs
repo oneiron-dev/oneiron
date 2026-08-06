@@ -51,14 +51,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::actor_claims::{
-    ActorClaimEvidence, ActorClaimRow, edit_cost_scope, edit_cost_scope_name, write_actor_claim,
+    ActorClaimEvidence, ActorClaimRow, edit_cost_scope, edit_cost_scope_name, require_actor_entity,
+    write_actor_claim,
 };
+use crate::batch::EntityMetadataHeader;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST,
 };
 use crate::edit_distance::delta::amendment_delta;
-use crate::entity_id::EntityId;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
     AttemptOutcome, AttributionAuditReport, AttributionJudge, AttributionVerdict, OutcomeEvidence,
@@ -81,6 +83,12 @@ const JUDGMENT_KEY_PREFIX: &[u8] = b"edit_distance/amendment_judgment/v1\0";
 /// `vault_meta` prefix of minted preference proposals, keyed by receipt id.
 const PREFERENCE_KEY_PREFIX: &[u8] = b"edit_distance/preference_proposal/v1\0";
 
+/// `vault_meta` prefix of the `(predicate, subject, scope)` tuples this
+/// projector holds a live cost head for — the retraction ledger. Without it a
+/// re-judged receipt's OLD tuple is unreachable: no judgment names it any more,
+/// and nothing else knows a row was ever landed there.
+const TARGET_KEY_PREFIX: &[u8] = b"edit_distance/edit_cost_target/v1\0";
+
 /// `vault_meta` prefix of persisted audit reports: prefix ‖ at (8 BE) ‖
 /// sequence (8 BE), so reports read back oldest-first and two runs in one
 /// second stay two rows.
@@ -95,6 +103,7 @@ const ROW_VERSION: u8 = 1;
 const EVIDENCE_ROW_LABEL: &str = "amendment evidence row";
 const JUDGMENT_ROW_LABEL: &str = "amendment judgment row";
 const PREFERENCE_ROW_LABEL: &str = "preference proposal row";
+const TARGET_ROW_LABEL: &str = "edit cost target row";
 const AUDIT_ROW_LABEL: &str = "amendment judge audit row";
 
 /// Longest accepted amendment scope — the ED lane's scope bound, shared with
@@ -367,22 +376,26 @@ const fn cost_predicate(class: AmendmentClass) -> Option<&'static str> {
 /// re-route them afterwards.
 ///
 /// Everything the row asserts is RESOLVED here, at the door: the receipt must
-/// carry a Δ this engine measured, the actor and any skill must exist, and the
-/// scope must be a usable key. A judgment is only as good as its inputs, and
-/// the classes it feeds author reserved truth.
+/// carry a Δ this engine measured, any skill must exist, the scope must be a
+/// usable key, and the actor must be an entity that can ACT. A judgment is only
+/// as good as its inputs, and the classes it feeds author reserved truth.
+///
+/// The actor check is the DOWNSTREAM door's own ([`require_actor_entity`], the
+/// D13 matrix), asked here rather than three passes later: an
+/// [`AmendmentClass::ExecutionLapse`] on a TURN would be recorded, judged and
+/// persisted before [`project_edit_cost_claims`] hit the refusal, wedging every
+/// later pass on durable state the engine had already accepted.
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] when a reference does not resolve or the scope
-/// is unusable; storage errors.
+/// [`Error::InvalidClaimBody`] when a reference does not resolve, names an
+/// entity that cannot act, or the scope is unusable; storage errors.
 pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) -> Result<()> {
     let scope = normalized_scope(&evidence.scope)?.to_owned();
     if amendment_delta(vault, &evidence.receipt_id)?.is_none() {
         return Err(invalid("amendment evidence cites an unmeasured receipt"));
     }
-    if vault.get_raw(&evidence.actor)?.is_none() {
-        return Err(invalid("amendment evidence names an unknown actor"));
-    }
+    require_actor_entity(vault, &evidence.actor)?;
     if let Some(skill) = evidence.skill
         && vault.get_skill_record(&skill)?.is_none()
     {
@@ -476,6 +489,11 @@ pub fn judge_amendment(vault: &Vault, receipt_id: &str) -> Result<Option<Amendme
 /// wrong verdict forever. The claim rows follow on the next
 /// [`project_edit_cost_claims`] pass, which recomputes from this ledger.
 ///
+/// ABSTENTION is a correction like any other. A re-judging pass whose honest
+/// answer is silence WITHDRAWS whatever the previous pass persisted rather than
+/// leaving it queryable: this ledger is what the projector recomputes from, so
+/// a row nobody now stands behind would keep charging by itself.
+///
 /// # Errors
 ///
 /// Storage errors, and whatever `judge` returns.
@@ -490,10 +508,10 @@ pub fn judge_amendment_with(
     // No measurement, no judgment: a cost with nothing behind it is the number
     // this module refuses to invent.
     let Some(delta) = amendment_delta(vault, receipt_id)? else {
-        return Ok(None);
+        return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
     let Some(class) = classify_amendment(&evidence, judge)? else {
-        return Ok(None);
+        return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
     let judgment = AmendmentJudgment {
         receipt_id: receipt_id.to_owned(),
@@ -507,7 +525,7 @@ pub fn judge_amendment_with(
     // A class that charges somebody but names nobody is not a judgment, it is a
     // routing bug wearing one. Recorded as an abstention rather than landed.
     if cost_predicate(class).is_some() && judgment.subject.is_none() {
-        return Ok(None);
+        return withdraw_judgment(vault, receipt_id).map(|()| None);
     }
 
     let row = StoredJudgment {
@@ -550,6 +568,36 @@ pub fn judge_amendment_with(
         Ok(())
     })?;
     Ok(Some(judgment))
+}
+
+/// Deletes whatever a previous pass persisted for `receipt_id` — its judgment
+/// and, with it, any preference proposal that judgment minted.
+///
+/// The withdrawal is the whole correction on this side: the cost head the row
+/// was holding up loses its ledger support, and the next
+/// [`project_edit_cost_claims`] pass retracts it.
+fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
+    let judgment_key = meta_key(JUDGMENT_KEY_PREFIX, receipt_id.as_bytes());
+    let preference_key = meta_key(PREFERENCE_KEY_PREFIX, receipt_id.as_bytes());
+    {
+        // A receipt that never landed an answer has none to withdraw, and an
+        // abstention is the common case — it must not cost a write transaction.
+        let rtxn = vault.store.env.read_txn()?;
+        if vault.store.vault_meta.get(&rtxn, &judgment_key)?.is_none()
+            && vault
+                .store
+                .vault_meta
+                .get(&rtxn, &preference_key)?
+                .is_none()
+        {
+            return Ok(());
+        }
+    }
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.delete(wtxn, &judgment_key)?;
+        vault.store.vault_meta.delete(wtxn, &preference_key)?;
+        Ok(())
+    })
 }
 
 /// Every persisted amendment judgment, in receipt-id order.
@@ -637,7 +685,15 @@ pub fn pending_preference_proposals(vault: &Vault) -> Result<Vec<PreferencePropo
 ///
 /// The value written is RECOMPUTED from the whole judgment ledger for the row's
 /// `(subject, scope)` pair, so the pass is idempotent and an interrupted one
-/// leaves a stale row rather than a double-counted one.
+/// leaves a stale row rather than a double-counted one. A pass that would write
+/// the row already standing writes nothing and re-returns it.
+///
+/// **Every pass reconciles before it writes.** The judgment ledger is
+/// overwrite-by-receipt, so a re-judgment can move a receipt off the tuple it
+/// used to charge — and nothing in the new judgment names the old one. The
+/// tuples this projector has landed are therefore kept as their own ledger, and
+/// one that has lost every supporting judgment is RETRACTED here rather than
+/// left charging a verdict no judge stands behind.
 ///
 /// # Errors
 ///
@@ -647,6 +703,7 @@ pub fn project_edit_cost_claims(
     judgments: &[AmendmentJudgment],
 ) -> Result<Vec<EntityId>> {
     let persisted = amendment_judgments(vault)?;
+    retract_unsupported_targets(vault, &persisted)?;
     let mut targets: Vec<(&'static str, EntityId, String)> = Vec::new();
     for judgment in judgments {
         let Some(predicate) = cost_predicate(judgment.class) else {
@@ -674,23 +731,203 @@ pub fn project_edit_cost_claims(
         let Some(aggregate) = aggregate_for(&persisted, predicate, subject, &scope) else {
             continue;
         };
-        let evidence = ActorClaimEvidence::amendment(aggregate.receipts.clone(), aggregate.at)?;
-        let claim_id = if predicate == PREDICATE_ACTOR_EDIT_COST {
-            write_actor_claim(
-                vault,
-                ActorClaimRow::EditCost {
-                    actor: subject,
-                    scope: scope.clone(),
-                    cost: aggregate.cost,
-                },
-                &evidence,
-            )?
-        } else {
-            write_skill_edit_cost(vault, &subject, &scope, &aggregate)?
-        };
-        written.push(claim_id);
+        // Recorded BEFORE the head it describes: the write door owns its own
+        // transaction, so the two cannot land atomically, and a tuple recorded
+        // without a head is reconciled away harmlessly while a head landed
+        // without its tuple would be unreachable for the rest of time.
+        record_target(vault, predicate, &subject, &scope)?;
+        written.push(write_cost_head(
+            vault, predicate, subject, &scope, &aggregate,
+        )?);
     }
     Ok(written)
+}
+
+/// Lands one tuple's cost head — or re-returns the head that already says
+/// exactly this.
+///
+/// The no-op arm is what makes a replay a replay. Both writers mint
+/// `EntityId::now()` and supersede whatever head they find, so an unchanged
+/// pass without this check forks a fresh claim entity every run: unbounded
+/// phantom supersession history, sync traffic for a number that did not move,
+/// and a different id back from a function whose contract is idempotence.
+///
+/// ONE head, and only one: two active heads for a tuple is a post-sync fork
+/// that must collapse even when the surviving value is unchanged, so that case
+/// falls through to the writers on purpose.
+fn write_cost_head(
+    vault: &Vault,
+    predicate: &'static str,
+    subject: EntityId,
+    scope: &str,
+    aggregate: &CostAggregate,
+) -> Result<EntityId> {
+    let evidence = ActorClaimEvidence::amendment(aggregate.receipts.clone(), aggregate.at)?;
+    let value = rmpv::Value::F32(aggregate.cost);
+    let cited = if predicate == PREDICATE_ACTOR_EDIT_COST {
+        evidence.to_value()
+    } else {
+        skill_cost_evidence(aggregate)
+    };
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let heads = active_cost_heads_in_txn(vault, &rtxn, predicate, &subject, scope)?;
+        if let [(head_id, head)] = heads.as_slice()
+            && head.value == value
+            && head.valid_from == Some(aggregate.at)
+            && head.evidence.as_ref() == Some(&cited)
+        {
+            return Ok(*head_id);
+        }
+    }
+    if predicate == PREDICATE_ACTOR_EDIT_COST {
+        write_actor_claim(
+            vault,
+            ActorClaimRow::EditCost {
+                actor: subject,
+                scope: scope.to_owned(),
+                cost: aggregate.cost,
+            },
+            &evidence,
+        )
+    } else {
+        write_skill_edit_cost(vault, &subject, scope, aggregate)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The landed-target ledger (retraction)
+// ---------------------------------------------------------------------------
+
+/// Records that this projector holds a live head for `(predicate, subject,
+/// scope)`, so a later pass can find it again after the judgments that earned
+/// it have moved elsewhere.
+fn record_target(
+    vault: &Vault,
+    predicate: &'static str,
+    subject: &EntityId,
+    scope: &str,
+) -> Result<()> {
+    let encoded = encode_row(
+        &StoredTarget {
+            v: ROW_VERSION,
+            predicate: predicate.to_owned(),
+            subject: subject.to_hex(),
+            scope: scope.to_owned(),
+        },
+        TARGET_ROW_LABEL,
+    )?;
+    let key = target_key(predicate, subject, scope);
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        Ok(())
+    })
+}
+
+/// Every tuple this projector has landed a head for.
+fn recorded_targets(vault: &Vault) -> Result<Vec<(&'static str, EntityId, String)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = Vec::new();
+    for entry in vault
+        .store
+        .vault_meta
+        .prefix_iter(&rtxn, TARGET_KEY_PREFIX)?
+    {
+        let (_, raw) = entry?;
+        let row: StoredTarget = decode_row(&raw, TARGET_ROW_LABEL)?;
+        if row.v != ROW_VERSION {
+            return Err(Error::CorruptedIndex(TARGET_ROW_LABEL));
+        }
+        let predicate =
+            known_cost_predicate(&row.predicate).ok_or(Error::CorruptedIndex(TARGET_ROW_LABEL))?;
+        out.push((
+            predicate,
+            hex_entity(&row.subject, TARGET_ROW_LABEL)?,
+            row.scope,
+        ));
+    }
+    Ok(out)
+}
+
+/// Closes every landed head the judgment ledger no longer supports.
+///
+/// A receipt re-judged onto another class, subject or scope orphans the head
+/// its old tuple was holding up: the aggregate is only ever recomputed for
+/// tuples some judgment still points at, so without this the old charge would
+/// stand forever and [`edit_cost_for`] would keep reporting it. Retraction —
+/// not deletion — is the withdrawal: the row stays readable as history.
+fn retract_unsupported_targets(vault: &Vault, persisted: &[AmendmentJudgment]) -> Result<()> {
+    for (predicate, subject, scope) in recorded_targets(vault)? {
+        if aggregate_for(persisted, predicate, subject, &scope).is_some() {
+            continue;
+        }
+        retract_target(vault, predicate, &subject, &scope)?;
+    }
+    Ok(())
+}
+
+/// Retracts one tuple's active heads and forgets the tuple, in one transaction.
+///
+/// The `skill.*`/`actor.*` namespaces own their own lifecycle mechanics — the
+/// generic [`crate::Vault::retract_claim`] refuses a reserved predicate by
+/// design — so the closed body is re-put through the same engine-owned door
+/// that wrote it, exactly as the reserved supersession path does.
+fn retract_target(
+    vault: &Vault,
+    predicate: &'static str,
+    subject: &EntityId,
+    scope: &str,
+) -> Result<()> {
+    let now = crate::unix_seconds_now();
+    let key = target_key(predicate, subject, scope);
+    vault.with_write_txn(|wtxn| {
+        for (id, mut body) in active_cost_heads_in_txn(vault, wtxn, predicate, subject, scope)? {
+            let header = {
+                let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? else {
+                    continue;
+                };
+                EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("edit cost claim entity"))?
+            };
+            // The clamp mirrors the supersession path: a withdrawal stamped
+            // BEFORE the row it closes would make the re-Put range invalid and
+            // roll the whole transaction back.
+            let at = now.max(header.occurred_start);
+            body.lifecycle = ClaimLifecycleStatus::Retracted;
+            body.valid_to = Some(at);
+            vault.put_reserved_claim_in_txn(
+                wtxn,
+                &id,
+                &body,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: at,
+                },
+                header.learned_at,
+            )?;
+        }
+        vault.store.vault_meta.delete(wtxn, &key)?;
+        Ok(())
+    })
+}
+
+/// The `vault_meta` key of one landed tuple. The scope goes LAST: it is the
+/// only field a caller supplies, so nothing it can contain shifts another.
+fn target_key(predicate: &str, subject: &EntityId, scope: &str) -> Vec<u8> {
+    let mut handle = Vec::with_capacity(predicate.len() + scope.len() + 2 * ENTITY_ID_LEN + 2);
+    handle.extend_from_slice(predicate.as_bytes());
+    handle.push(0);
+    handle.extend_from_slice(subject.to_hex().as_bytes());
+    handle.push(0);
+    handle.extend_from_slice(scope.as_bytes());
+    meta_key(TARGET_KEY_PREFIX, &handle)
+}
+
+/// The `'static` predicate a stored token names, if it names one of the two.
+fn known_cost_predicate(token: &str) -> Option<&'static str> {
+    [PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST]
+        .into_iter()
+        .find(|predicate| *predicate == token)
 }
 
 /// One `(subject, scope)` pair's folded cost.
@@ -771,15 +1008,10 @@ fn write_skill_edit_cost(
     let scope = normalized_scope(scope)?.to_owned();
     let at = aggregate.at;
     let value = rmpv::Value::F32(aggregate.cost);
-    let evidence = rmpv::Value::Array(
-        aggregate
-            .receipts
-            .iter()
-            .map(|receipt| rmpv::Value::from(receipt.as_str()))
-            .collect(),
-    );
+    let evidence = skill_cost_evidence(aggregate);
     vault.with_write_txn(|wtxn| {
-        let heads = active_skill_cost_heads_in_txn(vault, wtxn, skill, &scope)?;
+        let heads =
+            active_cost_heads_in_txn(vault, wtxn, PREDICATE_SKILL_EDIT_COST, skill, &scope)?;
         let claim_id = EntityId::now();
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_EDIT_COST,
@@ -805,33 +1037,49 @@ fn write_skill_edit_cost(
         // hold two distinct claims, and closing one would leave the other live
         // forever. The `max` mirrors the sibling clamp — an out-of-order event
         // time makes the re-Put range invalid and rolls the transaction back.
-        for (head_id, head_start) in &heads {
-            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, head_id, at.max(*head_start))?;
+        for (head_id, head) in &heads {
+            let head_start = head.valid_from.unwrap_or(0);
+            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, head_id, at.max(head_start))?;
         }
         Ok(claim_id)
     })
 }
 
-/// The active `skill.edit_cost` heads for one `(skill, scope)` pair, with their
-/// event times.
-fn active_skill_cost_heads_in_txn(
+/// The citation array a `skill.edit_cost` row carries — the `skill.*` shape,
+/// beside the lane envelope its `actor.*` sibling's own ledger builds.
+fn skill_cost_evidence(aggregate: &CostAggregate) -> rmpv::Value {
+    rmpv::Value::Array(
+        aggregate
+            .receipts
+            .iter()
+            .map(|receipt| rmpv::Value::from(receipt.as_str()))
+            .collect(),
+    )
+}
+
+/// The active heads of one `(predicate, subject, scope)` tuple.
+///
+/// One scan for both predicates: an entity is an ACTOR or a SKILL, never both,
+/// so the tuple already says which ledger is being read.
+fn active_cost_heads_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
-    skill: &EntityId,
+    predicate: &str,
+    subject: &EntityId,
     scope: &str,
-) -> Result<Vec<(EntityId, u64)>> {
+) -> Result<Vec<(EntityId, ClaimBody)>> {
     let mut heads = Vec::new();
-    for id in vault.claims_for_subject_in_txn(rtxn, skill)? {
+    for id in vault.claims_for_subject_in_txn(rtxn, subject)? {
         let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
             continue;
         };
-        if body.predicate != PREDICATE_SKILL_EDIT_COST
+        if body.predicate != predicate
             || body.lifecycle != ClaimLifecycleStatus::Active
             || edit_cost_scope_name(body.scope.as_ref()) != Some(scope)
         {
             continue;
         }
-        heads.push((id, body.valid_from.unwrap_or(0)));
+        heads.push((id, body));
     }
     Ok(heads)
 }
@@ -1086,6 +1334,14 @@ struct StoredPreference {
     scope: String,
     evidence_receipts: Vec<String>,
     at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredTarget {
+    v: u8,
+    predicate: String,
+    subject: String,
+    scope: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,7 +5,7 @@ use rmpv::Value;
 use crate::claim::ClaimLifecycleStatus;
 use crate::config::VaultConfig;
 use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 
 // ─── fixtures ───────────────────────────────────────────────────────────
@@ -76,17 +76,26 @@ fn active_rows(vault: &Vault, subject: &EntityId, predicate: &str) -> Result<Vec
     Ok(out)
 }
 
-fn superseded_count(vault: &Vault, subject: &EntityId, predicate: &str) -> Result<usize> {
+fn lifecycle_count(
+    vault: &Vault,
+    subject: &EntityId,
+    predicate: &str,
+    lifecycle: ClaimLifecycleStatus,
+) -> Result<usize> {
     let mut count = 0;
     for id in vault.claims_for_subject(subject)? {
         let Some(body) = vault.get_claim(&id)? else {
             continue;
         };
-        if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Superseded {
+        if body.predicate == predicate && body.lifecycle == lifecycle {
             count += 1;
         }
     }
     Ok(count)
+}
+
+fn superseded_count(vault: &Vault, subject: &EntityId, predicate: &str) -> Result<usize> {
+    lifecycle_count(vault, subject, predicate, ClaimLifecycleStatus::Superseded)
 }
 
 /// The receipts a cost row cites, out of either evidence shape: the `skill.*`
@@ -434,10 +443,11 @@ fn the_cost_row_supersedes_and_averages_its_judgments() -> Result<()> {
                 .with_routing_facts(false, true),
         )?;
         judgments.push(judge_amendment(&vault, &receipt)?.expect("a settled amendment routes"));
+        // The projector runs as the judgments arrive, so the second pass finds
+        // a live head carrying the FIRST estimate and has to close it — a pass
+        // over a ledger that already held both would only re-derive one number.
+        project_edit_cost_claims(&vault, &judgments)?;
     }
-
-    project_edit_cost_claims(&vault, &judgments[..1])?;
-    project_edit_cost_claims(&vault, &judgments)?;
 
     let rows = active_rows(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?;
     assert_eq!(rows.len(), 1, "the pair holds exactly one live estimate");
@@ -532,6 +542,192 @@ fn re_judging_withdraws_the_proposal_it_no_longer_stands_behind() -> Result<()> 
         amendment_judgments(&vault)?.len(),
         1,
         "a re-judgment replaces the receipt's row rather than adding one"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_reclassified_receipt_retracts_the_head_it_orphaned() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.retraction")?;
+
+    let defect = judged(
+        &vault,
+        "receipt:moved",
+        AmendmentEvidence::new("receipt:moved", actor, "outbound")
+            .at(120)
+            .with_skill(skill)
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(true, true),
+        "the skill said do it this way",
+        "the skill was wrong so do it that way",
+    )?
+    .expect("a settled amendment routes");
+    project_edit_cost_claims(&vault, &[defect])?;
+    assert!(edit_cost_for(&vault, &skill, "outbound")?.is_some());
+
+    // The door re-read the amendment: the world had moved under a proposal that
+    // was right when it was made, so the skill owes nothing.
+    record_amendment_evidence(
+        &vault,
+        &AmendmentEvidence::new("receipt:moved", actor, "outbound")
+            .at(120)
+            .with_skill(skill)
+            .with_cause(AmendmentCause::ExternalChange),
+    )?;
+    let rejudged = judge_amendment(&vault, "receipt:moved")?.expect("a settled amendment routes");
+    assert_eq!(rejudged.class, AmendmentClass::Environment);
+    project_edit_cost_claims(&vault, &[rejudged])?;
+
+    assert!(
+        edit_cost_for(&vault, &skill, "outbound")?.is_none(),
+        "a charge no persisted judgment supports is withdrawn, not left standing"
+    );
+    assert!(active_rows(&vault, &skill, PREDICATE_SKILL_EDIT_COST)?.is_empty());
+    assert_eq!(
+        lifecycle_count(
+            &vault,
+            &skill,
+            PREDICATE_SKILL_EDIT_COST,
+            ClaimLifecycleStatus::Retracted
+        )?,
+        1,
+        "the orphaned head is closed as a withdrawal, and the record is kept"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_abstaining_re_judgment_withdraws_the_answer_it_replaced() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.withdraw")?;
+
+    let preference = judged(
+        &vault,
+        "receipt:withdrawn",
+        AmendmentEvidence::new("receipt:withdrawn", actor, "calendar")
+            .at(130)
+            .with_skill(skill)
+            .with_cause(AmendmentCause::DeciderPreference),
+        "warm regards",
+        "best",
+    )?
+    .expect("a settled amendment routes");
+    assert_eq!(preference.class, AmendmentClass::PreferenceShift);
+    assert_eq!(pending_preference_proposals(&vault)?.len(), 1);
+
+    // The same door, re-read: the cause it thought it had does not hold up.
+    record_amendment_evidence(
+        &vault,
+        &AmendmentEvidence::new("receipt:withdrawn", actor, "calendar")
+            .at(130)
+            .with_skill(skill),
+    )?;
+    assert!(
+        judge_amendment(&vault, "receipt:withdrawn")?.is_none(),
+        "an unsettled cause abstains"
+    );
+    assert!(
+        amendment_judgments(&vault)?.is_empty(),
+        "a pass that withdrew its answer must not leave the old one queryable"
+    );
+    assert!(pending_preference_proposals(&vault)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_withdrawn_judgment_stops_charging_on_the_next_pass() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.stopcharging")?;
+
+    let lapse = judged(
+        &vault,
+        "receipt:lapsed",
+        AmendmentEvidence::new("receipt:lapsed", actor, "outbound")
+            .at(140)
+            .with_skill(skill)
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(false, true),
+        "the skill said do it this way",
+        "so do it this way",
+    )?
+    .expect("a settled amendment routes");
+    project_edit_cost_claims(&vault, &[lapse])?;
+    assert!(edit_cost_for(&vault, &actor, "outbound")?.is_some());
+
+    record_amendment_evidence(
+        &vault,
+        &AmendmentEvidence::new("receipt:lapsed", actor, "outbound")
+            .at(140)
+            .with_skill(skill),
+    )?;
+    assert!(judge_amendment(&vault, "receipt:lapsed")?.is_none());
+
+    // Nothing new to land — and the pass still has to answer for what the
+    // ledger no longer says.
+    assert!(project_edit_cost_claims(&vault, &[])?.is_empty());
+    assert!(
+        edit_cost_for(&vault, &actor, "outbound")?.is_none(),
+        "the withdrawn verdict stops charging on the pass that reads the ledger"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_replayed_pass_re_returns_the_head_it_already_landed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.replay")?;
+
+    let lapse = judged(
+        &vault,
+        "receipt:replay",
+        AmendmentEvidence::new("receipt:replay", actor, "outbound")
+            .at(150)
+            .with_skill(skill)
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(false, true),
+        "the skill said do it this way",
+        "so do it this way",
+    )?
+    .expect("a settled amendment routes");
+
+    let first = project_edit_cost_claims(&vault, std::slice::from_ref(&lapse))?;
+    let second = project_edit_cost_claims(&vault, &[lapse])?;
+    assert_eq!(
+        first, second,
+        "an unchanged pass re-returns its own head rather than minting another"
+    );
+    assert_eq!(
+        active_rows(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?.len(),
+        1
+    );
+    assert_eq!(
+        superseded_count(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?,
+        0,
+        "a replay writes no phantom supersession history"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_evidence_door_refuses_a_subject_that_cannot_act() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    measure_amendment(&vault, "receipt:turn", "one two", "one three")?;
+    let turn = EntityId::now();
+    vault.put_entity(&turn, ENTITY_TYPE_TURN, t(1), 1, b"")?;
+
+    let evidence = AmendmentEvidence::new("receipt:turn", turn, "outbound")
+        .at(160)
+        .with_cause(AmendmentCause::ProposalWrong)
+        .with_routing_facts(false, true);
+    assert!(
+        record_amendment_evidence(&vault, &evidence).is_err(),
+        "a TURN cannot be charged an actor.edit_cost, so the door refuses it \
+         here rather than wedging the projector two passes later"
     );
     Ok(())
 }
