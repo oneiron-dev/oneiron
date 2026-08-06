@@ -132,3 +132,24 @@ module doc.
   full runs. It asserts `migrated >= observed_before` where both sides are
   `unix_seconds_now()` — a wall-clock assertion in the sync/authority fold, no calendar,
   inbox, or claim-family code in its path.
+
+## SIMPLIFY (K3 pass, 2026-08-06)
+
+One deletion-biased pass over the impl tip. One edit warranted:
+
+- Deleted the private `lens_text(&str) -> Result<LensText>` pass-through wrapper in
+  `calendar/outcome.rs` (a pure rename layer over `LensText::new`, 11 call sites).
+  Call sites now name the real constructor. The wrapper had also been masking four
+  needless borrows of owned temporaries (`to_hex()` / `to_string()`); those borrows
+  dropped per clippy. No behavior change; no test, fixture, or public-API touch.
+
+Reviewed and deliberately left alone: `answer_button` (real shared logic, not a
+layer), the two MetaLine blocks in `build_check_in_lens` (extracting would add
+structure), the long module/law doc comments (they carry the four laws + the
+inherited gate hole — content, not ceremony), `CheckInResolution::recorded_value`
+(deviation D2, load-bearing for inbox row resolution), and the D1
+`OutcomeCheckInWake` local image (dep-reservation law; swap belongs to ONE-1783).
+
+Gates after: `cargo fmt --all -- --check` clean; `cargo clippy -p oneiron
+--all-features --all-targets` zero warnings; `cargo test -p oneiron --all-features
+--test calendar_outcome` 18/18 green.

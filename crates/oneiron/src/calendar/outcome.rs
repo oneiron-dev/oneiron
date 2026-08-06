@@ -527,8 +527,8 @@ pub struct CheckInCopy {
 /// [`crate::error::Error::InvalidConfig`] when a caller-supplied action id or
 /// copy string violates the lens token/text bounds.
 pub fn build_check_in_lens(model: &CheckInCardModel, copy: &CheckInCopy) -> Result<GeneratedLens> {
-    let title = lens_text(&copy.title)?;
-    let body = lens_text(&copy.body)?;
+    let title = LensText::new(&copy.title)?;
+    let body = LensText::new(&copy.body)?;
     let answer_action = SelfUiActionId::new(model.answer_action_id.as_str())?;
 
     let mut root = LensNode::with_fallback_text(
@@ -549,15 +549,15 @@ pub fn build_check_in_lens(model: &CheckInCardModel, copy: &CheckInCopy) -> Resu
     root.children.push(LensNode::new(
         LensAtomId::new("outcome-check-in-event")?,
         LensAtom::MetaLine(MetaLineAtom {
-            label: lens_text("event_ref")?,
-            value: lens_text(&model.event_ref.to_hex())?,
+            label: LensText::new("event_ref")?,
+            value: LensText::new(model.event_ref.to_hex())?,
         }),
     ));
     root.children.push(LensNode::new(
         LensAtomId::new("outcome-check-in-scheduled-start")?,
         LensAtom::MetaLine(MetaLineAtom {
-            label: lens_text("scheduled_start_utc")?,
-            value: lens_text(&model.scheduled_start_utc.to_string())?,
+            label: LensText::new("scheduled_start_utc")?,
+            value: LensText::new(model.scheduled_start_utc.to_string())?,
         }),
     ));
 
@@ -577,10 +577,10 @@ pub fn build_check_in_lens(model: &CheckInCardModel, copy: &CheckInCopy) -> Resu
         LensAtomId::new("outcome-check-in-recording")?,
         LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
             id: SelfUiControlId::new("outcome-check-in-recording")?,
-            label: lens_text(&copy.recording_label)?,
+            label: LensText::new(&copy.recording_label)?,
             action: SelfUiAction {
                 command: SelfUiActionId::new(model.recording_upload_action_id.as_str())?,
-                args: vec![SelfUiValue::Text(lens_text(&model.event_ref.to_hex())?)],
+                args: vec![SelfUiValue::Text(LensText::new(model.event_ref.to_hex())?)],
             },
         })),
     ));
@@ -599,20 +599,16 @@ fn answer_button(
         LensAtomId::new(control_id.as_str())?,
         LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
             id: SelfUiControlId::new(control_id)?,
-            label: lens_text(label)?,
+            label: LensText::new(label)?,
             action: SelfUiAction {
                 command,
                 args: vec![
-                    SelfUiValue::Text(lens_text(&model.event_ref.to_hex())?),
+                    SelfUiValue::Text(LensText::new(model.event_ref.to_hex())?),
                     SelfUiValue::Token(SelfUiOptionValue::new(answer.as_str())?),
                 ],
             },
         })),
     ))
-}
-
-fn lens_text(value: &str) -> Result<LensText> {
-    LensText::new(value)
 }
 
 /// Opens the EVENT's recording artifact for the card's upload door and returns
