@@ -1442,14 +1442,15 @@ fn split_apply_records_canonical_map_and_undo_restores() {
     );
 }
 
-/// CONTRACT INVERTED BY ONE-1745 (arming, not deletion): the facet door is
-/// armed now, so the cell that read "validates, then refuses" reads
-/// "validates, then MINTS". Every pre-existing assert is kept — the
-/// shell-base rejection, the self-distinct rejection, the still-unarmed
-/// `assert_distinct` door, and the untouched lifecycle of the base — and the
-/// facet half now asserts the effect instead of its absence.
+/// CONTRACT INVERTED BY ONE-1745, THEN ONE-1746 (arming, not deletion): both
+/// cells that read "validates, then refuses" now read "validates, then
+/// MINTS" — facet masks, and the `entity.distinct_from` claim. Every
+/// pre-existing assert is kept: the shell-base rejection, the self-distinct
+/// rejection, the unarmed facet PROPOSE lane, and the untouched lifecycle of
+/// every participant; the two armed halves assert the effect instead of its
+/// absence.
 #[test]
-fn facet_door_mints_and_assert_distinct_stays_unarmed() {
+fn facet_and_assert_distinct_doors_mint_their_own_effects() {
     let (_dir, vault) = open_vault();
     let base = put_person(&vault, 0x61);
     let other = put_person(&vault, 0x62);
@@ -1533,13 +1534,41 @@ fn facet_door_mints_and_assert_distinct_stays_unarmed() {
         .expect_err("facet proposals are unarmed");
     assert!(matches!(err, Error::IdentityTopologyUnarmed(_)));
 
-    let err = vault
-        .apply_identity_topology_op(&distinct_op(other, survivor), &write, 300)
-        .expect_err("assert_distinct apply is unarmed");
-    assert!(matches!(err, Error::IdentityTopologyUnarmed(_)));
-    assert_eq!(event_count(&vault), 2);
+    // ONE-1746: assert_distinct now applies. Like a facet op it moves NO
+    // lifecycle state (§6) — its whole effect is the `entity.distinct_from`
+    // claim, which the ledger event names.
+    let (event, transitions) = expect_applied(
+        vault
+            .apply_identity_topology_op(&distinct_op(other, survivor), &write, 300)
+            .expect("assert_distinct apply is armed"),
+    );
+    assert!(transitions.is_empty());
+    assert_eq!(event_count(&vault), 3);
+    let pair = distinct_pair_key(other, survivor);
+    let claims = vault
+        .distinct_claims_for_pair(&survivor, &other)
+        .expect("distinct claims");
+    assert_eq!(claims.len(), 1);
+    assert_eq!(
+        vault
+            .identity_topology_event(&event)
+            .expect("read assert event")
+            .expect("assert event exists")
+            .action,
+        StoredIdentityOpAction::AssertDistinct {
+            a: pair.0,
+            b: pair.1,
+            claim: claims[0],
+        }
+    );
     assert_eq!(
         vault.entity_lifecycle_state(&other).expect("other state"),
+        EntityLifecycleState::Active
+    );
+    assert_eq!(
+        vault
+            .entity_lifecycle_state(&survivor)
+            .expect("survivor state"),
         EntityLifecycleState::Active
     );
 }
@@ -4213,4 +4242,439 @@ fn applied_counts_are_bounded_by_the_map_and_the_consent_axis() {
         1,
         0
     )));
+}
+
+// ─── ONE-1746 (MS-04): entity.distinct_from ─────────────────────────────────
+
+fn proposed(write: IdentityOpWrite) -> IdentityOpWrite {
+    IdentityOpWrite {
+        approval: ClaimApprovalStatus::Proposed,
+        ..write
+    }
+}
+
+/// The claim body an `assert_distinct` event named, read back off the ledger.
+fn distinct_claim_of_event(vault: &Vault, event: &EntityId) -> (EntityId, ClaimBody) {
+    let record = vault
+        .identity_topology_event(event)
+        .expect("read event")
+        .expect("event exists");
+    let StoredIdentityOpAction::AssertDistinct { claim, .. } = record.action else {
+        panic!(
+            "expected an assert_distinct action, got {:?}",
+            record.action
+        );
+    };
+    (
+        claim,
+        vault
+            .get_claim(&claim)
+            .expect("read distinct claim")
+            .expect("distinct claim exists"),
+    )
+}
+
+#[test]
+fn assert_distinct_mints_one_normalized_claim_per_unordered_pair() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let pair = distinct_pair_key(a, b);
+
+    let (first, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&distinct_op(a, b), &write, 200)
+            .expect("assert (a, b)"),
+    );
+    let (claim, body) = distinct_claim_of_event(&vault, &first);
+    // §9 G.1: the claim is anchored on the pair's lex-first entity and its
+    // value IS the normalized pair, so argument order cannot fork the row.
+    assert_eq!(body.predicate, PREDICATE_ENTITY_DISTINCT_FROM);
+    assert_eq!(body.subject, ClaimSubject::Entity(pair.0));
+    assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(body.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(body.value, distinct_claim_value(pair));
+
+    // Idempotent: the reversed assertion records its own ledger event and
+    // ADOPTS the same claim — one pair, one row.
+    let (second, transitions) = expect_applied(
+        vault
+            .apply_identity_topology_op(&distinct_op(b, a), &write, 300)
+            .expect("assert (b, a)"),
+    );
+    assert!(transitions.is_empty());
+    assert_ne!(second, first);
+    assert_eq!(distinct_claim_of_event(&vault, &second).0, claim);
+    assert_eq!(
+        vault.distinct_claims_for_pair(&a, &b).expect("pair claims"),
+        vec![claim]
+    );
+    assert_eq!(
+        vault.distinct_claims_for_pair(&b, &a).expect("pair claims"),
+        vec![claim]
+    );
+
+    // Pair-exact: a different pair is a different claim, never a widening of
+    // this one.
+    vault
+        .apply_identity_topology_op(&distinct_op(a, c), &write, 400)
+        .expect("assert (a, c)");
+    let unrelated = vault
+        .distinct_claims_for_pair(&a, &c)
+        .expect("unrelated pair claims");
+    assert_eq!(unrelated.len(), 1);
+    assert_ne!(unrelated[0], claim);
+    assert!(
+        vault
+            .distinct_claims_for_pair(&b, &c)
+            .expect("never-asserted pair")
+            .is_empty()
+    );
+}
+
+#[test]
+fn distinct_claim_suppresses_only_proposed_merges_over_the_covered_pair() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    vault
+        .apply_identity_topology_op(&distinct_op(a, b), &write, 200)
+        .expect("assert distinct");
+    let pair = distinct_pair_key(a, b);
+
+    // §6: the covered pair's re-proposal is refused typed, in either
+    // direction and whichever side survives.
+    for op in [merge_op(vec![b], a), merge_op(vec![a], b)] {
+        let err = vault
+            .apply_identity_topology_op(&op, &proposed(write), 300)
+            .expect_err("a covered pair must not re-propose");
+        assert_eq!(
+            expect_rejection(err),
+            IdentityTopologyRejection::DistinctPairSuppressed {
+                a: pair.0,
+                b: pair.1,
+            }
+        );
+    }
+    // A proposal that merely TOUCHES a covered entity is untouched — only a
+    // proposal naming BOTH sides conflates the asserted pair.
+    expect_parked(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![c], a), &proposed(write), 300)
+            .expect("unrelated pair still parks"),
+    );
+    assert!(
+        vault
+            .open_merge_proposals_for_pair(&a, &b)
+            .expect("open proposals")
+            .is_empty()
+    );
+    assert_eq!(
+        vault
+            .open_merge_proposals_for_pair(&a, &c)
+            .expect("open proposals")
+            .len(),
+        1
+    );
+
+    // The claim suppresses agent RE-ASKING, never an owner's ruling: the same
+    // merge applies unchanged on the effective lane.
+    let (_, transitions) = expect_applied(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![b], a), &write, 400)
+            .expect("an effective merge is never blocked"),
+    );
+    assert_eq!(transitions, vec![(b, EntityLifecycleState::Merged)]);
+}
+
+#[test]
+fn a_proposed_distinct_assertion_suppresses_nothing_until_it_is_effective() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+
+    // The park mints its claim — a proposal with no row could never be
+    // approved — but the row carries `Proposed` and suppresses nothing.
+    let parked = expect_parked(
+        vault
+            .apply_identity_topology_op(&distinct_op(a, b), &proposed(write), 200)
+            .expect("propose an assertion"),
+    );
+    let (proposed_claim, body) = distinct_claim_of_event(&vault, &parked);
+    assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+    assert!(
+        vault
+            .distinct_claims_for_pair(&a, &b)
+            .expect("pair claims")
+            .is_empty()
+    );
+    expect_parked(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![b], a), &proposed(write), 300)
+            .expect("an unapproved assertion suppresses nothing"),
+    );
+
+    // A proposal must not ABSORB an effective assertion: the effective write
+    // RULES the park rather than being swallowed by it, so a producer who
+    // proposes the pair first cannot neutralize an owner-ruled assertion.
+    let (effective, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&distinct_op(a, b), &write, 400)
+            .expect("assert distinct"),
+    );
+    let (effective_claim, effective_body) = distinct_claim_of_event(&vault, &effective);
+    assert_eq!(effective_claim, proposed_claim);
+    assert_eq!(effective_body.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(
+        vault.distinct_claims_for_pair(&a, &b).expect("pair claims"),
+        vec![effective_claim]
+    );
+    assert!(matches!(
+        expect_rejection(
+            vault
+                .apply_identity_topology_op(&merge_op(vec![b], a), &proposed(write), 500)
+                .expect_err("now suppressed")
+        ),
+        IdentityTopologyRejection::DistinctPairSuppressed { .. }
+    ));
+}
+
+/// The park's ONLY resolution door. [`proposal_scope_target`] is unarmed for
+/// this op kind, so `resolve_identity_proposal` can never rule on a parked
+/// assertion — asserting the pair effectively is the ruling, and it has to
+/// promote the parked row rather than mint a second Active one beside it.
+#[test]
+fn an_effective_re_assertion_promotes_the_parked_distinct_row_in_place() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let pair = distinct_pair_key(a, b);
+    let proposer = IdentityOpWrite::auto(ClaimSource::Inferred);
+
+    let parked = expect_parked(
+        vault
+            .apply_identity_topology_op(&distinct_op(a, b), &proposed(proposer), 200)
+            .expect("propose an assertion"),
+    );
+    let (parked_claim, parked_body) = distinct_claim_of_event(&vault, &parked);
+    assert_eq!(parked_body.approval, ClaimApprovalStatus::Proposed);
+
+    // There is no other door: the park cannot reach the resolution ramp.
+    assert!(matches!(
+        vault
+            .resolve_identity_proposal(
+                &parked,
+                ProposalRuling::Approve,
+                &IdentityOpWrite::auto(ClaimSource::UserStated),
+                300,
+            )
+            .expect_err("assert_distinct has no resolution ramp"),
+        Error::IdentityTopologyUnarmed(_)
+    ));
+
+    // Asserting the pair effectively IS the ruling — same claim id back, in
+    // either pair order, with only the approval cell moved.
+    let ruler = IdentityOpWrite {
+        approval: ClaimApprovalStatus::Approved,
+        ..IdentityOpWrite::auto(ClaimSource::UserStated)
+    };
+    let (ruled, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&distinct_op(b, a), &ruler, 400)
+            .expect("rule the park by asserting it"),
+    );
+    let (ruled_claim, ruled_body) = distinct_claim_of_event(&vault, &ruled);
+    assert_eq!(ruled_claim, parked_claim);
+    assert_eq!(ruled_body.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(ruled_body.value, parked_body.value);
+    assert_eq!(ruled_body.subject, parked_body.subject);
+    assert_eq!(ruled_body.source, parked_body.source);
+    assert_eq!(ruled_body.confidence, parked_body.confidence);
+
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    // ONE pair, ONE Active row — the promoted one, never a second mint.
+    let covering: Vec<EntityId> = vault
+        .active_distinct_claims_in_txn(&rtxn, &pair.0)
+        .expect("active distinct rows")
+        .into_iter()
+        .filter(|row| row.pair == pair)
+        .map(|row| row.claim)
+        .collect();
+    assert_eq!(covering, vec![parked_claim]);
+    // The promotion moved consent, not the proposer's occurred/learned window.
+    let raw = vault
+        .store
+        .entities
+        .get(&rtxn, parked_claim.as_bytes())
+        .expect("read claim row")
+        .expect("claim row exists");
+    let header = EntityMetadataHeader::parse(&raw).expect("claim header");
+    assert_eq!(
+        (
+            header.occurred_start,
+            header.occurred_end,
+            header.learned_at
+        ),
+        (200, 200, 200)
+    );
+    drop(rtxn);
+
+    // And the promoted row is what §6 suppression reads.
+    assert_eq!(
+        vault.distinct_claims_for_pair(&a, &b).expect("pair claims"),
+        vec![parked_claim]
+    );
+}
+
+#[test]
+fn retracting_the_distinct_claim_lifts_suppression() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&distinct_op(a, b), &write, 200)
+            .expect("assert distinct"),
+    );
+    let (claim, _) = distinct_claim_of_event(&vault, &event);
+
+    // The claim's own lifecycle is the retraction door — no shadow state, so
+    // closing it is the whole undo.
+    vault.retract_claim(&claim, 300).expect("retract claim");
+    assert!(
+        vault
+            .distinct_claims_for_pair(&a, &b)
+            .expect("pair claims")
+            .is_empty()
+    );
+    expect_parked(
+        vault
+            .apply_identity_topology_op(&merge_op(vec![b], a), &proposed(write), 400)
+            .expect("a retracted assertion suppresses nothing"),
+    );
+    // And the ledger event survives the retraction (r1: append-only history).
+    assert!(
+        vault
+            .identity_topology_event(&event)
+            .expect("read event")
+            .is_some()
+    );
+}
+
+#[test]
+fn assert_distinct_event_is_not_undoable() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&distinct_op(a, b), &write, 200)
+            .expect("assert distinct"),
+    );
+    let err = vault
+        .undo_identity_topology_event(&event, &write, 300)
+        .expect_err("an assertion is retracted through its claim, never undone");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::NotUndoable { event }
+    );
+}
+
+#[test]
+fn assert_distinct_event_wire_round_trips_and_pins_the_normalized_pair() {
+    let pair = distinct_pair_key(id(0x21), id(0x22));
+    let record = StoredIdentityOpEvent {
+        seq: 7,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: Some(evidence()),
+        action: StoredIdentityOpAction::AssertDistinct {
+            a: pair.0,
+            b: pair.1,
+            claim: id(0x23),
+        },
+    };
+    let bytes = encode_identity_topology_event_body(&record).expect("encode");
+    assert_eq!(
+        decode_identity_topology_event_body(&bytes).expect("decode"),
+        record
+    );
+
+    // A descending pair is the unnormalized spelling one pair must not have.
+    let unnormalized = StoredIdentityOpEvent {
+        action: StoredIdentityOpAction::AssertDistinct {
+            a: pair.1,
+            b: pair.0,
+            claim: id(0x23),
+        },
+        ..record.clone()
+    };
+    let bytes = encode_identity_topology_event_body(&unnormalized).expect("encode");
+    assert!(matches!(
+        decode_identity_topology_event_body(&bytes),
+        Err(Error::InvalidIdentityTopologyEventBody(_))
+    ));
+
+    // Neither is a self-pair, and an amendment of this kind has no park to
+    // amend (the resolution door owns merge and split only).
+    let self_paired = StoredIdentityOpEvent {
+        action: StoredIdentityOpAction::AssertDistinct {
+            a: pair.0,
+            b: pair.0,
+            claim: id(0x23),
+        },
+        ..record
+    };
+    let bytes = encode_identity_topology_event_body(&self_paired).expect("encode");
+    assert!(decode_identity_topology_event_body(&bytes).is_err());
+    assert!(matches!(
+        encode_identity_op_amendment(&distinct_op(id(0x21), id(0x22))),
+        Err(Error::IdentityTopologyUnarmed(_))
+    ));
+}
+
+#[test]
+fn distinct_from_claim_structure_pins_the_pair_and_its_subject() {
+    let pair = distinct_pair_key(id(0x21), id(0x22));
+    let body = |subject, value| {
+        ClaimBody::new(
+            PREDICATE_ENTITY_DISTINCT_FROM,
+            ClaimSubject::Entity(subject),
+            value,
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+    };
+    validate_distinct_from_claim_structure(&body(pair.0, distinct_claim_value(pair)))
+        .expect("the normalized shape is the valid one");
+
+    // The two bounds that make one unordered pair exactly one claim: the
+    // value is normalized, and the subject is its lex-first entity. Without
+    // either, an agent could mint a second row for the same pair.
+    for rejected in [
+        body(pair.0, distinct_claim_value((pair.1, pair.0))),
+        body(pair.1, distinct_claim_value(pair)),
+        body(pair.0, distinct_claim_value((pair.0, pair.0))),
+        body(pair.0, Value::from("not a pair")),
+        body(
+            pair.0,
+            Value::Map(vec![(Value::from("a"), id_value(&pair.0))]),
+        ),
+    ] {
+        assert!(matches!(
+            validate_distinct_from_claim_structure(&rejected),
+            Err(Error::InvalidClaimBody(_))
+        ));
+    }
 }

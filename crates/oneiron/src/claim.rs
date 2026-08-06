@@ -1525,6 +1525,8 @@ pub(crate) fn validate_claim_body_and_decode(
         || body.predicate == PREDICATE_CONFLICT_RESOLVED
     {
         validate_conflict_claim_structure(&body)?;
+    } else if body.predicate == crate::identity_topology::PREDICATE_ENTITY_DISTINCT_FROM {
+        crate::identity_topology::validate_distinct_from_claim_structure(&body)?;
     } else if crate::channel_identity::is_channel_identity_claim_predicate(&body.predicate) {
         crate::channel_identity::validate_channel_identity_claim_structure(&body)?;
     } else if crate::identity_reputation::is_identity_reputation_claim_predicate(&body.predicate) {
@@ -2048,8 +2050,13 @@ impl Vault {
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
     }
 
-    /// Crate-private transaction-composable door for engine-owned reserved
-    /// Claims. This is intentionally not part of the public [`Vault`] API.
+    /// Crate-private transaction-composable door for ENGINE-OWNED Claims:
+    /// the reserved namespaces, and the family doors that own their
+    /// predicate's decision outright (ONE-1746's `assert_distinct`, whose
+    /// ARCH-0055 r3 consent axis rides the op itself). Both skip the
+    /// public write gate's criticality ladder — the owning door already
+    /// decided — and keep the source-trust check. This is intentionally not
+    /// part of the public [`Vault`] API.
     pub(crate) fn put_reserved_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,

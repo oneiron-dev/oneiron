@@ -212,8 +212,8 @@ fn outcome_receipt(vault: &Vault, receipt: EntityId) -> oneiron::ReceiptRecord {
 #[allow(dead_code)]
 mod seam {
     use super::{
-        ClaimApprovalStatus, ClaimSubject, EntityId, IdentityOpOutcome, ProposalOutcome,
-        ProposalRuling, Vault,
+        ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, IdentityOpOutcome,
+        IdentityOpWrite, IdentityTopologyOp, ProposalOutcome, ProposalRuling, Vault,
     };
 
     // ---- ONE-1744 (MS-02): redirect projection + read-time resolution ----
@@ -421,34 +421,64 @@ mod seam {
     }
 
     // ---- ONE-1746 (MS-04): entity.distinct_from + re-proposal suppression ----
+    // ARMED: the REAL op door mints the claim, and the REAL vault reads count
+    // it — no stand-ins left.
 
     /// Asserts the anti-merge claim for (a, b) (§9 G.1 row).
-    pub(crate) fn assert_distinct(_vault: &Vault, _a: &EntityId, _b: &EntityId) {
-        unimplemented!("armed by ONE-1746: entity.distinct_from write")
+    pub(crate) fn assert_distinct(vault: &Vault, a: &EntityId, b: &EntityId) {
+        let outcome = vault
+            .apply_identity_topology_op(
+                &IdentityTopologyOp::AssertDistinct(oneiron::AssertDistinctOp {
+                    a: *a,
+                    b: *b,
+                    reason: "oracle fixture assertion".to_owned(),
+                }),
+                &IdentityOpWrite::auto(ClaimSource::Inferred),
+                super::PROPOSAL_AT,
+            )
+            .expect("assert distinct");
+        // r6/§6: an assertion moves no lifecycle state — its whole effect is
+        // the claim.
+        let IdentityOpOutcome::Applied { transitions, .. } = outcome else {
+            panic!("auto assert_distinct must apply, got {outcome:?}");
+        };
+        assert!(transitions.is_empty());
     }
 
     /// ACTIVE `entity.distinct_from` claims keyed by the normalized
     /// symmetric pair.
-    pub(crate) fn count_active_distinct_claims(
-        _vault: &Vault,
-        _a: &EntityId,
-        _b: &EntityId,
-    ) -> usize {
-        unimplemented!("armed by ONE-1746: distinct-claim count by pair key")
+    pub(crate) fn count_active_distinct_claims(vault: &Vault, a: &EntityId, b: &EntityId) -> usize {
+        vault
+            .distinct_claims_for_pair(a, b)
+            .expect("distinct claims for pair")
+            .len()
     }
 
     /// Surfaces a merge proposal for (a, b) from any producer.
-    pub(crate) fn propose_merge(_vault: &Vault, _a: &EntityId, _b: &EntityId) {
-        unimplemented!("armed by ONE-1746: merge proposal intake")
+    pub(crate) fn propose_merge(vault: &Vault, a: &EntityId, b: &EntityId) {
+        // §6 intake has exactly two legitimate outcomes: the pair parks, or
+        // an effective distinct claim suppresses it with the typed rejection.
+        // Anything else is a real failure, so only that one rejection is
+        // swallowed here.
+        match vault.apply_identity_topology_op(
+            &super::merge_op(vec![*b], *a),
+            &super::proposed_write(),
+            super::PROPOSAL_AT,
+        ) {
+            Ok(IdentityOpOutcome::Parked { .. }) => {}
+            Err(oneiron::Error::IdentityTopologyRejected(
+                oneiron::IdentityTopologyRejection::DistinctPairSuppressed { .. },
+            )) => {}
+            other => panic!("merge proposal intake must park or be suppressed, got {other:?}"),
+        }
     }
 
     /// Open (non-suppressed) merge proposals for the pair.
-    pub(crate) fn count_open_merge_proposals(
-        _vault: &Vault,
-        _a: &EntityId,
-        _b: &EntityId,
-    ) -> usize {
-        unimplemented!("armed by ONE-1746: open merge-proposal count")
+    pub(crate) fn count_open_merge_proposals(vault: &Vault, a: &EntityId, b: &EntityId) -> usize {
+        vault
+            .open_merge_proposals_for_pair(a, b)
+            .expect("open merge proposals")
+            .len()
     }
 
     // ---- ONE-1747 (MS-05): proposal-outcome receipts + reserved delta ----
@@ -838,7 +868,6 @@ fn ms03_facet_never_blends_profiles_across_masks() {
 /// `(min(a,b), max(a,b))` — asserting both directions yields exactly ONE
 /// claim.
 #[test]
-#[ignore = "armed by ONE-1746"]
 fn ms04_assert_distinct_is_symmetric_single_claim() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
@@ -853,7 +882,6 @@ fn ms04_assert_distinct_is_symmetric_single_claim() {
 /// suppressed — rejections route, they don't dead-end into re-asks
 /// (Wikidata P1889 semantics).
 #[test]
-#[ignore = "armed by ONE-1746"]
 fn ms04_distinct_from_suppresses_merge_reproposal() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
@@ -867,7 +895,6 @@ fn ms04_distinct_from_suppresses_merge_reproposal() {
 /// proposal for (a, c) still surfaces. A suppress-everything-touching-a
 /// implementation must fail here.
 #[test]
-#[ignore = "armed by ONE-1746"]
 fn ms04_distinct_from_does_not_suppress_unrelated_pairs() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
