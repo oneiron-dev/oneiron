@@ -1029,6 +1029,18 @@ async fn campaign_surface_error_parity() {
     .await;
     assert_eq!(status, 400, "{blank}");
 
+    // BAD_REQUEST: a malformed `scope`. An empty axis means UNRESTRICTED, so a
+    // scope the surface cannot read must be refused rather than dropped — a
+    // silently-widened query would target every world and facet.
+    for malformed in [json!("sales"), json!(7), json!(["sales"])] {
+        let mut widened = saved_query_body();
+        widened["scope"] = malformed.clone();
+        let (status, refused) =
+            request(addr, "POST", "/saved-queries", Some(&token), Some(&widened)).await;
+        assert_eq!(status, 400, "scope {malformed} was accepted: {refused}");
+        assert_eq!(refused["code"], "BAD_REQUEST");
+    }
+
     // INVALID_STATE: an archived record refuses a stale-version write, and the
     // surface never offers a hard delete to route around it.
     let created = expect_call(

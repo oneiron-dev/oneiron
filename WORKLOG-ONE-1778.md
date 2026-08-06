@@ -296,3 +296,108 @@ Gates re-run on the unmodified tip: `cargo check -p oneiron --all-features` and
 `batch.rs` under default features — outside this lane's packet, left alone);
 `cargo test -p oneiron --all-features campaign::surface` 2/2;
 `cargo test -p oneiron-server --test campaign_surface_oracle` 11/11.
+
+## VERDICT-FIX (Opus, post-simplify tip `1f44007e3`)
+
+The finder returned five items; the verdict leg confirmed **three REAL** and
+banked two. All three are fixed at their chokepoint, each mutation-verified
+red-before / green-after. The two banked items are **not relitigated below**.
+
+### V1 (P1, `authorization-bypass`) — membership verbs verified admission, then dropped the actor
+
+`crates/oneiron/src/facade.rs` — `campaign_members` / `saved_query_members`.
+
+The projections select on the CAMPAIGN or the QUERY, never on `owner_actor`:
+`read_campaign_members(vault, req)` takes no principal, by the blueprint's own
+pinned signature. The facade called `verify_actor_binding` and then passed only
+the vault and a caller-controlled `owner_ref` through. Any admitted principal
+holding `core:read` and a foreign campaign's id could therefore page its cohort —
+member entity ids, states, epochs, and causes — while the RECORD reads on the
+same facade were owner-filtered. Two doors to one resource, one of them open.
+
+Fixed where the ownership fact already lives: each membership verb now performs
+the same owner-filtered record read its sibling `*_read` verb performs, and
+answers a non-owned or absent resource with the empty page — one answer for
+absent-or-not-yours, so the projection leaks no existence signal either. The
+skeleton signatures are unchanged; no principal is threaded into the projections.
+
+* **RED** `membership_reads_are_scoped_to_the_owning_principal` (new, in-crate):
+  panicked `a campaign's cohort must not page for a principal that does not own it`.
+* **GREEN** after: owner pages 1 row on both axes, intruder pages 0 on both.
+
+### V2 (P1, `cross-campaign-state-mixing`) — the fold read another campaign's events
+
+`crates/oneiron/src/campaign/surface.rs` — `fold_membership_events`.
+
+`membership_events` is keyed `(query, entity)` (`saved_query.rs` `event_prefix`),
+while every `MembershipEvent` carries its own `campaign_ref` and the head model
+explicitly supports one `(query, entity)` pair holding heads in several
+campaigns. The fold consumed the whole shared history unfiltered, so campaign A's
+row folded campaign B's later transitions: state, cause, and both bitemporal
+pairs were wrong in a supported configuration, and the saved-query axis emitted
+rows that were one campaign's state repeated rather than each campaign's own.
+
+Fixed in the fold's own skip clause, next to the existing `at_epoch` ceiling:
+the function now takes the `MembershipHead` and ignores every event whose
+`campaign_ref` is not that head's. One predicate, at the single place the union
+is consumed — no filtering scattered into the two public read functions.
+
+* **RED** `membership_rows_fold_only_their_own_campaigns_events` (new, in-crate):
+  campaign A (Entered @1) folded campaign B's Exited @3 — `left: "exited"`,
+  `right: "entered"`.
+* **GREEN** after: A reports `entered` / `data_change` / `entered_valid 100`;
+  B reports `exited` / `definition_change` / `entered_valid 200` /
+  `exited_valid 300`; the query axis pages both heads, `["entered", "exited"]`.
+
+### V3 (P2, `scope-validation`) — a scalar `scope` silently widened the query
+
+`crates/oneiron/src/campaign/surface.rs` — `parse_scope`.
+
+`parse_scope` checked only absent-or-null. For any other non-object,
+`raw.get("worlds")` and `raw.get("facets")` both return `None`, yielding empty
+axes — and an empty axis in `QueryScope` means UNRESTRICTED. So
+`{"scope": "sales", ...}` with an otherwise valid body was accepted as a saved
+query targeting every world and every facet instead of being refused. Campaign
+targeting semantics changed on a typo.
+
+Fixed by requiring `scope` to be a JSON object when present; absent and null
+still mean the documented default.
+
+* **RED** `scope_must_be_an_object` (new, in-crate): `"sales"`, `7`, `["sales"]`,
+  `true` all parsed. Also **RED** over HTTP in `campaign_surface_error_parity`
+  (new rows): `POST /saved-queries` returned `200` with
+  `"scope":{"worlds":[],"facets":[]}` — the widening, on the wire.
+* **GREEN** after: all four malformed shapes are field errors; HTTP returns
+  `400 BAD_REQUEST` for `"sales"`, `7`, and `["sales"]`.
+
+### Not relitigated (verdict-banked, owner/postmortem)
+
+* **Finder-1 (MCP transport)** — REJECTED as a lane defect by the verdict leg.
+  The demanded dispatch hook can only live in `mcp.rs` / `api/mcp_gateway.rs`,
+  both unconditional non-claims, and "CA-07 adds no MCP tool" is ratified. The
+  blueprint's `campaign_mcp_gateway_uses_existing_dialect` done-means presumes a
+  generic gateway verb arm that does not exist — a spec collision for the owner
+  (strike as dialect-owner work, or schedule an MCP arm), already carried as D3.
+* **Finder-4 (unbounded membership scan)** — REJECTED as blocking; posture item,
+  already carried as F4. Forced by the `registry.rs` non-claim, documented
+  in-code, same shape as the shipped `/api/core/discover`; responses stay
+  cursor-bounded. Follow-up is a membership index or a server-layer rate limit.
+
+### Packet + gates
+
+Diff is `campaign/surface.rs`, `facade.rs` (inside the two `self.*` membership
+verb methods only), and `tests/campaign_surface_oracle.rs`. No `Cargo.toml`,
+no `Cargo.lock`, no `mcp.rs`, no `mcp_gateway.rs`, no `graph_fs.rs`, no
+`registry.rs`. The ten `SELF_*` constants, `CAMPAIGN_SELF_VERBS`, the closed-list
+parse, and every pinned skeleton signature are untouched.
+
+* `cargo fmt --all` clean; `cargo clippy -p oneiron -p oneiron-server
+  --all-features --all-targets` clean.
+* `cargo test -p oneiron --all-features` — fully green (engine suite + doctests).
+* `cargo test -p oneiron-server` — green except **F2**, the pre-existing
+  `the_real_codec_rows_run_the_same_codec_package_axum_resolves` manifest-pin
+  red. Re-confirmed base-red this pass: it fails identically on the stashed
+  pre-fix tip and with the committed `Cargo.lock` restored, and the test reads
+  only `cargo metadata` edges — no `.rs` input. Its fix is a one-line bump in
+  `crates/oneiron-server/Cargo.toml`, a hard non-claim. Charged to no lane.
+* `campaign::surface` in-crate: 5/5. `campaign_surface_oracle`: 11/11.

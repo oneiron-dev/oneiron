@@ -3493,11 +3493,25 @@ impl MemoryFacade<'_> {
     }
 
     /// `self.campaign.members` — a cursor-bounded, read-only cohort page.
+    ///
+    /// The projection selects on the CAMPAIGN, not on the owner, so ownership
+    /// is established HERE, by the same owner-filtered read `self.campaign.read`
+    /// performs: a campaign this actor does not own answers exactly as an absent
+    /// one does, and a caller holding a foreign campaign's id learns neither its
+    /// cohort nor its existence.
     pub fn campaign_members(
         &self,
         request: &crate::campaign::surface::MembershipReadRequest,
     ) -> FacadeResult<crate::campaign::surface::MembershipPage> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        if crate::campaign::surface::read_campaign(self.vault, self.actor, request.owner_ref)?
+            .is_none()
+        {
+            return Ok(crate::campaign::surface::MembershipPage {
+                rows: Vec::new(),
+                next_cursor: None,
+            });
+        }
         Ok(crate::campaign::surface::read_campaign_members(
             self.vault, request,
         )?)
@@ -3559,11 +3573,23 @@ impl MemoryFacade<'_> {
 
     /// `self.saved_query.members` — a cursor-bounded, read-only page of the
     /// membership this query derived, causes preserved as CA-02 wrote them.
+    ///
+    /// Owner-scoped the same way [`Self::campaign_members`] is, and for the same
+    /// reason: the projection filters on the QUERY, so the owner check is this
+    /// method's to make.
     pub fn saved_query_members(
         &self,
         request: &crate::campaign::surface::MembershipReadRequest,
     ) -> FacadeResult<crate::campaign::surface::MembershipPage> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        if crate::saved_query::read_saved_query(self.vault, self.actor, request.owner_ref)?
+            .is_none()
+        {
+            return Ok(crate::campaign::surface::MembershipPage {
+                rows: Vec::new(),
+                next_cursor: None,
+            });
+        }
         Ok(crate::campaign::surface::read_saved_query_members(
             self.vault, request,
         )?)

@@ -788,7 +788,7 @@ fn membership_page(
             break;
         }
         let events = membership_events(vault, head.query_ref, head.entity_ref)?;
-        if let Some(row) = fold_membership_events(head.entity_ref, &events, req.at_epoch) {
+        if let Some(row) = fold_membership_events(&head, &events, req.at_epoch) {
             rows.push(row);
         }
         // Advanced for every head the loop CONSUMED, not only for the ones that
@@ -875,7 +875,12 @@ fn membership_heads(
     Ok(heads)
 }
 
-/// Folds one `(query, entity)` history into a single row.
+/// Folds one head's history into a single row.
+///
+/// The event log is keyed `(query, entity)` and one such pair can hold heads in
+/// SEVERAL campaigns, so the history handed in is the union across them and only
+/// the events carrying this head's `campaign_ref` are this head's. Folding the
+/// union would let one campaign's exit end a membership in another.
 ///
 /// `entered_*` always report the newest ENTRY, even when the entity has since
 /// exited, so a caller can tell "left after a long membership" from "left
@@ -883,13 +888,16 @@ fn membership_heads(
 /// a re-entry supersedes the prior exit rather than leaving a stale end date on
 /// a live member.
 fn fold_membership_events(
-    entity_ref: EntityId,
+    head: &MembershipHead,
     events: &[MembershipEvent],
     at_epoch: Option<u64>,
 ) -> Option<MembershipRow> {
     let mut entered: Option<&MembershipEvent> = None;
     let mut latest: Option<&MembershipEvent> = None;
     for event in events {
+        if event.campaign_ref != head.campaign_ref {
+            continue;
+        }
         if at_epoch.is_some_and(|ceiling| event.epoch > ceiling) {
             continue;
         }
@@ -902,7 +910,7 @@ fn fold_membership_events(
     let entered = entered?;
     let exited = (latest.transition == MembershipTransition::Exited).then_some(latest);
     Some(MembershipRow {
-        entity_ref,
+        entity_ref: head.entity_ref,
         state: latest.transition.as_str().to_owned(),
         entered_valid: entered.valid_at,
         entered_detected: entered.detected_at,
@@ -1291,6 +1299,12 @@ fn parse_scope(body: &Value) -> FacadeResult<QueryScope> {
     let Some(raw) = body.get("scope").filter(|value| !value.is_null()) else {
         return Ok(QueryScope::default());
     };
+    // An empty axis means UNRESTRICTED in [`QueryScope`], so a non-object scope
+    // cannot be read as "no fields present": `"scope": "sales"` would silently
+    // widen the query to every world and facet instead of being refused.
+    if !raw.is_object() {
+        return Err(field_error("scope", "must be an object"));
+    }
     let worlds = match raw.get("worlds") {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::Array(items)) => items
@@ -1445,6 +1459,7 @@ fn invalid(message: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EdgeActorClass;
     use crate::campaign::claims::{CampaignMemberChannel, CampaignMemberState};
     use crate::campaign::register_crm_pack;
     use crate::config::VaultConfig;
@@ -1535,6 +1550,34 @@ mod tests {
                 commit_membership_plan(self.vault, &plan, at + 1).expect("commit plan"),
                 MembershipCommitOutcome::Applied
             );
+        }
+    }
+
+    /// A minimal but REAL create request: the filter and matcher go through
+    /// CA-02's own `parse_filter_ast`, so the fixture cannot admit an
+    /// expression the engine would refuse.
+    fn saved_query_request() -> CreateSavedQueryRequest {
+        let claim = |predicate: &str| {
+            parse_filter_ast(&serde_json::json!({
+                "op": "claim",
+                "predicate": predicate,
+                "cmp": "eq",
+                "value": "vp",
+            }))
+            .expect("stage-1 filter")
+        };
+        CreateSavedQueryRequest {
+            schema_version: SAVED_QUERY_SCHEMA_VERSION,
+            scope: QueryScope::default(),
+            filter: claim("profile.seniority"),
+            matcher: MatcherSpec::Hard {
+                expression: claim("profile.headcount"),
+            },
+            eval: EvalPolicy {
+                mode: EvalMode::Manual,
+                max_entities_per_wake: 8,
+                max_judges_per_wake: 4,
+            },
         }
     }
 
@@ -1781,6 +1824,185 @@ mod tests {
                 .expect("campaign page")
                 .rows,
             vec![now]
+        );
+    }
+
+    /// One `(query, entity)` pair can hold heads in several campaigns. Each row
+    /// folds only the events of ITS campaign.
+    #[test]
+    fn membership_rows_fold_only_their_own_campaigns_events() {
+        let (_dir, vault) = oracle_vault();
+        let query = test_id(0x61);
+        let (first, second) = (test_id(0x60), test_id(0x62));
+        let person = test_id(0x63);
+        put_person(&vault, person);
+        let in_first = Cohort {
+            vault: &vault,
+            query,
+            campaign: first,
+        };
+        let in_second = Cohort {
+            vault: &vault,
+            query,
+            campaign: second,
+        };
+
+        // The event log is keyed `(query, entity)`, so these three transitions
+        // share ONE history across two campaigns — and the epoch is monotonic
+        // over that shared history, not per campaign.
+        in_first.commit(
+            person,
+            1,
+            MembershipTransition::Entered,
+            MembershipCause::DataChange,
+            100,
+        );
+        in_second.commit(
+            person,
+            2,
+            MembershipTransition::Entered,
+            MembershipCause::ScopeChange,
+            200,
+        );
+        in_second.commit(
+            person,
+            3,
+            MembershipTransition::Exited,
+            MembershipCause::DefinitionChange,
+            300,
+        );
+
+        // The first campaign never saw the exit: its member is still enrolled,
+        // on its own entry's clock and its own cause.
+        let still_in = read_campaign_members(&vault, &request(first, 10)).expect("first cohort");
+        assert_eq!(still_in.rows.len(), 1);
+        assert_eq!(still_in.rows[0].state, "entered");
+        assert_eq!(still_in.rows[0].cause.as_deref(), Some("data_change"));
+        assert_eq!(still_in.rows[0].entered_valid, 100);
+        assert_eq!(still_in.rows[0].exited_valid, None);
+
+        // The second did, and dates the entry from its OWN entry event rather
+        // than from the first campaign's.
+        let left = read_campaign_members(&vault, &request(second, 10)).expect("second cohort");
+        assert_eq!(left.rows.len(), 1);
+        assert_eq!(left.rows[0].state, "exited");
+        assert_eq!(left.rows[0].cause.as_deref(), Some("definition_change"));
+        assert_eq!(left.rows[0].entered_valid, 200);
+        assert_eq!(left.rows[0].exited_valid, Some(300));
+
+        // The query axis pages both heads, each folded against its own
+        // campaign, so the derived cohort is not one campaign's state twice.
+        let derived = read_saved_query_members(&vault, &request(query, 10)).expect("query cohort");
+        let mut states: Vec<&str> = derived
+            .rows
+            .iter()
+            .map(|row| row.state.as_str())
+            .collect::<Vec<_>>();
+        states.sort_unstable();
+        assert_eq!(states, ["entered", "exited"]);
+    }
+
+    /// A membership page is the owner's cohort, not any admitted caller's.
+    #[test]
+    fn membership_reads_are_scoped_to_the_owning_principal() {
+        let (_dir, vault) = oracle_vault();
+        let (owner, intruder, person) = (test_id(0x71), test_id(0x72), test_id(0x73));
+        for actor in [owner, intruder, person] {
+            put_person(&vault, actor);
+        }
+
+        let owner_facade = vault.memory_facade(owner, EdgeActorClass::Human);
+        let campaign = owner_facade
+            .campaign_create(
+                &CreateCampaignRequest {
+                    schema_version: CAMPAIGN_SCHEMA_VERSION,
+                    name: "owned cohort".to_owned(),
+                },
+                10,
+            )
+            .expect("create campaign")
+            .campaign_ref;
+        let query = owner_facade
+            .saved_query_create(&saved_query_request(), 10)
+            .expect("create saved query")
+            .query_ref;
+        Cohort {
+            vault: &vault,
+            query,
+            campaign,
+        }
+        .commit(
+            person,
+            1,
+            MembershipTransition::Entered,
+            MembershipCause::DataChange,
+            100,
+        );
+
+        // The owner pages their own cohort on both axes.
+        assert_eq!(
+            owner_facade
+                .campaign_members(&request(campaign, 10))
+                .expect("owner campaign page")
+                .rows
+                .len(),
+            1
+        );
+        assert_eq!(
+            owner_facade
+                .saved_query_members(&request(query, 10))
+                .expect("owner query page")
+                .rows
+                .len(),
+            1
+        );
+
+        // Another admitted principal holding the same well-formed refs pages
+        // nothing: absent-or-not-yours is ONE answer here, exactly as it is for
+        // the record reads.
+        let intruder_facade = vault.memory_facade(intruder, EdgeActorClass::Human);
+        assert!(
+            intruder_facade
+                .campaign_members(&request(campaign, 10))
+                .expect("foreign campaign page")
+                .rows
+                .is_empty(),
+            "a campaign's cohort must not page for a principal that does not own it"
+        );
+        assert!(
+            intruder_facade
+                .saved_query_members(&request(query, 10))
+                .expect("foreign query page")
+                .rows
+                .is_empty(),
+            "a query's cohort must not page for a principal that does not own it"
+        );
+    }
+
+    /// A `scope` that is not an object is a field error, never an unrestricted
+    /// query: every axis of [`QueryScope`] reads empty as "no restriction".
+    #[test]
+    fn scope_must_be_an_object() {
+        for malformed in [
+            serde_json::json!("sales"),
+            serde_json::json!(7),
+            serde_json::json!(["sales"]),
+            serde_json::json!(true),
+        ] {
+            let body = serde_json::json!({ "scope": malformed });
+            assert!(
+                parse_scope(&body).is_err(),
+                "{malformed} must not widen the query to every world and facet"
+            );
+        }
+        // Absent and null still mean the default scope, which CA-02 documents.
+        assert_eq!(
+            parse_scope(&serde_json::json!({})).expect("absent scope"),
+            QueryScope::default()
+        );
+        assert_eq!(
+            parse_scope(&serde_json::json!({ "scope": Value::Null })).expect("null scope"),
+            QueryScope::default()
         );
     }
 }
