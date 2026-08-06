@@ -230,3 +230,115 @@ tests green.
 - Exit consequences are out of scope: `detect_enrollment` records `Entered`
   transitions and `execute_claimed` answers `SkippedStale` for anything else.
   The `Exited` write path is exercised through ONE-1773's own commit door.
+
+## VERDICT-FIX
+
+Five verdict-verified REAL findings, each fixed at its chokepoint and each
+mutation-verified (test written first, observed red on the pre-fix tip
+`b1970a1ee`, green after). The two BANKED-REJECT items
+(`frozen-intent-recovery-drift`, `home-node-check-toctou`) were not relitigated.
+
+### P1 `cause-routing-review-bypass` — `enrollment.rs` cause baseline
+`derive_cause` compared each detection against a per-ENTITY row written at the
+previous DETECTION. That let a bulk move launder itself twice over: the row
+advanced the instant a `DefinitionChange` was detected, so the next detection
+under the same unreviewed definition read `DataChange` and auto-enrolled the
+very change routed for review; and an entity the moved definition just swept in
+has no row at all, and an absent row could only read as `DataChange` — the
+population review exists for was exactly the population that skipped it.
+
+Fix: one baseline row per QUERY (`campaign:enrollment_baseline:v1:<query>`)
+holding the derivation state the owner last ACCEPTED, plus
+`accept_enrollment_baseline(vault, event)` as the engine half of the review. A
+query with no baseline pins one on first detection (nothing prior could have
+moved). The per-entity context row and its two-put txn are deleted — the
+per-query baseline subsumes them.
+
+The acceptance door is not gold-plating: `ReviewRequired` with nowhere for a
+ruling to land turns the ratified routing DIAL into a wall, since every later
+detection under a moved definition would report the move forever. Presenting the
+review stays ONE-1778 surface work; only its durable effect lives here.
+
+Oracle: `a_definition_move_cannot_launder_itself_into_data_change` (second
+sighting, swept-in newcomer, and the post-acceptance return to automatic).
+Red-before: `left: DataChange, right: DefinitionChange`.
+
+### P1 `duplicate-attempt-double-send` — outward identity scope (PACKET_AMEND)
+ONE-1691 derives an intent from `(attempt_id, call_seq, server, tool,
+payload_hash)` and dedupes sends by it, so whatever is passed as `attempt_id`
+IS the definition of "the same send". Passing the queue row id made the send
+identity a function of how many times the work was enqueued — and this module
+tolerates duplicate attempts by design (dedupe is advisory) while
+`AlreadyApplied` still owes its outward leg, so two rows minted two frozen
+intents and sent the same enrollment twice.
+
+Fix: `enrollment_consequence_id(event, step)` derives the ledger identity from
+the consequence — `(query, entity, epoch)` (the watermark's own unit of
+membership) plus campaign, program, and step. `derive_enrollment_outbound_request`
+consequently no longer takes the `AttemptRecord` at all.
+
+**PACKET_AMEND note for the record:** this departs from the blueprint's literal
+"derives `OutboundCallRequest.attempt_id` from the durable queue attempt id"
+(R2-18 / A16). Every property that phrase was protecting still holds — no clock,
+no process counter, stable across restart, derived from persisted state only —
+but the identity is now scoped to the consequence rather than the queue row,
+which is what keeps advisory dedupe off the correctness path.
+
+Test: `duplicate_attempts_for_one_transition_send_once`. Red-before: two distinct
+intent ids for one transition.
+
+### P1 `outbound-home-node-bypass` — `run_enrollment_outbound_leg`
+The membership leg checked designation twice; the outward leg had no node
+parameter and checked nothing. Because the leg is documented as the SELF-
+CONTAINED crash-recovery entry point, no caller sequencing can cover it: a node
+can apply the cohort row while designated, lose designation, and come back for
+the send.
+
+Fix: the leg takes `local_node_id` and re-reads the designation itself before
+any ledger record or transport call, returning the new `EnrollmentOutboundLeg`
+enum (`Dispatched` / `NoOutboundStep` / `NotHomeNode` / `NoHomeNode`) — the same
+vocabulary the membership leg already answers in.
+
+Test: `outward_leg_refuses_a_demoted_node`. Red-before: the demoted node sent.
+
+### P2 `pending-epoch-dedupe-collision` — `enrollment_dedupe_key`
+The epoch only advances when a COMMIT spends it, so every transition detected
+before the first one lands shares one. Keying the coalescer on
+`(query, entity, epoch)` alone therefore answered "same work" for genuinely
+different pending transitions: the newer one inherited the older one's queue row
+and never executed, which is an advisory key deciding what gets enrolled.
+
+Fix: the key covers transition, cause, and evidence hash as well. Identical rows
+still coalesce (the `advisory_dedupe_is_not_correctness` oracle still holds);
+different ones no longer do.
+
+Oracle: `distinct_pending_transitions_do_not_share_a_dedupe_key`. Red-before:
+byte-identical keys for two different transitions.
+
+### P2 `stale-bulk-event-misrouted` — check order in `execute_claimed`
+Cause routing ran before the transition and live-evidence checks, so an event
+whose entity had stopped matching returned `ReviewRequired` and parked dead work
+in the owner's queue. Fix: staleness outranks cause — the two skip checks moved
+above the routing dial.
+
+Oracle: `stale_bulk_event_is_skipped_rather_than_parked_for_review`. Red-before:
+`ReviewRequired { cause: DefinitionChange }` instead of `SkippedStale`.
+
+### Gates
+`cargo fmt -p oneiron -- --check` clean · `cargo clippy -p oneiron --all-features
+--all-targets` clean (zero diagnostics in `enrollment.rs`) · `cargo test -p
+oneiron --all-features` green: 3628 lib tests + every integration suite, 0
+failed. Oracle 15/15, in-crate enrollment 16/16.
+
+Diff stays inside the packet: `crates/oneiron/src/campaign/enrollment.rs` and
+`crates/oneiron/tests/campaign_enrollment_oracle.rs` only. No `Cargo.toml`, no
+`Cargo.lock`, no `saved_query.rs`, no `attempt_queue.rs`, no `gate.rs`.
+
+### Known holes added by this round
+- The per-query baseline is pinned by the FIRST detection a query ever sees. A
+  definition or scope move that lands before any detection is therefore
+  invisible — inherent to having no prior state, and closing it would need a
+  query-authoring hook inside `saved_query.rs` (a NON-CLAIM).
+- `accept_enrollment_baseline` is an unauthenticated engine door: it records
+  that a ruling happened, not who made it. Binding it to an owner actor belongs
+  with the review surface in ONE-1778.
