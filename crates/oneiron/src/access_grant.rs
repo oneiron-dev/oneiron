@@ -125,6 +125,21 @@ impl AccessGrantScope {
         }
     }
 
+    /// Returns the one capability this scope shape can authorize.
+    ///
+    /// Scope and capability are a matched pair, not two free axes: a calendar
+    /// scope authorizes a rung read and nothing else, a companion-profile
+    /// scope a profile read and nothing else. [`AccessGrant::validate`] is the
+    /// door that enforces it, so a mispaired grant can never encode, decode,
+    /// or persist.
+    #[must_use]
+    pub const fn required_capability(self) -> AccessGrantCapability {
+        match self {
+            Self::CompanionProfile { .. } => AccessGrantCapability::CompanionProfileRead,
+            Self::Calendar { .. } => AccessGrantCapability::CalendarDisclosureRead,
+        }
+    }
+
     /// Returns the granted rung when this scope names the supplied calendar.
     #[must_use]
     pub fn calendar_rung(self, calendar_ref: &EntityId) -> Option<DisclosureRung> {
@@ -268,8 +283,18 @@ impl AccessGrant {
         Ok(grant)
     }
 
-    /// Validates revocation invariants.
+    /// Validates the scope/capability pairing and the revocation invariants.
+    ///
+    /// A grant whose capability does not match its scope shape is a nonsensical
+    /// control-plane state — every reader would answer a different question
+    /// about it — so it is rejected here, at the one door every codec, mint,
+    /// and revoke path already passes through.
     pub fn validate(&self) -> Result<()> {
+        if self.capability != self.scope.required_capability() {
+            return Err(Error::InvalidAccessGrantBody(
+                "scope and capability are not a matched pair",
+            ));
+        }
         match (self.status, self.revoked_at) {
             (AccessGrantStatus::Active, None) => Ok(()),
             (AccessGrantStatus::Active, Some(_)) => Err(invalid_grant()),
@@ -557,6 +582,21 @@ impl Vault {
 
     /// Revokes an AccessGrant by rewriting the same record as revoked.
     pub fn revoke_access_grant(&self, id: &EntityId, revoked_at: u64) -> Result<AccessGrant> {
+        self.revoke_admitted_access_grant(id, revoked_at, |_| Ok(()))
+    }
+
+    /// Revokes the record at `id` only when `admit` accepts the grant that the
+    /// write transaction itself read.
+    ///
+    /// The admission check rides the same `wtxn` as the rewrite: no second
+    /// snapshot exists for [`Vault::put_access_grant`] to replace between the
+    /// decision and the write.
+    fn revoke_admitted_access_grant(
+        &self,
+        id: &EntityId,
+        revoked_at: u64,
+        admit: impl FnOnce(&AccessGrant) -> Result<()>,
+    ) -> Result<AccessGrant> {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
             .store
@@ -569,6 +609,7 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        admit(&grant)?;
         let revoked = grant.revoked(revoked_at)?;
         let data = encode_access_grant_body(&revoked)?;
         self.apply_access_grant_body(&mut wtxn, id, revoked_at, data)?;
@@ -624,21 +665,23 @@ impl Vault {
     /// Revokes a calendar disclosure grant through the calendar surface.
     ///
     /// Fails closed on a grant that is not a calendar grant: the calendar
-    /// registry must not be a general revoke door for other scopes.
+    /// registry must not be a general revoke door for other scopes. The scope
+    /// check and the revoked rewrite share one write transaction, so the record
+    /// this door admits is exactly the record it revokes.
     pub fn revoke_calendar_access_grant(
         &self,
         grant_ref: &EntityId,
         revoked_at: u64,
     ) -> Result<AccessGrant> {
-        let grant = self
-            .get_access_grant(grant_ref)?
-            .ok_or(Error::EntityNotFound)?;
-        if !matches!(grant.scope, AccessGrantScope::Calendar { .. }) {
-            return Err(Error::InvalidAccessGrantBody(
-                "grant is not a calendar disclosure grant",
-            ));
-        }
-        self.revoke_access_grant(grant_ref, revoked_at)
+        self.revoke_admitted_access_grant(grant_ref, revoked_at, |grant| {
+            if matches!(grant.scope, AccessGrantScope::Calendar { .. }) {
+                Ok(())
+            } else {
+                Err(Error::InvalidAccessGrantBody(
+                    "grant is not a calendar disclosure grant",
+                ))
+            }
+        })
     }
 
     fn write_access_grant_body(&self, id: &EntityId, learned_at: u64, data: &[u8]) -> Result<()> {

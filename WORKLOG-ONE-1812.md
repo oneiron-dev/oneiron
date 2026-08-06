@@ -225,3 +225,117 @@ fixture, or public API touched.
 Gates after the pass: `cargo test -p oneiron --lib` green (3153 passed,
 0 failed), `cargo clippy -p oneiron --all-features` zero warnings,
 `cargo fmt -p oneiron -- --check` clean.
+
+## VERDICT-FIX (Opus, on simplify tip 38f143c00)
+
+Finder returned 4 items; the verdict leg rejected item 1 with derivation and
+ruled the other three REAL. Rejected item is **not** relitigated here.
+
+- **Item 1 — `parallel-consent-path` (P1) — REJECTED / BANKED by the verdict.**
+  The demand was to migrate `AccessGrant` into the `consent.grant.v1`
+  owner-stamped surface; ONE-1606's ratified law is *fold through ADAPTERS,
+  never a migration*, and the blueprint (lines 22/25) names
+  `create_access_grant` / `revoke_access_grant` as the doors this lane extends.
+  The `GrantMintIntentScope::Calendar` rejection on the outbound-mint path is a
+  load-bearing fail-closed arm, not a broken path. Banked observation carried
+  forward: `GrantMintIntentScope::Calendar` has no consuming door until
+  ONE-1815/ONE-1819 destructure it into `AccessGrant::calendar_disclosure` +
+  `create_access_grant` — expected under the flat-ticket decomposition.
+
+### FIX-A — `invalid-grant-state` (item 2, P2): scope×capability is one pair, not two axes
+
+This lane widened the scope×capability space from 1×1 to 2×2 while
+`AccessGrant::validate` still checked only `(status, revoked_at)`. A grant with
+`scope = Calendar` + `capability = CompanionProfileRead` encoded, decoded, and
+persisted, then three live paths disagreed about it: `list_calendar_access_grants`
+listed it (scope filter), `access_grant_projection_is_active` called it live
+(capability filter), and `calendar_disclosure_rung` denied every read.
+
+Fix at the one door every codec/mint/revoke path already passes through:
+`AccessGrantScope::required_capability()` states the pairing law
+(`Calendar ⇔ CalendarDisclosureRead`, `CompanionProfile ⇔ CompanionProfileRead`)
+and `AccessGrant::validate` rejects any other combination with
+`Error::InvalidAccessGrantBody("scope and capability are not a matched pair")`.
+One chokepoint arm; no call-site patches — `encode_access_grant_body`,
+`decode_access_grant_value`, `revoked`, `put_access_grant`, and
+`create_access_grant` all inherit it.
+
+Test: `access_grant_scope_and_capability_must_be_a_matched_pair` — both mismatch
+directions rejected at `validate`, `encode`, `revoked`, and `create_access_grant`,
+plus a mispaired on-disk body decoding fail-closed.
+
+Mutation (pairing gate deleted from `validate`): test FAILED at
+`access_grant/tests.rs:395` — red-before confirmed; green after restore.
+
+### FIX-B — `revocation-toctou` (item 3, P2): admit and rewrite the same record
+
+`revoke_calendar_access_grant` checked the scope through `get_access_grant` in a
+read transaction, dropped that snapshot, then called `revoke_access_grant`, which
+opened a *separate* write transaction and reread the entity. Public
+`put_access_grant` could replace the record between the two, so the door could
+revoke a `CompanionProfile` grant it never admitted — exactly the promise the
+method makes it will not do.
+
+Restructured to a private `Vault::revoke_admitted_access_grant(id, revoked_at,
+admit)`: it opens one write transaction, reads and decodes the record, runs the
+`admit` gate on *that* decoded grant, and rewrites it revoked — all before
+`commit()`. `revoke_access_grant` passes an always-admit gate (behaviour
+unchanged); `revoke_calendar_access_grant` passes the Calendar-scope gate and
+keeps its `InvalidAccessGrantBody("grant is not a calendar disclosure grant")`
+error. No second snapshot exists for a racing put to swap under the check, and a
+rejected scope aborts the whole transaction, so no partial revocation lands.
+
+Test: `revoke_calendar_access_grant_admits_and_rewrites_one_record` — the
+rejected companion grant is byte-identical afterwards (no partial write), and the
+admitted calendar grant is revoked in place and reads back as the returned record.
+
+Mutation (admission gate removed): `revoke_calendar_access_grant_admits_and_rewrites_one_record`
+FAILED at `tests.rs:451` and `calendar_grant_registry_lists_and_revokes` FAILED at
+`tests.rs:351` — red-before confirmed; green after restore.
+
+Honest scope note: the single-transaction property is *structural* — the gate now
+reads the same `wtxn`-decoded record it revokes. The interleaving itself is not
+directly asserted, because a deterministic interleave test would require pausing
+production code between the old read and write transactions, and a thread-race
+test would be a flake source under the flake guard. The mutation above proves the
+gate is load-bearing at the revoke door; the atomicity is proved by construction.
+
+### FIX-C — `packet-violation` (item 4, P2): PACKET_AMEND ratified, not extracted
+
+Production changes reach four files outside the five-file ONE-1812 packet.
+Per packet law the remedy is ratification, never burning finished work, and
+extraction is impossible here: the three foreign-wall files carry *compile-forced*
+exhaustive-match arms — without them the crate does not build.
+
+| File | Arm | Nature |
+|---|---|---|
+| `consent.rs` | `access_grant_scope_selectors` Calendar arm + `access_grant_projection_is_active` accepting `CalendarDisclosureRead` | load-bearing (registry projection) |
+| `receipt.rs` | `append_access_grant_scope_fields` Calendar arm | compile-forced |
+| `gate.rs` | `standing_outbound_grant_binding_parts` Calendar reject | compile-forced, fail-closed |
+| `outbound_grant.rs` | `StandingOutboundGrantScope` Calendar reject | compile-forced, fail-closed |
+
+FIX-A is what makes the `consent.rs` arm sound: `access_grant_projection_is_active`
+now filters on a capability that cannot disagree with its scope.
+
+Collision check re-run mechanically by this leg, CLEAN:
+- `gate.rs` — GATE-lane wall, no in-flight writer (`w5/cal-gate-prefix` landed as #597).
+- `outbound_grant.rs` — ONE-1814 owns it within BK and is not dispatched.
+- `consent.rs` / `receipt.rs` — MS-1748 (#603) and CA-1773 (#605) are merged to main;
+  `consent.rs` carries no standing BK claim.
+- `git merge-tree --write-tree origin/main HEAD` against `origin/main 33c02b331`
+  → `2512979968cf1902da7d01f39d2860868d88ea5b`, zero conflicts.
+
+Ratification appended to `/Users/olety/.claude-wave5/decisions.jsonl` as
+`{"type":"packet-amend","lane":"BK-1812","status":"RATIFIED","gate2":true}`,
+carrying the file list, the compile-forced rationale, and the collision evidence.
+It rides the GATE-2 deviation board.
+
+### Gates after the fix round
+
+- `cargo fmt -p oneiron -- --check` — clean.
+- `cargo clippy -p oneiron --all-features --lib --tests` — zero warnings, zero errors.
+- `cargo test -p oneiron --all-features` — all green; lib `3584 passed; 0 failed; 17 ignored`,
+  every integration target and both doctest targets `0 failed`.
+
+Diff stays within the packet plus the ratified four and the two inline test
+modules; no `Cargo.toml` / `Cargo.lock` change.
