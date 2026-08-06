@@ -141,6 +141,25 @@ Hard laws, and where each is discharged:
   `checkin_same_role_mutation_rejected_and_identical_reput_idempotent`,
   `habit_with_checkins_cannot_change_role`.
 
+## Simplify pass (K3, 2026-08-07)
+
+NO EDIT WARRANTED. Reviewed the full lane diff against the deletion-biased
+mandate: the `task_body_entries` decoder already backs all three users (role
+read, rewrite, public-door reject) with one strictness contract; `is_streak_key`
+is shared by the rewrite filter and the reject; every helper matches the
+ratified keystone skeleton; no dead code, duplicated helpers, defensive
+branches, or speculative generality found. The only candidates weighed —
+inlining `recompute_touched_habit_streaks_in_txn` or dropping the single-use
+`ChildOfBatchOverlay::child_of_edge_parents` accessor — were rejected: both
+would churn the live-shared `batch.rs` seam (1730 in flight) for zero net
+deletion, and the accessor matches the adjacent `affected_children` idiom.
+Tests, public API, reducer purity, same-txn law, peer-cannot-mint law, and the
+public-put rejection verified intact. Gates re-run at tip `88cf6fa`:
+`cargo fmt -p oneiron -- --check` clean; `cargo clippy -p oneiron
+--all-features --all-targets` clean; `cargo test -p oneiron --all-features --
+streak checkin habit each_role_validates` green (both ratified named tests +
+the four pre-existing checkin/habit tests + the amended `each_role_validates`).
+
 ## Gates
 
 * `cargo fmt -p oneiron -- --check` — clean.
