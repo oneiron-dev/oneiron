@@ -42,6 +42,7 @@
 //! unrelated.
 
 pub mod delta;
+pub mod escalation;
 pub mod graduation;
 #[cfg(feature = "sync")]
 pub mod proposal_text;
