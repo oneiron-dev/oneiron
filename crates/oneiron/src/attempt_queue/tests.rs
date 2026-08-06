@@ -1981,6 +1981,28 @@ fn attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields() -> Resu
     assert_eq!(claimed.id, attempt.id);
 
     tracing::subscriber::with_default(capture.clone(), || {
+        // `tracing` caches one `Interest` per callsite for the whole process, but
+        // `with_default` installs a subscriber on THIS thread only. The first
+        // thread to reach a callsite is the one that computes that cache, and it
+        // computes it from its own thread-local subscriber
+        // (`DefaultCallsite::register` -> `Rebuilder::JustOne` ->
+        // `dispatcher::get_default`). Several other tests call `cleanup_leases`
+        // concurrently with no subscriber attached, so whichever of them wins the
+        // race pins these callsites to `Interest::never()` for the rest of the
+        // process and nothing below is ever recorded. Emitting once forces the
+        // callsites REGISTERED whoever wins, and rebuilding the cache then
+        // recomputes them against this thread's subscriber; registration is
+        // one-shot, so they cannot be re-poisoned while the assertions run.
+        emit_attempt_queue_cleanup_span(
+            &CleanupAttemptLeases {
+                now: 0,
+                lease_timeout_secs: 0,
+            },
+            &AttemptQueueCleanupReport::default(),
+        );
+        tracing::callsite::rebuild_interest_cache();
+        capture.records.lock().unwrap().clear();
+
         queue.cleanup_leases(CleanupAttemptLeases {
             now: 40,
             lease_timeout_secs: 10,
