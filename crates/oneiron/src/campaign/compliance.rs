@@ -585,7 +585,7 @@ fn effective_jurisdiction(pack: &CompliancePack, facts: &DispatchComplianceFacts
 
 fn trusted_jurisdiction(pack: &CompliancePack, facts: &DispatchComplianceFacts) -> Option<String> {
     let observed = normalize_jurisdiction(facts.jurisdiction.as_deref()?);
-    if observed.is_empty() || observed == JURISDICTION_NONE {
+    if observed.is_empty() || observed.eq_ignore_ascii_case(JURISDICTION_NONE) {
         return None;
     }
     if facts
@@ -639,6 +639,10 @@ fn jurisdiction_chain(jurisdiction: &str) -> Vec<String> {
 
 /// A jurisdiction that seeds no consent-class row for this channel cannot be
 /// evaluated, so it fails closed rather than allowing on an empty axis.
+///
+/// The no-rows-at-all case fails closed for the same reason and reports no
+/// governing row, because there is none: a pack that governs nothing here
+/// cannot vouch for the send.
 fn consent_class_coverage_gap(rows: &[&ComplianceRuleRow]) -> Option<ComplianceVerdict> {
     if rows
         .iter()
@@ -646,8 +650,14 @@ fn consent_class_coverage_gap(rows: &[&ComplianceRuleRow]) -> Option<ComplianceV
     {
         return None;
     }
-    let anchor = rows.first()?;
-    Some(block(ComplianceBlockReason::RuleViolation, anchor))
+    Some(rows.first().map_or(
+        ComplianceVerdict::Block {
+            reason: ComplianceBlockReason::RuleViolation,
+            jurisdiction: None,
+            rule_kind: None,
+        },
+        |anchor| block(ComplianceBlockReason::RuleViolation, anchor),
+    ))
 }
 
 fn evaluate_row(
@@ -784,27 +794,31 @@ pub(crate) fn hydrate_dispatch_compliance_facts(
 }
 
 /// The newest ACTIVE `comm.jurisdiction` observation, with its confidence.
+///
+/// Two live heads at the same `observed_at` are a real possibility (an
+/// offline-minted twin, a re-import), and edge-iteration order is not a tie
+/// break a gate may depend on — so ties resolve on the token itself. Same
+/// vault, same answer, every run.
 fn jurisdiction_observation_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
 ) -> Result<Option<(String, Option<u16>)>> {
-    let mut newest: Option<(u64, String, Option<u16>)> = None;
+    let mut observations = Vec::new();
     for body in active_claim_bodies_in_txn(store, txn, subject, PREDICATE_COMM_JURISDICTION)? {
         let value = decode_comm_jurisdiction_value(&body.value)?;
-        let confidence = confidence_millis(body.confidence);
-        if newest
-            .as_ref()
-            .is_none_or(|(observed_at, _, _)| value.observed_at >= *observed_at)
-        {
-            newest = Some((
-                value.observed_at,
-                normalize_jurisdiction(&value.jurisdiction),
-                confidence,
-            ));
-        }
+        observations.push((
+            value.observed_at,
+            normalize_jurisdiction(&value.jurisdiction),
+            confidence_millis(body.confidence),
+        ));
     }
-    Ok(newest.map(|(_, token, confidence)| (token, confidence)))
+    observations
+        .sort_unstable_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    Ok(observations
+        .into_iter()
+        .next()
+        .map(|(_, token, confidence)| (token, confidence)))
 }
 
 /// `ClaimBody::confidence` is a fraction in `[0, 1]`; the pack's floor is in
