@@ -1979,7 +1979,8 @@ pub(crate) fn apply_ops_with_origin(
 
     secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
-    let habit_streak_candidates = habit_streak_recompute_candidates(&ops, &child_of_overlay);
+    let habit_streak_candidates =
+        habit_streak_recompute_candidates(store, &*wtxn, &ops, &child_of_overlay)?;
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
@@ -3232,6 +3233,9 @@ fn apply_put(
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
     let mut new_agent_definition = None;
+    // STO-03: `Some` only when the incoming TASK body named a derived streak
+    // counter, i.e. only on the sync door — the body that gets stored instead.
+    let mut task_body_without_streaks = None;
     let mut decoded_claim_body = None;
     let mut authority_entry_hash_pin: Option<crate::authority::AuthorityEntryHash> = None;
     // ONE-1604-D1 dominance VERDICT, recorded by the AUTHORITY_LOG arm below
@@ -3404,6 +3408,16 @@ fn apply_put(
     } else if entity_type == ENTITY_TYPE_TASK {
         let task_role = crate::habit::task_role_from_body_bytes(data)?;
         validate_task_role_put_invariants(store, &*wtxn, &id, task_role)?;
+        // STO-03: the streak counters are DERIVED, so an inbound value is
+        // discarded here — at the one arm every road to a TASK body converges
+        // on, for every role. The public doors already refused the keys
+        // (`validate_public_raw_put`), but the sync door deliberately does not
+        // run that check, so a peer's envelope reaches this point still
+        // carrying them. Stripping only `Habit` would leave the door open on
+        // every other role: the tail reducer visits `Habit` rows alone, so a
+        // peer-minted counter on a `Task` or `HabitCheckin` row would simply
+        // be stored and never overwritten.
+        task_body_without_streaks = crate::habit::strip_streak_fields(data)?;
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
@@ -3461,6 +3475,14 @@ fn apply_put(
             }
         }
         _ => data,
+    };
+    // STO-03: the sanitized TASK body replaces the inbound one from here on —
+    // before short-id planning hashes it and before the old-record comparison
+    // decides whether the body changed, so nothing downstream ever sees the
+    // discarded counters.
+    let data = match task_body_without_streaks.as_deref() {
+        Some(stripped) => stripped,
+        None => data,
     };
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
@@ -4688,31 +4710,51 @@ fn validate_habit_checkin_parent_role(
 
 /// Entities whose derived Habit counters this batch can invalidate.
 ///
-/// Two families, both necessary:
-/// * every parent named by a `ChildOf` add or delete — the check-in set moved;
-/// * every TASK put — the Habit BODY moved. That second family is what keeps
-///   the counters derived rather than transmitted: a replicated Habit envelope
-///   arrives carrying the peer's counters and a local body edit (a rename)
-///   carries none at all, and the tail pass overwrites both from the local
-///   child set.
+/// Four families, all necessary — an edge op is only the most VISIBLE way a
+/// check-in set moves:
+/// * every parent named by an explicit `ChildOf` add or delete;
+/// * every TASK put — the Habit BODY moved. This is what keeps the counters
+///   derived rather than transmitted: a replicated Habit envelope arrives
+///   carrying the peer's counters and a local body edit (a rename) carries
+///   none at all, and the tail pass overwrites both from the local child set;
+/// * every parent an ENTITY DELETE will orphan. `delete_related_edges` tears
+///   the row's `ChildOf` edges down without a `DeleteEdge` op, so a check-in
+///   deleted through the public batch door leaves no edge op to notice;
+/// * every parent already linked to a TASK being put. The edge may PRE-EXIST
+///   the child (the parent-role validator admits an edge whose child is not
+///   yet a check-in), so the qualifying child set can change on a put that
+///   names no edge at all.
+///
+/// The last two read the PRE-state, deliberately: an edge this batch removes
+/// is unreachable at the tail, and over-collecting costs one idempotent
+/// recompute while under-collecting strands a stale counter forever.
 ///
 /// The role filter is deliberately NOT applied here: the stored role is read
 /// at the tail, against the state the batch actually left behind.
 fn habit_streak_recompute_candidates(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
     ops: &[BatchOp],
     child_of_overlay: &ChildOfBatchOverlay,
-) -> BTreeSet<EntityId> {
+) -> Result<BTreeSet<EntityId>> {
     let mut candidates: BTreeSet<EntityId> = child_of_overlay.child_of_edge_parents().collect();
     for op in ops {
-        if let BatchOp::Put {
-            id, entity_type, ..
-        } = op
-            && *entity_type == ENTITY_TYPE_TASK
-        {
-            candidates.insert(*id);
+        let child = match op {
+            BatchOp::Put {
+                id, entity_type, ..
+            } if *entity_type == ENTITY_TYPE_TASK => {
+                candidates.insert(*id);
+                id
+            }
+            BatchOp::Delete { id } => id,
+            _ => continue,
+        };
+        for entry in store.edges_out.prefix_iter(rtxn, &child_of_prefix(child))? {
+            let (key, value) = entry?;
+            candidates.insert(parse_strict_edge_record(&key, &value)?.target);
         }
     }
-    candidates
+    Ok(candidates)
 }
 
 fn recompute_touched_habit_streaks_in_txn(

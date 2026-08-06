@@ -248,10 +248,7 @@ pub(crate) fn recompute_habit_streak_in_txn(
 /// same child set store the same bytes. Rerunning on an already-rewritten body
 /// reproduces it exactly.
 fn rewrite_habit_streak_fields(body: &[u8], streak: HabitStreak) -> Result<Vec<u8>> {
-    let mut entries: Vec<(Value, Value)> = task_body_entries(body)?
-        .into_iter()
-        .filter(|(key, _)| !is_streak_key(key))
-        .collect();
+    let mut entries = task_body_entries_without_streaks(body)?;
     entries.push((
         Value::from(TASK_BODY_CURRENT_STREAK_KEY),
         Value::from(streak.current),
@@ -260,11 +257,46 @@ fn rewrite_habit_streak_fields(body: &[u8], streak: HabitStreak) -> Result<Vec<u
         Value::from(TASK_BODY_LONGEST_STREAK_KEY),
         Value::from(streak.longest),
     ));
+    encode_task_body(entries)
+}
 
-    let mut out = Vec::with_capacity(body.len());
+fn task_body_entries_without_streaks(body: &[u8]) -> Result<Vec<(Value, Value)>> {
+    Ok(task_body_entries(body)?
+        .into_iter()
+        .filter(|(key, _)| !is_streak_key(key))
+        .collect())
+}
+
+fn encode_task_body(entries: Vec<(Value, Value)>) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &Value::Map(entries))
         .map_err(|_| Error::InvariantViolation("habit streak body encode"))?;
     Ok(out)
+}
+
+/// DISCARDS caller-supplied streak counters from a TASK body of ANY role,
+/// returning `None` when the body named none — the common case, which is then
+/// stored byte-for-byte as it arrived.
+///
+/// The public doors REJECT these keys ([`reject_public_streak_fields`]). The
+/// sync-replay door cannot: rejecting a peer's row would strand it and diverge
+/// the replicas. So it discards instead, and the discard covers every role,
+/// not just `Habit` — a `Habit`'s counters are afterwards written solely by
+/// [`recompute_habit_streak_in_txn`] out of the LOCAL child set, and a `Task`
+/// or `HabitCheckin` row (which the tail pass never visits) can therefore
+/// never carry the keys at all. A peer cannot mint a streak on any row.
+pub(crate) fn strip_streak_fields(body: &[u8]) -> Result<Option<Vec<u8>>> {
+    let entries = task_body_entries(body)?;
+    if !entries.iter().any(|(key, _)| is_streak_key(key)) {
+        return Ok(None);
+    }
+    encode_task_body(
+        entries
+            .into_iter()
+            .filter(|(key, _)| !is_streak_key(key))
+            .collect(),
+    )
+    .map(Some)
 }
 
 /// Rejects a caller-supplied streak counter on the public TASK put doors. The

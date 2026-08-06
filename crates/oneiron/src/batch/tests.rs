@@ -458,6 +458,235 @@ fn public_task_put_carrying_streak_fields_is_rejected() -> Result<()> {
     Ok(())
 }
 
+/// The stored counters must be a function of the PERSISTED children, so a
+/// child leaving the set has to move them exactly as a child joining does.
+/// `delete` tears the `ChildOf` edges down inside `deindex_entity` without
+/// emitting a `DeleteEdge` op, so an invalidation keyed on explicit edge ops
+/// alone never notices and the Habit keeps counting a check-in that is gone.
+#[test]
+fn deleting_a_checkin_recomputes_the_habit_streak() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let habit = EntityId::now();
+    let checkin_body = crate::habit::task_body_for_test(TaskRole::HabitCheckin);
+    let created = checkin_at(10, 0);
+
+    vault.put_entity(
+        &habit,
+        ENTITY_TYPE_TASK,
+        test_time_range(created, created),
+        created,
+        &crate::habit::task_body_for_test(TaskRole::Habit),
+    )?;
+    let checkins: Vec<(EntityId, u64)> = [checkin_at(10, 100), checkin_at(11, 200)]
+        .into_iter()
+        .map(|occurred| (EntityId::now(), occurred))
+        .collect();
+    for (checkin, occurred) in &checkins {
+        vault.put_habit_checkin(
+            &habit,
+            checkin,
+            test_time_range(*occurred, *occurred),
+            *occurred,
+            &checkin_body,
+        )?;
+    }
+    assert_eq!(stored_streak(&vault, &habit)?, (2, 2));
+
+    // The newest check-in leaves through the public batch delete door — no
+    // edge op, no TASK put naming the habit.
+    let (newest, _) = checkins[1];
+    vault.batch().delete(&newest).commit()?;
+    assert!(!vault.edge_exists(&newest, EdgeKind::ChildOf, &habit)?);
+    assert_eq!(
+        stored_streak(&vault, &habit)?,
+        (1, 1),
+        "a deleted check-in must leave the derived counters"
+    );
+
+    // And the last one: an emptied child set is the empty pair, not a frozen
+    // high-water mark.
+    vault.batch().delete(&checkins[0].0).commit()?;
+    assert_eq!(stored_streak(&vault, &habit)?, (0, 0));
+    Ok(())
+}
+
+/// A `ChildOf` edge may PRE-EXIST its child — sync replay routinely lands the
+/// edge before the entity, and the parent-role validator admits it. The put
+/// that materializes the check-in then names no edge at all, so the parent is
+/// reachable only through the child's already-stored `edges_out`.
+#[test]
+fn checkin_materializing_under_an_existing_edge_recomputes_the_habit_streak() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let habit = EntityId::now();
+    let checkin = EntityId::now();
+    let created = checkin_at(10, 0);
+    let occurred = checkin_at(11, 900);
+
+    vault.put_entity(
+        &habit,
+        ENTITY_TYPE_TASK,
+        test_time_range(created, created),
+        created,
+        &crate::habit::task_body_for_test(TaskRole::Habit),
+    )?;
+    vault
+        .batch()
+        .edge(&checkin, EdgeKind::ChildOf, &habit, 1.0)
+        .commit()?;
+    assert_eq!(
+        stored_streak(&vault, &habit)?,
+        (0, 0),
+        "an edge to a row that does not exist yet contributes no day"
+    );
+
+    // The child row arrives in its own transaction, carrying no edge.
+    vault.put_entity(
+        &checkin,
+        ENTITY_TYPE_TASK,
+        test_time_range(occurred, occurred),
+        occurred,
+        &crate::habit::task_body_for_test(TaskRole::HabitCheckin),
+    )?;
+    assert_eq!(
+        stored_streak(&vault, &habit)?,
+        (1, 1),
+        "the qualifying child set changed, so the parent must be recomputed"
+    );
+    Ok(())
+}
+
+/// The sync door deliberately skips `validate_public_raw_put`, so it is the
+/// one door a peer's counters can ride in through — on ANY role, not just
+/// `Habit`. The tail reducer visits `Habit` rows alone, so anything it does
+/// not visit must arrive already sanitized or the peer's number is stored
+/// forever.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_task_put_cannot_mint_streak_counters() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let habit = EntityId::now();
+    let checkin = EntityId::now();
+    let plain_task = EntityId::now();
+    let occurred = checkin_at(10, 3_600);
+
+    vault.put_entity(
+        &habit,
+        ENTITY_TYPE_TASK,
+        test_time_range(occurred, occurred),
+        occurred,
+        &crate::habit::task_body_for_test(TaskRole::Habit),
+    )?;
+    vault.put_habit_checkin(
+        &habit,
+        &checkin,
+        test_time_range(occurred, occurred),
+        occurred,
+        &crate::habit::task_body_for_test(TaskRole::HabitCheckin),
+    )?;
+    assert_eq!(stored_streak(&vault, &habit)?, (1, 1));
+
+    // A peer's Habit envelope: accepted as a body, but its arithmetic is
+    // replaced by the local child set.
+    vault
+        .batch()
+        .put_replicated(
+            &habit,
+            ENTITY_TYPE_TASK,
+            test_time_range(occurred, occurred),
+            occurred + 1,
+            &habit_body_with_streak(99, 99),
+        )
+        .commit()?;
+    assert_eq!(stored_streak(&vault, &habit)?, (1, 1));
+
+    // A peer's non-Habit rows: the tail pass never visits them, so the keys
+    // must be gone before the body is stored.
+    for (id, role) in [
+        (plain_task, TaskRole::Task),
+        (EntityId::now(), TaskRole::Goal),
+    ] {
+        let body = {
+            let value = Value::Map(vec![
+                (
+                    Value::from(crate::habit::TASK_BODY_ROLE_KEY),
+                    Value::from(role.role_byte()),
+                ),
+                (Value::from("title"), Value::from("peer row")),
+                (Value::from("currentStreak"), Value::from(99_u64)),
+                (Value::from("longestStreak"), Value::from(99_u64)),
+            ]);
+            let mut bytes = Vec::new();
+            rmpv::encode::write_value(&mut bytes, &value).expect("encode forged peer body");
+            bytes
+        };
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_TASK,
+                test_time_range(occurred, occurred),
+                occurred,
+                &body,
+            )
+            .commit()?;
+        assert_eq!(
+            stored_streak_field(&vault, &id, "currentStreak")?,
+            None,
+            "a peer cannot mint a counter on a {role:?} row"
+        );
+        assert_eq!(stored_streak_field(&vault, &id, "longestStreak")?, None);
+        assert_eq!(
+            stored_task_body(&vault, &id)?
+                .iter()
+                .find(|(name, _)| name.as_str() == Some("title"))
+                .map(|(_, value)| value.as_str().expect("title is a string").to_owned()),
+            Some("peer row".to_owned()),
+            "discarding the counters must not disturb the rest of the peer's body"
+        );
+    }
+
+    // A HabitCheckin envelope is the sharpest case: the row is a CHILD, so a
+    // counter on it would be both unowned and permanent.
+    let forged_checkin = EntityId::now();
+    let forged_checkin_body = {
+        let value = Value::Map(vec![
+            (
+                Value::from(crate::habit::TASK_BODY_ROLE_KEY),
+                Value::from(TaskRole::HabitCheckin.role_byte()),
+            ),
+            (Value::from("currentStreak"), Value::from(99_u64)),
+            (Value::from("longestStreak"), Value::from(99_u64)),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &value).expect("encode forged check-in body");
+        bytes
+    };
+    let replayed = checkin_at(11, 10);
+    vault
+        .batch()
+        .put_replicated(
+            &forged_checkin,
+            ENTITY_TYPE_TASK,
+            test_time_range(replayed, replayed),
+            replayed,
+            &forged_checkin_body,
+        )
+        .edge(&forged_checkin, EdgeKind::ChildOf, &habit, 1.0)
+        .commit()?;
+    assert_eq!(
+        stored_streak_field(&vault, &forged_checkin, "currentStreak")?,
+        None,
+        "a check-in row never gains a streak key"
+    );
+    assert_eq!(
+        stored_streak_field(&vault, &forged_checkin, "longestStreak")?,
+        None
+    );
+    // The replayed child still counts for the parent's arithmetic.
+    assert_eq!(stored_streak(&vault, &habit)?, (2, 2));
+    Ok(())
+}
+
 fn first_party_eiri_connector_actor_id() -> Result<EntityId> {
     EntityId::from_bytes(crate::gate::FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
         .map_err(|_| Error::InvariantViolation("invalid first-party Eiri actor fixture id"))
