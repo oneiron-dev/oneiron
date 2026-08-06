@@ -3428,6 +3428,22 @@ fn read_handles_reresolve_and_never_widen() -> Result<()> {
         );
     }
 
+    // A target whose stored content moved no longer hydrates the short ref the handle
+    // was issued against: the handle fails rather than following the entity forward.
+    vault.put_entity(
+        &target_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 2, end: 2 },
+        2,
+        b"person, revised",
+    )?;
+    assert!(
+        frame
+            .resolve_read_handle(&scoped_read, &render, &read_handle)
+            .is_err(),
+        "a stale short ref stops resolving instead of widening onto the new content"
+    );
+
     // A twin frame over the same render id never host-minted that token.
     let twin = LensRenderFrame::new(render_id("card-1"), frame.principal().clone());
     assert!(

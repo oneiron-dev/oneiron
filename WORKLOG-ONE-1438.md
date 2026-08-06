@@ -35,9 +35,12 @@ fields with `#[must_use]` accessors. Carries `renderId`, `atomId`, `reach`, `tar
 so an action-target binding cannot be laundered into a selection handle.
 
 `resolve_read_handle` repeats the whole proof against the *current* render and scope:
-switched principal, target that stopped hydrating (this is where a rotated short ref
-dies — `ensure_target_readable` hydrates `short_id` + `content_hash`), a render revision
-that dropped the binding, moved it to another atom, or relabelled its role.
+switched principal, target that stopped hydrating, a render revision that dropped the
+binding, moved it to another atom, or relabelled its role. The stale-short-ref case is
+tested end to end through the new door — the fixture re-puts the target entity with a
+different body, the stored `content_hash` moves, `ensure_target_readable` stops hydrating
+the handle's `short_id`, and a handle that resolved a moment earlier now fails instead of
+following the entity forward onto content it was never issued against.
 
 ### 4. Selection stays separate from approval
 
