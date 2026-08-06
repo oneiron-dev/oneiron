@@ -131,8 +131,9 @@ pub use crate::access_grant::{
 };
 pub use crate::actor_claims::{
     ACTOR_CLAIM_LINEAGE_KEY, ACTOR_CLAIM_MAX_CITED_EVIDENCE, ACTOR_DISTILL_CALL_PURPOSE_NAME,
-    ACTOR_NOTE_MAX_BYTES, ACTOR_SKILL_FIT_SCOPE_KEY, ActorClaimEvidence, ActorClaimRow, ActorNote,
-    ActorNoteKind, LAPSE_FAILURE_MODE, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON,
+    ACTOR_EDIT_COST_SCOPE_KEY, ACTOR_EDIT_COST_SCOPE_MAX_BYTES, ACTOR_NOTE_MAX_BYTES,
+    ACTOR_SKILL_FIT_SCOPE_KEY, ActorClaimEvidence, ActorClaimRow, ActorNote, ActorNoteKind,
+    LAPSE_FAILURE_MODE, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON,
     PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT, SessionActorDistiller,
     SessionDistillBrief, SessionDistillTurn, actor_claim_lineage, actor_distill_call_purpose,
     is_actor_claim_predicate, pending_session_actor_distills, project_actor_claims_from_judgments,
@@ -232,8 +233,10 @@ pub use crate::calendar::{
     BusyInterval, BusyUnion, CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER,
     CalendarAdmissionRequest, CalendarBodyScreener, CalendarEventView, CalendarInboundBody,
     CalendarRangeDto, CalendarReadRequest, CalendarScreenVerdict, CalendarSearchRequest,
-    CalendarSel, MAX_CALENDAR_SEARCH_LIMIT, Screened, freebusy, freebusy_scoped, read_event,
-    read_event_scoped, screen_then_claim, search_events, search_events_scoped,
+    CalendarSel, MAX_CALENDAR_SEARCH_LIMIT, Screened, SeriesDtStart, SeriesExceptionKey,
+    exception_identity, expand_master_window, expand_window, freebusy, freebusy_scoped,
+    mask_master_exceptions, read_event, read_event_scoped, screen_then_claim, search_events,
+    search_events_scoped,
 };
 pub use crate::channel_identity::{
     CHANNEL_IDENTITY_BODY_KEYS, CHANNEL_IDENTITY_CLAIM_PREDICATES,
@@ -274,8 +277,9 @@ pub use crate::channel_identity_provider::{
 };
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
-    ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
-    RESERVED_PREDICATE_NAMESPACE, SessionClaimBundle, SessionClaimBundleClaim, predicate_root,
+    ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_ACTOR_EDIT_COST, PREDICATE_CONFLICT_OPEN,
+    PREDICATE_CONFLICT_RESOLVED, PREDICATE_SKILL_EDIT_COST, RESERVED_PREDICATE_NAMESPACE,
+    SessionClaimBundle, SessionClaimBundleClaim, predicate_root,
 };
 pub use crate::cluster::{
     CLUSTER_COHESION_THRESHOLD, CLUSTER_ID_DOMAIN, ClaimCohort, ClusterAssignments, ClusterClaim,
@@ -444,14 +448,14 @@ pub use crate::dreamer_consolidation::{
     ConsolidationBucketPlan, ConsolidationCursor, ConsolidationExecutor, ConsolidationPartitionKey,
     ConsolidationPartitionPlan, ConsolidationSink, ConsolidationWatermark,
     DREAMER_BUCKET_HASH_DOMAIN, DREAMER_EVIDENCE_HASH_DOMAIN, DREAMER_GAP_DECAY_MS,
-    DREAMER_GAP_HASH_DOMAIN, DREAMER_GAP_SCAN_ATTEMPT_TYPE, GapQueueDelta, PriorHead,
-    PromotionCandidate, ReflectionGap, ReflectionGapKind, SwarmChildReturn, SwarmEvidenceRef,
-    TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY, WorkingSetTurn, advance_watermark,
-    collapse_sibling_evidence, corroboration_count, decode_partition_payload, detect_conflicts,
-    enqueue_partition_attempts, entity_ref_from_value, evidence_trust_meet, gap_hash,
-    plan_candidate_buckets, plan_partitions, read_cursor, read_watermark, scan_dirty_turns,
-    scan_reflection_gaps, swarm_evidence_content_hash, turn_trust_class, upsert_gap_queue,
-    validate_child_read_pin, write_cursor,
+    DREAMER_GAP_HASH_DOMAIN, DREAMER_GAP_SCAN_ATTEMPT_TYPE, DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE,
+    GapQueueDelta, PriorHead, PromotionCandidate, ReflectionGap, ReflectionGapKind,
+    SwarmChildReturn, SwarmEvidenceRef, TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY,
+    WorkingSetTurn, advance_watermark, collapse_sibling_evidence, corroboration_count,
+    decode_partition_payload, detect_conflicts, enqueue_partition_attempts, entity_ref_from_value,
+    evidence_trust_meet, gap_hash, plan_candidate_buckets, plan_partitions, read_cursor,
+    read_watermark, scan_dirty_turns, scan_reflection_gaps, swarm_evidence_content_hash,
+    turn_trust_class, upsert_gap_queue, validate_child_read_pin, write_cursor,
 };
 pub use crate::dreamer_promotion::{
     DreamerRunContext, PromotionOutcome, PromotionWriterSink, promote_consolidated_claims,
@@ -514,6 +518,13 @@ pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EdgeProvenanceFlags, EdgeValueLayout,
 };
+pub use crate::edit_distance::attribution::{
+    AmendmentAuditFixture, AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment,
+    PreferenceProposal, amendment_evidence, amendment_judgments, classify_amendment, edit_cost_for,
+    held_out_amendment_fixtures, judge_amendment, judge_amendment_with, judge_audit_reports,
+    pending_preference_proposals, project_edit_cost_claims, record_amendment_evidence,
+    run_judge_audit, run_judge_audit_with_judge,
+};
 pub use crate::edit_distance::escalation::{
     DEFAULT_ESCALATION_STANDING_N, ESCALATION_LAST_RULINGS_BOUND, ESCALATION_STANDING_N_KEY,
     EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger, StandingPolicy,
@@ -527,6 +538,37 @@ pub use crate::edit_distance::graduation::{
     exact_pattern, graduation_policy_for, graduation_policy_rows, guard_evidence,
     is_graduation_answer_receipt, posterior_lower_bound, set_graduation_policy, snooze_state,
     trust_table, unpin_scope,
+};
+pub use crate::edit_distance::miner::{
+    MINER_K_DEFAULT, MINER_K_SETTINGS_KEY, MINER_REJECTION_COOLDOWN_SECS, MinedOutcome,
+    MinedSkillEditDecision, MinedSkillEditProposal, MinedSkillEditVerdict, MinerRun,
+    MinerWatermark, PREDICATE_PREFERENCE_PHRASING, SubstitutionClass, SubstitutionCluster,
+    classify_substitution, mine_substitution_clusters, mined_skill_edit, miner_attempt_input,
+    miner_k, miner_run_id, miner_session_from_input, miner_watermark,
+    pending_substitution_skill_edits, resolve_mined_skill_edit, run_substitution_miner,
+    set_miner_k,
+};
+pub use crate::edit_distance::publisher::{
+    CONTENT_HASH_LEN, CountKey, InterviewSession, InterviewState, IssueCategory, IssueSignature,
+    PUBLISHER_CHANNEL_CLASS, PUBLISHER_ENABLED_COMPILED_DEFAULT, PUBLISHER_ENABLED_KEY,
+    PUBLISHER_INSTALL_DEFAULT_KEY, PUBLISHER_PARTY_KEY, PublisherError, PublisherResult,
+    SendOutcome, SignatureSendState, emit_issue_signature, interview_session, issue_signature,
+    publisher_enabled, publisher_party, send_signatures_if_enabled, set_publisher_enabled,
+    set_publisher_install_default, signature_send_state, submit_interview_for_review,
+    tally_judged_outcomes,
+};
+#[cfg(feature = "sync")]
+pub use crate::edit_distance::publisher::{open_interview, settle_interview_digest};
+pub use crate::edit_distance::reservoir::{
+    AMENDMENT_RECEIPT_ID_PREFIX, ExportManifest, FIELD_EXPORT_CONTENT_HASH, FIELD_EXPORT_PAIRS,
+    FIELD_EXPORT_SINCE, FIELD_EXPORT_TASK_CLASSES, RESERVOIR_DISCLOSURE_CLASS,
+    RESERVOIR_ENVELOPE_SELECTOR, RESERVOIR_EXPORT_AUDIENCE, ReservoirScope, TrainingPair,
+    amendment_receipt_id, export_reservoir, rebuild_reservoir_index,
+};
+pub use crate::edit_distance::routing::{
+    RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint, rebuild_routing_projection,
+    record_judged_amendment, rollout_rung, routing_data_bar, routing_weight_hint,
+    serving_model_version, set_rollout_rung, set_serving_model,
 };
 pub use crate::eiri::{
     EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,

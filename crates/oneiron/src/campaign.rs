@@ -37,6 +37,20 @@ pub mod enrollment;
 /// rule in Rust.
 pub mod compliance;
 
+/// CA-05's send hygiene: the one-transaction bounce/unsubscribe suppression
+/// door, the deterministic RFC 8058 `List-Unsubscribe` headers folded into the
+/// frozen outbound payload, and the sticky-sender binding. Sender health itself
+/// stays in `identity_reputation.rs`; this module wires the campaign webhook
+/// into it rather than growing a second reputation model.
+pub mod send_hygiene;
+
+/// CA-04's stage-ladder machinery: the pure ladder schema, coded-reply routing,
+/// warm/cold lane selection, the single projector that writes `crm.stage`
+/// through CA-01's transition door, read-side calendar-outcome consumption, and
+/// snooze-with-wake re-entry. Mechanism only — ONE-1779 supplies the preset
+/// content that instantiates a ladder, and no stage name is spelled here.
+pub mod stage;
+
 /// Stable short-id namespace for CAMPAIGN entities.
 ///
 /// Two lowercase ASCII letters per the short-id convention; it names CAMPAIGN,
