@@ -168,6 +168,34 @@ it compiles with `edit_distance` present and the Loro half cfg'd out.
       convention and touches no origin path; the parser ignores any message that
       is not ours.
 
+## Simplify pass (K3, post-impl)
+
+**Verdict: NO EDIT WARRANTED.** Deletion-biased pass over the lane diff; every
+candidate was scrutinized and rejected:
+
+- The `KEY_*`/`SPAN_KEY_*` alias consts are not duplication to delete — they are
+  what ties encode/decode field names to the pinned pub key-set arrays
+  (`PROPOSAL_ARTIFACT_RECORD_KEYS`/`SPAN_KEYS`); deleting them means cryptic
+  array indexing or driftable literals.
+- Every private helper earns its place: used ≥2× (`change_last_op`,
+  `meta_entity_id`, `binding_covers`, `peer_binding_rows_in_txn`) or is one half
+  of an encode/decode pair. Test helpers consume `peer_binding_value`,
+  `peer_actor_index_key`, `peer_binding_rows_in_txn` directly.
+- `WindowChange.len: u16` narrowing: dropping the `try_from` would only
+  reintroduce `as i32` casts downstream — net-neutral churn, rejected.
+- `peer_actor_at`'s impossible-path `InvariantViolation` survives scrutiny: any
+  restructure still needs the same witness, and the ambiguity-tie semantics are
+  a done-means contract.
+- The one-clone-per-span in `replay_window` is inherent (each span owns its
+  `after_text`, which is the next span's `before_text`).
+- No dead code: clippy is clean on `--all-features`; the only default-features
+  warning is the pre-existing `batch.rs` one on main (documented above).
+
+Gates re-run at the simplify point: `cargo fmt --check` clean · clippy
+`--all-features --all-targets` clean · clippy default (non-sync) clean for lane
+files · 14/14 lane tests green `--all-features`, 5/5 green non-sync (the
+`proposal_text` half correctly cfg'd out).
+
 ## Seams / notes for ED-01+
 
 - `LoroOpRef` is `Frontiers::encode()` bytes. ED-01's `source=recorded_ops` lane
