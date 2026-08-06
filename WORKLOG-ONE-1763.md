@@ -235,5 +235,74 @@ Gates after the pass: `cargo fmt --all -- --check` clean ·
 Gates re-run green on the MERGED tree: fmt clean, clippy `-D warnings` clean,
 `cargo test -p oneiron --all-features` **47/47 binaries, 3880 lib tests, 0 failed**.
 
+## VERDICT-FIX (Opus, on the simplify tip `9a0cf80c0`)
+
+Finder returned 4 items; the verdict leg confirmed **one** REAL and banked/rejected the rest
+with derivations. Only the confirmed item was fixed — nothing relitigated.
+
+### FIXED — P2 `concurrency`, `routing.rs` (first-fold-wins was not atomic)
+
+`record_judged_amendment` decided first-fold-wins in a read transaction it then dropped
+(`routing.rs:424-429`) and never re-checked inside `with_write_txn` (`:443`). LMDB's single
+writer serializes the two *writes*, but it does not make either fold's decision *to* write
+correct: two folds of one receipt both read the binding as absent, then commit in turn, and
+one receipt counts as two runs. That silently breaks the module's stated contract and, because
+the second fold samples the serving pointer again, it can also charge the extra run to a
+generation that did not produce it.
+
+Fix, at the chokepoint and nowhere else: the binding read moved INTO the write transaction as
+its first statement, with the early `Ok(())` there. The pre-check outside was deleted rather
+than kept as a fast path — one check, in the only place it is decisive; the duplicate-fold
+path is the rare one and does not deserve a second code path to be wrong in.
+
+**Mutation-verified.** New test `concurrent_folds_of_one_receipt_still_count_one_run`:
+
+- **RED before** (check restored to its pre-fix position): `left: 2, right: 1`, 3/3 runs.
+- **GREEN after**: 3/3 runs.
+
+The interleaving is *forced*, not raced. The test opens a write transaction and holds it, then
+spawns both folds: each reaches its binding read while the lock is held, so neither can observe
+the other's write, and dropping the gate lets them commit one at a time. That makes the red
+deterministic before the fix and the green deterministic after it — after the fix no ordering
+exists in which the second fold can commit before the first, so the assertion cannot be raced.
+Test fixture `fold` split into `judge` (ED-01 → ED-03, stopping before the routing fold) and
+`fold` (`judge` + `record_judged_amendment`), so a judged-but-unfolded receipt is available;
+no existing assertion or fixture value changed.
+
+### NOT FIXED — carried to the deviation board as banked items
+
+- **BANK-1** (finder P1 `model-version-keying`, rejected): an owner swap between draft and
+  judgment misattributes the run, and withdraw → rebuild → swap → re-judge loses the original
+  binding. Unfixable in packet — `AmendmentJudgment` carries no producing-model identity, so
+  the serving pointer plus the membership ledger is the ratified shape's only realization.
+  Needs receipt-carried `ModelStack` identity (a receipt-format change). Same hole D3 already
+  banks above.
+- **BANK-2** (finder P1 `rebuildability` sub-point b, rejected): skeleton says
+  `record_judged_amendment(delta_receipt: &EntityId)`, landed `&str`. Justified deviation,
+  already written up as **D1**; surfaced for the GATE-2 board.
+- **BANK-3** (finder P1 `routing-integration`, rejected): the hint-read landed as the sibling
+  door `resolve_with_routing_hint` with no in-crate caller. Accepted because `resolve` itself
+  has zero production callers and `engine_executor.rs` is packet-forbidden — but **ONE-1765
+  (layer 2) must wire a live consumer or the graduated rung stays decorative.** Already
+  written up as **D7**.
+
+### Gates after the fix
+
+- `cargo fmt --all -- --check` — clean
+- `cargo clippy -p oneiron --all-features --all-targets` (workspace `-D warnings`) — clean
+- `cargo test -p oneiron --all-features --no-fail-fast` — **47/47 binaries, 3881 lib tests,
+  0 failed** (3880 → 3881: the one new race test)
+
+Flake note, charged to no lane: the first full run failed
+`embed::tests::partial_remote_completion_is_logged_when_local_batch_fails`
+("completed remote work must surface in a warning, got []"). Green 3/3 in isolation and green
+on the identical full re-run. Thread-local `WarnCapture` over a timing-sensitive remote-rung
+path, no dependency on `edit_distance` in either direction — pre-existing flake, not this fix.
+
+Diff ⊆ packet: `routing.rs` + `routing/tests.rs` only. `Cargo.toml` / `Cargo.lock` /
+`settings.rs` / `engine_executor.rs` / `store.rs` untouched.
+
+Commit: `a9b8a0c3b` VERDICT-FIX — first-fold-wins decided inside the write transaction.
+
 Not pushed (workers never push; CY orchestrator publishes). `Cargo.lock` modified in the
 worktree, never staged.
