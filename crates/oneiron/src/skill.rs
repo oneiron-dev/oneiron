@@ -1221,7 +1221,6 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let data = encode_skill_record(record)?;
         let mut wtxn = self.store.env.write_txn()?;
         let existing = self.read_skill_record_in_txn(&wtxn, id)?;
         if record.lifecycle_status == SkillLifecycle::Superseded
@@ -1232,6 +1231,13 @@ impl Vault {
             ));
         }
         validate_skill_update(&existing, record)?;
+        // ONE-1892's activation scan consult is deliberately NOT here: it runs
+        // at the batch materialization chokepoint every SKILL body converges
+        // on (`skill_scan::escalate_activation_approval_in_txn`), so
+        // `put_entity` and a raw `batch().put` are governed by the same dial
+        // this door is. A second consult on this path would only re-derive the
+        // stamp the chokepoint is about to set.
+        let data = encode_skill_record(record)?;
         self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?;
         wtxn.commit()?;
         Ok(())

@@ -214,6 +214,7 @@ pub enum ErrorKind {
     EditProposalStale,
     SettleNotAuthorized,
     InvalidSkillBody,
+    SkillContentAnchorTypeMismatch,
     InvalidAgentDefBody,
     SystemAgentDisabled,
     AgentNotDispatchable,
@@ -903,6 +904,11 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
     InvalidSkillBody(&'static str),
+    /// The deterministic SKILL content-anchor id (ONE-1741) is already occupied
+    /// by an entity of another kind, so the scan-verdict subject cannot be
+    /// minted or reused without adopting a squatter. Nothing was written.
+    #[error("skill content anchor id is held by entity type {existing}")]
+    SkillContentAnchorTypeMismatch { existing: u8 },
     /// An AGENT_DEF entity body failed pinned structural/lifecycle validation
     /// or the update-immutability gate. Nothing was written.
     #[error("invalid AGENT_DEF body: {0}")]
@@ -1773,6 +1779,9 @@ impl Error {
             Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
+            Self::SkillContentAnchorTypeMismatch { .. } => {
+                ErrorKind::SkillContentAnchorTypeMismatch
+            }
             Self::InvalidAgentDefBody(_) => ErrorKind::InvalidAgentDefBody,
             Self::SystemAgentDisabled(_) => ErrorKind::SystemAgentDisabled,
             Self::AgentNotDispatchable(_) => ErrorKind::AgentNotDispatchable,
