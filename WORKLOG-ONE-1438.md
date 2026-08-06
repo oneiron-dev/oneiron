@@ -188,3 +188,113 @@ Gates at verdict: `cargo clippy -p oneiron --all-features --lib -- -D warnings` 
 `cargo test -p oneiron --all-features --lib lens::` 52/52; `cargo fmt --check -p oneiron`
 clean on both claimed files (only the pre-existing `surface_event/tests.rs` base defect
 shows, out of packet).
+
+## VERDICT-FIX (from tip fb1350bcf)
+
+One verdict-verified REAL P1. Commits `501e6f542` + `ecc69d85c`.
+
+### F1 — stale handles laundered onto a later frame's row (P1, closed)
+
+`LensBackingRefToken` is `(render_id, ref_id)` and nothing else. Render ids derive
+deterministically from card ids, so re-rendering a card produces a *second frame with the
+same render id*; `mint_backing_ref` names rows `ref-{len}`, so every frame's first mint is
+`ref-0`. Two frames over one card therefore mint **byte-identical tokens** over completely
+unrelated targets — the token cannot distinguish them, and only the issued handle's own
+recorded metadata can.
+
+`resolve_read_handle` never looked at that metadata. It proved `token.render_id ==
+frame.render_id`, that `ref_id` was present in the *current* table, that the target still
+hydrates, and that the *current* render declares the row's handle at the row's role — then
+returned the current row. The handle's recorded `short_ref`, `target_kind`, and `reach`
+were carried for the client's benefit and never re-proved. So frame B's `ref-0` answered
+frame A's handle: a read handle silently relocated onto a different entity, and when both
+the twin row and the current render said `ActionTarget`, the role check passed by agreeing
+with itself and a **read-only handle resolved to an action-target backing ref** — the exact
+launder `LensReadReach`'s missing variant exists to prevent (blueprint §2, §3, done-means).
+
+The stale doc comment named the defect out loud: *"Reach is fixed by that row, so
+re-proving the role covers the whole read-reach claim."* Reach is fixed by *whichever* row
+currently sits at `ref-0`, which is precisely what an attacker chooses.
+
+**Fix — one derivation, not three comparisons.** Issuance and re-resolution now share
+`LensRenderFrame::issue_read_handle`: the handle that selecting `atom_id` onto a resolved
+row proves *right now*. `select_atom` returns it; `resolve_read_handle` re-derives it and
+honors the presented handle only if the two are **equal whole**:
+
+```rust
+let resolved = self.resolve_backing_ref_token(scoped_read, &handle.backing_token)?;
+if self.issue_read_handle(render, &handle.atom_id, &resolved)? != *handle { ... }
+```
+
+Chosen over three ad-hoc field comparisons deliberately:
+
+- It is the *whole* invariant, stated once — "an issued handle is honored iff re-issuing it
+  now reproduces it" — instead of a checklist that a future field can silently escape.
+- Reach is re-derived through `LensReadReach::try_from`, which has **no action-target
+  variant**. An action-target row now yields no handle at all rather than a read handle
+  over it; §3 is enforced by the type, at the same chokepoint, on both paths.
+- `target_kind`, `render_id`, and `atom_id` come along for free in the struct equality, so
+  no provably-unreachable branch had to be written to cover them (see M5 below).
+
+The role-vs-host-row check moved into `issue_read_handle` unchanged, which also removes the
+one place the two paths had diverged (`select_atom` looked the role up from the *request's*
+handle name, re-resolution from the *host row's*). The prior simplify pass rejected
+"routing `select_atom` through `resolve_read_handle`" as double-resolution — correctly;
+this is the other direction (a shared derivation both callers reach with a row already in
+hand), so no token is resolved twice. That pass's note about folding `row.role != role`
+into the `find` predicate is now moot: the check lives in the shared helper.
+
+**The twin-frame test was vacuous.** `read_handles_reresolve_and_never_widen` built its
+twin with `LensRenderFrame::new(...)` and left the backing table **empty**, so it only ever
+proved "a token absent from the table does not resolve" — it never reached the metadata
+gap. It is kept (that case is still worth pinning) and the real case is now
+`stale_handles_never_launder_onto_a_later_frames_row`, which populates the twin with a
+same-named `ref-0` and asserts up front that
+
+```rust
+assert_eq!(&token, frame.backing_refs()[0].token(), ...)
+```
+
+— the twin's first mint *collides* with the token the issued handle carries. Without that
+assertion the test could rot back into vacuity. Three orthogonal twins follow, each
+isolating one leg: a different entity at the same role (short-ref re-proof), the **same**
+entity rebound as `ActionTarget` (reach derivation — same short ref and kind, so only the
+missing variant can reject it), and the same entity at `Timeline` (reach comparison). A
+positive control closes it: reach a twin issues itself resolves through that twin and
+points at the twin's own target, so the three rejections are the re-proof's doing and not a
+broken fixture.
+
+### Mutation verification (this fix)
+
+Each re-proof leg stripped in turn, tests re-run, source restored (`git diff` clean after):
+
+| Mutation | Result |
+|---|---|
+| M1 drop the whole metadata re-proof | **RED** — `stale_handles_never_launder_onto_a_later_frames_row` |
+| M2 drop role == host-row role | **RED** — `selection_proves_one_resolution_path` |
+| M3 omit `short_ref` from the re-proof | **RED** — `stale_handles_…_later_frames_row` |
+| M4 omit `reach` from the re-proof | **RED** — `stale_handles_…_later_frames_row` |
+| M5 omit `target_kind` from the re-proof | **still green — subsumed, reported honestly** |
+| M6 let an action-target row carry read reach | **RED** — `action_target_bindings_never_become_read_handles` + `stale_handles_…_later_frames_row` |
+
+M5 is not a coverage hole and no test was invented to manufacture one. `short_ref` is
+`short_id:content_hash`, which `hydrate_short_id` resolves to exactly one entity, and
+`ensure_target_readable` pins `Claim`↔`ENTITY_TYPE_CLAIM` and `Entity`↔not-claim against
+that entity's stored type. A target whose kind differs while its short ref matches
+therefore cannot survive `resolve_backing_ref_token` at all, so the `target_kind` term is
+unfalsifiable *given* the other two — it is carried by struct equality at zero cost and
+zero dead code, and would only become load-bearing if short refs ever stopped determining
+the row's kind. Writing a defensive branch for it would have been the gold-plating the
+doctrine header rejects; deriving why it cannot fire is the alternative.
+
+### Gates (per commit)
+
+`rustfmt --check` clean on both claimed files; `cargo clippy -p oneiron --lib
+--all-features --all-targets` — **0** findings in `lens.rs` / `lens/tests.rs`;
+`cargo test -p oneiron --all-features --lib lens` — **56/56 green** (52 → 56: three twin
+cases run inside one new test plus the sharpening commit).
+
+Diff stays inside the packet: `crates/oneiron/src/lens.rs`,
+`crates/oneiron/src/lens/tests.rs`, this worklog. No `Cargo.toml` / `Cargo.lock` touched.
+The pre-existing `surface_event/tests.rs:733` fmt defect is still red on the base, still
+another lane's, still untouched.
