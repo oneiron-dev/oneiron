@@ -20,6 +20,15 @@
 //! touched exactly once each, before stage 1, so the pipeline is reproducible
 //! from its inputs alone.
 //!
+//! # Bounded work
+//!
+//! Stage 4's rule is settled BEFORE those reads, not only during them: the
+//! caller's window is untrusted request data and may span centuries, while the
+//! booking horizon is configuration and is bounded by
+//! [`MAX_BOOKING_WINDOW_SECS`](crate::booking::config::MAX_BOOKING_WINDOW_SECS).
+//! Clipping first is what keeps one solve's freebusy query, hold read, and
+//! per-local-day walk proportional to the page's own horizon.
+//!
 //! # Interval convention
 //!
 //! [`TimeRange`] is inclusive on both ends in the engine core, and every
@@ -95,6 +104,11 @@ pub struct BookingCounts {
 }
 
 /// Loads confirmed-booking counts for `(page_ref, event_type)` over `window`.
+///
+/// `window` is the bookable extent — the caller's window already clipped to the
+/// page's horizon — so it is bounded, not caller-controlled. A cap is charged
+/// over a whole visitor-local period, so layer 2 widens `window` to the periods
+/// its candidates fall in rather than assuming it already covers them.
 ///
 /// STACK SEAM. Confirmed bookings live in the session-keyed lifecycle rows
 /// ONE-1813 lands in BK-A layer 2; on this layer there is no such store, so
@@ -206,7 +220,7 @@ impl SlotOracle for BookingSolver<'_> {
             constraint.validate()?;
         }
 
-        let window = half_open(req.window)?;
+        let requested = half_open(req.window)?;
         let config = match &self.synthetic_config {
             Some(config) => config.clone(),
             None => load_event_type_config(self.vault, self.page_ref, &req.event_type)?,
@@ -219,12 +233,31 @@ impl SlotOracle for BookingSolver<'_> {
             )));
         }
 
-        let busy_by_host = self.busy_by_host(&config, window)?;
+        // The bookable extent is settled BEFORE anything is read, because it is
+        // what bounds the read. A caller may ask for centuries; the horizon is
+        // configuration, and configuration is bounded.
+        let Some(window) = bookable_extent(requested, self.now_utc, &config) else {
+            return Ok(SolveResult {
+                slots: Vec::new(),
+                flex_used: false,
+            });
+        };
+        // CAL is asked over the extent PADDED by this event type's buffers: a
+        // busy interval just outside the horizon still casts its buffer inside
+        // it, and an unpadded query would drop exactly those blockers.
+        let pad = buffer_pad(&config);
+        let busy_by_host = self.busy_by_host(
+            &config,
+            TimeRange {
+                start: window.start.saturating_sub(pad),
+                end: window.end.saturating_add(pad),
+            },
+        )?;
         let counts = load_booking_counts(
             self.vault,
             self.page_ref,
             &req.event_type,
-            req.window,
+            inclusive(window),
             &req.visitor_tz,
         )?;
         let holds = self
@@ -436,21 +469,29 @@ pub(crate) fn attach_busy_union(
 // Stage 3 — buffers
 // -------------------------------------------------------------------------
 
+/// The free time this event type needs on each side of a busy interval.
+///
+/// Both the existing meeting and the candidate carry the buffers, so the gap
+/// either side must hold one meeting's `post_buffer_min` and the other's
+/// `pre_buffer_min` — `pre + post` seconds. This is also exactly how far
+/// OUTSIDE the bookable extent a busy interval can still reach, which is why
+/// [`SlotOracle::solve`] pads its freebusy query by the same amount.
+fn buffer_pad(config: &EventTypeConfig) -> u64 {
+    (u64::from(config.pre_buffer_min) + u64::from(config.post_buffer_min))
+        .saturating_mul(SECS_PER_MINUTE)
+}
+
 /// Removes busy time and the buffers around it from each host's mask.
 ///
-/// Both the existing meeting and the candidate carry this event type's buffers,
-/// so the gap either side of a busy interval must hold one meeting's
-/// `post_buffer_min` and the other's `pre_buffer_min` — `pre + post` seconds,
-/// on both sides. Growing the busy interval by that amount and then requiring
-/// the UNPADDED candidate to fit is exactly that rule, and it keeps the
-/// candidate's own footprint equal to its booked duration.
+/// Growing each busy interval by [`buffer_pad`] on both sides and then requiring
+/// the UNPADDED candidate to fit is exactly the required-gap rule, and it keeps
+/// the candidate's own footprint equal to its booked duration.
 #[must_use]
 pub(crate) fn apply_buffers(
     host_inputs: Vec<(EntityId, Vec<TimeRange>, BusyUnion)>,
     config: &EventTypeConfig,
 ) -> Vec<(EntityId, Vec<TimeRange>)> {
-    let pad = (u64::from(config.pre_buffer_min) + u64::from(config.post_buffer_min))
-        .saturating_mul(SECS_PER_MINUTE);
+    let pad = buffer_pad(config);
     host_inputs
         .into_iter()
         .map(|(host, mask, busy)| {
@@ -470,12 +511,33 @@ pub(crate) fn apply_buffers(
 // Stage 4 — notice and horizon
 // -------------------------------------------------------------------------
 
-/// Clips every mask to `[now + min_notice, now + booking_window]`, intersected
-/// with the requested window.
+/// What `requested` leaves of `[now + min_notice, now + booking_window]`.
 ///
-/// Both bounds are measured from request time, so the same configuration
-/// answers differently as `now_utc` moves — and identically for a fixed
-/// `now_utc`, which is what makes the solve reproducible.
+/// Both bounds are measured from request time, so the same configuration answers
+/// differently as `now_utc` moves — and identically for a fixed `now_utc`, which
+/// is what makes the solve reproducible. `None` means the horizon and the
+/// request do not overlap: nothing is bookable, and nothing needs reading.
+///
+/// The rule lives here, in stage 4, and [`SlotOracle::solve`] applies it once
+/// more BEFORE the pipeline. That is not a second rule: it is idempotent, and
+/// applying it early is what keeps one solve's storage reads and per-local-day
+/// walks proportional to the page's own bounded horizon rather than to whatever
+/// window a caller named.
+fn bookable_extent(
+    requested: TimeRange,
+    now_utc: u64,
+    config: &EventTypeConfig,
+) -> Option<TimeRange> {
+    intersect(
+        requested,
+        TimeRange {
+            start: now_utc.saturating_add(config.min_notice_secs),
+            end: now_utc.saturating_add(config.booking_window_secs),
+        },
+    )
+}
+
+/// Clips every mask to the bookable extent.
 #[must_use]
 pub(crate) fn enforce_notice_and_window(
     host_masks: Vec<(EntityId, Vec<TimeRange>)>,
@@ -483,21 +545,17 @@ pub(crate) fn enforce_notice_and_window(
     request_window: TimeRange,
     config: &EventTypeConfig,
 ) -> Vec<(EntityId, Vec<TimeRange>)> {
-    let bounds = TimeRange {
-        start: now_utc
-            .saturating_add(config.min_notice_secs)
-            .max(request_window.start),
-        end: now_utc
-            .saturating_add(config.booking_window_secs)
-            .min(request_window.end),
-    };
+    let bounds = bookable_extent(request_window, now_utc, config);
     host_masks
         .into_iter()
         .map(|(host, mask)| {
-            let clipped = mask
-                .into_iter()
-                .filter_map(|range| intersect(range, bounds))
-                .collect();
+            let clipped = bounds
+                .map(|bounds| {
+                    mask.into_iter()
+                        .filter_map(|range| intersect(range, bounds))
+                        .collect()
+                })
+                .unwrap_or_default();
             (host, clipped)
         })
         .collect()

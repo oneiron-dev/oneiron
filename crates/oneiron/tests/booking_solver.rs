@@ -806,6 +806,138 @@ fn booking_claims_resolve_normal_criticality_under_the_default_policy_manifest()
     assert!(slot_hours(&solved).contains(&SURVIVOR_MORNING));
 }
 
+/// A hold source that records the window it was asked for — the one place a
+/// caller can observe how much time one solve actually reaches over.
+#[derive(Default)]
+struct RecordingHolds(std::sync::Mutex<Option<TimeRange>>);
+
+impl ActiveHoldSource for RecordingHolds {
+    fn active_holds(
+        &self,
+        _page_ref: EntityId,
+        window: TimeRange,
+        _now_utc: u64,
+        _exclude_session_key: Option<&[u8; 32]>,
+    ) -> Result<Vec<TimeRange>, BookingError> {
+        *self.0.lock().expect("recording holds") = Some(window);
+        Ok(Vec::new())
+    }
+}
+
+/// One solve reads over the page's own booking horizon, not over whatever
+/// window the caller asked for.
+#[test]
+fn solve_work_is_bounded_by_the_horizon_not_the_request() {
+    let (_dir, vault) = temp_vault();
+    let page = booking_page(&vault);
+    let config = oracle_config();
+    let calendars = vec![(
+        test_id(HOST_A_SEED),
+        vec![oneiron::CalendarSel { system: None }],
+    )];
+    let holds = RecordingHolds::default();
+
+    // A request spanning more than a year, against a five-hour horizon.
+    let sprawling = SolveRequest {
+        event_type: EventTypeKey("intro-call".to_owned()),
+        window: TimeRange {
+            start: MONDAY,
+            end: MONDAY + 400 * 86_400,
+        },
+        constraint: None,
+        visitor_tz: "UTC".to_owned(),
+    };
+    BookingSolver {
+        vault: &vault,
+        page_ref: page,
+        calendars_by_host: &calendars,
+        holds: &holds,
+        now_utc: NOW,
+        synthetic_config: Some(config.clone()),
+    }
+    .solve(&sprawling)
+    .expect("solve");
+
+    // Every storage read and every per-local-day walk is scoped to this, not to
+    // the four hundred days the caller named.
+    let seen = holds
+        .0
+        .lock()
+        .expect("recording holds")
+        .expect("holds asked");
+    assert_eq!(
+        (seen.start, seen.end),
+        (
+            NOW + config.min_notice_secs,
+            NOW + config.booking_window_secs
+        ),
+        "the solve reaches over [now + min_notice, now + booking_window]"
+    );
+    assert!(seen.end - seen.start <= config.booking_window_secs);
+
+    // And a horizon the request cannot reach is answered without reading at all.
+    let past = RecordingHolds::default();
+    let answer = BookingSolver {
+        vault: &vault,
+        page_ref: page,
+        calendars_by_host: &calendars,
+        holds: &past,
+        now_utc: NOW + 10 * 86_400,
+        synthetic_config: Some(config),
+    }
+    .solve(&request(None))
+    .expect("solve");
+    assert!(answer.slots.is_empty() && !answer.flex_used);
+    assert!(past.0.lock().expect("recording holds").is_none());
+}
+
+/// The horizon clamp is PADDED by this event type's buffers, so a busy interval
+/// just outside it still blocks the candidates its buffer reaches.
+#[test]
+fn a_busy_interval_at_the_horizon_edge_still_buffers_the_last_candidate() {
+    let (_dir, vault) = temp_vault();
+    let actor = booking_actor(&vault);
+    let page = booking_page(&vault);
+    let config = oracle_config();
+
+    // 12:30-13:00 is the last candidate the five-hour horizon admits.
+    assert!(
+        slot_hours(&solve_with(
+            &vault,
+            page,
+            config.clone(),
+            &NoActiveHolds,
+            &request(None)
+        ))
+        .contains(&SURVIVOR_AFTERNOON)
+    );
+
+    // A meeting starting exactly at the horizon's end, whose 15-minute buffer
+    // reaches back inside it.
+    store_event(
+        &vault,
+        actor,
+        BUSY_SEED,
+        TimeRange {
+            start: NOW + config.booking_window_secs,
+            end: NOW + config.booking_window_secs + 3_599,
+        },
+        "busy",
+        None,
+    );
+    assert!(
+        !slot_hours(&solve_with(
+            &vault,
+            page,
+            config,
+            &NoActiveHolds,
+            &request(None)
+        ))
+        .contains(&SURVIVOR_AFTERNOON),
+        "a busy interval outside the horizon still owns the buffer it casts inside it"
+    );
+}
+
 /// A host binding that resolved to no selectors is the same wiring defect as a
 /// host with no binding at all — and the more dangerous one, because an empty
 /// selector slice asks CAL for the unfiltered all-calendar union.

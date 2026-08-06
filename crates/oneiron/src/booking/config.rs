@@ -48,6 +48,15 @@ pub const DEFAULT_MIN_NOTICE_SECS: u64 = 24 * 3_600;
 /// Ratified high-value preset minimum notice: 48 hours.
 pub const HIGH_VALUE_MIN_NOTICE_SECS: u64 = 48 * 3_600;
 
+/// The furthest ahead a page may open.
+///
+/// The horizon is what bounds ONE solve: the solver reaches over it to ask CAL
+/// for a busy union and to walk each host's local days, so an unbounded horizon
+/// is an unbounded read and an unbounded loop. A year and a day is far past any
+/// real booking page — the ratified deployment default is this week and next —
+/// and keeps the day walk under four hundred iterations per host.
+pub const MAX_BOOKING_WINDOW_SECS: u64 = 366 * 24 * 3_600;
+
 /// Exclusive upper bound for a civil minute-of-day. `1440` is admissible as an
 /// *end* minute and denotes the following midnight.
 pub(crate) const MINUTES_PER_DAY: u16 = 1_440;
@@ -178,8 +187,8 @@ impl EventTypeConfig {
         if self.slot_step_min == 0 {
             return Some("booking.event_type slot_step_min must be positive");
         }
-        if self.booking_window_secs == 0 {
-            return Some("booking.event_type booking_window_secs must be positive");
+        if self.booking_window_secs == 0 || self.booking_window_secs > MAX_BOOKING_WINDOW_SECS {
+            return Some("booking.event_type booking_window_secs must be 1 second to 366 days");
         }
         if self.hosts.is_empty() {
             return Some("booking.event_type must configure at least one host");
@@ -627,6 +636,10 @@ mod tests {
             ("zero duration", Box::new(|c| c.duration_min = 0)),
             ("zero step", Box::new(|c| c.slot_step_min = 0)),
             ("zero window", Box::new(|c| c.booking_window_secs = 0)),
+            (
+                "unbounded window",
+                Box::new(|c| c.booking_window_secs = MAX_BOOKING_WINDOW_SECS + 1),
+            ),
             ("no hosts", Box::new(|c| c.hosts.clear())),
             ("blank tz", Box::new(|c| c.hosts[0].host_tz.clear())),
             (
@@ -680,6 +693,12 @@ mod tests {
         midnight
             .validate()
             .expect("a window ending at midnight is valid");
+        // The longest horizon a page may open, which bounds one solve's work.
+        let mut widest = intro_config();
+        widest.booking_window_secs = MAX_BOOKING_WINDOW_SECS;
+        widest
+            .validate()
+            .expect("a year-and-a-day horizon is valid");
     }
 
     #[test]
