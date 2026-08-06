@@ -198,3 +198,81 @@ generality; every `chrono` import is used. Tests, fixtures, and public API untou
 Gates after: `cargo fmt -p oneiron --check` clean; `cargo test -p oneiron calendar::tz` 8/8;
 `cargo check -p oneiron --all-features` clean. Oracles re-run: no third-party type in any
 `pub` signature workspace-wide; `chrono`-family references confined to `calendar/tz.rs`.
+
+## VERDICT-FIX (Opus, 2026-08-06)
+
+Finder + verdict both landed on the same seam from opposite sides: the two directions of
+this border were not closed over the same range, and the failure mode of one of them was
+being reported as a DST gap. Both REAL at P2, both fixed at the chokepoint, neither
+relitigated. Nothing was banked.
+
+### The shared root
+
+The supported range is a range of **UTC instants** — `NaiveDate::MAX` is `+262142-12-31`,
+so the last representable instant is `+262142-12-31T23:59:59Z` (`8_210_266_876_799`). A
+zone offset moves a civil time relative to that boundary, so at the top of the range the
+zone is part of what decides representability. Both functions assumed the check they
+already had was zone-independent. It is not.
+
+### F1 — `utc_to_wall` emitted wall times its own inverse rejected (`range-boundary-roundtrip`)
+
+`DateTime`'s `Datelike`/`Timelike` accessors read an *overflowing* local datetime: chrono
+lets the localized value sit up to a day past `NaiveDate::MAX` and reports the fields
+without complaint. `utc_to_wall` validated the **UTC** datetime and then read fields off
+the **localized** one, so `utc_to_wall(8_210_266_876_799, "Pacific/Kiritimati")` returned
+`Ok(WallTime { y: 262143, mo: 1, d: 1, ... })` — a civil date `wall_to_utc` cannot even
+construct. An all-zone probe reproduced it on **305 of 597** zones.
+
+Fix: stop reading the overflowed value. Re-add the zone offset to the UTC datetime through
+the checked door (`NaiveDateTime::checked_add_offset`) and map `None` to
+`TimestampOutOfRange { utc }`. One guard, at the only place the localized civil time is
+produced; the same guard covers the bottom of the range for free.
+
+### F2 — a range overflow was typed as a spring-forward gap (`typed-error-misclassification`)
+
+`from_local_datetime` answers `None` for two unrelated reasons: the zone skipped this civil
+time, or the zone maps it fine but subtracting the offset leaves chrono's UTC range.
+Mapping every `None` to `NonexistentWallTime` told the caller "DST gap" about a civil time
+that is provably unique — `offset_from_local_datetime` returns `Single(SST)` for
+`262142-12-31T23:59:59` in `Pacific/Pago_Pago`. **239 of 597** zones behaved this way at the
+top of the range. This is not cosmetic: `NonexistentWallTime` is the variant the blueprint
+gives skip-vs-shift policy to, so a range failure would have been silently policy-shifted
+into a neighbouring hour.
+
+Fix: on the `None` path only, ask the offset alone. Offset resolution is a pure zone-rule
+lookup and never leaves the range, so `None` there means a genuine gap and anything else
+means the range failed — `InvalidWallTime`. The error set stays the ratified four variants;
+no variant was added.
+
+### Docs
+
+`InvalidWallTime` (in `calendar/mod.rs`) and both `# Errors` sections now name the
+range-overflow case, and the module header states the closure law directly: a wall time
+`utc_to_wall` hands out is always one `wall_to_utc` takes back, and falling off the range is
+never reported as a zone transition.
+
+### Mutation verification
+
+| Test | Red before | Green after | Isolated mutation |
+|---|---|---|---|
+| `both_directions_close_over_the_same_range` | `Ok(WallTime { y: 262143, .. })` vs expected `Err(TimestampOutOfRange)` | ok | fix-1 guard neutered (`.or(Some(naive_utc))`) → only this test fails |
+| `range_overflow_is_not_reported_as_a_dst_gap` | `Err(NonexistentWallTime { .. })` vs expected `Err(InvalidWallTime)` | ok | fix-2 classifier neutered (`skipped = true`) → only this test fails |
+
+The closure test is written as a law rather than a fixture: it sweeps **every zone in
+`chrono_tz::TZ_VARIANTS`** at both ends of the range and asserts that anything
+`utc_to_wall` admits, `wall_to_utc` takes back. That sweep is what would have caught F1 at
+build time, and it is the regression guard for the whole class.
+
+Gates: `cargo fmt -p oneiron --check` clean; `cargo clippy -p oneiron --all-features
+--all-targets` clean; `cargo test -p oneiron --all-features` green. Packet unchanged —
+`calendar/tz.rs` + `calendar/mod.rs` + this worklog. No `Cargo.toml` edit (the dep
+reservation was already landed), and `Cargo.lock` stays uncommitted.
+
+**Gate note (charged to no lane).** The first `--all-features` run tripped
+`embed::tests::partial_remote_completion_is_logged_when_local_batch_fails`
+("completed remote work must surface in a warning, got []"). It passes solo and passed on
+the flake-guard re-run of the whole suite with no code change in between. The test captures
+warnings through `tracing::subscriber::with_default`, which binds *thread-locally*, so a
+warning emitted off the calling thread is silently lost — a pre-existing race in `embed`,
+unrelated to this diff (which adds no logging, threading, or shared state). Recording it
+here as a real intermittent, not as this lane's red.

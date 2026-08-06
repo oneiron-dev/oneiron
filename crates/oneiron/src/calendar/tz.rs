@@ -32,8 +32,15 @@
 //! and is rejected the same way. [`utc_to_wall`] rejects timestamps past the
 //! conversion library's supported range as
 //! [`CalendarError::TimestampOutOfRange`].
+//!
+//! Both directions close over that one range, and the zone is part of what
+//! decides it: the supported range is a range of UTC instants, so at its top a
+//! positive offset — and at its bottom the epoch floor — takes a civil time out
+//! of range even though its fields look ordinary. A wall time [`utc_to_wall`]
+//! hands out is therefore always one [`wall_to_utc`] takes back. Falling off
+//! the range is never reported as a zone transition.
 
-use chrono::{DateTime, Datelike, MappedLocalTime, NaiveDate, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, MappedLocalTime, NaiveDate, Offset, TimeZone, Timelike};
 use chrono_tz::Tz;
 
 use super::CalendarError;
@@ -77,10 +84,13 @@ fn resolve_zone(tz: &str) -> Result<Tz, CalendarError> {
 ///
 /// - [`CalendarError::UnknownTimeZone`] — `tz` is not an IANA zone name.
 /// - [`CalendarError::InvalidWallTime`] — the fields are not a real civil
-///   date/time (a day the month does not have, a leap second), or the instant
-///   is pre-epoch and so outside the engine's `u64` time model.
+///   date/time (a day the month does not have, a leap second), or the civil
+///   time is real in `tz` but its instant is outside the supported range:
+///   pre-epoch, and so outside the engine's `u64` time model, or past the top
+///   of the conversion library's range.
 /// - [`CalendarError::NonexistentWallTime`] — the civil time falls in a
-///   spring-forward gap in `tz`.
+///   spring-forward gap in `tz`. A range failure is never reported this way:
+///   the gap error is what callers apply skip-vs-shift policy to.
 pub fn wall_to_utc(w: &WallTime, tz: &str) -> Result<u64, CalendarError> {
     let zone = resolve_zone(tz)?;
     let civil = NaiveDate::from_ymd_opt(w.y, u32::from(w.mo), u32::from(w.d))
@@ -88,9 +98,19 @@ pub fn wall_to_utc(w: &WallTime, tz: &str) -> Result<u64, CalendarError> {
         .ok_or(CalendarError::InvalidWallTime)?;
     let instant = match zone.from_local_datetime(&civil) {
         MappedLocalTime::None => {
-            return Err(CalendarError::NonexistentWallTime {
-                wall: *w,
-                tz: tz.to_owned(),
+            // Two unrelated failures answer `None` here: a civil time the zone
+            // skipped, and a civil time the zone maps fine but whose instant
+            // falls off the top of the supported range. Only the first is a
+            // gap, and only the first is what skip-vs-shift policy is for, so
+            // ask the offset alone — it resolves without leaving the range.
+            return Err(match zone.offset_from_local_datetime(&civil) {
+                MappedLocalTime::None => CalendarError::NonexistentWallTime {
+                    wall: *w,
+                    tz: tz.to_owned(),
+                },
+                // The zone does map this civil time; applying the offset is
+                // what left the range.
+                _ => CalendarError::InvalidWallTime,
             });
         }
         MappedLocalTime::Single(instant) => instant,
@@ -109,13 +129,23 @@ pub fn wall_to_utc(w: &WallTime, tz: &str) -> Result<u64, CalendarError> {
 ///
 /// - [`CalendarError::UnknownTimeZone`] — `tz` is not an IANA zone name.
 /// - [`CalendarError::TimestampOutOfRange`] — `utc` is past the supported
-///   conversion range.
+///   conversion range, either on its own or once `tz`'s offset is applied to
+///   it.
 pub fn utc_to_wall(utc: u64, tz: &str) -> Result<WallTime, CalendarError> {
     let zone = resolve_zone(tz)?;
     let seconds = i64::try_from(utc).map_err(|_| CalendarError::TimestampOutOfRange { utc })?;
-    let local = DateTime::from_timestamp(seconds, 0)
+    let instant = DateTime::from_timestamp(seconds, 0)
         .ok_or(CalendarError::TimestampOutOfRange { utc })?
         .with_timezone(&zone);
+    // The supported range is a *UTC* range, so a positive offset can carry the
+    // last instants of it onto a civil date past the civil maximum. A
+    // datetime's field accessors read that overflowed value happily; adding
+    // the offset through the checked door instead is what keeps this direction
+    // closed over the same range `wall_to_utc` accepts.
+    let local = instant
+        .naive_utc()
+        .checked_add_offset(instant.offset().fix())
+        .ok_or(CalendarError::TimestampOutOfRange { utc })?;
     // Every cast below is lossless: the accessors are documented as 1-12,
     // 1-31, 0-23, 0-59 and 0-59 respectively.
     Ok(WallTime {
@@ -144,6 +174,9 @@ mod tests {
     const JUL_15_0800Z: u64 = 1_784_102_400;
     /// `2026-10-25T00:30:00Z` — the earlier of the London fold's two instants.
     const OCT_25_0030Z: u64 = 1_792_888_200;
+    /// `+262142-12-31T23:59:59Z` — the last instant the conversion library
+    /// represents, and so the last one this border can convert in UTC itself.
+    const MAX_SUPPORTED_UTC: u64 = 8_210_266_876_799;
 
     const fn wall(y: i32, mo: u8, d: u8, h: u8, mi: u8, s: u8) -> WallTime {
         WallTime { y, mo, d, h, mi, s }
@@ -286,6 +319,87 @@ mod tests {
         }
 
         assert_eq!(invert(0, "UTC"), wall(1970, 1, 1, 0, 0, 0));
+    }
+
+    #[test]
+    fn both_directions_close_over_the_same_range() {
+        // The supported range is a *UTC* limit. Localising its last instant in
+        // a +14:00 zone lands on a civil date past the library's civil
+        // maximum, and the datetime accessors read that overflowed value
+        // without complaint — so the border must not hand out a wall time its
+        // own inverse cannot take back.
+        assert_eq!(
+            utc_to_wall(MAX_SUPPORTED_UTC, "Pacific/Kiritimati"),
+            Err(CalendarError::TimestampOutOfRange {
+                utc: MAX_SUPPORTED_UTC
+            })
+        );
+
+        // The rejection is the +14:00 shift, not a blanket retreat from the
+        // top of the range: UTC reaches that instant, and Kiritimati reaches
+        // its own last representable one.
+        assert_eq!(
+            invert(MAX_SUPPORTED_UTC, "UTC"),
+            wall(262142, 12, 31, 23, 59, 59)
+        );
+        let last_in_kiritimati = MAX_SUPPORTED_UTC - 14 * 3600;
+        assert_eq!(
+            invert(last_in_kiritimati, "Pacific/Kiritimati"),
+            wall(262142, 12, 31, 23, 59, 59)
+        );
+        assert_eq!(
+            convert(&wall(262142, 12, 31, 23, 59, 59), "Pacific/Kiritimati"),
+            last_in_kiritimati
+        );
+
+        // Closure as a law rather than a fixture: across every zone the
+        // database ships, and at both ends of the range, anything
+        // `utc_to_wall` admits is something `wall_to_utc` takes back.
+        for zone in chrono_tz::TZ_VARIANTS {
+            let tz = zone.name();
+            for utc in [
+                0,
+                JAN_15_0930Z,
+                MAX_SUPPORTED_UTC - 14 * 3600,
+                MAX_SUPPORTED_UTC,
+            ] {
+                if let Ok(w) = utc_to_wall(utc, tz) {
+                    assert!(
+                        wall_to_utc(&w, tz).is_ok(),
+                        "{tz} at {utc} yields {w:?}, which does not convert back"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn range_overflow_is_not_reported_as_a_dst_gap() {
+        // The library answers "no instant" for two unrelated reasons: a real
+        // spring-forward gap, and a unique civil time whose instant is past
+        // the top of the supported range. Only the first is a gap, and only
+        // the first is the one callers apply skip-or-shift policy to.
+        let top = wall(262142, 12, 31, 23, 59, 59);
+        assert_eq!(
+            wall_to_utc(&top, "Pacific/Pago_Pago"),
+            Err(CalendarError::InvalidWallTime),
+            "a unique civil time pushed past the range is not a gap"
+        );
+
+        // The same civil fields in UTC are the top of the range and convert,
+        // so the failure above is the -11:00 shift, not the fields.
+        assert_eq!(wall_to_utc(&top, "UTC"), Ok(MAX_SUPPORTED_UTC));
+
+        // A real gap keeps its own typed error, with the wall time and zone
+        // the caller needs to act on it.
+        let gap = wall(2026, 3, 29, 1, 30, 0);
+        assert_eq!(
+            wall_to_utc(&gap, "Europe/London"),
+            Err(CalendarError::NonexistentWallTime {
+                wall: gap,
+                tz: "Europe/London".to_owned(),
+            })
+        );
     }
 
     #[test]

@@ -34,12 +34,15 @@ pub enum CalendarError {
         /// The zone name as supplied.
         tz: String,
     },
-    /// The civil fields are not a real date/time, or the instant is outside the
-    /// engine's `u64` UTC model.
+    /// The civil fields are not a real date/time, or they are real in their
+    /// zone but their instant is outside the supported range — before the epoch
+    /// and so outside the engine's `u64` UTC model, or past the top of it.
     #[error("invalid wall time")]
     InvalidWallTime,
     /// The civil time falls in a spring-forward gap and has no UTC instant. The
-    /// caller decides skip-vs-shift; the border never shifts silently.
+    /// caller decides skip-vs-shift; the border never shifts silently. A civil
+    /// time that is unique but out of range is [`Self::InvalidWallTime`], not
+    /// this.
     #[error("wall time does not exist in time zone {tz}")]
     NonexistentWallTime {
         /// The civil time that has no instant in `tz`.
