@@ -158,3 +158,33 @@ the base and out of this packet. Gates were scoped around them.
 None opened. Selection is read-only by construction and the write path is unchanged: any
 mutation still names a gated verb and resolves its own action target through the action
 backchannel.
+
+## K3 simplify pass (tip 532418859)
+
+Verdict: **NO EDIT WARRANTED.**
+
+Candidates walked, each rejected with a grounding:
+
+- `accepts_bound_value`'s `(Slider, Value, non-Number)` arm looks defensive but is
+  reachable: `SelfUiBindableProperty::Value::accepts` admits `Number | Text`, so a
+  Text-valued `$state` bound to a slider's `value` passes type agreement and lands
+  exactly on that arm. Not dead.
+- Folding `row.role != role` into the `find` predicate in `select_atom` would conflate
+  two distinct rejections ("not host-bound" vs "role mismatch") — conflation, not
+  simplification.
+- `find` (not exactly-once) on the backing rows is sound: `mint_backing_ref` rejects a
+  duplicate handle per frame at the mint chokepoint, so uniqueness is a frame invariant,
+  not something `select_atom` must re-prove.
+- Routing `select_atom` through `resolve_read_handle` would double-resolve the token —
+  more work, not less.
+- `with_selected_context` is beyond the blueprint skeleton but is the only re-proving
+  population path for `selected_context` (documented blueprint delta 2); removing it is
+  a design change, outside simplify scope.
+- Helpers are all multi-use (`ensure_render_is_ours` ×3, `validate_generated_ui_state_bindings`
+  ×2, `SliderControl::admits` ×2, `declared_binding_role` ×2) — the dedup was already done
+  build-side. No layers, no speculative generality, no untouched-test desire.
+
+Gates at verdict: `cargo clippy -p oneiron --all-features --lib -- -D warnings` clean;
+`cargo test -p oneiron --all-features --lib lens::` 52/52; `cargo fmt --check -p oneiron`
+clean on both claimed files (only the pre-existing `surface_event/tests.rs` base defect
+shows, out of packet).
