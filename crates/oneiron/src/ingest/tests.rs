@@ -50,6 +50,29 @@ fn expected_meeting_transcript_config() -> IngestSourceConfig {
     }
 }
 
+/// CAL-02's ICS feed entry (ONE-1784). PACKET_AMEND candidate: this file is
+/// ONE-1790's claim, but the registry parity assertion lives here and must
+/// name entry #3 the moment `ingest.rs` registers it.
+fn expected_ics_feed_config() -> IngestSourceConfig {
+    IngestSourceConfig {
+        source_id: ICS_FEED_SOURCE_ID,
+        label: "ICS feed",
+        format: IngestSourceFormat::IcsFeed,
+        adapter_skill: Some(IngestAdapterSkillRef {
+            skill_id: "builtin.ingest.ics-feed",
+            version: "1",
+        }),
+        writes_claims: false,
+        trust_ceiling: IngestTrustCeiling {
+            claim_source: ClaimSource::Imported,
+            max_auto_sensitivity: None,
+            receipted: false,
+            warned: false,
+        },
+        default_admission: ClaimApprovalStatus::Proposed,
+    }
+}
+
 /// A minimal valid artifact, so a test can mutate exactly the field it probes.
 fn meeting_transcript_json(overrides: &[(&str, &str)]) -> String {
     let mut document = format!(
@@ -165,7 +188,8 @@ fn ingest_registry_equals_known_harness_config() {
         registry_configs,
         [
             expected_jsonl_transcript_config(),
-            expected_meeting_transcript_config()
+            expected_meeting_transcript_config(),
+            expected_ics_feed_config(),
         ]
     );
 }
