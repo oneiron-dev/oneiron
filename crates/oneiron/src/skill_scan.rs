@@ -16,15 +16,19 @@
 //! model-driven scanners join later as ADDITIONAL rows on the same content
 //! anchor rather than replacing this one.
 
-use std::borrow::Cow;
-
 use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimApprovalStatus;
+use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
-use crate::skill::{SkillContentHash, SkillLifecycle, SkillRecord, encode_skill_record};
+use crate::registry::ENTITY_TYPE_SKILL;
+use crate::skill::{
+    SkillContentHash, SkillLifecycle, SkillRecord, decode_skill_record, encode_skill_record,
+};
 use crate::skill_hub::{
     HubPackage, ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillGovernance, SkillScanReceipt,
 };
+use crate::store::Store;
 
 /// Provider id minted by the engine's own deterministic static pass.
 ///
@@ -48,15 +52,20 @@ pub const SKILL_SCAN_ACTIVATION_RISK_THRESHOLD_KEY: &[u8] =
 /// breadth (`Low`/`Medium`) is signal recorded on the row, not a consent event.
 pub const DEFAULT_ACTIVATION_RISK_THRESHOLD: ScanRiskLevel = ScanRiskLevel::High;
 
-/// Bytes read from any one package file during the static pass.
+/// The scan budget IS the admission envelope: every byte a hub package can
+/// legally carry through the import door is a byte this pass reads.
 ///
-/// A hub file may be up to 16 MiB and a package up to 32 MiB; tokenizing all of
-/// that on every import buys little (credentials live near the top of config
-/// and script files) and costs real import latency. An oversized file is
-/// scanned to this budget and the receipt drops to
-/// [`ScanCompleteness::Partial`] — partial coverage, honestly labelled, beats
-/// either a silent skip or an unbounded scan.
-const MAX_SCAN_BYTES_PER_FILE: usize = 1024 * 1024;
+/// An earlier, smaller budget (1 MiB/file) was a detection bypass, not a
+/// defense: `HubPackage` admits 16 MiB files, so a credential parked past the
+/// prefix rode in with `risk = None` while the receipt claimed only
+/// [`ScanCompleteness::Partial`] — and the activation gate reads `riskLevel`
+/// alone, so the honest label was inert. Anchoring the budget to the admission
+/// caps closes that gap and keeps the work bounded by the same numbers the
+/// import door already enforces: nothing importable is scanned partially, and
+/// a package too big to import (only reachable by calling this pure pass
+/// directly) is still read to the envelope and honestly labelled `Partial`.
+const MAX_SCAN_BYTES_PER_FILE: usize = crate::skill_hub::MAX_HUB_FILE_BYTES;
+const MAX_SCAN_BYTES_PER_PACKAGE: usize = crate::skill_hub::MAX_HUB_PACKAGE_TOTAL_BYTES;
 
 /// What the activation consult says about one skill's canonical bytes.
 ///
@@ -102,9 +111,11 @@ impl ActivationPosture {
 /// 2. **Capability breadth** — a declared `env` requirement asks for the host
 ///    process's environment, which is where credentials live: `Medium`. A
 ///    declared bin / MCP / allowed tool is ordinary surface: `Low`.
-/// 3. **Structure** — an empty tree has nothing to scan, and an oversized file
-///    is scanned only to [`MAX_SCAN_BYTES_PER_FILE`]; either drops completeness
-///    to `Partial`.
+/// 3. **Structure** — an empty tree has nothing to scan, and a tree past the
+///    admission envelope ([`MAX_SCAN_BYTES_PER_FILE`] per file,
+///    [`MAX_SCAN_BYTES_PER_PACKAGE`] in total) is read only that far; either
+///    drops completeness to `Partial`. An importable package is always read in
+///    full.
 ///
 /// The verdict axis is `Suspicious` on a credential hit and **`Unknown`
 /// otherwise — never `Clean`**. A pattern scan can find known-bad shapes; it
@@ -119,15 +130,17 @@ impl ActivationPosture {
 pub fn run_static_skill_scan(package: &HubPackage, scanned_at: u64) -> Result<SkillScanReceipt> {
     let mut risk = ScanRiskLevel::None;
     let mut complete = !package.files.is_empty();
+    let mut remaining = MAX_SCAN_BYTES_PER_PACKAGE;
 
     for file in &package.files {
-        let scanned = match file.content.get(..MAX_SCAN_BYTES_PER_FILE) {
-            Some(head) => {
-                complete = false;
-                head
-            }
-            None => file.content.as_slice(),
+        let budget = MAX_SCAN_BYTES_PER_FILE.min(remaining);
+        let scanned = if file.content.len() > budget {
+            complete = false;
+            &file.content[..budget]
+        } else {
+            file.content.as_slice()
         };
+        remaining -= scanned.len();
         if carries_credential(scanned)? {
             risk = risk.max(ScanRiskLevel::High);
         }
@@ -189,7 +202,7 @@ pub fn scan_gate_for_activation(
     content_hash: SkillContentHash,
 ) -> Result<ActivationPosture> {
     let rtxn = vault.store.env.read_txn()?;
-    scan_gate_for_activation_in_txn(vault, &rtxn, content_hash)
+    scan_gate_for_activation_in_txn(&vault.store, &rtxn, content_hash)
 }
 
 /// [`scan_gate_for_activation`] inside the caller's transaction.
@@ -202,13 +215,15 @@ pub fn scan_gate_for_activation(
 /// this gate is specified not to be — the producer is what makes verdicts
 /// common, not a block on activation.
 pub(crate) fn scan_gate_for_activation_in_txn(
-    vault: &Vault,
+    store: &Store,
     rtxn: &heed::RoTxn<'_>,
     content_hash: SkillContentHash,
 ) -> Result<ActivationPosture> {
-    let threshold = activation_risk_threshold_in_txn(vault, rtxn)?;
+    let threshold = activation_risk_threshold_in_txn(store, rtxn)?;
     let mut worst = ScanRiskLevel::None;
-    for body in vault.skill_scan_verdicts_for_content_hash_in_txn(rtxn, content_hash)? {
+    for body in
+        crate::skill_hub::skill_scan_verdicts_for_content_hash_in_store(store, rtxn, content_hash)?
+    {
         worst = worst.max(crate::skill_hub::scan_verdict_row_risk(&body)?);
     }
     Ok(if worst >= threshold {
@@ -218,45 +233,66 @@ pub(crate) fn scan_gate_for_activation_in_txn(
     })
 }
 
-/// The approval an update should land with, once the scan gate has spoken.
+/// Escalates an activating SKILL body's consent stamp, in place, when the
+/// scan gate asks for an owner tap. Reports whether the stamp moved.
 ///
-/// Consults ONLY on a transition INTO `active` — that is the moment a skill
-/// becomes loadable canon (`SkillLifecycle::loads_as_canon`), and it covers
-/// candidate admission, stale revival, and post-quarantine reactivation alike.
-/// Every other update (content revision, cache refresh, supersession) is left
-/// exactly as the caller wrote it.
+/// This is the whole consumer arm, and it lives at the batch
+/// entity-materialization chokepoint rather than on any typed door: the typed
+/// update door is one road to a SKILL body among several — `Vault::put_entity`
+/// and `Vault::batch().put` reach the same bytes without passing it, and an
+/// activation gate a caller can walk around is not a gate. Every road converges
+/// on `apply_put`, so the consult is wired there once.
 ///
-/// Returns a borrow on the common path: the escalation clones, nothing else
-/// does.
-pub(crate) fn consult_activation_scan_gate_in_txn<'a>(
-    vault: &Vault,
+/// Fires ONLY on a transition INTO `active` — the moment a skill becomes
+/// loadable canon (`SkillLifecycle::loads_as_canon`) — which covers candidate
+/// admission, stale revival, and post-quarantine reactivation alike. Every
+/// other write (create, content revision, cache refresh, supersession) is left
+/// exactly as the caller wrote it. A stored body that does not decode as a
+/// skill record counts as NOT-active, so a legacy-opaque predecessor is an
+/// activation to be consulted rather than a hole to slip through.
+pub(crate) fn escalate_activation_approval_in_txn(
+    store: &Store,
     rtxn: &heed::RoTxn<'_>,
-    prior: &SkillRecord,
-    updated: &'a SkillRecord,
-) -> Result<Cow<'a, SkillRecord>> {
-    if prior.lifecycle_status == SkillLifecycle::Active
-        || updated.lifecycle_status != SkillLifecycle::Active
+    id: &EntityId,
+    updated: &mut SkillRecord,
+) -> Result<bool> {
+    if updated.lifecycle_status != SkillLifecycle::Active
         || updated.approval_status != ClaimApprovalStatus::Auto
     {
-        return Ok(Cow::Borrowed(updated));
+        return Ok(false);
     }
     let Some(content_hash) = updated.content_hash else {
-        return Ok(Cow::Borrowed(updated));
+        return Ok(false);
     };
-    let posture = scan_gate_for_activation_in_txn(vault, rtxn, content_hash)?;
+    // No stored body is a CREATE, not an activation: the birth law downstream
+    // rejects a locally born `active` skill outright, so there is nothing here
+    // to escalate.
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_SKILL {
+        return Ok(false);
+    }
+    let prior_body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if decode_skill_record(prior_body)
+        .is_ok_and(|prior| prior.lifecycle_status == SkillLifecycle::Active)
+    {
+        return Ok(false);
+    }
+    let posture = scan_gate_for_activation_in_txn(store, rtxn, content_hash)?;
     let escalated = posture.approval_for(updated.approval_status);
     if escalated == updated.approval_status {
-        return Ok(Cow::Borrowed(updated));
+        return Ok(false);
     }
-    let mut record = updated.clone();
-    record.approval_status = escalated;
-    Ok(Cow::Owned(record))
+    updated.approval_status = escalated;
+    Ok(true)
 }
 
 /// Reads the persisted activation risk threshold (default: `High`).
 pub fn skill_scan_activation_risk_threshold(vault: &Vault) -> Result<ScanRiskLevel> {
     let rtxn = vault.store.env.read_txn()?;
-    activation_risk_threshold_in_txn(vault, &rtxn)
+    activation_risk_threshold_in_txn(&vault.store, &rtxn)
 }
 
 /// Sets the activation risk threshold dial.
@@ -275,11 +311,10 @@ pub fn set_skill_scan_activation_risk_threshold(
 }
 
 fn activation_risk_threshold_in_txn(
-    vault: &Vault,
+    store: &Store,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<ScanRiskLevel> {
-    let Some(raw) = vault
-        .store
+    let Some(raw) = store
         .vault_meta
         .get(rtxn, SKILL_SCAN_ACTIVATION_RISK_THRESHOLD_KEY)?
     else {

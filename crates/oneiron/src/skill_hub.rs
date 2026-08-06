@@ -49,9 +49,9 @@ const SKILL_CONTENT_ANCHOR_ID_DOMAIN: &[u8] = b"oneiron:skill-scan-content-ancho
 const MAX_HUB_TEXT_BYTES: usize = 4096;
 const MAX_CAPABILITY_ENTRIES: usize = 256;
 const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
-const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_HUB_PACKAGE_FILES: usize = 4096;
-const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 const MAX_HUB_SKILL_SCAN_ENTRIES: usize = 100_000;
 /// How far a scanner's clock may run ahead of this node's ingest clock before
 /// its declared `scannedAt` is treated as skew and clamped (ONE-1892).
@@ -999,6 +999,20 @@ impl Vault {
                 None => {
                     let mut candidate = package.record.clone();
                     candidate.lifecycle_status = SkillLifecycle::Candidate;
+                    // ONE-1892: consent is a LOCAL act, so the import door
+                    // stamps it rather than copying it. A hub package is
+                    // untrusted input all the way down — it declares its own
+                    // `approvalStatus`, and an `approved` stamp arriving that
+                    // way would be a remote party answering the owner's
+                    // question for him: the activation consult only escalates
+                    // `auto`, so a self-declared approval would walk a
+                    // credential-bearing skill into `active` with no tap. The
+                    // sync door already holds this law one line at a time
+                    // ("canonical approval/lifecycle state stays local"); the
+                    // import door is where the FIRST stamp is minted, and
+                    // `auto` — the same default a locally born candidate gets
+                    // — is the only honest one.
+                    candidate.approval_status = ClaimApprovalStatus::Auto;
                     candidate.content_hash = Some(content_hash);
                     self.apply_hub_import_skill_record(
                         &mut wtxn,
@@ -1449,20 +1463,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         content_hash: SkillContentHash,
     ) -> Result<Vec<ClaimBody>> {
-        let hash_hex = content_hash.to_hex();
-        let anchor = skill_content_anchor_entity_id(content_hash)?;
-        let mut rows = Vec::new();
-        for (_, body, _) in
-            self.active_claims_for_predicate_in_txn(rtxn, &anchor, PREDICATE_SKILL_SCAN_VERDICT)?
-        {
-            // Defense in depth: every row on this anchor is for `content_hash`
-            // by construction, but the exact-hash filter keeps discovery precise
-            // even against a truncation collision on the derived anchor id.
-            if map_text(&body.value, "contentHash") == Some(hash_hex.as_str()) {
-                rows.push(body);
-            }
-        }
-        Ok(rows)
+        skill_scan_verdicts_for_content_hash_in_store(&self.store, rtxn, content_hash)
     }
 
     /// Refuses cross-hub dependencies before any package can materialize.
@@ -2091,6 +2092,56 @@ pub(crate) fn scan_verdict_row_risk(body: &ClaimBody) -> Result<ScanRiskLevel> {
     map_text(&body.value, "riskLevel")
         .and_then(ScanRiskLevel::parse)
         .ok_or(Error::CorruptedIndex("skill scan verdict riskLevel"))
+}
+
+/// Active scanner receipts for canonical bytes, read off the deterministic
+/// content anchor with only the storage handle in hand.
+///
+/// The one implementation behind
+/// [`Vault::skill_scan_verdicts_for_content_hash_in_txn`]. It takes `&Store`
+/// rather than `&Vault` because the activation consult's real chokepoint is
+/// the batch entity-materialization arm, which never holds a `Vault` — and a
+/// gate that reads different rows depending on which door called it is not a
+/// gate. Walks the anchor's inbound `claim_of` edges directly, the same rows
+/// `Vault::claims_for_subject_in_txn` resolves: a peer that is missing, not a
+/// CLAIM, or of another predicate is skipped, exactly as the edge-peer filter
+/// skips it.
+pub(crate) fn skill_scan_verdicts_for_content_hash_in_store(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    content_hash: SkillContentHash,
+) -> Result<Vec<ClaimBody>> {
+    let hash_hex = content_hash.to_hex();
+    let anchor = skill_content_anchor_entity_id(content_hash)?;
+    let prefix = crate::vault::edge_kind_prefix(&anchor, crate::edge::EdgeKind::ClaimOf);
+    let mut rows = Vec::new();
+    for (scanned, entry) in store.edges_in.prefix_iter(rtxn, &prefix)?.enumerate() {
+        if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+            return Err(Error::IndexOverflow("skill scan verdicts for content hash"));
+        }
+        let (key, value) = entry?;
+        let claim_id = crate::vault::parse_edge_record(&key, &value)?.target;
+        let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+            continue;
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        // Defense in depth: every row on this anchor is for `content_hash`
+        // by construction, but the exact-hash filter keeps discovery precise
+        // even against a truncation collision on the derived anchor id.
+        if body.predicate == PREDICATE_SKILL_SCAN_VERDICT
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
+        {
+            rows.push(body);
+        }
+    }
+    Ok(rows)
 }
 
 fn validate_skill_scan_receipt(receipt: &SkillScanReceipt) -> Result<()> {

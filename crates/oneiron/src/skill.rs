@@ -1231,14 +1231,13 @@ impl Vault {
             ));
         }
         validate_skill_update(&existing, record)?;
-        // ONE-1892: activation admission consult, read from INSIDE this write
-        // transaction. A scan verdict at or above the risk dial escalates the
-        // consent stamp on an activating record from `auto` to `proposed`; it
-        // never refuses the update and never touches any other axis, so the
-        // skill still activates — the owner just taps it through.
-        let record =
-            crate::skill_scan::consult_activation_scan_gate_in_txn(self, &wtxn, &existing, record)?;
-        let data = encode_skill_record(&record)?;
+        // ONE-1892's activation scan consult is deliberately NOT here: it runs
+        // at the batch materialization chokepoint every SKILL body converges
+        // on (`skill_scan::escalate_activation_approval_in_txn`), so
+        // `put_entity` and a raw `batch().put` are governed by the same dial
+        // this door is. A second consult on this path would only re-derive the
+        // stamp the chokepoint is about to set.
+        let data = encode_skill_record(record)?;
         self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?;
         wtxn.commit()?;
         Ok(())

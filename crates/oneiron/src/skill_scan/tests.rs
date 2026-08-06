@@ -173,10 +173,40 @@ fn oversized_file_is_scanned_to_budget_and_reported_partial() -> Result<()> {
     );
     let receipt = run_static_skill_scan(&package, 7)?;
 
-    // Coverage is truncated, and says so — but the head of the file was really
-    // read, so a credential at the top is still caught.
+    // Past the ADMISSION envelope, so no import door will ever present this
+    // shape — only a direct call to the pure pass can. Coverage is truncated,
+    // and says so; the head was really read, so a credential up top is caught.
+    assert!(content.len() > crate::skill_hub::MAX_HUB_FILE_BYTES);
     assert_eq!(receipt.completeness, ScanCompleteness::Partial);
     assert_eq!(receipt.risk_level, ScanRiskLevel::High);
+    Ok(())
+}
+
+#[test]
+fn a_credential_parked_past_the_first_megabyte_is_still_found() -> Result<()> {
+    // The exact bypass an earlier 1 MiB-per-file budget left open: hub files
+    // are admitted up to 16 MiB, so a credential below the scanned prefix rode
+    // in at `risk = None` and the gate — which reads `riskLevel` and nothing
+    // else — waved it through as auto-eligible.
+    let mut content = vec![b'a'; 1024 * 1024 + 4096];
+    content.push(b'\n');
+    content.extend_from_slice(SECRET_FIXTURE.as_bytes());
+    assert!(content.len() < crate::skill_hub::MAX_HUB_FILE_BYTES);
+
+    let package = package_of(
+        "fixture.deep-secret",
+        &content,
+        SkillCapabilitySurface::default(),
+    );
+    let receipt = run_static_skill_scan(&package, 7)?;
+
+    assert_eq!(receipt.risk_level, ScanRiskLevel::High);
+    assert_eq!(receipt.verdict, ScanVerdict::Suspicious);
+    assert_eq!(
+        receipt.completeness,
+        ScanCompleteness::Complete,
+        "an importable file is read in full, so coverage is not partial"
+    );
     Ok(())
 }
 
@@ -287,6 +317,72 @@ fn activation_leaves_clean_skills_and_owner_approvals_alone() -> Result<()> {
             .expect("activated skill")
             .approval_status,
         ClaimApprovalStatus::Approved
+    );
+    Ok(())
+}
+
+#[test]
+fn a_hub_package_cannot_declare_its_own_approval_past_the_gate() -> Result<()> {
+    let (_temp, vault) = open_vault();
+    let body = format!("# skill\nexport TOKEN={SECRET_FIXTURE}\n");
+    let mut package = package_of(
+        "fixture.self-approved",
+        body.as_bytes(),
+        SkillCapabilitySurface::default(),
+    );
+    // The hostile shape: a remote package answering the owner's question for
+    // him. The consult only escalates `auto`, so a self-declared `approved`
+    // would walk a credential-bearing skill into `active` with no tap.
+    package.record.approval_status = ClaimApprovalStatus::Approved;
+    let entity = vault.import_skill_from_hub(&hub_ref(), &package, t(1), 2)?;
+
+    let imported = vault.get_skill_record(&entity)?.expect("imported skill");
+    assert_eq!(
+        imported.approval_status,
+        ClaimApprovalStatus::Auto,
+        "consent is a local act; the import door stamps it rather than copying it"
+    );
+
+    // Activate exactly as the hub shipped it — only the lifecycle moves.
+    let mut active = imported;
+    active.lifecycle_status = SkillLifecycle::Active;
+    vault.update_skill_record(&entity, &active, t(3), 4)?;
+    assert_eq!(
+        vault
+            .get_skill_record(&entity)?
+            .expect("activated skill")
+            .approval_status,
+        ClaimApprovalStatus::Proposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_raw_entity_put_cannot_activate_around_the_scan_gate() -> Result<()> {
+    let (_temp, vault) = open_vault();
+    let body = format!("# skill\nexport TOKEN={SECRET_FIXTURE}\n");
+    let package = package_of(
+        "fixture.raw-put",
+        body.as_bytes(),
+        SkillCapabilitySurface::default(),
+    );
+    let entity = vault.import_skill_from_hub(&hub_ref(), &package, t(1), 2)?;
+
+    // `put_entity` and `batch().put` are update doors of their own: they reach
+    // a SKILL body without passing the typed update door, so the consult has
+    // to live where they converge.
+    let mut active = vault.get_skill_record(&entity)?.expect("imported skill");
+    active.lifecycle_status = SkillLifecycle::Active;
+    active.approval_status = ClaimApprovalStatus::Auto;
+    let data = encode_skill_record(&active)?;
+    vault.put_entity(&entity, ENTITY_TYPE_SKILL, t(3), 4, &data)?;
+
+    let stored = vault.get_skill_record(&entity)?.expect("activated skill");
+    assert_eq!(stored.lifecycle_status, SkillLifecycle::Active);
+    assert_eq!(
+        stored.approval_status,
+        ClaimApprovalStatus::Proposed,
+        "the raw put lands active, and lands asking for the owner tap"
     );
     Ok(())
 }

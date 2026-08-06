@@ -3415,6 +3415,33 @@ fn apply_put(
     } else {
         BTreeSet::new()
     };
+    // ONE-1892: the SKILL activation scan consult, at the one arm every road
+    // to a SKILL body converges on. The typed update door is not the
+    // chokepoint — `put_entity` and a raw `batch().put` land an already-
+    // `active` body here without passing it — so the escalation from `auto`
+    // to `proposed` (a dial, never a refusal) is computed here instead.
+    //
+    // LOCAL writes only: a replicated row carries a peer's already-settled
+    // consent and re-deciding it would diverge the replicas, and the hub-sync
+    // door copies the local approval stamp verbatim, so it never presents a
+    // transition to escalate.
+    //
+    // Placed BEFORE short-id planning because the plan hashes the body bytes
+    // into the ARCH-0019 row-n3 disambiguator: an escalation applied after it
+    // would stage a body the short-id row no longer describes.
+    let escalated_skill_body;
+    let data = match new_skill_record.as_mut() {
+        Some(updated) if !replicated && !hub_sync_imported => {
+            if crate::skill_scan::escalate_activation_approval_in_txn(store, &*wtxn, &id, updated)?
+            {
+                escalated_skill_body = crate::skill::encode_skill_record(updated)?;
+                &escalated_skill_body[..]
+            } else {
+                data
+            }
+        }
+        _ => data,
+    };
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin

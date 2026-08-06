@@ -178,3 +178,111 @@ Gates after the pass: `cargo fmt -p oneiron -- --check` clean · `cargo clippy
 -p oneiron --all-features --all-targets` clean · `cargo nextest run -p oneiron
 --all-features` scoped to `skill_scan` + `skill_hub` (57/57) and the
 `skills_epic_oracle` binary (16/16) all green.
+
+## VERDICT-FIX (Opus, on f690f0d)
+
+Three REAL P1s from the finder/verdict legs, all in the activation-consent
+invariant this ticket exists to arm, all fixed at their chokepoint. Two
+adjudicated items (BANKED-1 clamp hardening, BANKED-2 packet amendment) are
+not relitigated here.
+
+### F1 — `untrusted-approval-bypass`: the hub cannot mint local consent
+
+`import_skill_from_hub_with_id` cloned the hub-supplied record and forced only
+`lifecycle_status = Candidate`, so a package declaring
+`approvalStatus: approved` kept that stamp. The consult escalates `auto` and
+nothing else — deliberately, since rewriting an owner's `approved` would re-ask
+a question he answered — so a self-approved package walked a credential-bearing
+skill into `active` with no tap.
+
+Fix (2 lines, `skill_hub.rs`): the import door now STAMPS the approval
+(`ClaimApprovalStatus::Auto`) instead of copying it. Consent is a local act;
+the sync door already holds that law one line at a time ("canonical
+approval/lifecycle state stays local") and the import door is where the FIRST
+stamp is minted. `auto` is the same default a locally born candidate gets, so
+the scan gate — not the package — decides what the activation costs.
+
+Regression: `a_hub_package_cannot_declare_its_own_approval_past_the_gate`.
+Mutation-verified: with the stamp line removed the import reads back
+`Approved` (red); with it, `Auto` at import and `Proposed` at activation.
+
+### F2 — `activation-chokepoint-bypass`: the consult moves to `apply_put`
+
+The consult was wired into `Vault::update_skill_record` — ONE road to a SKILL
+body among several. `Vault::put_entity` and `Vault::batch().put` re-encode an
+existing candidate as `Active` + `Auto`, `apply_put` accepts the transition via
+`validate_skill_update`, and the caller's bytes were staged unchanged. An
+activation gate a caller can walk around is not a gate (house class:
+`chokepoint-not-call-site`).
+
+Fix: `skill_scan::escalate_activation_approval_in_txn(store, rtxn, id, &mut record)`
+is wired into `apply_put`, the one arm every road converges on
+(`update_skill_record` and `put_skill_record` both route through
+`apply_skill_record_body` → `apply_ops` → `apply_put`, as does a raw
+`batch().put`). It escalates the decoded record in place and the arm re-encodes
+before staging. Local writes only (`!replicated && !hub_sync_imported`): a
+replicated row carries a peer's already-settled consent and re-deciding it
+would diverge replicas, and the hub-sync door copies the local stamp verbatim
+so it never presents a transition to escalate.
+
+Placement is load-bearing: the wire sits BEFORE `plan_short_id_update`, which
+hashes the body bytes into the ARCH-0019 row-n3 disambiguator — an escalation
+applied after it would stage a body the short-id row no longer describes.
+
+Two consequences worth naming:
+
+- **The call-site consult in `skill.rs` is DELETED, not duplicated.** With the
+  chokepoint armed, a second consult on the typed door only re-derives the
+  stamp `apply_put` is about to set. `consult_activation_scan_gate_in_txn` went
+  with it. (Mutation check confirms the direction: disabling the `apply_put`
+  arm reds the typed-door test too — the chokepoint now carries it.)
+- **The gate reads the same rows from every door.** The verdict reader
+  `skill_scan_verdicts_for_content_hash_in_store` and the posture reader
+  `scan_gate_for_activation_in_txn` were re-based from `&Vault` onto `&Store`
+  (`apply_put` never holds a `Vault`), with the `Vault` methods delegating.
+  One implementation, walking the anchor's inbound `claim_of` edges exactly as
+  `claims_for_subject_in_txn` resolves them — a gate that reads different rows
+  depending on which door called it is not a gate either.
+
+Also widened: a stored body that does NOT decode as a skill record now counts
+as NOT-active, so a legacy-opaque predecessor is an activation to be consulted
+rather than a hole. Absent stored body = a CREATE, left alone (the birth law
+downstream rejects a locally born `active` skill outright).
+
+Regression: `a_raw_entity_put_cannot_activate_around_the_scan_gate`.
+Mutation-verified red (`Auto`) → green (`Proposed`).
+
+### F3 — `secret-scan-coverage-bypass`: the scan budget IS the admission envelope
+
+`run_static_skill_scan` read the first 1 MiB of each file while `HubPackage`
+admits 16 MiB files and 32 MiB packages. A credential parked past byte
+1,048,576 imported at `risk = None`; only `completeness` dropped to `Partial`,
+and the gate reads `riskLevel` alone, so the honest label was consumer-inert.
+The "unbounded work" defense was void — the package cap already bounds a full
+scan at 32 MiB, one-time per import.
+
+Fix: the per-file budget is now `skill_hub::MAX_HUB_FILE_BYTES` and a running
+package budget of `MAX_HUB_PACKAGE_TOTAL_BYTES` was added, so the scan envelope
+is exactly the admission envelope: nothing importable is scanned partially, and
+a package too big to import (only reachable by calling the pure pass directly)
+is still read to the envelope and honestly labelled `Partial`. The off-by-one
+in the old `get(..N)` truncation went with it — a file of exactly the budget is
+now `Complete`, not `Partial`.
+
+Regression: `a_credential_parked_past_the_first_megabyte_is_still_found`
+(credential at ~1 MiB + 4 KiB, inside the admission cap). Mutation-verified:
+budget back at 1 MiB reads `risk = None` (red); at the admission cap, `High`
+and `Complete`.
+
+### Packet + gates
+
+Diff ⊆ packet: `skill_scan.rs` + `skill_scan/tests.rs` (owned), `skill_hub.rs`
+(owned), `skill.rs` (claimed), `batch.rs` (CLAIMS.md: "1892 (activation
+consult)", additive — the source-index maintenance and the 1447-merged arms are
+untouched), `error.rs`, `lib.rs`. No `Cargo.toml` / `Cargo.lock`. The
+`skills_epic_oracle.rs` PACKET_AMEND is unchanged from the impl leg and stays
+banked for the owner (BANKED-2).
+
+- `cargo fmt --all -- --check` — clean
+- `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` — clean
+- `cargo nextest run -p oneiron --all-features` — **3946 passed, 0 failed, 61 skipped**
