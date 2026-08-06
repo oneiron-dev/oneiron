@@ -23,15 +23,24 @@
 //!
 //! ## Where the bytes live
 //!
-//! Every durable row this module owns is a `vault_meta` sidecar under a
-//! versioned prefix (see [`keys`]). That is a deliberate posture, not an
-//! oversight: `registry::validate_entity_type` resolves against the STATIC
-//! entity-type registry only, so a *dynamically* registered structural kind has
-//! a reserved byte and short-id namespace but is not yet writable through the
-//! batch put path. Registering the kind stakes the namespace (exactly as CA-00
-//! does for CAMPAIGN); the records themselves are module-owned sidecars until
-//! the write path honors runtime registrations. Memo rows would be sidecars
-//! either way — they are memos, not synced authority.
+//! `vault_meta` rows do NOT replicate — sync exports entities, edges, and
+//! claims. So the split here is by AUTHORITY, not by convenience:
+//!
+//! * **The definition is a real entity** of the dynamically registered
+//!   SAVED_QUERY kind, written through the batch put chokepoint. A dynamic
+//!   registration IS writable (`Store::validate_entity_type` accepts it), so
+//!   there is no reason for the authority of a saved query to be a node-local
+//!   sidecar — a peer that never received the definition could not evaluate,
+//!   repair, or even name the query that derived its cohort.
+//! * **The membership epoch is replica-convergent.** The `vault_meta` watermark
+//!   row is a local fast path; the FLOOR is recomputed from the replicated
+//!   `campaign.member` claims, whose CA-01 derivation carries the epoch. A
+//!   promoted peer therefore continues the epoch sequence instead of restarting
+//!   at 1 (see [`next_membership_epoch`]).
+//! * **Memos, event rows, repair receipts, and migration maps stay
+//!   node-local.** A memo is a derivation cache, not authority. Event rows are
+//!   a local audit projection of transitions whose authoritative record is the
+//!   replicated claim chain; losing them on a peer loses history, never truth.
 //!
 //! ## Principal binding
 //!
@@ -50,12 +59,16 @@ use serde_json::{Map as JsonMap, Value};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::campaign::CRM_PACK_ID;
 use crate::campaign::claims::{
     CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
-    encode_campaign_member_value,
+    decode_campaign_member_value, encode_campaign_member_value,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, claim_surfaceable,
+    decode_claim_body,
+};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -63,7 +76,7 @@ use crate::llm::{
     BudgetLease, CallEnvelope, ContentPart, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId,
 };
-use crate::registry::{StructuralKindRegistration, TypeByteBand};
+use crate::registry::{ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteBand};
 use crate::temporal::TimeRange;
 
 /// Stable short-id namespace for SAVED_QUERY entities. Two lowercase ASCII
@@ -169,6 +182,27 @@ impl QueryScope {
     #[must_use]
     pub fn is_closed_against(&self, grants: &Self) -> bool {
         self.intersect(grants).is_none()
+    }
+
+    /// Whether an entity carrying `membership` is inside THIS scope.
+    ///
+    /// `membership` is the entity's own world/facet reach as
+    /// [`SavedQueryEvaluator`] observed it — its `in_world` and `has_facet`
+    /// edges, narrowed to this scope. A restricted axis demands a witness on
+    /// that axis, so an entity with no world membership at all is OUTSIDE a
+    /// world-scoped query rather than universally inside it. An unrestricted
+    /// axis admits everything, which is what makes the default scope total.
+    #[must_use]
+    pub fn admits(&self, membership: &Self) -> bool {
+        let axis_admits = |declared: &[EntityId], held: &[EntityId]| {
+            declared.is_empty() || held.iter().any(|value| declared.contains(value))
+        };
+        axis_admits(&self.worlds, &membership.worlds)
+            && (self.facets.is_empty()
+                || membership
+                    .facets
+                    .iter()
+                    .any(|facet| self.facets.contains(facet)))
     }
 }
 
@@ -657,8 +691,9 @@ fn collect_filter_dependencies(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] when the definition fails validation; storage
-/// errors propagate unchanged.
+/// [`Error::InvalidConfig`] when the definition fails validation or the
+/// SAVED_QUERY kind is not registered in this vault; storage errors propagate
+/// unchanged.
 pub fn create_saved_query(
     vault: &Vault,
     authenticated_principal: EntityId,
@@ -682,7 +717,8 @@ pub fn create_saved_query(
         created_at: now,
         updated_at: now,
     };
-    store_record(vault, &record)?;
+    let kind = saved_query_type_byte(vault)?;
+    vault.with_write_txn(|wtxn| store_record_in_txn(vault, wtxn, &record, kind))?;
     Ok(record)
 }
 
@@ -706,6 +742,12 @@ pub fn read_saved_query(
 
 /// Replaces a saved query's definition under a version CAS.
 ///
+/// The compare and the write share ONE write transaction. LMDB's single-writer
+/// rule serializes the writes but not a compare performed before the writer
+/// transaction opens: two callers that both read version 1 outside the txn
+/// would both store "version 2", and the first update would vanish with no
+/// error. The CAS is only a CAS inside the txn that performs it.
+///
 /// # Errors
 ///
 /// [`Error::EntityNotFound`] when the query is absent OR owned by another
@@ -718,34 +760,40 @@ pub fn update_saved_query(
     request: &UpdateSavedQueryRequest,
     now: u64,
 ) -> Result<SavedQueryRecord> {
-    let mut record = owned_record(vault, authenticated_principal, query_ref)?;
-    require_expected_version(&record, request.expected_definition_version)?;
-    let definition = SavedQueryDefinition {
-        schema_version: record.definition.schema_version,
-        owner_actor: record.definition.owner_actor,
-        scope: request.scope.clone(),
-        definition_version: next_version(record.definition.definition_version)?,
-        filter: request.filter.clone(),
-        matcher: request.matcher.clone(),
-        eval: request.eval,
-        // An update is the operator's answer to a paused query, so it clears
-        // the pause. Archived is terminal and is not reopened here.
-        lifecycle: match record.definition.lifecycle {
-            SavedQueryLifecycle::Archived => SavedQueryLifecycle::Archived,
-            SavedQueryLifecycle::Active | SavedQueryLifecycle::Paused { .. } => {
-                SavedQueryLifecycle::Active
-            }
-        },
-    };
-    validate_definition(&definition)?;
-    record.definition = definition;
-    record.updated_at = now;
-    store_record(vault, &record)?;
-    Ok(record)
+    let kind = saved_query_type_byte(vault)?;
+    vault.with_write_txn(|wtxn| {
+        let mut record =
+            owned_record_in_txn(vault, wtxn, authenticated_principal, query_ref, kind)?;
+        require_expected_version(&record, request.expected_definition_version)?;
+        let definition = SavedQueryDefinition {
+            schema_version: record.definition.schema_version,
+            owner_actor: record.definition.owner_actor,
+            scope: request.scope.clone(),
+            definition_version: next_version(record.definition.definition_version)?,
+            filter: request.filter.clone(),
+            matcher: request.matcher.clone(),
+            eval: request.eval,
+            // An update is the operator's answer to a paused query, so it
+            // clears the pause. Archived is terminal and is not reopened here.
+            lifecycle: match record.definition.lifecycle {
+                SavedQueryLifecycle::Archived => SavedQueryLifecycle::Archived,
+                SavedQueryLifecycle::Active | SavedQueryLifecycle::Paused { .. } => {
+                    SavedQueryLifecycle::Active
+                }
+            },
+        };
+        validate_definition(&definition)?;
+        record.definition = definition;
+        record.updated_at = now;
+        store_record_in_txn(vault, wtxn, &record, kind)?;
+        Ok(record)
+    })
 }
 
 /// Archives a saved query. A lifecycle transition, never a delete: the record
 /// stays readable so ONE-1778 can still address it.
+///
+/// Shares [`update_saved_query`]'s single-transaction CAS for the same reason.
 ///
 /// # Errors
 ///
@@ -758,22 +806,31 @@ pub fn archive_saved_query(
     expected_definition_version: u64,
     now: u64,
 ) -> Result<SavedQueryRecord> {
-    let mut record = owned_record(vault, authenticated_principal, query_ref)?;
-    require_expected_version(&record, expected_definition_version)?;
-    record.definition.definition_version = next_version(record.definition.definition_version)?;
-    record.definition.lifecycle = SavedQueryLifecycle::Archived;
-    record.updated_at = now;
-    store_record(vault, &record)?;
-    Ok(record)
+    let kind = saved_query_type_byte(vault)?;
+    vault.with_write_txn(|wtxn| {
+        let mut record =
+            owned_record_in_txn(vault, wtxn, authenticated_principal, query_ref, kind)?;
+        require_expected_version(&record, expected_definition_version)?;
+        record.definition.definition_version = next_version(record.definition.definition_version)?;
+        record.definition.lifecycle = SavedQueryLifecycle::Archived;
+        record.updated_at = now;
+        store_record_in_txn(vault, wtxn, &record, kind)?;
+        Ok(record)
+    })
 }
 
-/// Loads a record the principal owns, or reports it as absent.
-fn owned_record(
+/// Loads a record the principal owns THROUGH the caller's transaction, or
+/// reports it as absent. Ownership is part of the read, not a post-filter.
+fn owned_record_in_txn(
     vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
     authenticated_principal: EntityId,
     query_ref: EntityId,
+    kind: u8,
 ) -> Result<SavedQueryRecord> {
-    read_saved_query(vault, authenticated_principal, query_ref)?.ok_or(Error::EntityNotFound)
+    load_record_in_txn(vault, wtxn, query_ref, kind)?
+        .filter(|record| record.definition.owner_actor == authenticated_principal)
+        .ok_or(Error::EntityNotFound)
 }
 
 fn require_expected_version(record: &SavedQueryRecord, expected: u64) -> Result<()> {
@@ -799,6 +856,14 @@ fn validate_definition(definition: &SavedQueryDefinition) -> Result<()> {
     validate_matcher(&definition.matcher)?;
     for facet in &definition.scope.facets {
         validate_bounded_text(facet, "scope facet")?;
+    }
+    // A zero bound is not "unbounded" and it is not a working budget either: a
+    // zero-judge wake would still spend the first judge before the post-hoc
+    // count stopped it, and a zero-entity wake reports "exhausted" without
+    // visiting anything. Both are budget lies, so the definition never stores
+    // one.
+    if definition.eval.max_entities_per_wake == 0 || definition.eval.max_judges_per_wake == 0 {
+        return Err(invalid("saved query wake bounds must be at least one"));
     }
     Ok(())
 }
@@ -846,6 +911,11 @@ pub struct RelevantEvidence {
     /// digest, not prose: its only job is to move when either vector moves, so
     /// a re-embedding invalidates the memo.
     pub semantic_inputs: Vec<(EntityId, String)>,
+    /// The entity's OWN world/facet membership, narrowed to the effective
+    /// scope. It is evidence, not a read filter: membership is what decides
+    /// whether the entity is inside the query's reach at all, and putting it
+    /// here is what makes moving between worlds invalidate the memo.
+    pub scope_membership: QueryScope,
 }
 
 /// The `Of360DerivationEnvelope` shape, mirrored for saved-query verdicts.
@@ -994,6 +1064,7 @@ pub fn compute_evidence_hash(
     hash_claim_values(&mut hasher, &evidence.claim_values)?;
     hash_edge_targets(&mut hasher, &evidence.edge_targets);
     hash_semantic_inputs(&mut hasher, &evidence.semantic_inputs);
+    hash_scope(&mut hasher, &evidence.scope_membership);
     Ok(hasher.finalize().into())
 }
 
@@ -1124,6 +1195,19 @@ struct StagedOutcome {
     judge_ran: bool,
 }
 
+/// One evidence collection, plus the vectors the fingerprints were taken from.
+///
+/// Stage 2 scores THESE vectors rather than re-reading them: each
+/// `Vault::get_vector` opens its own read transaction, so a re-read could see a
+/// re-embedding that landed after fingerprinting and store a verdict derived
+/// from new vectors under the old vectors' evidence hash. A memo must be
+/// derived from exactly the evidence its key names.
+struct CollectedEvidence {
+    evidence: RelevantEvidence,
+    subject_vector: Option<Vec<f32>>,
+    exemplar_vectors: Vec<(EntityId, Option<Vec<f32>>)>,
+}
+
 impl SavedQueryEvaluator<'_> {
     /// Evaluates one entity against one definition.
     ///
@@ -1163,8 +1247,8 @@ impl SavedQueryEvaluator<'_> {
             scope: effective_scope,
             ..request.definition.clone()
         };
-        let evidence = self.collect_evidence(&definition, request.entity_ref)?;
-        let evidence_hash = compute_evidence_hash(&definition, &evidence)?;
+        let collected = self.collect_evidence(&definition, request.entity_ref, request.valid_at)?;
+        let evidence_hash = compute_evidence_hash(&definition, &collected.evidence)?;
         let key = VerdictMemoKey {
             query_ref: request.query_ref,
             entity_ref: request.entity_ref,
@@ -1184,10 +1268,23 @@ impl SavedQueryEvaluator<'_> {
             });
         }
 
-        let (decision, judge_ran) = if evaluate_filter(&definition.filter, &evidence) {
-            self.run_stage_two(&definition, &evidence).await?
+        // Stage 0: the entity must be INSIDE the effective scope. A closed
+        // intersection is not the only way to be out of reach — a query
+        // declared for world A must not enroll a person who lives in world B or
+        // in no world at all, however well that person's claims read. The
+        // entity's membership is in the evidence hash, so joining or leaving a
+        // world invalidates this verdict instead of freezing it.
+        let (decision, judge_ran) = if definition
+            .scope
+            .admits(&collected.evidence.scope_membership)
+        {
+            if evaluate_filter(&definition.filter, &collected.evidence) {
+                self.run_stage_two(&definition, &collected).await?
+            } else {
+                (no_match("stage-1 filter did not match"), false)
+            }
         } else {
-            (no_match("stage-1 filter did not match"), false)
+            (no_match("entity is outside the effective scope"), false)
         };
 
         put_verdict_memo(
@@ -1221,6 +1318,7 @@ impl SavedQueryEvaluator<'_> {
             claim_values: Vec::new(),
             edge_targets: Vec::new(),
             semantic_inputs: Vec::new(),
+            scope_membership: QueryScope::default(),
         };
         Ok(StagedOutcome {
             outcome: EvaluationOutcome {
@@ -1236,8 +1334,9 @@ impl SavedQueryEvaluator<'_> {
     async fn run_stage_two(
         &self,
         definition: &SavedQueryDefinition,
-        evidence: &RelevantEvidence,
+        collected: &CollectedEvidence,
     ) -> Result<(MatchDecision, bool)> {
+        let evidence = &collected.evidence;
         match &definition.matcher {
             MatcherSpec::Hard { expression } => Ok((
                 if evaluate_filter(expression, evidence) {
@@ -1254,11 +1353,7 @@ impl SavedQueryEvaluator<'_> {
                 exemplar_ref,
                 minimum_similarity_micros,
             } => Ok((
-                self.semantic_decision(
-                    evidence.entity_ref,
-                    *exemplar_ref,
-                    *minimum_similarity_micros,
-                )?,
+                semantic_decision(collected, *exemplar_ref, *minimum_similarity_micros),
                 false,
             )),
             MatcherSpec::LlmJudge {
@@ -1272,33 +1367,6 @@ impl SavedQueryEvaluator<'_> {
                 Ok((decision, true))
             }
         }
-    }
-
-    fn semantic_decision(
-        &self,
-        entity_ref: EntityId,
-        exemplar_ref: EntityId,
-        floor_micros: u32,
-    ) -> Result<MatchDecision> {
-        let (Some(subject), Some(exemplar)) = (
-            self.vault.get_vector(&entity_ref)?,
-            self.vault.get_vector(&exemplar_ref)?,
-        ) else {
-            // No vector is not "dissimilar", it is unknowable — and an
-            // unknowable similarity must not admit membership.
-            return Ok(no_match("semantic matcher found no vector to compare"));
-        };
-        let similarity = cosine_similarity_micros(&subject, &exemplar);
-        Ok(if similarity >= floor_micros {
-            MatchDecision {
-                verdict: MatchVerdict::Match,
-                why: format!("similarity {similarity} reached floor {floor_micros}"),
-            }
-        } else {
-            no_match(&format!(
-                "similarity {similarity} below floor {floor_micros}"
-            ))
-        })
     }
 
     /// Evaluates a bounded slice of a candidate set.
@@ -1324,9 +1392,14 @@ impl SavedQueryEvaluator<'_> {
             judges_run: 0,
             resume_after: None,
         };
-        for (index, entity_ref) in candidates.iter().enumerate() {
+        // `resume_after` names the last entity actually VISITED, tracked rather
+        // than derived from the loop index: an index-relative "previous
+        // candidate" reports `None` at index 0, and `None` is documented to
+        // mean the candidate set was exhausted.
+        let mut last_visited = None;
+        for entity_ref in candidates {
             if report.evaluated >= record.definition.eval.max_entities_per_wake {
-                report.resume_after = candidates.get(index.wrapping_sub(1)).copied();
+                report.resume_after = last_visited;
                 return Ok(report);
             }
             let staged = self
@@ -1341,6 +1414,7 @@ impl SavedQueryEvaluator<'_> {
                 })
                 .await?;
             report.evaluated = report.evaluated.saturating_add(1);
+            last_visited = Some(*entity_ref);
             if staged.outcome.memo_hit {
                 report.memo_hits = report.memo_hits.saturating_add(1);
             }
@@ -1355,25 +1429,85 @@ impl SavedQueryEvaluator<'_> {
         Ok(report)
     }
 
-    /// Reads the entity's live claims and edges, narrowed to the declared axes.
+    /// Reads the entity's effective claims and edges, narrowed to the declared
+    /// axes and to the effective scope.
     fn collect_evidence(
         &self,
         definition: &SavedQueryDefinition,
         entity_ref: EntityId,
-    ) -> Result<RelevantEvidence> {
+        valid_at: u64,
+    ) -> Result<CollectedEvidence> {
         let deps = filter_dependencies(&definition.filter, &definition.matcher);
-        Ok(RelevantEvidence {
-            entity_ref,
-            claim_values: self.relevant_claim_values(entity_ref, &deps.claim_predicates)?,
-            edge_targets: self.relevant_edge_targets(entity_ref, &deps.edge_kinds)?,
-            semantic_inputs: self.semantic_fingerprints(entity_ref, &deps.semantic_exemplars)?,
+        let scope_membership = self.scope_membership(entity_ref, &definition.scope)?;
+        let claim_values =
+            self.relevant_claim_values(entity_ref, &deps.claim_predicates, definition, valid_at)?;
+        let edge_targets = self.relevant_edge_targets(entity_ref, &deps.edge_kinds)?;
+        let subject_vector = if deps.semantic_exemplars.is_empty() {
+            None
+        } else {
+            self.vault.get_vector(&entity_ref)?
+        };
+        let mut exemplar_vectors = Vec::with_capacity(deps.semantic_exemplars.len());
+        let mut semantic_inputs = Vec::with_capacity(deps.semantic_exemplars.len());
+        for exemplar in &deps.semantic_exemplars {
+            let against = self.vault.get_vector(exemplar)?;
+            semantic_inputs.push((
+                *exemplar,
+                vector_pair_fingerprint(&subject_vector, &against),
+            ));
+            exemplar_vectors.push((*exemplar, against));
+        }
+        Ok(CollectedEvidence {
+            evidence: RelevantEvidence {
+                entity_ref,
+                claim_values,
+                edge_targets,
+                semantic_inputs,
+                scope_membership,
+            },
+            subject_vector,
+            exemplar_vectors,
         })
+    }
+
+    /// The entity's own world/facet membership, narrowed to `scope`.
+    ///
+    /// Worlds come from `in_world` edges and facets from `has_facet` edges,
+    /// with a facet spelled as its FACET entity's canonical hex — the same
+    /// spelling `gate.rs` uses for a facet reference in a scoped-read grant.
+    fn scope_membership(&self, entity_ref: EntityId, scope: &QueryScope) -> Result<QueryScope> {
+        if scope.worlds.is_empty() && scope.facets.is_empty() {
+            return Ok(QueryScope::default());
+        }
+        let mut worlds = Vec::new();
+        let mut facets = Vec::new();
+        for edge in self.vault.edges_out(&entity_ref)? {
+            match edge.kind {
+                EdgeKind::InWorld if scope.worlds.contains(&edge.target) => {
+                    worlds.push(edge.target);
+                }
+                EdgeKind::HasFacet => {
+                    let token = edge.target.to_hex();
+                    if scope.facets.contains(&token) {
+                        facets.push(token);
+                    }
+                }
+                _ => {}
+            }
+        }
+        worlds.sort_unstable();
+        worlds.dedup();
+        facets.sort();
+        facets.dedup();
+        Ok(QueryScope { worlds, facets })
     }
 
     fn relevant_claim_values(
         &self,
         entity_ref: EntityId,
         predicates: &[String],
+        definition: &SavedQueryDefinition,
+        valid_at: u64,
     ) -> Result<Vec<(String, Value)>> {
         if predicates.is_empty() {
             return Ok(Vec::new());
@@ -1383,10 +1517,10 @@ impl SavedQueryEvaluator<'_> {
             if edge.kind != EdgeKind::ClaimOf {
                 continue;
             }
-            let Some(body) = self.live_claim_body(&edge.target)? else {
+            let Some(body) = self.effective_claim_body(&edge.target, valid_at)? else {
                 continue;
             };
-            if predicates.contains(&body.predicate) {
+            if predicates.contains(&body.predicate) && claim_in_scope(&body, &definition.scope) {
                 values.push((body.predicate, rmpv_to_json(&body.value)));
             }
         }
@@ -1398,15 +1532,28 @@ impl SavedQueryEvaluator<'_> {
         Ok(values)
     }
 
-    fn live_claim_body(&self, claim_ref: &EntityId) -> Result<Option<ClaimBody>> {
-        if self.vault.get_entity_type(claim_ref)? != Some(crate::registry::ENTITY_TYPE_CLAIM) {
+    /// The claim body at `claim_ref` IF it is effective truth at `valid_at`.
+    ///
+    /// "Active" alone is not effective: an `Active` `Proposed` claim is an
+    /// unapproved suggestion, a `stale` derived claim is known to be behind its
+    /// source, and a claim whose valid-time window has not opened (or has
+    /// closed) is not true now. Membership derived from any of those would
+    /// enroll a person on evidence the rest of the engine refuses to read, so
+    /// this mirrors `claim.rs`'s `claim_surfaceable` plus `comm.rs`'s
+    /// valid-time window rather than inventing a looser rule.
+    fn effective_claim_body(
+        &self,
+        claim_ref: &EntityId,
+        valid_at: u64,
+    ) -> Result<Option<ClaimBody>> {
+        if self.vault.get_entity_type(claim_ref)? != Some(ENTITY_TYPE_CLAIM) {
             return Ok(None);
         }
         let Some(raw) = self.vault.get(claim_ref)? else {
             return Ok(None);
         };
-        let body = crate::claim::decode_claim_body(&raw, true)?;
-        Ok((body.lifecycle == ClaimLifecycleStatus::Active).then_some(body))
+        let body = decode_claim_body(&raw, true)?;
+        Ok(claim_effective_at(&body, valid_at).then_some(body))
     }
 
     fn relevant_edge_targets(
@@ -1435,19 +1582,55 @@ impl SavedQueryEvaluator<'_> {
         targets.sort_unstable();
         Ok(targets)
     }
+}
 
-    fn semantic_fingerprints(
-        &self,
-        entity_ref: EntityId,
-        exemplars: &[EntityId],
-    ) -> Result<Vec<(EntityId, String)>> {
-        let subject = self.vault.get_vector(&entity_ref)?;
-        let mut inputs = Vec::with_capacity(exemplars.len());
-        for exemplar in exemplars {
-            let against = self.vault.get_vector(exemplar)?;
-            inputs.push((*exemplar, vector_pair_fingerprint(&subject, &against)));
+/// Whether a claim contributes to standing state at `at`: the engine's
+/// read-admission predicate plus the valid-time window.
+fn claim_effective_at(body: &ClaimBody, at: u64) -> bool {
+    claim_surfaceable(body)
+        && body.valid_from.is_none_or(|from| from <= at)
+        && body.valid_to.is_none_or(|to| at <= to)
+}
+
+/// Whether a claim's WORLD scope is inside the query's effective scope.
+///
+/// A world-less claim is base reality and is admitted under any world axis —
+/// the same rule `gate.rs`'s `scoped_read_world_matches_claim` applies to a
+/// scoped-read grant. A claim scoped to a world OUTSIDE the axis is not
+/// evidence this query may read at all.
+fn claim_in_scope(body: &ClaimBody, scope: &QueryScope) -> bool {
+    match body.world {
+        None => true,
+        Some(world) => scope.worlds.is_empty() || scope.worlds.contains(&world),
+    }
+}
+
+/// Scores the vectors the evidence hash was taken from — never a re-read.
+fn semantic_decision(
+    collected: &CollectedEvidence,
+    exemplar_ref: EntityId,
+    floor_micros: u32,
+) -> MatchDecision {
+    let exemplar = collected
+        .exemplar_vectors
+        .iter()
+        .find(|(id, _)| *id == exemplar_ref)
+        .and_then(|(_, vector)| vector.as_ref());
+    let (Some(subject), Some(exemplar)) = (collected.subject_vector.as_ref(), exemplar) else {
+        // No vector is not "dissimilar", it is unknowable — and an unknowable
+        // similarity must not admit membership.
+        return no_match("semantic matcher found no vector to compare");
+    };
+    let similarity = cosine_similarity_micros(subject, exemplar);
+    if similarity >= floor_micros {
+        MatchDecision {
+            verdict: MatchVerdict::Match,
+            why: format!("similarity {similarity} reached floor {floor_micros}"),
         }
-        Ok(inputs)
+    } else {
+        no_match(&format!(
+            "similarity {similarity} below floor {floor_micros}"
+        ))
     }
 }
 
@@ -1536,28 +1719,43 @@ fn json_message(role: LlmMessageRole, value: &Value) -> Result<LlmMessage> {
     })
 }
 
+/// The judge's view of the evidence.
+///
+/// Claims are PAIRS, not a predicate-keyed object: an entity can carry two live
+/// values for one predicate, and a map would silently show the judge only the
+/// last one while the evidence hash covered both. What the judge reads and what
+/// the memo key hashes have to be the same evidence.
 fn evidence_to_json(evidence: &RelevantEvidence) -> Value {
-    let mut claims = JsonMap::new();
-    for (predicate, value) in &evidence.claim_values {
-        claims.insert(predicate.clone(), value.clone());
-    }
-    let edges = evidence
-        .edge_targets
-        .iter()
-        .map(|(kind, target)| {
-            Value::Array(vec![
-                Value::String(kind.clone()),
-                Value::String(target.to_hex()),
-            ])
-        })
-        .collect();
+    let pairs = |entries: &mut dyn Iterator<Item = (String, Value)>| {
+        Value::Array(
+            entries
+                .map(|(left, right)| Value::Array(vec![Value::String(left), right]))
+                .collect(),
+        )
+    };
     let mut root = JsonMap::new();
     root.insert(
         "entity".to_owned(),
         Value::String(evidence.entity_ref.to_hex()),
     );
-    root.insert("claims".to_owned(), Value::Object(claims));
-    root.insert("edges".to_owned(), Value::Array(edges));
+    root.insert(
+        "claims".to_owned(),
+        pairs(
+            &mut evidence
+                .claim_values
+                .iter()
+                .map(|(predicate, value)| (predicate.clone(), value.clone())),
+        ),
+    );
+    root.insert(
+        "edges".to_owned(),
+        pairs(
+            &mut evidence
+                .edge_targets
+                .iter()
+                .map(|(kind, target)| (kind.clone(), Value::String(target.to_hex()))),
+        ),
+    );
     Value::Object(root)
 }
 
@@ -1781,7 +1979,10 @@ pub enum MembershipCommitOutcome {
 /// The next epoch a transition on this `(query, entity)` pair may claim.
 ///
 /// Re-entry after exit is a NEW epoch, never a resurrection of the old one, and
-/// this is the only door that mints one.
+/// this is the only door that mints one. The floor is
+/// [`current_watermark`]-derived, so a node that was promoted to home after a
+/// failover continues the sequence its peers already replicated instead of
+/// restarting at 1 against `campaign.member` claims that carry later epochs.
 ///
 /// # Errors
 ///
@@ -1792,7 +1993,7 @@ pub fn next_membership_epoch(
     entity_ref: EntityId,
 ) -> Result<u64> {
     let rtxn = vault.store.env.read_txn()?;
-    let current = read_watermark(vault, &rtxn, query_ref, entity_ref)?;
+    let current = current_watermark(vault, &rtxn, query_ref, entity_ref)?;
     current.map_or(Ok(1), |(epoch, _)| {
         epoch
             .checked_add(1)
@@ -1831,10 +2032,19 @@ pub fn commit_membership_plan(
     );
     let encoded_event = encode_event(event)?;
     vault.with_write_txn(|wtxn| {
-        let watermark = read_watermark(vault, wtxn, event.query_ref, event.entity_ref)?;
+        let watermark = current_watermark(vault, wtxn, event.query_ref, event.entity_ref)?;
         if let Some(outcome) = watermark_verdict(watermark, event.epoch, &content) {
             return Ok(outcome);
         }
+        // The prior heads are read BEFORE the replacement lands, so the
+        // replacement is never its own competition.
+        let superseded = live_member_heads_in_txn(
+            vault,
+            wtxn,
+            event.query_ref,
+            event.campaign_ref,
+            event.entity_ref,
+        )?;
         vault.store.vault_meta.put(
             wtxn,
             &keys::watermark(&event.query_ref, &event.entity_ref),
@@ -1845,9 +2055,10 @@ pub fn commit_membership_plan(
             &keys::event(&event.query_ref, &event.entity_ref, event.epoch),
             &encoded_event,
         )?;
+        let claim_id = EntityId::now();
         vault.put_claim_in_txn(
             wtxn,
-            &EntityId::now(),
+            &claim_id,
             &claim_body,
             TimeRange {
                 start: event.valid_at,
@@ -1855,13 +2066,28 @@ pub fn commit_membership_plan(
             },
             now,
         )?;
+        // A transition REPLACES the cohort head; it does not add a second one.
+        // Without this, Entered(1) -> Exited(2) -> Entered(3) would leave three
+        // live `campaign.member` claims on the person carrying mutually
+        // incompatible states, and `claims_for_subject` would expose all three
+        // as current truth. Same-txn supersession is the CA-01 `crm.stage`
+        // pattern: a rejection rolls the replacement back with it.
+        for old_id in superseded {
+            vault.supersede_claim_in_txn(wtxn, &claim_id, &old_id, now)?;
+        }
         Ok(MembershipCommitOutcome::Applied)
     })
 }
 
 /// `None` means "proceed"; `Some` is the terminal outcome.
+///
+/// `stored` is the content digest of the plan the watermark records, and is
+/// absent when the watermark came from the replicated claim chain rather than
+/// this node's own row. An unprovable retry is a stale epoch, never
+/// `AlreadyApplied`: reporting success for a plan this node cannot show it
+/// applied is the one answer the watermark exists to prevent.
 fn watermark_verdict(
-    watermark: Option<(u64, [u8; EVIDENCE_HASH_LEN])>,
+    watermark: Option<(u64, Option<[u8; EVIDENCE_HASH_LEN]>)>,
     epoch: u64,
     content: &[u8; EVIDENCE_HASH_LEN],
 ) -> Option<MembershipCommitOutcome> {
@@ -1869,10 +2095,61 @@ fn watermark_verdict(
     if epoch > current_epoch {
         return None;
     }
-    if epoch == current_epoch && stored == *content {
+    if epoch == current_epoch && stored == Some(*content) {
         return Some(MembershipCommitOutcome::AlreadyApplied);
     }
     Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch })
+}
+
+/// Live `campaign.member` claim ids on `entity_ref` derived from this
+/// `(query, campaign)` pair — the heads a new transition must close.
+fn live_member_heads_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query_ref: EntityId,
+    campaign_ref: EntityId,
+    entity_ref: EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut heads = Vec::new();
+    for claim_id in vault.claims_for_subject_in_txn(txn, &entity_ref)? {
+        let Some((body, value)) = member_claim_in_txn(vault, txn, &claim_id)? else {
+            continue;
+        };
+        if body.lifecycle != ClaimLifecycleStatus::Active || value.campaign != campaign_ref {
+            continue;
+        }
+        if value
+            .derivation
+            .is_some_and(|derivation| derivation.source_query == query_ref)
+        {
+            heads.push(claim_id);
+        }
+    }
+    Ok(heads)
+}
+
+/// Decodes the `campaign.member` claim at `claim_id`, or `None` when the row is
+/// absent, is not a CLAIM, or carries another predicate.
+fn member_claim_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+) -> Result<Option<(ClaimBody, CampaignMemberValue)>> {
+    let Some(raw) = vault.store.entities.get(txn, claim_id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Err(Error::CorruptedIndex("saved query member claim header"));
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    if body.predicate != PREDICATE_CAMPAIGN_MEMBER {
+        return Ok(None);
+    }
+    let value = decode_campaign_member_value(&body.value)?;
+    Ok(Some((body, value)))
 }
 
 /// Proves the event and the CA-01 claim value describe the same transition.
@@ -2059,13 +2336,23 @@ pub fn put_pack_migration_map(
 /// Runs the ratified pack-drift ladder, in order.
 ///
 /// Rung order is worst-case-wins across the affected predicates: an unmapped
-/// predicate pauses the query even if every other predicate renames cleanly. A
-/// partially-migrated query would evaluate against a definition nobody wrote,
-/// which is the one outcome the ladder exists to prevent.
+/// predicate pauses the query even if every other predicate renames cleanly. So
+/// the WHOLE affected set is classified before a rung is chosen — returning on
+/// the first bad predicate would make the outcome depend on the order the pack
+/// author happened to list them in, and could leave a query Active whose other
+/// predicate has no rewrite at all. A partially-migrated query would evaluate
+/// against a definition nobody wrote, which is the one outcome the ladder
+/// exists to prevent.
+///
+/// `definition` is the snapshot the repair was PLANNED from: the replacement is
+/// built from the stored record, and a version that has moved since planning
+/// loses rather than overwriting the owner's concurrent update.
 ///
 /// # Errors
 ///
-/// [`Error::EntityNotFound`] when the query is absent; storage errors propagate.
+/// [`Error::EntityNotFound`] when the query is absent, [`Error::ConcurrentWrite`]
+/// when the plan is stale, [`Error::InvalidConfig`] when the query is archived;
+/// storage errors propagate.
 pub fn repair_pack_drift(
     vault: &Vault,
     query_ref: EntityId,
@@ -2074,30 +2361,15 @@ pub fn repair_pack_drift(
     now: u64,
 ) -> Result<PackDriftResolution> {
     let map = load_migration_map(vault, drift)?.unwrap_or_default();
+    let mut unmapped = Vec::new();
+    let mut proposals = Vec::new();
     let mut renames = BTreeMap::new();
     let mut notices = Vec::new();
     for predicate in &drift.affected_predicates {
         match map.rewrites.get(predicate) {
-            None => {
-                return pause_query(
-                    vault,
-                    query_ref,
-                    format!(
-                        "pack move {}@{} -> {}@{} has no rewrite for predicate {predicate:?}",
-                        drift.from_pack_id, drift.from_version, drift.to_pack_id, drift.to_version
-                    ),
-                    now,
-                );
-            }
+            None => unmapped.push(predicate.clone()),
             Some(PackPredicateRewrite::SemanticsChanging { to, note }) => {
-                return record_repair(
-                    vault,
-                    query_ref,
-                    drift,
-                    &format!("proposal: {predicate} -> {to} ({note})"),
-                    now,
-                )
-                .map(|proposal_ref| PackDriftResolution::ProposalRequired { proposal_ref });
+                proposals.push(format!("{predicate} -> {to} ({note})"));
             }
             Some(PackPredicateRewrite::Rename { to }) => {
                 renames.insert(predicate.clone(), to.clone());
@@ -2108,58 +2380,86 @@ pub fn repair_pack_drift(
             }
         }
     }
-    apply_pack_migration(vault, query_ref, definition, drift, &renames, &notices, now)
-}
-
-fn apply_pack_migration(
-    vault: &Vault,
-    query_ref: EntityId,
-    definition: &SavedQueryDefinition,
-    drift: &PackDrift,
-    renames: &BTreeMap<String, String>,
-    notices: &[String],
-    now: u64,
-) -> Result<PackDriftResolution> {
-    let mut record = load_record(vault, query_ref)?.ok_or(Error::EntityNotFound)?;
-    record.definition = SavedQueryDefinition {
-        filter: rewrite_predicates(&definition.filter, renames),
-        matcher: rewrite_matcher(&definition.matcher, renames),
-        definition_version: next_version(definition.definition_version)?,
-        lifecycle: SavedQueryLifecycle::Active,
-        ..definition.clone()
-    };
-    record.updated_at = now;
-    store_record(vault, &record)?;
-    let summary = if notices.is_empty() {
-        format!("auto-migrated {} predicate(s)", renames.len())
-    } else {
-        format!("auto-rewritten with notices: {}", notices.join("; "))
-    };
-    let receipt_ref = record_repair(vault, query_ref, drift, &summary, now)?;
-    Ok(if notices.is_empty() {
-        PackDriftResolution::AutoMigrated { receipt_ref }
-    } else {
-        PackDriftResolution::AutoRewritten { receipt_ref }
+    let moved = format!(
+        "pack move {}@{} -> {}@{}",
+        drift.from_pack_id, drift.from_version, drift.to_pack_id, drift.to_version
+    );
+    let kind = saved_query_type_byte(vault)?;
+    vault.with_write_txn(|wtxn| {
+        let mut record =
+            load_record_in_txn(vault, wtxn, query_ref, kind)?.ok_or(Error::EntityNotFound)?;
+        if record.definition.definition_version != definition.definition_version {
+            return Err(Error::ConcurrentWrite(
+                "saved query definition version is not current",
+            ));
+        }
+        if record.definition.lifecycle == SavedQueryLifecycle::Archived {
+            return Err(invalid(
+                "saved query is archived; pack drift repair does not reopen it",
+            ));
+        }
+        if !unmapped.is_empty() {
+            let error = format!(
+                "{moved} has no rewrite for predicate(s) {}",
+                unmapped.join(", ")
+            );
+            return pause_in_txn(vault, wtxn, record, kind, error, now);
+        }
+        if !proposals.is_empty() {
+            let summary = format!("proposal: {}", proposals.join("; "));
+            return record_repair_in_txn(vault, wtxn, query_ref, drift, &summary, now)
+                .map(|proposal_ref| PackDriftResolution::ProposalRequired { proposal_ref });
+        }
+        let migrated = SavedQueryDefinition {
+            filter: rewrite_predicates(&record.definition.filter, &renames),
+            matcher: rewrite_matcher(&record.definition.matcher, &renames),
+            definition_version: next_version(record.definition.definition_version)?,
+            lifecycle: SavedQueryLifecycle::Active,
+            ..record.definition.clone()
+        };
+        // The ladder's own last rung: a rewrite target the write door would
+        // never have accepted is no viable rewrite, so it PAUSES rather than
+        // being persisted as an active definition nobody could have authored.
+        if let Err(error) = validate_definition(&migrated) {
+            let error = format!("{moved} produced an invalid definition: {error}");
+            return pause_in_txn(vault, wtxn, record, kind, error, now);
+        }
+        record.definition = migrated;
+        record.updated_at = now;
+        store_record_in_txn(vault, wtxn, &record, kind)?;
+        let summary = if notices.is_empty() {
+            format!("auto-migrated {} predicate(s)", renames.len())
+        } else {
+            format!("auto-rewritten with notices: {}", notices.join("; "))
+        };
+        let receipt_ref = record_repair_in_txn(vault, wtxn, query_ref, drift, &summary, now)?;
+        Ok(if notices.is_empty() {
+            PackDriftResolution::AutoMigrated { receipt_ref }
+        } else {
+            PackDriftResolution::AutoRewritten { receipt_ref }
+        })
     })
 }
 
-fn pause_query(
+fn pause_in_txn(
     vault: &Vault,
-    query_ref: EntityId,
+    wtxn: &mut heed::RwTxn<'_>,
+    mut record: SavedQueryRecord,
+    kind: u8,
     error: String,
     now: u64,
 ) -> Result<PackDriftResolution> {
-    let mut record = load_record(vault, query_ref)?.ok_or(Error::EntityNotFound)?;
     record.definition.lifecycle = SavedQueryLifecycle::Paused {
         error: error.clone(),
     };
     record.updated_at = now;
-    store_record(vault, &record)?;
+    store_record_in_txn(vault, wtxn, &record, kind)?;
     Ok(PackDriftResolution::Paused { error })
 }
 
-fn record_repair(
+fn record_repair_in_txn(
     vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
     query_ref: EntityId,
     drift: &PackDrift,
     summary: &str,
@@ -2176,7 +2476,10 @@ fn record_repair(
             .map_err(|_| Error::InvariantViolation("pack drift encode failed"))?,
     );
     let encoded = canonical_json_bytes(&Value::Object(row))?;
-    put_meta_row(vault, &keys::repair(&repair_ref), &encoded)?;
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, &keys::repair(&repair_ref), &encoded)?;
     Ok(repair_ref)
 }
 
@@ -2244,7 +2547,6 @@ mod keys {
     use super::{EVIDENCE_HASH_LEN, PackDrift, VerdictMemoKey};
     use crate::entity_id::EntityId;
 
-    const RECORD: &[u8] = b"saved_query.def.v1:";
     const MEMO: &[u8] = b"saved_query.memo.v1:";
     const WATERMARK: &[u8] = b"saved_query.epoch.v1:";
     const EVENT: &[u8] = b"saved_query.event.v1:";
@@ -2259,10 +2561,6 @@ mod keys {
             key.extend_from_slice(part);
         }
         key
-    }
-
-    pub(super) fn record(query_ref: &EntityId) -> Vec<u8> {
-        keyed(RECORD, &[query_ref.as_bytes()])
     }
 
     pub(super) fn memo(key: &VerdictMemoKey) -> Vec<u8> {
@@ -2330,19 +2628,134 @@ fn put_meta_row(vault: &Vault, key: &[u8], value: &[u8]) -> Result<()> {
     vault.with_write_txn(|wtxn| vault.store.vault_meta.put(wtxn, key, value))
 }
 
-fn load_record(vault: &Vault, query_ref: EntityId) -> Result<Option<SavedQueryRecord>> {
-    let Some(raw) = meta_row(vault, &keys::record(&query_ref))? else {
-        return Ok(None);
-    };
-    decode_record(&raw).map(Some)
+/// The type byte this vault assigned the SAVED_QUERY kind at pack registration.
+///
+/// Resolved from the vault-scoped registry rather than a constant: the byte is
+/// caller-assigned per vault, and this module owns none. A vault that never
+/// installed the CRM pack has no namespace to write into, which is a
+/// configuration error, not a silent sidecar fallback.
+fn saved_query_type_byte(vault: &Vault) -> Result<u8> {
+    vault
+        .structural_kind_registrations()
+        .into_iter()
+        .find(|registration| {
+            registration.short_id_prefix == SAVED_QUERY_SHORT_ID_PREFIX
+                && registration.pack == CRM_PACK_ID
+        })
+        .map(|registration| registration.type_byte)
+        .ok_or_else(|| invalid("saved query kind is not registered in this vault"))
 }
 
-fn store_record(vault: &Vault, record: &SavedQueryRecord) -> Result<()> {
-    put_meta_row(
-        vault,
-        &keys::record(&record.query_ref),
-        &encode_record(record)?,
+/// Reads the SAVED_QUERY entity body through the caller's transaction.
+fn load_record_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query_ref: EntityId,
+    kind: u8,
+) -> Result<Option<SavedQueryRecord>> {
+    let Some(raw) = vault.store.entities.get(txn, query_ref.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Err(Error::CorruptedIndex("saved query entity header"));
+    };
+    if header.entity_type != kind {
+        return Ok(None);
+    }
+    decode_record(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+}
+
+fn load_record(vault: &Vault, query_ref: EntityId) -> Result<Option<SavedQueryRecord>> {
+    let kind = saved_query_type_byte(vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    load_record_in_txn(vault, &rtxn, query_ref, kind)
+}
+
+/// Writes the definition through the batch put chokepoint, in the caller's
+/// transaction, so the definition replicates like every other entity.
+fn store_record_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &SavedQueryRecord,
+    kind: u8,
+) -> Result<()> {
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        vec![BatchOp::Put {
+            id: record.query_ref,
+            entity_type: kind,
+            occurred: TimeRange {
+                start: record.created_at,
+                end: record.updated_at,
+            },
+            learned_at: record.updated_at,
+            data: encode_record(record)?,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        false,
     )
+}
+
+/// The epoch floor this `(query, entity)` pair may not write at or below.
+///
+/// `vault_meta` does not replicate, so the local watermark row alone is a
+/// node-local opinion: a peer promoted to home after a failover would read
+/// `None` and restart at epoch 1 while the replicated `campaign.member` claims
+/// already carry later epochs. The CA-01 derivation carries the epoch on a
+/// claim that DOES replicate, so the claim chain is the convergent floor and
+/// the local row is only the fast path that can also prove content equality.
+fn current_watermark(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query_ref: EntityId,
+    entity_ref: EntityId,
+) -> Result<Option<(u64, Option<[u8; EVIDENCE_HASH_LEN]>)>> {
+    let local = read_watermark(vault, txn, query_ref, entity_ref)?;
+    let replicated = replicated_epoch_floor(vault, txn, query_ref, entity_ref)?;
+    Ok(match (local, replicated) {
+        (None, None) => None,
+        (Some((epoch, content)), None) => Some((epoch, Some(content))),
+        (None, Some(floor)) => Some((floor, None)),
+        (Some((epoch, content)), Some(floor)) => {
+            if floor > epoch {
+                Some((floor, None))
+            } else {
+                Some((epoch, Some(content)))
+            }
+        }
+    })
+}
+
+/// Highest epoch any replicated `campaign.member` claim on `entity_ref` carries
+/// for `query_ref`. Every lifecycle counts: a superseded head still proves its
+/// epoch was spent.
+fn replicated_epoch_floor(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query_ref: EntityId,
+    entity_ref: EntityId,
+) -> Result<Option<u64>> {
+    let mut floor = None;
+    for claim_id in vault.claims_for_subject_in_txn(txn, &entity_ref)? {
+        let Some((_, value)) = member_claim_in_txn(vault, txn, &claim_id)? else {
+            continue;
+        };
+        if let Some(derivation) = value.derivation
+            && derivation.source_query == query_ref
+        {
+            floor = floor.max(Some(derivation.epoch));
+        }
+    }
+    Ok(floor)
 }
 
 fn read_watermark(
@@ -2844,6 +3257,15 @@ fn canonicalize_json(value: &Value) -> Value {
     }
 }
 
+/// Projects a MessagePack claim value into JSON, INJECTIVELY.
+///
+/// The projection is what gets hashed into the memo key, so two distinct claim
+/// values must never land on the same JSON. Binary, Ext, and non-string-keyed
+/// maps therefore carry a `$`-tagged wrapper instead of being flattened into a
+/// bare string or silently dropped, and a genuine map key that starts with `$`
+/// is escaped by doubling it. Without this, `Binary([0x61])` and the literal
+/// string `"61"` produce the same bytes and evidence can change type without
+/// moving the hash.
 fn rmpv_to_json(value: &rmpv::Value) -> Value {
     match value {
         rmpv::Value::Nil => Value::Null,
@@ -2861,21 +3283,60 @@ fn rmpv_to_json(value: &rmpv::Value) -> Value {
             .unwrap_or(Value::Null),
         rmpv::Value::F32(number) => json_number(f64::from(*number)),
         rmpv::Value::F64(number) => json_number(*number),
-        rmpv::Value::String(text) => text
-            .as_str()
-            .map_or(Value::Null, |text| Value::String(text.to_owned())),
-        rmpv::Value::Binary(bytes) => Value::String(hex_lower(bytes)),
+        // A non-UTF-8 MessagePack string is bytes, so it is tagged as bytes
+        // rather than collapsing to null alongside every other undecodable
+        // value.
+        rmpv::Value::String(text) => text.as_str().map_or_else(
+            || tagged_json("$bin", Value::String(hex_lower(text.as_bytes()))),
+            |text| Value::String(text.to_owned()),
+        ),
+        rmpv::Value::Binary(bytes) => tagged_json("$bin", Value::String(hex_lower(bytes))),
         rmpv::Value::Array(values) => Value::Array(values.iter().map(rmpv_to_json).collect()),
-        rmpv::Value::Map(entries) => Value::Object(
+        rmpv::Value::Map(entries) => rmpv_map_to_json(entries),
+        rmpv::Value::Ext(tag, bytes) => tagged_json(
+            "$ext",
+            Value::Array(vec![Value::from(*tag), Value::String(hex_lower(bytes))]),
+        ),
+    }
+}
+
+fn rmpv_map_to_json(entries: &[(rmpv::Value, rmpv::Value)]) -> Value {
+    if entries.iter().all(|(key, _)| key.as_str().is_some()) {
+        return Value::Object(
             entries
                 .iter()
                 .filter_map(|(key, value)| {
                     key.as_str()
-                        .map(|key| (key.to_owned(), rmpv_to_json(value)))
+                        .map(|key| (escape_json_key(key), rmpv_to_json(value)))
                 })
                 .collect(),
+        );
+    }
+    // A map with non-string keys has no lossless JSON object form; erasing
+    // those entries would let the map change without moving the hash.
+    tagged_json(
+        "$map",
+        Value::Array(
+            entries
+                .iter()
+                .map(|(key, value)| Value::Array(vec![rmpv_to_json(key), rmpv_to_json(value)]))
+                .collect(),
         ),
-        rmpv::Value::Ext(tag, bytes) => Value::String(format!("ext:{tag}:{}", hex_lower(bytes))),
+    )
+}
+
+fn tagged_json(tag: &str, payload: Value) -> Value {
+    let mut wrapper = JsonMap::new();
+    wrapper.insert(tag.to_owned(), payload);
+    Value::Object(wrapper)
+}
+
+/// Doubles a leading `$` so a real key can never impersonate a wrapper tag.
+fn escape_json_key(key: &str) -> String {
+    if key.starts_with('$') {
+        format!("${key}")
+    } else {
+        key.to_owned()
     }
 }
 
@@ -2977,5 +3438,596 @@ fn edge_kind_from_name(value: &str) -> Option<EdgeKind> {
     Some(kind)
 }
 
+/// Private-encoding unit tests: memo-key canonicalization, malformed-row
+/// rejection, and the pure predicates the evaluator composes. Public
+/// behavior lives in `tests/saved_query_oracle.rs`.
 #[cfg(test)]
-mod tests;
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::entity_id::EntityId;
+
+    fn id(seed: u8) -> EntityId {
+        crate::test_util::entity(seed)
+    }
+
+    fn sample_definition() -> SavedQueryDefinition {
+        SavedQueryDefinition {
+            schema_version: SAVED_QUERY_SCHEMA_VERSION,
+            owner_actor: id(0x21),
+            scope: QueryScope::default(),
+            definition_version: 3,
+            filter: FilterAst::Claim {
+                predicate: "crm.fit".to_owned(),
+                cmp: ClaimComparison::Exists,
+                value: Value::Null,
+            },
+            matcher: MatcherSpec::Hard {
+                expression: FilterAst::All { terms: Vec::new() },
+            },
+            eval: EvalPolicy {
+                mode: EvalMode::Manual,
+                max_entities_per_wake: 8,
+                max_judges_per_wake: 2,
+            },
+            lifecycle: SavedQueryLifecycle::Active,
+        }
+    }
+
+    fn sample_memo_row() -> VerdictMemoRow {
+        VerdictMemoRow {
+            key: VerdictMemoKey {
+                query_ref: id(0x22),
+                entity_ref: id(0x23),
+                evidence_hash: [7u8; EVIDENCE_HASH_LEN],
+            },
+            definition_version: 3,
+            verdict: MatchVerdict::Match,
+            why: "because".to_owned(),
+            envelope: SavedQueryDerivationEnvelope {
+                content_hash: hex_lower(&[7u8; EVIDENCE_HASH_LEN]),
+                model_id: "hard".to_owned(),
+                version: EVALUATOR_VERSION.to_owned(),
+                params_hash: hex_lower(&[9u8; EVIDENCE_HASH_LEN]),
+            },
+            evaluated_at: 1_700,
+        }
+    }
+
+    /// The memo key is the three identity components concatenated, in a fixed
+    /// order, under a versioned prefix. Nothing else may enter it — a key that also
+    /// hashed the verdict would never hit.
+    #[test]
+    fn memo_key_is_prefix_plus_three_fixed_width_components() {
+        let key = VerdictMemoKey {
+            query_ref: id(0x24),
+            entity_ref: id(0x25),
+            evidence_hash: [0x5A; EVIDENCE_HASH_LEN],
+        };
+        let encoded = keys::memo(&key);
+        let prefix = b"saved_query.memo.v1:";
+        assert!(encoded.starts_with(prefix));
+        assert_eq!(encoded.len(), prefix.len() + 16 + 16 + EVIDENCE_HASH_LEN);
+        assert_eq!(
+            &encoded[prefix.len()..prefix.len() + 16],
+            id(0x24).as_bytes()
+        );
+        assert_eq!(
+            &encoded[prefix.len() + 16..prefix.len() + 32],
+            id(0x25).as_bytes()
+        );
+        assert_eq!(&encoded[prefix.len() + 32..], &[0x5A; EVIDENCE_HASH_LEN]);
+    }
+
+    /// Swapping the query and entity refs must produce a different key: a single
+    /// concatenation with fixed widths is only unambiguous if the order is honored.
+    #[test]
+    fn memo_key_distinguishes_swapped_refs() {
+        let forward = keys::memo(&VerdictMemoKey {
+            query_ref: id(0x26),
+            entity_ref: id(0x27),
+            evidence_hash: [1u8; EVIDENCE_HASH_LEN],
+        });
+        let swapped = keys::memo(&VerdictMemoKey {
+            query_ref: id(0x27),
+            entity_ref: id(0x26),
+            evidence_hash: [1u8; EVIDENCE_HASH_LEN],
+        });
+        assert_ne!(forward, swapped);
+    }
+
+    /// Event keys sort by epoch under a `(query, entity)` prefix scan, so history
+    /// reads back oldest-first without a sort step that could disagree with disk.
+    #[test]
+    fn event_keys_sort_by_epoch_within_the_pair_prefix() {
+        let (query, entity) = (id(0x28), id(0x29));
+        let prefix = keys::event_prefix(&query, &entity);
+        let mut keys = [
+            keys::event(&query, &entity, 10),
+            keys::event(&query, &entity, 2),
+            keys::event(&query, &entity, 300),
+        ];
+        assert!(keys.iter().all(|key| key.starts_with(&prefix)));
+        keys.sort();
+        assert_eq!(keys[0], keys::event(&query, &entity, 2));
+        assert_eq!(keys[1], keys::event(&query, &entity, 10));
+        assert_eq!(keys[2], keys::event(&query, &entity, 300));
+    }
+
+    #[test]
+    fn memo_row_round_trips_through_its_codec() {
+        let row = sample_memo_row();
+        let encoded = encode_memo_row(&row).expect("encode");
+        assert_eq!(decode_memo_row(&encoded).expect("decode"), row);
+    }
+
+    /// A row that is not JSON, is missing a field, or names a verdict outside the
+    /// closed set is CorruptedIndex — never a silent miss and never a default.
+    #[test]
+    fn malformed_memo_rows_are_rejected() {
+        let encoded = encode_memo_row(&sample_memo_row()).expect("encode");
+        let mut truncated = encoded.clone();
+        truncated.truncate(encoded.len() / 2);
+
+        let mut parsed: Value = serde_json::from_slice(&encoded).expect("row is json");
+        parsed["verdict"] = json!("maybe");
+        let unknown_verdict = serde_json::to_vec(&parsed).expect("re-encode");
+
+        let mut parsed: Value = serde_json::from_slice(&encoded).expect("row is json");
+        parsed["evidence_hash"] = json!("00ff");
+        let short_hash = serde_json::to_vec(&parsed).expect("re-encode");
+
+        let mut parsed: Value = serde_json::from_slice(&encoded).expect("row is json");
+        parsed.as_object_mut().expect("object").remove("why");
+        let missing_field = serde_json::to_vec(&parsed).expect("re-encode");
+
+        for (label, bytes) in [
+            ("truncated", truncated),
+            ("unknown verdict", unknown_verdict),
+            ("short hash", short_hash),
+            ("missing field", missing_field),
+        ] {
+            assert!(
+                matches!(decode_memo_row(&bytes), Err(Error::CorruptedIndex(_))),
+                "{label} memo row must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn definition_round_trips_through_its_codec() {
+        let definition = sample_definition();
+        let json = definition_to_json(&definition).expect("encode");
+        assert_eq!(definition_from_json(&json).expect("decode"), definition);
+    }
+
+    /// Canonical JSON sorts object keys recursively; the crate builds `serde_json`
+    /// with `preserve_order`, so two equal values with different insertion orders
+    /// would otherwise hash differently.
+    #[test]
+    fn canonical_json_is_insertion_order_independent() {
+        let first = json!({"b": 1, "a": {"d": 2, "c": 3}});
+        let second = json!({"a": {"c": 3, "d": 2}, "b": 1});
+        assert_ne!(
+            serde_json::to_vec(&first).expect("raw"),
+            serde_json::to_vec(&second).expect("raw"),
+            "the fixture must actually differ before canonicalization"
+        );
+        assert_eq!(
+            canonical_json_bytes(&first).expect("canonical"),
+            canonical_json_bytes(&second).expect("canonical")
+        );
+    }
+
+    /// The watermark row is `epoch || content digest`; any other length is disk
+    /// corruption, not a shorter epoch.
+    #[test]
+    fn watermark_rows_round_trip_and_reject_wrong_lengths() {
+        let content = [3u8; EVIDENCE_HASH_LEN];
+        let encoded = encode_watermark(42, &content);
+        assert_eq!(decode_watermark(&encoded).expect("decode"), (42, content));
+        assert!(matches!(
+            decode_watermark(&encoded[..encoded.len() - 1]),
+            Err(Error::CorruptedIndex(_))
+        ));
+    }
+
+    /// An exact-match vector pair reaches the full micros scale, so a query with a
+    /// 1_000_000 floor can still match its own exemplar.
+    #[test]
+    fn cosine_similarity_saturates_on_identical_vectors() {
+        assert_eq!(
+            cosine_similarity_micros(&[1.0, 2.0], &[1.0, 2.0]),
+            1_000_000
+        );
+        assert_eq!(cosine_similarity_micros(&[1.0, 0.0], &[0.0, 1.0]), 0);
+        // Anti-correlated clamps to zero rather than recentering onto a positive
+        // range that a zero floor would admit.
+        assert_eq!(cosine_similarity_micros(&[1.0, 0.0], &[-1.0, 0.0]), 0);
+        assert_eq!(cosine_similarity_micros(&[1.0], &[1.0, 2.0]), 0);
+    }
+
+    /// The fingerprint's only job is to move when either vector moves.
+    #[test]
+    fn vector_pair_fingerprint_tracks_both_sides() {
+        let base = vector_pair_fingerprint(&Some(vec![1.0, 2.0]), &Some(vec![3.0, 4.0]));
+        assert_ne!(
+            base,
+            vector_pair_fingerprint(&Some(vec![1.0, 2.5]), &Some(vec![3.0, 4.0]))
+        );
+        assert_ne!(
+            base,
+            vector_pair_fingerprint(&Some(vec![1.0, 2.0]), &Some(vec![3.0, 4.5]))
+        );
+        assert_ne!(base, vector_pair_fingerprint(&None, &Some(vec![3.0, 4.0])));
+    }
+
+    /// Empty axes mean "unrestricted"; two disjoint restricted axes CLOSE, which is
+    /// the fail-closed signal, not an unrestricted empty result.
+    #[test]
+    fn scope_intersection_separates_unrestricted_from_closed() {
+        let unrestricted = QueryScope::default();
+        let alpha = QueryScope {
+            worlds: vec![id(0x2A)],
+            facets: vec!["work".to_owned()],
+        };
+        let beta = QueryScope {
+            worlds: vec![id(0x2B)],
+            facets: vec!["work".to_owned()],
+        };
+
+        assert_eq!(alpha.intersect(&unrestricted), Some(alpha.clone()));
+        assert_eq!(unrestricted.intersect(&alpha), Some(alpha.clone()));
+        assert_eq!(alpha.intersect(&alpha), Some(alpha.clone()));
+        assert_eq!(alpha.intersect(&beta), None);
+        assert!(alpha.is_closed_against(&beta));
+        assert!(!alpha.is_closed_against(&unrestricted));
+    }
+
+    /// Irrelevant evidence must not move the hash, and relevant evidence must.
+    #[test]
+    fn evidence_hash_covers_relevant_evidence_and_scope() {
+        let definition = sample_definition();
+        let base = RelevantEvidence {
+            entity_ref: id(0x2C),
+            claim_values: vec![("crm.fit".to_owned(), json!("fit"))],
+            edge_targets: Vec::new(),
+            semantic_inputs: Vec::new(),
+            scope_membership: QueryScope::default(),
+        };
+        let hash = compute_evidence_hash(&definition, &base).expect("hash");
+
+        let mut moved = base.clone();
+        moved.claim_values = vec![("crm.fit".to_owned(), json!("not_fit"))];
+        assert_ne!(
+            hash,
+            compute_evidence_hash(&definition, &moved).expect("hash")
+        );
+
+        let mut bumped = definition.clone();
+        bumped.definition_version += 1;
+        assert_ne!(hash, compute_evidence_hash(&bumped, &base).expect("hash"));
+
+        let mut rescoped = definition.clone();
+        rescoped.scope = QueryScope {
+            worlds: vec![id(0x2D)],
+            facets: Vec::new(),
+        };
+        assert_ne!(hash, compute_evidence_hash(&rescoped, &base).expect("hash"));
+
+        // Scope MEMBERSHIP is evidence too: moving into or out of a world has
+        // to invalidate the memo, and nothing else carries that movement.
+        let mut moved_world = base.clone();
+        moved_world.scope_membership = QueryScope {
+            worlds: vec![id(0x2D)],
+            facets: Vec::new(),
+        };
+        assert_ne!(
+            hash,
+            compute_evidence_hash(&definition, &moved_world).expect("hash")
+        );
+
+        assert_eq!(
+            hash,
+            compute_evidence_hash(&definition, &base).expect("hash")
+        );
+    }
+
+    /// A restricted axis needs a WITNESS on that axis. An entity with no world
+    /// membership is outside a world-scoped query, not universally inside it.
+    #[test]
+    fn scope_admits_only_entities_holding_the_restricted_axis() {
+        let (alpha, beta, facet) = (id(0x2F), id(0x30), id(0x31).to_hex());
+        let world_scoped = QueryScope {
+            worlds: vec![alpha],
+            facets: Vec::new(),
+        };
+        assert!(world_scoped.admits(&QueryScope {
+            worlds: vec![alpha],
+            facets: Vec::new(),
+        }));
+        assert!(!world_scoped.admits(&QueryScope::default()));
+        assert!(!world_scoped.admits(&QueryScope {
+            worlds: vec![beta],
+            facets: Vec::new(),
+        }));
+
+        // An unrestricted scope admits everything, including a bare entity.
+        assert!(QueryScope::default().admits(&QueryScope::default()));
+
+        // Both axes must be witnessed when both are restricted.
+        let both = QueryScope {
+            worlds: vec![alpha],
+            facets: vec![facet.clone()],
+        };
+        assert!(!both.admits(&QueryScope {
+            worlds: vec![alpha],
+            facets: Vec::new(),
+        }));
+        assert!(both.admits(&QueryScope {
+            worlds: vec![alpha],
+            facets: vec![facet],
+        }));
+    }
+
+    /// Claim evidence is admitted by WORLD: base reality reads everywhere, a
+    /// claim scoped to an out-of-reach world reads nowhere.
+    #[test]
+    fn claim_world_scope_admission_mirrors_the_gate_rule() {
+        let scoped_to = |world: Option<EntityId>| {
+            let mut body = ClaimBody::new(
+                "crm.fit",
+                ClaimSubject::Entity(id(0x32)),
+                rmpv::Value::from("fit"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            );
+            body.world = world;
+            body
+        };
+        let scope = QueryScope {
+            worlds: vec![id(0x33)],
+            facets: Vec::new(),
+        };
+        assert!(claim_in_scope(&scoped_to(None), &scope));
+        assert!(claim_in_scope(&scoped_to(Some(id(0x33))), &scope));
+        assert!(!claim_in_scope(&scoped_to(Some(id(0x34))), &scope));
+        // An unrestricted world axis admits every claim world.
+        assert!(claim_in_scope(
+            &scoped_to(Some(id(0x34))),
+            &QueryScope::default()
+        ));
+    }
+
+    /// Active alone is not effective. Approval, staleness, and the valid-time
+    /// window all gate whether a claim is standing truth at the requested time.
+    #[test]
+    fn only_effective_claims_count_as_evidence() {
+        let base = || {
+            ClaimBody::new(
+                "crm.fit",
+                ClaimSubject::Entity(id(0x35)),
+                rmpv::Value::from("fit"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            )
+        };
+        assert!(claim_effective_at(&base(), 1_000));
+
+        let mut proposed = base();
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        assert!(!claim_effective_at(&proposed, 1_000));
+
+        let mut stale = base();
+        stale.stale = true;
+        assert!(!claim_effective_at(&stale, 1_000));
+
+        let mut superseded = base();
+        superseded.lifecycle = ClaimLifecycleStatus::Superseded;
+        assert!(!claim_effective_at(&superseded, 1_000));
+
+        let mut not_yet = base();
+        not_yet.valid_from = Some(2_000);
+        assert!(!claim_effective_at(&not_yet, 1_000));
+        assert!(claim_effective_at(&not_yet, 2_000));
+
+        let mut expired = base();
+        expired.valid_to = Some(500);
+        assert!(!claim_effective_at(&expired, 1_000));
+        assert!(claim_effective_at(&expired, 500));
+    }
+
+    /// The MessagePack projection must be injective: a byte string and the
+    /// literal text of its hex spelling cannot land on the same JSON, and a map
+    /// key that looks like a wrapper tag cannot impersonate one.
+    #[test]
+    fn rmpv_projection_is_injective_across_types() {
+        assert_ne!(
+            rmpv_to_json(&rmpv::Value::Binary(vec![0x61])),
+            rmpv_to_json(&rmpv::Value::from("61"))
+        );
+        assert_ne!(
+            rmpv_to_json(&rmpv::Value::Ext(1, vec![0x61])),
+            rmpv_to_json(&rmpv::Value::Binary(vec![0x61]))
+        );
+        let impersonator =
+            rmpv::Value::Map(vec![(rmpv::Value::from("$bin"), rmpv::Value::from("61"))]);
+        assert_ne!(
+            rmpv_to_json(&impersonator),
+            rmpv_to_json(&rmpv::Value::Binary(vec![0x61]))
+        );
+        // Non-string map keys are preserved rather than erased.
+        let numeric_keys = rmpv::Value::Map(vec![(rmpv::Value::from(1), rmpv::Value::from("a"))]);
+        assert_ne!(
+            rmpv_to_json(&numeric_keys),
+            rmpv_to_json(&rmpv::Value::Map(Vec::new()))
+        );
+    }
+
+    /// Two live values for one predicate must both reach the judge; a
+    /// predicate-keyed object would show it only the last one while the hash
+    /// covered both.
+    #[test]
+    fn judge_evidence_preserves_every_live_claim_value() {
+        let evidence = RelevantEvidence {
+            entity_ref: id(0x36),
+            claim_values: vec![
+                ("crm.fit".to_owned(), json!("fit")),
+                ("crm.fit".to_owned(), json!("not_fit")),
+            ],
+            edge_targets: Vec::new(),
+            semantic_inputs: Vec::new(),
+            scope_membership: QueryScope::default(),
+        };
+        let projected = evidence_to_json(&evidence);
+        let claims = projected["claims"].as_array().expect("claims are pairs");
+        assert_eq!(claims.len(), 2);
+        assert_eq!(claims[0], json!(["crm.fit", "fit"]));
+        assert_eq!(claims[1], json!(["crm.fit", "not_fit"]));
+    }
+
+    /// Stage 2 scores the vectors the fingerprint was taken from. The function
+    /// takes NO vault, so a re-read cannot creep back in: a verdict derived
+    /// from vectors the evidence hash does not name is a memo that lies.
+    #[test]
+    fn semantic_decision_scores_the_fingerprinted_vectors() {
+        let exemplar_ref = id(0x37);
+        let collected = |subject: Option<Vec<f32>>, exemplar: Option<Vec<f32>>| CollectedEvidence {
+            evidence: RelevantEvidence {
+                entity_ref: id(0x38),
+                claim_values: Vec::new(),
+                edge_targets: Vec::new(),
+                semantic_inputs: vec![(exemplar_ref, vector_pair_fingerprint(&subject, &exemplar))],
+                scope_membership: QueryScope::default(),
+            },
+            subject_vector: subject,
+            exemplar_vectors: vec![(exemplar_ref, exemplar)],
+        };
+
+        let identical = collected(Some(vec![1.0, 2.0]), Some(vec![1.0, 2.0]));
+        assert_eq!(
+            semantic_decision(&identical, exemplar_ref, MICROS_PER_UNIT).verdict,
+            MatchVerdict::Match
+        );
+
+        let orthogonal = collected(Some(vec![1.0, 0.0]), Some(vec![0.0, 1.0]));
+        assert_eq!(
+            semantic_decision(&orthogonal, exemplar_ref, 1).verdict,
+            MatchVerdict::NoMatch
+        );
+
+        // An unknowable similarity never admits membership.
+        let missing = collected(None, Some(vec![1.0, 2.0]));
+        assert_eq!(
+            semantic_decision(&missing, exemplar_ref, 0).verdict,
+            MatchVerdict::NoMatch
+        );
+    }
+
+    /// A zero bound is a budget lie, not an unbounded budget.
+    #[test]
+    fn zero_wake_bounds_are_rejected_at_the_write_door() {
+        let mut definition = sample_definition();
+        definition.eval.max_judges_per_wake = 0;
+        assert!(matches!(
+            validate_definition(&definition),
+            Err(Error::InvalidConfig(_))
+        ));
+
+        let mut definition = sample_definition();
+        definition.eval.max_entities_per_wake = 0;
+        assert!(matches!(
+            validate_definition(&definition),
+            Err(Error::InvalidConfig(_))
+        ));
+
+        assert!(validate_definition(&sample_definition()).is_ok());
+    }
+
+    /// Length prefixes exist so `("ab", "c")` and `("a", "bc")` cannot collide.
+    #[test]
+    fn evidence_hash_length_prefixes_prevent_field_smearing() {
+        let definition = sample_definition();
+        let left = RelevantEvidence {
+            entity_ref: id(0x2E),
+            claim_values: vec![("ab".to_owned(), json!("c"))],
+            edge_targets: Vec::new(),
+            semantic_inputs: Vec::new(),
+            scope_membership: QueryScope::default(),
+        };
+        let right = RelevantEvidence {
+            claim_values: vec![("a".to_owned(), json!("bc"))],
+            ..left.clone()
+        };
+        assert_ne!(
+            compute_evidence_hash(&definition, &left).expect("hash"),
+            compute_evidence_hash(&definition, &right).expect("hash")
+        );
+    }
+
+    /// A judge answer must be a closed-set verdict in a JSON object. Prose, a
+    /// missing reason, and an unknown verdict token are all upstream failures.
+    #[test]
+    fn judge_responses_must_be_closed_set_json() {
+        assert_eq!(
+            decode_judge_decision(r#"{"verdict":"match","why":"fits the rubric"}"#)
+                .expect("decode"),
+            MatchDecision {
+                verdict: MatchVerdict::Match,
+                why: "fits the rubric".to_owned(),
+            }
+        );
+        for bad in [
+            "yes, definitely a match",
+            r#"{"verdict":"probably","why":"x"}"#,
+            r#"{"verdict":"match"}"#,
+            r#"{"why":"x"}"#,
+        ] {
+            assert!(
+                matches!(
+                    decode_judge_decision(bad),
+                    Err(Error::UpstreamToolFailure { .. })
+                ),
+                "{bad:?} must not decode to a verdict"
+            );
+        }
+    }
+
+    /// The watermark decides the outcome; payload equality alone never does.
+    #[test]
+    fn watermark_verdict_rejects_stale_epochs_without_calling_them_applied() {
+        let content = [1u8; EVIDENCE_HASH_LEN];
+        let other = [2u8; EVIDENCE_HASH_LEN];
+
+        assert_eq!(watermark_verdict(None, 1, &content), None);
+        assert_eq!(
+            watermark_verdict(Some((1, Some(content))), 2, &content),
+            None
+        );
+        assert_eq!(
+            watermark_verdict(Some((1, Some(content))), 1, &content),
+            Some(MembershipCommitOutcome::AlreadyApplied)
+        );
+        // Same epoch, different content: a conflict, not a retry.
+        assert_eq!(
+            watermark_verdict(Some((1, Some(content))), 1, &other),
+            Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch: 1 })
+        );
+        // The replayed-Entered-after-re-entry case.
+        assert_eq!(
+            watermark_verdict(Some((3, Some(other))), 1, &content),
+            Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch: 3 })
+        );
+        // A watermark recovered from the replicated claim chain carries no
+        // content digest, so a same-epoch replay it cannot prove is stale —
+        // never "already applied".
+        assert_eq!(
+            watermark_verdict(Some((2, None)), 2, &content),
+            Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch: 2 })
+        );
+        assert_eq!(watermark_verdict(Some((2, None)), 3, &content), None);
+    }
+}

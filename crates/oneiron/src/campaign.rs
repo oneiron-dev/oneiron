@@ -15,8 +15,10 @@
 //! structural kind and stops there.
 
 use crate::Vault;
-use crate::error::Result;
-use crate::registry::{StructuralKindRegistration, TypeByteBand};
+use crate::error::{Error, Result};
+use crate::registry::{
+    StructuralKindRegistration, TYPE_BYTE_BAND_CRM_END, TYPE_BYTE_BAND_CRM_START, TypeByteBand,
+};
 
 /// The CRM pack's claim families: `campaign.member`, `crm.fit`, `crm.stage`,
 /// and the CA-owned `comm.do_not_contact` / `comm.bounce` /
@@ -73,27 +75,98 @@ pub struct CrmPackRegistration {
 
 /// Registers the whole CRM pack against one vault.
 ///
-/// The pack's kinds are registered from ONE entry point so a host cannot
-/// install half a pack: a vault carrying CAMPAIGN but not SAVED_QUERY would let
-/// a cohort exist with no way to name the query that derived it. Both bytes are
-/// caller-assigned from the `Crm` band — this module still owns no byte — and
-/// the first failure aborts, leaving the earlier registration in place for the
-/// operator to inspect rather than silently rolled back.
+/// The pack's kinds are registered from ONE entry point so a host cannot be
+/// left with half a pack: a vault carrying CAMPAIGN but not SAVED_QUERY would
+/// let a cohort exist with no way to name the query that derived it. Both bytes
+/// are caller-assigned from the `Crm` band — this module still owns no byte.
+///
+/// Two properties make the guarantee real, because
+/// [`Vault::register_structural_kind`] commits per call and cannot be composed
+/// into one transaction from here:
+///
+/// * **Both slots are vetted before either is written.** A bad SAVED_QUERY byte
+///   is rejected before CAMPAIGN becomes durable, so the ordinary
+///   misconfiguration never half-installs anything.
+/// * **The call is resumable.** A slot already registered to exactly this
+///   pack's kind is reused instead of colliding with itself, so re-running the
+///   same whole-pack call after any partial failure converges instead of
+///   failing forever on the registration it already made.
 ///
 /// # Errors
 ///
 /// Propagates [`Vault::register_structural_kind`] errors unchanged: band
 /// violations, byte collisions, and prefix collisions all keep their existing
-/// identities.
+/// identities. Two equal bytes are a byte collision.
 pub fn register_crm_pack(
     vault: &Vault,
     campaign_type_byte: u8,
     saved_query_type_byte: u8,
 ) -> Result<CrmPackRegistration> {
+    if campaign_type_byte == saved_query_type_byte {
+        return Err(Error::StructuralKindTypeByteCollision(campaign_type_byte));
+    }
+    vet_pack_slot(vault, campaign_type_byte, CAMPAIGN_SHORT_ID_PREFIX)?;
+    vet_pack_slot(
+        vault,
+        saved_query_type_byte,
+        crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX,
+    )?;
     Ok(CrmPackRegistration {
-        campaign: register_campaign_kind(vault, campaign_type_byte)?,
-        saved_query: crate::saved_query::register_saved_query_kind(vault, saved_query_type_byte)?,
+        campaign: register_pack_slot(
+            vault,
+            campaign_type_byte,
+            CAMPAIGN_SHORT_ID_PREFIX,
+            |byte| register_campaign_kind(vault, byte),
+        )?,
+        saved_query: register_pack_slot(
+            vault,
+            saved_query_type_byte,
+            crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX,
+            |byte| crate::saved_query::register_saved_query_kind(vault, byte),
+        )?,
     })
+}
+
+/// Rejects a slot that cannot possibly register, BEFORE any slot is written.
+///
+/// Deliberately narrow: it checks the band this pack is confined to and a byte
+/// already held by something that is not this slot. Every other rejection stays
+/// where it belongs — inside the registrar.
+fn vet_pack_slot(vault: &Vault, type_byte: u8, prefix: &str) -> Result<()> {
+    if !(TYPE_BYTE_BAND_CRM_START..=TYPE_BYTE_BAND_CRM_END).contains(&type_byte) {
+        return Err(Error::StructuralKindBandViolation {
+            type_byte,
+            declared_band: TypeByteBand::Crm,
+            actual_band: crate::registry::band_of(type_byte),
+            reason: "type byte is outside the declared band",
+        });
+    }
+    match vault.structural_kind_registration(type_byte) {
+        Some(existing) if !slot_matches(&existing, type_byte, prefix) => {
+            Err(Error::StructuralKindTypeByteCollision(type_byte))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Registers a slot, or returns the identical registration already present.
+fn register_pack_slot(
+    vault: &Vault,
+    type_byte: u8,
+    prefix: &str,
+    register: impl FnOnce(u8) -> Result<StructuralKindRegistration>,
+) -> Result<StructuralKindRegistration> {
+    match vault.structural_kind_registration(type_byte) {
+        Some(existing) if slot_matches(&existing, type_byte, prefix) => Ok(existing),
+        _ => register(type_byte),
+    }
+}
+
+fn slot_matches(existing: &StructuralKindRegistration, type_byte: u8, prefix: &str) -> bool {
+    existing.type_byte == type_byte
+        && existing.short_id_prefix == prefix
+        && existing.band == TypeByteBand::Crm
+        && existing.pack == CRM_PACK_ID
 }
 
 #[cfg(test)]

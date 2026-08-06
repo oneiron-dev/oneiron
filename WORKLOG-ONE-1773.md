@@ -286,3 +286,235 @@ this lane) — same class as the batch flake above, charged to no lane.
   `owner_grants` from its actor-bound facade.
 - **OF-241** is not a dependency. `EvidenceDependencies` is the subscription-wiring
   surface when it lands; no live-sub runtime or registry was minted.
+
+## VERDICT-FIX round (finder + verdict legs, 11 REAL findings)
+
+Adjudicated verdict: `FIX-REQUIRED` — 4 REAL P1 + 7 REAL P2 + one half-real P3.
+Every fix below is mutation-verified: the fix was reverted, the named test was
+run, and it went RED; the revert was then undone. 18 mutations, 18 caught.
+
+### P1-1 `effective-scope-not-applied-to-candidate` (saved_query.rs)
+
+The scope intersection failed closed only in the degenerate EMPTY-intersection
+case; nothing ever asked whether the CANDIDATE was inside the effective scope.
+A world-A query matched a world-B person, or an unscoped one.
+
+The blueprint was genuinely underdefined on the mechanism (its named oracle
+enshrined the weak reading), so the fix PINS it:
+
+- `QueryScope::admits(&membership)` — a restricted axis demands a witness ON
+  that axis. An entity with no world membership is OUTSIDE a world-scoped
+  query, not universally inside it.
+- `SavedQueryEvaluator::scope_membership` reads the entity's own `in_world` /
+  `has_facet` edges, narrowed to the effective scope. A facet is spelled as its
+  FACET entity's canonical hex — the spelling `gate.rs` already uses for a facet
+  ref in a scoped-read grant.
+- `RelevantEvidence.scope_membership` is a new EVIDENCE field, hashed. Moving
+  between worlds therefore moves the evidence hash and invalidates the memo;
+  nothing else carried that movement.
+- Claim evidence is admitted by world too (`claim_in_scope`): a claim scoped to
+  an unreachable world is not evidence this query may read. A world-less claim
+  is base reality and reads everywhere — `gate.rs`'s
+  `scoped_read_world_matches_claim` rule, mirrored rather than re-invented.
+
+The stage-0 gate runs after the memo lookup and before stage 1, so an
+out-of-scope candidate never spends a judge call.
+
+Tests: `declared_scope_is_applied_to_the_candidate_entity`,
+`out_of_scope_claim_evidence_does_not_satisfy_the_filter` (oracle);
+`scope_admits_only_entities_holding_the_restricted_axis`,
+`claim_world_scope_admission_mirrors_the_gate_rule` (unit). The oracle's
+`owner_actor_is_the_only_evaluation_principal` now places its person in the
+declared world — the weak reading it used to enshrine is gone.
+
+### P1-2 `saved-query-authority-stored-in-unsynced-vault-meta` (saved_query.rs)
+
+The module header's rationale was FALSE on this base: `Store::validate_entity_type`
+accepts runtime registrations, and `registered_structural_kind_unblocks_writes_and_short_ids`
+(src/tests.rs) proves a dynamic kind is writable with short ids. `vault_meta`
+never replicates, so the whole authority of a saved query was node-local.
+
+Split by AUTHORITY, not convenience:
+
+- **The definition is a real entity** of the registered SAVED_QUERY kind,
+  written through the batch put chokepoint (`store_record_in_txn` →
+  `apply_ops`/`BatchOp::Put`) and read back with a header type check. The byte
+  is resolved per-vault from the structural-kind registry
+  (`saved_query_type_byte`) — still no constant anywhere. A vault with no CRM
+  pack now errors instead of silently sidecar-ing.
+- **The epoch watermark is replica-convergent.** `current_watermark` takes the
+  max of the local `vault_meta` row and `replicated_epoch_floor` — the highest
+  epoch any replicated `campaign.member` claim carries for this
+  `(query, entity)` pair, across every lifecycle. A promoted home node
+  continues the sequence instead of restarting at 1. A watermark recovered from
+  the claim chain carries no content digest, so a same-epoch replay it cannot
+  PROVE it applied is `RejectedStaleEpoch`, never `AlreadyApplied`.
+- Memos, event rows, repair receipts, and migration maps stay node-local, and
+  the header now says so honestly: a memo is a derivation cache, event rows are
+  a local audit projection of transitions whose authoritative record is the
+  replicated claim chain.
+
+The "engine gap" note in the previous section was wrong and is superseded by
+this entry.
+
+Tests: `saved_query_crud_round_trips_and_archives_without_delete` (asserts the
+record's entity type is the registered byte),
+`membership_epoch_floor_survives_a_promoted_node_with_no_local_watermark`.
+
+### P1-3 `membership-transitions-leave-competing-active-heads` (saved_query.rs)
+
+`commit_membership_plan` minted a fresh claim per transition and never closed
+the prior head, so `Entered(1) → Exited(2) → Entered(3)` left three Active
+`campaign.member` claims with mutually incompatible states, all of them visible
+to `claims_for_subject` as current truth.
+
+The commit now reads the live heads for this `(query, campaign, entity)`
+BEFORE writing the replacement (so the replacement is never its own
+competition) and supersedes each one in the same transaction — the CA-01
+`supersede_crm_stage_in_txn` pattern the blueprint names as the mirror. A
+rejected supersession rolls the replacement back with it. Event history is
+untouched: closing a claim head is not erasing a transition.
+
+Test: `membership_transitions_leave_exactly_one_live_head`.
+
+### P1-4 `non-effective-claims-count-as-live-evidence` (saved_query.rs)
+
+`live_claim_body` accepted any `lifecycle == Active` claim — an unapproved
+`Proposed` claim, a `stale` derived claim, or a claim outside its valid-time
+window all entered the evidence and could satisfy the filter. The harm chain
+ends at consent-gated outbound.
+
+`effective_claim_body` now applies `claim_effective_at` = `claim_surfaceable`
+(the engine's canonical read-admission predicate: `Auto|Approved` ∧ `Active` ∧
+`!stale`) plus the `comm.rs` valid-time window, and `EvaluationRequest.valid_at`
+is threaded into evidence collection.
+
+Tests: `only_effective_claims_satisfy_the_stage_one_filter` (oracle, four
+arms), `only_effective_claims_count_as_evidence` (unit).
+
+### P2-5 `definition-version-cas-is-not-atomic` (saved_query.rs)
+
+`update`/`archive` compared `expected_definition_version` in a read txn and
+then opened a separate write txn. LMDB's single-writer rule serializes the
+WRITES, not a compare performed outside them, so two writers both reading v1
+both stored "v2" and the first update vanished silently.
+
+Both doors now run load → compare → validate → store inside ONE
+`with_write_txn` (`owned_record_in_txn` / `store_record_in_txn`). The module
+already did this correctly for the epoch watermark; the pattern was available.
+
+Test: `concurrent_updates_cannot_both_win_the_version_cas` — two threads, both
+believing v1, exactly one winner and the loser gets `ConcurrentWrite`.
+
+### P2-6 `pack-repair-bypasses-definition-write-door` (saved_query.rs)
+
+`apply_pack_migration` built its replacement from the CALLER's snapshot, forced
+lifecycle `Active`, and never validated. Three defects, one chokepoint:
+
+- The replacement is built from the STORED record, and a `definition_version`
+  that moved since the repair was planned returns `ConcurrentWrite` instead of
+  reverting the owner's update.
+- An `Archived` query is not reopened — repair returns `InvalidConfig`.
+- The migrated definition goes through `validate_definition`; a rewrite target
+  like `""` or `"top_k"` PAUSES the query (the ladder's own "no viable rewrite"
+  rung) rather than being persisted as an active definition nobody authored.
+
+Test: `pack_repair_respects_the_definition_write_door` (all three arms).
+
+### P2-7 `pack-drift-result-depends-on-predicate-order` (saved_query.rs)
+
+`repair_pack_drift` returned on the FIRST semantics-changing or unmapped
+predicate, so `[SemanticsChanging, unmapped]` returned `ProposalRequired` and
+left a broken query Active while the reverse order returned `Paused`. The whole
+affected set is now classified before a rung is chosen, and the rungs are
+applied worst-case-first — the contract the docstring already claimed.
+
+Test: `pack_drift_rung_does_not_depend_on_predicate_order` (both orders).
+
+### P2-8 `semantic-verdict-hash-uses-different-snapshots` (saved_query.rs)
+
+`semantic_fingerprints` read the vectors, then `semantic_decision` re-read both
+through `Vault::get_vector` — each its own read transaction. A write landing
+between them stored a verdict derived from new vectors under the old vectors'
+hash, and a later revert produced a false memo hit.
+
+`collect_evidence` now returns `CollectedEvidence`, carrying the vectors the
+fingerprints were taken from. `semantic_decision` is a free function that takes
+NO vault, so a re-read cannot creep back in — the signature is the enforcement.
+
+Tests: `semantic_matcher_scores_the_fingerprinted_snapshot` (oracle),
+`semantic_decision_scores_the_fingerprinted_vectors` (unit).
+
+### P2-9 `relevant-evidence-projection-is-lossy` (saved_query.rs)
+
+Both halves:
+
+- `evidence_to_json` inserted `Vec<(String, Value)>` into a predicate-keyed
+  object, so two live values for one predicate showed the judge only the last
+  while the hash covered both. Claims are now PAIRS, like edges.
+- `rmpv_to_json` mapped `Binary` to an untagged hex string, so `Binary([0x61])`
+  and the literal `"61"` produced identical JSON. `Binary` and `Ext` now carry
+  `$`-tagged wrappers, a real map key starting with `$` is escaped by doubling,
+  a non-UTF-8 MessagePack string is tagged as bytes instead of collapsing to
+  null, and a map with non-string keys becomes `{"$map": [[k, v], …]}` instead
+  of having those entries silently dropped. The projection is injective, which
+  is what the memo key needs it to be.
+
+Tests: `judge_evidence_preserves_every_live_claim_value`,
+`rmpv_projection_is_injective_across_types` (unit).
+
+### P2-10 `zero-wake-bounds-are-not-enforced` (saved_query.rs)
+
+`validate_definition` now rejects a zero `max_entities_per_wake` or
+`max_judges_per_wake`: a zero-judge wake still spent the first judge before the
+post-increment check stopped it, and a zero-entity wake reported
+`evaluated = 0` with `resume_after = None` — documented to mean "exhausted".
+Separately, `resume_after` now tracks the last entity actually VISITED instead
+of `index.wrapping_sub(1)`, which reported `None` at index 0.
+
+Tests: `zero_wake_bounds_never_reach_a_stored_definition` (oracle),
+`zero_wake_bounds_are_rejected_at_the_write_door` (unit).
+
+### P2-11 `crm-pack-registration-can-commit-half-a-pack` (campaign.rs)
+
+`register_structural_kind` commits per call and is non-idempotent, so a bad
+SAVED_QUERY byte left CAMPAIGN durable and made whole-pack retry fail on the
+campaign collision — the docstring's "cannot install half a pack" contradicted
+its own next sentence. Since the registrar cannot be composed into one
+transaction from here, two properties make the guarantee real:
+
+- **Both slots are vetted before either is written** (`vet_pack_slot`: CRM band
+  + byte already held by something that is not this slot; two equal bytes are a
+  collision). The ordinary misconfiguration never half-installs anything.
+- **The call is resumable** (`register_pack_slot`): a slot already registered to
+  exactly this pack's kind is reused, so re-running the one entry point after
+  any partial failure converges instead of colliding with itself.
+
+Test: `crm_pack_registration_never_leaves_half_a_pack`.
+
+### P3-12 `packet-claims-violation` — PACKET_AMEND, folded
+
+`WORKLOG-ONE-1773.md` was REJECTED as a violation (wave convention — main
+carries `WORKLOG-ONE-*.md` from every merged lane). The real half was
+`crates/oneiron/src/saved_query/tests.rs`, an unclaimed new source file. The
+blueprint permits private tests "under `#[cfg(test)]` in `saved_query.rs`", so
+the module was folded inline and the file deleted — no amendment needed, no
+work burned. `git diff --name-only origin/main...HEAD` is now exactly the four
+manifest paths plus the worklog.
+
+### Gates
+
+`cargo fmt -p oneiron --check` clean · `cargo clippy -p oneiron --all-features
+--all-targets` zero warnings · `cargo test -p oneiron --all-features` green
+(22 saved_query unit + 29 oracle + full suite). No `Cargo.toml` / `Cargo.lock`
+change; `campaign/claims.rs`, `registry.rs`, `store.rs`, `vault.rs`, `claim.rs`
+and `gate.rs` remain untouched non-claims.
+
+Base-red note: the lib suite on this branch base flakes ONE test per full
+parallel run under `-j 6 --test-threads` default — observed
+`batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once`
+(clock-second boundary) with this lane's changes and
+`embed::tests::partial_remote_completion_is_logged_when_local_batch_fails`
+on the pre-fix tree with the changes stashed. Both pass in isolation, both live
+in files this lane never touches, and the suite is green at
+`--test-threads=6`. Charged to no lane.
