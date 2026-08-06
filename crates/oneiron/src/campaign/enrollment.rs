@@ -759,10 +759,17 @@ pub fn decode_enrollment_attempt_payload(bytes: &[u8]) -> Result<CampaignEnrollm
     })
 }
 
-/// Advisory queue-hygiene key over the persisted `(query, entity, epoch)`.
+/// Advisory queue-hygiene key over the persisted transition.
 ///
 /// It coalesces duplicate enqueues and nothing more. Every correctness property
 /// this module claims survives this key being wrong, absent, or hostile.
+///
+/// It covers the whole transition rather than just `(query, entity, epoch)`
+/// because the epoch only advances when a COMMIT spends it: every transition
+/// detected before the first one lands shares an epoch. Keying on that alone
+/// made the coalescer answer "same work" for genuinely different pending
+/// transitions, so the newest one would inherit the oldest one's queue row and
+/// then never execute — an advisory key silently deciding what gets enrolled.
 ///
 /// # Errors
 ///
@@ -778,6 +785,11 @@ pub fn enrollment_dedupe_key(
     hasher.update(event.query_ref.as_bytes());
     hasher.update(event.entity_ref.as_bytes());
     hasher.update(event.epoch.to_be_bytes());
+    hasher.update(event.transition.as_str().as_bytes());
+    hasher.update([0u8]);
+    hasher.update(event.cause.as_str().as_bytes());
+    hasher.update([0u8]);
+    hasher.update(event.evidence_hash);
     Ok(bytes_to_hex_lower(&hasher.finalize()))
 }
 

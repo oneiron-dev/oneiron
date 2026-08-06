@@ -839,7 +839,7 @@ fn advisory_dedupe_is_not_correctness() -> Result<()> {
     assert_eq!(
         enrollment_dedupe_key(&vault, &fixture.payload(first.event_ref))?,
         enrollment_dedupe_key(&vault, &fixture.payload(second.event_ref))?,
-        "the advisory key is a function of (query, entity, epoch)"
+        "two rows describing the identical transition are the same work"
     );
 
     // Bypass the coalescer entirely.
@@ -869,6 +869,45 @@ fn advisory_dedupe_is_not_correctness() -> Result<()> {
         live_member_heads(&vault, fixture.person, fixture.query.query_ref),
         vec![("enrolled".to_owned(), 1, vec![CHANNEL.to_owned()])]
     );
+    Ok(())
+}
+
+/// Two DIFFERENT pending transitions share an epoch, because the epoch only
+/// moves when a commit spends it. The advisory key must still tell them apart:
+/// coalescing them would drop the newer, truer transition and leave the older
+/// one to execute as stale — which is dedupe deciding what gets enrolled, the
+/// one job it must never have.
+#[test]
+fn distinct_pending_transitions_do_not_share_a_dedupe_key() -> Result<()> {
+    let (_dir, vault) = oracle_vault();
+    let fixture = install_fixture(&vault);
+    let first_world = test_id(0x3E);
+    let second_world = test_id(0x3F);
+    let grants = QueryScope {
+        worlds: vec![first_world, second_world],
+        facets: Vec::new(),
+    };
+    place_in_world(&vault, fixture.person, first_world);
+    let first = detect(&vault, &fixture, &grants, 100);
+
+    // The entity's own reach moves. It still matches, on different evidence,
+    // and nothing has committed yet — so both transitions are pending at once.
+    place_in_world(&vault, fixture.person, second_world);
+    let second = detect(&vault, &fixture, &grants, 101);
+
+    assert_eq!(first.epoch, second.epoch, "no commit has spent the epoch");
+    assert_eq!(first.cause, second.cause);
+    assert_ne!(first.evidence_hash, second.evidence_hash);
+    assert_ne!(
+        enrollment_dedupe_key(&vault, &fixture.payload(first.event_ref))?,
+        enrollment_dedupe_key(&vault, &fixture.payload(second.event_ref))?,
+        "an unspent epoch is not enough to make two transitions the same work"
+    );
+
+    // Both reach the queue as their own rows through the ordinary door.
+    let one = enqueue(&vault, &fixture.payload(first.event_ref), 102);
+    let two = enqueue(&vault, &fixture.payload(second.event_ref), 103);
+    assert_ne!(one.id, two.id);
     Ok(())
 }
 
