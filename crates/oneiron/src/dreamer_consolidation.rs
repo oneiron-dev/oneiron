@@ -62,6 +62,11 @@ pub const DREAMER_GAP_DECAY_MS: u64 = 14 * 24 * 60 * 60 * 1000;
 /// `DreamerAttemptPayload.attempt_type` string for reflection gap-scan child
 /// attempts (a payload discriminator, not a new queue kind).
 pub const DREAMER_GAP_SCAN_ATTEMPT_TYPE: &str = "dreamer.reflection.gap_scan";
+/// `DreamerAttemptPayload.attempt_type` string for ED-04's recurring-substitution
+/// miner pass (ONE-1760, ARCH-0056 §4) — a payload discriminator beside the
+/// gap scan, not a new queue kind and not a new wake mechanism. The pass rides
+/// the landed SessionEnd wake, whose `input` names the ended sitting.
+pub const DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE: &str = "dreamer.edit_distance.substitution_mine";
 /// Documented OPT-IN turn-body key naming the WORLD entity this turn's
 /// content belongs to (16-byte MessagePack binary; ILD D4 opt-in precedent).
 pub const TURN_BODY_WORLD_REF_KEY: &str = "world_ref";
@@ -2140,6 +2145,18 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         attempt: &crate::dreamer_runner::DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
+        // ED-04 (ONE-1760): the recurring-substitution miner is a
+        // consolidation-scope job like the gap scan — deterministic, no LLM
+        // step, so it spends no units. The payload shape and the pass itself
+        // are the miner's; this arm is the registration.
+        if attempt.status.payload.attempt_type == DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE {
+            let session = crate::edit_distance::miner::session_from_miner_input(
+                &attempt.status.payload.input,
+            )?;
+            crate::edit_distance::miner::run_substitution_miner(ctx.vault, &session)?;
+            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        }
+
         if attempt.status.payload.attempt_type == DREAMER_GAP_SCAN_ATTEMPT_TYPE {
             // Gap-scan child attempt: deterministic detectors + queue upsert.
             let (_, turn_ids, _) = decode_partition_payload(&attempt.status.payload.input)?;
