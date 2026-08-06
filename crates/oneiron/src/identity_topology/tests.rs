@@ -4198,12 +4198,7 @@ fn applied_counts_are_bounded_by_the_map_and_the_consent_axis() {
         1,
         1
     )));
-    assert!(!admits(&record(
-        ClaimApprovalStatus::Auto,
-        residue.clone(),
-        1,
-        1
-    )));
+    assert!(!admits(&record(ClaimApprovalStatus::Auto, residue, 1, 1)));
 
     // A park applied nothing, whatever its map declares.
     assert!(admits(&record(
