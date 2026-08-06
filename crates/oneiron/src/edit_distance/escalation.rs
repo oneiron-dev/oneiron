@@ -67,7 +67,7 @@ use crate::receipt::{
     FIELD_AMENDMENT_DELTA, FIELD_ESCALATION_BAND_CEILING, FIELD_ESCALATION_BUDGET_BAND,
     FIELD_ESCALATION_CITED_RECEIPTS, FIELD_ESCALATION_QUESTION, FIELD_ESCALATION_RATIONALE,
     FIELD_ESCALATION_RULING, FIELD_ESCALATION_SCOPE, FIELD_ESCALATION_TRIGGER, FIELD_TASK_REF,
-    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord,
+    ReceiptKind, ReceiptQuery, ReceiptRecord, retain_newest_receipt,
 };
 use crate::store::Store;
 use crate::vault::Vault;
@@ -428,18 +428,6 @@ fn escalation_key_id(key: &[u8]) -> Result<EntityId> {
         .and_then(|tail| <[u8; ENTITY_ID_LEN]>::try_from(tail).ok())
         .ok_or(Error::CorruptedIndex(ESCALATION_ROW_LABEL))?;
     EntityId::from_bytes(tail).map_err(|_| Error::CorruptedIndex(ESCALATION_ROW_LABEL))
-}
-
-/// Names the first key past a family, so a reverse walk has the explicit
-/// half-open range `OverlayDb` needs (it exposes no reverse prefix iterator).
-/// Both prefixes end in `NUL`, so bumping the final byte is the exclusive
-/// bound.
-fn family_range_end(prefix: &[u8]) -> Vec<u8> {
-    let mut end = prefix.to_vec();
-    if let Some(last) = end.last_mut() {
-        *last = last.saturating_add(1);
-    }
-    end
 }
 
 fn escalation_receipt_id(id: &EntityId) -> String {
@@ -898,10 +886,16 @@ pub fn is_standing_policy_receipt(record: &ReceiptRecord) -> bool {
 /// Registered in `receipt::collect_receipt_records` beside the gate-decision
 /// and ramp projectors, and opens its own read txn as they do.
 ///
-/// Both walks are NEWEST-FIRST under [`MAX_RECEIPT_QUERY_SCAN`]: neither family
-/// drains — the ledger is append-only and a policy row outlives its acceptance
-/// — so an oldest-first cap would permanently hide recent decisions behind the
-/// oldest ones.
+/// Both walks are EXHAUSTIVE, which is forced by the keyspace: these keys are
+/// scope-major, so a bounded PREFIX of key order is not a bounded SUFFIX of
+/// time order. A scan cap here would let one high-sorting scope's history hide
+/// every recent decision made under a lower-sorting one — while
+/// [`escalation_stats`] (which walks one scope's range, uncapped) kept counting
+/// rows the receipt query could no longer return, breaking the
+/// rebuild-from-receipts identity. What is bounded is the RESULT, not the walk:
+/// the newest `query.limit` records, kept by
+/// [`crate::receipt::retain_newest_receipt`] under the same order the query's
+/// final sort uses, exactly as `receipt::gate_receipts` does with its pages.
 ///
 /// # Errors
 ///
@@ -912,46 +906,49 @@ pub(crate) fn escalation_receipts(
 ) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    let ledger_end = family_range_end(ESCALATION_KEY_PREFIX);
     for entry in vault
         .store
         .vault_meta
-        .rev_range(&rtxn, &family_bounds(ESCALATION_KEY_PREFIX, &ledger_end))?
-        .take(MAX_RECEIPT_QUERY_SCAN)
+        .prefix_iter(&rtxn, ESCALATION_KEY_PREFIX)?
     {
         let (key, raw) = entry?;
-        let record = escalation_receipt_record(&escalation_key_id(&key)?, &escalation_row(&raw)?);
-        if query.matches(&record) {
-            out.push(record);
-        }
+        retain_projected(
+            query,
+            &mut out,
+            escalation_receipt_record(&escalation_key_id(&key)?, &escalation_row(&raw)?),
+        );
     }
-    let policy_end = family_range_end(STANDING_POLICY_KEY_PREFIX);
     for entry in vault
         .store
         .vault_meta
-        .rev_range(
-            &rtxn,
-            &family_bounds(STANDING_POLICY_KEY_PREFIX, &policy_end),
-        )?
-        .take(MAX_RECEIPT_QUERY_SCAN)
+        .prefix_iter(&rtxn, STANDING_POLICY_KEY_PREFIX)?
     {
         let (_, raw) = entry?;
         for record in standing_policy_receipt_records(&standing_policy_row(&raw)?) {
-            if query.matches(&record) {
-                out.push(record);
-            }
+            retain_projected(query, &mut out, record);
         }
     }
     Ok(out)
 }
 
-type FamilyBounds<'a> = (std::ops::Bound<&'a [u8]>, std::ops::Bound<&'a [u8]>);
-
-const fn family_bounds<'a>(prefix: &'a [u8], end: &'a [u8]) -> FamilyBounds<'a> {
-    (
-        std::ops::Bound::Included(prefix),
-        std::ops::Bound::Excluded(end),
-    )
+/// Keeps one projected record if the query wants it, newest-first bounded.
+///
+/// One buffer serves both families: the caller's answer is the newest `limit`
+/// receipts across every projector, so the newest `limit` across both of these
+/// is exactly what cannot be dropped without changing it.
+///
+/// A `job_ref` query stays exhaustive, as `receipt::gate_receipts` does and for
+/// its reason: that join runs after collection, so a record dropped here could
+/// not be found again.
+fn retain_projected(query: &ReceiptQuery, out: &mut Vec<ReceiptRecord>, record: ReceiptRecord) {
+    if !query.matches(&record) {
+        return;
+    }
+    if query.job_ref.is_some() {
+        out.push(record);
+    } else {
+        retain_newest_receipt(out, record, query.limit);
+    }
 }
 
 fn escalation_receipt_record(id: &EntityId, row: &StoredEscalation) -> ReceiptRecord {

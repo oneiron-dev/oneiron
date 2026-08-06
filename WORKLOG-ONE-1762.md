@@ -121,9 +121,9 @@ specified item:
   two answers, not a pattern.
 - **`escalation_stats` scans a scope's whole range uncapped** — counts are not
   derivable from a prefix, and the range walked is one scope's rows, not the
-  family's. The receipt PROJECTORS are capped at `MAX_RECEIPT_QUERY_SCAN` and
-  walk newest-first, for ED-05's reason: neither family drains, so an
-  oldest-first cap would permanently hide recent decisions.
+  family's. The receipt PROJECTORS were originally capped at
+  `MAX_RECEIPT_QUERY_SCAN` too; **that cap was the F1 defect and is gone** — see
+  VERDICT-FIX below.
 - **`needs_input` / OF-390 untouched** — ED-06 stores what came back; no
   ask-routing was built.
 - **ES-07 (ONE-1720) has NOT landed**: `effect_spine_oracle.rs`'s
@@ -153,6 +153,75 @@ fixtures, or public API touched.
 Gates after the pass: `cargo fmt --check` clean · `clippy -p oneiron
 --all-features --all-targets -D warnings` clean · `cargo test -p oneiron
 --all-features --lib` 3717 passed / 0 failed.
+
+## VERDICT-FIX (finder + verdict legs, post-simplify)
+
+Three findings returned; the verdict adjudicated **one REAL** and rejected two
+with derivations (F2 `strike-keying` → declared deviation D3, GATE-2 board;
+F3 `packet-contract` → declared deviations D1+D2, PACKET_AMEND). Rejected items
+are not relitigated here. One code fix:
+
+**F1 (P2, `receipt-pagination`, `escalation.rs`) — CONFIRMED REAL. Fixed at the
+chokepoint.**
+
+The defect: `escalation_receipts` walked each family with `rev_range(..)` and a
+**terminal** `.take(MAX_RECEIPT_QUERY_SCAN)`. Escalation keys are scope-major
+(`prefix ‖ scope_digest(16) ‖ row_id(16)`), not time-major, so a bounded PREFIX
+of key order is not a bounded SUFFIX of time order. Past 100k family rows a
+scope whose digest sorts high spent the entire budget, and every ruling recorded
+under a lower-sorting scope became unprojectable — while `escalation_stats`,
+which walks ONE scope's range uncapped, went on counting it. That divergence is
+the blueprint's rebuild-from-receipts identity (CID-7) coming apart, and the
+module doc's "Both walks are NEWEST-FIRST" claim was false at family level. The
+`attempt_pack_receipts` precedent the doc leaned on holds only because those
+keys ARE time-major; ED-05's `answer_receipts_in_txn` (the same class, ratified
+this wave as 1761-F4) at least warns on cap-fire — this projector was silent.
+
+The fix takes the conforming pattern from the CENTRAL Gate projector in the same
+family, `receipt::gate_receipts`: **the walk is exhaustive, the RESULT is
+bounded.** Both families are now walked with `prefix_iter` (forward, whole
+family), and each matching record goes through one `retain_projected` helper
+that keeps the newest `query.limit` records via
+`receipt::retain_newest_receipt`. Consequences:
+
+- No terminal cap survives, so no cap-fired warn is owed — there is no prefix to
+  announce. Key order no longer decides which receipts exist.
+- Retention uses `receipt::receipt_newest_first_order`, the SAME total order
+  `finalize_receipt_query_records` finally sorts by. That identity is what makes
+  a bounded projector buffer lossless: a record this buffer drops could not have
+  survived the public sort either. A second spelling of "newest-first" local to
+  this module would have been two things that can disagree.
+- ONE buffer serves both families (the caller's answer is the newest `limit`
+  across all projectors, so the newest `limit` across both of these is exactly
+  what cannot be dropped without changing it).
+- A `job_ref` query stays exhaustive, as `gate_receipts` does and for its
+  reason: that lineage join runs after collection, so a record dropped here
+  could not be found again.
+- Deleted: `family_range_end`, `family_bounds`, `FamilyBounds` (the reverse-range
+  scaffolding the cap needed) and the `MAX_RECEIPT_QUERY_SCAN` import.
+  Net −3 lines in `escalation.rs`.
+
+**D2b — two visibility lifts in `receipt.rs` (extends the D2 PACKET_AMEND).**
+`retain_newest_receipt` and `receipt_newest_first_order` go private → `pub(crate)`
+(no signature, body, or behavior change; `retain_newest_receipt` gains a doc
+comment). This is the smallest way to reuse the ordering chokepoint instead of
+minting a rival definition, and it is the shape CLAIMS.md already blesses for
+this lane's shared files (cf. the ED-01 `llm.rs canonical_json_bytes` one-word
+lift). Declared, not absorbed — it rides the same PACKET_AMEND as D2.
+
+**Mutation-verified** (revert the projector body to its pre-fix form, re-run):
+
+| test | red-before | green-after |
+|---|---|---|
+| `a_cap_sized_scope_cannot_hide_a_newer_ruling_under_a_lower_one` | FAILED — *"a cap-sized scope must not make a newer ruling under another scope unprojectable"* (the F1 assert itself, not the bound) | ok |
+| `a_bounded_result_keeps_the_newest_across_both_families` | FAILED — `left: 6, right: 2` (unbounded push) | ok |
+
+The first plants exactly `MAX_RECEIPT_QUERY_SCAN` ancient rows under the
+higher-sorting of two digest-ordered scopes, records ONE newer ruling under the
+lower-sorting one, and asserts the fold and the projection still agree. It
+queries with `limit = 2` on purpose: what is under test is that the WALK is
+exhaustive, not that the buffer is roomy. The second pins the retention contract
+the cap was replaced with, across both families in one shared buffer.
 
 ## Gates
 

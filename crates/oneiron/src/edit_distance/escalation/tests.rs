@@ -786,3 +786,139 @@ fn the_two_receipt_families_never_answer_for_each_other() {
         "escalation receipts join the Gate family rather than replacing it"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The family walk
+// ---------------------------------------------------------------------------
+
+/// Two fixture scopes in KEY order — the axis the projector walk runs along.
+/// Which literal sorts first is a blake3 digest's business, so the fixture asks
+/// instead of asserting.
+fn scopes_in_key_order() -> (&'static str, &'static str) {
+    const ONE: &str = "escalation/walk_a";
+    const TWO: &str = "escalation/walk_b";
+    if scope_key(ONE) < scope_key(TWO) {
+        (ONE, TWO)
+    } else {
+        (TWO, ONE)
+    }
+}
+
+#[test]
+fn a_cap_sized_scope_cannot_hide_a_newer_ruling_under_a_lower_one() {
+    // Ledger keys are scope-major, so a bounded prefix of KEY order is not a
+    // bounded suffix of TIME order: one scope holding a scan cap's worth of
+    // ancient rows used to spend the whole budget, and every ruling under a
+    // lower-sorting scope became unprojectable — while `escalation_stats`,
+    // which walks one scope's range uncapped, went on counting it. That gap is
+    // the rebuild-from-receipts identity (CID-7) coming apart.
+    let mut config = crate::test_util::embedding_test_config();
+    // A cap-sized ledger outgrows the default test map.
+    config.map_size = 512 * 1024 * 1024;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let (low_scope, high_scope) = scopes_in_key_order();
+
+    let filler = StoredEscalation {
+        v: ROW_VERSION,
+        task_ref: crate::test_util::entity(0x31).to_hex(),
+        scope: high_scope.to_owned(),
+        trigger: EscalationTrigger::Unsure.as_str().to_owned(),
+        question: "q".to_owned(),
+        ruling: EscalationRuling::Approve.as_str().to_owned(),
+        delta: None,
+        rationale: "r".to_owned(),
+        budget_band: None,
+        at: 1,
+    };
+    let data = encode_row(&filler, ESCALATION_ROW_LABEL).expect("encode");
+    let filler_id = |index: u32| {
+        let mut bytes = [0_u8; ENTITY_ID_LEN];
+        // The index leads the id, so key order inside the scope is write order.
+        bytes[..4].copy_from_slice(&index.to_be_bytes());
+        bytes[4] = 1;
+        EntityId::from_bytes(bytes).expect("16 bytes is a well-formed entity id")
+    };
+    let cap = u32::try_from(crate::receipt::MAX_RECEIPT_QUERY_SCAN).expect("the cap fits in u32");
+    vault
+        .with_write_txn(|wtxn| {
+            for index in 0..cap {
+                vault.store.vault_meta.put(
+                    wtxn,
+                    &escalation_key(high_scope, &filler_id(index)),
+                    &data,
+                )?;
+            }
+            Ok(())
+        })
+        .expect("plant a cap-sized scope");
+
+    // The newest ruling in the vault, under the scope the digest put first.
+    let recent = record_escalation_at(
+        &vault,
+        EscalationReceipt {
+            scope: low_scope.to_owned(),
+            ..ask(EscalationTrigger::Unsure, EscalationRuling::Deny)
+        },
+        9_000,
+    )
+    .expect("record escalation");
+
+    assert_eq!(
+        escalation_stats(&vault, low_scope, EscalationTrigger::Unsure)
+            .expect("stats")
+            .deny,
+        1,
+        "the fold counts the recent ruling"
+    );
+    // A tight result bound on purpose: what is under test is that the WALK is
+    // exhaustive, not that the buffer is roomy.
+    let projected = escalation_receipts(&vault, &ReceiptQuery::new(2)).expect("receipts");
+    assert!(
+        projected
+            .iter()
+            .any(|record| record.receipt_id == escalation_receipt_id(&recent)),
+        "a cap-sized scope must not make a newer ruling under another scope unprojectable"
+    );
+    assert_eq!(projected.len(), 2, "the result is bounded by the query");
+}
+
+#[test]
+fn a_bounded_result_keeps_the_newest_across_both_families() {
+    let (_dir, vault) = open_vault();
+    let ids = record_run(
+        &vault,
+        EscalationTrigger::Unsure,
+        &EscalationRuling::Approve,
+        5,
+        1_000,
+    );
+    maybe_propose_standing_policy_at(&vault, SCOPE, EscalationTrigger::Unsure, 5_000)
+        .expect("propose")
+        .expect("stable pattern");
+
+    // One buffer serves both walks, so the newest two receipts in the vault win
+    // regardless of which family they came from or which walk found them: the
+    // proposal is projected SECOND and still displaces an older ruling.
+    let projected: Vec<String> = escalation_receipts(&vault, &ReceiptQuery::new(2))
+        .expect("receipts")
+        .into_iter()
+        .map(|record| record.receipt_id)
+        .collect();
+    assert_eq!(projected.len(), 2);
+    assert!(
+        projected
+            .iter()
+            .any(|id| id.starts_with(STANDING_POLICY_RECEIPT_PREFIX)),
+        "the newest receipt in the vault is the proposal"
+    );
+    assert!(
+        projected.contains(&escalation_receipt_id(&ids[4])),
+        "and the newest ruling beside it"
+    );
+    assert!(
+        ids[..4]
+            .iter()
+            .all(|id| !projected.contains(&escalation_receipt_id(id))),
+        "the older rulings are the ones the bound drops"
+    );
+}

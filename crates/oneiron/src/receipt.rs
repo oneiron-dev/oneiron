@@ -2045,7 +2045,10 @@ fn sort_receipts_newest_first(records: &mut [ReceiptRecord]) {
     records.sort_by(receipt_newest_first_order);
 }
 
-fn receipt_newest_first_order(left: &ReceiptRecord, right: &ReceiptRecord) -> std::cmp::Ordering {
+pub(crate) fn receipt_newest_first_order(
+    left: &ReceiptRecord,
+    right: &ReceiptRecord,
+) -> std::cmp::Ordering {
     right
         .occurred_at
         .cmp(&left.occurred_at)
@@ -2053,7 +2056,15 @@ fn receipt_newest_first_order(left: &ReceiptRecord, right: &ReceiptRecord) -> st
         .then_with(|| left.receipt_id.cmp(&right.receipt_id))
 }
 
-fn retain_newest_receipt(receipts: &mut Vec<ReceiptRecord>, receipt: ReceiptRecord, limit: usize) {
+/// Keeps at most `limit` records, evicting the oldest under
+/// [`receipt_newest_first_order`] — the SAME order
+/// [`finalize_receipt_query_records`] finally sorts by, which is what makes a
+/// bounded projector buffer lossless with respect to the public answer.
+pub(crate) fn retain_newest_receipt(
+    receipts: &mut Vec<ReceiptRecord>,
+    receipt: ReceiptRecord,
+    limit: usize,
+) {
     if receipts.len() < limit {
         receipts.push(receipt);
         return;
