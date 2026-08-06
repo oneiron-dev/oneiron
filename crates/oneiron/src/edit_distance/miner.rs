@@ -24,10 +24,16 @@
 //! `dreamer_consolidation`'s executor dispatches
 //! [`DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE`](crate::dreamer_consolidation::DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE)
 //! exactly as it dispatches the reflection gap scan: a payload discriminator on
-//! the existing queue, never a second wake mechanism. Session close therefore
-//! never blocks on this pass, and a pass that dies is re-admitted by the
-//! attempt queue, whose claim mechanics also give the single-flight the
-//! watermark assumes.
+//! the existing queue, never a second wake mechanism.
+//!
+//! The registration is
+//! [`register_substitution_mine_in_txn`](crate::dreamer_consolidation), inside
+//! `Vault::end_session_with_wake`'s own close transaction and dedupe-keyed on
+//! the sitting — so the pass is a durable fact of the close rather than
+//! something the closing process meant to do, session close never blocks on it,
+//! and a pass that dies is simply re-admitted by the queue. Concurrency is not
+//! assumed away: the emission's dedup check runs INSIDE its write transaction,
+//! so two passes running at once still mint one proposal per cluster.
 //!
 //! # Two ledgers, one law
 //!

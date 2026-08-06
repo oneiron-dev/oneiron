@@ -174,3 +174,96 @@ public API, tests: untouched.
 Gates re-run: `cargo fmt -p oneiron --check` clean · `cargo clippy -p oneiron --all-features
 --all-targets` clean · `cargo nextest run -p oneiron --all-features edit_distance::miner` 28/28 ·
 full `cargo nextest run -p oneiron --all-features` green.
+
+## VERDICT-FIX (Opus, tip after simplify)
+
+Five verdict-verified findings, each fixed at its chokepoint and mutation-verified (the named test
+goes RED when the fix alone is reverted, GREEN with it).
+
+### P1 · `session-end-miner-attempt-never-enqueued`
+
+The executor arm was a dispatcher with nothing to dispatch: no production caller ever created a
+`dreamer.edit_distance.substitution_mine` attempt, so the pass ran only when a human called
+`run_substitution_miner`. Fixed at the inlet, not the arm — new
+`dreamer_consolidation::register_substitution_mine_in_txn` enqueues the attempt on the Meso
+consolidation queue INSIDE `end_session_with_wake`'s close transaction, dedupe-keyed on the sitting,
+beside the ONE-1739 distill registration and for the same reason ((f) in that door's contract).
+
+Two shape consequences fell out of the inlet, and both are corrections rather than costs:
+
+* **The payload shrank to the sitting.** `miner_attempt_input` took a whole `MinerRun` — a write
+  actor and a run id the session-close transaction has no business knowing. The executor now supplies
+  the actor from `ConsolidationExecutor::actor` (the deployment's claim-authoring policy, exactly
+  where the milestone-envelope rule puts it) and the group key from the attempt's own `run_id`.
+  `miner_run_from_input` → `miner_session_from_input`; `MinerRun` itself is unchanged.
+* **A per-sitting fallback group key** (`miner_run_id`): the session-end enqueue carries no run id,
+  the same way the partition attempts it sits beside do not, and a Proposed claim with no inbox group
+  is a claim nobody can answer.
+
+Test: `ending_a_session_registers_the_miner_pass_on_the_meso_queue`.
+
+### P1 · `partial-pass-watermark-permanently-skips-clusters`
+
+Both emit paths committed the PASS-WIDE watermark inside their per-cluster transaction, so the first
+cluster's commit spoke for clusters the pass had not reached. A pass dying between two eligible
+clusters stranded the second one behind a bound it never earned. The watermark now advances ONCE,
+after the loop; the mint-marks (which are per-cluster and already in the emission transaction) are
+what make the replay emit once. Blueprint's "same txn" guarantee is intact where it lives — the
+dedup half — and is now stronger, not weaker.
+
+Test: `a_pass_that_dies_between_clusters_leaves_the_unreached_one_minable` (two eligible clusters,
+the second one's skill deleted between the corrections and the pass).
+
+### P2 · `mint-mark-dedup-check-outside-write-transaction`
+
+`cluster_is_eligible` opened its own read transaction before either emission opened its write one, so
+two callers could both read "eligible" and both commit. It now takes the caller's transaction and is
+called INSIDE the emission's write transaction (as are `preference_is_stale`, the new
+`skill_edit_is_stale`, and the skill-existence check `emit_skill_edit` used to do outside). Both emit
+functions return `Option<EntityId>` and decline in-transaction.
+
+Test: `the_dedup_check_sees_the_mark_written_in_its_own_transaction`.
+
+### P2 · `second-granularity-watermark-strands-new-evidence`
+
+Judgment stamps are second-granular, and a strict `at > watermark` gate could not see a receipt
+landing in the boundary second — the comment's "can never drop one" was wrong in the terminal case
+where no later judgment ever arrives. The watermark is now `MinerWatermark { at, boundary }`, where
+`boundary` counts the judgments stamped exactly `at`; work exists iff the stamp advanced OR the
+boundary second gained a member. Exact in both directions, and the short-circuit survives (a `>=`
+gate would have made the watermark dead weight). `miner_watermark` returns the struct; the
+`watermark == 0` special case is gone, since an empty gate is `(0, 0)` and any judgment beats it.
+
+Test: `a_receipt_landing_in_the_boundary_second_is_still_new_evidence`.
+
+### P2 · `skill-edit-hysteresis-seam` (item 2's surviving half)
+
+Banked per the verdict: no gate envelope on the proposal row — ONE-1737's ratified "minting is not
+applying" posture, and this lane defines the seam ONE-1448 consumes. What was real is that
+eligibility-by-row-existence cannot express a cooldown: retaining a rejected row silences the cluster
+forever, deleting it re-opens instantly, and neither is the ratified dial-not-wall. The proposal row
+now carries a `decision: Option<MinedSkillEditDecision>` and `resolve_mined_skill_edit` is the door
+ONE-1448 answers through, so `skill_edit_is_stale` is the same three-way question
+`preference_is_stale` already answers — open / landed / rejected-and-cooling. Symmetry, not new
+machinery: `pending_substitution_skill_edits` now means "unanswered", and an answered proposal stays
+readable by id, which is where the cooldown reads it.
+
+Test: `a_rejected_skill_edit_is_silent_inside_its_cooldown_and_speaks_after_it`.
+
+### PACKET_AMEND (3 files, additive, no collision)
+
+* `crates/oneiron/src/session_lifecycle.rs` — the fix's chokepoint IS the close transaction; one
+  import word, one call, one doc bullet. Nothing else in the door moves.
+* `crates/oneiron/src/session_lifecycle/tests.rs` — `meso_attempt_count` counted queue KIND, which no
+  longer names a partition round on its own; split into `meso_attempt_payloads` /
+  `meso_partition_payloads` so the three assertions keep meaning what they said.
+* `crates/oneiron/src/actor_claims/tests.rs` — `stamped_pack_receipt` used the untyped
+  `AttemptQueue::claim`, and a fresh row's ready key is `(0, attempt_id)`, so it took the oldest row
+  in the vault rather than its own once a fixture's session close registered one. Claims BY KIND now,
+  like every production worker. Pre-existing fragility, surfaced not caused.
+
+`Cargo.toml` / `Cargo.lock` / `settings.rs`: untouched.
+
+Gates: `cargo fmt -p oneiron` · `cargo clippy -p oneiron --all-features --all-targets -- -D warnings`
+clean · `cargo test -p oneiron --all-features` green (3882 lib + every integration target), miner
+suite 33/33.
