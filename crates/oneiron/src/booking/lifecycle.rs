@@ -144,6 +144,14 @@ const MAX_IDEMPOTENCY_KEY_BYTES: usize = 128;
 /// Bound on the failure reason stamped onto a failed attempt row.
 const MAX_ATTEMPT_FAILURE_REASON_BYTES: usize = 512;
 
+/// How far either side of a held slot confirm's re-solve looks.
+///
+/// Confirm must answer a taken slot with the SAME solver's nearest
+/// alternatives, which a window equal to the held slot cannot contain. The
+/// solver still clips every solve to the page's own booking horizon, so this
+/// widens the ANSWER, never the work bound.
+const CONFIRM_ALTERNATIVES_PAD_SECS: u64 = 24 * 60 * 60;
+
 /// Row-format byte on every lifecycle `vault_meta` value.
 const LIFECYCLE_ROW_VERSION: u8 = 1;
 
@@ -395,8 +403,10 @@ pub struct SoftHoldRow {
     pub session_key: SessionKey,
     pub visitor_tz: String,
     pub constraint: Option<ConstraintObject>,
+    #[serde(with = "digest_serde")]
     pub token_hash: [u8; 32],
     pub expires_at: u64,
+    #[serde(with = "opt_digest_serde")]
     pub checkout_lease_hash: Option<[u8; 32]>,
 }
 
@@ -431,6 +441,7 @@ struct LifecycleTokenRow {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckoutLeaseRow {
+    #[serde(with = "digest_serde")]
     session_hash: [u8; 32],
     expires_at: u64,
 }
@@ -445,6 +456,7 @@ struct LifecycleReceiptRow {
     sequence: u32,
     /// Present on confirm receipts: the session that owned the consumed hold,
     /// so a retry from another session cannot read this receipt back.
+    #[serde(with = "opt_digest_serde")]
     session_hash: Option<[u8; 32]>,
 }
 
@@ -983,7 +995,9 @@ pub(crate) fn execute_confirm(
     spec: &ConfirmSpec,
     now_utc: u64,
 ) -> Result<BookingVerbReceipt, BookingError> {
-    let decided = booking_writer(vault, |wtxn| confirm_in_writer(vault, oracle, spec, wtxn, now_utc))?;
+    let decided = booking_writer(vault, |wtxn| {
+        confirm_in_writer(vault, oracle, spec, wtxn, now_utc)
+    })?;
     match decided {
         ConfirmOutcome::Taken { alternatives } => {
             Ok(BookingVerbReceipt::SlotTaken { alternatives })
@@ -1066,7 +1080,7 @@ fn confirm_in_writer(
     // (3) Fresh availability, read while we hold the writer.
     let solved = oracle.solve(&SolveRequest {
         event_type: hold.event_type.clone(),
-        window: inclusive_occurrence(hold.slot)?,
+        window: confirm_solve_window(hold.slot)?,
         constraint: hold.constraint.clone(),
         visitor_tz: hold.visitor_tz.clone(),
     })?;
@@ -1320,9 +1334,7 @@ impl ActiveHoldSource for VaultActiveHoldSource<'_> {
             if row.page_ref != page_ref || !row.is_live_at(now_utc) {
                 continue;
             }
-            if bound == Some(row.session_key.0)
-                || exclude_session_key == Some(&row.session_key.0)
-            {
+            if bound == Some(row.session_key.0) || exclude_session_key == Some(&row.session_key.0) {
                 continue;
             }
             if row.slot.start < window.end && window.start < row.slot.end {
@@ -1633,15 +1645,35 @@ fn read_booking_facts(
             _ => {}
         }
     }
-    let header = vault
-        .read_entity_header(event_ref)
-        .map_err(|error| engine_failure("booking event header read", error))?
-        .ok_or_else(|| refused("booking EVENT no longer exists"))?;
     Ok(BookingFacts {
         page_ref: page_ref.ok_or_else(|| refused("booking carries no source page claim"))?,
         event_type: event_type.ok_or_else(|| refused("booking carries no event type claim"))?,
-        slot: half_open_occurrence(header.occurred_start, header.occurred_end),
+        slot: occurrence_in(vault, rtxn, event_ref)?,
     })
+}
+
+/// The EVENT's stored occurrence, read through the CALLER's transaction.
+///
+/// Deliberately not `Vault::read_entity_header`: that door opens a transaction
+/// of its own, and LMDB gives a thread one read transaction at a time, so a
+/// nested read would fail whenever this runs under a caller-owned read txn.
+fn occurrence_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<TimeRange, BookingError> {
+    let raw = vault
+        .store
+        .entities
+        .get(rtxn, event_ref.as_bytes())
+        .map_err(|error| engine_failure("booking event header read", error))?
+        .ok_or_else(|| refused("booking EVENT no longer exists"))?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or_else(|| refused("booking EVENT header did not parse"))?;
+    Ok(half_open_occurrence(
+        header.occurred_start,
+        header.occurred_end,
+    ))
 }
 
 /// The EVENT body a booking stores: the event type key and nothing else. No
@@ -2031,11 +2063,7 @@ fn put_meta(
         .map_err(|error| engine_failure("meta write", error))
 }
 
-fn delete_meta(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8],
-) -> Result<(), BookingError> {
+fn delete_meta(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, key: &[u8]) -> Result<(), BookingError> {
     vault
         .store
         .vault_meta
@@ -2108,6 +2136,16 @@ fn inclusive_occurrence(slot: TimeRange) -> Result<TimeRange, BookingError> {
     Ok(TimeRange {
         start: slot.start,
         end,
+    })
+}
+
+/// The inclusive solve window confirm asks over: the held slot padded far
+/// enough on both sides to carry nearest alternatives.
+fn confirm_solve_window(slot: TimeRange) -> Result<TimeRange, BookingError> {
+    let held = inclusive_occurrence(slot)?;
+    Ok(TimeRange {
+        start: held.start.saturating_sub(CONFIRM_ALTERNATIVES_PAD_SECS),
+        end: held.end.saturating_add(CONFIRM_ALTERNATIVES_PAD_SECS),
     })
 }
 
@@ -2198,6 +2236,72 @@ mod time_range_serde {
     }
 }
 
+/// Digests cross the wire as lowercase hex — fixed width, and a compact byte
+/// string rather than the 32-element integer array `[u8; 32]` would otherwise
+/// serialize into.
+mod digest_serde {
+    use super::{Deserialize, Deserializer, Serializer, hex_lower};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &[u8; 32],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&hex_lower(value))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<[u8; 32], D::Error> {
+        let hex = String::deserialize(deserializer)?;
+        super::digest_from_hex(&hex)
+            .ok_or_else(|| serde::de::Error::custom("booking digest is not 32 lowercase hex bytes"))
+    }
+}
+
+mod opt_digest_serde {
+    use super::{Deserialize, Deserializer, Serialize, Serializer, hex_lower};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &Option<[u8; 32]>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value.map(|bytes| hex_lower(&bytes)).serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<[u8; 32]>, D::Error> {
+        match Option::<String>::deserialize(deserializer)? {
+            None => Ok(None),
+            Some(hex) => super::digest_from_hex(&hex).map(Some).ok_or_else(|| {
+                serde::de::Error::custom("booking digest is not 32 lowercase hex bytes")
+            }),
+        }
+    }
+}
+
+/// Parses exactly 32 lowercase hex bytes.
+fn digest_from_hex(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut out = [0_u8; 32];
+    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        let high = hex_nibble(pair[0])?;
+        let low = hex_nibble(pair[1])?;
+        *slot = (high << 4) | low;
+    }
+    Some(out)
+}
+
+const fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
+}
+
 mod entity_ref_serde {
     use super::{Deserialize, Deserializer, EntityId, Serializer};
 
@@ -2213,5 +2317,167 @@ mod entity_ref_serde {
     ) -> Result<EntityId, D::Error> {
         let hex = String::deserialize(deserializer)?;
         EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
+    }
+}
+
+// -------------------------------------------------------------------------
+// Crate-internal invariants
+//
+// These three assertions need to read `vault_meta` bytes and to call the
+// family validator directly, neither of which crosses the public API. Every
+// BEHAVIOURAL oracle lives in `tests/booking_lifecycle.rs`; only what a
+// black-box test structurally cannot see is asserted here.
+// -------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::entity as id;
+
+    const PAGE: u8 = 0x51;
+    const NOW: u64 = 1_772_409_600;
+
+    fn open_vault() -> (tempfile::TempDir, Vault) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault =
+            Vault::open(dir.path(), crate::VaultConfig::default()).expect("open booking vault");
+        (dir, vault)
+    }
+
+    fn hold_spec(session_key: SessionKey) -> HoldSpec {
+        HoldSpec {
+            page_ref: id(PAGE),
+            event_type: EventTypeKey("intro-call".to_owned()),
+            slot: TimeRange {
+                start: NOW + 3_600,
+                end: NOW + 5_400,
+            },
+            session_key,
+            visitor_tz: "UTC".to_owned(),
+            constraint: None,
+            lease: HoldLeaseSpec::Ordinary,
+            idempotency_key: None,
+        }
+    }
+
+    /// Every byte in `vault_meta`, so a search for a raw secret cannot miss a
+    /// row by looking under the wrong prefix.
+    fn all_meta_bytes(vault: &Vault) -> Vec<u8> {
+        let rtxn = read_txn(vault).expect("read txn");
+        let mut bytes = Vec::new();
+        for entry in vault.store.vault_meta.iter(&rtxn).expect("meta scan") {
+            let (key, value) = entry.expect("meta row");
+            bytes.extend_from_slice(&key);
+            bytes.extend_from_slice(&value);
+        }
+        bytes
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        !needle.is_empty() && haystack.windows(needle.len()).any(|slice| slice == needle)
+    }
+
+    #[test]
+    fn raw_bearer_tokens_never_enter_vault_meta() {
+        let (_dir, vault) = open_vault();
+        let session = SessionKey::derive(b"session-one");
+        let receipt = execute_hold(&vault, &hold_spec(session), NOW).expect("hold");
+        let (lease, _) = issue_checkout_lease(&vault, &session, 600, NOW).expect("lease");
+
+        let stored = all_meta_bytes(&vault);
+        assert!(
+            !contains(&stored, receipt.token.0.as_bytes()),
+            "the raw hold token must never be at rest; only its digest is stored"
+        );
+        assert!(
+            !contains(&stored, lease.0.as_bytes()),
+            "the raw checkout lease must never be at rest; only its digest is stored"
+        );
+        // The digests, by contrast, ARE there — otherwise the assertions above
+        // would pass on an empty store. The hold token's digest sits in the row
+        // as hex; the lease's digest is also the row's key.
+        assert!(contains(
+            &stored,
+            hex_lower(&token_digest(&receipt.token)).as_bytes()
+        ));
+        assert!(contains(&stored, &lease_digest(&lease)));
+    }
+
+    #[test]
+    fn hold_rows_key_on_the_session_and_never_on_the_token() {
+        let (_dir, vault) = open_vault();
+        let session = SessionKey::derive(b"session-one");
+        let receipt = execute_hold(&vault, &hold_spec(session), NOW).expect("hold");
+
+        let rtxn = read_txn(&vault).expect("read txn");
+        let key = hold_key(&session);
+        assert!(
+            read_meta_bytes(&vault, &rtxn, &key)
+                .expect("hold row read")
+                .is_some(),
+            "the row is reachable from the session alone"
+        );
+        assert!(
+            !contains(&key, &token_digest(&receipt.token)),
+            "the hold key is derived from the session, not from the credential"
+        );
+        assert_eq!(
+            key.len(),
+            BOOKING_HOLD_META_PREFIX.len() + 32,
+            "prefix + one 32-byte digest"
+        );
+        assert!(key.starts_with(BOOKING_HOLD_META_PREFIX));
+    }
+
+    #[test]
+    fn booking_lifecycle_validator_is_exact_at_the_family_door() {
+        let subject = ClaimSubject::Entity(id(0x52));
+        let body = |predicate: &str, value: rmpv::Value| {
+            ClaimBody::new(
+                predicate,
+                subject,
+                value,
+                1.0,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )
+        };
+        let status = encode_claim_value(&BookingStatusValue {
+            status: BookingStatus::Confirmed,
+            recorded_at: NOW,
+        })
+        .expect("encode status");
+
+        validate_lifecycle_claim(&body(BOOKING_STATUS_PREDICATE, status.clone()))
+            .expect("a well-formed status value passes");
+        // A value from a sibling predicate is refused: the validator routes on
+        // the exact predicate and then checks THAT predicate's schema.
+        assert!(
+            validate_lifecycle_claim(&body(BOOKING_SOURCE_PAGE_PREDICATE, status)).is_err(),
+            "one family member's value must not satisfy another's schema"
+        );
+        // An unknown `booking.*` predicate is never adopted by the family.
+        assert!(
+            validate_lifecycle_claim(&body(
+                "booking.something_new",
+                rmpv::Value::from("whatever")
+            ))
+            .is_err()
+        );
+        // An edge subject is refused before any value is decoded.
+        let mut edge_subject = body(
+            BOOKING_STATUS_PREDICATE,
+            encode_claim_value(&BookingStatusValue {
+                status: BookingStatus::Cancelled,
+                recorded_at: NOW,
+            })
+            .expect("encode status"),
+        );
+        edge_subject.subject = ClaimSubject::Edge {
+            source: id(0x52),
+            kind: crate::edge::EdgeKind::ClaimOf,
+            target: id(0x53),
+        };
+        assert!(validate_lifecycle_claim(&edge_subject).is_err());
     }
 }
