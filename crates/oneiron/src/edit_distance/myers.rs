@@ -233,7 +233,7 @@ fn shortest_edit_script(before: &[u32], after: &[u32]) -> Option<EditScript> {
             }
             frontier[(offset + k) as usize] = x;
             if x >= n && y >= m {
-                return Some(backtrack(before, after, &trace, d));
+                return Some(backtrack(before, after, &trace, d, (n, m)));
             }
             k += 2;
         }
@@ -241,17 +241,23 @@ fn shortest_edit_script(before: &[u32], after: &[u32]) -> Option<EditScript> {
     None
 }
 
-/// Walks the trace back from `(n, m)` to the origin, naming every line the
-/// script removed or added and counting the diagonals it slid along.
-fn backtrack(before: &[u32], after: &[u32], trace: &[i32], depth: i32) -> EditScript {
+/// Walks the trace back from the corner the forward pass reached, naming
+/// every line the script removed or added and counting the diagonals it slid
+/// along.
+fn backtrack(
+    before: &[u32],
+    after: &[u32],
+    trace: &[i32],
+    depth: i32,
+    end: (i32, i32),
+) -> EditScript {
     let mut script = EditScript {
         deleted: Vec::new(),
         inserted: Vec::new(),
         kept: 0,
         approx: false,
     };
-    let mut x = i32::try_from(before.len()).unwrap_or(i32::MAX);
-    let mut y = i32::try_from(after.len()).unwrap_or(i32::MAX);
+    let (mut x, mut y) = end;
 
     for d in (0..=depth).rev() {
         // Step 0 has one predecessor, the origin, and no edit to charge — the
