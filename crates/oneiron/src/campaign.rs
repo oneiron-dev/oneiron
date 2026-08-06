@@ -37,6 +37,13 @@ pub mod enrollment;
 /// rule in Rust.
 pub mod compliance;
 
+/// CA-05's send hygiene: the one-transaction bounce/unsubscribe suppression
+/// door, the deterministic RFC 8058 `List-Unsubscribe` headers folded into the
+/// frozen outbound payload, and the sticky-sender binding. Sender health itself
+/// stays in `identity_reputation.rs`; this module wires the campaign webhook
+/// into it rather than growing a second reputation model.
+pub mod send_hygiene;
+
 /// Stable short-id namespace for CAMPAIGN entities.
 ///
 /// Two lowercase ASCII letters per the short-id convention; it names CAMPAIGN,
