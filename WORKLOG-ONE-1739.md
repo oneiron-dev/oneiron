@@ -128,3 +128,32 @@ names this file. Not claimed, so surfaced here for ratification.
 - `cargo test -p oneiron --all-features`: **42/42 suites ok, 0 failed.**
   New: 14 unit tests in `actor_claims::tests`, 4 oracle arms armed
   (`skills_epic_oracle` 16 passed / 0 ignored).
+
+## SIMPLIFY (K3, 2026-08-06)
+
+Deletion-biased pass over the tip. Three cuts, all in `actor_claims.rs`;
+no test assertion, fixture, or exercised public API touched:
+
+1. **`ActorNoteKind::predicate()` deleted** — dead surface: zero callers
+   (grep-verified across src + oracle), and not in the keystone skeleton. The
+   note kind only ever becomes a row through the private `row()` arm.
+2. **`ActorClaimEvidence::at()` deleted** — dead accessor; the one reader
+   (`write_actor_claim`) is in-module and reads the field directly.
+3. **Fit-range check deduplicated into `valid_skill_fit(fit)`** — the
+   `is_finite && (0.0..=1.0).contains` pair appeared verbatim in
+   `value_and_scope` and `validate_actor_claim_structure`; the NaN-trap
+   comment moved to the helper so the subtlety lives in one place.
+
+Considered and rejected: sharing `dreamer_consolidation::decode_turn_body`
+for the CHAT-lane turn parse. It is DREAMER's private surface mid-wave, its
+`TurnBodyFacts` carries two fields this lane never reads, and exposing it is
+structure-addition across a claimed seam — the 18-line tolerant-read
+duplication (same `spkr`/`txt` spelling tolerance, house precedent) is the
+cheaper shape.
+
+Gates after the cuts: `cargo fmt -p oneiron -- --check` — only the known
+base defect `surface_event/tests.rs:733` · clippy `--all-features
+--all-targets` — only the three documented base defects
+(`identity_topology/tests.rs:4203`, `surface_event/tests.rs:736`,
+`campaign_claim_gate_oracle.rs:87`), nothing in lane files ·
+`cargo nextest run -p oneiron --all-features`: **3802 passed, 0 failed**.

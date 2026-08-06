@@ -203,16 +203,6 @@ pub enum ActorNoteKind {
 }
 
 impl ActorNoteKind {
-    /// The predicate this note kind writes.
-    #[must_use]
-    pub const fn predicate(self) -> &'static str {
-        match self {
-            Self::Lesson => PREDICATE_ACTOR_LESSON,
-            Self::FailureMode => PREDICATE_ACTOR_FAILURE_MODE,
-            Self::ScopeNote => PREDICATE_ACTOR_SCOPE_NOTE,
-        }
-    }
-
     fn row(self, actor: EntityId, text: String) -> ActorClaimRow {
         match self {
             Self::Lesson => ActorClaimRow::Lesson { actor, text },
@@ -270,10 +260,7 @@ impl ActorClaimRow {
             | Self::FailureMode { text, .. }
             | Self::ScopeNote { text, .. } => Ok((Value::from(normalize_note(text)?), None)),
             Self::SkillFit { skill, fit, .. } => {
-                // Non-finite is rejected explicitly: NaN fails every range
-                // comparison, so a `contains` check ALONE would silently admit
-                // it and poison every downstream ranking.
-                if !fit.is_finite() || !(0.0..=1.0).contains(fit) {
+                if !valid_skill_fit(*fit) {
                     return Err(invalid("actor.skill_fit must be a finite fit in 0..=1"));
                 }
                 Ok((Value::F32(*fit), Some(skill_fit_scope(skill))))
@@ -299,6 +286,13 @@ fn skill_fit_scope(skill: &EntityId) -> Value {
         Value::from(ACTOR_SKILL_FIT_SCOPE_KEY),
         Value::Binary(skill.as_bytes().to_vec()),
     )])
+}
+
+/// A fit is a finite estimate in the unit interval. The finiteness half is
+/// explicit: NaN fails every range comparison, so a `contains` check ALONE
+/// would silently admit it and poison every downstream ranking.
+fn valid_skill_fit(fit: f32) -> bool {
+    fit.is_finite() && (0.0..=1.0).contains(&fit)
 }
 
 // ---------------------------------------------------------------------------
@@ -359,12 +353,6 @@ impl ActorClaimEvidence {
             lane: ActorClaimLane::Chat { session, turns },
             at,
         })
-    }
-
-    /// When the observation happened.
-    #[must_use]
-    pub const fn at(&self) -> u64 {
-        self.at
     }
 
     /// The evidence meet this lane earns — see the module header's lineage
@@ -918,7 +906,7 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
         let Value::F32(fit) = body.value else {
             return Err(invalid("actor.skill_fit value must be a fit in 0..=1"));
         };
-        if !fit.is_finite() || !(0.0..=1.0).contains(&fit) {
+        if !valid_skill_fit(fit) {
             return Err(invalid("actor.skill_fit must be a finite fit in 0..=1"));
         }
         if skill_fit_scope_skill(body.scope.as_ref()).is_none() {
