@@ -204,3 +204,142 @@ unrelated `facet_of_endpoints_provably_off_table`) · `cargo clippy -p oneiron
 --all-features --all-targets` clean · **`cargo test -p oneiron --all-features`:
 4443 passed, 0 failed** — identical count to the impl leg, six promote oracles
 included. `Cargo.lock` drift from the gate runs restored, never committed.
+
+## VERDICT-FIX (Sol finder + K3 verdict: FIX-REQUIRED, 2 REAL items)
+
+Both verdict-verified items fixed at their chokepoints. No banked/rejected item
+relitigated. Diff stays inside the packet plus the lane's own test file.
+
+### P1 — `off-record-grant-forgery` (finder P1, verdict CONFIRMED)
+
+**Defect.** `BaseWriteOrigin` was a unit-variant enum and the exemption rode
+BESIDE it as `PromoteMemberOf<'a> = Option<&'a dyn Fn(&EntityId) -> bool>`.
+`TxnBatchBuilder::promotion_replay` is `pub(crate)` and took that predicate, so
+any crate caller could pass `&|_| true` and open BOTH membership doors — the K4
+decode-point taint guard and `guard_off_record_entity_put` — for every live
+overlay id in the vault. The unforgeable `PromoteReplayGrant` was erased into a
+closure at the one call site, and origin/predicate agreement was held only by a
+`debug_assert` that compiles out in release.
+
+**Fix.** The capability now IS the arm:
+
+```rust
+pub(crate) enum BaseWriteOrigin<'grant> {
+    Ordinary,
+    PromoteReplay(&'grant PromoteReplayGrant),
+}
+```
+
+`PromoteReplayGrant`'s field and its `mint` stay private to
+`off_record/promote.rs`, so the exempting arm cannot be constructed anywhere
+else in the crate. The parallel `promote_member_of` channel is DELETED
+crate-wide (`rg promote_member_of` → zero hits): `check_decode_point_taint_guard`,
+`apply_ops_with_origin`, `apply_put`, and `guard_off_record_entity_put` all now
+take the origin alone and ask it `origin.exempts(id)`, so the two doors cannot
+drift and the `debug_assert` that was doing the coupling is gone with the
+mismatch it guarded against. `apply_ops_with_origin` loses an argument.
+
+**Mutation verification (red-before / green-after).**
+- RED: a probe test passing `&|_| true` to `TxnBatchBuilder::promotion_replay`
+  with a `Put` for a SECOND live room's overlay id, asserting refusal —
+  `FAILED ... a forged exemption must not open the promote door`. The forged
+  predicate admitted the write; the hole was real and reachable.
+- GREEN: the same code is now a type error, and it is the ONLY error in
+  `cargo check -p oneiron --all-features --all-targets`:
+  `expected &PromoteReplayGrant, found &{closure@tests.rs:1104:18}`.
+  Production compiles clean; forgery is unrepresentable, not merely rejected.
+- The probe is not landed (it cannot compile). What landed instead is a
+  behavioural test of the grant's SCOPE, reshaped from
+  `promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back`: a real
+  plan whose op list is extended past its own closure with an `AuthoredBy` edge
+  naming a second live room's overlay member. The trailing op rejects with
+  `OffRecordTaintedBaseWrite` AFTER the shell/turn/message/summary puts have
+  staged, base delta is zero both tables, no receipt is written, and the
+  unmodified closure then promotes cleanly — the single-transaction rollback and
+  journal-survival halves the old fixture proved, on a probe that survives P2.
+
+### P2 — `promotion-closure`: the promoted set is the ratified THREE edges
+
+**Defect.** `JournalRole::AttributionEdge` covers both `BelongsTo` and
+`AuthoredBy`, and `journal_entry_in_closure` took the whole role. A normal
+user-authored witness therefore replayed FOUR attribution edges and the oracle
+`promote_attribution_edge_set_is_exact` had been rewritten around that output
+with a declared deviation.
+
+**Ruling taken.** A lane cannot amend a content-ratified constant. The blueprint
+(lines 12, 69) and the relay HARD LAWS both pin the closure at four entity ids
+and exactly `PartOf(message → turn)`, `DerivedFrom(summary → turn)`,
+`BelongsTo(message → shell)`, with the oracle asserting three forward and three
+reverse rows. Implemented to spec.
+
+**Fix.** In `session_overlay.rs`, the `AttributionEdge` arm of the ONE
+closure-membership predicate now also asks
+`attribution_edge_is_closure_internal(&entry.op)` — reading the kind off the
+TYPED JOURNAL's own semantic `BatchOp`, never an index key, so the
+typed-journal-only law holds. The derivation is a boundary, not a kind
+allowlist: `BelongsTo`'s target is the conversation shell, a closure member;
+`AuthoredBy`'s target is a base identity the room neither staged nor owns, so it
+points OUT of the subgraph the user consented to publish. Because selection and
+retirement share the predicate, the authorship edge stays an overlay row and a
+journal entry for the rest of the room's life (the in-room view still resolves
+it) and evaporates at close with everything else unpromoted.
+
+**Mutation verification.** RED: oracle restored to 3 forward / 3 reverse →
+`assertion left == right failed ... left: 4 right: 3`. GREEN after the
+`session_overlay.rs` change, with two added assertions — the promoted message
+has no `AuthoredBy` target in base and the actor gains no promoted in-edge.
+
+**Deviation-board note (for GATE-2, not lane-declared).** The implementer's
+provenance-parity argument is factually grounded (the ordinary witness path does
+write `AuthoredBy` at `facade.rs:1744`), so a promoted message now carries less
+provenance than a base-witnessed one. That is the ratified shape and it is
+implemented; if the owner/Fable prefers the 4-edge closure, the amendment is a
+one-line change to `attribution_edge_is_closure_internal` plus the oracle's
+three counts. Raising it, not deciding it.
+
+### Packet
+
+Touched: `batch.rs`, `session_overlay.rs`, `off_record/promote.rs`,
+`off_record/lifecycle.rs`, `off_record/mod.rs`, `branch_store_oracle.rs` (all
+packet) + `off_record/tests.rs` (test file). `error.rs` was NOT touched by this
+leg; the verdict's PACKET_AMEND observation about it stands from the impl leg.
+No `Cargo.toml`/`Cargo.lock` change — lock drift from every gate run restored,
+never staged.
+
+### Gates
+
+`cargo fmt --check` clean · `cargo check -p oneiron --all-features --all-targets`
+clean · `cargo clippy -p oneiron --all-features --all-targets` clean ·
+`cargo test -p oneiron --all-features --lib promote_ -- --test-threads=1`:
+**9 passed, 0 failed** (all six armed ONE-1730 oracles + the reshaped grant-scope
+rollback test + two unrelated `promote_*` tests).
+
+### BLOCKED: final full-suite gate could not be run — box-level resource exhaustion
+
+`cargo test -p oneiron --all-features` cannot complete on this machine right
+now: **1411 passed, 2537 failed, and 100% of the failures are the same error** —
+`open vault: Storage(Io(Os { code: 28, kind: StorageFull, message: "No space
+left on device" }))`. It is NOT disk and NOT this lane:
+
+- `/System/Volumes/Data` holds a steady 270 GiB free THROUGHOUT a failing run
+  (sampled every 6 s); APFS container free space 290 GB; 1 GiB `ftruncate` +
+  `mmap` in `$TMPDIR` succeeds from a probe program.
+- The failure is `sem_open`. LMDB on Apple takes TWO POSIX **named semaphores**
+  per environment (`mdb.c` `MUTEXNAME(env,'r'/'w')`, base85 of a hash of the
+  lockfile's dev+ino), and `sem_open` returns `ENOSPC` when the system-wide
+  named-semaphore table is full. A 5-line C probe fails on its SECOND
+  `sem_open` of a fresh unique name: `FAILED at 1: No space left on device
+  (errno 28)`. `kern.posix.sem.max = 10000`.
+- No test binaries are running (`ps`), and `lsof` shows no `PSXSEM` holders, so
+  the table is full of LEAKED names from test processes killed before
+  `mdb_env_close` — macOS keeps a named semaphore alive until `sem_unlink` or
+  reboot. The names are hashes, so they cannot be enumerated and unlinked.
+- Every LMDB-opening test in every lane on this box is affected; earlier in this
+  same session the identical commands passed (the promote 9/9 above), so the
+  table filled mid-session.
+
+**Remedy (needs the owner/orchestrator, not a worker):** `sudo sysctl -w
+kern.posix.sem.max=65536` — immediate, non-destructive, unblocks every lane —
+or reboot. `sudo` prompts for a password here, so this leg cannot apply it.
+Re-run `cargo test -p oneiron --all-features` after that; **not-yet-run is not
+green.**
