@@ -120,7 +120,7 @@ pub(crate) const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 const GATE_METRIC_OUTCOME_COUNT: usize = 3;
-const GATE_METRIC_REASON_CLASS_COUNT: usize = 14;
+const GATE_METRIC_REASON_CLASS_COUNT: usize = 15;
 
 static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
     GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
@@ -725,6 +725,8 @@ pub(crate) enum GateMetricReasonClass {
     /// DEC-0006 consent ladder: catastrophe floor, irreversible effect, bound
     /// exceeded, and write-classification failure all meter here.
     Consent,
+    /// CA-06 campaign compliance: a seeded legal rule row refused the dispatch.
+    CampaignCompliance,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -746,6 +748,7 @@ impl GateMetricReasonClass {
             Self::EffectorBudget => "effector_budget",
             Self::CharterPolicy => "charter_policy",
             Self::Consent => "consent",
+            Self::CampaignCompliance => "campaign_compliance",
         }
     }
 
@@ -765,6 +768,7 @@ impl GateMetricReasonClass {
             Self::EffectorBudget => 11,
             Self::CharterPolicy => 12,
             Self::Consent => 13,
+            Self::CampaignCompliance => 14,
         }
     }
 
@@ -784,6 +788,7 @@ impl GateMetricReasonClass {
             Self::EffectorBudget,
             Self::CharterPolicy,
             Self::Consent,
+            Self::CampaignCompliance,
         ]
     }
 }
@@ -821,6 +826,10 @@ pub(crate) enum GateReasonCode {
     /// absent, so no reversibility verdict could be produced. Writes fail safe
     /// by asking.
     PendingConsentWriteClassificationFailed,
+    /// CA-06 (ONE-1777): a seeded campaign-compliance row refused this
+    /// dispatch. Enforcement, not an ask — an owner approval must not be able
+    /// to unlock a send the governing legal row forbids, so this is a deny.
+    DenyCampaignCompliance,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -850,6 +859,7 @@ impl GateReasonCode {
             Self::PendingConsentWriteClassificationFailed => {
                 "gate.pending.consent.write_classification_failed"
             }
+            Self::DenyCampaignCompliance => "gate.deny.campaign_compliance",
         }
     }
 
@@ -880,6 +890,7 @@ impl GateReasonCode {
             | Self::PendingConsentBoundExceeded
             | Self::PendingConsentCatastropheFloor
             | Self::PendingConsentWriteClassificationFailed => GateMetricReasonClass::Consent,
+            Self::DenyCampaignCompliance => GateMetricReasonClass::CampaignCompliance,
         }
     }
 }
@@ -3290,6 +3301,34 @@ pub(crate) fn evaluate_external_effect_policy(
         .external_effect
         .as_ref()
         .and_then(|effect| effect.standing_grant_ref.clone());
+
+    // CA-06 campaign-compliance stage (ONE-1777). The evaluator hydrates its
+    // own typed facts from the claim substrate on THIS txn and answers with a
+    // pure verdict; the mapping to a decision stays here, where decisions are
+    // constructed. It runs BEFORE the connector-key and budget stages — both
+    // guarded on would-be-Allow — so a legal-row refusal never consumes budget,
+    // exactly like the counterparty-opt-out wall. It converts a would-be Allow
+    // AND a Pending: an owner approval must not be able to unlock a dispatch
+    // the governing row forbids. It is enforcement, not a new approval step;
+    // effects outside a campaign never reach the evaluator at all.
+    if decision.outcome() != GateOutcome::Deny
+        && let Some(crate::campaign::compliance::ComplianceVerdict::Block { reason, .. }) =
+            crate::campaign::compliance::campaign_compliance_gate(
+                store,
+                &*wtxn,
+                &hydrated_effect,
+                created_at,
+            )?
+    {
+        decision = GateDecision::deny(GateReasonCode::DenyCampaignCompliance)
+            .with_receipt_reasons([reason.receipt_reason()])
+            .with_receipt_reasons(external_effect_receipt_reasons(
+                input
+                    .external_effect
+                    .as_ref()
+                    .expect("external effect input"),
+            ));
+    }
 
     // GOV-01 connector-key stage (ONE-1416). Channel keys retain
     // unset-is-noop; synthetic scoped-MCP keys fail closed below. The status
