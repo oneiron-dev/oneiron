@@ -204,7 +204,8 @@ impl EditScript {
 fn shortest_edit_script(before: &[u32], after: &[u32]) -> Option<EditScript> {
     let n = i32::try_from(before.len()).ok()?;
     let m = i32::try_from(after.len()).ok()?;
-    let max_d = i32::try_from(MAX_EDIT_SCRIPT.min(before.len() + after.len())).ok()?;
+    // Bounded by MAX_EDIT_SCRIPT, so the cast cannot truncate.
+    let max_d = MAX_EDIT_SCRIPT.min(before.len() + after.len()) as i32;
 
     // One guard cell past each end: the greedy rule reads the neighbours of
     // diagonal `k`, and at `|k| == max_d` one of those is off the board. It

@@ -381,26 +381,19 @@ struct LeafCounts {
 }
 
 impl LeafCounts {
-    /// Charges a whole subtree present on one side only.
-    fn one_sided(&mut self, value: &Value, side: Side) {
+    /// Charges a whole subtree present only on the before side.
+    fn removed_subtree(&mut self, value: &Value) {
         let leaves = leaf_count(value);
-        match side {
-            Side::Before => {
-                self.del = self.del.saturating_add(leaves);
-                self.before = self.before.saturating_add(leaves);
-            }
-            Side::After => {
-                self.ins = self.ins.saturating_add(leaves);
-                self.after = self.after.saturating_add(leaves);
-            }
-        }
+        self.del = self.del.saturating_add(leaves);
+        self.before = self.before.saturating_add(leaves);
     }
-}
 
-#[derive(Clone, Copy)]
-enum Side {
-    Before,
-    After,
+    /// Charges a whole subtree present only on the after side.
+    fn added_subtree(&mut self, value: &Value) {
+        let leaves = leaf_count(value);
+        self.ins = self.ins.saturating_add(leaves);
+        self.after = self.after.saturating_add(leaves);
+    }
 }
 
 fn diff_values(before: &Value, after: &Value, depth: u32, counts: &mut LeafCounts) {
@@ -422,8 +415,8 @@ fn diff_values(before: &Value, after: &Value, depth: u32, counts: &mut LeafCount
         counts.before = counts.before.saturating_add(1);
         counts.after = counts.after.saturating_add(1);
     } else {
-        counts.one_sided(before, Side::Before);
-        counts.one_sided(after, Side::After);
+        counts.removed_subtree(before);
+        counts.added_subtree(after);
     }
 }
 
@@ -436,12 +429,12 @@ fn diff_maps(
     for (key, value) in left {
         match right.iter().find(|(other, _)| other == key) {
             Some((_, other)) => diff_values(value, other, depth + 1, counts),
-            None => counts.one_sided(value, Side::Before),
+            None => counts.removed_subtree(value),
         }
     }
     for (key, value) in right {
         if !left.iter().any(|(other, _)| other == key) {
-            counts.one_sided(value, Side::After);
+            counts.added_subtree(value);
         }
     }
 }
@@ -452,10 +445,10 @@ fn diff_arrays(left: &[Value], right: &[Value], depth: u32, counts: &mut LeafCou
         diff_values(&left[index], &right[index], depth + 1, counts);
     }
     for value in &left[shared..] {
-        counts.one_sided(value, Side::Before);
+        counts.removed_subtree(value);
     }
     for value in &right[shared..] {
-        counts.one_sided(value, Side::After);
+        counts.added_subtree(value);
     }
 }
 

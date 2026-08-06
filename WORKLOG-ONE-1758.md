@@ -152,3 +152,31 @@ private to `pub(super)` rather than copied).
   law). It reproduces on a clean checkout of b3c1fd756 the moment cargo runs.
 * Commits: `e110644c4` (lane), plus a follow-up threading the end corner into
   `backtrack` (drops a dead `unwrap_or` fallback) and this worklog.
+
+## SIMPLIFY pass (K3, 2026-08-05)
+
+Two deletions, both private internals; no test assertion, fixture, or public
+API touched. `d_norm` formula, `MOVE_DISCOUNT`, cap behavior all unchanged.
+
+1. **`delta.rs`: `Side` enum deleted.** `LeafCounts::one_sided(value, side)`
+   was a two-variant enum plus a match whose only job was picking which counter
+   pair to bump. Replaced with two named methods (`removed_subtree` /
+   `added_subtree`); all six call sites now say which side they mean instead of
+   passing a token that says it. Net -12 lines, one less type.
+2. **`myers.rs`: dead failure branch deleted.** `max_d` was built with
+   `i32::try_from(...).ok()?`, but the value is `min`'d against
+   `MAX_EDIT_SCRIPT` (1024) one line up, so the conversion can never fail.
+   Now a plain `as i32` with a comment stating the bound. The genuinely
+   fallible `n`/`m` conversions (unbounded line counts) keep their honest bail.
+
+Considered and rejected: merging `trim_common_affix` with `CharAffix::between`
+(similar shape, different units — a shared generic would be exactly the
+speculative generality the boring-by-law clause forbids); touching
+`LineDiff::approximate()` (public API, and the method-over-field choice
+already removes the dual-source-of-truth the blueprint's field would have
+created).
+
+Gates after the pass: `cargo fmt --check` clean · `clippy --all-features
+--all-targets -D warnings` clean · `cargo test -p oneiron --all-features --lib`
+3712 passed / 0 failed (incl. all 80 `edit_distance` tests, which the simplify
+did not need to touch).
