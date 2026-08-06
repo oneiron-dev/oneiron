@@ -33,6 +33,7 @@ use sha2::{Digest, Sha256};
 use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::calendar::outcome::{DueOutcomeCheckIn, check_in_is_still_due};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_CONFLICT_OPEN,
@@ -115,7 +116,7 @@ impl InboxReviewDial {
     }
 }
 
-/// Why a pending member surfaces in the exception queue.
+/// Why a row surfaces in the exception queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxExceptionClass {
@@ -127,6 +128,9 @@ pub enum InboxExceptionClass {
     SupersedesUserStated,
     /// The proposal is an OF-060 conflict row (`core.conflict.open`).
     Conflict,
+    /// A meeting-class EVENT's post-end check-in is still unanswered (CAL-07).
+    /// The only class not produced by the dreamer-run classifier.
+    MeetingOutcomeCheckIn,
 }
 
 /// B2 RS6 bulk verbs over one dreamer-run group.
@@ -246,6 +250,25 @@ pub struct InboxSubCluster {
     /// `entity:<subject id>` or `theme:<predicate layer>`.
     pub key: String,
     pub member_claim_ids: Vec<String>,
+}
+
+/// One unanswered meeting-outcome check-in (CAL-07).
+///
+/// Derived, never stored: the row exists exactly while the EVENT is
+/// meeting-class and carries no live `calendar.event_outcome` claim. An owner
+/// answer or newly arrived machine evidence records that claim, and the row
+/// stops projecting on the next pass — there is no retraction to remember.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InboxCheckInException {
+    /// The EVENT the check-in asks about.
+    pub event_ref: String,
+    /// The host wake whose due delivery surfaced this row.
+    pub wake_id: String,
+    /// The EVENT's scheduled start, for the card the host renders.
+    pub scheduled_start_utc: u64,
+    /// Always [`InboxExceptionClass::MeetingOutcomeCheckIn`]; carried so this
+    /// row folds into the same class filters the dreamer-run queue uses.
+    pub exception_class: InboxExceptionClass,
 }
 
 /// Outcome of one bulk verb over a group.
@@ -448,6 +471,46 @@ impl Vault {
             open_group,
             resolution_receipts,
         })
+    }
+
+    /// Projects the still-unanswered meeting-outcome check-ins for the wakes the
+    /// host has delivered as due (CAL-07).
+    ///
+    /// A sibling of the dreamer-run projection, not a member of it: a calendar
+    /// check-in has no run, no pending-consent row, and no consent binding, so
+    /// it carries no bulk verb and never enters a group. What it shares is the
+    /// exception-class vocabulary.
+    ///
+    /// Each due wake is rechecked against current claim state
+    /// ([`check_in_is_still_due`]) — an outcome that arrived during the grace
+    /// window suppresses the row. At most one row per EVENT: a second wake for
+    /// an EVENT already surfaced is dropped, so a retried or duplicated host
+    /// delivery cannot double-ask.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and claim-body errors from reading an outcome head.
+    pub fn inbox_meeting_outcome_check_ins(
+        &self,
+        due: &[DueOutcomeCheckIn],
+    ) -> Result<Vec<InboxCheckInException>> {
+        let mut rows: Vec<InboxCheckInException> = Vec::new();
+        for check_in in due {
+            let event_ref = check_in.event_ref.to_hex();
+            if rows.iter().any(|row| row.event_ref == event_ref) {
+                continue;
+            }
+            if !check_in_is_still_due(self, check_in)? {
+                continue;
+            }
+            rows.push(InboxCheckInException {
+                event_ref,
+                wake_id: check_in.wake_id.clone(),
+                scheduled_start_utc: check_in.scheduled_start_utc,
+                exception_class: InboxExceptionClass::MeetingOutcomeCheckIn,
+            });
+        }
+        Ok(rows)
     }
 }
 

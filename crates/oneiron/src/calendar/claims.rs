@@ -22,6 +22,9 @@
 
 use rmpv::Value;
 
+use super::outcome::{
+    EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue, PREDICATE_CALENDAR_EVENT_OUTCOME,
+};
 use crate::Vault;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
@@ -57,7 +60,10 @@ pub const PREDICATE_CALENDAR_STATUS: &str = "calendar.status";
 ///
 /// Membership is an exact table, never a `calendar.` prefix match: an unknown
 /// future `calendar.*` predicate must not be silently interpreted as one of
-/// these classes. ONE-1789 appends `calendar.event_outcome` in its own diff.
+/// these classes. `calendar.event_outcome` (CAL-07) is the one member whose
+/// constant lives in a sibling module — [`super::outcome`] owns its semantics —
+/// but the table, the validator, and the descriptor row stay here, so the family
+/// still has exactly one home.
 pub const CALENDAR_CLAIM_PREDICATES: &[&str] = &[
     PREDICATE_CALENDAR_TIME_KIND,
     PREDICATE_CALENDAR_WALL_TIME,
@@ -71,6 +77,7 @@ pub const CALENDAR_CLAIM_PREDICATES: &[&str] = &[
     PREDICATE_CALENDAR_PASSPORT,
     PREDICATE_CALENDAR_ORIGIN,
     PREDICATE_CALENDAR_STATUS,
+    PREDICATE_CALENDAR_EVENT_OUTCOME,
 ];
 
 const KEY_KIND: &str = "kind";
@@ -100,6 +107,7 @@ const KEY_PRESENCE: &str = "presence";
 const KEY_STATUS: &str = "status";
 const KEY_BASIS: &str = "basis";
 const KEY_RECORDED_AT: &str = "recorded_at";
+const KEY_OUTCOME: &str = "outcome";
 
 /// Upper bound for every bounded text field in this family.
 const MAX_TEXT_BYTES: usize = 512;
@@ -503,8 +511,10 @@ pub struct ClaimClassDescriptorRow {
 /// Descriptor rows for the whole `calendar.*` family, one per predicate.
 ///
 /// `calendar.passport` and `calendar.origin` are projector-recorded provenance;
-/// every other predicate, including `calendar.status`, is ordinary. No calendar
-/// class is enforcement-gated or restrictive: none of them is a consent surface.
+/// every other predicate, including `calendar.status` and
+/// `calendar.event_outcome`, is ordinary — an outcome may be owner-attested, so
+/// it is not projector-only. No calendar class is enforcement-gated or
+/// restrictive: none of them is a consent surface.
 #[must_use]
 pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
     CALENDAR_CLAIM_PREDICATES
@@ -595,6 +605,7 @@ pub(crate) fn validate_calendar_claim_structure(body: &ClaimBody) -> Result<()> 
                 .ok_or_else(|| invalid_claim("calendar.origin is invalid"))
         }
         PREDICATE_CALENDAR_STATUS => decode_status_value(&body.value).map(|_| ()),
+        PREDICATE_CALENDAR_EVENT_OUTCOME => decode_event_outcome_value(&body.value).map(|_| ()),
         _ => unreachable!("predicate membership checked above"),
     }
 }
@@ -748,6 +759,41 @@ pub(crate) fn decode_status_value(value: &Value) -> Result<CalendarStatusValue> 
     Ok(CalendarStatusValue {
         status,
         basis,
+        recorded_at: required_u64(entries, KEY_RECORDED_AT)?,
+    })
+}
+
+/// Encodes a [`EventOutcomeClaimValue`] into the exact wire map
+/// [`decode_event_outcome_value`] accepts.
+///
+/// The write half of the CAL-07 codec, and the only way an outcome writer builds
+/// the value: without it, every writer would re-spell this module's key literals
+/// and the closed token sets, which is exactly how a family's wire shape drifts.
+#[must_use]
+pub(crate) fn encode_event_outcome_value(value: &EventOutcomeClaimValue) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_OUTCOME),
+            Value::from(value.outcome.as_str()),
+        ),
+        (Value::from(KEY_BASIS), Value::from(value.basis.as_str())),
+        (Value::from(KEY_RECORDED_AT), Value::from(value.recorded_at)),
+    ])
+}
+
+/// Decodes a `calendar.event_outcome` value.
+///
+/// Exact key set, closed token sets, and a `u64` `recorded_at`: an outcome token
+/// this layer does not know must never decode as one it does.
+pub(crate) fn decode_event_outcome_value(value: &Value) -> Result<EventOutcomeClaimValue> {
+    let entries = value_map(value)?;
+    let keys = [KEY_OUTCOME, KEY_BASIS, KEY_RECORDED_AT];
+    validate_keys(entries, &keys, &keys)?;
+    Ok(EventOutcomeClaimValue {
+        outcome: EventOutcome::parse(required_string(entries, KEY_OUTCOME)?)
+            .ok_or_else(|| invalid_claim("calendar event_outcome outcome is invalid"))?,
+        basis: EventOutcomeBasis::parse(required_string(entries, KEY_BASIS)?)
+            .ok_or_else(|| invalid_claim("calendar event_outcome basis is invalid"))?,
         recorded_at: required_u64(entries, KEY_RECORDED_AT)?,
     })
 }
@@ -1032,6 +1078,14 @@ mod tests {
         ])
     }
 
+    fn canonical_event_outcome() -> Value {
+        map(&[
+            (KEY_OUTCOME, Value::from(EventOutcome::Held.as_str())),
+            (KEY_BASIS, Value::from(EventOutcomeBasis::Machine.as_str())),
+            (KEY_RECORDED_AT, Value::from(1_754_400_000_u64)),
+        ])
+    }
+
     /// One canonical value per predicate, in table order.
     fn canonical_values() -> Vec<(&'static str, Value)> {
         vec![
@@ -1059,6 +1113,7 @@ mod tests {
                 Value::from(CalendarOrigin::Imported.as_str()),
             ),
             (PREDICATE_CALENDAR_STATUS, canonical_status()),
+            (PREDICATE_CALENDAR_EVENT_OUTCOME, canonical_event_outcome()),
         ]
     }
 
@@ -1078,20 +1133,21 @@ mod tests {
             "calendar.passport",
             "calendar.origin",
             "calendar.status",
+            "calendar.event_outcome",
         ]);
-        // Set-compare scoped "at this layer": ONE-1789 appends
-        // `calendar.event_outcome` and updates this test in its own diff.
+        // Set-compare scoped "at this layer": CAL-00's twelve plus CAL-07's
+        // `calendar.event_outcome`, each exactly once.
         assert_eq!(minted, expected);
         // Once each: no duplicate rows hiding behind the set compare.
         assert_eq!(CALENDAR_CLAIM_PREDICATES.len(), minted.len());
-        assert_eq!(CALENDAR_CLAIM_PREDICATES.len(), 12);
+        assert_eq!(CALENDAR_CLAIM_PREDICATES.len(), 13);
 
         for predicate in CALENDAR_CLAIM_PREDICATES {
             assert!(is_calendar_claim_predicate(predicate));
         }
         // Exact-table membership, never a `calendar.` prefix match.
         assert!(!is_calendar_claim_predicate("calendar.unknown"));
-        assert!(!is_calendar_claim_predicate("calendar.event_outcome"));
+        assert!(!is_calendar_claim_predicate("calendar.outcome"));
         assert!(!is_calendar_claim_predicate("calendar."));
     }
 
@@ -1245,6 +1301,23 @@ mod tests {
             map(&[
                 (KEY_STATUS, Value::from(CalendarStatus::Cancelled.as_str())),
                 (KEY_BASIS, Value::from("imported")),
+                (KEY_RECORDED_AT, Value::from(1_u64)),
+            ]),
+        );
+
+        reject(
+            PREDICATE_CALENDAR_EVENT_OUTCOME,
+            map(&[
+                (KEY_OUTCOME, Value::from("rescheduled")),
+                (KEY_BASIS, Value::from(EventOutcomeBasis::Machine.as_str())),
+                (KEY_RECORDED_AT, Value::from(1_u64)),
+            ]),
+        );
+        reject(
+            PREDICATE_CALENDAR_EVENT_OUTCOME,
+            map(&[
+                (KEY_OUTCOME, Value::from(EventOutcome::Held.as_str())),
+                (KEY_BASIS, Value::from("inferred")),
                 (KEY_RECORDED_AT, Value::from(1_u64)),
             ]),
         );

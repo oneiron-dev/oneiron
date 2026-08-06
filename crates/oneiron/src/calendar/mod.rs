@@ -8,9 +8,14 @@
 //! CAL-09 adds the read side on top of that family — [`query`] projects EVENTs
 //! and [`freebusy`] projects busy-only occupancy — plus the optional inbound
 //! [`safeguard`] hook CAL-02 calls before imported-claim admission.
+//!
+//! CAL-07 adds [`outcome`]: the evidence ladder that decides what happened at an
+//! EVENT, the post-end check-in it arms, and the `calendar.event_outcome` head
+//! CA-04 reads as stage-transition evidence.
 
 pub mod claims;
 pub mod freebusy;
+pub mod outcome;
 pub mod query;
 pub mod safeguard;
 
@@ -27,6 +32,15 @@ pub use claims::{
     claim_class_descriptors, is_calendar_claim_predicate,
 };
 pub use freebusy::{BusyInterval, BusyUnion, freebusy, freebusy_scoped};
+pub use outcome::{
+    CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DEFAULT_OUTCOME_GRACE_SECS,
+    DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
+    MachineOutcomeEvidence, MeetingClassSignals, OUTCOME_CHECK_IN_REASON_TAG, OutcomeCheckInWake,
+    PREDICATE_CALENDAR_EVENT_OUTCOME, accept_check_in_recording, build_check_in_lens,
+    check_in_is_still_due, check_in_recording_artifact_id, is_meeting_class,
+    outcome_from_machine_evidence, plan_outcome_check_in, project_event_outcome,
+    read_event_outcome, record_event_outcome, resolve_owner_check_in,
+};
 pub use query::{
     CalendarEventView, CalendarRangeDto, CalendarRead, CalendarReadRequest, CalendarSearchRequest,
     CalendarSel, MAX_CALENDAR_SEARCH_LIMIT, read_event, read_event_scoped, search_events,
