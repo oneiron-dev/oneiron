@@ -2343,6 +2343,21 @@ impl Vault {
         owner: &AuthenticatedOwner,
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
+        self.with_write_txn(|wtxn| self.create_standing_grant_in_txn(wtxn, owner, bound))
+    }
+
+    /// Transaction-composable [`Vault::create_standing_grant`].
+    ///
+    /// Exists so a caller whose PRECONDITION must hold at mint time can test
+    /// it in the same transaction that writes the row: ONE-1748's graduation
+    /// tap reads the scope's ramp posture here, so a stale tap cannot overtake
+    /// the demotion that retracted the offer it is answering.
+    pub(crate) fn create_standing_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        bound: GrantBound,
+    ) -> Result<ConsentReceipt> {
         if bound_catastrophe_class(&bound).is_some() {
             return Err(Error::ConsentCatastropheNotRememberable(
                 "the catastrophe floor is non-rememberable; no standing grant may cover it",
@@ -2362,13 +2377,11 @@ impl Vault {
 
         let key = consent_grant_key(&row.grant_ref());
         let data = encode_consent_grant_row(&row)?;
-        let mut wtxn = self.store.env.write_txn()?;
         // Re-minting an identical bound is the owner re-affirming it; the row
         // is idempotent, and the receipt is still written so the act is
         // audit-visible.
-        self.store.vault_meta.put(&mut wtxn, &key, &data)?;
-        self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
-        wtxn.commit()?;
+        self.store.vault_meta.put(wtxn, &key, &data)?;
+        self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
         Ok(receipt)
     }
 
@@ -2648,6 +2661,52 @@ pub fn load_active_standing_grants(
         }
     }
     Ok(grants)
+}
+
+/// Whether one standing grant row exists and is live, on the caller's
+/// transaction.
+///
+/// The consent registry is the single truth for "is this bound graduated": a
+/// consumer that needs the answer reads THIS row rather than keeping a second
+/// copy that could disagree with it (ONE-1748's ramp derives
+/// [`crate::consent_graduation::RampState`] here).
+pub(crate) fn standing_grant_is_active_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    grant_ref: &str,
+) -> Result<bool> {
+    let Some(raw) = store.vault_meta.get(txn, &consent_grant_key(grant_ref))? else {
+        return Ok(false);
+    };
+    Ok(decode_consent_grant_row(&raw)?.is_active())
+}
+
+/// Flips one standing grant to [`ConsentGrantStatus::Revoked`] inside the
+/// caller's write transaction, reporting whether a live row was actually
+/// revoked.
+///
+/// Deliberately owner-free, unlike [`Vault::revoke_consent_grant`]: REDUCING
+/// authority is safe for anyone to do, and only GRANTING requires an
+/// [`AuthenticatedOwner`]. The caller owns the receipt — this door writes none,
+/// so an engine-side self-demotion records exactly one act (ONE-1748) instead
+/// of a revocation receipt and a demotion receipt describing the same event.
+pub(crate) fn revoke_standing_grant_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    grant_ref: &str,
+) -> Result<bool> {
+    let key = consent_grant_key(grant_ref);
+    let Some(raw) = store.vault_meta.get(&*wtxn, &key)? else {
+        return Ok(false);
+    };
+    let mut row = decode_consent_grant_row(&raw)?;
+    if !row.is_active() {
+        return Ok(false);
+    }
+    row.status = ConsentGrantStatus::Revoked;
+    let data = encode_consent_grant_row(&row)?;
+    store.vault_meta.put(wtxn, &key, &data)?;
+    Ok(true)
 }
 
 /// Reads one approve-once marker from the caller's transaction.

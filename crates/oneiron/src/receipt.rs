@@ -98,7 +98,7 @@ const FIELD_COUNTERPARTY_REF: &str = "counterparty_ref";
 const FIELD_IDENTITY_REF: &str = "identity_ref";
 const FIELD_CHANNEL_IDENTITY_REF: &str = "channel_identity_ref";
 const FIELD_RECEIVING_IDENTITY_REF: &str = "receiving_identity_ref";
-const FIELD_GRANT_REF: &str = "grant_ref";
+pub(crate) const FIELD_GRANT_REF: &str = "grant_ref";
 const FIELD_BUNDLE_REF: &str = "bundle_ref";
 const FIELD_BUDGET_DEBIT: &str = "budget_debit";
 const FIELD_BUDGET: &str = "budget";
@@ -116,10 +116,17 @@ const FIELD_DISCLOSURE_STAMP: &str = "disclosure_stamp";
 const BOARD_STATE_REF_PREFIX: &str = "board:";
 const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
 /// ARCH-0055 r7 proposal-outcome receipt fields (ONE-1747).
+///
+/// The three ramp-scope keys are `pub(crate)` because ONE-1748's demotion
+/// receipt names the SAME scope tuple: two spellings of one key would make the
+/// ramp's own receipts unjoinable with the outcome receipts they answer.
 const FIELD_PROPOSAL_REF: &str = "proposal_ref";
-const FIELD_OP_KIND: &str = "op_kind";
-const FIELD_TARGET_CLASS: &str = "target_class";
-const FIELD_SCOPE_ACTOR: &str = "actor";
+pub(crate) const FIELD_OP_KIND: &str = "op_kind";
+pub(crate) const FIELD_TARGET_CLASS: &str = "target_class";
+pub(crate) const FIELD_SCOPE_ACTOR: &str = "actor";
+/// Why a consent-graduation scope was demoted back to the propose lane
+/// (ONE-1748); the wire strings are `consent_graduation::DemotionReason`.
+pub(crate) const FIELD_DEMOTION_REASON: &str = "demotion_reason";
 /// The resolution event's claim-source axis. Deliberately NOT `"source"`:
 /// that key is reserved as one of the six ARCH-0056 Δ field names this
 /// receipt must not project until ED-01 (ONE-1757) builds the Δ schema.
@@ -2139,6 +2146,13 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     }
     if query.includes_kind(ReceiptKind::Gate) {
         records.extend(gate_receipts(vault, query)?);
+        // The SECOND Gate projector (ONE-1748): consent-graduation
+        // self-demotions and door-recorded ramp outcomes. They share the kind
+        // but not the store — a ramp bookkeeping row has no business in the
+        // gate-decision ledger, which ONE-1637 made the erasure chain's H0
+        // index. Both projectors open their own read txn, so they run before
+        // the shared `rtxn` below.
+        records.extend(crate::consent_graduation::ramp_receipts(vault, query)?);
     }
 
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
