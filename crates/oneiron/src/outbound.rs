@@ -17,6 +17,7 @@ use crate::attempt_queue::{
     RetryAttempt,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::campaign::send_hygiene::{ListUnsubscribeTarget, inject_campaign_email_hygiene_headers};
 use crate::channel_identity::{
     ChannelIdentityBinding, ChannelIdentityState, decode_channel_identity_body,
 };
@@ -143,6 +144,23 @@ impl OutboundIntent {
             job_ref: trigger.job_ref,
         }
     }
+}
+
+/// The bytes one outbound effect freezes: the intent, plus the CA-05 send
+/// hygiene headers derived from that same frozen metadata.
+///
+/// Flattened and elided-when-empty, the way every optional field on
+/// [`OutboundIntent`] is: the frozen bytes are what a connector reads and what
+/// the ledger hashes into an intent id, so a send that carries no hygiene
+/// headers says nothing about them rather than freezing an empty map. Ordering
+/// is fixed by the struct's field order and by the [`BTreeMap`], because these
+/// bytes are the retry contract.
+#[derive(Serialize)]
+struct FrozenOutboundPayload<'a> {
+    #[serde(flatten)]
+    intent: &'a OutboundIntent,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    hygiene_headers: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -583,6 +601,11 @@ pub struct OutboundDispatchRequest {
     /// cadence, sweep bans, and kill-switch state cannot be bypassed by an
     /// adapter.
     pub linkedin_sandbox_policy: Option<LinkedInSeatSandboxPolicy>,
+    /// CA-05 unsubscribe target for a campaign email send, frozen with the
+    /// intent. Absent for every send that is not campaign email; present, it
+    /// produces the `List-Unsubscribe` / `List-Unsubscribe-Post` headers that
+    /// ride the frozen payload to the connector.
+    pub campaign_unsubscribe: Option<ListUnsubscribeTarget>,
 }
 
 impl OutboundDispatchRequest {
@@ -617,6 +640,7 @@ impl OutboundDispatchRequest {
             delivery_window_apns_interruption_level: None,
             context_receipt: None,
             linkedin_sandbox_policy: None,
+            campaign_unsubscribe: None,
         }
     }
 
@@ -720,6 +744,13 @@ impl OutboundDispatchRequest {
         self.linkedin_sandbox_policy = Some(policy);
         self
     }
+
+    /// Freezes the CA-05 unsubscribe target for a campaign email send.
+    #[must_use]
+    pub fn campaign_unsubscribe(mut self, target: ListUnsubscribeTarget) -> Self {
+        self.campaign_unsubscribe = Some(target);
+        self
+    }
 }
 
 /// Connector-adapter execution request after resolve, gate, and window stages.
@@ -732,6 +763,10 @@ pub struct OutboundExecutionRequest<'a> {
     pub verb_contract: &'static OutboundVerbContract,
     pub channel_identity_ref: Option<EntityId>,
     pub counterparty_ref: Option<&'a str>,
+    /// CA-05 send-hygiene headers, replayed from the FROZEN payload rather than
+    /// re-derived, so an adapter cannot invent a different unsubscribe target
+    /// per attempt. Empty for every send that froze none.
+    pub hygiene_headers: BTreeMap<String, String>,
 }
 
 /// Adapter execution outcome consumed by the common receipt emitter.
@@ -1284,7 +1319,22 @@ impl OutboundDispatchPipeline {
             outcome,
             execution,
         ) = if admit_for_execution {
-            let payload = serde_json::to_vec(&request.intent).map_err(|_| {
+            // CA-05: the unsubscribe headers are derived ONCE, here, from the
+            // metadata this send is about to freeze — before the gate runs and
+            // long before any connector sees the call. A retry replays these
+            // bytes instead of re-deriving, which is what makes the headers
+            // byte-identical rather than merely equivalent.
+            let mut hygiene_headers = BTreeMap::new();
+            inject_campaign_email_hygiene_headers(
+                &normalize_key(&request.intent.channel),
+                &mut hygiene_headers,
+                request.campaign_unsubscribe.as_ref(),
+            )?;
+            let payload = serde_json::to_vec(&FrozenOutboundPayload {
+                intent: &request.intent,
+                hygiene_headers,
+            })
+            .map_err(|_| {
                 OutboundDispatchError::Engine(Error::InvariantViolation(
                     "outbound intent freeze failed",
                 ))
@@ -2191,13 +2241,14 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             || call.tool() != self.verb_contract.kind
             || call.resolved_endpoint().is_some()
         {
-            return crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
-                crate::outbound_intent_ledger::OutboundSendFailure {
-                    kind: crate::outbound_intent_ledger::OutboundFailureKind::InvalidRequest,
-                    code: None,
-                },
-            );
+            return invalid_frozen_call();
         }
+        // The last in-process boundary before the connector: the hygiene
+        // headers come out of the frozen bytes, never out of the live request.
+        let Ok(hygiene_headers) = crate::outbound_chokepoint::frozen_call_hygiene_headers(call)
+        else {
+            return invalid_frozen_call();
+        };
         let execution_request = OutboundExecutionRequest {
             intent_ref: &self.request.intent_ref,
             intent: &self.request.intent,
@@ -2213,6 +2264,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             verb_contract: self.verb_contract,
             channel_identity_ref: self.request.channel_identity_ref,
             counterparty_ref: self.request.counterparty_ref.as_deref(),
+            hygiene_headers,
         };
         let execution = self.sink.execute(&execution_request);
         let outcome = match execution.kind {
@@ -2235,6 +2287,16 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         self.execution = Some(execution);
         outcome
     }
+}
+
+/// A frozen call the dispatch transport cannot honor verbatim.
+fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {
+    crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
+        crate::outbound_intent_ledger::OutboundSendFailure {
+            kind: crate::outbound_intent_ledger::OutboundFailureKind::InvalidRequest,
+            code: None,
+        },
+    )
 }
 
 fn outbound_dispatch_attempt_id(
