@@ -12,17 +12,48 @@
 //! CAL-07 adds [`outcome`]: the evidence ladder that decides what happened at an
 //! EVENT, the post-end check-in it arms, and the `calendar.event_outcome` head
 //! CA-04 reads as stage-transition evidence.
+//!
+//! CAL-01 adds [`tz`]: the one border where the `u64` UTC core meets IANA wall
+//! time. The IANA database is private to that module — no third-party datetime
+//! type crosses a public signature here or anywhere else in the crate.
 
 pub mod claims;
 pub mod freebusy;
 pub mod outcome;
 pub mod query;
 pub mod safeguard;
+pub mod tz;
 
 /// Single calendar error home. Uninhabited at CAL-00; later stack layers append variants.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum CalendarError {}
+pub enum CalendarError {
+    /// The named zone is not in the IANA database. Never a silent UTC fallback.
+    #[error("unknown IANA time zone: {tz}")]
+    UnknownTimeZone {
+        /// The zone name as supplied.
+        tz: String,
+    },
+    /// The civil fields are not a real date/time, or the instant is outside the
+    /// engine's `u64` UTC model.
+    #[error("invalid wall time")]
+    InvalidWallTime,
+    /// The civil time falls in a spring-forward gap and has no UTC instant. The
+    /// caller decides skip-vs-shift; the border never shifts silently.
+    #[error("wall time does not exist in time zone {tz}")]
+    NonexistentWallTime {
+        /// The civil time that has no instant in `tz`.
+        wall: tz::WallTime,
+        /// The zone whose transition removed it.
+        tz: String,
+    },
+    /// The timestamp is past the supported conversion range.
+    #[error("UTC timestamp is outside the supported calendar range: {utc}")]
+    TimestampOutOfRange {
+        /// The offending timestamp.
+        utc: u64,
+    },
+}
 
 pub use claims::{
     CALENDAR_CLAIM_PREDICATES, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection,
@@ -50,6 +81,7 @@ pub use safeguard::{
     CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER, CalendarAdmissionRequest,
     CalendarBodyScreener, CalendarInboundBody, CalendarScreenVerdict, Screened, screen_then_claim,
 };
+pub use tz::{WallTime, utc_to_wall, wall_to_utc};
 
 #[cfg(test)]
 pub(crate) mod test_support {
