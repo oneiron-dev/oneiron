@@ -4277,18 +4277,9 @@ impl Vault {
     /// this looks, so argument order cannot change the answer.
     pub fn distinct_claims_for_pair(&self, a: &EntityId, b: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        self.distinct_claims_for_pair_in_txn(&rtxn, a, b)
-    }
-
-    pub(crate) fn distinct_claims_for_pair_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        a: &EntityId,
-        b: &EntityId,
-    ) -> Result<Vec<EntityId>> {
         let pair = distinct_pair_key(*a, *b);
         let mut claims = Vec::new();
-        for row in self.active_distinct_claims_in_txn(rtxn, &pair.0)? {
+        for row in self.active_distinct_claims_in_txn(&rtxn, &pair.0)? {
             if row.pair == pair && is_effective_approval(row.approval) {
                 claims.push(row.claim);
             }

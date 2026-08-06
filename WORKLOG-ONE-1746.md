@@ -170,3 +170,21 @@ and the comment states the settled reason rather than "arms in ONE-1746".
   `facet_and_assert_distinct_doors_mint_their_own_effects`; its assert_distinct
   half now asserts the effect instead of its absence (arming, not weakening —
   every pre-existing assert kept).
+
+## SIMPLIFY (K3, 2026-08-06)
+
+Deletion-biased pass over the impl tip. ONE edit warranted:
+
+- Collapsed the single-caller `pub(crate) fn distinct_claims_for_pair_in_txn`
+  layer into the public `distinct_claims_for_pair` door — the `in_txn` split
+  is the house idiom for txn-composable reads, but nothing composes this one
+  (suppression reads `active_distinct_claims_in_txn` directly), so the wrapper
+  was speculative generality.
+
+Everything else held: every helper has real callers, the doc density carries
+the ratified ARCH-0055 §6 consent rationale (house style), no test
+assertions/fixtures or public API touched.
+
+Gates after: `cargo fmt --check` clean · `cargo clippy -p oneiron
+--all-features --all-targets -- -D warnings` clean · `cargo nextest run -p
+oneiron --all-features` 3828 passed / 64 skipped.
