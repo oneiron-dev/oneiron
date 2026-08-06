@@ -143,6 +143,36 @@ pub(crate) const FIELD_AMENDMENT_DELTA: &str = "amendment_delta";
 /// would otherwise confuse stay apart — capture failure is non-fatal, but it
 /// is receipted, never silent.
 pub(crate) const FIELD_AMENDMENT_DELTA_UNCAPTURED: &str = "amendment_delta_uncaptured";
+/// The ARCH-0056 §7 ESCALATION field class (ONE-1762, ED-06).
+///
+/// An escalation is a gate decision a human made, so it projects into the
+/// existing `Gate` kind rather than minting one — which means the kind alone no
+/// longer says which projector wrote a record. These keys are that
+/// discriminator: a receipt carrying them is an escalation ruling or the
+/// standing policy one earned, and `edit_distance::escalation` is the only
+/// writer. They are `pub(crate)` for the same reason [`FIELD_AMENDMENT_DELTA`]
+/// is — the projector lives in another module, and a second spelling of one key
+/// would make the two families unjoinable.
+pub(crate) const FIELD_ESCALATION_SCOPE: &str = "escalation_scope";
+/// Which of the three closed triggers fired (`escalation::EscalationTrigger`).
+pub(crate) const FIELD_ESCALATION_TRIGGER: &str = "escalation_trigger";
+/// What was ruled (`escalation::EscalationRuling`). Also the ledger receipt's
+/// `outcome`; on a standing-policy receipt the outcome is the row's STATUS, so
+/// this field is what keeps one key answering "what was ruled" across the whole
+/// class.
+pub(crate) const FIELD_ESCALATION_RULING: &str = "escalation_ruling";
+/// What the engine asked when it stopped.
+pub(crate) const FIELD_ESCALATION_QUESTION: &str = "escalation_question";
+/// Why the human ruled as they did.
+pub(crate) const FIELD_ESCALATION_RATIONALE: &str = "escalation_rationale";
+/// The ask's magnitude band. Budget-triggered escalations only.
+pub(crate) const FIELD_ESCALATION_BUDGET_BAND: &str = "escalation_budget_band";
+/// The band ceiling a standing policy covers — distinct from
+/// [`FIELD_ESCALATION_BUDGET_BAND`], which is one ask's magnitude rather than a
+/// row's reach.
+pub(crate) const FIELD_ESCALATION_BAND_CEILING: &str = "escalation_band_ceiling";
+/// Comma-joined receipt ids of the rulings a standing policy was learned from.
+pub(crate) const FIELD_ESCALATION_CITED_RECEIPTS: &str = "escalation_cited_receipts";
 const FIELD_RECEIPT_SCHEMA: &str = "receipt_schema";
 const FIELD_ENGINE_REGISTER: &str = "engine_register";
 const FIELD_CARE_REGISTER: &str = "care_register";
@@ -2015,7 +2045,10 @@ fn sort_receipts_newest_first(records: &mut [ReceiptRecord]) {
     records.sort_by(receipt_newest_first_order);
 }
 
-fn receipt_newest_first_order(left: &ReceiptRecord, right: &ReceiptRecord) -> std::cmp::Ordering {
+pub(crate) fn receipt_newest_first_order(
+    left: &ReceiptRecord,
+    right: &ReceiptRecord,
+) -> std::cmp::Ordering {
     right
         .occurred_at
         .cmp(&left.occurred_at)
@@ -2023,7 +2056,15 @@ fn receipt_newest_first_order(left: &ReceiptRecord, right: &ReceiptRecord) -> st
         .then_with(|| left.receipt_id.cmp(&right.receipt_id))
 }
 
-fn retain_newest_receipt(receipts: &mut Vec<ReceiptRecord>, receipt: ReceiptRecord, limit: usize) {
+/// Keeps at most `limit` records, evicting the oldest under
+/// [`receipt_newest_first_order`] — the SAME order
+/// [`finalize_receipt_query_records`] finally sorts by, which is what makes a
+/// bounded projector buffer lossless with respect to the public answer.
+pub(crate) fn retain_newest_receipt(
+    receipts: &mut Vec<ReceiptRecord>,
+    receipt: ReceiptRecord,
+    limit: usize,
+) {
     if receipts.len() < limit {
         receipts.push(receipt);
         return;
@@ -2160,6 +2201,13 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         // index. Both projectors open their own read txn, so they run before
         // the shared `rtxn` below.
         records.extend(crate::consent_graduation::ramp_receipts(vault, query)?);
+        // The THIRD Gate projector (ONE-1762): escalation rulings and the
+        // standing policies they earn. Same kind, own store, own field class —
+        // an escalation is a gate decision a human made, so it mints no kind of
+        // its own. Opens its own read txn, as the ramp projector does.
+        records.extend(crate::edit_distance::escalation::escalation_receipts(
+            vault, query,
+        )?);
     }
 
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {

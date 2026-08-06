@@ -508,6 +508,13 @@ pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EdgeProvenanceFlags, EdgeValueLayout,
 };
+pub use crate::edit_distance::escalation::{
+    DEFAULT_ESCALATION_STANDING_N, ESCALATION_LAST_RULINGS_BOUND, ESCALATION_STANDING_N_KEY,
+    EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger, StandingPolicy,
+    StandingPolicyStatus, accept_standing_policy, escalation_standing_n, escalation_stats,
+    is_escalation_receipt, is_standing_policy_receipt, maybe_propose_standing_policy,
+    record_escalation, set_escalation_standing_n, standing_policy_for,
+};
 pub use crate::edit_distance::graduation::{
     DEFAULT_POSTERIOR_GUARD, OfferAnswer, OfferAnswerOutcome, SnoozeState, ThresholdRow,
     TrustTableRow, WILDCARD_PATTERN, answer_graduation_offer, clear_graduation_policy,
