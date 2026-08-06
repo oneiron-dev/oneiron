@@ -1005,8 +1005,28 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            self.put_skill_record_in_txn(wtxn, id, record, occurred, learned_at)
+        })
+    }
+
+    /// [`Vault::put_skill_record`] inside the caller's write transaction.
+    ///
+    /// Same door, same checks — only the transaction boundary moves out. Birth
+    /// paths whose DEDUP decision must not race their create need the lookup
+    /// and the write under one transaction (the conversation-convert door,
+    /// ONE-1446), and a create that commits on its own would let two callers
+    /// both read "no holder" and both mint.
+    pub(crate) fn put_skill_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        record: &SkillRecord,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
         let data = encode_skill_record(record)?;
-        if self.get_raw(id)?.is_none() {
+        if self.store.entities.get(&*wtxn, id.as_bytes())?.is_none() {
             if record.lifecycle_status != SkillLifecycle::Candidate {
                 return Err(Error::InvalidSkillBody(
                     "new skills are born candidate; the admission gate activates them",
@@ -1019,22 +1039,26 @@ impl Vault {
             // here. The batch chokepoint re-runs both checks for local
             // raw creates; sync remat (`replicated`) is exempt.
             if let Some(parent) = record.forked_from {
-                self.validate_local_fork_parent(id, &parent)?;
+                self.validate_local_fork_parent(wtxn, id, &parent)?;
             }
         }
-        let mut wtxn = self.store.env.write_txn()?;
-        self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?;
-        wtxn.commit()?;
-        Ok(())
+        self.apply_skill_record_body(wtxn, id, occurred, learned_at, data, false)
     }
 
-    fn validate_local_fork_parent(&self, fork_id: &EntityId, parent: &EntityId) -> Result<()> {
+    /// Read INSIDE the caller's transaction: the parent this create trusts must
+    /// be the parent the create commits against.
+    fn validate_local_fork_parent(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        fork_id: &EntityId,
+        parent: &EntityId,
+    ) -> Result<()> {
         if parent == fork_id {
             return Err(Error::InvalidSkillBody(
                 "forkedFrom cannot name the fork itself",
             ));
         }
-        let Some(raw) = self.get_raw(parent)? else {
+        let Some(raw) = self.store.entities.get(wtxn, parent.as_bytes())? else {
             return Err(Error::InvalidSkillBody(
                 "forkedFrom parent must exist as a type-7 SKILL",
             ));
