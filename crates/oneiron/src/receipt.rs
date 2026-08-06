@@ -2641,6 +2641,15 @@ fn identity_topology_receipt(
             fields.insert("facet_count".to_owned(), facets.len().to_string());
             Some(format!("entity:{}", entity.to_hex()))
         }
+        // ONE-1746: the pair is the decision, and the claim is where it
+        // lives — both projected so a reader can audit the assertion without
+        // dereferencing the ledger event.
+        StoredIdentityOpAction::AssertDistinct { a, b, claim } => {
+            fields.insert("pair_a".to_owned(), a.to_hex());
+            fields.insert("pair_b".to_owned(), b.to_hex());
+            fields.insert("claim".to_owned(), claim.to_hex());
+            Some(format!("claim:{}", claim.to_hex()))
+        }
         StoredIdentityOpAction::Undo { target } => {
             fields.insert("undo_of".to_owned(), target.to_hex());
             Some(format!("event:{}", target.to_hex()))

@@ -34,8 +34,19 @@
 //! counter-event over the ledger, never a rewrite (r1); claim subjects are
 //! never eagerly rewritten (r6) — read-time canonicalization runs through
 //! the redirect projection in [`crate::identity_redirect`] (ONE-1744).
-//! Reassignment-map application and FACET minting arm in ONE-1745;
-//! `entity.distinct_from` claim storage arms in ONE-1746.
+//! Reassignment-map application and FACET minting arm in ONE-1745.
+//!
+//! Anti-merge assertions (ONE-1746): `assert_distinct` mints a public
+//! `entity.distinct_from` CLAIM keyed by the normalized symmetric pair, so
+//! (a, b) and (b, a) are ONE claim. Unlike the topology ops around it the
+//! claim carries its own consent axis in its `appr` column — it rides the
+//! ordinary claim approval flow, is agent-mintable, and is NOT a reserved
+//! engine-only namespace. §6 re-proposal suppression reads that claim:
+//! lifecycle-ACTIVE and approval in {`Approved`, `Auto`} suppresses a
+//! PROPOSED merge over the covered pair, and nothing else — an owner's
+//! explicit `Auto`/`Approved` merge is never blocked, unrelated pairs are
+//! never touched, and superseding or retracting the claim lifts suppression
+//! with no shadow state to unwind.
 //!
 //! Zero-head split (r2 "gone", ONE-1744): `split(entity, heads: [])` is a
 //! legal deliberate retire-without-successor. It shells the original like
@@ -52,7 +63,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rmpv::Value;
 
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -86,11 +97,20 @@ pub(crate) mod test_hooks {
 
 /// Predicate of the anti-merge claim (ARCH-0055 §9 G.1 row): symmetric
 /// `entity.distinct_from` pair, conflict-set keyed by [`distinct_pair_key`].
-/// Declared here as the family's contract; the write path — a
-/// `CLAIM_PREDICATE_REGISTRY` entry plus the literal-dispatch match arm in
-/// `claim.rs` — arms in ONE-1746 together with re-proposal suppression.
 /// Unlike the op events (engine-authored type-76 records), distinct_from
 /// stays a public CLAIM: it is a statement about the world, not an action.
+///
+/// The write path is the literal-dispatch arm in
+/// [`crate::claim::validate_claim_body_and_decode`], which routes every
+/// type-0 write of this predicate — the op door's and an agent's alike —
+/// through [`validate_distinct_from_claim_structure`]. It is deliberately
+/// NOT a `CLAIM_PREDICATE_REGISTRY` entry: that list is the core/companion/
+/// eiri LAYER schema list (`registered_predicates_carry_layer_prefix` pins
+/// the prefix), and `entity.*` is a family namespace, not a layer — the
+/// same reason the fifteen other predicate families validate through their
+/// own dispatch arm without a registry row. The registry gates no write
+/// (well-formed unknown predicates are accepted), so the arm alone is what
+/// enforces the pair.
 pub const PREDICATE_ENTITY_DISTINCT_FROM: &str = "entity.distinct_from";
 
 /// vault_meta key of the engine-stamped monotonic event sequence — the
@@ -158,6 +178,14 @@ const BODY_KEY_FACETS: &str = "facets";
 /// bodies byte-identical to their pre-ONE-1745 encoding.
 const BODY_KEY_APPLIED_ASSIGNED: &str = "asg";
 const BODY_KEY_APPLIED_RESIDUE: &str = "res";
+/// Normalized distinct-pair keys (ONE-1746), shared by the type-76
+/// `assert_distinct` event body AND the `entity.distinct_from` claim value:
+/// one pair shape with one spelling, so the two surfaces cannot drift.
+const BODY_KEY_PAIR_A: &str = "a";
+const BODY_KEY_PAIR_B: &str = "b";
+/// The CLAIM row an `assert_distinct` event carries its assertion in — the
+/// row's id, so the event's effect is auditable from the ledger alone.
+const BODY_KEY_CLAIM: &str = "claim";
 
 const MAP_KEY_ITEM: &str = "item";
 const MAP_KEY_HEAD: &str = "head";
@@ -168,6 +196,9 @@ const EVENT_KIND_SPLIT: &str = "split";
 /// Wire kind of the ARCH-0055 r5 facet event (ONE-1745). Pinned string, in
 /// the same reservation family as the other three kinds.
 const EVENT_KIND_FACET: &str = "facet";
+/// Wire kind of the ARCH-0055 §6 anti-merge assertion (ONE-1746). Pinned
+/// string, in the same reservation family as the other kinds.
+const EVENT_KIND_ASSERT_DISTINCT: &str = "assert_distinct";
 const EVENT_KIND_UNDO: &str = "undo";
 /// Wire kind of the ARCH-0055 r7 proposal-resolution event (ONE-1747). The
 /// resolution event IS the retirement of the park: the projector finds a
@@ -600,6 +631,67 @@ pub fn distinct_pair_key(a: EntityId, b: EntityId) -> (EntityId, EntityId) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
+/// One lifecycle-`Active` `entity.distinct_from` claim as the family's
+/// readers see it: the row, its consent axis, and the pair it covers.
+#[derive(Debug, Clone, Copy)]
+struct DistinctClaimRow {
+    claim: EntityId,
+    approval: ClaimApprovalStatus,
+    pair: (EntityId, EntityId),
+}
+
+/// The `entity.distinct_from` claim VALUE for a pair: the normalized
+/// symmetric key, so (a, b) and (b, a) encode to identical bytes and the
+/// pair is readable without dereferencing the claim's subject.
+#[must_use]
+fn distinct_claim_value(pair: (EntityId, EntityId)) -> Value {
+    Value::Map(vec![
+        (Value::from(BODY_KEY_PAIR_A), id_value(&pair.0)),
+        (Value::from(BODY_KEY_PAIR_B), id_value(&pair.1)),
+    ])
+}
+
+/// The [`distinct_claim_value`] inverse. Fail-closed: a value that is not a
+/// normalized two-id map is not a distinct assertion.
+fn decode_distinct_claim_pair(value: &Value) -> Result<(EntityId, EntityId)> {
+    const PAIR_CONTEXT: &str = "entity.distinct_from claim value must be a normalized id pair";
+    let map = value.as_map().ok_or(Error::InvalidClaimBody(PAIR_CONTEXT))?;
+    let id = |key| {
+        let bytes: [u8; ENTITY_ID_LEN] = map_field(map, key)
+            .and_then(Value::as_slice)
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or(Error::InvalidClaimBody(PAIR_CONTEXT))?;
+        EntityId::from_bytes(bytes).map_err(|_| Error::InvalidClaimBody(PAIR_CONTEXT))
+    };
+    let (a, b) = (id(BODY_KEY_PAIR_A)?, id(BODY_KEY_PAIR_B)?);
+    // Strictly ascending: `a == b` is the self-assertion the transition
+    // table already refuses, and a descending pair is the unnormalized
+    // encoding that would let one pair carry two distinct claims.
+    if a >= b {
+        return Err(Error::InvalidClaimBody(PAIR_CONTEXT));
+    }
+    Ok((a, b))
+}
+
+/// D18 structural validator for the `entity.distinct_from` predicate, run at
+/// the shared type-0 write chokepoint on every door that can admit it.
+///
+/// The symmetry law lives HERE rather than in the op door because the claim
+/// is public: an agent minting it directly must land the same single row the
+/// engine's `assert_distinct` does. Two bounds do that — the value is the
+/// NORMALIZED pair (so both directions encode identically), and the subject
+/// is the pair's lexicographically-first entity (so both directions anchor
+/// on the same subject and one `claims_for_subject` sweep finds them).
+pub(crate) fn validate_distinct_from_claim_structure(body: &ClaimBody) -> Result<()> {
+    let (a, _) = decode_distinct_claim_pair(&body.value)?;
+    if body.subject != ClaimSubject::Entity(a) {
+        return Err(Error::InvalidClaimBody(
+            "entity.distinct_from subject must be the pair's lexicographically-first entity",
+        ));
+    }
+    Ok(())
+}
+
 // ─── Proposal resolution (ARCH-0055 r7) ─────────────────────────────────────
 
 /// The ruling a decider applies to a parked `Proposed` identity-topology
@@ -751,6 +843,17 @@ pub enum IdentityTopologyRejection {
     NotStructural {
         /// The non-structural participant.
         entity: EntityId,
+    },
+    /// A PROPOSED merge names a pair an effective `entity.distinct_from`
+    /// claim already covers (ARCH-0055 §6, ONE-1746). Rejections route, they
+    /// do not dead-end into re-asks: the claim suppresses agent re-proposal
+    /// only — an `Auto`/`Approved` merge the owner ruled on is never blocked,
+    /// and superseding or retracting the claim lifts the suppression.
+    DistinctPairSuppressed {
+        /// Lexicographically-first side of the covered pair.
+        a: EntityId,
+        /// Lexicographically-last side of the covered pair.
+        b: EntityId,
     },
     /// undo names an event that is not the current topology writer for its
     /// entities (already undone, superseded by a later re-apply, parked, or
@@ -1080,8 +1183,12 @@ fn evaluate_fold_undo(
     let shelled = match op {
         IdentityTopologyOp::Merge(merge) => merge.sources.clone(),
         IdentityTopologyOp::Split(split) => vec![split.entity],
-        // Facet / assert_distinct applies move no lifecycle state; their
-        // undo semantics arm with their apply paths (ONE-1745 / ONE-1746).
+        // Facet and assert_distinct applies move no lifecycle state, so this
+        // family's undo currency test — "is this event still the topology
+        // writer for the entities it shelled?" — has nothing to test for
+        // either. Both are retracted through the door that owns their
+        // effect: a mask by splitting that FACET, an assertion by
+        // superseding or retracting its own CLAIM.
         IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
             return Err(IdentityTopologyRejection::NotUndoable { event: *target });
         }
@@ -1138,6 +1245,18 @@ pub enum StoredIdentityOpAction {
         /// Map rows it left unscoped.
         applied_residue: u64,
     },
+    /// An anti-merge assertion and the CLAIM it is carried by (ONE-1746).
+    /// The pair is stored NORMALIZED ([`distinct_pair_key`]), so the ledger
+    /// speaks the same single shape the claim does.
+    AssertDistinct {
+        /// Lexicographically-first side of the pair; also the claim subject.
+        a: EntityId,
+        /// Lexicographically-last side of the pair.
+        b: EntityId,
+        /// The `entity.distinct_from` CLAIM this event asserted through —
+        /// newly minted, or the live one a re-assertion adopted.
+        claim: EntityId,
+    },
     /// A counter-event reverting `target`.
     Undo {
         /// The reverted ledger event.
@@ -1171,6 +1290,7 @@ impl StoredIdentityOpAction {
             Self::Merge { .. } => EVENT_KIND_MERGE,
             Self::Split { .. } => EVENT_KIND_SPLIT,
             Self::Facet { .. } => EVENT_KIND_FACET,
+            Self::AssertDistinct { .. } => EVENT_KIND_ASSERT_DISTINCT,
             Self::Undo { .. } => EVENT_KIND_UNDO,
             Self::ProposalResolution { .. } => EVENT_KIND_PROPOSAL_RESOLUTION,
         }
@@ -1184,7 +1304,10 @@ impl StoredIdentityOpAction {
             Self::Split { reassignment, .. } | Self::Facet { reassignment, .. } => {
                 Some(reassignment)
             }
-            Self::Merge { .. } | Self::Undo { .. } | Self::ProposalResolution { .. } => None,
+            Self::Merge { .. }
+            | Self::AssertDistinct { .. }
+            | Self::Undo { .. }
+            | Self::ProposalResolution { .. } => None,
         }
     }
 
@@ -1210,7 +1333,10 @@ impl StoredIdentityOpAction {
                 assigned: *applied_assigned as usize,
                 residue: *applied_residue as usize,
             }),
-            Self::Merge { .. } | Self::Undo { .. } | Self::ProposalResolution { .. } => None,
+            Self::Merge { .. }
+            | Self::AssertDistinct { .. }
+            | Self::Undo { .. }
+            | Self::ProposalResolution { .. } => None,
         }
     }
 
@@ -1222,7 +1348,9 @@ impl StoredIdentityOpAction {
     /// reason evidence is: the transition table reads only the mask COUNT
     /// (`facets.is_empty()` and the index bound), never a label. The labels
     /// themselves are runtime data on the minted FACET entity bodies, which
-    /// is where a reader wanting them looks.
+    /// is where a reader wanting them looks. An assert_distinct REASON is a
+    /// placeholder for the identical reason — it rides the event's evidence
+    /// rationale, which is where a reader wanting it looks.
     #[must_use]
     pub fn to_fold_action(&self) -> IdentityTopologyAction {
         match self {
@@ -1261,6 +1389,15 @@ impl StoredIdentityOpAction {
                 reassignment: reassignment.clone(),
                 evidence: IdentityOpEvidence::default(),
             })),
+            Self::AssertDistinct { a, b, .. } => {
+                IdentityTopologyAction::Apply(IdentityTopologyOp::AssertDistinct(
+                    AssertDistinctOp {
+                        a: *a,
+                        b: *b,
+                        reason: String::new(),
+                    },
+                ))
+            }
             Self::Undo { target } => IdentityTopologyAction::Undo { target: *target },
             Self::ProposalResolution {
                 proposal, outcome, ..
@@ -1436,6 +1573,11 @@ fn encode_action_entries(action: &StoredIdentityOpAction, entries: &mut Vec<(Val
             ));
             encode_applied_counts(*applied_assigned, *applied_residue, entries);
         }
+        StoredIdentityOpAction::AssertDistinct { a, b, claim } => {
+            entries.push((Value::from(BODY_KEY_PAIR_A), id_value(a)));
+            entries.push((Value::from(BODY_KEY_PAIR_B), id_value(b)));
+            entries.push((Value::from(BODY_KEY_CLAIM), id_value(claim)));
+        }
         StoredIdentityOpAction::Undo { target } => {
             entries.push((Value::from(BODY_KEY_TARGET), id_value(target)));
         }
@@ -1551,6 +1693,25 @@ fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<StoredIdentityOpA
                 )?)?,
                 applied_assigned,
                 applied_residue,
+            })
+        }
+        EVENT_KIND_ASSERT_DISTINCT => {
+            const PAIR_CONTEXT: &str = "identity topology assert_distinct pair";
+            let a = decode_id_field(map, BODY_KEY_PAIR_A, PAIR_CONTEXT)?;
+            let b = decode_id_field(map, BODY_KEY_PAIR_B, PAIR_CONTEXT)?;
+            // The stored pair is NORMALIZED, so a descending or self-paired
+            // row is malformed rather than a second spelling of one pair.
+            if a >= b {
+                return Err(Error::InvalidIdentityTopologyEventBody(PAIR_CONTEXT));
+            }
+            Ok(StoredIdentityOpAction::AssertDistinct {
+                a,
+                b,
+                claim: decode_id_field(
+                    map,
+                    BODY_KEY_CLAIM,
+                    "identity topology assert_distinct claim",
+                )?,
             })
         }
         EVENT_KIND_UNDO => Ok(StoredIdentityOpAction::Undo {
@@ -2266,6 +2427,11 @@ pub enum IdentityOpOutcome {
     },
     /// `Proposed`: the event is recorded for legibility, but no edge and no
     /// lifecycle state moved — zero topology effects until approved.
+    ///
+    /// ONE-1746 exception, by design: a `Proposed` `assert_distinct` DOES
+    /// mint its `entity.distinct_from` claim, in the `Proposed` state. That
+    /// claim is the assertion's own consent surface — it suppresses nothing
+    /// until approved, and a proposal with no row could never be approved.
     Parked {
         /// The parked ledger event record.
         event: EntityId,
@@ -3145,11 +3311,12 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
         StoredIdentityOpAction::Split { entity, .. } => BTreeSet::from([entity]),
         // A resolution shells nothing of its own: an approving ruling's
         // effects ride the applied op's OWN event, which induces its own
-        // sources when evicted. Nor does a facet op — it leaves its base
-        // `Active` (r6), so it induces no `merged_into`/`split_into` row for
-        // this reconciler to own.
+        // sources when evicted. Nor does a facet or assert_distinct op — both
+        // leave every participant `Active` (r6 / §6), so neither induces a
+        // `merged_into`/`split_into` row for this reconciler to own.
         StoredIdentityOpAction::Undo { .. }
         | StoredIdentityOpAction::Facet { .. }
+        | StoredIdentityOpAction::AssertDistinct { .. }
         | StoredIdentityOpAction::ProposalResolution { .. } => BTreeSet::new(),
     }))
 }
@@ -3302,11 +3469,16 @@ impl Vault {
     /// is written on any rejection. No participant is tombstoned and no
     /// claim subject is rewritten (r1/r6).
     ///
-    /// Facet and assert_distinct ops are validated through the same table
-    /// but their apply doors are not armed yet
-    /// ([`Error::IdentityTopologyUnarmed`]): a door that recorded an event
-    /// without its effect would corrupt the ledger's meaning. Facet minting
-    /// arms in ONE-1745; distinct_from storage in ONE-1746.
+    /// An `assert_distinct` op writes its `entity.distinct_from` CLAIM
+    /// through the ordinary claim door (ONE-1746) and is idempotent: a live
+    /// claim for the pair is adopted rather than duplicated. Unlike the
+    /// topology arms, its consent axis lands ON that claim's `appr` column
+    /// rather than being withheld from it — a `Proposed` assertion IS a
+    /// proposed claim, which suppresses nothing until approved and is
+    /// approved through the claim's own lifecycle. Withholding the row
+    /// instead would strand the proposal: there is no resolution door for
+    /// this op kind ([`proposal_scope_target`]), so a park could never be
+    /// ruled on.
     pub fn apply_identity_topology_op(
         &self,
         op: &IdentityTopologyOp,
@@ -3329,6 +3501,21 @@ impl Vault {
     ) -> Result<IdentityOpOutcome> {
         if write.approval == ClaimApprovalStatus::Rejected {
             return Ok(IdentityOpOutcome::Noop);
+        }
+        // ARCH-0055 §6 re-proposal suppression (ONE-1746). Propose and apply
+        // are ONE door, separated only by `write.approval`, so the gate sits
+        // here behind `!is_effective()`: a PROPOSED merge over a pair an
+        // effective `entity.distinct_from` claim covers is refused, while an
+        // `Auto`/`Approved` merge — an owner ruling on the pair — passes
+        // untouched. It cannot live in `evaluate_transition`: that fn is pure
+        // and sees neither the approval axis nor a txn to read claims from.
+        if !write.is_effective()
+            && let IdentityTopologyOp::Merge(merge) = op
+            && let Some((a, b)) = self.suppressed_merge_pair_in_txn(&*wtxn, merge)?
+        {
+            return Err(Error::IdentityTopologyRejected(
+                IdentityTopologyRejection::DistinctPairSuppressed { a, b },
+            ));
         }
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
@@ -3486,10 +3673,123 @@ impl Vault {
                     transitions,
                 )
             }
-            IdentityTopologyOp::AssertDistinct(_) => {
-                Err(Error::IdentityTopologyUnarmed("distinct_from assertion"))
+            IdentityTopologyOp::AssertDistinct(distinct) => {
+                let pair = distinct_pair_key(distinct.a, distinct.b);
+                let claim = self.assert_distinct_claim_in_txn(wtxn, write, pair, now)?;
+                self.write_identity_event_in_txn(
+                    wtxn,
+                    event_id,
+                    write,
+                    now,
+                    StoredIdentityOpAction::AssertDistinct {
+                        a: pair.0,
+                        b: pair.1,
+                        claim,
+                    },
+                    // The reason is the decision's rationale, recorded where
+                    // every other op in this family records one.
+                    Some(IdentityOpEvidence {
+                        refs: Vec::new(),
+                        rationale: distinct.reason.clone(),
+                    }),
+                    Vec::new(),
+                    transitions,
+                )
             }
         }
+    }
+
+    /// The CLAIM one `assert_distinct` op asserts through: the live row for
+    /// the pair when there already is one, a freshly minted row otherwise.
+    ///
+    /// This is what makes the op IDEMPOTENT — asserting a covered pair adds a
+    /// ledger event, never a duplicate claim. The reuse test is "already at
+    /// least as effective as this write", not bare existence: a `Proposed`
+    /// row must not absorb an effective assertion, or any producer could
+    /// neutralize an owner-ruled one by proposing it first.
+    ///
+    /// The claim rides the ORDINARY claim door, so the D18 structural
+    /// validator, the subject-existence check and the `claim_of` wiring are
+    /// the same ones an agent minting this predicate directly passes through.
+    fn assert_distinct_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        write: &IdentityOpWrite,
+        pair: (EntityId, EntityId),
+        now: u64,
+    ) -> Result<EntityId> {
+        let reusable = self
+            .active_distinct_claims_in_txn(&*wtxn, &pair.0)?
+            .into_iter()
+            .find(|row| {
+                row.pair == pair
+                    && (!write.is_effective() || is_effective_approval(row.approval))
+            });
+        if let Some(row) = reusable {
+            return Ok(row.claim);
+        }
+
+        let claim = EntityId::now();
+        let mut body = ClaimBody::new(
+            PREDICATE_ENTITY_DISTINCT_FROM,
+            ClaimSubject::Entity(pair.0),
+            distinct_claim_value(pair),
+            write.confidence,
+            write.approval,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(write.source);
+        self.put_claim_in_txn(
+            wtxn,
+            &claim,
+            &body,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )?;
+        Ok(claim)
+    }
+
+    /// Parked `Proposed` merge events still awaiting a ruling whose
+    /// participant set names BOTH `a` and `b` — the "is this pair still being
+    /// re-asked?" read the §6 suppression contract is stated against
+    /// (ONE-1746).
+    ///
+    /// A suppressed proposal never reaches the ledger, so it never appears
+    /// here; a resolved one drops out through the fold's resolution witness.
+    pub fn open_merge_proposals_for_pair(
+        &self,
+        a: &EntityId,
+        b: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let resolved =
+            fold_identity_topology_log(&self.fold_effective_identity_topology_events_in_txn(&rtxn)?)
+                .resolved_proposals;
+        let mut open = Vec::new();
+        for event in self.identity_topology_events_in_txn(&rtxn)? {
+            let IdentityTopologyAction::Apply(IdentityTopologyOp::Merge(merge)) = &event.action
+            else {
+                continue;
+            };
+            if event.approval != ClaimApprovalStatus::Proposed
+                || resolved.contains_key(&event.event_id)
+            {
+                continue;
+            }
+            let named: BTreeSet<EntityId> = merge
+                .sources
+                .iter()
+                .copied()
+                .chain(std::iter::once(merge.survivor))
+                .collect();
+            if named.contains(a) && named.contains(b) {
+                open.push(event.event_id);
+            }
+        }
+        Ok(open)
     }
 
     /// Mints one ARCH-0022 FACET (type-13) entity per spec and wires each to
@@ -3600,7 +3900,12 @@ impl Vault {
             // deleting entities is ARCH-0038's door, not this one. Retiring a
             // mask is a split of that FACET, which this family already
             // expresses.
-            StoredIdentityOpAction::Facet { .. } => {
+            // An assert_distinct event is not undoable for the same reason,
+            // and its retraction door already exists: the assertion lives in
+            // a public CLAIM whose own lifecycle (supersede / retract) lifts
+            // suppression. Unwinding it from here would need a second,
+            // shadow retraction path over the same row.
+            StoredIdentityOpAction::Facet { .. } | StoredIdentityOpAction::AssertDistinct { .. } => {
                 return Err(Error::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
                 ));
@@ -3944,6 +4249,105 @@ impl Vault {
     pub fn identity_topology_event(&self, id: &EntityId) -> Result<Option<StoredIdentityOpEvent>> {
         let rtxn = self.store.env.read_txn()?;
         self.identity_topology_event_in_txn(&rtxn, id)
+    }
+
+    /// SUPPRESSING `entity.distinct_from` claims covering the unordered pair
+    /// (ARCH-0055 §6, ONE-1746): lifecycle-`Active` AND approval in
+    /// {`Approved`, `Auto`}.
+    ///
+    /// That predicate — not bare lifecycle — is the definition, because it is
+    /// the one the suppression gate acts on, and ONE derivation cannot drift
+    /// from itself. A `Proposed` assertion is therefore correctly absent: it
+    /// is a proposal about the pair, not yet an assertion of it, and
+    /// superseding or retracting a live claim empties this set (no shadow
+    /// state).
+    ///
+    /// Symmetric by construction: the claim's subject is the pair's
+    /// lexicographically-first entity ([`distinct_pair_key`]), which is where
+    /// this looks, so argument order cannot change the answer.
+    pub fn distinct_claims_for_pair(&self, a: &EntityId, b: &EntityId) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.distinct_claims_for_pair_in_txn(&rtxn, a, b)
+    }
+
+    pub(crate) fn distinct_claims_for_pair_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        a: &EntityId,
+        b: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let pair = distinct_pair_key(*a, *b);
+        let mut claims = Vec::new();
+        for row in self.active_distinct_claims_in_txn(rtxn, &pair.0)? {
+            if row.pair == pair && is_effective_approval(row.approval) {
+                claims.push(row.claim);
+            }
+        }
+        Ok(claims)
+    }
+
+    /// Every lifecycle-`Active` `entity.distinct_from` claim ANCHORED on
+    /// `subject`, with its approval axis and the normalized pair it covers.
+    ///
+    /// Anchored is enough for every caller: the write path pins the subject to
+    /// the pair's lexicographically-first entity, so for any pair whose two
+    /// sides are both in a caller's candidate set, the covering claim hangs
+    /// off a member of that set. One sweep per candidate finds them all
+    /// without a scan per candidate PAIR.
+    ///
+    /// The approval axis is returned rather than filtered here because the two
+    /// callers ask different questions of it: suppression counts only
+    /// effective rows, while the idempotence test also has to see a `Proposed`
+    /// one to avoid stacking duplicate proposals on one pair.
+    fn active_distinct_claims_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+    ) -> Result<Vec<DistinctClaimRow>> {
+        let mut rows = Vec::new();
+        for claim in self.claims_for_subject_in_txn(rtxn, subject)? {
+            let Some(body) = self.get_claim_in_txn(rtxn, &claim)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE_ENTITY_DISTINCT_FROM
+                || body.lifecycle != ClaimLifecycleStatus::Active
+            {
+                continue;
+            }
+            rows.push(DistinctClaimRow {
+                claim,
+                approval: body.approval,
+                // Stored bodies passed the D18 validator, so a malformed pair
+                // here is corruption — surfaced, never skipped.
+                pair: decode_distinct_claim_pair(&body.value)?,
+            });
+        }
+        Ok(rows)
+    }
+
+    /// The pair a PROPOSED merge would conflate against an effective
+    /// `entity.distinct_from` claim, if any (ARCH-0055 §6).
+    ///
+    /// Pair-EXACT: only a pair whose BOTH sides the op names counts, so an
+    /// assertion about (a, b) leaves a merge of (a, c) untouched. Bounded by
+    /// one claim sweep per participant, never a sweep per candidate pair.
+    fn suppressed_merge_pair_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        merge: &MergeOp,
+    ) -> Result<Option<(EntityId, EntityId)>> {
+        let mut named: BTreeSet<EntityId> = merge.sources.iter().copied().collect();
+        named.insert(merge.survivor);
+        for subject in &named {
+            for row in self.active_distinct_claims_in_txn(rtxn, subject)? {
+                // `row.pair.0` IS `subject`, so naming the other side is the
+                // whole both-sides-named test.
+                if is_effective_approval(row.approval) && named.contains(&row.pair.1) {
+                    return Ok(Some(row.pair));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// CLAIM ids a topology decision assigned to `target` (ARCH-0055 r2/r5),

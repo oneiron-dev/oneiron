@@ -1525,6 +1525,8 @@ pub(crate) fn validate_claim_body_and_decode(
         || body.predicate == PREDICATE_CONFLICT_RESOLVED
     {
         validate_conflict_claim_structure(&body)?;
+    } else if body.predicate == crate::identity_topology::PREDICATE_ENTITY_DISTINCT_FROM {
+        crate::identity_topology::validate_distinct_from_claim_structure(&body)?;
     } else if crate::channel_identity::is_channel_identity_claim_predicate(&body.predicate) {
         crate::channel_identity::validate_channel_identity_claim_structure(&body)?;
     } else if crate::identity_reputation::is_identity_reputation_claim_predicate(&body.predicate) {
