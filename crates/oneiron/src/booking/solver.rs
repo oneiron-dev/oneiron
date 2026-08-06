@@ -52,8 +52,8 @@ use crate::calendar::CalendarError;
 use crate::calendar::freebusy::{BusyUnion, freebusy};
 use crate::calendar::query::CalendarSel;
 use crate::calendar::tz::{WallTime, utc_to_wall, wall_to_utc};
-use crate::temporal::TimeRange;
 use crate::entity_id::EntityId;
+use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
 /// Seconds in a minute — the unit every configuration knob is written in.
@@ -107,6 +107,12 @@ pub struct BookingCounts {
 /// # Errors
 ///
 /// [`BookingError::SlotOracle`] once layer 2 reads storage here.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the fallible signature is the ratified layer-2 contract; the lint \
+              fires only while the body is storage-free, and unfulfilling it is \
+              how ONE-1813 is told to delete this attribute"
+)]
 pub(crate) fn load_booking_counts(
     _vault: &Vault,
     _page_ref: EntityId,
@@ -326,7 +332,8 @@ fn run_pipeline(
 fn with_flex_pool(config: &EventTypeConfig) -> EventTypeConfig {
     let mut widened = config.clone();
     for host in &mut widened.hosts {
-        host.working_hours.extend(config.flex_windows.iter().cloned());
+        host.working_hours
+            .extend(config.flex_windows.iter().cloned());
     }
     widened
 }
@@ -370,8 +377,7 @@ pub(crate) fn working_hours_mask(
                         window.start_minute,
                         window.end_minute,
                         &host.host_tz,
-                    )?
-                        && let Some(clipped) = intersect(range, requested)
+                    )? && let Some(clipped) = intersect(range, requested)
                     {
                         ranges.push(clipped);
                     }
@@ -562,9 +568,12 @@ fn retain_under_caps(
             };
             under_cap(config.daily_cap, &counts.daily, visitor_tz, |bucket_day| {
                 bucket_day == day
-            }) && under_cap(config.weekly_cap, &counts.weekly, visitor_tz, |bucket_day| {
-                week_of(bucket_day) == week_of(day)
-            })
+            }) && under_cap(
+                config.weekly_cap,
+                &counts.weekly,
+                visitor_tz,
+                |bucket_day| week_of(bucket_day) == week_of(day),
+            )
         })
         .collect()
 }
@@ -580,9 +589,7 @@ fn under_cap(
     };
     let confirmed: u32 = buckets
         .iter()
-        .filter(|bucket| {
-            local_day(bucket.window_start_utc, visitor_tz).is_ok_and(&same_period)
-        })
+        .filter(|bucket| local_day(bucket.window_start_utc, visitor_tz).is_ok_and(&same_period))
         .map(|bucket| u32::from(bucket.confirmed))
         .sum();
     confirmed < u32::from(cap)
@@ -756,7 +763,11 @@ fn rank_of(slot: TimeRange, config: &EventTypeConfig, _visitor_tz: &str) -> f32 
             })
         })
     });
-    if preferred { PREFERRED_RANK } else { ORDINARY_RANK }
+    if preferred {
+        PREFERRED_RANK
+    } else {
+        ORDINARY_RANK
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -970,11 +981,7 @@ fn wall_window_to_utc(
 /// into the next civil day. A fall-back fold resolves to the earliest offset
 /// (the border's policy); a spring-forward gap yields `None`, which the caller
 /// reads as "this occurrence does not exist".
-fn wall_minute_to_utc(
-    day: i64,
-    minute: u16,
-    tz: &str,
-) -> Result<Option<u64>, BookingError> {
+fn wall_minute_to_utc(day: i64, minute: u16, tz: &str) -> Result<Option<u64>, BookingError> {
     let carry = i64::from(minute / MINUTES_PER_DAY);
     let minute = minute % MINUTES_PER_DAY;
     let (year, month, civil_day) = civil_from_days(day + carry);
@@ -1128,9 +1135,7 @@ mod tests {
 
         // A window on another weekday contributes nothing.
         let tuesday_only = config(vec![host(HOST_A, "UTC", vec![window(1, 9, 11)])]);
-        assert!(
-            starts(&working_hours_mask(&tuesday_only, monday()).expect("mask")).is_empty()
-        );
+        assert!(starts(&working_hours_mask(&tuesday_only, monday()).expect("mask")).is_empty());
     }
 
     #[test]
@@ -1159,7 +1164,11 @@ mod tests {
 
     #[test]
     fn unresolvable_host_zone_is_a_typed_config_error() {
-        let bogus = config(vec![host(HOST_A, "Mars/Olympus_Mons", vec![window(0, 9, 11)])]);
+        let bogus = config(vec![host(
+            HOST_A,
+            "Mars/Olympus_Mons",
+            vec![window(0, 9, 11)],
+        )]);
         assert!(matches!(
             working_hours_mask(&bogus, monday()),
             Err(BookingError::InvalidConfig(_))
@@ -1262,12 +1271,8 @@ mod tests {
         };
         let mut config = utc_host_config();
         config.booking_window_secs = 7 * 86_400;
-        let clipped = enforce_notice_and_window(
-            vec![(id(HOST_A), vec![far])],
-            MONDAY,
-            far,
-            &config,
-        );
+        let clipped =
+            enforce_notice_and_window(vec![(id(HOST_A), vec![far])], MONDAY, far, &config);
         assert_eq!(starts(&clipped), [(MONDAY, MONDAY + 7 * 86_400)]);
     }
 
@@ -1282,7 +1287,7 @@ mod tests {
         )];
         let config = utc_host_config();
         assert_eq!(config.duration_min, 30);
-        let slots = apply_event_type_knobs(mask.clone(), &config, "UTC", &empty_counts());
+        let slots = apply_event_type_knobs(mask, &config, "UTC", &empty_counts());
         assert_eq!(
             starts(&slots),
             [
@@ -1302,7 +1307,13 @@ mod tests {
             }],
         )];
         assert_eq!(
-            starts(&apply_event_type_knobs(ragged, &config, "UTC", &empty_counts()))[0].0,
+            starts(&apply_event_type_knobs(
+                ragged,
+                &config,
+                "UTC",
+                &empty_counts()
+            ))[0]
+                .0,
             MONDAY + 9 * 3_600 + 1_800
         );
     }
@@ -1363,7 +1374,7 @@ mod tests {
         );
 
         // Weekly caps aggregate every bucket in the Monday-anchored week.
-        let mut weekly = config.clone();
+        let mut weekly = config;
         weekly.daily_cap = None;
         weekly.weekly_cap = Some(3);
         let spread = BookingCounts {
@@ -1431,7 +1442,7 @@ mod tests {
             start: MONDAY + 9 * 3_600 + 1_800,
             end: MONDAY + 10 * 3_600,
         };
-        assert_eq!(starts(&subtract_live_holds(slots.clone(), &[touching])).len(), 2);
+        assert_eq!(starts(&subtract_live_holds(slots, &[touching])).len(), 2);
         // The layer-1 source holds nothing; the confirming session's own hold is
         // excludable through the same door ONE-1813 implements.
         assert_eq!(
@@ -1462,7 +1473,10 @@ mod tests {
             "union is sorted and duplicate-free"
         );
         assert_eq!(
-            flat(route_host_masks(vec![a.clone(), b.clone()], RoutingMode::Both)),
+            flat(route_host_masks(
+                vec![a.clone(), b.clone()],
+                RoutingMode::Both
+            )),
             [slot(10).start]
         );
         // Disjoint hosts, three hosts, and an empty host.
@@ -1473,13 +1487,7 @@ mod tests {
             ))
             .is_empty()
         );
-        assert!(
-            flat(route_host_masks(
-                vec![a.clone(), b.clone(), c],
-                RoutingMode::Both
-            ))
-            .is_empty()
-        );
+        assert!(flat(route_host_masks(vec![a.clone(), b, c], RoutingMode::Both)).is_empty());
         let empty_host = (id(HOST_B), Vec::new());
         assert!(
             flat(route_host_masks(
@@ -1546,11 +1554,17 @@ mod tests {
         };
         let all = vec![slot(0, 9), slot(0, 15), slot(1, 9)];
         let emit = |constraint: Option<&ConstraintObject>, tz: &str| {
-            rank_and_emit(all.clone(), &utc_host_config(), constraint, tz, &empty_counts())
-                .slots
-                .into_iter()
-                .map(|slot| slot.start_utc)
-                .collect::<Vec<_>>()
+            rank_and_emit(
+                all.clone(),
+                &utc_host_config(),
+                constraint,
+                tz,
+                &empty_counts(),
+            )
+            .slots
+            .into_iter()
+            .map(|slot| slot.start_utc)
+            .collect::<Vec<_>>()
         };
         assert_eq!(emit(None, "UTC").len(), 3);
 

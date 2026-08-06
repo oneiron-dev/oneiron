@@ -208,8 +208,9 @@ impl EventTypeConfig {
     ///
     /// [`BookingError::InvalidConfig`] naming the first defect found.
     pub fn validate(&self) -> std::result::Result<(), BookingError> {
-        self.defect()
-            .map_or(Ok(()), |reason| Err(BookingError::InvalidConfig(reason.to_owned())))
+        self.defect().map_or(Ok(()), |reason| {
+            Err(BookingError::InvalidConfig(reason.to_owned()))
+        })
     }
 }
 
@@ -609,16 +610,25 @@ mod tests {
         assert!(validate_event_type_claim(&claim_body(&stale_version)).is_err());
     }
 
+    /// One named mutation that must turn a valid configuration invalid.
+    type Defect = (&'static str, Box<dyn Fn(&mut EventTypeConfig)>);
+
     #[test]
     fn configuration_defects_are_named_by_one_table() {
-        let cases: Vec<(&str, Box<dyn Fn(&mut EventTypeConfig)>)> = vec![
-            ("blank key", Box::new(|c| c.key = EventTypeKey("  ".to_owned()))),
+        let cases: Vec<Defect> = vec![
+            (
+                "blank key",
+                Box::new(|c| c.key = EventTypeKey("  ".to_owned())),
+            ),
             ("zero duration", Box::new(|c| c.duration_min = 0)),
             ("zero step", Box::new(|c| c.slot_step_min = 0)),
             ("zero window", Box::new(|c| c.booking_window_secs = 0)),
             ("no hosts", Box::new(|c| c.hosts.clear())),
             ("blank tz", Box::new(|c| c.hosts[0].host_tz.clear())),
-            ("no calendars", Box::new(|c| c.hosts[0].calendar_refs.clear())),
+            (
+                "no calendars",
+                Box::new(|c| c.hosts[0].calendar_refs.clear()),
+            ),
             (
                 "weekday out of range",
                 Box::new(|c| c.hosts[0].working_hours[0].weekday = 7),
@@ -655,12 +665,17 @@ mod tests {
             assert!(config.validate().is_err(), "{label} must be rejected");
             // The write door and the solver read the same table.
             let value = claim_value(config);
-            assert!(validate_event_type_claim(&claim_body(&value)).is_err(), "{label}");
+            assert!(
+                validate_event_type_claim(&claim_body(&value)).is_err(),
+                "{label}"
+            );
         }
         // The boundary case a half-open end minute must ACCEPT.
         let mut midnight = intro_config();
         midnight.hosts[0].working_hours[0].end_minute = MINUTES_PER_DAY;
-        midnight.validate().expect("a window ending at midnight is valid");
+        midnight
+            .validate()
+            .expect("a window ending at midnight is valid");
     }
 
     #[test]
