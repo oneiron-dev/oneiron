@@ -162,33 +162,33 @@ pub fn classify_passport(
     Ok(PassportDecision::SkipUnchanged { event_ref })
 }
 
-/// Keeps one live `calendar.passport` claim per `(system × UID)`: admits
-/// `next` through the imported-evidence Gate door, then supersedes exactly
-/// the live claim whose decoded key is `(next.system, next.uid)` — never a
-/// sibling source's passport on the same EVENT.
+/// Keeps one live `calendar.passport` claim per `(system × UID)`: supersedes
+/// exactly the live claim whose decoded key is `(system, uid)` with the
+/// already-admitted `new_id` — never a sibling source's passport on the same
+/// EVENT.
+///
+/// Admission is the caller's half and runs FIRST, through CAL-09's
+/// `screen_then_claim` hook and the imported-evidence Gate door
+/// ([`super::ingest`] owns both); this helper owns only the scoped
+/// replacement. There is deliberately no admission inside this module, so no
+/// unscreened passport-movement path can exist.
 ///
 /// # Errors
 ///
-/// [`CalendarError::IcsIngest`] when no live passport carries
-/// `(next.system, next.uid)`, or on store/gate failures.
+/// [`CalendarError::IcsIngest`] when no live passport carries `(system, uid)`,
+/// or on store failures.
 pub fn supersede_calendar_passport(
     vault: &Vault,
     event_ref: EntityId,
-    next: &CalendarPassportValue,
+    system: &str,
+    uid: &str,
+    new_id: &EntityId,
     recorded_at: u64,
 ) -> Result<(), CalendarError> {
-    let Some((old_id, _)) = live_passport_for(vault, &event_ref, &next.system, &next.uid)? else {
+    let Some((old_id, _)) = live_passport_for(vault, &event_ref, system, uid)? else {
         return Err(ingest("no live passport carries this (system, uid) pair"));
     };
-    let new_id = super::ingest::admit_calendar_import_claim(
-        vault,
-        &event_ref,
-        PREDICATE_CALENDAR_PASSPORT,
-        encode_passport_value(next),
-        &next.uid,
-        recorded_at,
-    )?;
-    vault.supersede_claim(&new_id, &old_id, recorded_at)?;
+    vault.supersede_claim(new_id, &old_id, recorded_at)?;
     Ok(())
 }
 

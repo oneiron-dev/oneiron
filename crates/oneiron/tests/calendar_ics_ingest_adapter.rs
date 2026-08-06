@@ -31,13 +31,14 @@ use std::sync::Mutex;
 
 use oneiron::calendar::CalendarError;
 use oneiron::calendar::claims::{
-    CalendarPassportPresence, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
+    CalendarPassportPresence, PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS,
+    PREDICATE_CALENDAR_TIME_KIND,
 };
 use oneiron::calendar::ingest::{
     CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedPollConfig, IcsFeedPollPayload,
     IcsFetchResponse, IcsHttpResponse, IcsHttpTransport, IcsPollRunState, enqueue_ics_feed_poll,
-    ics_feed_cursor_snapshot, ics_feed_pause_exceptions, run_ics_feed_poll,
-    run_ics_feed_poll_with_screener,
+    ics_feed_cursor_snapshot, ics_feed_pause_exceptions, ics_feed_poll_dedupe_key,
+    run_ics_feed_poll, run_ics_feed_poll_with_screener,
 };
 use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
 use oneiron::calendar::safeguard::{
@@ -49,7 +50,7 @@ use oneiron::ingest::{
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::{
     AttemptQueue, AttemptState, ClaimAttempt, ClaimLifecycleStatus, ClaimOutcome, ClaimSource,
-    CompleteAttempt, EntityId, Vault, VaultConfig,
+    CompleteAttempt, EnqueueOutcome, EntityId, Vault, VaultConfig,
 };
 
 /// Fixed poll times.
@@ -66,6 +67,8 @@ struct EventSpec {
     transp: Option<&'static str>,
     cancelled: bool,
     description: Option<&'static str>,
+    dtstart: Option<&'static str>,
+    dtend: Option<&'static str>,
 }
 
 impl EventSpec {
@@ -77,6 +80,8 @@ impl EventSpec {
             transp: None,
             cancelled: false,
             description: None,
+            dtstart: None,
+            dtend: None,
         }
     }
 }
@@ -89,8 +94,14 @@ fn feed(events: &[EventSpec]) -> Vec<u8> {
         out.push_str("BEGIN:VEVENT\r\n");
         out.push_str(&format!("UID:{}\r\n", event.uid));
         out.push_str("DTSTAMP:20260805T100000Z\r\n");
-        out.push_str("DTSTART:20260806T140000Z\r\n");
-        out.push_str("DTEND:20260806T150000Z\r\n");
+        out.push_str(&format!(
+            "DTSTART:{}\r\n",
+            event.dtstart.unwrap_or("20260806T140000Z")
+        ));
+        out.push_str(&format!(
+            "DTEND:{}\r\n",
+            event.dtend.unwrap_or("20260806T150000Z")
+        ));
         out.push_str(&format!("SEQUENCE:{}\r\n", event.sequence));
         out.push_str(&format!("SUMMARY:{}\r\n", event.summary));
         if let Some(transp) = event.transp {
@@ -1234,4 +1245,300 @@ fn imported_cancel_status_in_feed_writes_imported_cancel_basis() {
         vault.get_entity_type(&event).expect("entity type"),
         Some(ENTITY_TYPE_EVENT)
     );
+}
+
+// ---------------------------------------------------------------------------
+// VERDICT-FIX oracles (ONE-1784 finder/verdict round): each test below pins
+// one adjudicated REAL finding and was verified red against the pre-fix tree.
+// ---------------------------------------------------------------------------
+
+/// The `source_record_id` an admitted claim carries through its write
+/// envelope's imported-evidence candidate.
+fn claim_source_record_id(body: &oneiron::ClaimBody) -> &str {
+    let evidence = body.evidence.as_ref().expect("write envelope evidence");
+    let candidate = value_field(evidence, "candidate_evidence").expect("candidate evidence");
+    value_field(candidate, "source_record_id")
+        .and_then(rmpv::Value::as_str)
+        .expect("source_record_id")
+}
+
+/// The EVENT body's `name` field, read straight off the entity row.
+fn event_name(vault: &Vault, event: &EntityId) -> Option<String> {
+    let body = vault.get(event).expect("entity read")?;
+    let mut cursor = std::io::Cursor::new(&body);
+    let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return None;
+    };
+    entries.into_iter().find_map(|(key, value)| {
+        (key.as_str() == Some("name")).then(|| value.as_str().map(str::to_owned))?
+    })
+}
+
+/// A screener that always clears and counts how many bodies it saw.
+struct CountingScreener {
+    seen: Mutex<usize>,
+}
+
+impl CalendarBodyScreener for CountingScreener {
+    fn screen(&self, _body: &CalendarInboundBody) -> oneiron::Result<CalendarScreenVerdict> {
+        *self.seen.lock().expect("seen") += 1;
+        Ok(CalendarScreenVerdict::Clear)
+    }
+}
+
+#[test]
+fn feed_identity_is_injective_over_colon_bearing_fields() {
+    // `validate` permits ':' in both fields, and the blueprint's own example
+    // secret_ref carries one: the identity encoding must keep the tuple
+    // injective or two feeds would share a cursor, ETag, pause, and archive.
+    let left = IcsFeedPollConfig {
+        secret_ref: "b:c".to_owned(),
+        ..config("a")
+    };
+    let right = IcsFeedPollConfig {
+        secret_ref: "c".to_owned(),
+        ..config("a:b")
+    };
+    assert_ne!(
+        ics_feed_poll_dedupe_key(&left),
+        ics_feed_poll_dedupe_key(&right),
+        "(a, b:c) and (a:b, c) are two feeds, never one identity"
+    );
+
+    // The two feeds therefore run two independent chains.
+    let (_dir, vault) = temp_vault();
+    enqueue_ics_feed_poll(&vault, left, T0).expect("left enqueue");
+    enqueue_ics_feed_poll(&vault, right, T0).expect("right enqueue");
+    assert_eq!(
+        poll_rows_in(&vault, true).len(),
+        2,
+        "colon-bearing feeds must not dedupe against each other"
+    );
+}
+
+#[test]
+fn setup_enqueue_never_forks_a_parallel_poll_chain() {
+    let (_dir, vault) = temp_vault();
+    let cfg = config("work");
+    enqueue_ics_feed_poll(&vault, cfg.clone(), T0).expect("setup enqueue");
+    complete_pending_poll_row(&vault, T0);
+
+    // The run re-enqueues exactly one generation-scoped successor.
+    poll(
+        &vault,
+        &cfg,
+        complete(feed(&[EventSpec::new("uid-q@x", 1)]), "v1"),
+        T1,
+    )
+    .expect("poll");
+    assert_eq!(poll_rows_in(&vault, true).len(), 1, "one live generation");
+
+    // A redundant setup call while that generation is pending must adopt the
+    // live chain, never fork a second one under the bare key.
+    let again = enqueue_ics_feed_poll(&vault, cfg, T2).expect("idempotent setup");
+    assert!(
+        matches!(again, EnqueueOutcome::Existing(_)),
+        "setup while a generation is pending returns Existing, got {again:?}"
+    );
+    assert_eq!(
+        poll_rows_in(&vault, true).len(),
+        1,
+        "one feed, one pending attempt — no parallel chains"
+    );
+}
+
+#[test]
+fn superseding_admissions_cross_the_safeguard_hook() {
+    let (_dir, vault) = temp_vault();
+    let cfg = config("work");
+    let screener = CountingScreener {
+        seen: Mutex::new(0),
+    };
+    let fetcher = StubFetcher::with([
+        complete(feed(&[EventSpec::new("uid-hk@x", 1)]), "v1"),
+        complete(feed(&[EventSpec::new("uid-hk@x", 2)]), "v2"),
+        complete(feed(&[]), "v3"),
+    ]);
+
+    // Create poll: origin + time_kind + passport = 3 screened admissions.
+    run_ics_feed_poll_with_screener(&vault, &fetcher, Some(&screener), true, &cfg, T0, 7)
+        .expect("create poll");
+    assert_eq!(*screener.seen.lock().expect("seen"), 3);
+
+    // Higher-SEQUENCE update: the superseding passport admission crosses the
+    // hook exactly like a fresh one — the run's verdict witness proves it.
+    run_ics_feed_poll_with_screener(&vault, &fetcher, Some(&screener), true, &cfg, T1, 7)
+        .expect("update poll");
+    assert_eq!(
+        *screener.seen.lock().expect("seen"),
+        4,
+        "the superseding passport admission is screened too"
+    );
+    let cursor = ics_feed_cursor_snapshot(&vault, &cfg)
+        .expect("cursor")
+        .expect("cursor after update");
+    assert_eq!(
+        cursor.last_screen_verdict.as_deref(),
+        Some("clear"),
+        "an update run made of only supersessions still carries a verdict"
+    );
+
+    // Complete-feed absence: the absence supersession AND the derived
+    // cancellation are both screened admissions.
+    run_ics_feed_poll_with_screener(&vault, &fetcher, Some(&screener), true, &cfg, T2, 7)
+        .expect("absence poll");
+    assert_eq!(
+        *screener.seen.lock().expect("seen"),
+        6,
+        "absence supersession + absence cancellation cross the hook"
+    );
+}
+
+#[test]
+fn superseding_passport_keeps_archive_provenance() {
+    let (_dir, vault) = temp_vault();
+    let cfg = config("work");
+    poll(
+        &vault,
+        &cfg,
+        complete(feed(&[EventSpec::new("uid-pr@x", 1)]), "v1"),
+        T0,
+    )
+    .expect("create poll");
+    let event = resolve_event_by_uid(&vault, "uid-pr@x")
+        .expect("resolve")
+        .expect("event");
+    let live_passport_source = |vault: &Vault| {
+        let claims = claims_on(vault, &event);
+        let live = live_claims(&claims, PREDICATE_CALENDAR_PASSPORT);
+        let [(_, body)] = live.as_slice() else {
+            panic!("one live passport claim");
+        };
+        claim_source_record_id(body).to_owned()
+    };
+    let created = live_passport_source(&vault);
+    let (artifact_hex, _) = created.split_once("#v").expect("create provenance");
+    assert_eq!(created, format!("{artifact_hex}#v1:uid-pr@x"));
+
+    // Hash-drift update: the new passport head points at the complete 200
+    // archive that produced it — never a bare UID.
+    let drifted = EventSpec {
+        summary: "renamed standup",
+        ..EventSpec::new("uid-pr@x", 1)
+    };
+    poll(&vault, &cfg, complete(feed(&[drifted]), "v2"), T1).expect("drift poll");
+    assert_eq!(
+        live_passport_source(&vault),
+        format!("{artifact_hex}#v2:uid-pr@x"),
+        "a superseding passport keeps archive provenance"
+    );
+
+    // Absence: the absence passport cites the complete feed that proved the
+    // omission.
+    poll(&vault, &cfg, complete(feed(&[]), "v3"), T2).expect("absence poll");
+    assert_eq!(
+        live_passport_source(&vault),
+        format!("{artifact_hex}#v3:uid-pr@x"),
+        "an absence passport keeps provenance to the proving feed"
+    );
+}
+
+#[test]
+fn update_existing_remints_event_content() {
+    let (_dir, vault) = temp_vault();
+    let cfg = config("work");
+    let original = EventSpec {
+        transp: Some("OPAQUE"),
+        ..EventSpec::new("uid-up@x", 1)
+    };
+    poll(&vault, &cfg, complete(feed(&[original]), "v1"), T0).expect("create poll");
+    let event = resolve_event_by_uid(&vault, "uid-up@x")
+        .expect("resolve")
+        .expect("event");
+    assert_eq!(event_name(&vault, &event).as_deref(), Some("standup"));
+
+    // Same SEQUENCE, drifted content: SUMMARY, DTSTART, and TRANSP all moved.
+    let moved = EventSpec {
+        summary: "moved standup",
+        transp: Some("TRANSPARENT"),
+        dtstart: Some("20260807T090000Z"),
+        dtend: Some("20260807T093000Z"),
+        ..EventSpec::new("uid-up@x", 1)
+    };
+    poll(&vault, &cfg, complete(feed(&[moved]), "v2"), T1).expect("drift poll");
+
+    // The EVENT's name follows the drifted SUMMARY...
+    assert_eq!(
+        event_name(&vault, &event).as_deref(),
+        Some("moved standup"),
+        "an update re-mints the EVENT row, not just the passport head"
+    );
+    // ...and `calendar.time` re-mints under supersession: exactly one live
+    // claim, now carrying the drifted transparency.
+    let claims = claims_on(&vault, &event);
+    let live = live_claims(&claims, PREDICATE_CALENDAR_TIME_KIND);
+    let [(_, body)] = live.as_slice() else {
+        panic!(
+            "one live time_kind claim after an update, got {}",
+            live.len()
+        );
+    };
+    assert_eq!(
+        value_field(&body.value, "busy_transparency").and_then(rmpv::Value::as_str),
+        Some("free"),
+        "drifted TRANSP re-mints busy_transparency"
+    );
+}
+
+/// Probes the vault write lock from inside the HTTP call: if the door still
+/// holds its custody read txn when egress runs, the probe cannot acquire a
+/// write txn and the fetch fails instead of stalling every vault write for
+/// the fetch's duration.
+struct WriteLockProbeTransport {
+    vault: std::sync::Arc<Vault>,
+}
+
+impl IcsHttpTransport for WriteLockProbeTransport {
+    fn get(&self, _url: &str, _if_none_match: Option<&str>) -> Result<IcsHttpResponse, String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let vault = self.vault.clone();
+        std::thread::spawn(move || {
+            let probe = EntityId::now();
+            let _ = vault.put_entity(
+                &probe,
+                oneiron::registry::ENTITY_TYPE_MACHINE,
+                oneiron::temporal::TimeRange { start: 0, end: 0 },
+                0,
+                b"write-lock probe",
+            );
+            let _ = tx.send(());
+        });
+        if rx.recv_timeout(std::time::Duration::from_secs(10)).is_err() {
+            return Err("vault write lock held across HTTP egress".to_owned());
+        }
+        Ok(IcsHttpResponse {
+            status: 304,
+            etag: None,
+            body: Vec::new(),
+        })
+    }
+}
+
+#[test]
+fn custody_door_never_holds_the_vault_write_lock_across_egress() {
+    let (_dir, vault) = temp_vault_seeded();
+    register_canary_secret(&vault, "ics-feed:canary");
+    let vault = std::sync::Arc::new(vault);
+
+    let fetcher = CustodyDoorIcsFeedFetcher::new(
+        &vault,
+        CANARY_EFFECTOR,
+        WriteLockProbeTransport {
+            vault: vault.clone(),
+        },
+    );
+    let response = fetcher
+        .fetch("ics-feed:canary", None)
+        .expect("the custody read txn is released before the HTTP door opens");
+    assert!(matches!(response, IcsFetchResponse::NotModified { .. }));
 }

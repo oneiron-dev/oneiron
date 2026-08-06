@@ -22,7 +22,9 @@
 //!    each admission the candidate passes through CAL-09's
 //!    [`super::safeguard::screen_then_claim`] hook, and admission runs from
 //!    the typed `CalendarAdmissionRequest` — no zero-argument claim closure,
-//!    no direct `put_claim`.
+//!    no direct `put_claim`. Superseding admissions (passport updates,
+//!    source absence) cross the same hook: [`super::passport`] owns only the
+//!    scoped claim replacement, never an admission of its own.
 //! 7. Success and 304 both re-enqueue with bounded cadence jitter. A
 //!    provider-side secret-URL reset pauses loudly: paused state on the
 //!    attempt row and the feed cursor, one inbox exception, no retry storm,
@@ -49,7 +51,7 @@ use super::claims::{
     CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
     CalendarStatus, CalendarStatusBasis, CalendarTimeKind, PREDICATE_CALENDAR_ORIGIN,
     PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
-    decode_status_value,
+    decode_status_value, decode_time_kind_value,
 };
 use super::ics::{ParsedVEvent, parse_ics_feed};
 use super::passport::{
@@ -58,8 +60,8 @@ use super::passport::{
 };
 use super::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::attempt_queue::{
-    AttemptInterventionKind, AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome,
-    InterveneAttempt,
+    AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, EnqueueAttempt,
+    EnqueueOutcome, InterveneAttempt,
 };
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
@@ -160,11 +162,19 @@ pub struct IcsFeedPollPayload {
     pub not_before: u64,
 }
 
+/// The one injective feed identity. `system` is byte-length-prefixed so
+/// colon-bearing fields can never collide — `("a", "b:c")` and `("a:b", "c")`
+/// are two feeds, and everything keyed by this string (attempt dedupe, the
+/// cursor row, the raw archive, the pause exception) must keep them apart.
+fn ics_feed_identity(system: &str, secret_ref: &str) -> String {
+    format!("ics-feed:{}:{system}:{secret_ref}", system.len())
+}
+
 /// The dedupe identity of one feed's poll chain: at most one pending
 /// `calendar.ics.poll` attempt per `(system, secret_ref)`.
 #[must_use]
 pub fn ics_feed_poll_dedupe_key(config: &IcsFeedPollConfig) -> String {
-    format!("ics-feed:{}:{}", config.system, config.secret_ref)
+    ics_feed_identity(&config.system, &config.secret_ref)
 }
 
 /// The re-enqueue's dedupe key carries the due instant: the attempt queue's
@@ -292,23 +302,26 @@ impl<T: IcsHttpTransport> IcsFeedFetcher for CustodyDoorIcsFeedFetcher<'_, T> {
             .ok_or_else(|| CalendarError::IcsCredential {
                 reason: format!("no live custody record for secret_ref `{secret_ref}`"),
             })?;
-        let wtxn = self
-            .vault
-            .store
-            .env
-            .write_txn()
-            .map_err(crate::Error::from)?;
         // The value door is binding-enforced; the read itself writes nothing
-        // and the txn aborts on drop. SECRET-02 swap point: this call becomes
+        // and the txn aborts on drop. The txn is scoped to the read: it must
+        // NEVER span the HTTP call, or one slow feed stalls every vault write
+        // for the fetch's duration. SECRET-02 swap point: this call becomes
         // `inject_secret_at_door` / `materialize_secret_lease` when that API
         // lands, with no signature change here.
-        let value = self
-            .vault
-            .get_secret_value_in_txn(&wtxn, &custody_id, &self.effector)
-            .map_err(|err| credential("custody door refused the read", &err))?
-            .ok_or_else(|| CalendarError::IcsCredential {
-                reason: format!("custody record for `{secret_ref}` vanished mid-read"),
-            })?;
+        let value = {
+            let wtxn = self
+                .vault
+                .store
+                .env
+                .write_txn()
+                .map_err(crate::Error::from)?;
+            self.vault
+                .get_secret_value_in_txn(&wtxn, &custody_id, &self.effector)
+                .map_err(|err| credential("custody door refused the read", &err))?
+                .ok_or_else(|| CalendarError::IcsCredential {
+                    reason: format!("custody record for `{secret_ref}` vanished mid-read"),
+                })?
+        };
         let url = String::from_utf8(value).map_err(|_| CalendarError::IcsCredential {
             reason: format!("custody value for `{secret_ref}` is not a URL string"),
         })?;
@@ -318,7 +331,6 @@ impl<T: IcsHttpTransport> IcsFeedFetcher for CustodyDoorIcsFeedFetcher<'_, T> {
                 .map_err(|reason| CalendarError::IcsFetch {
                     reason: reason.replace(url.as_str(), "<redacted-url>"),
                 })?;
-        drop(wtxn);
         match response.status {
             304 => Ok(IcsFetchResponse::NotModified {
                 etag: response.etag,
@@ -392,6 +404,11 @@ impl IcsFeedCursor {
 /// exactly; a second enqueue while one is pending returns
 /// [`EnqueueOutcome::Existing`].
 ///
+/// One feed runs one chain: the queue's key dedupe alone cannot see a
+/// pending generation-scoped row from the bare setup key, so the setup path
+/// first adopts any live chain row — a redundant setup call can never fork a
+/// second poll chain for the same feed.
+///
 /// # Errors
 ///
 /// [`CalendarError::IcsIngest`] on invalid config or store failure.
@@ -401,8 +418,46 @@ pub fn enqueue_ics_feed_poll(
     now: u64,
 ) -> Result<EnqueueOutcome, CalendarError> {
     config.validate()?;
+    if let Some(record) = pending_poll_record(vault, &config)? {
+        return Ok(EnqueueOutcome::Existing(record));
+    }
     let dedupe_key = ics_feed_poll_dedupe_key(&config);
     enqueue_poll_attempt(vault, &config, now, dedupe_key, now)
+}
+
+/// The feed's live chain row, if any: one pending attempt carrying the bare
+/// setup key or any generation-scoped key.
+fn pending_poll_record(
+    vault: &Vault,
+    config: &IcsFeedPollConfig,
+) -> Result<Option<AttemptRecord>, CalendarError> {
+    let dedupe_key = ics_feed_poll_dedupe_key(config);
+    for record in AttemptQueue::new(vault).list()? {
+        let pending = matches!(
+            record.state,
+            AttemptState::Queued
+                | AttemptState::Leased
+                | AttemptState::Paused
+                | AttemptState::Scheduled
+        );
+        if pending && is_feed_poll_row(&record, &dedupe_key) {
+            return Ok(Some(record));
+        }
+    }
+    Ok(None)
+}
+
+/// True when an attempt row belongs to this feed's poll chain — the bare
+/// setup key or any generation-scoped key derived from it.
+fn is_feed_poll_row(record: &AttemptRecord, dedupe_key: &str) -> bool {
+    if record.kind != ICS_POLL_ATTEMPT_KIND {
+        return false;
+    }
+    let generation_prefix = format!("{dedupe_key}:due:");
+    record
+        .dedupe_key
+        .as_deref()
+        .is_some_and(|stored| stored == dedupe_key || stored.starts_with(&generation_prefix))
 }
 
 /// Runs one poll with the safeguard dial off and no screener — the
@@ -611,8 +666,14 @@ impl PollAdmission<'_> {
             }
             PassportDecision::SkipUnchanged { .. } => {}
             PassportDecision::UpdateExisting { event_ref } => {
+                // The update verdict moves the EVENT, not just the passport
+                // head: occurred and name follow the drifted VEVENT, and
+                // `calendar.time` re-mints when its value moved.
+                self.rewrite_event(event_ref, event)?;
+                self.admit_time_kind(event_ref, event)?;
                 let next = self.passport_value(event, CalendarPassportPresence::Live);
-                supersede_calendar_passport(self.vault, event_ref, &next, self.now)?;
+                let body = screen_body(event);
+                self.admit_superseding_passport(event_ref, &next, &body)?;
                 self.apply_imported_cancel(event_ref, event)?;
             }
             PassportDecision::MarkSourceAbsent { .. } => {
@@ -652,7 +713,14 @@ impl PollAdmission<'_> {
                 let mut absent = value.clone();
                 absent.presence = CalendarPassportPresence::Absent;
                 absent.last_seen_at = self.now;
-                supersede_calendar_passport(self.vault, event_ref, &absent, self.now)?;
+                // Absence carries no inbound content, so the screen body is
+                // empty — but the admission still crosses the hook and cites
+                // the complete feed that proved the omission.
+                self.admit_superseding_passport(
+                    event_ref,
+                    &absent,
+                    &CalendarInboundBody::default(),
+                )?;
             }
             if all_live_inbound_passports_absent(self.vault, &event_ref)? {
                 self.admit_absence_cancellation(event_ref)?;
@@ -665,7 +733,33 @@ impl PollAdmission<'_> {
     /// parsed times, `name` from SUMMARY with a UID fallback.
     fn mint_event(&self, event: &ParsedVEvent) -> Result<EntityId, CalendarError> {
         let event_ref = EntityId::now();
-        let occurred = match (event.starts_at_utc, event.ends_at_utc) {
+        let occurred = self.event_occurred(event);
+        let body = encode_event_body(event_name(event))?;
+        self.vault
+            .put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, self.now, &body)?;
+        Ok(event_ref)
+    }
+
+    /// Re-mints the EVENT's structural row from a drifted VEVENT: the id is
+    /// stable, occurred and `name` follow the new head. Without this the
+    /// update verdict would move only the passport while the event kept
+    /// stale content — the drift detector's whole point.
+    fn rewrite_event(
+        &self,
+        event_ref: EntityId,
+        event: &ParsedVEvent,
+    ) -> Result<(), CalendarError> {
+        let occurred = self.event_occurred(event);
+        let body = encode_event_body(event_name(event))?;
+        self.vault
+            .put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, self.now, &body)?;
+        Ok(())
+    }
+
+    /// The EVENT's stored occurrence from the parsed times: `now` when the
+    /// feed expressed no convertible time.
+    fn event_occurred(&self, event: &ParsedVEvent) -> TimeRange {
+        match (event.starts_at_utc, event.ends_at_utc) {
             (Some(start), Some(end)) => TimeRange {
                 start,
                 end: end.max(start),
@@ -675,21 +769,7 @@ impl PollAdmission<'_> {
                 start: self.now,
                 end: self.now,
             },
-        };
-        let name = event
-            .summary
-            .as_deref()
-            .filter(|summary| !summary.is_empty())
-            .unwrap_or(event.uid.as_str());
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
-        )
-        .map_err(|_| ingest("event body did not encode"))?;
-        self.vault
-            .put_entity(&event_ref, ENTITY_TYPE_EVENT, occurred, self.now, &body)?;
-        Ok(event_ref)
+        }
     }
 
     fn admit_origin(
@@ -709,11 +789,34 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
+    /// Admits the event's `calendar.time` kind claim, superseding the prior
+    /// live claim when the value moved and skipping when the live claim
+    /// already carries the exact value — the same one-live-claim discipline
+    /// as [`Self::admit_status_if_changed`].
     fn admit_time_kind(
         &mut self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
+        let mut prior_live: Option<EntityId> = None;
+        for claim_id in self.vault.claims_for_subject(&event_ref)? {
+            let Some(claim) = self.vault.get_claim(&claim_id)? else {
+                continue;
+            };
+            if claim.predicate != PREDICATE_CALENDAR_TIME_KIND
+                || claim.lifecycle != ClaimLifecycleStatus::Active
+            {
+                continue;
+            }
+            let current = decode_time_kind_value(&claim.value)
+                .map_err(|_| ingest("stored time claim did not decode"))?;
+            if current.kind == CalendarTimeKind::Absolute
+                && current.busy_transparency == event.busy_transparency
+            {
+                return Ok(());
+            }
+            prior_live = Some(claim_id);
+        }
         let value = rmpv::Value::Map(vec![
             (
                 rmpv::Value::from("kind"),
@@ -726,14 +829,45 @@ impl PollAdmission<'_> {
         ]);
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
-        self.admit_screened(
+        let new_id = self.admit_screened(
             event_ref,
             &body,
             &source_record_id,
             PREDICATE_CALENDAR_TIME_KIND,
             value,
         )?;
+        if let Some(old_id) = prior_live {
+            self.vault.supersede_claim(&new_id, &old_id, self.now)?;
+        }
         Ok(())
+    }
+
+    /// Screens and admits the next passport head for `(system × UID)` —
+    /// through the same hook + Gate door a fresh admission crosses — then
+    /// supersedes exactly the scoped live claim. Supersessions carry the
+    /// archived complete feed's provenance (`blob#vN:uid`), never a bare UID.
+    fn admit_superseding_passport(
+        &mut self,
+        event_ref: EntityId,
+        next: &CalendarPassportValue,
+        body: &CalendarInboundBody,
+    ) -> Result<(), CalendarError> {
+        let source_record_id = format!("{}:{}", self.blob_ref, next.uid);
+        let new_id = self.admit_screened(
+            event_ref,
+            body,
+            &source_record_id,
+            PREDICATE_CALENDAR_PASSPORT,
+            super::passport::encode_passport_value(next),
+        )?;
+        supersede_calendar_passport(
+            self.vault,
+            event_ref,
+            &next.system,
+            &next.uid,
+            &new_id,
+            self.now,
+        )
     }
 
     fn admit_fresh_passport(
@@ -909,6 +1043,26 @@ fn screen_body(event: &ParsedVEvent) -> CalendarInboundBody {
     }
 }
 
+/// The EVENT's display name: SUMMARY, with a UID fallback.
+fn event_name(event: &ParsedVEvent) -> &str {
+    event
+        .summary
+        .as_deref()
+        .filter(|summary| !summary.is_empty())
+        .unwrap_or(event.uid.as_str())
+}
+
+/// The EVENT body row: a MessagePack map carrying only the name.
+fn encode_event_body(name: &str) -> Result<Vec<u8>, CalendarError> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
+    )
+    .map_err(|_| ingest("event body did not encode"))?;
+    Ok(body)
+}
+
 /// The registry-facing ICS source: parse-only normalization of a feed body
 /// into text-bearing records. Claim admission belongs to the poll runner,
 /// never to `normalize`.
@@ -1080,13 +1234,9 @@ fn pause_feed(
         },
     )?;
     let dedupe_key = ics_feed_poll_dedupe_key(config);
-    let generation_prefix = format!("{dedupe_key}:due:");
     let queue = AttemptQueue::new(vault);
     for record in queue.list()? {
-        let belongs_to_feed = record.dedupe_key.as_deref().is_some_and(|stored| {
-            stored == dedupe_key.as_str() || stored.starts_with(&generation_prefix)
-        });
-        if record.kind != ICS_POLL_ATTEMPT_KIND || !belongs_to_feed {
+        if !is_feed_poll_row(&record, &dedupe_key) {
             continue;
         }
         if matches!(record.state, AttemptState::Queued | AttemptState::Scheduled) {
@@ -1186,7 +1336,7 @@ fn write_cursor(vault: &Vault, key: &[u8], cursor: &IcsFeedCursor) -> Result<(),
 fn ics_feed_exception_ref(system: &str, secret_ref: &str) -> Result<EntityId, CalendarError> {
     Ok(derive_entity_id(
         ICS_FEED_EXCEPTION_ID_DOMAIN,
-        format!("ics-feed:{system}:{secret_ref}").as_bytes(),
+        ics_feed_identity(system, secret_ref).as_bytes(),
     )?)
 }
 
@@ -1240,5 +1390,85 @@ fn credential(context: &'static str, err: &crate::Error) -> CalendarError {
 fn ingest(reason: &'static str) -> CalendarError {
     CalendarError::IcsIngest {
         reason: reason.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::calendar::test_support::open_calendar_vault;
+
+    /// A one-body fetcher: every fetch returns a complete feed.
+    struct BodyFetcher {
+        body: Vec<u8>,
+    }
+
+    impl IcsFeedFetcher for BodyFetcher {
+        fn fetch(
+            &self,
+            _secret_ref: &str,
+            _if_none_match: Option<&str>,
+        ) -> Result<IcsFetchResponse, CalendarError> {
+            Ok(IcsFetchResponse::Complete {
+                etag: None,
+                body: self.body.clone(),
+            })
+        }
+    }
+
+    fn one_event_feed(dtstart: &str, dtend: &str) -> Vec<u8> {
+        format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n\
+             BEGIN:VEVENT\r\nUID:uid-oc@x\r\nDTSTAMP:20260805T100000Z\r\n\
+             DTSTART:{dtstart}\r\nDTEND:{dtend}\r\nSEQUENCE:1\r\nSUMMARY:standup\r\n\
+             END:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+        .into_bytes()
+    }
+
+    fn test_config() -> IcsFeedPollConfig {
+        IcsFeedPollConfig {
+            secret_ref: "ics-feed:work".to_owned(),
+            system: "work".to_owned(),
+            cadence_min_seconds: 300,
+            cadence_max_seconds: 900,
+        }
+    }
+
+    /// VERDICT-FIX (semantic-update-not-applied): a same-SEQUENCE content
+    /// drift moves the EVENT's stored occurrence, not just the passport head.
+    /// The header read is crate-internal, so this half of the oracle lives
+    /// here; the name/transparency half lives in the adapter oracle.
+    #[test]
+    fn update_existing_rewrites_the_event_occurrence() {
+        let (_dir, vault) = open_calendar_vault();
+        let config = test_config();
+        let first = BodyFetcher {
+            body: one_event_feed("20260806T140000Z", "20260806T150000Z"),
+        };
+        run_ics_feed_poll(&vault, &first, &config, 1_800_000_000, 7).expect("create poll");
+        let event = crate::calendar::passport::resolve_event_by_uid(&vault, "uid-oc@x")
+            .expect("resolve")
+            .expect("event minted");
+        let before = vault
+            .read_entity_header(&event)
+            .expect("header")
+            .expect("event exists");
+        assert_eq!(before.occurred_start, 1_786_024_800);
+        assert_eq!(before.occurred_end, 1_786_028_400);
+
+        let drifted = BodyFetcher {
+            body: one_event_feed("20260807T090000Z", "20260807T093000Z"),
+        };
+        run_ics_feed_poll(&vault, &drifted, &config, 1_800_000_100, 7).expect("drift poll");
+        let after = vault
+            .read_entity_header(&event)
+            .expect("header")
+            .expect("event exists");
+        assert_eq!(
+            (after.occurred_start, after.occurred_end),
+            (1_786_093_200, 1_786_095_000),
+            "a drifted DTSTART/DTEND re-mints the EVENT occurrence"
+        );
     }
 }
