@@ -192,3 +192,31 @@ untouched. `campaign::claims::counterparty_do_not_contact_in_txn` and
 
 * Per-commit cheap gate: `cargo fmt --check` + `cargo clippy -p oneiron --all-features`.
 * Final: `cargo test -p oneiron --all-features`.
+
+## Simplify pass (K3, on tip 50a56b98a)
+
+One deletion, nothing added:
+
+* `gate::counterparty_contact_by_identity_index` no longer re-implements the
+  type-132 entity read (raw get + header parse + type check + body decode); it
+  calls the impl leg's own `read_counterparty_contact_in_txn`. Corruption paths
+  still all return `Err(Error::CorruptedIndex(..))`; only the message strings of
+  the two consolidated branches changed. `ENTITY_TYPE_COUNTERPARTY_CONTACT`
+  moves to a `#[cfg(test)]` import — `gate/tests.rs` still uses it via
+  `use super::*`, so the test module is untouched.
+
+Deliberately kept (flagged, not done):
+
+* The party-channel index READ in `counterparty_contacts_for_send` is
+  observationally redundant at HEAD — the mandatory full scan returns a
+  superset — but it is blueprint-keystone structure with a named future owner
+  (ONE-1752 retires the scan, the index becomes the primary source). Deleting
+  it is a redesign call, not a simplify call; the "index has no distinguishing
+  test" follow-up above already tracks it.
+* `outbound::enrich_dispatch_channel_identity` is a single-call-site wrapper,
+  but it is the blueprint's named seam for the call sites that consolidated
+  into `dispatch_inner` (deviation 6); kept as the documented shape.
+
+Gates after the pass: `cargo fmt --check` clean; `cargo clippy -p oneiron
+--all-features` clean; oracle 15/15 pass; scoped lib tests
+(`gate:: counterparty_contact:: outbound::`) 209/209 pass.

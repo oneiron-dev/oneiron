@@ -28,8 +28,8 @@ use crate::connector_key::{
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_index_key,
     counterparty_contacts_by_party_channel, counterparty_contacts_by_party_full_scan,
-    decode_counterparty_contact_body, decode_counterparty_contact_index_value,
-    normalize_channel_class,
+    decode_counterparty_contact_index_value, normalize_channel_class,
+    read_counterparty_contact_in_txn,
 };
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
@@ -46,9 +46,11 @@ use crate::outbound_grant::{
     standing_outbound_grant_principal_index_prefix,
 };
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
+#[cfg(test)]
+use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_POLICY_MANIFEST,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::vault::Vault;
@@ -3881,23 +3883,11 @@ fn counterparty_contact_by_identity_index(
         return Ok(None);
     };
     let id = decode_counterparty_contact_index_value(&raw_id)?;
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(record) = read_counterparty_contact_in_txn(store, txn, &id)? else {
         return Err(Error::CorruptedIndex(
             "counterparty contact lookup index entity row",
         ));
     };
-    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
-        return Err(Error::CorruptedIndex(
-            "counterparty contact lookup index entity header",
-        ));
-    };
-    if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-        return Err(Error::CorruptedIndex(
-            "counterparty contact lookup index entity type",
-        ));
-    }
-    let record =
-        decode_counterparty_contact_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
     if !record.matches_counterparty(identity_ref, counterparty) {
         return Err(Error::CorruptedIndex(
             "counterparty contact lookup index assignment",
