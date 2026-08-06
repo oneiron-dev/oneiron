@@ -157,3 +157,26 @@ regression; the last two consecutive full runs were green.
   nesting the caller did not choose.
 - ED-08's outbound-draft lane rides the same `capture_*` fns: nothing in this module knows about
   claims or identity topology.
+
+## SIMPLIFY pass (K3, 2026-08-06)
+
+Deletion-biased review of the full lane diff (e356021e0..HEAD). The implementation is already
+tight and blueprint-faithful; ONE edit warranted:
+
+- **Deleted `DeltaCaptureContext::from_recorded`** (delta.rs) — zero callers anywhere in the
+  tree: production rides `from_bodies` (inbox door + identity projection), tests build the
+  struct literal. Speculative symmetry with the used constructor; ED-02's recorded-ops callers
+  can re-add it the day one exists. -8 lines.
+
+Considered and rejected:
+- `Side` enum → two charge methods: duplicates the leaf-charge body across 5 call sites for a
+  ~5-line net; churn, not deletion.
+- `DeltaSource::as_str`: pinned by a test assertion (fixture-sync law — untouchable).
+- `amendment_delta()` pub read API: the side-ledger's read half, exercised by tests; the natural
+  consumer door, not speculative.
+- `PROPOSAL_TRIGGER_PREFIX`: receipt.rs builds `"event:"` inline at 3 sites with no shared
+  const, so the local const matches the existing shape — nothing to collapse into.
+
+No test assertions, fixtures, or public API touched. Gates after the pass:
+`cargo fmt --check` clean · `cargo clippy -p oneiron --all-features --all-targets` clean ·
+`cargo nextest run -p oneiron --all-features` **3920 passed / 0 failed / 64 skipped**.

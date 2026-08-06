@@ -445,15 +445,6 @@ pub struct DeltaCaptureContext<'a> {
 }
 
 impl<'a> DeltaCaptureContext<'a> {
-    /// Context for an artifact with a recorded op window.
-    #[must_use]
-    pub const fn from_recorded(recorded: &'a FinalizedProposalText) -> Self {
-        Self {
-            recorded: Some(recorded),
-            bodies: None,
-        }
-    }
-
     /// Context for two structured bodies.
     #[must_use]
     pub const fn from_bodies(proposed: &'a [u8], finalized: &'a [u8]) -> Self {
