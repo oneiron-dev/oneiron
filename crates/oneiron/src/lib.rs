@@ -550,6 +550,11 @@ pub use crate::edit_distance::publisher::{
 };
 #[cfg(feature = "sync")]
 pub use crate::edit_distance::publisher::{open_interview, settle_interview_digest};
+pub use crate::edit_distance::routing::{
+    RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint, rebuild_routing_projection,
+    record_judged_amendment, rollout_rung, routing_data_bar, routing_weight_hint,
+    serving_model_version, set_rollout_rung, set_serving_model,
+};
 pub use crate::eiri::{
     EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
     EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
