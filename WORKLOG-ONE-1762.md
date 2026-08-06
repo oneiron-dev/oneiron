@@ -132,6 +132,28 @@ specified item:
   inline shape to migrate — this is the greenfield schema 1720 will consume.
   The oracle file was not touched.
 
+## Simplify pass (K3, post-impl)
+
+Deletion-biased review of `escalation.rs` (1066 → 1063 lines). The impl was
+already tight — no layers, duplication, or speculative generality survived the
+read. Three micro-cuts applied, no structure added:
+
+- `ruling_parts`: hand-rolled `match { Some => Some(..?), None => None }` →
+  `Option::map(..).transpose()?` idiom.
+- `record_escalation_at` / `maybe_propose_standing_policy_at`: two avoidable
+  `scope.clone()`s removed by hoisting key construction so `scope` moves into
+  the row on its last use.
+
+Considered and deliberately left: the two row-decode fns (a generic would need
+a version-field trait = added structure), `family_bounds`/`FamilyBounds` (the
+alias documents the half-open range shape `OverlayDb` needs), `policy_status`
+(one use, but the name carries the derive-not-store rule). No test assertions,
+fixtures, or public API touched.
+
+Gates after the pass: `cargo fmt --check` clean · `clippy -p oneiron
+--all-features --all-targets -D warnings` clean · `cargo test -p oneiron
+--all-features --lib` 3717 passed / 0 failed.
+
 ## Gates
 
 - `cargo fmt -p oneiron` — clean.

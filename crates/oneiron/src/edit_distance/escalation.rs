@@ -463,10 +463,7 @@ fn normalized_scope(scope: &str) -> Result<&str> {
 
 /// The stored `(ruling token, Δ bytes)` pair for a ruling.
 fn ruling_parts(ruling: &EscalationRuling) -> Result<(String, Option<Vec<u8>>)> {
-    let delta = match ruling.delta() {
-        Some(delta) => Some(delta.encode()?),
-        None => None,
-    };
+    let delta = ruling.delta().map(AmendmentDelta::encode).transpose()?;
     Ok((ruling.as_str().to_owned(), delta))
 }
 
@@ -576,10 +573,12 @@ pub(crate) fn record_escalation_at(
         ));
     }
     let (ruling, delta) = ruling_parts(&receipt.ruling)?;
+    let id = EntityId::now();
+    let key = escalation_key(&scope, &id);
     let row = StoredEscalation {
         v: ROW_VERSION,
         task_ref: receipt.task_ref.to_hex(),
-        scope: scope.clone(),
+        scope,
         trigger: receipt.trigger.as_str().to_owned(),
         question: receipt.question,
         ruling,
@@ -589,12 +588,8 @@ pub(crate) fn record_escalation_at(
         at,
     };
     let data = encode_row(&row, ESCALATION_ROW_LABEL)?;
-    let id = EntityId::now();
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &escalation_key(&scope, &id), &data)?;
+        vault.store.vault_meta.put(wtxn, &key, &data)?;
         Ok(())
     })?;
     Ok(id)
@@ -709,7 +704,7 @@ pub(crate) fn maybe_propose_standing_policy_at(
         let row = StoredStandingPolicy {
             v: ROW_VERSION,
             row_ref: row_ref.to_hex(),
-            scope: scope.clone(),
+            scope,
             trigger: trigger.as_str().to_owned(),
             ruling: window.ruling,
             delta: window.delta,
