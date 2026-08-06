@@ -87,6 +87,11 @@ pub(crate) fn validate_actor_confidence_prior_claim_structure(body: &ClaimBody) 
 
 /// Resolves or mints the provider actor, then writes a new active prior and
 /// supersedes every prior active head for that actor in the same transaction.
+///
+/// Writes through the engine-owned reserved door: `actor.*` is a reserved
+/// namespace (ONE-1739), so this — the ONE prior-writing path — carries the
+/// same exemption the skill-hub doors carry, and the generic public Claim API
+/// can no longer plant a head here.
 pub fn write_provider_prior(
     vault: &Vault,
     provider: &str,
@@ -126,7 +131,7 @@ pub fn write_provider_prior(
         body.evidence = Some(Value::from(evidence));
         body.valid_from = Some(now);
         body.source = Some(ClaimSource::Observed);
-        vault.put_claim_in_txn(
+        vault.put_reserved_claim_in_txn(
             wtxn,
             &claim_id,
             &body,
@@ -137,7 +142,7 @@ pub fn write_provider_prior(
             now,
         )?;
         for prior_id in active_priors {
-            vault.supersede_claim_in_txn(wtxn, &claim_id, &prior_id, now)?;
+            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, &prior_id, now)?;
         }
         Ok(claim_id)
     })
@@ -294,13 +299,12 @@ fn count_prior_claims(
 /// not corruption, so we pick the newest head deterministically (by
 /// `valid_from`, then claim id) rather than bricking every read with an error.
 ///
-/// KNOWN HOLE (authorization, not convergence): a policy-authorized generic
-/// `put_claim` can plant an `actor.confidence_prior` head that this read then
-/// honors (newest silently wins trust) instead of rejecting it. The
-/// authorization boundary is predicate reservation — `actor.confidence_prior`
-/// is trust-bearing and joins the reserved-predicate namespace (door-only
-/// writes) alongside {edge, skill} once ONE-1741's generalization lands. It is
-/// NOT closed on this branch.
+/// The authorization boundary that makes "newest head wins" safe is predicate
+/// reservation: `actor.confidence_prior` is trust-bearing, and `actor.*` joined
+/// the reserved-predicate namespace alongside `{edge, skill}` in ONE-1739. A
+/// generic `put_claim` can no longer plant a head here whatever the policy
+/// says — [`write_provider_prior`] is the only local writer, so every head this
+/// read honors came through it.
 fn active_provider_prior(vault: &Vault, actor: &EntityId) -> Result<Option<f32>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut best: Option<(u64, EntityId, f32)> = None;
