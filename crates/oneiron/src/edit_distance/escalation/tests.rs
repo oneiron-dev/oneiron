@@ -508,6 +508,12 @@ fn the_n_dial_moves_the_threshold_and_refuses_zero() {
     maybe_propose_standing_policy_at(&vault, SCOPE, EscalationTrigger::Policy, 5_000)
         .expect("propose")
         .expect("two agreeing rulings clear the dialed threshold");
+
+    // The dial's key shares this module's `edit_distance/escalation/` namespace
+    // with the ledger, so the projector's range walk is where a badly-chosen key
+    // would surface — as a decode failure on four bytes of little-endian u32.
+    assert_eq!(ledger_receipts(&vault).len(), 2);
+    assert_eq!(policy_receipts(&vault).len(), 1);
 }
 
 // ---------------------------------------------------------------------------
