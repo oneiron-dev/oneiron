@@ -1513,6 +1513,119 @@ mod seam {
         }
     }
 
+    /// ONE-1729: the same run-entry route, exercised by session MEMORY SEARCH.
+    ///
+    /// Search registers a retrieval-run row, so it is an apply like any other
+    /// and must refuse across the flip. A search door that minted its own
+    /// route would sail through here — and land base telemetry for a run whose
+    /// replay record sits in an overlay that is about to evaporate.
+    pub(super) fn search_through_a_route_captured_before_a_flip(
+        session: &SessionVault<'_>,
+    ) -> SeamResult<()> {
+        let storage = crate::code_run::ExecutorStorage::for_session(&session.session)
+            .expect("capture the run's route at run entry");
+        session
+            .session
+            .flip_on_record()
+            .expect("flip the room mid-run");
+        match storage.search_text("anything the room might hold", 5) {
+            Err(error) => Err(map_executor_error(error)),
+            Ok(_) => {
+                panic!("a route captured before the flip must not register telemetry after it")
+            }
+        }
+    }
+
+    /// ONE-1729: `witness_turn` on a MISMATCHED storage/dispatcher pair.
+    ///
+    /// Returns the `InvalidConfig` payload the entry refused with, or `None`
+    /// when the turn was allowed — the bypass this probe hunts, since
+    /// `witness_turn` writes and would otherwise reach the session's room
+    /// carrying the other binding's actor without the check `run` performs.
+    pub(super) fn witness_turn_with_mismatched_binding(
+        vault: &Vault,
+        session: &SessionVault<'_>,
+    ) -> Result<Option<String>> {
+        let backend = UnreachableBackend;
+        let lease = crate::BudgetLease::for_test("binding-oracle");
+        let mut runtime = UnreachableRuntime;
+        let canonical = crate::code_run::HostSelfDispatcher::new(
+            vault,
+            oracle_write_actor(),
+            "witness-canonical",
+        )?;
+        let executor = crate::engine_executor::EngineNativeExecutor::for_off_record_session(
+            &session.session,
+            &backend,
+            &lease,
+            &mut runtime,
+            &canonical,
+        )
+        .expect("bind the executor to the live session");
+        match executor.witness_turn(
+            crate::off_record::ExecutorUtterance::Speak,
+            "a turn the mismatched pair must never land",
+            9,
+        ) {
+            Err(crate::engine_executor::EngineExecutorError::Engine(Error::InvalidConfig(
+                message,
+            ))) => Ok(Some(message)),
+            Err(other) => panic!("unexpected witness refusal: {other}"),
+            Ok(_) => Ok(None),
+        }
+    }
+
+    /// ONE-1729: force the ONE interleave a non-atomic compare-and-set loses —
+    /// a competing mutation that commits after the run's compare and before
+    /// its put — and report the run's verdict (`None` = it was told it won).
+    ///
+    /// The interleave is the base WRITE LOCK's doing, not luck: the competitor
+    /// holds the single base writer before the run is released, so the run
+    /// cannot reach its transaction until that mutation has committed. A
+    /// compare taken outside the transaction is therefore guaranteed stale by
+    /// the time the put lands; a compare taken inside it cannot be.
+    pub(super) fn replay_put_racing_a_committed_change(
+        vault: &Vault,
+        session: &SessionVault<'_>,
+    ) -> Result<Option<crate::error::ErrorKind>> {
+        use crate::code_run::{CodeRunDeterminism, CodeRunReplayRecord, ExecutorStorage};
+
+        let storage = ExecutorStorage::for_session(&session.session)?;
+        let run_id = EntityId::now();
+        let record = CodeRunReplayRecord::new(
+            run_id,
+            CodeRunDeterminism::new(1_719_000_007_000, [0xA1; 32]),
+        );
+        let generation = storage.put_code_run_replay_record_if_generation(&record, None)?;
+        // Keyed exactly as `code_run.rs` keys it; the competitor removes the
+        // row the run believes it is updating.
+        let mut key = b"code_run:replay:v1:".to_vec();
+        key.extend_from_slice(run_id.as_bytes());
+
+        let writer_held = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| -> Result<Option<crate::error::ErrorKind>> {
+            let run = scope.spawn(|| {
+                writer_held.wait();
+                storage.put_code_run_replay_record_if_generation(&record, Some(generation))
+            });
+            vault.with_write_txn(|wtxn| {
+                writer_held.wait();
+                // Long enough that a compare living outside the transaction has
+                // certainly run: the run thread is queued on the writer this
+                // closure holds, and only a compare INSIDE that transaction can
+                // still see the deletion below.
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                vault.store.vault_meta.delete(wtxn, &key)?;
+                Ok(())
+            })?;
+            Ok(run
+                .join()
+                .expect("the bound run must not panic")
+                .err()
+                .map(|error| error.kind()))
+        })
+    }
+
     /// ONE-1732: open a vault whose stored ABI version is `stored` with an
     /// engine whose ABI version is `engine`; Err = the fail-closed gate.
     pub(super) fn open_with_abi_pair(
@@ -2655,6 +2768,88 @@ fn run_entry_route_refuses_an_apply_across_a_mid_run_flip() -> Result<()> {
         full_db_census(&vault)?,
         census_before,
         "and nothing crossed into base under the stale route"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729: session `MemorySearch` applies through the run's captured route
+/// too — its retrieval-run row is a durable write, so a mid-run flip refuses
+/// it exactly as it refuses a replay write.
+///
+/// A search door that minted its own route would pass here while every
+/// neighbouring apply on the same run refused, and would leave base telemetry
+/// behind for a run whose record evaporates.
+#[test]
+fn run_entry_route_refuses_a_search_across_a_mid_run_flip() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let session = seam::SessionVault::enter(&vault, "oracle-search-route").expect("enter session");
+    let census_before = full_db_census(&vault)?;
+
+    let refused = seam::search_through_a_route_captured_before_a_flip(&session);
+    assert_eq!(
+        refused,
+        Err(seam::SeamError::LeaseClosed),
+        "the run-entry route must refuse its own search after a mode flip"
+    );
+    assert_eq!(
+        full_db_census(&vault)?,
+        census_before,
+        "and no retrieval telemetry crossed into base under the stale route"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729: `witness_turn` refuses a mismatched storage/dispatcher pair
+/// before it writes, because it is a write-capable entry point in its own
+/// right — a pair that never calls `run` must not be able to land a turn.
+#[test]
+fn executor_witness_turn_refuses_a_mismatched_binding() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut session =
+        seam::SessionVault::enter(&vault, "oracle-witness-binding").expect("enter session");
+    session.bind_actor()?;
+    let room_before = session.session_artifact_census()?;
+    let census_before = full_db_census(&vault)?;
+
+    assert_eq!(
+        seam::witness_turn_with_mismatched_binding(&vault, &session)?.as_deref(),
+        Some("executor storage/dispatcher binding mismatch"),
+        "a write-capable entry point must run the binding check itself"
+    );
+    assert_eq!(
+        session.session_artifact_census()?,
+        room_before,
+        "a refused witness leaves the room untouched"
+    );
+    assert_eq!(
+        full_db_census(&vault)?,
+        census_before,
+        "and writes nothing to base"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// ONE-1729: the session replay compare-and-set is ATOMIC, like its canonical
+/// sibling — the compare reads inside the transaction that writes.
+///
+/// Two bound runs holding the same expected generation must not both be told
+/// they won: a row that changed under a run is refused with the existing
+/// concurrent-write error rather than silently overwritten.
+#[test]
+fn session_replay_compare_and_set_refuses_a_row_that_moved() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let session = seam::SessionVault::enter(&vault, "oracle-replay-cas").expect("enter session");
+    // On record, so the competing mutation reaches the same row the routed
+    // put targets; the compare protocol under test is route-independent.
+    session.flip_on_record()?;
+
+    assert_eq!(
+        seam::replay_put_racing_a_committed_change(&vault, &session)?,
+        Some(crate::error::ErrorKind::ConcurrentWrite),
+        "a replay row that moved between compare and put must refuse, not lose the update"
     );
     session.close()?;
     Ok(())

@@ -1403,6 +1403,16 @@ impl SessionBinding<'_> {
         )
     }
 
+    /// In-room retrieval through the run's captured route.
+    ///
+    /// Search registers a retrieval-run row, so it is an APPLY like any other
+    /// and goes through the stored route rather than a fresh one: a room that
+    /// flipped mid-run refuses the search instead of quietly landing base
+    /// telemetry for a run whose replay record sits in an evaporating overlay.
+    fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
+        self.session.search_text_routed(&self.route, query, limit)
+    }
+
     fn get_replay_record(&self, run_id: &EntityId) -> Result<Option<CodeRunReplayRecord>> {
         self.session
             .vault_meta_get(&code_run_replay_record_key(run_id))?
@@ -1410,13 +1420,14 @@ impl SessionBinding<'_> {
             .transpose()
     }
 
-    /// Compare-and-set against the SAME composed view it will update.
+    /// Compare-and-set against the SAME composed view it will update, in the
+    /// SAME transaction — the canonical sibling's atomicity, routed.
     ///
-    /// A failed comparison writes neither overlay nor base — the refusal
-    /// returns before the put. `expected` is the replay record's own
-    /// generation protocol, a separate concern from the mode-flip route: the
-    /// number says "no one else appended", the route says "the room is still
-    /// the room you bound".
+    /// A failed comparison writes neither overlay nor base; the routed
+    /// compare-and-put refuses inside its transaction, so nothing commits.
+    /// `expected` is the replay record's own generation protocol, a separate
+    /// concern from the mode-flip route: the number says "no one else
+    /// appended", the route says "the room is still the room you bound".
     fn put_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -1424,19 +1435,25 @@ impl SessionBinding<'_> {
     ) -> Result<CodeRunReplayGeneration> {
         let encoded = encode_code_run_replay_record(record)?;
         let next_generation = record.generation()?;
-        let key = code_run_replay_record_key(&record.run_id);
-        let current_generation = self
-            .get_replay_record(&record.run_id)?
-            .as_ref()
-            .map(CodeRunReplayRecord::generation)
-            .transpose()?;
-        if current_generation != expected {
-            return Err(Error::ConcurrentWrite(
-                "code-run replay record changed; retry executor",
-            ));
-        }
-        self.session
-            .vault_meta_put_routed(&self.route, &key, &encoded)?;
+        self.session.vault_meta_compare_and_put_routed(
+            &self.route,
+            &code_run_replay_record_key(&record.run_id),
+            &encoded,
+            |current| {
+                let stored = current
+                    .map(decode_code_run_replay_record)
+                    .transpose()?
+                    .as_ref()
+                    .map(CodeRunReplayRecord::generation)
+                    .transpose()?;
+                if stored == expected {
+                    return Ok(());
+                }
+                Err(Error::ConcurrentWrite(
+                    "code-run replay record changed; retry executor",
+                ))
+            },
+        )?;
         Ok(next_generation)
     }
 
@@ -1527,7 +1544,7 @@ impl<'a> ExecutorStorage<'a> {
     pub(crate) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
         match self {
             Self::Canonical(vault) => vault.search_text(query, limit),
-            Self::Session(binding) => binding.session.search_text(query, limit),
+            Self::Session(binding) => binding.search_text(query, limit),
         }
     }
 

@@ -411,16 +411,24 @@ impl<'a> EngineNativeExecutor<'a> {
     /// executor transcripts are not this ticket's work, which is what keeps
     /// the of060 fitness pin at zero diff.
     ///
+    /// This is a WRITE-CAPABLE entry point, so it verifies the same
+    /// storage/dispatcher binding [`Self::run`] does, before it reads or
+    /// writes anything: a mismatched pair that never calls `run` would
+    /// otherwise land a turn through one binding's session under the other's
+    /// actor.
+    ///
     /// # Errors
     ///
-    /// Propagates the session's typed refusals, including the stale-route
-    /// family when the room flipped mode after this run's entry.
+    /// Returns `Error::InvalidConfig` for a mismatched storage/dispatcher
+    /// pair, and propagates the session's typed refusals, including the
+    /// stale-route family when the room flipped mode after this run's entry.
     pub fn witness_turn(
         &self,
         kind: ExecutorUtterance,
         text: &str,
         occurred_at: u64,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
+        self.verify_storage_dispatcher_binding()?;
         let ExecutorStorage::Session(binding) = &self.storage else {
             return Ok(None);
         };

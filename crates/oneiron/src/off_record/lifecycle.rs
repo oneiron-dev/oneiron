@@ -738,7 +738,22 @@ impl OffRecordSession<'_> {
         Ok(*state.continuation_shell.get_or_insert_with(EntityId::now))
     }
 
-    /// In-room BM25 retrieval over the composed union (ARCH-0052 §7).
+    /// In-room BM25 retrieval over the composed union, minting its own route.
+    ///
+    /// The one-shot sibling of [`Self::search_text_routed`], for callers with
+    /// no run to bind to; a bound RUN never takes this door, because its
+    /// applies all go through the one route it captured at run entry.
+    #[allow(
+        dead_code,
+        reason = "one-shot sibling: the lib-target search caller is ONE-1729's bound executor \
+                  run, which necessarily carries its own route"
+    )]
+    pub(crate) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
+        self.search_text_routed(&self.write_route()?, query, limit)
+    }
+
+    /// In-room BM25 retrieval over the composed union (ARCH-0052 §7), applied
+    /// through the route the CALLER captured.
     ///
     /// This is the session sibling of `Vault::search_text_with_telemetry` and
     /// mirrors it exactly: the same generalized `bm25::search_text` body, the
@@ -757,8 +772,21 @@ impl OffRecordSession<'_> {
     /// [`ScoredEntity`] and the executor's `self.memory.search` outcome
     /// carries per-hit scores, so projecting them away here would have forced
     /// a second scoring body on the session path.
-    pub(crate) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
-        let route = self.write_route()?;
+    ///
+    /// The route is a PARAMETER (ONE-1729): registering the retrieval-run row
+    /// makes search an APPLY, so a bound run takes it through the single route
+    /// it captured at run entry, like every other apply. Minting one here
+    /// instead would let a run whose room flipped mid-search land base
+    /// telemetry under a route it never held while its neighbouring applies
+    /// refused — torn run bookkeeping, and exactly the silent re-mint the
+    /// run-entry capture exists to prevent.
+    pub(crate) fn search_text_routed(
+        &self,
+        route: &SessionWriteRoute,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
+        route.revalidate()?;
         let view = self.read_view()?;
         let search = self.vault.search_text_scored(
             &view,
@@ -851,6 +879,52 @@ impl OffRecordSession<'_> {
             }
             RouteTarget::Base => self.vault.with_write_txn(|wtxn| {
                 route.revalidate()?;
+                self.vault.store.vault_meta.put(wtxn, key, value)
+            }),
+        }
+    }
+
+    /// The routed write, conditional on what the row holds RIGHT NOW.
+    ///
+    /// `accepts_current` sees the composed value inside the very transaction
+    /// that replaces it, so the pair is a real compare-and-set. Reading
+    /// through an earlier snapshot instead would let two bound runs observe
+    /// the same generation, both pass, and both commit — a lost update with
+    /// each writer told it won. Its refusal is the CALLER's typed error: the
+    /// protocol being compared belongs to the caller, the transaction
+    /// discipline belongs here.
+    pub(crate) fn vault_meta_compare_and_put_routed(
+        &self,
+        route: &SessionWriteRoute,
+        key: &[u8],
+        value: &[u8],
+        accepts_current: impl FnOnce(Option<&[u8]>) -> Result<()>,
+    ) -> Result<()> {
+        route.revalidate()?;
+        match route.target() {
+            RouteTarget::Overlay => {
+                // Same base-writer-then-segment-permit order as the sibling
+                // above; the composed read is taken after the segment installs
+                // so it cannot miss a room-mate's just-applied row.
+                let overlay = self.entry.overlay.clone();
+                let segment = self.vault.with_write_txn(|wtxn| {
+                    let segment = overlay.install_txn_segment()?;
+                    route.revalidate()?;
+                    let view = self.vault.store.session_view(overlay.clone())?;
+                    accepts_current(view.vault_meta_get_in_txn(&*wtxn, key)?.as_deref())?;
+                    view.vault_meta_put_in_txn(wtxn, key, value)?;
+                    Ok(segment)
+                })?;
+                segment.commit()
+            }
+            RouteTarget::Base => self.vault.with_write_txn(|wtxn| {
+                route.revalidate()?;
+                // Composed, not base-only: the row this run is updating may
+                // still be the overlay row an earlier off-record run of the
+                // same room wrote, which is exactly what the unconditional
+                // read sees.
+                let view = self.vault.store.session_view(self.entry.overlay.clone())?;
+                accepts_current(view.vault_meta_get_in_txn(&*wtxn, key)?.as_deref())?;
                 self.vault.store.vault_meta.put(wtxn, key, value)
             }),
         }
