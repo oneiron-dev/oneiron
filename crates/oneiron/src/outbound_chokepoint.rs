@@ -92,6 +92,28 @@ pub(crate) trait OutboundTransport {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome;
 }
 
+/// The CA-05 send-hygiene headers this call must go out under, read from the
+/// FROZEN bytes at the last boundary before transport.
+///
+/// Reading them here rather than re-deriving them is what makes retries
+/// byte-identical: a replay never recomputes an unsubscribe target, it replays
+/// the one the ledger froze. A payload that carries no hygiene headers — every
+/// non-email send, and every connector payload that was never JSON — yields an
+/// empty map, so nothing about existing transports changes.
+///
+/// # Errors
+///
+/// [`IntentLedgerError::InvalidRecord`] when the frozen payload carries the
+/// hygiene field in a shape that cannot be replayed. A send whose headers the
+/// ledger cannot vouch for does not reach the wire.
+pub(crate) fn frozen_call_hygiene_headers(
+    call: &FrozenOutboundCall,
+) -> Result<std::collections::BTreeMap<String, String>, OutboundEffectError> {
+    crate::campaign::send_hygiene::frozen_payload_hygiene_headers(call.payload()).map_err(|_| {
+        IntentLedgerError::InvalidRecord("frozen outbound payload carries invalid hygiene headers")
+    })
+}
+
 enum RecoveryGovernance {
     Allow,
     Block(&'static str),
