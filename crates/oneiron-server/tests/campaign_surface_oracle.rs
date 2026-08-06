@@ -1162,34 +1162,60 @@ fn campaign_server_handlers_use_sync_server_state() {
 /// closed list, with no Graph-FS prerequisite.
 #[tokio::test]
 async fn campaign_discovery_lists_self_verbs_once() {
-    let (_dir, vault, principal) = oracle_vault();
+    let (_dir, vault, _principal) = oracle_vault();
     let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
-    let _ = principal;
 
     let (status, discovered) = request(addr, "GET", "/api/core/discover", Some(SECRET), None).await;
     assert_eq!(status, 200, "{discovered}");
-    let listed: Vec<&str> = discovered["self_verbs"]
+    let capabilities: Vec<&str> = discovered["feature_flags"]["capabilities"]
         .as_array()
-        .expect("discovery should advertise self_verbs")
+        .expect("discovery should advertise capabilities")
         .iter()
-        .map(|verb| verb.as_str().expect("verb should be a string"))
+        .map(|token| token.as_str().expect("capability should be a string"))
         .collect();
-    assert_eq!(listed, CAMPAIGN_SELF_VERBS.to_vec());
 
-    let mut deduped = listed.clone();
-    deduped.sort_unstable();
-    deduped.dedup();
+    for verb in CAMPAIGN_SELF_VERBS {
+        assert_eq!(
+            capabilities.iter().filter(|token| *token == verb).count(),
+            1,
+            "{verb} must be advertised exactly once: {capabilities:?}"
+        );
+    }
+
+    // The advertised set is the engine's closed list, not a hand-kept copy: no
+    // `self.*` token exists that the dispatcher would refuse.
+    for token in &capabilities {
+        if token.starts_with("self.") {
+            assert!(
+                CampaignSurfaceVerb::parse(token).is_some(),
+                "{token} is advertised but does not dispatch"
+            );
+        }
+    }
     assert_eq!(
-        deduped.len(),
-        listed.len(),
-        "each verb must be advertised exactly once"
+        capabilities
+            .iter()
+            .filter(|token| token.starts_with("self."))
+            .count(),
+        CAMPAIGN_SELF_VERBS.len()
     );
+
+    // The batch's own MCP catalog is still advertised alongside them.
+    assert!(capabilities.contains(&"mcp.tool.oneiron.calendar"));
 
     // The vault under test mounts no Graph-FS `/queries/` view, and every verb
     // is still advertised — discovery states no filesystem prerequisite.
     let body = serde_json::to_string(&discovered).unwrap();
     assert!(!body.contains("graph_fs"), "{body}");
     assert!(!body.contains("/queries/"), "{body}");
+
+    // Health advertises the same vocabulary, from the same derivation.
+    let (status, health) = request(addr, "GET", "/api/health", None, None).await;
+    assert_eq!(status, 200, "{health}");
+    assert_eq!(
+        health["capabilities"]["capabilities"],
+        discovered["feature_flags"]["capabilities"]
+    );
 
     handle.abort();
 }

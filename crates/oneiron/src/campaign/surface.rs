@@ -1487,47 +1487,55 @@ mod tests {
             .expect("put person");
     }
 
-    fn commit(
-        vault: &Vault,
+    /// One `(query, campaign)` pair, so a fixture can spell a transition
+    /// without restating the two refs it never varies.
+    struct Cohort<'v> {
+        vault: &'v Vault,
         query: EntityId,
         campaign: EntityId,
-        person: EntityId,
-        epoch: u64,
-        transition: MembershipTransition,
-        cause: MembershipCause,
-        at: u64,
-    ) {
-        let event = MembershipEvent {
-            query_ref: query,
-            campaign_ref: campaign,
-            entity_ref: person,
-            epoch,
-            valid_at: at,
-            detected_at: at + 1,
-            transition,
-            cause,
-            evidence_hash: [u8::try_from(epoch % 251).unwrap_or_default(); 32],
-        };
-        let state = match transition {
-            MembershipTransition::Entered => CampaignMemberState::Enrolled,
-            MembershipTransition::Exited => CampaignMemberState::Exited,
-        };
-        let plan = MembershipWritePlan {
-            value: derived_member_value(
-                &event,
-                state,
-                vec![CampaignMemberChannel {
-                    channel: "email".to_owned(),
-                    basis_evidence: test_id(0xE1),
-                    sender_ref: test_id(0xE2),
-                }],
-            ),
-            event,
-        };
-        assert_eq!(
-            commit_membership_plan(vault, &plan, at + 1).expect("commit plan"),
-            MembershipCommitOutcome::Applied
-        );
+    }
+
+    impl Cohort<'_> {
+        fn commit(
+            &self,
+            person: EntityId,
+            epoch: u64,
+            transition: MembershipTransition,
+            cause: MembershipCause,
+            at: u64,
+        ) {
+            let event = MembershipEvent {
+                query_ref: self.query,
+                campaign_ref: self.campaign,
+                entity_ref: person,
+                epoch,
+                valid_at: at,
+                detected_at: at + 1,
+                transition,
+                cause,
+                evidence_hash: [u8::try_from(epoch % 251).unwrap_or_default(); 32],
+            };
+            let state = match transition {
+                MembershipTransition::Entered => CampaignMemberState::Enrolled,
+                MembershipTransition::Exited => CampaignMemberState::Exited,
+            };
+            let plan = MembershipWritePlan {
+                value: derived_member_value(
+                    &event,
+                    state,
+                    vec![CampaignMemberChannel {
+                        channel: "email".to_owned(),
+                        basis_evidence: test_id(0xE1),
+                        sender_ref: test_id(0xE2),
+                    }],
+                ),
+                event,
+            };
+            assert_eq!(
+                commit_membership_plan(self.vault, &plan, at + 1).expect("commit plan"),
+                MembershipCommitOutcome::Applied
+            );
+        }
     }
 
     fn request(owner: EntityId, limit: u32) -> MembershipReadRequest {
@@ -1557,13 +1565,15 @@ mod tests {
     fn campaign_membership_reads_are_paginated_and_read_only() {
         let (_dir, vault) = oracle_vault();
         let (query, campaign) = (test_id(0x31), test_id(0x30));
+        let cohort = Cohort {
+            vault: &vault,
+            query,
+            campaign,
+        };
         let people = [test_id(0x41), test_id(0x42), test_id(0x43)];
         for (index, person) in people.iter().enumerate() {
             put_person(&vault, *person);
-            commit(
-                &vault,
-                query,
-                campaign,
+            cohort.commit(
                 *person,
                 1,
                 MembershipTransition::Entered,
@@ -1679,32 +1689,28 @@ mod tests {
         let (_dir, vault) = oracle_vault();
         let (query, campaign, person) = (test_id(0x51), test_id(0x50), test_id(0x52));
         put_person(&vault, person);
-
-        // One entity, three epochs, the closed cause set in full.
-        commit(
-            &vault,
+        let cohort = Cohort {
+            vault: &vault,
             query,
             campaign,
+        };
+
+        // One entity, three epochs, the closed cause set in full.
+        cohort.commit(
             person,
             1,
             MembershipTransition::Entered,
             MembershipCause::DataChange,
             200,
         );
-        commit(
-            &vault,
-            query,
-            campaign,
+        cohort.commit(
             person,
             2,
             MembershipTransition::Exited,
             MembershipCause::ScopeChange,
             300,
         );
-        commit(
-            &vault,
-            query,
-            campaign,
+        cohort.commit(
             person,
             3,
             MembershipTransition::Entered,

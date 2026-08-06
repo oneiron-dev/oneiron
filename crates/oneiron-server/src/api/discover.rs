@@ -103,9 +103,6 @@ pub(crate) struct DiscoverResponse {
     personas: Vec<DiscoveredEntity>,
     /// Known conversation entities available for caller selection.
     conversations: Vec<DiscoveredEntity>,
-    /// Code-mode `self.*` verbs this server dispatches, each listed once.
-    #[schema(value_type = Vec<String>, example = json!(["self.campaign.create", "self.saved_query.members"]))]
-    self_verbs: Vec<&'static str>,
     /// Capabilities and modes advertised by this API.
     feature_flags: FeatureFlags,
     /// Outbound connector capability manifest discovery.
@@ -438,7 +435,6 @@ pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse,
         },
         personas,
         conversations,
-        self_verbs: self_verbs(),
         feature_flags: feature_flags(),
         outbound_capabilities: outbound_capability_discovery(),
         counts,
@@ -513,12 +509,21 @@ pub(crate) fn supported_formats() -> Vec<&'static str> {
 /// Advertises CA-07's code-mode `self.*` verbs.
 ///
 /// Copied straight from the engine's closed list rather than hand-listed here,
-/// so each verb appears exactly once and a verb the surface dispatches cannot
-/// go unadvertised. The verbs reach the same engine functions the HTTP routes
-/// do, and none of them depends on the optional Graph-FS `/queries/` view —
-/// discovery therefore states no filesystem prerequisite.
-pub(crate) fn self_verbs() -> Vec<&'static str> {
-    oneiron::campaign::surface::CAMPAIGN_SELF_VERBS.to_vec()
+/// so each verb appears exactly once and a verb the surface dispatches cannot go
+/// unadvertised — the same derived-by-construction rule
+/// [`mcp_tool_capabilities`] follows for the MCP catalog.
+///
+/// They ride the existing `capabilities` vocabulary rather than a new discovery
+/// key: the verb string IS the token an agent calls, so a second top-level list
+/// would be a second place to keep coherent for no extra information.
+///
+/// None of the verbs depends on the optional Graph-FS `/queries/` view, so
+/// discovery states no filesystem prerequisite for any of them.
+fn self_verb_capabilities() -> Vec<String> {
+    oneiron::campaign::surface::CAMPAIGN_SELF_VERBS
+        .iter()
+        .map(|verb| (*verb).to_owned())
+        .collect()
 }
 
 pub(crate) fn feature_flags() -> FeatureFlags {
@@ -527,6 +532,7 @@ pub(crate) fn feature_flags() -> FeatureFlags {
             .iter()
             .map(|capability| (*capability).to_owned())
             .chain(mcp_tool_capabilities())
+            .chain(self_verb_capabilities())
             .collect(),
         modes: CAPABILITY_MODES.to_vec(),
     }
