@@ -1335,7 +1335,12 @@ impl Vault {
         decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])
     }
 
-    fn apply_skill_record_body(
+    /// Crate-private, and the ONE way an engine-authored state flip reaches a
+    /// SKILL body inside a caller's transaction (ONE-1447's stale fold is the
+    /// second such writer after the confidence cache): every caller has already
+    /// run [`validate_skill_update`] against the STORED record, and the batch
+    /// chokepoint runs it again.
+    pub(crate) fn apply_skill_record_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

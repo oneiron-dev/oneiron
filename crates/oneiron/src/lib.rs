@@ -854,8 +854,10 @@ pub use crate::skill_convert::{
     CONVERT_RATIONALE_MAX_BYTES, ConvertOutcome, ConvertRequest, ConvertUtterance,
     PROVENANCE_BIRTH_KEY, PROVENANCE_DEDUP_RATIONALE_KEY, PROVENANCE_MERGE_OF_KEY,
     PROVENANCE_SOURCE_MESSAGES_KEY, RefineVerdict, RefinedSkill, SKILL_CONVERT_CALL_PURPOSE_NAME,
-    SkillNeighbor, SkillRefineBrief, SkillRefiner, convert_messages_to_skill,
-    skill_convert_call_purpose, source_message_refs,
+    STALE_NOTE_DELETED_REFS_KEY, STALE_NOTE_REASON_KEY, STALE_REASON_SOURCE_MESSAGE_DELETED,
+    SkillNeighbor, SkillRefineBrief, SkillRefiner, SkillStaleNote, convert_messages_to_skill,
+    rebuild_skill_source_index, skill_convert_call_purpose, skill_stale_note,
+    skills_dependent_on_message, source_message_refs,
 };
 pub use crate::skill_hub::{
     GitSkillHubAdapter, HUB_PIN_KEYS, HUB_REF_KEYS, HttpIndexSkillHubAdapter,
