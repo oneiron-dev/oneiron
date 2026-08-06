@@ -457,8 +457,152 @@ fn assert_fixture_preserved_metadata(name: &str, validated: &McpValidatedToolArg
         }
         McpValidatedToolArgs::Nav(_)
         | McpValidatedToolArgs::Read(_)
-        | McpValidatedToolArgs::Edit(_) => {}
+        | McpValidatedToolArgs::Edit(_)
+        | McpValidatedToolArgs::Calendar(_) => {}
     }
+}
+
+fn calendar_args(operation: Value) -> Value {
+    json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json("read_calendar"),
+        "operation": operation,
+    })
+}
+
+#[test]
+fn oneiron_calendar_schema_is_closed_and_op_specific() {
+    let catalog = mcp_tool_schemas();
+    assert_eq!(
+        catalog
+            .iter()
+            .filter(|schema| schema.name == "oneiron.calendar")
+            .count(),
+        1,
+        "the catalog carries exactly one calendar tool"
+    );
+    assert_eq!(
+        McpToolName::Calendar.operations(),
+        &["read", "search", "freebusy", "invite"],
+        "the operation set is closed at exactly four ops"
+    );
+
+    let schema = mcp_tool_schema(McpToolName::Calendar).input_schema;
+    let branches = schema["properties"]["operation"]["oneOf"]
+        .as_array()
+        .expect("operation branches");
+    let ops = branches
+        .iter()
+        .map(|branch| {
+            branch["properties"]["op"]["const"]
+                .as_str()
+                .expect("op const")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ops, McpToolName::Calendar.operations());
+
+    let invite = branches.last().expect("invite branch");
+    assert_eq!(
+        invite["required"],
+        json!([
+            "op",
+            "method",
+            "uid",
+            "sequence",
+            "ics_blob_ref",
+            "recipient"
+        ]),
+        "the invite arm requires C7's exact typed payload, not an outbound draft"
+    );
+    assert_eq!(
+        invite["properties"]["method"]["enum"],
+        json!(["REQUEST", "CANCEL"])
+    );
+
+    // Every accepted op decodes; nothing outside the set does.
+    for operation in [
+        json!({ "op": "read", "event_ref": RESULT_ID }),
+        json!({ "op": "search", "text": "review", "limit": 5 }),
+        json!({ "op": "freebusy", "range": { "start": 10, "end": 20 } }),
+        json!({
+            "op": "invite",
+            "method": "REQUEST",
+            "uid": "uid-1",
+            "sequence": 0,
+            "ics_blob_ref": "blob:one-1791",
+            "recipient": "guest@example.test",
+        }),
+    ] {
+        validate_mcp_tool_args(McpToolName::Calendar, calendar_args(operation))
+            .expect("closed calendar op validates");
+    }
+
+    for rejected in [
+        // Unknown op.
+        json!({ "op": "delete", "event_ref": RESULT_ID }),
+        // Field from another arm.
+        json!({ "op": "read", "event_ref": RESULT_ID, "range": { "start": 1, "end": 2 } }),
+        // Missing invite field.
+        json!({
+            "op": "invite",
+            "method": "REQUEST",
+            "uid": "uid-1",
+            "sequence": 0,
+            "recipient": "guest@example.test",
+        }),
+        // An outbound draft is not an invite payload.
+        json!({
+            "op": "invite",
+            "verb": "send",
+            "channel": "email",
+            "target": "guest@example.test",
+        }),
+        // Method outside REQUEST|CANCEL.
+        json!({
+            "op": "invite",
+            "method": "REPLY",
+            "uid": "uid-1",
+            "sequence": 0,
+            "ics_blob_ref": "blob:one-1791",
+            "recipient": "guest@example.test",
+        }),
+        // Malformed ref and range.
+        json!({ "op": "read", "event_ref": "not-an-entity-id" }),
+        json!({ "op": "freebusy", "range": { "start": 20, "end": 10 } }),
+    ] {
+        assert!(
+            validate_mcp_tool_args(McpToolName::Calendar, calendar_args(rejected.clone())).is_err(),
+            "calendar op must be rejected: {rejected}"
+        );
+    }
+}
+
+#[test]
+fn mcp_tool_catalog_stays_closed_over_six_tools() {
+    let names = McpToolName::all()
+        .iter()
+        .map(|tool| tool.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec![
+            "oneiron.nav",
+            "oneiron.read",
+            "oneiron.edit",
+            "oneiron.ask",
+            "oneiron.ask_routed",
+            "oneiron.calendar",
+        ]
+    );
+    for name in &names {
+        assert_eq!(
+            McpToolName::from_name(name).map(McpToolName::as_str),
+            Some(*name),
+            "{name} round-trips through the closed catalog"
+        );
+    }
+    assert!(McpToolName::from_name("oneiron.book").is_none());
 }
 
 #[test]

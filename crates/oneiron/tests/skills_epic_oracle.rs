@@ -19,15 +19,27 @@
 //! SK-05 (ONE-1738), SK-06 (ONE-1739). SK-07 (ONE-1740) is docs-only and
 //! owned elsewhere; SK-01 (ONE-1735) ships live tests in
 //! `src/skill/tests.rs`, not here.
+//!
+//! FULLY ARMED as of ONE-1739 (SK-06): every contract here now runs against
+//! landed machinery, so a red here is a regression, never an un-built layer.
 
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
+    ActorClaimEvidence, ActorClaimRow, ActorNote, ActorNoteKind, AttemptOutcome, AttemptQueue,
+    AttemptRecord, AttributionVerdict, ClaimApprovalStatus, ClaimAttempt, ClaimBody,
+    ClaimLifecycleStatus, ClaimOutcome, ClaimSource, ClaimSubject, CompleteAttempt,
+    CompleteOutcome, EdgeActorClass, EnqueueAttempt, EnqueueOutcome, EntityId,
     HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, HubSyncPolicy,
-    LocalDirSkillHubAdapter, Result, ScanCompleteness, ScanRiskLevel, ScanVerdict,
-    SkillCapabilitySurface, SkillContentHash, SkillGovernance, SkillLifecycle, SkillRecord,
-    SkillScanReceipt, TimeRange, Vault, VaultConfig, canonical_skill_tree_hash,
-    cross_check_declared_content_hash,
+    LocalDirSkillHubAdapter, ManifestEntry, ManifestKind, OutcomeEvidence, ReceiptQuery, Result,
+    SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, ScanCompleteness, ScanRiskLevel, ScanVerdict,
+    SessionActorDistiller, SessionClosePredicate, SessionDistillBrief, SessionEndWake,
+    SessionMintOutcome, SkillCapabilitySurface, SkillContentHash, SkillEditProposal,
+    SkillGovernance, SkillLifecycle, SkillRecord, SkillScanReceipt, TimeRange, Vault, VaultConfig,
+    WitnessAuthor, WitnessMessage, WitnessTurn, attempt_pack_receipt_id, canonical_skill_tree_hash,
+    cross_check_declared_content_hash, pending_edit_proposals, project_actor_claims_from_judgments,
+    project_skill_reliability, read_attribution_cursor, rebuild_skill_confidence_cache,
+    record_attribution_evidence, run_attribution_projector, run_session_end_actor_distill,
+    skill_reliability_posterior, write_actor_claim,
 };
 use rmpv::Value;
 
@@ -39,13 +51,10 @@ const PRED_ACTOR_FAILURE_MODE: &str = "actor.failure_mode";
 const PRED_ACTOR_SCOPE_NOTE: &str = "actor.scope_note";
 const PRED_ACTOR_SKILL_FIT: &str = "actor.skill_fit";
 const PRED_SKILL_RELIABILITY: &str = "skill.reliability";
-
-/// ARM seam value: the arming ticket replaces the `unarmed()` call with the
-/// real machinery call. Until then the `.expect("armed by ONE-XXXX…")` on it
-/// panics if the test is run unarmed (the `#[ignore]` keeps it parked).
-fn unarmed<T>() -> Option<T> {
-    None
-}
+/// SK-05's floor-crossing PROPOSAL row (ONE-1738): the reserved `skill.*` claim
+/// a lower-bound crossing mints, so quarantine is always a question a human
+/// answers rather than a lifecycle flip the engine performs.
+const PRED_SKILL_QUARANTINE_PROPOSAL: &str = "skill.quarantine_proposal";
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -103,6 +112,41 @@ fn put_actor(vault: &Vault, id: &EntityId) -> Result<()> {
     vault.put_entity(id, ENTITY_TYPE_PERSON, t(1), 1, b"oracle actor fixture")
 }
 
+/// Runs one attempt whose pack loaded `skill_id` to its terminal door and
+/// returns the receipt id that close STAMPED. Attribution evidence cites these
+/// — a hand-written receipt string is refused at the evidence door.
+fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
+    let queue = AttemptQueue::new(vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "oracle.attempt".to_owned(),
+        payload: Vec::new(),
+        dedupe_key: None,
+        run_id: None,
+        now: 10,
+    })?
+    else {
+        panic!("a fresh dedupe-free enqueue is never Existing");
+    };
+    queue.append_manifest_entry(
+        attempt.id,
+        ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
+    )?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "oracle-worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("the enqueued attempt is claimable");
+    };
+    queue.complete(CompleteAttempt {
+        id: attempt.id,
+        lease_owner: "oracle-worker".to_owned(),
+        attempt_count: leased.attempt_count,
+        now: 13,
+    })?;
+    Ok(attempt_pack_receipt_id(&attempt.id))
+}
+
 /// All claim rows on `subject` with `predicate`, split (active, superseded).
 fn claim_rows(
     vault: &Vault,
@@ -131,6 +175,62 @@ fn total_claims(vault: &Vault, subject: &EntityId) -> Result<usize> {
     Ok(vault.claims_for_subject(subject)?.len())
 }
 
+/// A CHAT-lane distiller returning exactly the notes it was handed — the
+/// `run_attribution_projector_with_judge` seam, on the distillation side (the
+/// engine itself never invents a note).
+struct OracleDistiller(Vec<ActorNote>);
+
+impl SessionActorDistiller for OracleDistiller {
+    fn distill(&self, _brief: &SessionDistillBrief) -> Result<Vec<ActorNote>> {
+        Ok(self.0.clone())
+    }
+}
+
+/// Opens a plain-chat sitting, witnesses `turn_count` turns THROUGH THE
+/// PRODUCTION WITNESS DOOR, and ends it through the landed SessionEnd wake,
+/// which registers the distill job.
+///
+/// The door is the fixture's whole point (ONE-1739 verdict F1): it writes an
+/// empty TURN container plus MESSAGE children and no SESSION edge whatever, so
+/// a sitting assembled by hand — turns carrying `spkr`/`txt` under a `ChildOf`
+/// edge into the session — would arm this contract against a shape production
+/// never produces, and a dead chat lane would pass it.
+fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<EntityId> {
+    let speaker = EntityId::now();
+    put_actor(vault, &speaker)?;
+    let facade = vault.memory_facade(speaker, EdgeActorClass::Human);
+    let conversation = EntityId::now().to_hex();
+    let SessionMintOutcome::Minted(session) = vault.mint_session(now)? else {
+        panic!("a fresh vault mints a session");
+    };
+    for index in 0..turn_count {
+        let index = u64::try_from(index).expect("fixture turn counts are small");
+        facade
+            .witness(&WitnessTurn {
+                conversation_ref: conversation.clone(),
+                turn_ref: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::User,
+                    message_type: "text".to_owned(),
+                    content: format!("turn {index}"),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: now + index,
+            })
+            .expect("the witness door lands the turn");
+    }
+    vault.end_session_with_wake(
+        &session,
+        SessionClosePredicate::Explicit,
+        now + 100,
+        &SessionEndWake::none(0),
+    )?;
+    Ok(session)
+}
+
 /// String field of a MessagePack map value, by key.
 fn map_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value
@@ -138,6 +238,26 @@ fn map_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
         .iter()
         .find(|(k, _)| k.as_str() == Some(key))
         .and_then(|(_, v)| v.as_str())
+}
+
+/// Active scan verdicts for `content_hash`, minus the engine's own static
+/// receipt (ONE-1892 PACKET_AMEND).
+///
+/// The hub import door now runs a deterministic static pass and ingests its
+/// receipt, so bytes that entered through a hub always carry an
+/// `oneiron.static.v1` row. The SK-02/SK-03 verdict contracts are about
+/// INDEPENDENT PROVIDER rows keyed on `(content_hash, provider)`; counting the
+/// engine's own row into those arities would assert the producer's existence
+/// rather than the contract.
+fn third_party_scan_verdicts(
+    vault: &Vault,
+    content_hash: SkillContentHash,
+) -> Result<Vec<ClaimBody>> {
+    Ok(vault
+        .skill_scan_verdicts_for_content_hash(content_hash)?
+        .into_iter()
+        .filter(|body| map_str(&body.value, "provider") != Some(oneiron::SCAN_PROVIDER_STATIC_V1))
+        .collect())
 }
 
 // ═══ SK-02 · ONE-1736 — SKILL_HUB entity + adapters + rug-pull diff ═════
@@ -386,7 +506,12 @@ fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
 
     // ONE-1741: verdicts anchor to the content bytes, so discovery is by
     // content hash, not by the submitting holder's subject edges.
-    let active = vault.skill_scan_verdicts_for_content_hash(content_hash)?;
+    //
+    // ONE-1892 PACKET_AMEND: the hub import above now produces the engine's own
+    // `oneiron.static.v1` receipt for these bytes. This contract is about the
+    // THIRD-PARTY providers ingested here staying independent rows, so the
+    // engine's own row is filtered out rather than counted into the arity.
+    let active = third_party_scan_verdicts(&vault, content_hash)?;
     assert_eq!(
         active.len(),
         3,
@@ -418,7 +543,7 @@ fn sk02_scan_verdicts_key_on_content_hash_provider_time() -> Result<()> {
     );
     // Re-fetch via a second hub added NO rows: verdicts key on the hash,
     // not the ref — 3 stays 3.
-    let after_second_hub = vault.skill_scan_verdicts_for_content_hash(content_hash)?;
+    let after_second_hub = third_party_scan_verdicts(&vault, content_hash)?;
     assert_eq!(
         after_second_hub.len(),
         3,
@@ -716,12 +841,110 @@ fn sk03_provider_audit_verdicts_are_independent_rows_signal_not_gate() -> Result
 /// entries, and the terminal receipt carries the FULL accumulated
 /// manifest. Earlier entries never mutate or disappear.
 #[test]
-#[ignore = "armed by ONE-1737: attempt-alive pack manifest on the effect-spine receipts (needs ES-02+ES-03)"]
 fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
-    // ARM(ONE-1737): start an attempt with a tier-1 pack (index only),
-    // pull one tier-2 body mid-run ("oracle.skill.pdf@3"), then close the
-    // attempt; capture the manifest after each of the three moments.
-    let manifest_snapshots: Vec<Vec<String>> = Vec::new();
+    // ARMED (ONE-1737): an attempt starts with a tier-1 pack (index only),
+    // pulls one tier-2 body mid-run ("oracle.skill.pdf@3"), then closes; the
+    // manifest is captured after each of the three moments. The TERMINAL
+    // snapshot is read back off the receipt's projected field-set, not off
+    // the attempt row — the contract is that the RECEIPT carries the full
+    // accumulated manifest.
+    let (_tmp, vault) = temp_vault();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(attempt) = queue
+        .enqueue(EnqueueAttempt {
+            kind: "oracle.attempt".to_owned(),
+            payload: Vec::new(),
+            dedupe_key: None,
+            run_id: None,
+            now: 10,
+        })
+        .expect("enqueue attempt")
+    else {
+        panic!("a fresh dedupe-free enqueue is never Existing");
+    };
+
+    let wire_forms = |record: &AttemptRecord| -> Vec<String> {
+        record
+            .manifest()
+            .iter()
+            .map(ManifestEntry::wire_form)
+            .collect()
+    };
+
+    // t0 — tier-1 index resident for the whole run.
+    let at_t0 = queue
+        .append_manifest_entry(
+            attempt.id,
+            ManifestEntry::new(ManifestKind::Skill, "oracle.skill.index", "1", 11),
+        )
+        .expect("tier-1 index appends at t0");
+
+    // Mid-run — the attempt is leased and a step matches, pulling a tier-2
+    // body. The pull is stamped WHEN it happens, not at close.
+    let ClaimOutcome::Claimed(leased) = queue
+        .claim(ClaimAttempt {
+            lease_owner: "oracle-worker".to_owned(),
+            now: 12,
+        })
+        .expect("claim the queued attempt")
+    else {
+        panic!("the enqueued attempt is claimable");
+    };
+    let at_mid = queue
+        .append_manifest_entry(
+            attempt.id,
+            ManifestEntry::new(ManifestKind::Skill, "oracle.skill.pdf", "3", 13),
+        )
+        .expect("tier-2 body appends mid-run");
+
+    // Terminal — closing the attempt STAMPS its accumulated manifest into the
+    // terminal receipt. No test-only projection call: the queue's own terminal
+    // door does it, so this reads the receipt back off the production RS1
+    // receipt family exactly as a host would.
+    let CompleteOutcome::Completed(_closed) = queue
+        .complete(CompleteAttempt {
+            id: attempt.id,
+            lease_owner: "oracle-worker".to_owned(),
+            attempt_count: leased.attempt_count,
+            now: 14,
+        })
+        .expect("complete the leased attempt")
+    else {
+        panic!("a leased attempt completes exactly once");
+    };
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    let family = vault
+        .receipts(ReceiptQuery::new(16))
+        .expect("query the receipt family");
+    let receipt = family
+        .into_iter()
+        .find(|row| row.receipt_id == receipt_id)
+        .expect("the terminal transition stamped the pack receipt onto the spine");
+    assert_eq!(
+        receipt.outcome, "completed",
+        "the receipt records the terminal the attempt actually reached"
+    );
+
+    // The manifest door refuses a terminal attempt: append-only is not a
+    // convention here, it is enforced at the write door.
+    assert!(
+        queue
+            .append_manifest_entry(
+                attempt.id,
+                ManifestEntry::new(ManifestKind::Skill, "oracle.skill.late", "9", 15),
+            )
+            .is_err(),
+        "a closed attempt's manifest is the evidence its receipt already projected"
+    );
+
+    let manifest_snapshots: Vec<Vec<String>> = vec![
+        wire_forms(&at_t0),
+        wire_forms(&at_mid),
+        receipt
+            .pack_manifest_skills()
+            .expect("the terminal receipt stamped the manifest field"),
+    ];
 
     assert_eq!(
         manifest_snapshots.len(),
@@ -764,12 +987,25 @@ fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
     );
 }
 
-/// Contract (ARCH-0053 §4, ONE-1737): the attribution projector classifies
-/// BEFORE writing. Skill defect → claim on the SKILL entity (zero on the
-/// actor). Execution lapse → `actor.failure_mode` on the ACTOR (zero new
-/// rows on the skill — a lapse contributes nothing to the skill, §5).
+/// Contract (ARCH-0053 §4, ONE-1737 + ONE-1739): the attribution projector
+/// classifies BEFORE writing. Skill defect → claim on the SKILL entity (zero
+/// on the actor). Execution lapse → `actor.failure_mode` on the ACTOR (zero
+/// new rows on the skill — a lapse contributes nothing to the skill, §5).
+///
+/// RE-POINTED TO ONE-1739 (ONE-1737, deviation-board item). Every assert here
+/// counts CLAIM ROWS, and the claim-write doors plus the `actor.*` predicate
+/// reservation belong to ONE-1739 — the SK stack deliberately splits routing
+/// (1737) from claiming (1738 reliability / 1739 actor rows), so 1737 cannot
+/// satisfy these counts without writing claims its layer must not write. The
+/// counts are untouched, per the arming law.
+///
+/// ONE-1737 landed the routing half and it is green under
+/// `skill_attribution::tests::defect_routes_to_the_skill_and_lapse_routes_to_the_actor`:
+/// the same two fixtures route to `SkillDefect` on the SKILL and
+/// `ExecutionLapse` on the ACTOR, with each verdict citing its receipt and
+/// neither contributing to the other's subject. ONE-1739 replaces the ARM seam
+/// below with the claim writes those judgments drive.
 #[test]
-#[ignore = "armed by ONE-1737: ARCH-0035 attribution projector routing"]
 fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -778,15 +1014,31 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     put_actor(&vault, &actor_entity)?;
     let skill_claims_before = total_claims(&vault, &skill_entity)?;
 
-    // ARM(ONE-1737): run the projector over (a) a failed-attempt receipt
-    // judged SKILL DEFECT, then (b) a failed-attempt receipt judged
-    // EXECUTION LAPSE, both with this skill in the manifest and this
-    // actor executing.
-    let projected = false;
-    assert!(
-        projected,
-        "armed by ONE-1737: attribution projector not built yet"
-    );
+    // ONE-1737's half, live: route (a) a failed-attempt receipt judged SKILL
+    // DEFECT and (b) one judged EXECUTION LAPSE, both with this skill in the
+    // manifest and this actor executing.
+    let failed = |receipt: &str, followed_skill: bool| {
+        OutcomeEvidence::new(receipt, actor_entity, AttemptOutcome::Failed, 30)
+            .with_skill(skill_entity)
+            .with_routing_facts(followed_skill, true)
+    };
+    let defect_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
+    let lapse_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
+    record_attribution_evidence(&vault, &failed(&defect_receipt, true))?;
+    record_attribution_evidence(&vault, &failed(&lapse_receipt, false))?;
+    let judgments = run_attribution_projector(&vault, 0)?;
+    assert_eq!(judgments.len(), 2, "both failures routed");
+    assert_eq!(judgments[0].verdict, AttributionVerdict::SkillDefect);
+    assert_eq!(judgments[0].subject, skill_entity);
+    assert_eq!(judgments[1].verdict, AttributionVerdict::ExecutionLapse);
+    assert_eq!(judgments[1].subject, actor_entity);
+
+    // ARMED (ONE-1739): drive the claim writes off those routed judgments —
+    // the defect through SK-05's reliability projector, the lapse through
+    // SK-06's actor door. Each projector is handed BOTH judgments, so the
+    // counts below also prove neither writes on the other's subject.
+    project_skill_reliability(&vault, &judgments)?;
+    project_actor_claims_from_judgments(&vault, &judgments)?;
 
     // (a) defect landed on the skill, not the actor.
     assert_eq!(
@@ -820,7 +1072,6 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
 /// content) is NOT a claim at all — it becomes a skill EDIT PROPOSAL.
 /// Zero claims land on either entity.
 #[test]
-#[ignore = "armed by ONE-1737: discovery routing to SKILL-OPT edit proposals"]
 fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
@@ -829,15 +1080,28 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     put_actor(&vault, &actor_entity)?;
     let skill_claims_before = total_claims(&vault, &skill_entity)?;
 
-    // ARM(ONE-1737): run the projector over an outcome judged DISCOVERY
-    // (the skill was missing content the attempt needed); capture how many
-    // edit proposals it minted.
-    let projected = false;
-    let edit_proposals_minted: usize = 0;
+    // ARMED (ONE-1737): the projector runs over an outcome the routing table
+    // judges DISCOVERY — the attempt failed, the actor DID follow the skill,
+    // and the skill did NOT cover the failing step (missing content).
+    let discovery_receipt = stamped_pack_receipt(&vault, "oracle.skill.discovery")?;
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(discovery_receipt, actor_entity, AttemptOutcome::Failed, 20)
+            .with_skill(skill_entity)
+            .with_routing_facts(true, false),
+    )?;
+    let judgments = run_attribution_projector(&vault, 0)?;
+    let projected = judgments.len() == 1
+        && judgments[0].verdict == AttributionVerdict::Discovery
+        && judgments[0].subject == skill_entity;
+    // The proposals are MINTED, PERSISTED rows read back off their own
+    // keyspace — not a filtered view of the judgments, which would have made
+    // this count a restatement of the line above rather than evidence.
+    let edit_proposals: Vec<SkillEditProposal> = pending_edit_proposals(&vault)?;
 
     assert!(
         projected,
-        "armed by ONE-1737: discovery routing not built yet"
+        "the outcome routed to exactly one DISCOVERY verdict"
     );
     assert_eq!(
         total_claims(&vault, &skill_entity)?,
@@ -850,8 +1114,22 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
         "discovery is not a claim on the actor"
     );
     assert_eq!(
-        edit_proposals_minted, 1,
+        edit_proposals.len(),
+        1,
         "discovery = exactly one edit proposal"
+    );
+    let proposal = &edit_proposals[0];
+    assert_eq!(
+        proposal.skill, skill_entity,
+        "the proposal targets the skill whose content was missing"
+    );
+    assert_eq!(
+        proposal.judgment_sequence, judgments[0].sequence,
+        "the proposal cites the judgment that demanded it"
+    );
+    assert_eq!(
+        proposal.evidence_receipts, judgments[0].evidence_receipts,
+        "and carries that judgment's receipts forward as its trace"
     );
     Ok(())
 }
@@ -863,22 +1141,38 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
 /// and CITING its receipts as evidence. Two projection passes = one
 /// active row + one superseded row, never two active rows.
 #[test]
-#[ignore = "armed by ONE-1738: reliability claim projection over OF-184 Beta machinery (needs ONE-1248/1249/1250)"]
 fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
+    let actor_entity = EntityId::now();
     put_active_imported_skill(&vault, &skill_entity, "oracle.skill.reliability")?;
+    put_actor(&vault, &actor_entity)?;
 
-    // ARM(ONE-1738): project reliability after a first attributed outcome,
-    // then again after a second attributed outcome for the same skill, and
-    // record the two receipt ids those outcomes minted (wire form, exactly
-    // as evidence cites them).
-    let projected_twice = false;
-    let minted_receipts: Option<Vec<Value>> = unarmed();
-    assert!(
-        projected_twice,
-        "armed by ONE-1738: reliability projection not built yet"
-    );
+    // ARMED (ONE-1738): project reliability after a first attributed outcome,
+    // then again after a second attributed outcome for the same skill. Both are
+    // SK-04-routed skill defects — the only loss class §5 counts — and each
+    // rides its own stamped pack receipt, which is what the claim cites.
+    let mut minted = Vec::new();
+    for at in [30_u64, 31] {
+        let receipt = stamped_pack_receipt(&vault, "oracle.skill.reliability")?;
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, at)
+                .with_skill(skill_entity)
+                .with_routing_facts(true, true),
+        )?;
+        let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+        assert_eq!(judgments.len(), 1, "one outcome routed per pass");
+        assert_eq!(judgments[0].verdict, AttributionVerdict::SkillDefect);
+        let projected = project_skill_reliability(&vault, &judgments)?;
+        assert_eq!(
+            projected,
+            vec![skill_entity],
+            "the defect's skill projected"
+        );
+        minted.push(Value::from(receipt));
+    }
+    let minted_receipts: Vec<Value> = minted;
 
     let (active, superseded) = claim_rows(&vault, &skill_entity, PRED_SKILL_RELIABILITY)?;
     assert_eq!(
@@ -896,7 +1190,7 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
     assert_eq!(row.approval, ClaimApprovalStatus::Auto, "projector-written");
     // Evidence cites exactly the two receipts the outcomes minted (review
     // C15): any array of length two must not pass.
-    let minted = minted_receipts.expect("armed by ONE-1738: receipt minting not captured yet");
+    let minted = minted_receipts;
     assert_eq!(minted.len(), 2, "two attributed outcomes = two receipts");
     let evidence = row
         .evidence
@@ -942,21 +1236,50 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
 /// cache rebuilds to the claim posterior's value, and touching the cache
 /// never touches the claim.
 #[test]
-#[ignore = "armed by ONE-1738: score-field demotion + cache rebuild door"]
 fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
+    let actor_entity = EntityId::now();
     put_active_imported_skill(&vault, &skill_entity, "oracle.skill.cache")?;
+    put_actor(&vault, &actor_entity)?;
 
-    // ARM(ONE-1738): project a reliability claim, capture the posterior
-    // mean it asserts, clobber the record's cached score, run the rebuild
-    // door, and capture the rebuilt cache value.
-    let claim_posterior_mean: Option<f32> = unarmed();
-    let rebuilt_cache_value: Option<f32> = unarmed();
+    // ARMED (ONE-1738): project a reliability claim, capture the posterior mean
+    // it asserts, clobber the record's cached score through the ordinary update
+    // door, then run the rebuild door.
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.cache")?;
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, 30)
+            .with_skill(skill_entity)
+            .with_routing_facts(true, true),
+    )?;
+    let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+    project_skill_reliability(&vault, &judgments)?;
+    let claim_posterior_mean: f32 = skill_reliability_posterior(&vault, &skill_entity)?
+        .expect("the projected claim carries the posterior")
+        .mean();
 
-    let mean =
-        claim_posterior_mean.expect("armed by ONE-1738: reliability projection not built yet");
-    let rebuilt = rebuilt_cache_value.expect("armed by ONE-1738: rebuild door not built yet");
+    // The cache is WRITABLE and non-authoritative: clobbering it is a lawful
+    // record edit that mints no revision — and, crucially, changes no claim.
+    let mut clobbered = vault
+        .get_skill_record(&skill_entity)?
+        .expect("record persists");
+    clobbered.confidence = 0.01;
+    vault.update_skill_record(&skill_entity, &clobbered, t(40), 41)?;
+    let rebuilt_cache_value: f32 = rebuild_skill_confidence_cache(&vault, &skill_entity, 42)?;
+    assert!(
+        (vault
+            .get_skill_record(&skill_entity)?
+            .expect("record persists")
+            .confidence
+            - rebuilt_cache_value)
+            .abs()
+            < 1e-6,
+        "the rebuild landed on the stored record, not just in the return value"
+    );
+
+    let mean = claim_posterior_mean;
+    let rebuilt = rebuilt_cache_value;
     assert!(
         (rebuilt - mean).abs() < 1e-6,
         "cache rebuilds to the claim's posterior mean: {rebuilt} vs {mean}"
@@ -976,11 +1299,12 @@ fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
 /// exists. (The ONE-1735 update gate already hard-rejects
 /// `quarantined + approval=auto` — this test pins the projector's side.)
 #[test]
-#[ignore = "armed by ONE-1738: floor-crossing quarantine proposal"]
 fn sk05_floor_crossing_proposes_quarantine_never_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill_entity = EntityId::now();
+    let actor_entity = EntityId::now();
     let active = put_active_imported_skill(&vault, &skill_entity, "oracle.skill.floor")?;
+    put_actor(&vault, &actor_entity)?;
 
     // Real today (ONE-1735 floor): the door itself refuses auto quarantine.
     let mut auto_quarantine = active;
@@ -990,10 +1314,32 @@ fn sk05_floor_crossing_proposes_quarantine_never_auto() -> Result<()> {
         .update_skill_record(&skill_entity, &auto_quarantine, t(20), 21)
         .expect_err("auto quarantine is rejected at the door");
 
-    // ARM(ONE-1738): drive attributed losses past the reliability floor
-    // via the projector; capture how many quarantine PROPOSALS it minted.
-    let floor_crossed = false;
-    let quarantine_proposals: usize = 0;
+    // ARMED (ONE-1738): drive attributed losses past the reliability floor via
+    // the projector. Every pass runs the floor check, so the run also proves the
+    // crossing is not re-proposed once a proposal is open.
+    let mut floor_crossed = false;
+    for at in 30..30 + u64::from(SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES) + 2 {
+        let receipt = stamped_pack_receipt(&vault, "oracle.skill.floor")?;
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, at)
+                .with_skill(skill_entity)
+                .with_routing_facts(true, true),
+        )?;
+        let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+        project_skill_reliability(&vault, &judgments)?;
+        let (open, _) = claim_rows(&vault, &skill_entity, PRED_SKILL_QUARANTINE_PROPOSAL)?;
+        if let Some(row) = open.first() {
+            assert_eq!(
+                row.approval,
+                ClaimApprovalStatus::Proposed,
+                "the floor PROPOSES: a projector-minted `auto` quarantine would be the bug"
+            );
+            floor_crossed = true;
+        }
+    }
+    let (proposals, _) = claim_rows(&vault, &skill_entity, PRED_SKILL_QUARANTINE_PROPOSAL)?;
+    let quarantine_proposals: usize = proposals.len();
 
     assert!(
         floor_crossed,
@@ -1019,7 +1365,6 @@ fn sk05_floor_crossing_proposes_quarantine_never_auto() -> Result<()> {
 /// distinct one adds a row. `actor.skill_fit` is ONE-PER-(actor, skill),
 /// superseding, with a fit value in 0..=1.
 #[test]
-#[ignore = "armed by ONE-1739: actor.* claim writes (Dreamer distill + projector rows)"]
 fn sk06_actor_row_cardinalities_are_pinned() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor_entity = EntityId::now();
@@ -1029,14 +1374,74 @@ fn sk06_actor_row_cardinalities_are_pinned() -> Result<()> {
     put_active_imported_skill(&vault, &skill_a, "oracle.skill.fit.a")?;
     put_active_imported_skill(&vault, &skill_b, "oracle.skill.fit.b")?;
 
-    // ARM(ONE-1739): through the landed inlets write —
-    //   actor.lesson: "cite the receipt" twice (dup) + "read the diff" once;
-    //   actor.failure_mode: "skips verification" once;
-    //   actor.scope_note: "long-horizon research" once;
-    //   actor.skill_fit for (actor, skill_a): 0.25 then 0.75 (supersedes);
-    //   actor.skill_fit for (actor, skill_b): 0.5 once.
-    let written = false;
-    assert!(written, "armed by ONE-1739: actor.* inlets not built yet");
+    // ARMED (ONE-1739): every row goes through `write_actor_claim`, the ONE
+    // door both inlets share — cardinality is the door's contract, so this is
+    // where it is pinned.
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.fit.a")?;
+    let evidence = |at: u64| ActorClaimEvidence::task(vec![receipt.clone()], at);
+    for (row, at) in [
+        (
+            ActorClaimRow::Lesson {
+                actor: actor_entity,
+                text: "cite the receipt".to_owned(),
+            },
+            30_u64,
+        ),
+        (
+            ActorClaimRow::Lesson {
+                actor: actor_entity,
+                text: "cite the receipt".to_owned(),
+            },
+            31,
+        ),
+        (
+            ActorClaimRow::Lesson {
+                actor: actor_entity,
+                text: "read the diff".to_owned(),
+            },
+            32,
+        ),
+        (
+            ActorClaimRow::FailureMode {
+                actor: actor_entity,
+                text: "skips verification".to_owned(),
+            },
+            33,
+        ),
+        (
+            ActorClaimRow::ScopeNote {
+                actor: actor_entity,
+                text: "long-horizon research".to_owned(),
+            },
+            34,
+        ),
+        (
+            ActorClaimRow::SkillFit {
+                actor: actor_entity,
+                skill: skill_a,
+                fit: 0.25,
+            },
+            35,
+        ),
+        (
+            ActorClaimRow::SkillFit {
+                actor: actor_entity,
+                skill: skill_a,
+                fit: 0.75,
+            },
+            36,
+        ),
+        (
+            ActorClaimRow::SkillFit {
+                actor: actor_entity,
+                skill: skill_b,
+                fit: 0.5,
+            },
+            37,
+        ),
+    ] {
+        write_actor_claim(&vault, row, &evidence(at)?)?;
+    }
 
     let (lessons, _) = claim_rows(&vault, &actor_entity, PRED_ACTOR_LESSON)?;
     assert_eq!(
@@ -1109,25 +1514,54 @@ fn sk06_actor_row_cardinalities_are_pinned() -> Result<()> {
 /// projector/Dreamer-written per §G.1 (never hand-written next to their
 /// evidence).
 #[test]
-#[ignore = "armed by ONE-1739: task-lane + chat-lane inlets through the write gate"]
 fn sk06_two_inlets_one_ledger_both_through_the_write_gate() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor_entity = EntityId::now();
+    let skill_entity = EntityId::now();
     put_actor(&vault, &actor_entity)?;
+    put_active_imported_skill(&vault, &skill_entity, "oracle.skill.inlets")?;
 
-    // ARM(ONE-1739): produce one actor.lesson via the TASK lane (projector
-    // over an ATTEMPT receipt) and one distinct actor.lesson via the CHAT
-    // lane (Dreamer session-end distillation) — both through the gate.
-    let task_lane_wrote = false;
-    let chat_lane_wrote = false;
-    assert!(
-        task_lane_wrote,
-        "armed by ONE-1739: task-lane inlet not built yet"
-    );
-    assert!(
-        chat_lane_wrote,
-        "armed by ONE-1739: chat-lane inlet not built yet"
-    );
+    // ARMED (ONE-1739) TASK lane: an ATTEMPT receipt routes to an
+    // ExecutionLapse judgment, the projector lands its failure-mode row, and
+    // the lesson that receipt teaches lands through the SAME door on
+    // receipt-grounded (`ToolOutput`-lineage) evidence. The projector itself
+    // mints no lesson — a routing boolean cannot source prose — so the note is
+    // the distiller tier's, exactly as on the chat side.
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.inlets")?;
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, 40)
+            .with_skill(skill_entity)
+            .with_routing_facts(false, false),
+    )?;
+    let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+    let task_lane_wrote = !project_actor_claims_from_judgments(&vault, &judgments)?.is_empty()
+        && write_actor_claim(
+            &vault,
+            ActorClaimRow::Lesson {
+                actor: actor_entity,
+                text: "check the pack before departing from it".to_owned(),
+            },
+            &ActorClaimEvidence::task(vec![receipt], 41)?,
+        )
+        .is_ok();
+
+    // ARMED (ONE-1739) CHAT lane: the same rows, distilled at the SessionEnd
+    // wake from a sitting's turns.
+    let session = witnessed_chat_session(&vault, 2, 50)?;
+    let chat_lane_wrote = !run_session_end_actor_distill(
+        &vault,
+        &session,
+        &OracleDistiller(vec![ActorNote {
+            actor: actor_entity,
+            kind: ActorNoteKind::Lesson,
+            text: "say what you are unsure of".to_owned(),
+        }]),
+    )?
+    .is_empty();
+
+    assert!(task_lane_wrote, "the task-lane inlet landed rows");
+    assert!(chat_lane_wrote, "the chat-lane inlet landed rows");
 
     let (lessons, _) = claim_rows(&vault, &actor_entity, PRED_ACTOR_LESSON)?;
     assert_eq!(
@@ -1155,23 +1589,40 @@ fn sk06_two_inlets_one_ledger_both_through_the_write_gate() -> Result<()> {
 /// distill. The moment chat spawns real work, THAT moment mints a TASK.
 /// Lanes compose, never blur.
 #[test]
-#[ignore = "armed by ONE-1739: chat-lane distill + task minting boundary"]
 fn sk06_chat_lane_mints_no_task_until_work_spawns() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let actor_entity = EntityId::now();
     put_actor(&vault, &actor_entity)?;
 
-    // ARM(ONE-1739): run the Dreamer session-end distill over a plain-chat
-    // SESSION fixture (capture any TASK ids it minted), then have the chat
-    // spawn real work (capture the TASK ids minted at that moment).
-    let distilled = false;
-    let tasks_minted_by_chat: Vec<EntityId> = Vec::new();
-    let tasks_minted_by_spawned_work: Option<Vec<EntityId>> = unarmed();
+    // ARMED (ONE-1739): the Dreamer session-end distill over a plain-chat
+    // SESSION fixture mints CLAIMs and nothing else…
+    let session = witnessed_chat_session(&vault, 2, 60)?;
+    let distilled = !run_session_end_actor_distill(
+        &vault,
+        &session,
+        &OracleDistiller(vec![ActorNote {
+            actor: actor_entity,
+            kind: ActorNoteKind::Lesson,
+            text: "restate the ask before answering".to_owned(),
+        }]),
+    )?
+    .is_empty();
+    let tasks_minted_by_chat = vault.entities_by_type(ENTITY_TYPE_TASK)?;
 
-    assert!(
-        distilled,
-        "armed by ONE-1739: chat-lane distill not built yet"
-    );
+    // …and the moment the sitting spawns real work, the surface that spawns
+    // it mints the TASK explicitly. Minting is an ACT, never a side effect of
+    // learning from a conversation.
+    let spawned_task = EntityId::now();
+    let mut task_body = Vec::new();
+    rmpv::encode::write_value(
+        &mut task_body,
+        &Value::Map(vec![(Value::from("role"), Value::from(1_u8))]),
+    )
+    .expect("TASK role body encodes");
+    vault.put_entity(&spawned_task, ENTITY_TYPE_TASK, t(61), 61, &task_body)?;
+    let spawned = vault.entities_by_type(ENTITY_TYPE_TASK)?;
+
+    assert!(distilled, "the chat-lane distill landed its row");
     let (lessons, _) = claim_rows(&vault, &actor_entity, PRED_ACTOR_LESSON)?;
     assert_eq!(
         lessons.len(),
@@ -1183,8 +1634,6 @@ fn sk06_chat_lane_mints_no_task_until_work_spawns() -> Result<()> {
         0,
         "plain chatting mints no TASK (08b r13)"
     );
-    let spawned =
-        tasks_minted_by_spawned_work.expect("armed by ONE-1739: work-spawn boundary not built yet");
     assert_eq!(
         spawned.len(),
         1,

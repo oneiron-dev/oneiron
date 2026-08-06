@@ -273,7 +273,11 @@ const _: () =
 const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 1;
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
-const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
+/// Crate-visible so the off-record close census can count the session's own
+/// retrieval-run receipt rows in the overlay `VaultMeta` keyspace immediately
+/// before they evaporate (ONE-1728 K8). The key FORMAT is owned here; the
+/// census only tests the prefix.
+pub(crate) const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
 const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
 const RETRIEVAL_TRACE_FORK_KEY_PREFIX: &[u8] = b"retr_trace_fork:v0:";
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
@@ -402,6 +406,11 @@ impl RetrievalRunId {
     }
 
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "no P4a path reconstructs a run id from raw bytes; on the ONE-1728 seg-4 \
+                  post-merge delete-list unless ONE-1730's promote replay claims it"
+    )]
     pub(crate) fn from_bytes(bytes: [u8; 16]) -> Self {
         Self { bytes }
     }
@@ -1346,6 +1355,11 @@ pub struct Store {
 )]
 pub(crate) struct SessionStoreView<'store> {
     _owner: &'store StoreOwner,
+    /// The overlay every accessor above stages into. Held so a staging site
+    /// inside a base write transaction can install its segment (see
+    /// [`SessionStoreView::install_txn_segment`]) without the caller having to
+    /// carry the session handle alongside the view.
+    overlay: Arc<crate::session_overlay::SessionOverlay>,
     pub(crate) entities: OverlayDb,
     pub(crate) edges_out: OverlayDb,
     pub(crate) edges_in: OverlayDb,
@@ -1376,6 +1390,200 @@ pub(crate) struct SessionStoreView<'store> {
     pub(crate) attempt_dedupe: OverlayDb,
 }
 
+/// The session-side retrieval-telemetry surface (ONE-1728 §7 / K10).
+///
+/// Each method is the session sibling of the identically-named `Store`
+/// method and rides the SAME extracted staging body, so the two targets
+/// cannot drift in key format or side-write footprint. The difference is
+/// purely which accessor bundle the body reaches: a session run's rows land
+/// in the overlay `VaultMeta` keyspace and evaporate at close, so the base
+/// telemetry ledger gains zero rows from an OffRecord session.
+///
+/// These take the caller's `wtxn` rather than opening their own, because a
+/// session write must commit in the same transaction its overlay segment is
+/// staged into — the segment guard applies staged rows only after the base
+/// commit returns.
+#[allow(
+    dead_code,
+    reason = "P4a lands the session telemetry seam whole; `record_retrieval_run_in_txn` has its \
+              lib-target caller in ONE-1728's session `search_text`, and the finalize/delete/read \
+              siblings get theirs from ONE-1729's session context-pack runs and ONE-1730's promote"
+)]
+impl SessionStoreView<'_> {
+    /// Installs a write segment on the overlay this view stages into.
+    ///
+    /// Every session write needs an active segment on the calling thread —
+    /// `SessionOverlay::stage_mutation` refuses without one — and the segment
+    /// permit is acquired AFTER the base writer (`session_overlay`'s documented
+    /// base -> segment order; the reverse is the ABBA path). A view therefore
+    /// cannot install its segment at construction: the staging site installs it
+    /// inside its own write transaction and commits the returned guard after
+    /// the base commit returns.
+    pub(crate) fn install_txn_segment(&self) -> Result<crate::session_overlay::TxnSegmentGuard> {
+        self.overlay.install_txn_segment()
+    }
+
+    /// Session sibling of `Store::record_retrieval_run`.
+    pub(crate) fn record_retrieval_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &RetrievalRunRecord,
+    ) -> Result<()> {
+        stage_retrieval_run_with_visibility(self, wtxn, record, true)
+    }
+
+    /// Session sibling of `Store::record_context_pack_provisional_retrieval_run`.
+    pub(crate) fn record_context_pack_provisional_retrieval_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &RetrievalRunRecord,
+    ) -> Result<()> {
+        stage_retrieval_run_with_visibility(self, wtxn, record, false)
+    }
+
+    /// Session sibling of `Store::finalize_context_pack_retrieval_run`.
+    ///
+    /// Finalizes the same overlay row the session registration created; the
+    /// base finalizer never sees that row and this one never reaches a base
+    /// row.
+    pub(crate) fn finalize_context_pack_retrieval_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: RetrievalRunId,
+        elapsed_us: u64,
+        claims_suppressed: usize,
+        surfaced_result_ids: &[[u8; 16]],
+        empty_reason: Option<String>,
+    ) -> Result<()> {
+        stage_context_pack_retrieval_run_finalize(
+            self,
+            wtxn,
+            run_id,
+            elapsed_us,
+            claims_suppressed,
+            surfaced_result_ids,
+            empty_reason,
+        )
+    }
+
+    /// Session sibling of `Store::delete_retrieval_run`, used to discard a
+    /// failed session context-pack run's provisional overlay row.
+    pub(crate) fn delete_retrieval_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: RetrievalRunId,
+    ) -> Result<()> {
+        stage_retrieval_run_delete(self, wtxn, run_id)
+    }
+
+    /// Composed read of the newest published retrieval-run rows: overlay ∪
+    /// base, so an in-room caller sees its own runs and its ancestors'.
+    pub(crate) fn retrieval_runs_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        limit: usize,
+    ) -> Result<Vec<RetrievalRunRecord>> {
+        read_retrieval_runs_in_txn(self, rtxn, limit)
+    }
+
+    /// Mode-aware VaultMeta write half consumed by
+    /// `OffRecordSession::vault_meta_put`. Reuses the existing raw key/value
+    /// representation; this pins routing, not a new encoding.
+    pub(crate) fn vault_meta_put_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<()> {
+        self.vault_meta.put(wtxn, key, value)
+    }
+
+    /// Composed VaultMeta read half consumed by
+    /// `OffRecordSession::vault_meta_get` — overlay ∪ base.
+    pub(crate) fn vault_meta_get_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .vault_meta
+            .get(rtxn, key)?
+            .map(std::borrow::Cow::into_owned))
+    }
+}
+
+/// Generates [`ManifestDbs`] and its two implementations from ONE list of the
+/// manifest's named databases, so the trait cannot drift from the structs: a
+/// database renamed in `Store` or `SessionStoreView` and not here fails to
+/// compile.
+macro_rules! manifest_dbs {
+    ($($name:ident: $ty:ty),+ $(,)?) => {
+        /// The manifest's named databases, addressed uniformly by write target
+        /// (ARCH-0052 D2, ONE-1728 K11).
+        ///
+        /// [`Store`] answers with canonical accessors that read and write base
+        /// LMDB rows. [`SessionStoreView`] answers with composed accessors over
+        /// one shared overlay snapshot: reads see overlay ∪ base, writes stage
+        /// into the session overlay and evaporate at close.
+        ///
+        /// This is what "write-target parameterization" means in this codebase.
+        /// An index writer generic over `&impl ManifestDbs` has ONE body serving
+        /// both targets — the base path is byte-identical because it is
+        /// literally the same code reaching the same accessors, not a copy that
+        /// could drift. `OverlayDb` already decides base-vs-overlay internally,
+        /// so no writer needs a target branch.
+        #[allow(
+            dead_code,
+            reason = "the trait is generated from ONE list so it cannot drift from the structs; \
+                      six accessors (ppr_cache_deps, sync_state, sync_queue, attempt_records, \
+                      attempt_ready, attempt_dedupe) have no write-target-parameterized caller \
+                      after P4a and are on the ONE-1728 seg-4 post-merge delete-list"
+        )]
+        pub(crate) trait ManifestDbs {
+            $(fn $name(&self) -> &$ty;)+
+        }
+
+        impl ManifestDbs for Store {
+            $(fn $name(&self) -> &$ty { &self.$name })+
+        }
+
+        impl ManifestDbs for SessionStoreView<'_> {
+            $(fn $name(&self) -> &$ty { &self.$name })+
+        }
+    };
+}
+
+manifest_dbs! {
+    entities: OverlayDb,
+    type_index: OverlayDb,
+    short_ids: OverlayDb,
+    short_ids_reverse: OverlayDb,
+    vault_meta: OverlayDb,
+    vectors: OverlayDb,
+    hnsw_neighbors: OverlayDb,
+    hnsw_meta: OverlayDb,
+    text_postings: OverlayDb,
+    text_meta: OverlayDb,
+    text_forward: OverlayDb,
+    text_bm25_field_stats: OverlayDb,
+    text_doc_field_lengths: OverlayDb,
+    edges_out: OverlayDb,
+    edges_in: OverlayDb,
+    ppr_cache: OverlayDb,
+    ppr_cache_deps: OverlayDb,
+    temporal_occurred_start: OverlayDb,
+    temporal_occurred_end: OverlayDb,
+    temporal_learned: OverlayDb,
+    temporal_long_intervals: OverlayDb,
+    phonetic_index: OverlayDb,
+    phonetic_forward: OverlayDb,
+    sync_state: OverlayStrDb,
+    sync_queue: OverlayDb,
+    attempt_records: OverlayDb,
+    attempt_ready: OverlayDb,
+    attempt_dedupe: OverlayDb,
+}
+
 impl std::ops::Deref for Store {
     type Target = StoreCore;
 
@@ -1401,10 +1609,6 @@ impl Drop for StoreOwner {
 impl Store {
     /// Captures one segment-aware snapshot and applies it to every database
     /// accessor in this logical read transaction.
-    #[allow(
-        dead_code,
-        reason = "ONE-1727 completes the all-28 accessor view; ONE-1728 witness/retrieval is its first lib-target caller"
-    )]
     pub(crate) fn session_view(
         &self,
         overlay: Arc<crate::session_overlay::SessionOverlay>,
@@ -1416,6 +1620,7 @@ impl Store {
             |base, keyspace| OverlayDb::composed(base, overlay.clone(), snapshot.clone(), keyspace);
         Ok(SessionStoreView {
             _owner: &self.owner,
+            overlay: overlay.clone(),
             entities: db(self.core.raw.entities, OverlayKeyspace::Entities),
             edges_out: db(self.core.raw.edges_out, OverlayKeyspace::EdgesOut),
             edges_in: db(self.core.raw.edges_in, OverlayKeyspace::EdgesIn),
@@ -2232,21 +2437,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &GateDecisionRecord,
     ) -> Result<()> {
-        // Decode accepts the redacted skeleton (ONE-1637); APPEND never mints
-        // one. Redaction is an in-place rewrite owned by the erase coupling.
-        if record.version != GATE_DECISION_LEDGER_VERSION || record.redacted_at.is_some() {
-            return Err(Error::InvariantViolation("gate decision born redacted"));
-        }
-        vet_gate_decision_record(record)?;
-        let key = gate_decision_key(record.decision_id);
-        if self.vault_meta.get(wtxn, &key)?.is_some() {
-            return Err(Error::InvariantViolation("gate decision id collision"));
-        }
-        let value = encode_gate_decision(record)?;
-        self.vault_meta.put(wtxn, &key, &value)?;
-        self.put_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
-        self.put_gate_decision_claim_index_in_txn(wtxn, record)?;
-        Ok(())
+        append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
     pub(crate) fn delete_gate_decision_in_txn(
@@ -2852,19 +3043,10 @@ impl Store {
         Ok(())
     }
 
-    fn put_gate_decision_grant_ref_index_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        record: &GateDecisionRecord,
-    ) -> Result<()> {
-        let Some(grant_ref) = record.grant_ref.as_deref() else {
-            return Ok(());
-        };
-        self.put_gate_decision_grant_ref_index_row_in_txn(wtxn, grant_ref, record.decision_id)
-    }
-
     /// Parts-based form, so a streaming backfill can write the row without
-    /// holding the decoded record it came from.
+    /// holding the decoded record it came from. The append path builds the
+    /// same row inline in [`append_gate_decision_row_in_txn`], which is
+    /// target-parameterized and so cannot route through a `Store` method.
     fn put_gate_decision_grant_ref_index_row_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -2890,22 +3072,6 @@ impl Store {
         self.vault_meta.delete(
             wtxn,
             &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
-        )?;
-        Ok(())
-    }
-
-    fn put_gate_decision_claim_index_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        record: &GateDecisionRecord,
-    ) -> Result<()> {
-        let Some(claim_id) = record.claim_id.as_ref() else {
-            return Ok(());
-        };
-        self.vault_meta.put(
-            wtxn,
-            &gate_decision_claim_index_key(claim_id, record.decision_id),
-            b"",
         )?;
         Ok(())
     }
@@ -3411,24 +3577,8 @@ impl Store {
             ));
         }
 
-        let key = retrieval_run_key(record.run_id);
-        let value = encode_retrieval_run(record)?;
-        let provisional_key = retrieval_run_provisional_key(record.run_id);
         let mut wtxn = self.env.write_txn()?;
-        self.vault_meta.put(&mut wtxn, &key, &value)?;
-        if published {
-            self.vault_meta.delete(&mut wtxn, &provisional_key)?;
-            if let Some(trace) = &record.trace {
-                put_retrieval_trace_fork_index(
-                    &self.vault_meta,
-                    &mut wtxn,
-                    &trace.fork_hash,
-                    record.run_id,
-                )?;
-            }
-        } else {
-            self.vault_meta.put(&mut wtxn, &provisional_key, b"1")?;
-        }
+        stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -3440,21 +3590,8 @@ impl Store {
             ));
         }
 
-        let key = retrieval_run_key(run_id);
-        let provisional_key = retrieval_run_provisional_key(run_id);
-        let outcome_prefix = retrieval_outcome_run_prefix(run_id);
         let mut wtxn = self.env.write_txn()?;
-        delete_retrieval_trace_fork_indexes_for_run(&self.vault_meta, &mut wtxn, &key, run_id)?;
-        let mut outcome_keys = Vec::new();
-        for row in self.vault_meta.prefix_iter(&wtxn, &outcome_prefix)? {
-            let (key, _) = row?;
-            outcome_keys.push(key.to_vec());
-        }
-        for key in outcome_keys {
-            self.vault_meta.delete(&mut wtxn, &key)?;
-        }
-        self.vault_meta.delete(&mut wtxn, &provisional_key)?;
-        self.vault_meta.delete(&mut wtxn, &key)?;
+        stage_retrieval_run_delete(self, &mut wtxn, run_id)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -3473,46 +3610,16 @@ impl Store {
             ));
         }
 
-        let key = retrieval_run_key(run_id);
-        let provisional_key = retrieval_run_provisional_key(run_id);
         let mut wtxn = self.env.write_txn()?;
-        let Some(raw) = self.vault_meta.get(&wtxn, &key)? else {
-            self.vault_meta.delete(&mut wtxn, &provisional_key)?;
-            wtxn.commit()?;
-            return Ok(());
-        };
-        let mut record = decode_retrieval_run(&raw)?;
-        record.elapsed_us = elapsed_us;
-        record.claims_suppressed = claims_suppressed;
-        record.result_ids = surfaced_result_ids.to_vec();
-        let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
-        for (index, result_id) in surfaced_result_ids.iter().enumerate() {
-            if let Some(entry) = record
-                .score_breakdown
-                .iter()
-                .find(|entry| entry.result_id == *result_id)
-            {
-                let mut entry = entry.clone();
-                entry.final_rank = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
-                surfaced_breakdown.push(entry);
-            }
-        }
-        record.score_breakdown = surfaced_breakdown;
-        if let Some(trace) = record.trace.as_mut() {
-            trace.final_stage.candidates = record.score_breakdown.clone();
-        }
-        record.empty_reason = empty_reason;
-        let value = encode_retrieval_run(&record)?;
-        self.vault_meta.put(&mut wtxn, &key, &value)?;
-        if let Some(trace) = &record.trace {
-            put_retrieval_trace_fork_index(
-                &self.vault_meta,
-                &mut wtxn,
-                &trace.fork_hash,
-                record.run_id,
-            )?;
-        }
-        self.vault_meta.delete(&mut wtxn, &provisional_key)?;
+        stage_context_pack_retrieval_run_finalize(
+            self,
+            &mut wtxn,
+            run_id,
+            elapsed_us,
+            claims_suppressed,
+            surfaced_result_ids,
+            empty_reason,
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -3560,41 +3667,8 @@ impl Store {
     }
 
     pub fn retrieval_runs(&self, limit: usize) -> Result<Vec<RetrievalRunRecord>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
         let rtxn = self.env.read_txn()?;
-        let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-        let upper = retrieval_run_upper_bound();
-        for row in self.vault_meta.rev_range(
-            &rtxn,
-            &(
-                std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
-                break;
-            }
-            let run_id = retrieval_run_id_from_key(&key)?;
-            if self
-                .vault_meta
-                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
-                .is_some()
-            {
-                continue;
-            }
-            let record = decode_retrieval_run(&value)?;
-            if record.run_id != run_id {
-                return Err(Error::CorruptedIndex("retrieval run telemetry"));
-            }
-            records.push(record);
-            if records.len() == limit {
-                break;
-            }
-        }
-        Ok(records)
+        read_retrieval_runs_in_txn(self, &rtxn, limit)
     }
 
     pub(crate) fn retrieval_run(
@@ -3851,6 +3925,160 @@ impl Store {
         }
         retrieval_outcomes_for_run_in_txn(&self.vault_meta, &rtxn, run_id)
     }
+}
+
+/// Reads the newest published retrieval-run rows from `target`, newest first.
+///
+/// `Store` reads base rows; a `SessionStoreView` reads overlay ∪ base, so an
+/// in-room caller sees its own run rows and a base caller never does.
+fn read_retrieval_runs_in_txn(
+    target: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    limit: usize,
+) -> Result<Vec<RetrievalRunRecord>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
+    let upper = retrieval_run_upper_bound();
+    for row in target.vault_meta().rev_range(
+        rtxn,
+        &(
+            std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
+            std::ops::Bound::Excluded(upper.as_slice()),
+        ),
+    )? {
+        let (key, value) = row?;
+        if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
+            break;
+        }
+        let run_id = retrieval_run_id_from_key(&key)?;
+        if target
+            .vault_meta()
+            .get(rtxn, &retrieval_run_provisional_key(run_id))?
+            .is_some()
+        {
+            continue;
+        }
+        let record = decode_retrieval_run(&value)?;
+        if record.run_id != run_id {
+            return Err(Error::CorruptedIndex("retrieval run telemetry"));
+        }
+        records.push(record);
+        if records.len() == limit {
+            break;
+        }
+    }
+    Ok(records)
+}
+
+/// Stages one retrieval-run row and its provisional/fork-index side writes
+/// into `target`'s `vault_meta` (ONE-1728 K11).
+///
+/// The base path is byte-identical because it IS this body: `Store`'s
+/// `record_retrieval_run_with_visibility` opens the txn and calls here. A
+/// session target passes its `SessionStoreView`, so an OffRecord run's row
+/// stages into the overlay keyspace and evaporates at close — the base
+/// telemetry ledger gains nothing (ARCH-0052 §7 / K10).
+fn stage_retrieval_run_with_visibility(
+    target: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    record: &RetrievalRunRecord,
+    published: bool,
+) -> Result<()> {
+    let key = retrieval_run_key(record.run_id);
+    let value = encode_retrieval_run(record)?;
+    let provisional_key = retrieval_run_provisional_key(record.run_id);
+    target.vault_meta().put(wtxn, &key, &value)?;
+    if published {
+        target.vault_meta().delete(wtxn, &provisional_key)?;
+        if let Some(trace) = &record.trace {
+            put_retrieval_trace_fork_index(
+                target.vault_meta(),
+                wtxn,
+                &trace.fork_hash,
+                record.run_id,
+            )?;
+        }
+    } else {
+        target.vault_meta().put(wtxn, &provisional_key, b"1")?;
+    }
+    Ok(())
+}
+
+/// Stages the deletion of one retrieval-run row, its provisional marker, its
+/// outcome rows, and its trace fork indexes into `target`'s `vault_meta`.
+fn stage_retrieval_run_delete(
+    target: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    run_id: RetrievalRunId,
+) -> Result<()> {
+    let key = retrieval_run_key(run_id);
+    let provisional_key = retrieval_run_provisional_key(run_id);
+    let outcome_prefix = retrieval_outcome_run_prefix(run_id);
+    delete_retrieval_trace_fork_indexes_for_run(target.vault_meta(), wtxn, &key, run_id)?;
+    let mut outcome_keys = Vec::new();
+    for row in target.vault_meta().prefix_iter(wtxn, &outcome_prefix)? {
+        let (key, _) = row?;
+        outcome_keys.push(key.to_vec());
+    }
+    for key in outcome_keys {
+        target.vault_meta().delete(wtxn, &key)?;
+    }
+    target.vault_meta().delete(wtxn, &provisional_key)?;
+    target.vault_meta().delete(wtxn, &key)?;
+    Ok(())
+}
+
+/// Stages the finalize of one provisional context-pack retrieval-run row —
+/// clearing the provisional marker — into `target`'s `vault_meta`.
+///
+/// A session run finalizes the SAME overlay row its registration created:
+/// the row is looked up through the composed accessor, so the base finalizer
+/// never sees it and this one never reaches a base row (ARCH-0052 §7).
+fn stage_context_pack_retrieval_run_finalize(
+    target: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    run_id: RetrievalRunId,
+    elapsed_us: u64,
+    claims_suppressed: usize,
+    surfaced_result_ids: &[[u8; 16]],
+    empty_reason: Option<String>,
+) -> Result<()> {
+    let key = retrieval_run_key(run_id);
+    let provisional_key = retrieval_run_provisional_key(run_id);
+    let Some(raw) = target.vault_meta().get(wtxn, &key)? else {
+        target.vault_meta().delete(wtxn, &provisional_key)?;
+        return Ok(());
+    };
+    let mut record = decode_retrieval_run(&raw)?;
+    record.elapsed_us = elapsed_us;
+    record.claims_suppressed = claims_suppressed;
+    record.result_ids = surfaced_result_ids.to_vec();
+    let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
+    for (index, result_id) in surfaced_result_ids.iter().enumerate() {
+        if let Some(entry) = record
+            .score_breakdown
+            .iter()
+            .find(|entry| entry.result_id == *result_id)
+        {
+            let mut entry = entry.clone();
+            entry.final_rank = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
+            surfaced_breakdown.push(entry);
+        }
+    }
+    record.score_breakdown = surfaced_breakdown;
+    if let Some(trace) = record.trace.as_mut() {
+        trace.final_stage.candidates = record.score_breakdown.clone();
+    }
+    record.empty_reason = empty_reason;
+    let value = encode_retrieval_run(&record)?;
+    target.vault_meta().put(wtxn, &key, &value)?;
+    if let Some(trace) = &record.trace {
+        put_retrieval_trace_fork_index(target.vault_meta(), wtxn, &trace.fork_hash, record.run_id)?;
+    }
+    target.vault_meta().delete(wtxn, &provisional_key)?;
+    Ok(())
 }
 
 fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
@@ -4211,6 +4439,53 @@ fn apply_retrieval_blend_weight_update(
         (next[3] / sum) as f32,
     )
     .normalized()
+}
+
+/// Appends one WRITE-PATH gate decision plus its two index rows, addressed by
+/// write target (ONE-1728 K5).
+///
+/// TIER SEPARATION IS THE POINT. Write-path decisions are receipts ABOUT the
+/// content they judged, so a decision on session content stages into the
+/// overlay and evaporates with the transcript it describes. The EGRESS tier is
+/// categorically different — those decisions and REDACTION_AUDIT are floor
+/// survivors and keep crossing to base through
+/// [`crate::off_record::FloorWrites`], never through here.
+///
+/// The key/encode functions and both index side writes are shared verbatim, so
+/// a session decision is byte-identical to the base row it would have been —
+/// which is what makes promote a replay rather than a re-derivation.
+fn append_gate_decision_row_in_txn(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    record: &GateDecisionRecord,
+) -> Result<()> {
+    // Decode accepts the redacted skeleton (ONE-1637); APPEND never mints
+    // one. Redaction is an in-place rewrite owned by the erase coupling.
+    if record.version != GATE_DECISION_LEDGER_VERSION || record.redacted_at.is_some() {
+        return Err(Error::InvariantViolation("gate decision born redacted"));
+    }
+    vet_gate_decision_record(record)?;
+    let key = gate_decision_key(record.decision_id);
+    if store.vault_meta().get(wtxn, &key)?.is_some() {
+        return Err(Error::InvariantViolation("gate decision id collision"));
+    }
+    let value = encode_gate_decision(record)?;
+    store.vault_meta().put(wtxn, &key, &value)?;
+    if let Some(grant_ref) = record.grant_ref.as_deref() {
+        store.vault_meta().put(
+            wtxn,
+            &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
+            b"1",
+        )?;
+    }
+    if let Some(claim_id) = record.claim_id.as_ref() {
+        store.vault_meta().put(
+            wtxn,
+            &gate_decision_claim_index_key(claim_id, record.decision_id),
+            b"",
+        )?;
+    }
+    Ok(())
 }
 
 fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
@@ -5672,14 +5947,14 @@ fn persist_model_id_if_missing(
 }
 
 pub(crate) fn ensure_model_id_for_vector_write(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     requested: Option<&str>,
 ) -> Result<()> {
     let requested = requested.ok_or_else(|| {
         Error::InvalidConfig(ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL.to_owned())
     })?;
-    match store.hnsw_meta.get(&*wtxn, MODEL_ID_KEY)? {
+    match store.hnsw_meta().get(&*wtxn, MODEL_ID_KEY)? {
         Some(raw) => {
             let stored = parse_utf8_bytes(&raw)?;
             if stored != requested {
@@ -5691,9 +5966,9 @@ pub(crate) fn ensure_model_id_for_vector_write(
         }
         None => {
             if has_persisted_vector_or_hnsw_data(
-                &store.hnsw_meta,
-                &store.vectors,
-                &store.hnsw_neighbors,
+                store.hnsw_meta(),
+                store.vectors(),
+                store.hnsw_neighbors(),
                 &*wtxn,
             )? {
                 return Err(Error::InvalidConfig(
@@ -5701,7 +5976,7 @@ pub(crate) fn ensure_model_id_for_vector_write(
                 ));
             }
             store
-                .hnsw_meta
+                .hnsw_meta()
                 .put(wtxn, MODEL_ID_KEY, requested.as_bytes())?;
         }
     }

@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod access_grant;
+pub mod actor_claims;
 pub mod affect;
 pub mod agent_def;
 pub mod agent_dispatch;
@@ -12,11 +13,15 @@ pub mod authority;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
+pub mod booking;
+pub mod calendar;
+pub mod campaign;
 pub mod channel_identity;
 pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod claim;
+pub mod cluster;
 pub mod code_artifact;
 pub mod code_revision;
 pub mod code_run;
@@ -27,6 +32,8 @@ pub mod comm;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
+pub mod consent;
+pub mod consent_graduation;
 pub mod context_board;
 pub mod context_pack;
 pub mod counterparty_contact;
@@ -41,6 +48,7 @@ pub mod dreamer_runner;
 pub mod dreamer_tournament;
 pub mod dreamer_wake;
 pub mod edge;
+pub mod edit_distance;
 pub mod edit_roundtrip;
 pub mod edit_settle;
 pub mod eiri;
@@ -58,6 +66,7 @@ pub mod graph_fs;
 pub mod habit;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
+pub mod identity_redirect;
 pub mod identity_reputation;
 pub mod identity_topology;
 pub mod inbox;
@@ -89,12 +98,19 @@ pub mod registry;
 pub mod repo_mutation;
 pub mod rerank;
 pub mod run_tree;
+pub mod saved_query;
+pub mod secret_custody;
+pub mod secret_manifest;
 pub mod serialize;
 pub mod session_lifecycle;
 pub(crate) mod session_overlay;
 pub mod settings;
 pub mod skill;
+pub mod skill_attribution;
+pub mod skill_convert;
 pub mod skill_hub;
+pub mod skill_reliability;
+pub mod skill_scan;
 pub mod speculative;
 pub mod store;
 pub mod surface_event;
@@ -110,7 +126,17 @@ pub mod write_envelope;
 
 pub use crate::access_grant::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, AccessGrant, AccessGrantCapability,
-    AccessGrantScope, AccessGrantStatus, decode_access_grant_body, encode_access_grant_body,
+    AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow, decode_access_grant_body,
+    encode_access_grant_body,
+};
+pub use crate::actor_claims::{
+    ACTOR_CLAIM_LINEAGE_KEY, ACTOR_CLAIM_MAX_CITED_EVIDENCE, ACTOR_DISTILL_CALL_PURPOSE_NAME,
+    ACTOR_NOTE_MAX_BYTES, ACTOR_SKILL_FIT_SCOPE_KEY, ActorClaimEvidence, ActorClaimRow, ActorNote,
+    ActorNoteKind, LAPSE_FAILURE_MODE, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON,
+    PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT, SessionActorDistiller,
+    SessionDistillBrief, SessionDistillTurn, actor_claim_lineage, actor_distill_call_purpose,
+    is_actor_claim_predicate, pending_session_actor_distills, project_actor_claims_from_judgments,
+    run_session_end_actor_distill, skill_fit_for, write_actor_claim,
 };
 pub use crate::affect::coping::{
     COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue,
@@ -158,7 +184,8 @@ pub use crate::attempt_queue::{
     AttemptQueueCleanupMetricsSnapshot, AttemptQueueCleanupReport, AttemptQueueRetryReason,
     AttemptQueueRetryReasonCount, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
     CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
-    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, RetryAttempt, RetryOutcome,
+    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, MAX_ATTEMPT_MANIFEST_ENTRIES,
+    ManifestEntry, ManifestKind, RetryAttempt, RetryOutcome,
     attempt_queue_cleanup_metrics_snapshot,
 };
 pub use crate::authority::{
@@ -188,6 +215,25 @@ pub use crate::blob_artifact::{
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
+};
+pub use crate::booking::{
+    ActiveHoldSource, BOOKING_EVENT_TYPE_META_PREFIX, BOOKING_EVENT_TYPE_PREDICATE,
+    BOOKING_EVENT_TYPE_SCHEMA_VERSION, BookingCountBucket, BookingCounts, BookingError,
+    BookingEventTypeClaimValue, BookingSolver, BusyBlockRow, CalendarDisclosureDefault,
+    ConstraintObject, DEFAULT_INTRO_DURATION_MIN, DEFAULT_MIN_NOTICE_SECS, DisclosureRung,
+    EventDetailsRow, EventRow, EventTypeConfig, EventTypeKey, HIGH_VALUE_MIN_NOTICE_SECS,
+    HostAvailabilityConfig, MAX_BOOKING_WINDOW_SECS, NoActiveHolds, RankedSlot, RoutingMode,
+    RungProjection, SlotMask, SlotOracle, SolveRequest, SolveResult, SurfaceClass, TitledEventRow,
+    WeeklyWallWindow, decode_event_type_claim_value, default_disclosure_rung,
+    encode_event_type_claim_value, event_type_index_key, is_booking_claim_predicate,
+    project_at_rung, project_calendar_grant, slot_mask,
+};
+pub use crate::calendar::{
+    BusyInterval, BusyUnion, CALENDAR_SAFEGUARD_CONFIG_KEY, CALENDAR_SAFEGUARD_REASON_NO_SCREENER,
+    CalendarAdmissionRequest, CalendarBodyScreener, CalendarEventView, CalendarInboundBody,
+    CalendarRangeDto, CalendarReadRequest, CalendarScreenVerdict, CalendarSearchRequest,
+    CalendarSel, MAX_CALENDAR_SEARCH_LIMIT, Screened, freebusy, freebusy_scoped, read_event,
+    read_event_scoped, screen_then_claim, search_events, search_events_scoped,
 };
 pub use crate::channel_identity::{
     CHANNEL_IDENTITY_BODY_KEYS, CHANNEL_IDENTITY_CLAIM_PREDICATES,
@@ -230,6 +276,10 @@ pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
     RESERVED_PREDICATE_NAMESPACE, SessionClaimBundle, SessionClaimBundleClaim, predicate_root,
+};
+pub use crate::cluster::{
+    CLUSTER_COHESION_THRESHOLD, CLUSTER_ID_DOMAIN, ClaimCohort, ClusterAssignments, ClusterClaim,
+    ClusterOptions, ClusterPartitionKey, CohortId, cluster_claims,
 };
 pub use crate::code_artifact::{
     CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,
@@ -316,6 +366,32 @@ pub use crate::connector_key::{
     EffectorBudgetReservePolicy, EffectorBudgetRowRead, EffectorBudgetWindow,
     PendingConnectorCharter, compile_connector_charter, decode_connector_key_body,
     encode_connector_key_body,
+};
+// DEC-0006 unified consent-mode. `consent::ActorBound` is deliberately NOT
+// re-exported here: `crate::vault::ActorBound` (the engine-internal write
+// handle) already owns that name at the crate root, and `vault.rs` is outside
+// this contract's claim. The pinned downstream import path for the consent
+// subject type is therefore `oneiron::consent::ActorBound`; every other name
+// in the contract is re-exported below.
+pub use crate::consent::{
+    ActionClass, ActionEnvelope, ActionGrant, AudienceBound, AuthenticatedOwner,
+    BULK_BLAST_RADIUS_FLOOR, BoundClass, BoundEnvelope, BoundSubject, CATASTROPHE_FLOOR_V1,
+    CATASTROPHE_FLOOR_VERSION, CONSENT_CONTENT_KIND, CONSENT_GRANT_BODY_KEYS,
+    CONSENT_GRANT_SCHEMA_VERSION, CONSENT_REASON_APPROVE_ONCE, CONSENT_REASON_DENIED,
+    CONSENT_REASON_REVOKED, CONSENT_REASON_STANDING_CREATED, CONSENT_REASON_STANDING_USED,
+    CONSENT_REVOKE_COMMAND, CatastropheClass, ComposedEffect, ConsentDecision, ConsentDomain,
+    ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp,
+    ConsentProposal, ConsentReceipt, ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow,
+    ConsentRevokeAction, DisclosureClass, DisclosureEnvelope, DisclosureGrant, EffectDigest,
+    EffectFacts, GrantBound, MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
+    ReversibilityClass, StandingConsentGrant, UndoFidelity, access_grant_projection_is_active,
+    action_grant_from_standing_outbound_grant, bound_catastrophe_class, decode_consent_grant_row,
+    disclosure_grant_from_access_grant, disclosure_grant_from_disclosure_scope,
+    encode_consent_grant_row,
+};
+pub use crate::consent_graduation::{
+    DEFAULT_GRADUATION_STREAK_FLOOR, DemotionReason, RampScope, RampState, ScopeOutcomeStats,
+    is_ramp_demotion_receipt, is_ramp_outcome_receipt, op_kind_is_ramp_eligible,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
@@ -438,6 +514,20 @@ pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EdgeProvenanceFlags, EdgeValueLayout,
 };
+pub use crate::edit_distance::escalation::{
+    DEFAULT_ESCALATION_STANDING_N, ESCALATION_LAST_RULINGS_BOUND, ESCALATION_STANDING_N_KEY,
+    EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger, StandingPolicy,
+    StandingPolicyStatus, accept_standing_policy, escalation_standing_n, escalation_stats,
+    is_escalation_receipt, is_standing_policy_receipt, maybe_propose_standing_policy,
+    record_escalation, set_escalation_standing_n, standing_policy_for,
+};
+pub use crate::edit_distance::graduation::{
+    DEFAULT_POSTERIOR_GUARD, OfferAnswer, OfferAnswerOutcome, SnoozeState, ThresholdRow,
+    TrustTableRow, WILDCARD_PATTERN, answer_graduation_offer, clear_graduation_policy,
+    exact_pattern, graduation_policy_for, graduation_policy_rows, guard_evidence,
+    is_graduation_answer_receipt, posterior_lower_bound, set_graduation_policy, snooze_state,
+    trust_table, unpin_scope,
+};
 pub use crate::eiri::{
     EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
     EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
@@ -482,6 +572,8 @@ pub use crate::extraction_eval::{
 };
 pub use crate::facade::{
     AdmitImportedClaimInput, BRIDGE_OUTBOUND_ATTEMPT_KIND, BlobArtifactInput, BlobVersionView,
+    CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB, CalendarFreebusyDto,
+    CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
     ClaimInput, ClaimListFilter, ClaimView, CommitReceipt, CompanionRecordInput,
     ConsolidationAttemptInput, DeleteReceipt, DreamerAttemptRef, DreamerAttemptView, Effort,
     EntityRefReceipt, EntityView, FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN,
@@ -517,6 +609,7 @@ pub use crate::graph_fs::{
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile,
     GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
+pub use crate::identity_redirect::REDIRECT_CARRIER_CLASS;
 pub use crate::identity_reputation::{
     CONSTRAINED_REPUTATION_DAILY_CAP, DEGRADED_REPUTATION_DAILY_CAP, EmailReputationWebhookSignal,
     IDENTITY_REPUTATION_CLAIM_PREDICATES, IDENTITY_REPUTATION_SCHEMA_VERSION,
@@ -532,8 +625,10 @@ pub use crate::identity_topology::{
     AssertDistinctOp, EntityLifecycleState, FacetOp, FacetSpec, IdentityOpEvidence,
     IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyEvent,
     IdentityTopologyFold, IdentityTopologyOp, IdentityTopologyRejection, MergeOp,
-    PREDICATE_ENTITY_DISTINCT_FROM, ReassignmentEntry, ReassignmentMap, ReassignmentTarget,
-    SplitOp, StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan, distinct_pair_key,
+    PREDICATE_ENTITY_DISTINCT_FROM, PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED, ProposalOutcome,
+    ProposalRuling, ProposalScope, ReassignmentEntry, ReassignmentMap, ReassignmentStats,
+    ReassignmentTarget, SplitOp, StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan,
+    decode_identity_op_amendment, distinct_pair_key, encode_identity_op_amendment,
     evaluate_transition, fold_identity_topology_log, merge_lifecycle_states,
 };
 pub use crate::inbox::{
@@ -543,10 +638,11 @@ pub use crate::inbox::{
     InboxSubCluster,
 };
 pub use crate::ingest::{
-    INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
-    IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry,
-    IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
-    KNOWN_INGEST_HARNESS_CONFIG, NormalizedIngestBatch, NormalizedIngestClaim,
+    INGEST_SOURCE_REGISTRY, IngestAdapterSkillRef, IngestError, IngestHarnessConfig, IngestResult,
+    IngestSource, IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration,
+    IngestSourceRegistry, IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
+    KNOWN_INGEST_HARNESS_CONFIG, MEETING_TRANSCRIPT_SCHEMA_V1, MEETING_TRANSCRIPT_SOURCE_ID,
+    MeetingTranscriptSource, NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestNote,
     NormalizedIngestRecord,
 };
 pub use crate::interlocutor::{
@@ -707,13 +803,16 @@ pub use crate::psych_profile::{
     decode_psych_profile_body, encode_psych_profile_body,
 };
 pub use crate::receipt::{
-    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection, FIELD_TASK_REF,
-    FIELD_TRANSPORT_DISPATCHED, GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery,
-    ReceiptKind, ReceiptProjectionIntent, ReceiptProjectionRun, ReceiptQuery, ReceiptRecord,
-    ReceiptView, SessionLocalReceiptLog, SessionReceiptClose, StandingOutboundGrantLensRow,
-    StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery,
-    append_context_receipt_fields, eiri_memory_board_state_ref, outbound_intent_receipt,
-    project_receipts_by_brief, project_receipts_by_counterparty, project_receipts_by_grant,
+    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection,
+    FIELD_MANIFEST_ACTOR_CLAIMS, FIELD_MANIFEST_SKILLS, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED,
+    GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent,
+    ReceiptProjectionRun, ReceiptQuery, ReceiptRecord, ReceiptView, SessionLocalReceiptLog,
+    SessionReceiptClose, StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction,
+    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, append_context_receipt_fields,
+    append_pack_manifest_fields, attempt_pack_receipt, attempt_pack_receipt_id,
+    eiri_memory_board_state_ref, outbound_intent_receipt, project_receipts_by_brief,
+    project_receipts_by_counterparty, project_receipts_by_grant, proposal_outcome_amended_body,
+    proposal_outcome_delta,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
@@ -745,6 +844,15 @@ pub use crate::run_tree::{
     RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
     RunTreeRepair, RunTreeStatus, RunTreeTimestamps, render_run_tree,
 };
+pub use crate::saved_query::{
+    ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, EvaluationOutcome,
+    EvaluationRequest, EvidenceDependencies, FilterAst, MatchDecision, MatchVerdict, MatcherSpec,
+    MembershipCause, MembershipCommitOutcome, MembershipEvent, MembershipTransition,
+    MembershipWritePlan, PackDrift, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,
+    QueryScope, RelevantEvidence, SavedQueryDefinition, SavedQueryDerivationEnvelope,
+    SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryLifecycle, SavedQueryRecord,
+    UpdateSavedQueryRequest, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport,
+};
 pub use crate::session_lifecycle::{
     EndedSession, OpenSession, SessionClosePredicate, SessionEndReason, SessionEndWake,
     SessionLifecycleRecord, SessionMintOutcome,
@@ -766,6 +874,25 @@ pub use crate::skill::{
     SkillLifecycle, SkillRecord, canonical_skill_tree_hash, cross_check_declared_content_hash,
     decode_skill_record, encode_skill_record,
 };
+pub use crate::skill_attribution::{
+    ATTRIBUTION_CALL_PURPOSE_NAME, AttemptOutcome, AttributionAuditReport, AttributionJudge,
+    AttributionJudgment, AttributionVerdict, AuditFixture, OutcomeEvidence, RuleAttributionJudge,
+    SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal, attribution_audit_reports,
+    attribution_call_purpose, attribution_judgments, held_out_audit_fixtures,
+    pending_edit_proposals, read_attribution_cursor, record_attribution_evidence,
+    run_attribution_audit, run_attribution_audit_with_judge, run_attribution_projector,
+    run_attribution_projector_with_judge,
+};
+pub use crate::skill_convert::{
+    CONVERT_BIRTH_PATH, CONVERT_HINT_MAX_BYTES, CONVERT_MAX_NEIGHBORS, CONVERT_MAX_SOURCE_MESSAGES,
+    CONVERT_RATIONALE_MAX_BYTES, ConvertOutcome, ConvertRequest, ConvertUtterance,
+    PROVENANCE_BIRTH_KEY, PROVENANCE_DEDUP_RATIONALE_KEY, PROVENANCE_MERGE_OF_KEY,
+    PROVENANCE_SOURCE_MESSAGES_KEY, RefineVerdict, RefinedSkill, SKILL_CONVERT_CALL_PURPOSE_NAME,
+    STALE_NOTE_DELETED_REFS_KEY, STALE_NOTE_REASON_KEY, STALE_REASON_SOURCE_MESSAGE_DELETED,
+    SkillNeighbor, SkillRefineBrief, SkillRefiner, SkillStaleNote, convert_messages_to_skill,
+    rebuild_skill_source_index, skill_convert_call_purpose, skill_stale_note,
+    skills_dependent_on_message, source_message_refs,
+};
 pub use crate::skill_hub::{
     GitSkillHubAdapter, HUB_PIN_KEYS, HUB_REF_KEYS, HttpIndexSkillHubAdapter,
     HubDependencyResolution, HubFile, HubIndexEntry, HubPackage, HubPin, HubRef,
@@ -774,6 +901,21 @@ pub use crate::skill_hub::{
     ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillCapabilitySurface, SkillGovernance,
     SkillHubAdapter, SkillHubKind, SkillHubRecord, SkillHubTrustTier, SkillScanReceipt,
     TrackedHubRef, decode_skill_hub_record, encode_skill_hub_record,
+};
+pub use crate::skill_reliability::{
+    DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+    PREDICATE_SKILL_RELIABILITY, ProvenanceTrustClass, SKILL_RELIABILITY_FLOOR_KEY,
+    SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, SKILL_RELIABILITY_MAX_CITED_RECEIPTS,
+    SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior, check_reliability_floor,
+    project_skill_reliability, project_skill_reliability_for, rebuild_skill_confidence_cache,
+    record_skill_contributing_win, set_skill_reliability_floor, skill_provenance_trust_class,
+    skill_reliability_floor, skill_reliability_posterior, skill_reliability_prior,
+    skill_selection_score,
+};
+pub use crate::skill_scan::{
+    ActivationPosture, DEFAULT_ACTIVATION_RISK_THRESHOLD, SCAN_PROVIDER_STATIC_V1,
+    SKILL_SCAN_ACTIVATION_RISK_THRESHOLD_KEY, run_static_skill_scan, scan_gate_for_activation,
+    set_skill_scan_activation_risk_threshold, skill_scan_activation_risk_threshold,
 };
 pub use crate::speculative::{
     SPECULATIVE_FIRE_CAP_DEFAULT, SPECULATIVE_FIRE_LIMIT_DEFAULT, SpeculativeFinal,
@@ -789,8 +931,14 @@ pub use crate::store::{
 };
 pub use crate::surface_event::{
     INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
-    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
-    SurfaceCounterpartyStamp, SurfaceEvent,
+    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_ATTEMPT_KIND,
+    SURFACE_EVENT_SCHEMA_VERSION, SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAck,
+    SurfaceEventAction, SurfaceEventAdmission, SurfaceEventAttemptPayload, SurfaceEventAttemptRef,
+    SurfaceEventDispatchDisposition, SurfaceEventDispatchRequest, SurfaceEventDispatchRoute,
+    SurfaceEventDispatcher, SurfaceEventHandoffState, SurfaceEventHandoffStatus,
+    SurfaceEventSource, SurfaceEventWorkerOutcome, SurfaceInteractionKind, SurfaceSourceApp,
+    decode_surface_event_attempt_payload, encode_surface_event_attempt_payload,
+    surface_event_run_id,
 };
 pub use crate::task_verb::{
     DEFAULT_TASK_CANCEL_MODE, TASKS_VERBS, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt,

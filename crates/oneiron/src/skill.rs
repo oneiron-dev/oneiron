@@ -353,6 +353,23 @@ pub struct SkillRecord {
     pub approval_status: ClaimApprovalStatus,
     pub lifecycle_status: SkillLifecycle,
     pub source: ClaimSource,
+    /// DEMOTED CACHE (ARCH-0053 §5, ONE-1738): a materialization of the
+    /// `skill.reliability` claim's Beta posterior mean, not a fact of its own.
+    /// Claims are truth — the authoritative value is the claim on this SKILL
+    /// entity, and [`crate::skill_reliability::rebuild_skill_confidence_cache`]
+    /// recomputes this field from it (CID-7's demotion pattern).
+    ///
+    /// Consequences that are load-bearing rather than incidental:
+    /// - selection reads the CLAIM
+    ///   ([`crate::skill_reliability::skill_selection_score`]), never this
+    ///   field, so a clobbered cache cannot change which skills load;
+    /// - moving it mints no content revision (see `skill_content_changed`), so
+    ///   a cache refresh needs no `version` bump and does not trip the
+    ///   imported-content fork law.
+    ///
+    /// The wire key stays `confidence` and the field stays `f32`: the demotion
+    /// is about AUTHORITY, and renaming it would have been an ABI break for no
+    /// semantic gain.
     pub confidence: f32,
     pub generated: bool,
     pub human_authored: bool,
@@ -602,11 +619,19 @@ fn validate_skill_update_for_door(
 }
 
 /// Whether anything OTHER than the two state axes (`approval_status`,
-/// `lifecycle_status`) differs between the two records.
+/// `lifecycle_status`) and the demoted `confidence` cache differs between the
+/// two records.
 fn skill_content_changed(prior: &SkillRecord, updated: &SkillRecord) -> bool {
     let mut normalized = updated.clone();
     normalized.approval_status = prior.approval_status;
     normalized.lifecycle_status = prior.lifecycle_status;
+    // `confidence` is a CACHE of the `skill.reliability` claim's posterior mean
+    // (ONE-1738), so refreshing it asserts nothing new about the skill's
+    // CONTENT: it is normalized away exactly like the state axes. Requiring a
+    // version bump for it would mint a revision per attributed outcome, and
+    // banning it on imports would make an imported skill's reliability
+    // permanently unmaterializable.
+    normalized.confidence = prior.confidence;
     normalized != *prior
 }
 
@@ -980,8 +1005,28 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            self.put_skill_record_in_txn(wtxn, id, record, occurred, learned_at)
+        })
+    }
+
+    /// [`Vault::put_skill_record`] inside the caller's write transaction.
+    ///
+    /// Same door, same checks — only the transaction boundary moves out. Birth
+    /// paths whose DEDUP decision must not race their create need the lookup
+    /// and the write under one transaction (the conversation-convert door,
+    /// ONE-1446), and a create that commits on its own would let two callers
+    /// both read "no holder" and both mint.
+    pub(crate) fn put_skill_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        record: &SkillRecord,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
         let data = encode_skill_record(record)?;
-        if self.get_raw(id)?.is_none() {
+        if self.store.entities.get(&*wtxn, id.as_bytes())?.is_none() {
             if record.lifecycle_status != SkillLifecycle::Candidate {
                 return Err(Error::InvalidSkillBody(
                     "new skills are born candidate; the admission gate activates them",
@@ -994,22 +1039,26 @@ impl Vault {
             // here. The batch chokepoint re-runs both checks for local
             // raw creates; sync remat (`replicated`) is exempt.
             if let Some(parent) = record.forked_from {
-                self.validate_local_fork_parent(id, &parent)?;
+                self.validate_local_fork_parent(wtxn, id, &parent)?;
             }
         }
-        let mut wtxn = self.store.env.write_txn()?;
-        self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?;
-        wtxn.commit()?;
-        Ok(())
+        self.apply_skill_record_body(wtxn, id, occurred, learned_at, data, false)
     }
 
-    fn validate_local_fork_parent(&self, fork_id: &EntityId, parent: &EntityId) -> Result<()> {
+    /// Read INSIDE the caller's transaction: the parent this create trusts must
+    /// be the parent the create commits against.
+    fn validate_local_fork_parent(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        fork_id: &EntityId,
+        parent: &EntityId,
+    ) -> Result<()> {
         if parent == fork_id {
             return Err(Error::InvalidSkillBody(
                 "forkedFrom cannot name the fork itself",
             ));
         }
-        let Some(raw) = self.get_raw(parent)? else {
+        let Some(raw) = self.store.entities.get(wtxn, parent.as_bytes())? else {
             return Err(Error::InvalidSkillBody(
                 "forkedFrom parent must exist as a type-7 SKILL",
             ));
@@ -1172,7 +1221,6 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let data = encode_skill_record(record)?;
         let mut wtxn = self.store.env.write_txn()?;
         let existing = self.read_skill_record_in_txn(&wtxn, id)?;
         if record.lifecycle_status == SkillLifecycle::Superseded
@@ -1183,9 +1231,55 @@ impl Vault {
             ));
         }
         validate_skill_update(&existing, record)?;
+        // ONE-1892's activation scan consult is deliberately NOT here: it runs
+        // at the batch materialization chokepoint every SKILL body converges
+        // on (`skill_scan::escalate_activation_approval_in_txn`), so
+        // `put_entity` and a raw `batch().put` are governed by the same dial
+        // this door is. A second consult on this path would only re-derive the
+        // stamp the chokepoint is about to set.
+        let data = encode_skill_record(record)?;
         self.apply_skill_record_body(&mut wtxn, id, occurred, learned_at, data, false)?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// Writes the demoted `confidence` CACHE from the reliability projector
+    /// (ONE-1738), inside the caller's write transaction.
+    ///
+    /// Every other field is copied from the STORED record, so a cache refresh
+    /// structurally cannot smuggle a content edit — and the write still runs
+    /// the ordinary update gate, so the lifecycle machine and the fork law keep
+    /// their say. `skill_content_changed` normalizes `confidence` away, which
+    /// is what lets this land on an imported skill without a version bump.
+    ///
+    /// Crate-private on purpose: hosts move this value by projecting the claim
+    /// ([`crate::skill_reliability::rebuild_skill_confidence_cache`]), never by
+    /// asserting a number.
+    ///
+    /// A SUPERSEDED revision keeps the cache it was frozen with. The lifecycle
+    /// machine below hard-rejects any update to a frozen revision, and this
+    /// door shares its caller's write transaction — so a late outcome
+    /// attributed to v1 after v2 was admitted would roll back the OUTCOME and
+    /// the reliability CLAIM alongside the cache write, losing valid evidence
+    /// to a materialization. Truth still lands; only the cache, which the
+    /// frozen revision no longer serves anything from, is skipped.
+    pub(crate) fn refresh_skill_confidence_cache_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        confidence: f32,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let stored = self.read_skill_record_in_txn(wtxn, id)?;
+        if stored.lifecycle_status == SkillLifecycle::Superseded {
+            return Ok(());
+        }
+        let mut refreshed = stored.clone();
+        refreshed.confidence = confidence;
+        validate_skill_update(&stored, &refreshed)?;
+        let data = encode_skill_record(&refreshed)?;
+        self.apply_skill_record_body(wtxn, id, occurred, learned_at, data, false)
     }
 
     pub(crate) fn apply_hub_sync_skill_record(
@@ -1247,7 +1341,12 @@ impl Vault {
         decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])
     }
 
-    fn apply_skill_record_body(
+    /// Crate-private, and the ONE way an engine-authored state flip reaches a
+    /// SKILL body inside a caller's transaction (ONE-1447's stale fold is the
+    /// second such writer after the confidence cache): every caller has already
+    /// run [`validate_skill_update`] against the STORED record, and the batch
+    /// chokepoint runs it again.
+    pub(crate) fn apply_skill_record_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

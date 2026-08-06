@@ -120,7 +120,7 @@ pub(crate) const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 const GATE_METRIC_OUTCOME_COUNT: usize = 3;
-const GATE_METRIC_REASON_CLASS_COUNT: usize = 13;
+const GATE_METRIC_REASON_CLASS_COUNT: usize = 15;
 
 static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
     GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
@@ -344,6 +344,236 @@ pub(crate) struct GateEvaluatorInput {
     /// bound (owner writes, connectors, non-definition agent actors) —
     /// preserves pre-AGENT-2 behavior at every existing construction site.
     pub(crate) agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+    /// The DEC-0006 consent context, when the caller composed one. `None` =
+    /// this door has not been moved onto the unified consent path yet and
+    /// keeps its pre-DEC-0006 criticality behaviour.
+    pub(crate) consent: Option<ConsentGateContext>,
+}
+
+/// The DEC-0006 inputs the Gate needs to run the consent ladder.
+///
+/// The Gate does not compose these: `consent.rs` owns the evaluation, and this
+/// carries its verdict plus the reason the verdict was reached, so the receipt
+/// records WHY an op asked rather than only THAT it asked.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ConsentGateContext {
+    /// The consent evaluator's verdict for this operation.
+    pub(crate) decision: crate::consent::ConsentDecision,
+    /// Why the verdict was reached, when it was not Auto.
+    pub(crate) reason: Option<ConsentPendingReason>,
+}
+
+/// Stable pending-reason codes for the DEC-0006 consent ladder.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConsentPendingReason {
+    /// Irreversible in effect, with no approve-once receipt or covering grant.
+    IrreversibleEffect,
+    /// A standing grant exists but the candidate exceeds its bound.
+    BoundExceeded,
+    /// The closed catastrophe floor matched — the only always-gate.
+    CatastropheFloor,
+    /// Required write facts were malformed or absent (invariant 8 fallback).
+    WriteClassificationFailed,
+}
+
+impl ConsentGateContext {
+    /// Runs the DEC-0006 evaluator and packages its verdict for the Gate.
+    ///
+    /// This is the ONE composer: `consent.rs` owns the decision, and the Gate
+    /// only translates it into reason codes. Keeping the call here means a
+    /// door opts into the unified consent path by composing a
+    /// [`crate::consent::ComposedEffect`], never by re-implementing the ladder.
+    pub(crate) fn evaluate(
+        effect: &crate::consent::ComposedEffect,
+        approve_once: Option<&crate::consent::ApproveOnceAuthorization>,
+        grants: &[crate::consent::StandingConsentGrant],
+    ) -> Self {
+        let decision = crate::consent::evaluate_consent(effect, approve_once, grants);
+        Self {
+            decision,
+            reason: (decision != crate::consent::ConsentDecision::Auto)
+                .then(|| Self::pending_reason(effect, grants)),
+        }
+    }
+
+    /// Why a non-Auto verdict was reached, in the evaluator's own precedence:
+    /// catastrophe first, then a classification failure, then a bound a grant
+    /// names but does not cover, else the plain irreversible case.
+    fn pending_reason(
+        effect: &crate::consent::ComposedEffect,
+        grants: &[crate::consent::StandingConsentGrant],
+    ) -> ConsentPendingReason {
+        if effect.catastrophe().is_some() {
+            return ConsentPendingReason::CatastropheFloor;
+        }
+        if crate::consent::classify_composed_effect(effect.facts()).is_err() {
+            return ConsentPendingReason::WriteClassificationFailed;
+        }
+        if crate::consent::bound_exceeded(effect, grants) {
+            return ConsentPendingReason::BoundExceeded;
+        }
+        ConsentPendingReason::IrreversibleEffect
+    }
+}
+
+impl ConsentPendingReason {
+    const fn reason_code(self) -> GateReasonCode {
+        match self {
+            Self::IrreversibleEffect => GateReasonCode::PendingConsentIrreversibleEffect,
+            Self::BoundExceeded => GateReasonCode::PendingConsentBoundExceeded,
+            Self::CatastropheFloor => GateReasonCode::PendingConsentCatastropheFloor,
+            Self::WriteClassificationFailed => {
+                GateReasonCode::PendingConsentWriteClassificationFailed
+            }
+        }
+    }
+}
+
+/// Translates a consent verdict into Gate pending reasons.
+///
+/// `Auto` contributes nothing (the op runs). `Ask` and `Hide` both hold the
+/// write — the difference between them is the SURFACE the host raises, which
+/// is the domain fail-safe (invariant 8) and is carried by the reason, not by
+/// a second Gate outcome.
+/// The stable `gate.`-namespaced reason-code strings for one consent verdict.
+///
+/// Empty exactly when the verdict is Auto.
+pub(crate) fn consent_gate_reason_codes(consent: &ConsentGateContext) -> Vec<String> {
+    consent_ladder_reasons(Some(consent))
+        .into_iter()
+        .map(|code| code.as_str().to_owned())
+        .collect()
+}
+
+fn consent_ladder_reasons(consent: Option<&ConsentGateContext>) -> Vec<GateReasonCode> {
+    let Some(consent) = consent else {
+        return Vec::new();
+    };
+    match consent.decision {
+        crate::consent::ConsentDecision::Auto => Vec::new(),
+        crate::consent::ConsentDecision::Ask | crate::consent::ConsentDecision::Hide => {
+            vec![
+                consent
+                    .reason
+                    .unwrap_or(ConsentPendingReason::IrreversibleEffect)
+                    .reason_code(),
+            ]
+        }
+    }
+}
+
+/// Composes the DEC-0006 consent context for one external effect.
+///
+/// This is how the ONE production external-effect door
+/// ([`evaluate_external_effect_policy`]) opts onto the unified consent path:
+/// it maps the engine-observed effect facts into a [`crate::consent::ComposedEffect`]
+/// and runs the ONE evaluator, so no caller re-implements the ladder or
+/// smuggles a caller-chosen `reversible` verdict in (invariant 6 — every fact
+/// here is host-observed: an outbound send is irreversible-in-effect by
+/// construction, with external observers on the channel).
+///
+/// Returns `None` when the effect facts cannot be normalized into an honest
+/// requirement pair (a verb or channel that fails the bound-ref rules) — the
+/// door then keeps its pre-DEC-0006 criticality behaviour rather than
+/// fabricate a bound no grant could ever cover or could always cover.
+fn external_effect_composed_effect(
+    effect: &ExternalEffectGateInput,
+) -> Option<crate::consent::ComposedEffect> {
+    let facts = external_effect_facts(effect);
+    let requirement = external_effect_action_requirement(effect)?;
+    crate::consent::ComposedEffect::new(facts)
+        .with_action_requirement(requirement)
+        .ok()
+}
+
+fn external_effect_consent_context(
+    effect: &ExternalEffectGateInput,
+    approve_once: Option<&crate::consent::ApproveOnceAuthorization>,
+    grants: &[crate::consent::StandingConsentGrant],
+) -> Option<ConsentGateContext> {
+    let composed = external_effect_composed_effect(effect)?;
+    Some(ConsentGateContext::evaluate(
+        &composed,
+        approve_once,
+        grants,
+    ))
+}
+
+/// The host-observed fact set for one external effect, in the consent
+/// evaluator's vocabulary. An external send/deploy is irreversible-in-effect
+/// and externally observable by definition; nothing here is caller-asserted.
+fn external_effect_facts(effect: &ExternalEffectGateInput) -> crate::consent::EffectFacts {
+    let operation_kind = if effect.verb.trim().is_empty() {
+        format!("external:{}", effect.channel.trim())
+    } else {
+        format!("external:{}:{}", effect.channel.trim(), effect.verb.trim())
+    };
+    crate::consent::EffectFacts {
+        operation_kind,
+        // An outbound effect rides the transport's send hook chain.
+        fires_hooks: true,
+        // A dispatch leaves this vault: it is published to (observed by) the
+        // channel's counterparties, so undo cannot retract it.
+        triggers_publish: true,
+        external_observers: true,
+        undo_fidelity: crate::consent::UndoFidelity::None,
+        blast_radius: 1,
+        catastrophe: None,
+    }
+}
+
+/// The action requirement one external effect must be covered by: acting actor
+/// × its verb class × an envelope naming the verb selector.
+///
+/// The selector vocabulary mirrors the canonical
+/// [`crate::consent::action_grant_from_standing_outbound_grant`] adapter
+/// (`verb:<class>` / `channel:<channel>` / `contact:<ref>` / `brief:<ref>`),
+/// so a legacy grant scope-matched onto this effect reads as consent-COVERING
+/// it — the fold that closes the write-side residual without minting a second
+/// rememberable lane. An effect whose verb class is not named by a grant's
+/// dial is envelope-uncovered on the same axis, so it still asks (the DEC-0006
+/// bound-exceeded path). The actor is NOT class-narrowed and the envelope is
+/// NOT target-pinned: the adapter mints grants on `principal_ref` alone, and
+/// the door's scope matcher already verified the channel/contact/brief axes on
+/// this txn before this fold runs.
+fn external_effect_action_requirement(
+    effect: &ExternalEffectGateInput,
+) -> Option<crate::consent::GrantBound> {
+    let actor_ref = effect
+        .actor
+        .actor_ref
+        .clone()
+        .or_else(|| effect.provenance.actor_entity_ref.map(|id| id.to_hex()))?;
+    let verb_class = if effect.verb.trim().is_empty() {
+        effect.channel.trim()
+    } else {
+        effect.verb.trim()
+    };
+    // The envelope's selectors name the verb axis exactly as the legacy
+    // adapter mints it (`verb:<class>`), so a scope-matched grant's fold reads
+    // as containing the effect. The channel axis rides the TARGET pin instead
+    // of the selector set — the selectors must stay verb-shaped or a
+    // verb-class grant (selector `[verb:send]`) would fail subset-containment
+    // against a candidate that also names its channel. Target-pinning to the
+    // channel mirrors the `Channel` dial's target arm, so `Channel{email}`
+    // contains an email-send while a `BriefVerbClass{brief}` grant covers only
+    // its own brief; a verb-class grant with NO target pin covers both.
+    let mut envelope = crate::consent::ActionEnvelope::new([format!("verb:{verb_class}")]).ok()?;
+    let target = effect
+        .brief_ref
+        .as_deref()
+        .unwrap_or_else(|| effect.channel.trim());
+    if !target.is_empty() {
+        envelope = envelope.with_target(target).ok()?;
+    }
+    crate::consent::GrantBound::action(
+        crate::consent::ActorBound::new(actor_ref).ok()?,
+        crate::consent::ActionClass::new(verb_class).ok()?,
+        envelope,
+    )
+    .ok()
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -411,6 +641,7 @@ impl ExternalEffectGateInput {
     fn gate_input(
         &self,
         agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+        consent: Option<ConsentGateContext>,
     ) -> GateEvaluatorInput {
         GateEvaluatorInput {
             actor: self.actor.clone(),
@@ -421,6 +652,7 @@ impl ExternalEffectGateInput {
             policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
             provenance: self.provenance.clone(),
             agent_definition_ceiling,
+            consent,
             external_effect: Some(ExternalEffectGateContext {
                 verb: self.verb.clone(),
                 channel: self.channel.clone(),
@@ -490,6 +722,11 @@ pub(crate) enum GateMetricReasonClass {
     CounterpartyOptOut,
     EffectorBudget,
     CharterPolicy,
+    /// DEC-0006 consent ladder: catastrophe floor, irreversible effect, bound
+    /// exceeded, and write-classification failure all meter here.
+    Consent,
+    /// CA-06 campaign compliance: a seeded legal rule row refused the dispatch.
+    CampaignCompliance,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -510,6 +747,8 @@ impl GateMetricReasonClass {
             Self::CounterpartyOptOut => "counterparty_opt_out",
             Self::EffectorBudget => "effector_budget",
             Self::CharterPolicy => "charter_policy",
+            Self::Consent => "consent",
+            Self::CampaignCompliance => "campaign_compliance",
         }
     }
 
@@ -528,6 +767,8 @@ impl GateMetricReasonClass {
             Self::CounterpartyOptOut => 10,
             Self::EffectorBudget => 11,
             Self::CharterPolicy => 12,
+            Self::Consent => 13,
+            Self::CampaignCompliance => 14,
         }
     }
 
@@ -546,6 +787,8 @@ impl GateMetricReasonClass {
             Self::CounterpartyOptOut,
             Self::EffectorBudget,
             Self::CharterPolicy,
+            Self::Consent,
+            Self::CampaignCompliance,
         ]
     }
 }
@@ -569,6 +812,24 @@ pub(crate) enum GateReasonCode {
     DenyConnectorKeySuspended,
     DenyCharterNeverList,
     PendingCharterDrift,
+    /// DEC-0006 invariant 1: the operation is irreversible in effect and no
+    /// approve-once receipt or covering standing grant authorizes it.
+    PendingConsentIrreversibleEffect,
+    /// DEC-0006 invariant 3: a standing grant exists but the candidate exceeds
+    /// its bound. Widening is its own owner decision, never a side effect of
+    /// reuse — so this is a fresh ask, not a silent auto.
+    PendingConsentBoundExceeded,
+    /// DEC-0006 invariant 7: the operation matched the closed catastrophe
+    /// floor. Gated at ANY trust level, non-rememberable.
+    PendingConsentCatastropheFloor,
+    /// DEC-0006 invariant 8: the engine-owned write facts were malformed or
+    /// absent, so no reversibility verdict could be produced. Writes fail safe
+    /// by asking.
+    PendingConsentWriteClassificationFailed,
+    /// CA-06 (ONE-1777): a seeded campaign-compliance row refused this
+    /// dispatch. Enforcement, not an ask — an owner approval must not be able
+    /// to unlock a send the governing legal row forbids, so this is a deny.
+    DenyCampaignCompliance,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -592,6 +853,13 @@ impl GateReasonCode {
             Self::DenyConnectorKeySuspended => "gate.deny.connector_key_suspended",
             Self::DenyCharterNeverList => "gate.deny.charter_never_list",
             Self::PendingCharterDrift => "gate.pending.charter_drift",
+            Self::PendingConsentIrreversibleEffect => "gate.pending.consent.irreversible_effect",
+            Self::PendingConsentBoundExceeded => "gate.pending.consent.bound_exceeded",
+            Self::PendingConsentCatastropheFloor => "gate.pending.consent.catastrophe_floor",
+            Self::PendingConsentWriteClassificationFailed => {
+                "gate.pending.consent.write_classification_failed"
+            }
+            Self::DenyCampaignCompliance => "gate.deny.campaign_compliance",
         }
     }
 
@@ -618,6 +886,11 @@ impl GateReasonCode {
             Self::DenyCharterNeverList | Self::PendingCharterDrift => {
                 GateMetricReasonClass::CharterPolicy
             }
+            Self::PendingConsentIrreversibleEffect
+            | Self::PendingConsentBoundExceeded
+            | Self::PendingConsentCatastropheFloor
+            | Self::PendingConsentWriteClassificationFailed => GateMetricReasonClass::Consent,
+            Self::DenyCampaignCompliance => GateMetricReasonClass::CampaignCompliance,
         }
     }
 }
@@ -1220,9 +1493,18 @@ impl PolicyManifestResolution {
             pending.push(GateReasonCode::PendingSourceTrust);
         }
 
-        if input.criticality == PolicyCriticality::Critical {
+        // DEC-0006 write-side residual: `Critical` is a composed-effect SIGNAL,
+        // not an unconditional gate. It contributes to the consent ladder
+        // below (via `ConsentGateContext`), and the closed catastrophe set is
+        // the only always-gate (invariant 7). The legacy unconditional floor
+        // survives only where no consent context was composed, so a caller
+        // that has not yet been moved onto the DEC-0006 path keeps its
+        // pre-existing behaviour rather than silently losing a gate.
+        if input.criticality == PolicyCriticality::Critical && input.consent.is_none() {
             pending.push(GateReasonCode::PendingCriticalityFloor);
         }
+
+        pending.extend(consent_ladder_reasons(input.consent.as_ref()));
 
         match input.content_kind {
             GateContentKind::Claim | GateContentKind::EdgeProvenanceClaim => {}
@@ -2148,6 +2430,26 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     ),
                 ]),
                 Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("calendar.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("booking.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
                     (Value::from(RULE_PREFIX_KEY), Value::from("affect.vad")),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -2567,6 +2869,11 @@ pub(crate) fn check_claim_policy_for_write_with_record(
             provenance,
             mode.include_source_in_gate_input,
             agent_definition_ceiling,
+            // Claim bodies carry no effect-fact axes the consent evaluator
+            // could classify honestly; this door keeps its pre-DEC-0006
+            // criticality behaviour (the `None` arm of `evaluate_gate`)
+            // rather than guess at defaults that would silently auto-run.
+            None,
         );
         let decision = policy.evaluate_gate(&input);
         let binding = GateConsentBinding::for_claim(body, policy)?;
@@ -2828,6 +3135,9 @@ fn check_session_bundle_actor_policy(
             },
             true,
             agent_definition_ceiling,
+            // Read-only review door over proposed claims; no effect facts to
+            // classify, so no consent context is composed (pre-DEC-0006 path).
+            None,
         );
         enforce_gate_decision(policy.evaluate_gate(&input))?;
     }
@@ -2867,6 +3177,7 @@ pub(crate) struct ExternalEffectGovernance {
     input: GateEvaluatorInput,
     binding: GateConsentBinding,
     grant_ref: Option<String>,
+    approve_once: Option<crate::consent::ApproveOnceAuthorization>,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
     budget_target: Option<ExternalEffectBudgetTarget>,
 }
@@ -2928,7 +3239,67 @@ pub(crate) fn evaluate_external_effect_policy(
         hydrated_effect.actor.actor_ref.as_deref(),
         hydrated_effect.provenance.actor_entity_ref,
     );
-    let mut input = hydrated_effect.gate_input(agent_definition_ceiling);
+    // DEC-0006: this door composes its consent context at the chokepoint, so
+    // consent is evaluated by the one ladder rather than re-implemented per
+    // call site. The coverage set folds three already-verified authorization
+    // facts read on THIS write txn — the vault's ACTIVE consent grants, the
+    // scope-matched `StandingOutboundGrant` (through the pinned adapter), and
+    // any budget-free POLICY-scoped grant the compiler's four-axis matcher
+    // accepts (echoed as a covering grant; see below) — so an effect already
+    // authorized on remembered state is Auto on the consent axis exactly once,
+    // honors revocation immediately, and an UNGRANTED irreversible effect is
+    // the only one that enters the ask lane (invariant 1).
+    let mut consent_grants = crate::consent::load_active_standing_grants(store, wtxn)?;
+    let provisional = hydrated_effect.gate_input(agent_definition_ceiling, None);
+    let requirement = external_effect_action_requirement(&hydrated_effect);
+    if let (Some(requirement), Some(effect_ctx)) =
+        (requirement, provisional.external_effect.as_ref())
+    {
+        let scoped_covers = policy.scoped_grants().iter().any(|grant| {
+            grant.budget.is_none()
+                && external_effect_grant_matches(grant, &provisional.actor, effect_ctx)
+        });
+        if scoped_covers && let Ok(grant) = crate::consent::ActionGrant::new(requirement.clone()) {
+            consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+        }
+        // A scope-matched `StandingOutboundGrant` resolved on this txn — the
+        // matcher already enforced actor identity, channel/contact/verb-class
+        // scope, and ACTIVE status — is folded as remembered coverage by
+        // ECHOING the requirement as its covering grant. Dial vocabularies
+        // differ per scope kind (channel/contact/brief/scoped-MCP), so the
+        // adapter's normalized bound cannot be trusted to subset-match the
+        // requirement's verb-shaped selectors; the door's own four-axis match
+        // is the authority the echo records. Revocation is honored by the
+        // matcher upstream: a revoked row never reaches this arm.
+        if matched_grant.is_some()
+            && let Ok(grant) = crate::consent::ActionGrant::new(requirement)
+        {
+            consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+        }
+    }
+    // A payload-aware scoped-MCP grant ALREADY authorized this effect at the
+    // registry-match stage (`scoped_mcp_grant_authorized`) — the only safe MCP
+    // auto path. Fold it: the effect is consent-covered, not re-asked.
+    if scoped_mcp_grant_authorized
+        && let Some(requirement) = external_effect_action_requirement(&hydrated_effect)
+        && let Ok(grant) = crate::consent::ActionGrant::new(requirement)
+    {
+        consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+    }
+    // The exact engine-computed digest is the only approve-once lookup key.
+    // Reading it on THIS write transaction yields either no approval, one
+    // unforgeable available authorization, or a typed spent-replay refusal.
+    // The marker is changed to spent only when the final Gate decision is
+    // recorded as Allow in this same transaction.
+    let approve_once = external_effect_composed_effect(&hydrated_effect)
+        .map(|effect| {
+            crate::consent::approve_once_authorization_in_txn(store, &*wtxn, &effect.digest())
+        })
+        .transpose()?
+        .flatten();
+    let consent =
+        external_effect_consent_context(&hydrated_effect, approve_once.as_ref(), &consent_grants);
+    let mut input = hydrated_effect.gate_input(agent_definition_ceiling, consent);
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
     }
@@ -2940,6 +3311,34 @@ pub(crate) fn evaluate_external_effect_policy(
         .external_effect
         .as_ref()
         .and_then(|effect| effect.standing_grant_ref.clone());
+
+    // CA-06 campaign-compliance stage (ONE-1777). The evaluator hydrates its
+    // own typed facts from the claim substrate on THIS txn and answers with a
+    // pure verdict; the mapping to a decision stays here, where decisions are
+    // constructed. It runs BEFORE the connector-key and budget stages — both
+    // guarded on would-be-Allow — so a legal-row refusal never consumes budget,
+    // exactly like the counterparty-opt-out wall. It converts a would-be Allow
+    // AND a Pending: an owner approval must not be able to unlock a dispatch
+    // the governing row forbids. It is enforcement, not a new approval step;
+    // effects outside a campaign never reach the evaluator at all.
+    if decision.outcome() != GateOutcome::Deny
+        && let Some(crate::campaign::compliance::ComplianceVerdict::Block { reason, .. }) =
+            crate::campaign::compliance::campaign_compliance_gate(
+                store,
+                &*wtxn,
+                &hydrated_effect,
+                created_at,
+            )?
+    {
+        decision = GateDecision::deny(GateReasonCode::DenyCampaignCompliance)
+            .with_receipt_reasons([reason.receipt_reason()])
+            .with_receipt_reasons(external_effect_receipt_reasons(
+                input
+                    .external_effect
+                    .as_ref()
+                    .expect("external effect input"),
+            ));
+    }
 
     // GOV-01 connector-key stage (ONE-1416). Channel keys retain
     // unset-is-noop; synthetic scoped-MCP keys fail closed below. The status
@@ -3054,6 +3453,7 @@ pub(crate) fn evaluate_external_effect_policy(
         input,
         binding,
         grant_ref,
+        approve_once,
         matched_grant,
         budget_target,
     })
@@ -3071,9 +3471,15 @@ pub(crate) fn record_external_effect_policy(
         input,
         binding,
         grant_ref,
+        approve_once,
         matched_grant,
         budget_target: _,
     } = governance;
+    if decision.outcome() == GateOutcome::Allow
+        && let Some(authorization) = approve_once.as_ref()
+    {
+        crate::consent::spend_approve_once_in_txn(store, wtxn, authorization)?;
+    }
     crate::off_record::FloorWrites::new(store).append_egress_gate_decision(
         wtxn,
         &GateDecisionRecord {
@@ -3374,12 +3780,13 @@ fn hydrate_external_effect_contact(
     effect: &ExternalEffectGateInput,
 ) -> Result<ExternalEffectGateInput> {
     let mut hydrated = effect.clone();
-    let (Some(identity_ref), Some(counterparty)) =
-        (effect.channel_identity_ref, effect.counterparty.as_deref())
-    else {
+    let Some(counterparty) = effect.counterparty.as_deref() else {
         return Ok(hydrated);
     };
-    if let Some(record) = counterparty_contact_for_send(store, txn, &identity_ref, counterparty)? {
+    if let Some(identity_ref) = effect.channel_identity_ref
+        && let Some(record) =
+            counterparty_contact_for_send(store, txn, &identity_ref, counterparty)?
+    {
         hydrated.counterparty_first_touch = Some(record.first_touch);
         if record.first_touch == CounterpartyFirstTouch::Public
             && hydrated.policy_risk == ExternalEffectPolicyRisk::Normal
@@ -3391,6 +3798,20 @@ fn hydrate_external_effect_contact(
             .opt_out
             .map(super::counterparty_contact::CounterpartyOptOut::receipt_reason);
     }
+    // CA-01 do-not-contact leg. `comm.do_not_contact` is campaign- AND
+    // identity-independent, so it runs for every counterparty — including the
+    // ones with no channel identity and no contact record, which is exactly
+    // where the type-132 read above contributes nothing. The fold is monotonic
+    // (`|=`): this leg can only ADD suppression, never clear an opt-out another
+    // source already established. ONE-1868 owns completing the hydration so no
+    // shipping path can answer a false "no".
+    hydrated.counterparty_opted_out |= crate::campaign::claims::counterparty_do_not_contact_in_txn(
+        store,
+        txn,
+        counterparty,
+        Some(effect.channel.as_str()),
+        &effect.verb,
+    )?;
     Ok(hydrated)
 }
 
@@ -3625,6 +4046,9 @@ pub(crate) fn check_edge_provenance_claim_policy(
             },
             false,
             agent_definition_ceiling,
+            // Edge-provenance claims, like ordinary claims, carry no effect-fact
+            // axes; the door keeps its pre-DEC-0006 behaviour (None arm).
+            None,
         );
         let decision = policy.evaluate_gate(&input);
         record_gate_decision_metrics(&decision);
@@ -3643,6 +4067,10 @@ fn check_claim_source_trust(body: &ClaimBody, policy: &PolicyManifestResolution)
     )
 }
 
+// The claim-door assembler takes the full axis tuple one call site at a time
+// spells out; boxing the tail two `Option` knobs would hide the consent seam
+// this lane opened.
+#[allow(clippy::too_many_arguments)]
 fn claim_gate_input(
     body: &ClaimBody,
     policy: &PolicyManifestResolution,
@@ -3651,6 +4079,7 @@ fn claim_gate_input(
     provenance: GateProvenanceHandles,
     include_source: bool,
     agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+    consent: Option<ConsentGateContext>,
 ) -> GateEvaluatorInput {
     let (source, sensitivity_band) = if include_source || body.approval == ClaimApprovalStatus::Auto
     {
@@ -3669,6 +4098,7 @@ fn claim_gate_input(
         provenance,
         external_effect: None,
         agent_definition_ceiling,
+        consent,
     }
 }
 
@@ -3801,6 +4231,11 @@ pub(crate) fn standing_outbound_grant_binding_parts(
             hash_str(&mut hasher, "brief_verb_class");
             hash_str(&mut hasher, brief_ref.trim());
             hash_str(&mut hasher, verb_class.trim());
+        }
+        GrantMintIntentScope::Calendar { .. } => {
+            return Err(Error::InvalidOutboundGrantBody(
+                "calendar disclosure scope is a read grant, not an outbound grant scope",
+            ));
         }
     }
     Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))

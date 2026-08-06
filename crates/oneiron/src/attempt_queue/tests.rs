@@ -1075,7 +1075,9 @@ fn attempt_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
         };
         assert_eq!(first_attempt.id, attempt.id);
 
-        let RetryOutcome::Retried(_) = queue.retry(RetryAttempt {
+        // The retry is a fresh row, so the second lease restarts that row's own
+        // generation fence at 1 rather than continuing the source's count.
+        let RetryOutcome::Retried(scheduled) = queue.retry(RetryAttempt {
             id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: first_attempt.attempt_count,
@@ -1091,11 +1093,9 @@ fn attempt_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
         else {
             panic!("expected second attempt");
         };
-        assert_eq!(second_attempt.id, attempt.id);
-        assert_eq!(
-            second_attempt.attempt_count,
-            first_attempt.attempt_count + 1
-        );
+        assert_eq!(second_attempt.id, scheduled.id);
+        assert_ne!(second_attempt.id, attempt.id);
+        assert_eq!(second_attempt.attempt_count, 1);
         Ok(second_attempt)
     }
 
@@ -1196,7 +1196,7 @@ fn attempt_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
 }
 
 #[test]
-fn attempt_queue_transitions_retry_preserves_payload_provenance_and_backoff() -> Result<()> {
+fn attempt_queue_retry_mints_a_new_row_and_leaves_the_source_terminal() -> Result<()> {
     let (_dir, vault) = open_queue();
     let queue = AttemptQueue::new(&vault);
 
@@ -1236,23 +1236,45 @@ fn attempt_queue_transitions_retry_preserves_payload_provenance_and_backoff() ->
         last_error: Some("rate limited".to_owned()),
         now: 30,
     })?;
-    assert_eq!(retried.id, attempt.id);
-    assert_eq!(retried.state, AttemptState::Queued);
+
+    // The retry is a DIFFERENT row that carries the immutable payload and
+    // provenance forward, links back to the try it replaces, and restarts the
+    // per-row lease fence.
+    assert_ne!(retried.id, attempt.id);
+    assert_eq!(retried.retry_of, Some(attempt.id));
+    assert_eq!(retried.state, AttemptState::Scheduled);
     assert_eq!(retried.lease_owner, None);
-    assert_eq!(retried.attempt_count, 1);
-    assert_eq!(retried.backoff_until, Some(100));
-    assert_eq!(retried.last_error.as_deref(), Some("rate limited"));
+    assert_eq!(retried.attempt_count, 0);
+    assert_eq!(retried.scheduled_at, Some(100));
+    assert_eq!(retried.backoff_until, None);
+    assert_eq!(retried.last_error, None);
+    assert_eq!(retried.claimed_at, None);
+    assert_eq!(retried.created_at, 30);
+    assert_eq!(retried.updated_at, 30);
     assert_eq!(retried.payload, b"payload-10");
     assert_eq!(retried.run_id.as_deref(), Some("run-10"));
     assert_eq!(retried.dedupe_key.as_deref(), Some("turn:retry"));
 
+    // The source stays queryable as the failed try and can never be reclaimed.
+    let source = queue.get(attempt.id)?.expect("source stays point-readable");
+    assert_eq!(source.state, AttemptState::Failed);
+    assert_eq!(source.last_error.as_deref(), Some("rate limited"));
+    assert_eq!(source.lease_owner, None);
+    assert_eq!(source.scheduled_at, None);
+    assert_eq!(source.backoff_until, None);
+    assert_eq!(source.retry_of, None);
+    assert_eq!(source.updated_at, 30);
+    assert_eq!(source.attempt_count, 1);
+
+    // The advisory dedupe index followed the newest pending member.
     let EnqueueOutcome::Existing(duplicate_pending) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:retry"), 40))?
     else {
-        panic!("pending dedupe key should coalesce");
+        panic!("pending dedupe key should coalesce onto the scheduled retry");
     };
-    assert_eq!(duplicate_pending.id, attempt.id);
+    assert_eq!(duplicate_pending.id, retried.id);
 
+    // Claimable exactly at `scheduled_at`, never one second early.
     assert_eq!(
         queue.claim(ClaimAttempt {
             lease_owner: "worker-b".to_owned(),
@@ -1266,15 +1288,168 @@ fn attempt_queue_transitions_retry_preserves_payload_provenance_and_backoff() ->
         now: 100,
     })?
     else {
-        panic!("expected claim after backoff");
+        panic!("expected claim at the scheduled instant");
     };
-    assert_eq!(second_attempt.id, attempt.id);
-    assert_eq!(second_attempt.attempt_count, 2);
+    assert_eq!(second_attempt.id, retried.id);
+    assert_eq!(second_attempt.attempt_count, 1);
+    assert_eq!(second_attempt.scheduled_at, None);
     assert_eq!(second_attempt.backoff_until, None);
-    assert_eq!(second_attempt.last_error.as_deref(), Some("rate limited"));
+    assert_eq!(second_attempt.retry_of, Some(attempt.id));
     assert_eq!(second_attempt.payload, b"payload-10");
     assert_eq!(second_attempt.run_id.as_deref(), Some("run-10"));
     assert_eq!(second_attempt.dedupe_key.as_deref(), Some("turn:retry"));
+
+    // The terminal source never re-enters the ready index behind the retry.
+    assert_eq!(
+        queue.claim(ClaimAttempt {
+            lease_owner: "worker-c".to_owned(),
+            now: 1_000,
+        })?,
+        ClaimOutcome::Empty
+    );
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_keeps_every_try_independently_queryable() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:chain"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    let mut chain = vec![root.id];
+    let mut now = 20;
+    for _ in 0..3 {
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now,
+        })?
+        else {
+            panic!("expected claim at {now}");
+        };
+        assert_eq!(claimed.id, *chain.last().expect("chain is never empty"));
+        let RetryOutcome::Retried(next) = queue.retry(RetryAttempt {
+            id: claimed.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: now + 10,
+            last_error: Some(format!("retryable at {now}")),
+            now: now + 1,
+        })?;
+        chain.push(next.id);
+        now += 10;
+    }
+
+    // Three retries produce four distinct rows in an unambiguous parent chain.
+    assert_eq!(chain.len(), 4);
+    let unique: std::collections::HashSet<_> = chain.iter().collect();
+    assert_eq!(unique.len(), 4);
+
+    for (index, id) in chain.iter().enumerate() {
+        let record = queue.get(*id)?.expect("every try stays queryable");
+        assert_eq!(
+            record.retry_of,
+            index.checked_sub(1).map(|prev| chain[prev])
+        );
+        assert_eq!(record.payload, b"payload-10");
+        assert_eq!(record.run_id.as_deref(), Some("run-10"));
+        if index + 1 == chain.len() {
+            assert_eq!(record.state, AttemptState::Scheduled);
+        } else {
+            assert_eq!(record.state, AttemptState::Failed);
+            assert!(record.last_error.is_some());
+        }
+    }
+
+    // Every try is attached to the one run, so the run index tracked each mint.
+    let run = queue.list_run("run-10")?;
+    assert_eq!(run.len(), 4);
+    assert_eq!(
+        run.iter().map(|record| record.id).collect::<Vec<_>>(),
+        chain
+    );
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_omitting_a_reason_stamps_a_stable_token() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(attempt) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:no-reason"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 20,
+    })?
+    else {
+        panic!("expected claim");
+    };
+
+    let RetryOutcome::Retried(retried) = queue.retry(RetryAttempt {
+        id: attempt.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: claimed.attempt_count,
+        backoff_until: 40,
+        last_error: None,
+        now: 30,
+    })?;
+    assert_eq!(retried.state, AttemptState::Scheduled);
+
+    // A `Failed` row must carry a reason; the source is finalized either way.
+    let source = queue.get(attempt.id)?.expect("source stays readable");
+    assert_eq!(source.state, AttemptState::Failed);
+    assert_eq!(source.last_error.as_deref(), Some(RETRY_REASON_UNSPECIFIED));
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_of_a_missing_lease_writes_nothing() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(attempt) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:atomic"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 20,
+    })?
+    else {
+        panic!("expected claim");
+    };
+
+    // A rejected retry must leave neither a half-finalized source nor an
+    // orphan retry row: the whole transition is one transaction.
+    let stale = queue
+        .retry(RetryAttempt {
+            id: attempt.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count + 1,
+            backoff_until: 40,
+            last_error: Some("retryable".to_owned()),
+            now: 30,
+        })
+        .unwrap_err();
+    assert_invalid_transition(stale, "retry", "stale_attempt");
+
+    let records = queue.list()?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, attempt.id);
+    assert_eq!(records[0].state, AttemptState::Leased);
+    assert_eq!(records[0].updated_at, 20);
 
     Ok(())
 }
@@ -1585,7 +1760,9 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
     else {
         panic!("expected claim");
     };
-    let RetryOutcome::Retried(_) = queue.retry(RetryAttempt {
+    // Retrying finalizes `backoff_attempt` as a failed try and mints the
+    // scheduled row that carries the backoff; the pause lands on that new row.
+    let RetryOutcome::Retried(backoff_retry) = queue.retry(RetryAttempt {
         id: backoff_attempt.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: backoff_claim.attempt_count,
@@ -1597,7 +1774,7 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         effect: AttemptInterventionEffect::Paused,
         ..
     } = queue.intervene(InterveneAttempt {
-        id: backoff_attempt.id,
+        id: backoff_retry.id,
         kind: AttemptInterventionKind::Pause,
         actor: "cleanup-test".to_owned(),
         note: None,
@@ -1694,7 +1871,9 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
     })?;
     assert_eq!(report.pending, 3);
     assert_eq!(report.running, 1);
-    assert_eq!(report.failed, 1);
+    // Two failed rows: the terminal `failed_attempt` plus the retried try that
+    // `backoff_attempt` became.
+    assert_eq!(report.failed, 2);
     assert_eq!(report.done, 1);
     assert_eq!(report.stale_requeued, 1);
     assert_eq!(
@@ -1705,6 +1884,14 @@ fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         report.retry_reason_count(AttemptQueueRetryReason::RetryBackoff),
         1
     );
+
+    let retried_source = queue
+        .get(backoff_attempt.id)?
+        .expect("retried source persisted");
+    assert_eq!(retried_source.state, AttemptState::Failed);
+    let paused_retry = queue.get(backoff_retry.id)?.expect("retry row persisted");
+    assert_eq!(paused_retry.state, AttemptState::Paused);
+    assert_eq!(paused_retry.scheduled_at, Some(80));
 
     let requeued = queue
         .get(stale_attempt.id)?
@@ -1794,6 +1981,28 @@ fn attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields() -> Resu
     assert_eq!(claimed.id, attempt.id);
 
     tracing::subscriber::with_default(capture.clone(), || {
+        // `tracing` caches one `Interest` per callsite for the whole process, but
+        // `with_default` installs a subscriber on THIS thread only. The first
+        // thread to reach a callsite is the one that computes that cache, and it
+        // computes it from its own thread-local subscriber
+        // (`DefaultCallsite::register` -> `Rebuilder::JustOne` ->
+        // `dispatcher::get_default`). Several other tests call `cleanup_leases`
+        // concurrently with no subscriber attached, so whichever of them wins the
+        // race pins these callsites to `Interest::never()` for the rest of the
+        // process and nothing below is ever recorded. Emitting once forces the
+        // callsites REGISTERED whoever wins, and rebuilding the cache then
+        // recomputes them against this thread's subscriber; registration is
+        // one-shot, so they cannot be re-poisoned while the assertions run.
+        emit_attempt_queue_cleanup_span(
+            &CleanupAttemptLeases {
+                now: 0,
+                lease_timeout_secs: 0,
+            },
+            &AttemptQueueCleanupReport::default(),
+        );
+        tracing::callsite::rebuild_interest_cache();
+        capture.records.lock().unwrap().clear();
+
         queue.cleanup_leases(CleanupAttemptLeases {
             now: 40,
             lease_timeout_secs: 10,
@@ -1837,4 +2046,564 @@ fn ready_key_round_trips() -> Result<()> {
     let key = ready_key(42, id);
     assert_eq!(decode_ready_key(&key)?, (42, id));
     Ok(())
+}
+
+// ─── ONE-1737 · ARCH-0053 §3 attempt-alive pack manifest ────────────────
+
+fn skill_entry(reference: &str, version: &str, at: u64) -> ManifestEntry {
+    ManifestEntry::new(ManifestKind::Skill, reference, version, at)
+}
+
+fn enqueued(queue: &AttemptQueue<'_>, now: u64) -> Result<AttemptRecord> {
+    match queue.enqueue(enqueue("pack", None, now))? {
+        EnqueueOutcome::Enqueued(record) => Ok(record),
+        EnqueueOutcome::Existing(record) => Ok(record),
+    }
+}
+
+/// The pack is ALIVE: the manifest grows across the pending states and every
+/// earlier row survives verbatim (§3, r5 — the one-and-done reading is
+/// rejected).
+#[test]
+fn manifest_appends_across_the_live_attempt_and_never_mutates() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let attempt = enqueued(&queue, 10)?;
+
+    let at_t0 = queue.append_manifest_entry(attempt.id, skill_entry("index", "1", 11))?;
+    let ClaimOutcome::Claimed(_) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("expected claim");
+    };
+    let at_mid = queue.append_manifest_entry(attempt.id, skill_entry("pdf", "3", 13))?;
+
+    assert_eq!(at_t0.manifest().len(), 1);
+    assert_eq!(at_mid.manifest().len(), 2);
+    assert_eq!(
+        at_mid.manifest()[0],
+        at_t0.manifest()[0],
+        "the t0 row survives the mid-run append verbatim"
+    );
+    assert_eq!(at_mid.manifest()[1].wire_form(), "pdf@3");
+    assert_eq!(
+        queue.get(attempt.id)?.expect("row persists").manifest(),
+        at_mid.manifest(),
+        "the manifest is durable, not in-memory"
+    );
+    Ok(())
+}
+
+/// A paused attempt is still live — its pack can still pull.
+#[test]
+fn manifest_appends_on_a_paused_attempt() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let attempt = enqueued(&queue, 10)?;
+    queue.intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Pause,
+        actor: "operator".to_owned(),
+        note: None,
+        now: 11,
+    })?;
+
+    let paused = queue.append_manifest_entry(attempt.id, skill_entry("index", "1", 12))?;
+
+    assert_eq!(paused.state, AttemptState::Paused);
+    assert_eq!(paused.manifest().len(), 1);
+    Ok(())
+}
+
+/// Every terminal state refuses: a closed attempt's manifest is the evidence
+/// its terminal receipt already projected, so appending would rewrite history.
+#[test]
+fn manifest_door_refuses_every_terminal_state() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let completed = enqueued(&queue, 10)?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".to_owned(),
+        now: 11,
+    })?
+    else {
+        panic!("expected claim");
+    };
+    queue.complete(CompleteAttempt {
+        id: completed.id,
+        lease_owner: "worker".to_owned(),
+        attempt_count: leased.attempt_count,
+        now: 12,
+    })?;
+
+    let cancelled = enqueued(&queue, 20)?;
+    queue.intervene(InterveneAttempt {
+        id: cancelled.id,
+        kind: AttemptInterventionKind::Cancel,
+        actor: "operator".to_owned(),
+        note: None,
+        now: 21,
+    })?;
+
+    for (id, state) in [(completed.id, "completed"), (cancelled.id, "cancelled")] {
+        let error = queue
+            .append_manifest_entry(id, skill_entry("late", "9", 30))
+            .expect_err("a terminal attempt refuses manifest appends");
+        assert!(
+            matches!(
+                error,
+                Error::InvalidAttemptQueueTransition {
+                    action: "append_manifest_entry",
+                    state: observed,
+                } if observed == state
+            ),
+            "expected a typed refusal naming {state}, got {error:?}"
+        );
+    }
+    Ok(())
+}
+
+/// The append door does not touch `updated_at`: that field is the lease-expiry
+/// clock, and turning a pack load into a lease heartbeat would silently change
+/// reclaim timing.
+#[test]
+fn manifest_append_leaves_the_lease_clock_alone() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let attempt = enqueued(&queue, 10)?;
+
+    let after = queue.append_manifest_entry(attempt.id, skill_entry("index", "1", 999))?;
+
+    assert_eq!(after.updated_at, attempt.updated_at);
+    Ok(())
+}
+
+/// The cap REFUSES; it never drains. This is the deliberate divergence from
+/// `MAX_ATTEMPT_EVENTS_PER_RECORD`, whose drain would silently violate the
+/// append-only invariant.
+#[test]
+fn manifest_refuses_at_the_cap_instead_of_dropping_the_oldest_row() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let attempt = enqueued(&queue, 10)?;
+
+    // Seed a full manifest through the record path (appending 4096 rows one
+    // door call at a time is a needless minute of LMDB writes).
+    let mut record = queue.get(attempt.id)?.expect("row persists");
+    record.manifest = (0..MAX_ATTEMPT_MANIFEST_ENTRIES)
+        .map(|index| skill_entry(&format!("skill-{index}"), "1", 11))
+        .collect();
+    let first = record.manifest[0].clone();
+    let encoded = encode_record(&record)?;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .attempt_records
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
+        Ok(())
+    })?;
+
+    let error = queue
+        .append_manifest_entry(attempt.id, skill_entry("overflow", "1", 12))
+        .expect_err("a full manifest refuses");
+
+    assert!(matches!(
+        error,
+        Error::InvalidAttemptQueueRecord(ERR_MANIFEST_FULL)
+    ));
+    let after = queue.get(attempt.id)?.expect("row persists");
+    assert_eq!(
+        after.manifest().len(),
+        MAX_ATTEMPT_MANIFEST_ENTRIES,
+        "nothing was appended"
+    );
+    assert_eq!(
+        after.manifest()[0],
+        first,
+        "and nothing was dropped: fail loud, never drain"
+    );
+    Ok(())
+}
+
+/// Malformed rows are refused at the door and at decode, so a corrupt manifest
+/// cannot enter the store through either path.
+#[test]
+fn manifest_entries_are_validated() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let attempt = enqueued(&queue, 10)?;
+
+    for (entry, expected) in [
+        (skill_entry("", "1", 11), ERR_MANIFEST_REFERENCE_EMPTY),
+        (skill_entry("skill", "", 11), ERR_MANIFEST_VERSION_EMPTY),
+        (
+            skill_entry(&"r".repeat(MAX_MANIFEST_REFERENCE_LEN + 1), "1", 11),
+            ERR_MANIFEST_REFERENCE_TOO_LONG,
+        ),
+        (
+            skill_entry("skill", &"v".repeat(MAX_MANIFEST_VERSION_LEN + 1), 11),
+            ERR_MANIFEST_VERSION_TOO_LONG,
+        ),
+    ] {
+        let error = queue
+            .append_manifest_entry(attempt.id, entry)
+            .expect_err("a malformed manifest row is refused");
+        assert!(
+            matches!(error, Error::InvalidAttemptQueueRecord(reason) if reason == expected),
+            "expected {expected}, got {error:?}"
+        );
+    }
+    assert!(
+        queue
+            .get(attempt.id)?
+            .expect("row persists")
+            .manifest()
+            .is_empty()
+    );
+    Ok(())
+}
+
+/// A row written before the manifest existed decodes to an empty manifest:
+/// additive `#[serde(default)]`, no migration.
+#[test]
+fn a_record_without_the_manifest_key_decodes_empty() -> Result<()> {
+    #[derive(serde::Serialize)]
+    struct PreManifestAttemptRecord {
+        id: AttemptId,
+        kind: String,
+        payload: Vec<u8>,
+        state: AttemptState,
+        lease_owner: Option<String>,
+        attempt_count: u32,
+        claimed_at: Option<u64>,
+        backoff_until: Option<u64>,
+        last_error: Option<String>,
+        task_ref: Option<String>,
+        run_id: Option<String>,
+        dedupe_key: Option<String>,
+        created_at: u64,
+        updated_at: u64,
+        events: Vec<AttemptEvent>,
+    }
+
+    let id = AttemptId::now();
+    let legacy = PreManifestAttemptRecord {
+        id,
+        kind: "pack".to_owned(),
+        payload: Vec::new(),
+        state: AttemptState::Queued,
+        lease_owner: None,
+        attempt_count: 0,
+        claimed_at: None,
+        backoff_until: None,
+        last_error: None,
+        task_ref: None,
+        run_id: None,
+        dedupe_key: None,
+        created_at: 10,
+        updated_at: 10,
+        events: Vec::new(),
+    };
+    let mut encoded = vec![ATTEMPT_RECORD_VERSION];
+    encoded.extend(rmp_serde::to_vec_named(&legacy).expect("serialize pre-manifest record"));
+
+    assert!(decode_record(&encoded, id)?.manifest().is_empty());
+    Ok(())
+}
+
+/// `AttemptEvent` and the intervention enum stay untouched: the manifest is a
+/// PARALLEL field, never a shoehorned event payload (the seam rule).
+#[test]
+fn interventions_and_manifest_rows_stay_separate_lanes() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let attempt = enqueued(&queue, 10)?;
+
+    queue.append_manifest_entry(attempt.id, skill_entry("index", "1", 11))?;
+    let interrupted = queue.intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Interrupt,
+        actor: "operator".to_owned(),
+        note: None,
+        now: 12,
+    })?;
+
+    assert_eq!(interrupted.record.events.len(), 1);
+    assert_eq!(
+        interrupted.record.manifest().len(),
+        1,
+        "the intervention did not land in the manifest"
+    );
+    assert_eq!(
+        interrupted.record.events[0].kind,
+        AttemptInterventionKind::Interrupt
+    );
+    Ok(())
+}
+
+// ─── ONE-1737 · terminal pack receipt is stamped BY the queue ───────────
+
+/// Runs one attempt with a two-kind pack manifest to the requested terminal
+/// door, returning its stamped receipt (if any) and its receipt id.
+fn run_packed_attempt(
+    vault: &Vault,
+    terminal: fn(&AttemptQueue<'_>, AttemptId, u32) -> Result<()>,
+) -> Result<(String, Option<crate::ReceiptRecord>)> {
+    let queue = AttemptQueue::new(vault);
+    let attempt = enqueued(&queue, 10)?;
+    queue.append_manifest_entry(attempt.id, skill_entry("index", "1", 11))?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("expected claim");
+    };
+    queue.append_manifest_entry(attempt.id, skill_entry("pdf", "3", 13))?;
+    queue.append_manifest_entry(
+        attempt.id,
+        ManifestEntry::new(ManifestKind::ActorClaim, "claim-a", "2", 13),
+    )?;
+    terminal(&queue, attempt.id, leased.attempt_count)?;
+
+    let receipt_id = crate::receipt::attempt_pack_receipt_id(&attempt.id);
+    let receipt = crate::receipt::attempt_pack_receipt(vault, &receipt_id)?;
+    Ok((receipt_id, receipt))
+}
+
+fn complete_at_14(queue: &AttemptQueue<'_>, id: AttemptId, attempt_count: u32) -> Result<()> {
+    queue.complete(CompleteAttempt {
+        id,
+        lease_owner: "worker".to_owned(),
+        attempt_count,
+        now: 14,
+    })?;
+    Ok(())
+}
+
+fn fail_at_14(queue: &AttemptQueue<'_>, id: AttemptId, attempt_count: u32) -> Result<()> {
+    queue.fail(FailAttempt {
+        id,
+        lease_owner: "worker".to_owned(),
+        attempt_count,
+        reason: "boom".to_owned(),
+        now: 14,
+    })?;
+    Ok(())
+}
+
+/// The terminal transition itself stamps the pack receipt: no caller opts in,
+/// so no execute lane can forget it. The receipt carries the FULL accumulated
+/// manifest, split by kind, in append order.
+#[test]
+fn completing_an_attempt_under_a_pack_stamps_its_terminal_receipt() -> Result<()> {
+    let (_dir, vault) = open_queue();
+
+    let (receipt_id, receipt) = run_packed_attempt(&vault, complete_at_14)?;
+    let receipt = receipt.expect("the terminal transition stamped a pack receipt");
+
+    assert_eq!(receipt.receipt_id, receipt_id);
+    assert_eq!(receipt.outcome, "completed");
+    assert_eq!(receipt.occurred_at, 14, "the receipt is stamped at close");
+    assert_eq!(receipt.actor.as_deref(), Some("worker"));
+    assert_eq!(
+        receipt.pack_manifest_skills(),
+        Some(vec!["index@1".to_owned(), "pdf@3".to_owned()]),
+        "both the t0 index and the mid-run pull are on the terminal receipt"
+    );
+    assert_eq!(
+        receipt.pack_manifest_actor_claims(),
+        Some(vec!["claim-a@2".to_owned()])
+    );
+
+    // …and it is on the RS1 receipt family, not only in its own ledger.
+    let family = vault.receipts(crate::ReceiptQuery::new(16))?;
+    assert_eq!(
+        family
+            .iter()
+            .filter(|row| row.receipt_id == receipt_id)
+            .count(),
+        1,
+        "the stamped receipt projects into the unified receipt family exactly once"
+    );
+    Ok(())
+}
+
+/// A failed execute is attribution's primary input, so the fail door stamps
+/// too — and the outcome distinguishes the two terminals.
+#[test]
+fn failing_an_attempt_under_a_pack_stamps_its_terminal_receipt() -> Result<()> {
+    let (_dir, vault) = open_queue();
+
+    let (_, receipt) = run_packed_attempt(&vault, fail_at_14)?;
+    let receipt = receipt.expect("the fail door stamped a pack receipt");
+
+    assert_eq!(receipt.outcome, "failed");
+    assert_eq!(
+        receipt.pack_manifest_skills(),
+        Some(vec!["index@1".to_owned(), "pdf@3".to_owned()])
+    );
+    Ok(())
+}
+
+/// The manifest IS the reason the receipt exists: an attempt that ran under no
+/// pack mints no row, so the ledger stays the attribution surface rather than
+/// a second copy of the attempt queue.
+#[test]
+fn an_attempt_with_no_pack_stamps_no_receipt() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let attempt = enqueued(&queue, 10)?;
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".to_owned(),
+        now: 11,
+    })?
+    else {
+        panic!("expected claim");
+    };
+    complete_at_14(&queue, attempt.id, leased.attempt_count)?;
+
+    assert_eq!(
+        crate::receipt::attempt_pack_receipt(
+            &vault,
+            &crate::receipt::attempt_pack_receipt_id(&attempt.id),
+        )?,
+        None
+    );
+    assert!(vault.receipts(crate::ReceiptQuery::new(16))?.is_empty());
+    Ok(())
+}
+
+/// A row written before `scheduled_at`/`retry_of` existed, at the unchanged
+/// record version.
+#[derive(serde::Serialize)]
+struct PreScheduledAttemptRecord {
+    id: AttemptId,
+    kind: String,
+    payload: Vec<u8>,
+    state: AttemptState,
+    lease_owner: Option<String>,
+    attempt_count: u32,
+    claimed_at: Option<u64>,
+    backoff_until: Option<u64>,
+    last_error: Option<String>,
+    task_ref: Option<String>,
+    run_id: Option<String>,
+    dedupe_key: Option<String>,
+    created_at: u64,
+    updated_at: u64,
+    events: Vec<AttemptEvent>,
+}
+
+#[test]
+fn legacy_backoff_row_decodes_and_keeps_its_readiness_instant() -> Result<()> {
+    // Record version is unchanged: appending a unit-enum variant and two
+    // defaulted fields must not force a bump or a migration.
+    assert_eq!(ATTEMPT_RECORD_VERSION, 2);
+
+    let id = AttemptId::from_bytes(&[0x7A; 16])?;
+    let legacy = PreScheduledAttemptRecord {
+        id,
+        kind: "claim_extraction".to_owned(),
+        payload: b"legacy-payload".to_vec(),
+        state: AttemptState::Queued,
+        lease_owner: None,
+        attempt_count: 1,
+        claimed_at: Some(20),
+        backoff_until: Some(100),
+        last_error: Some("rate limited".to_owned()),
+        task_ref: None,
+        run_id: Some("run-legacy".to_owned()),
+        dedupe_key: Some("turn:legacy".to_owned()),
+        created_at: 10,
+        updated_at: 30,
+        events: Vec::new(),
+    };
+    let mut encoded = vec![ATTEMPT_RECORD_VERSION];
+    encoded.extend(rmp_serde::to_vec_named(&legacy).expect("serialize legacy attempt record"));
+
+    let decoded = decode_record(&encoded, id)?;
+    assert_eq!(decoded.state, AttemptState::Queued);
+    assert_eq!(decoded.backoff_until, Some(100));
+    assert_eq!(decoded.scheduled_at, None);
+    assert_eq!(decoded.retry_of, None);
+    assert_eq!(decoded.attempt_count, 1);
+    assert_eq!(decoded.last_error.as_deref(), Some("rate limited"));
+
+    // The legacy spelling still drives readiness, at the exact same instant.
+    assert_eq!(ready_at(&decoded), 100);
+
+    // Re-encoding a decoded legacy row keeps it decodable and unchanged.
+    let round_tripped = decode_record(&encode_record(&decoded)?, id)?;
+    assert_eq!(round_tripped, decoded);
+
+    Ok(())
+}
+
+#[test]
+fn legacy_backoff_row_stays_claimable_at_its_original_instant() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(attempt) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:legacy-live"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // Plant a pre-ONE-1795 row in place: Queued with only `backoff_until`, and
+    // a ready entry at that instant. No bulk rewrite converts it.
+    let mut record = queue.get(attempt.id)?.expect("enqueued row");
+    record.state = AttemptState::Queued;
+    record.backoff_until = Some(100);
+    record.attempt_count = 1;
+    record.claimed_at = Some(20);
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .attempt_ready
+            .delete(&mut wtxn, &ready_key(0, record.id))?;
+        let encoded = encode_record(&record)?;
+        vault
+            .store
+            .attempt_records
+            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+        vault.store.attempt_ready.put(
+            &mut wtxn,
+            &ready_key(100, record.id),
+            record.id.as_bytes(),
+        )?;
+        wtxn.commit()?;
+    }
+
+    assert_eq!(
+        queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now: 99,
+        })?,
+        ClaimOutcome::Empty
+    );
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 100,
+    })?
+    else {
+        panic!("legacy backoff row must claim at its own instant");
+    };
+    assert_eq!(claimed.id, attempt.id);
+    assert_eq!(claimed.backoff_until, None);
+    assert_eq!(claimed.scheduled_at, None);
+    assert_eq!(claimed.attempt_count, 2);
+
+    Ok(())
+}
+
+#[test]
+fn dedupe_hash_domain_stays_pinned() {
+    // Changing this silently orphans every live dedupe entry.
+    assert_eq!(DEDUPE_DOMAIN, b"oneiron.job_queue.dedupe.v1\0");
 }

@@ -57,6 +57,21 @@ sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", tag = "v0.6
 jieba-rs = { version = "0.9", default-features = false }
 lindera = { version = "3.0", default-features = false }
 
+# CAL-01 (ONE-1783): the shared calendar dependency reservation. `chrono` +
+# `chrono-tz` back the IANA conversion border in `src/calendar/tz.rs` and are
+# private to it — no chrono-family type may appear in a public signature. The
+# core index stays pure `u64` UTC. `icalendar` (CAL-02/CAL-04 parse/emit) and
+# `rrule` (CAL-03) land in the same append so the stacked calendar layers never
+# reopen this manifest. `default-features = false` on chrono states this crate's
+# own need — the border converts, it never reads a system clock or a host zone.
+# Note that `rrule` depends on chrono with defaults, so feature unification
+# still resolves chrono with `clock`; the flag is intent, not an achieved
+# tree-wide floor.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono-tz = "0.10"
+icalendar = "0.17"
+rrule = "0.14"
+
 # ONE-1148 (owner-approved POSIX-sem build, M5 kickoff 2026-06-13): macOS
 # LMDB otherwise defaults to SysV semaphores (mdb.c picks MDB_USE_SYSV_SEM
 # on __APPLE__) whose semget key comes from ftok(lockfile, 'M') — ~24 bits

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::access_grant::{AccessGrant, AccessGrantScope, decode_access_grant_body};
+use crate::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::companion::{
     ENTITY_TYPE_COMPANION_REGISTER,
@@ -34,7 +35,7 @@ use crate::registry::{
 };
 use crate::store::{
     ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, GateSystemNoticeRecord,
-    PendingGateConsentRecord, SEND_RECEIPT_RECORD_VERSION,
+    PendingGateConsentRecord, SEND_RECEIPT_RECORD_VERSION, Store,
 };
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
@@ -44,6 +45,7 @@ pub(crate) const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;
 thread_local! {
     static GATE_RECEIPT_PAGES_SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static GATE_RECEIPT_MAX_BUFFERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ATTEMPT_PACK_SCAN_CAPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -61,6 +63,16 @@ fn gate_receipt_pages_scanned() -> usize {
 fn gate_receipt_max_buffered() -> usize {
     GATE_RECEIPT_MAX_BUFFERED.get()
 }
+
+#[cfg(test)]
+fn attempt_pack_scan_capped() -> usize {
+    ATTEMPT_PACK_SCAN_CAPPED.get()
+}
+
+#[cfg(test)]
+fn reset_attempt_pack_scan_capped() {
+    ATTEMPT_PACK_SCAN_CAPPED.set(0);
+}
 const RECEIPT_VIEW_COMPONENT: &str = "receipt_view";
 const FIELD_JOB_REF: &str = "job_ref";
 const FIELD_BRIEF_REF: &str = "brief_ref";
@@ -70,12 +82,23 @@ const FIELD_INTENT_REF: &str = "intent_ref";
 pub const FIELD_TASK_REF: &str = "task_ref";
 /// Durable proof that the connector execution sink was reached successfully.
 pub const FIELD_TRANSPORT_DISPATCHED: &str = "transport_dispatched";
+/// ARCH-0053 §2 pack manifest: the `skill_id@version` rows the attempt loaded,
+/// as a canonical JSON array string.
+pub const FIELD_MANIFEST_SKILLS: &str = "manifest.skills";
+/// ARCH-0053 §2 pack manifest: the `actor.*` claim rows the attempt loaded, as
+/// a canonical JSON array string.
+pub const FIELD_MANIFEST_ACTOR_CLAIMS: &str = "manifest.actor_claims";
+/// `vault_meta` keyspace of the attempt PACK RECEIPT ledger. The suffix is the
+/// receipt id itself, so a cited `receipt_ref` point-reads its row.
+const ATTEMPT_PACK_RECEIPT_KEY_PREFIX: &[u8] = b"attempt_receipt:v1:";
+/// `receipt_id` namespace of the same ledger.
+const ATTEMPT_PACK_RECEIPT_ID_PREFIX: &str = "attempt:";
 const FIELD_PARENT_REF: &str = "parent_ref";
 const FIELD_COUNTERPARTY_REF: &str = "counterparty_ref";
 const FIELD_IDENTITY_REF: &str = "identity_ref";
 const FIELD_CHANNEL_IDENTITY_REF: &str = "channel_identity_ref";
 const FIELD_RECEIVING_IDENTITY_REF: &str = "receiving_identity_ref";
-const FIELD_GRANT_REF: &str = "grant_ref";
+pub(crate) const FIELD_GRANT_REF: &str = "grant_ref";
 const FIELD_BUNDLE_REF: &str = "bundle_ref";
 const FIELD_BUDGET_DEBIT: &str = "budget_debit";
 const FIELD_BUDGET: &str = "budget";
@@ -92,6 +115,64 @@ const FIELD_PROMPT_INPUT_REF: &str = "prompt_input_ref";
 const FIELD_DISCLOSURE_STAMP: &str = "disclosure_stamp";
 const BOARD_STATE_REF_PREFIX: &str = "board:";
 const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
+/// ARCH-0055 r7 proposal-outcome receipt fields (ONE-1747).
+///
+/// The three ramp-scope keys are `pub(crate)` because ONE-1748's demotion
+/// receipt names the SAME scope tuple: two spellings of one key would make the
+/// ramp's own receipts unjoinable with the outcome receipts they answer.
+const FIELD_PROPOSAL_REF: &str = "proposal_ref";
+pub(crate) const FIELD_OP_KIND: &str = "op_kind";
+pub(crate) const FIELD_TARGET_CLASS: &str = "target_class";
+pub(crate) const FIELD_SCOPE_ACTOR: &str = "actor";
+/// Why a consent-graduation scope was demoted back to the propose lane
+/// (ONE-1748); the wire strings are `consent_graduation::DemotionReason`.
+pub(crate) const FIELD_DEMOTION_REASON: &str = "demotion_reason";
+/// The resolution event's claim-source axis. Deliberately NOT `"source"`:
+/// that key is reserved as one of the six ARCH-0056 Δ field names this
+/// receipt must not project until ED-01 (ONE-1757) builds the Δ schema.
+const FIELD_CLAIM_SOURCE: &str = "claim_source";
+/// The amended op body verbatim (lower hex) — the PRODUCER artifact.
+const FIELD_AMENDED_BODY: &str = "amended_body";
+/// The ARCH-0056 Δ slot. Minted reserved by ONE-1747; ED-01 (ONE-1757) fills
+/// it from the Δ side-ledger as receipts project
+/// (`edit_distance::delta::attach_amendment_deltas`), which is why the key is
+/// `pub(crate)` rather than private to this module.
+pub(crate) const FIELD_AMENDMENT_DELTA: &str = "amendment_delta";
+/// Companion marker to [`FIELD_AMENDMENT_DELTA`]: the Δ for this amendment was
+/// measured and the measurement FAILED. It exists so the two states a reader
+/// would otherwise confuse stay apart — capture failure is non-fatal, but it
+/// is receipted, never silent.
+pub(crate) const FIELD_AMENDMENT_DELTA_UNCAPTURED: &str = "amendment_delta_uncaptured";
+/// The ARCH-0056 §7 ESCALATION field class (ONE-1762, ED-06).
+///
+/// An escalation is a gate decision a human made, so it projects into the
+/// existing `Gate` kind rather than minting one — which means the kind alone no
+/// longer says which projector wrote a record. These keys are that
+/// discriminator: a receipt carrying them is an escalation ruling or the
+/// standing policy one earned, and `edit_distance::escalation` is the only
+/// writer. They are `pub(crate)` for the same reason [`FIELD_AMENDMENT_DELTA`]
+/// is — the projector lives in another module, and a second spelling of one key
+/// would make the two families unjoinable.
+pub(crate) const FIELD_ESCALATION_SCOPE: &str = "escalation_scope";
+/// Which of the three closed triggers fired (`escalation::EscalationTrigger`).
+pub(crate) const FIELD_ESCALATION_TRIGGER: &str = "escalation_trigger";
+/// What was ruled (`escalation::EscalationRuling`). Also the ledger receipt's
+/// `outcome`; on a standing-policy receipt the outcome is the row's STATUS, so
+/// this field is what keeps one key answering "what was ruled" across the whole
+/// class.
+pub(crate) const FIELD_ESCALATION_RULING: &str = "escalation_ruling";
+/// What the engine asked when it stopped.
+pub(crate) const FIELD_ESCALATION_QUESTION: &str = "escalation_question";
+/// Why the human ruled as they did.
+pub(crate) const FIELD_ESCALATION_RATIONALE: &str = "escalation_rationale";
+/// The ask's magnitude band. Budget-triggered escalations only.
+pub(crate) const FIELD_ESCALATION_BUDGET_BAND: &str = "escalation_budget_band";
+/// The band ceiling a standing policy covers — distinct from
+/// [`FIELD_ESCALATION_BUDGET_BAND`], which is one ask's magnitude rather than a
+/// row's reach.
+pub(crate) const FIELD_ESCALATION_BAND_CEILING: &str = "escalation_band_ceiling";
+/// Comma-joined receipt ids of the rulings a standing policy was learned from.
+pub(crate) const FIELD_ESCALATION_CITED_RECEIPTS: &str = "escalation_cited_receipts";
 const FIELD_RECEIPT_SCHEMA: &str = "receipt_schema";
 const FIELD_ENGINE_REGISTER: &str = "engine_register";
 const FIELD_CARE_REGISTER: &str = "care_register";
@@ -129,6 +210,11 @@ pub enum ReceiptKind {
     ///
     /// [`EditProposal`]: crate::edit_roundtrip::EditProposal
     ArtifactSettle,
+    /// Outcome receipt of a resolved identity-topology proposal (ARCH-0055
+    /// r7, ONE-1747): what was proposed, what the decider ruled, and — on an
+    /// amended approval — the amended op body verbatim. Projects from the
+    /// type-76 resolution ledger event; there is no separate receipt store.
+    ProposalOutcome,
 }
 
 impl ReceiptKind {
@@ -142,6 +228,7 @@ impl ReceiptKind {
             Self::ScopedRead => "scoped_read",
             Self::Share => "share",
             Self::ArtifactSettle => "artifact_settle",
+            Self::ProposalOutcome => "proposal_outcome",
         }
     }
 
@@ -155,6 +242,7 @@ impl ReceiptKind {
             "scoped_read" => Some(Self::ScopedRead),
             "share" => Some(Self::Share),
             "artifact_settle" => Some(Self::ArtifactSettle),
+            "proposal_outcome" => Some(Self::ProposalOutcome),
             _ => None,
         }
     }
@@ -501,6 +589,243 @@ pub fn eiri_memory_board_state_ref(board: &EiriMemoryBoard) -> Result<String> {
     ))
 }
 
+/// Projects an attempt's accumulated PACK MANIFEST into receipt fields
+/// (ARCH-0053 §2 — the manifest is the attribution hinge).
+///
+/// This is a field-set on the RS1 shared spine, NOT a new receipt kind and
+/// NOT a new store: the terminal receipt of an attempt carries what the pack
+/// actually loaded, so an outcome can be attributed to a skill or an actor
+/// without re-deriving the pack. Both keys are always stamped, so an absent
+/// key means "this receipt predates the manifest" while an empty array means
+/// "the pack loaded nothing of that kind".
+///
+/// Order is the manifest's append order — never sorted, never deduped: the
+/// append-only sequence IS the evidence.
+pub fn append_pack_manifest_fields(
+    receipt: &mut ReceiptRecord,
+    manifest: &[ManifestEntry],
+) -> Result<()> {
+    let skills = manifest_wire_forms(manifest, ManifestKind::Skill);
+    let actor_claims = manifest_wire_forms(manifest, ManifestKind::ActorClaim);
+    receipt.fields.insert(
+        FIELD_MANIFEST_SKILLS.to_owned(),
+        encode_wire_forms(&skills)?,
+    );
+    receipt.fields.insert(
+        FIELD_MANIFEST_ACTOR_CLAIMS.to_owned(),
+        encode_wire_forms(&actor_claims)?,
+    );
+    Ok(())
+}
+
+fn manifest_wire_forms(manifest: &[ManifestEntry], kind: ManifestKind) -> Vec<String> {
+    manifest
+        .iter()
+        .filter(|entry| entry.kind == kind)
+        .map(ManifestEntry::wire_form)
+        .collect()
+}
+
+fn encode_wire_forms(entries: &[String]) -> Result<String> {
+    serde_json::to_string(entries)
+        .map_err(|_| Error::InvariantViolation("pack manifest field encode failed"))
+}
+
+fn decode_wire_forms(raw: &str) -> Option<Vec<String>> {
+    serde_json::from_str(raw).ok()
+}
+
+/// The stable `receipt_id` of one attempt's terminal PACK RECEIPT.
+///
+/// Attribution evidence cites this string, and the ledger is keyed by it, so
+/// a cited `receipt_ref` resolves with a point-read rather than a scan.
+#[must_use]
+pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
+    format!(
+        "{ATTEMPT_PACK_RECEIPT_ID_PREFIX}{}",
+        hex_lower(attempt_id.as_bytes())
+    )
+}
+
+fn attempt_pack_receipt_key(receipt_id: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(ATTEMPT_PACK_RECEIPT_KEY_PREFIX.len() + receipt_id.len());
+    key.extend_from_slice(ATTEMPT_PACK_RECEIPT_KEY_PREFIX);
+    key.extend_from_slice(receipt_id.as_bytes());
+    key
+}
+
+/// Stamps the terminal pack receipt for an attempt that ran underneath a
+/// skill pack, inside the terminal transition's OWN write transaction.
+///
+/// This is the production call path for [`append_pack_manifest_fields`]:
+/// [`AttemptQueue::complete`] and [`AttemptQueue::fail`] are the two doors
+/// every execute leaves through, so stamping there cannot be forgotten by a
+/// caller and cannot drift per lane. An attempt whose pack loaded nothing
+/// mints no row — the manifest IS the reason this receipt exists.
+///
+/// Atomic with the state seal: a terminal attempt with a manifest and no
+/// receipt (or the reverse) is not a reachable state. The row is written
+/// once, at the transition, and never rewritten — which is what makes
+/// "a closed attempt's manifest is the evidence its receipt already
+/// projected" true rather than aspirational.
+///
+/// [`AttemptQueue::complete`]: crate::attempt_queue::AttemptQueue::complete
+/// [`AttemptQueue::fail`]: crate::attempt_queue::AttemptQueue::fail
+pub(crate) fn stamp_attempt_pack_receipt_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &AttemptRecord,
+    actor: &str,
+) -> Result<()> {
+    if record.manifest().is_empty() {
+        return Ok(());
+    }
+    let mut receipt = ReceiptRecord {
+        receipt_id: attempt_pack_receipt_id(&record.id),
+        receipt_kind: ReceiptKind::Outbound,
+        occurred_at: record.updated_at,
+        actor: Some(actor.to_owned()),
+        on_behalf_of: None,
+        outcome: record.state.as_str().to_owned(),
+        job_ref: record.run_id.clone(),
+        trigger_ref: record.task_ref.clone(),
+        policy_trace: Vec::new(),
+        fields: BTreeMap::new(),
+    };
+    append_pack_manifest_fields(&mut receipt, record.manifest())?;
+    let encoded = rmp_serde::to_vec_named(&receipt)
+        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
+    store.vault_meta.put(
+        wtxn,
+        &attempt_pack_receipt_key(&receipt.receipt_id),
+        &encoded,
+    )?;
+    Ok(())
+}
+
+/// Point-reads the attempt pack receipt named by `receipt_id`.
+///
+/// `Ok(None)` means "no such receipt on the ledger" — the answer attribution
+/// needs to reject a fabricated `receipt_ref`, and the reason this is a
+/// point-read: it runs once per recorded outcome.
+pub fn attempt_pack_receipt(vault: &Vault, receipt_id: &str) -> Result<Option<ReceiptRecord>> {
+    if !receipt_id.starts_with(ATTEMPT_PACK_RECEIPT_ID_PREFIX) {
+        return Ok(None);
+    }
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &attempt_pack_receipt_key(receipt_id))?
+    else {
+        return Ok(None);
+    };
+    decode_attempt_pack_receipt(&raw).map(Some)
+}
+
+/// Overwrites one row of the pack receipt ledger.
+///
+/// Test-only by construction: production stamps exactly once, at the terminal
+/// transition, and never rewrites. Tests use it to synthesize rows the current
+/// stamper cannot produce (a receipt predating the manifest field-set).
+#[cfg(test)]
+pub(crate) fn overwrite_attempt_pack_receipt_for_test(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+) -> Result<()> {
+    vault.with_write_txn(|wtxn| put_attempt_pack_receipt_for_test(&vault.store, wtxn, receipt))
+}
+
+/// The transaction-scoped half of [`overwrite_attempt_pack_receipt_for_test`],
+/// so a test that synthesizes a large ledger pays one write transaction rather
+/// than one per row.
+#[cfg(test)]
+pub(crate) fn put_attempt_pack_receipt_for_test(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt: &ReceiptRecord,
+) -> Result<()> {
+    let encoded = rmp_serde::to_vec_named(receipt)
+        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
+    store.vault_meta.put(
+        wtxn,
+        &attempt_pack_receipt_key(&receipt.receipt_id),
+        &encoded,
+    )?;
+    Ok(())
+}
+
+/// Names the first key past the attempt pack receipt family.
+///
+/// The reverse walk needs an explicit half-open range because `OverlayDb`
+/// exposes no reverse prefix iterator. The prefix is an ASCII literal, so its
+/// final byte is nowhere near `0xFF` and bumping it is the exclusive bound.
+fn attempt_pack_receipt_key_range_end() -> Vec<u8> {
+    let mut end = ATTEMPT_PACK_RECEIPT_KEY_PREFIX.to_vec();
+    if let Some(last) = end.last_mut() {
+        *last = last.saturating_add(1);
+    }
+    end
+}
+
+/// Collects the attempt pack receipt ledger under the family DoS guard.
+///
+/// Walks the key range NEWEST-FIRST — the key embeds the UUIDv7 attempt id, so
+/// key order IS mint order — and caps the walk at [`MAX_RECEIPT_QUERY_SCAN`].
+/// Direction is the whole point of the cap: these rows persist for the life of
+/// the vault (unlike the attempt events they project from, which drain), so an
+/// oldest-first cap would permanently hide every RECENT receipt behind an
+/// attacker-grown backlog, and the family query is newest-first by contract.
+/// Callers sort and truncate downstream, so below the cap this returns the
+/// same set the unbounded walk did.
+///
+/// Above the cap the answer is a bounded PREFIX, not the family — which
+/// [`note_attempt_pack_scan_capped`] says out loud rather than truncating in
+/// silence.
+fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let end = attempt_pack_receipt_key_range_end();
+    let bounds = (
+        std::ops::Bound::Included(ATTEMPT_PACK_RECEIPT_KEY_PREFIX),
+        std::ops::Bound::Excluded(&end[..]),
+    );
+    let mut receipts = Vec::new();
+    // One row PAST the cap is read and never decoded: it is what separates a
+    // ledger holding exactly the cap from one the cap truncated.
+    for row in vault
+        .store
+        .vault_meta
+        .rev_range(&rtxn, &bounds)?
+        .take(MAX_RECEIPT_QUERY_SCAN + 1)
+    {
+        let (_, raw) = row?;
+        if receipts.len() == MAX_RECEIPT_QUERY_SCAN {
+            note_attempt_pack_scan_capped();
+            break;
+        }
+        receipts.push(decode_attempt_pack_receipt(&raw)?);
+    }
+    Ok(receipts)
+}
+
+/// Surfaces an attempt pack receipt scan that stopped at the work cap.
+///
+/// The discarded remainder is unbounded by construction, so it is never
+/// counted — the signal is that the cap FIRED, which is the fact an operator
+/// (or a test) needs to know the query answered from a prefix.
+fn note_attempt_pack_scan_capped() {
+    tracing::warn!(
+        scan_cap = MAX_RECEIPT_QUERY_SCAN,
+        "attempt pack receipt scan hit the receipt-family work cap; older rows were not projected"
+    );
+    #[cfg(test)]
+    ATTEMPT_PACK_SCAN_CAPPED.with(|fired| fired.set(fired.get() + 1));
+}
+
+fn decode_attempt_pack_receipt(raw: &[u8]) -> Result<ReceiptRecord> {
+    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("attempt pack receipt row"))
+}
+
 /// Attaches the OF-369 context field-set to an emit-adjacent receipt.
 ///
 /// Non-emit receipts never carry emit context; attaching to one is rejected
@@ -520,6 +845,25 @@ pub fn append_context_receipt_fields(
 }
 
 impl ReceiptRecord {
+    /// Reads the ARCH-0053 §2 pack manifest recorded on this receipt: the
+    /// `skill_id@version` rows the attempt's pack loaded, in append order.
+    ///
+    /// Returns `None` on receipts stamped before the field-set existed —
+    /// distinct from `Some(vec![])`, which records a pack that loaded no
+    /// skills. The values are read from the recorded field alone, never
+    /// recomputed from the live attempt row (record-not-replay).
+    #[must_use]
+    pub fn pack_manifest_skills(&self) -> Option<Vec<String>> {
+        decode_wire_forms(self.fields.get(FIELD_MANIFEST_SKILLS)?)
+    }
+
+    /// Reads the ARCH-0053 §2 pack manifest's `actor.*` claim rows. Same
+    /// absent-versus-empty contract as [`Self::pack_manifest_skills`].
+    #[must_use]
+    pub fn pack_manifest_actor_claims(&self) -> Option<Vec<String>> {
+        decode_wire_forms(self.fields.get(FIELD_MANIFEST_ACTOR_CLAIMS)?)
+    }
+
     /// Reads the OF-369 context field-set recorded on this receipt.
     ///
     /// Returns `None` on non-emit receipt kinds and on emit receipts that
@@ -882,6 +1226,23 @@ impl Vault {
         query: StandingOutboundGrantsLensQuery,
     ) -> Result<StandingOutboundGrantsLens> {
         standing_outbound_grants_lens(self, query)
+    }
+
+    /// DEC-0006 surface (b): the unified consent registry, projected here so
+    /// review and one-tap revoke reach it through the receipt family like
+    /// every other lens.
+    ///
+    /// This is a re-export of [`Vault::consent_registry`], not a second
+    /// registry — invariant 9 allows exactly two human surfaces, so a lens
+    /// that recomputed its own view would BE the forbidden third one.
+    /// [`Vault::standing_outbound_grants_lens`] above is likewise a
+    /// COMPATIBILITY projection over the outbound grant family, kept for its
+    /// existing callers rather than promoted to a separate consent surface.
+    pub fn consent_registry_lens(
+        &self,
+        query: crate::consent::ConsentRegistryQuery,
+    ) -> Result<crate::consent::ConsentRegistry> {
+        self.consent_registry(query)
     }
 }
 
@@ -1684,7 +2045,10 @@ fn sort_receipts_newest_first(records: &mut [ReceiptRecord]) {
     records.sort_by(receipt_newest_first_order);
 }
 
-fn receipt_newest_first_order(left: &ReceiptRecord, right: &ReceiptRecord) -> std::cmp::Ordering {
+pub(crate) fn receipt_newest_first_order(
+    left: &ReceiptRecord,
+    right: &ReceiptRecord,
+) -> std::cmp::Ordering {
     right
         .occurred_at
         .cmp(&left.occurred_at)
@@ -1692,7 +2056,15 @@ fn receipt_newest_first_order(left: &ReceiptRecord, right: &ReceiptRecord) -> st
         .then_with(|| left.receipt_id.cmp(&right.receipt_id))
 }
 
-fn retain_newest_receipt(receipts: &mut Vec<ReceiptRecord>, receipt: ReceiptRecord, limit: usize) {
+/// Keeps at most `limit` records, evicting the oldest under
+/// [`receipt_newest_first_order`] — the SAME order
+/// [`finalize_receipt_query_records`] finally sorts by, which is what makes a
+/// bounded projector buffer lossless with respect to the public answer.
+pub(crate) fn retain_newest_receipt(
+    receipts: &mut Vec<ReceiptRecord>,
+    receipt: ReceiptRecord,
+    limit: usize,
+) {
     if receipts.len() < limit {
         receipts.push(receipt);
         return;
@@ -1814,9 +2186,28 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );
+        records.extend(
+            attempt_pack_receipts(vault)?
+                .into_iter()
+                .filter(|receipt| query.matches(receipt)),
+        );
     }
     if query.includes_kind(ReceiptKind::Gate) {
         records.extend(gate_receipts(vault, query)?);
+        // The SECOND Gate projector (ONE-1748): consent-graduation
+        // self-demotions and door-recorded ramp outcomes. They share the kind
+        // but not the store — a ramp bookkeeping row has no business in the
+        // gate-decision ledger, which ONE-1637 made the erasure chain's H0
+        // index. Both projectors open their own read txn, so they run before
+        // the shared `rtxn` below.
+        records.extend(crate::consent_graduation::ramp_receipts(vault, query)?);
+        // The THIRD Gate projector (ONE-1762): escalation rulings and the
+        // standing policies they earn. Same kind, own store, own field class —
+        // an escalation is a gate decision a human made, so it mints no kind of
+        // its own. Opens its own read txn, as the ramp projector does.
+        records.extend(crate::edit_distance::escalation::escalation_receipts(
+            vault, query,
+        )?);
     }
 
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
@@ -1833,6 +2224,12 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     let rtxn = vault.store.env.read_txn()?;
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
         records.extend(companion_lifecycle_receipts(vault, &rtxn, query)?);
+    }
+    // ONE type-76 scan serves both kinds it projects; the projector-level
+    // kind gate keeps a single-kind query from returning the other's rows.
+    if query.includes_kind(ReceiptKind::IdentityLifecycle)
+        || query.includes_kind(ReceiptKind::ProposalOutcome)
+    {
         records.extend(identity_topology_receipts(vault, &rtxn, query)?);
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
@@ -1843,6 +2240,13 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
         records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
     }
+
+    // ED-01 (ONE-1757): the reserved Δ slot is filled from its own side-ledger
+    // once, HERE, rather than by every projector that can emit an amended
+    // outcome. Receipts are projections, so a Δ has nowhere else to be
+    // stamped; one pass over the collected records keeps the family
+    // projectors ignorant of edit distance.
+    crate::edit_distance::delta::attach_amendment_deltas(vault, &rtxn, &mut records)?;
 
     Ok(records)
 }
@@ -2132,12 +2536,140 @@ fn identity_topology_receipts(
         {
             continue;
         }
-        let receipt = identity_topology_receipt(&event_id, &record);
-        if query.matches(&receipt) {
+        // Per-kind dispatch: a resolution row NAMED by the fold as a
+        // duplicate (the proposal already retired by an EARLIER ruling)
+        // projects nothing — an outcome receipt for it would read as a
+        // second, contradictory decision about one review. Rejection sets
+        // arrive from the fold the log itself maintains, so a replay that
+        // double-rules converges to the same single receipt everywhere.
+        let action_is_resolution = matches!(
+            record.action,
+            crate::identity_topology::StoredIdentityOpAction::ProposalResolution { .. }
+        );
+        if action_is_resolution {
+            let fold = crate::identity_topology::fold_identity_topology_log(
+                &vault.fold_effective_identity_topology_events_in_txn(rtxn)?,
+            );
+            if fold
+                .rejections
+                .iter()
+                .any(|(rejected, reason)| {
+                    *rejected == event_id
+                        && matches!(
+                            reason,
+                            crate::identity_topology::IdentityTopologyRejection::ProposalAlreadyResolved { .. }
+                        )
+                })
+            {
+                continue;
+            }
+        }
+        let receipt = if action_is_resolution {
+            proposal_outcome_receipt(&event_id, &record)
+        } else {
+            identity_topology_receipt(&event_id, &record)
+        };
+        if query.includes_kind(receipt.receipt_kind) && query.matches(&receipt) {
             receipts.push(receipt);
         }
     }
     Ok(receipts)
+}
+
+/// Projects the ARCH-0055 r7 proposal-outcome receipt from a resolution
+/// ledger event (ONE-1747).
+///
+/// The three ramp-scope fields (`op_kind`, `target_class`, `actor`) are
+/// stamped on ALL THREE outcomes so MS-06 (ONE-1748) can rebuild per-scope
+/// ramp statistics from receipts alone, with no ledger dereference.
+///
+/// `amended_body` carries the amended op bytes as lower hex, present ONLY on
+/// `approved_amended` — the producer artifact ED-01 (ONE-1757) diffs
+/// against the proposal, never overwritten. It is DISTINCT from
+/// [`FIELD_AMENDMENT_DELTA`], the reserved slot ED-01 fills with the encoded
+/// Δ schema: two fields, two meanings. This ticket never writes the latter.
+fn proposal_outcome_receipt(
+    event_id: &EntityId,
+    record: &crate::identity_topology::StoredIdentityOpEvent,
+) -> ReceiptRecord {
+    use crate::identity_topology::StoredIdentityOpAction;
+
+    let StoredIdentityOpAction::ProposalResolution {
+        proposal,
+        outcome,
+        scope,
+        amended_body,
+    } = &record.action
+    else {
+        unreachable!("proposal outcome receipt projects only resolution events")
+    };
+
+    let mut fields = BTreeMap::new();
+    fields.insert(FIELD_PROPOSAL_REF.to_owned(), proposal.to_hex());
+    fields.insert(FIELD_OP_KIND.to_owned(), scope.op_kind.to_owned());
+    fields.insert(FIELD_TARGET_CLASS.to_owned(), scope.target_class.clone());
+    fields.insert(FIELD_SCOPE_ACTOR.to_owned(), scope.actor.clone());
+    // NOT `source`: that key is one of the six ARCH-0056 Δ field names this
+    // receipt must not project until ED-01 (ONE-1757) builds the Δ schema.
+    // The claim-source axis is real and unrelated, so it keeps its own
+    // unambiguous key rather than squatting on the reserved one.
+    fields.insert(
+        FIELD_CLAIM_SOURCE.to_owned(),
+        record.source.as_str().to_owned(),
+    );
+    fields.insert("seq".to_owned(), record.seq.to_string());
+    if let Some(amended_body) = amended_body {
+        fields.insert(FIELD_AMENDED_BODY.to_owned(), hex_lower(amended_body));
+    }
+
+    ReceiptRecord {
+        receipt_id: format!("proposal_outcome:{}", event_id.to_hex()),
+        receipt_kind: ReceiptKind::ProposalOutcome,
+        occurred_at: record.at,
+        actor: record.actor.map(|actor| actor.entity_ref().to_hex()),
+        on_behalf_of: None,
+        outcome: outcome.as_str().to_owned(),
+        job_ref: None,
+        trigger_ref: Some(format!("event:{}", proposal.to_hex())),
+        policy_trace: Vec::new(),
+        fields,
+    }
+}
+
+/// The amended op body a proposal-outcome receipt carries — the raw bytes
+/// the decider approved, byte-identical to what was applied. `None` on
+/// `approved_untouched` / `rejected` (nothing was amended) and on any other
+/// receipt kind.
+#[must_use]
+pub fn proposal_outcome_amended_body(record: &ReceiptRecord) -> Option<Vec<u8>> {
+    receipt_hex_field(record, FIELD_AMENDED_BODY)
+}
+
+/// The reserved ARCH-0056 amendment-delta slot (ONE-1747 mints it EMPTY;
+/// ED-01 / ONE-1757 fills it with the encoded Δ schema).
+///
+/// Always `None` today — deliberately, not incidentally: the Δ schema is the
+/// ED epic's surface, and building it here would over-build it. Distinct
+/// from [`proposal_outcome_amended_body`], which is the producer artifact
+/// the Δ is computed FROM.
+#[must_use]
+pub fn proposal_outcome_delta(record: &ReceiptRecord) -> Option<Vec<u8>> {
+    receipt_hex_field(record, FIELD_AMENDMENT_DELTA)
+}
+
+/// Decodes an opaque payload field carried as lower hex. A malformed value
+/// reads as absent: the field is engine-written through
+/// [`hex_lower`], so unparseable content is not a payload the caller can
+/// meaningfully act on.
+fn receipt_hex_field(record: &ReceiptRecord, field: &str) -> Option<Vec<u8>> {
+    let hex = record.fields.get(field)?;
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(hex.get(index..index + 2)?, 16).ok())
+        .collect()
 }
 
 fn identity_topology_receipt(
@@ -2156,27 +2688,52 @@ fn identity_topology_receipt(
             actor.actor_class().gate_actor_class().to_owned(),
         );
     }
+    // DECLARED vs APPLIED (ONE-1745), for every action that carries a
+    // reassignment map. The gap is the point: it means the decision named
+    // items this vault holds no claim for. Both halves read the STORED
+    // record alone, so the projector stays pure — no vault, no txn.
+    if let Some(map) = record.action.reassignment_map() {
+        let (assigned, residue) = map.assigned_and_residue_counts();
+        fields.insert("assigned".to_owned(), assigned.to_string());
+        fields.insert("residue".to_owned(), residue.to_string());
+    }
+    if let Some(applied) = record.action.applied_reassignment_stats() {
+        fields.insert("applied_assigned".to_owned(), applied.assigned.to_string());
+        fields.insert("applied_residue".to_owned(), applied.residue.to_string());
+    }
     let trigger_ref = match &record.action {
         StoredIdentityOpAction::Merge { sources, survivor } => {
             fields.insert("survivor".to_owned(), survivor.to_hex());
             fields.insert("source_count".to_owned(), sources.len().to_string());
             Some(format!("entity:{}", survivor.to_hex()))
         }
-        StoredIdentityOpAction::Split {
-            entity,
-            heads,
-            reassignment,
-        } => {
-            let (assigned, residue) = reassignment.assigned_and_residue_counts();
+        StoredIdentityOpAction::Split { entity, heads, .. } => {
             fields.insert("entity".to_owned(), entity.to_hex());
             fields.insert("head_count".to_owned(), heads.len().to_string());
-            fields.insert("assigned".to_owned(), assigned.to_string());
-            fields.insert("residue".to_owned(), residue.to_string());
             Some(format!("entity:{}", entity.to_hex()))
+        }
+        StoredIdentityOpAction::Facet { entity, facets, .. } => {
+            fields.insert("entity".to_owned(), entity.to_hex());
+            fields.insert("facet_count".to_owned(), facets.len().to_string());
+            Some(format!("entity:{}", entity.to_hex()))
+        }
+        // ONE-1746: the pair is the decision, and the claim is where it
+        // lives — both projected so a reader can audit the assertion without
+        // dereferencing the ledger event.
+        StoredIdentityOpAction::AssertDistinct { a, b, claim } => {
+            fields.insert("pair_a".to_owned(), a.to_hex());
+            fields.insert("pair_b".to_owned(), b.to_hex());
+            fields.insert("claim".to_owned(), claim.to_hex());
+            Some(format!("claim:{}", claim.to_hex()))
         }
         StoredIdentityOpAction::Undo { target } => {
             fields.insert("undo_of".to_owned(), target.to_hex());
             Some(format!("event:{}", target.to_hex()))
+        }
+        // Resolution rows project the ProposalOutcome receipt instead; the
+        // caller dispatches on the action before reaching this projector.
+        StoredIdentityOpAction::ProposalResolution { proposal, .. } => {
+            Some(format!("event:{}", proposal.to_hex()))
         }
     };
 
@@ -2615,6 +3172,11 @@ fn append_access_grant_scope_fields(
             fields.insert("scope".to_owned(), "companion_profile".to_owned());
             fields.insert("person_ref".to_owned(), person_ref.to_hex());
             fields.insert("persona_ref".to_owned(), persona_ref.to_hex());
+        }
+        AccessGrantScope::Calendar { calendar_ref, rung } => {
+            fields.insert("scope".to_owned(), "calendar".to_owned());
+            fields.insert("calendar_ref".to_owned(), calendar_ref.to_hex());
+            fields.insert("rung".to_owned(), rung.as_str().to_owned());
         }
     }
 }

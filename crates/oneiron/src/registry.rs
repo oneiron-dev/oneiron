@@ -36,6 +36,15 @@ pub const ENTITY_TYPE_CODE_SYMBOL: u8 = 84;
 /// per version. A blob artifact is not a code artifact — kind = shape
 /// (DEC-0005 §7), so CODE_ARTIFACT (83) reuse was rejected.
 pub const ENTITY_TYPE_BLOB_ARTIFACT: u8 = 85;
+/// ARCH-0069 S1/S2 secret custody (SECRET-01, ONE-1919): the `SecretCustodyRecord`
+/// is the secret VALUE's home — plaintext bytes at rest under the vault DEK
+/// plane, never claims / CRDT / export / logs. Maintenance classification in
+/// the Companion band.
+/// Byte 77 minted under the byte-space v3 rider (re-pick within 77–99 on a
+/// spine conflict; registrations are not re-keys). Replication of this byte
+/// is fail-closed until ONE-1865's per-credential dial replaces the interim
+/// sync/selector.rs exclusion.
+pub const ENTITY_TYPE_SECRET_CUSTODY: u8 = 77;
 /// ARCH-0055 identity-topology ledger event (ONE-1743, owner-ruled seat;
 /// byte pinned by the byte-space v3 canon row shipping in the docs lane).
 /// Engine-authored maintenance record written ONLY by the identity-topology
@@ -458,6 +467,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         short_id_prefix: Some("ba"),
         classification: EntityClassification::Pack,
         band: TypeByteBand::Productivity,
+    },
+    EntityTypeRegistryEntry {
+        kind: "SECRET_CUSTODY",
+        type_byte: ENTITY_TYPE_SECRET_CUSTODY,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::Companion,
     },
     EntityTypeRegistryEntry {
         kind: "REDACTION_AUDIT",

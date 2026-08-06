@@ -15,7 +15,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 const SEED_HASH_LEN: usize = 16;
 #[cfg(test)]
@@ -185,16 +185,16 @@ impl CachedPprRow {
     }
 }
 
-struct PprRoundContext<'a, 'txn> {
-    store: &'a Store,
+struct PprRoundContext<'a, 'txn, D: ManifestDbs> {
+    store: &'a D,
     txn: &'a RoTxn<'txn>,
     seeds: &'a [EntityId],
     seed_weights: &'a [f32],
     alpha: f32,
 }
 
-struct PprCacheReadContext<'a, 'txn> {
-    store: &'a Store,
+struct PprCacheReadContext<'a, 'txn, D: ManifestDbs> {
+    store: &'a D,
     txn: &'a RoTxn<'txn>,
     seeds: &'a [EntityId],
     alpha: f32,
@@ -240,7 +240,7 @@ struct PprCacheReadContext<'a, 'txn> {
 /// is the normalized weight vector (Σ seed mass = 1.0).
 #[cfg(test)]
 pub(crate) fn ppr_compute_weighted(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     weighting: SeedWeighting,
@@ -251,7 +251,7 @@ pub(crate) fn ppr_compute_weighted(
 }
 
 fn ppr_compute_state_weighted(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     weighting: SeedWeighting,
@@ -297,7 +297,7 @@ fn ppr_compute_state_weighted(
 }
 
 fn ppr_resume_state_weighted(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     weighting: SeedWeighting,
@@ -340,13 +340,13 @@ fn ppr_resume_state_weighted(
 }
 
 fn run_ppr_rounds(
-    context: PprRoundContext<'_, '_>,
+    context: PprRoundContext<'_, '_, impl ManifestDbs>,
     rounds: u32,
     scores: &mut HashMap<EntityId, f32>,
     frontier: &mut HashMap<(EntityId, u32), f32>,
     dependencies: &mut HashSet<EntityId>,
 ) -> Result<()> {
-    let edge_dbs = [&context.store.edges_out, &context.store.edges_in];
+    let edge_dbs = [context.store.edges_out(), context.store.edges_in()];
 
     for _ in 0..rounds {
         if frontier.is_empty() {
@@ -464,7 +464,7 @@ fn frontier_to_map(frontier: Vec<PprFrontierEntry>) -> HashMap<(EntityId, u32), 
 /// `ppr_query_in_txn_with_deferred_cache`, which carries the mode.
 #[cfg(test)]
 pub(crate) fn ppr_compute(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
@@ -476,7 +476,7 @@ pub(crate) fn ppr_compute(
 /// Resolves the normalized per-seed mass vector for `weighting`. Always sums
 /// to 1.0 (up to f32 rounding) and every entry is strictly positive.
 fn seed_weights(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     weighting: SeedWeighting,
@@ -501,7 +501,7 @@ fn seed_weights(
 /// normalizer is finite and strictly positive — the division below cannot
 /// produce NaN or infinity.
 fn specificity_seed_weights(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
 ) -> Result<Vec<f32>> {
@@ -524,9 +524,13 @@ fn specificity_seed_weights(
 /// (pinned decision — the count is a literal row count over the index; no
 /// persisted counter exists in the DB manifest). Corrupt rows are a typed
 /// error, never silently skipped.
-fn inbound_mentions_count(store: &Store, txn: &RoTxn<'_>, seed: &EntityId) -> Result<u64> {
+fn inbound_mentions_count(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seed: &EntityId,
+) -> Result<u64> {
     let mut count = 0_u64;
-    for entry in store.edges_in.prefix_iter(txn, seed.as_bytes())? {
+    for entry in store.edges_in().prefix_iter(txn, seed.as_bytes())? {
         let (key, _) = entry?;
         let (_, kind, _) = parse_strict_edge_record_key(&key)?;
         if kind == EdgeKind::Mentions {
@@ -561,14 +565,14 @@ fn inbound_mentions_count(store: &Store, txn: &RoTxn<'_>, seed: &EntityId) -> Re
 /// the 7 d / 30 d boundaries — TTL is a freshness heuristic; correctness is
 /// owned by the graph-version + stale gates.
 fn recency_tiered_cache_ttl_secs(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     now: u64,
 ) -> Result<u64> {
     let mut max_learned_at: Option<u64> = None;
     for seed in seeds {
-        let Some(raw) = store.entities.get(txn, seed.as_bytes())? else {
+        let Some(raw) = store.entities().get(txn, seed.as_bytes())? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -631,7 +635,7 @@ pub(crate) fn ppr_query(
 
 #[cfg(test)]
 pub(crate) fn ppr_query_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
@@ -650,7 +654,7 @@ pub(crate) fn ppr_query_in_txn(
 }
 
 pub(crate) fn ppr_query_in_txn_with_deferred_cache(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
@@ -677,7 +681,7 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
 }
 
 fn ppr_query_in_txn_impl(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
@@ -731,7 +735,7 @@ fn ppr_query_in_txn_impl(
 }
 
 fn read_deepest_resume_state(
-    context: &PprCacheReadContext<'_, '_>,
+    context: &PprCacheReadContext<'_, '_, impl ManifestDbs>,
     target_depth: u32,
 ) -> Result<Option<PprCacheState>> {
     for completed_depth in (0..target_depth).rev() {
@@ -753,7 +757,7 @@ fn read_deepest_resume_state(
 }
 
 fn read_exact_cache_row(
-    context: &PprCacheReadContext<'_, '_>,
+    context: &PprCacheReadContext<'_, '_, impl ManifestDbs>,
     seed_hash: &[u8; SEED_HASH_LEN],
     expected_depth: u32,
 ) -> Result<Option<CachedPprRow>> {
@@ -761,7 +765,7 @@ fn read_exact_cache_row(
 }
 
 fn read_resume_cache_row(
-    context: &PprCacheReadContext<'_, '_>,
+    context: &PprCacheReadContext<'_, '_, impl ManifestDbs>,
     seed_hash: &[u8; SEED_HASH_LEN],
     expected_depth: u32,
 ) -> Result<Option<CachedPprRow>> {
@@ -769,12 +773,12 @@ fn read_resume_cache_row(
 }
 
 fn read_servable_cache_row(
-    context: &PprCacheReadContext<'_, '_>,
+    context: &PprCacheReadContext<'_, '_, impl ManifestDbs>,
     seed_hash: &[u8; SEED_HASH_LEN],
     expected_depth: u32,
     enforce_ttl: bool,
 ) -> Result<Option<CachedPprRow>> {
-    let Some(raw) = context.store.ppr_cache.get(context.txn, seed_hash)? else {
+    let Some(raw) = context.store.ppr_cache().get(context.txn, seed_hash)? else {
         return Ok(None);
     };
     let (computed_at, cached_graph_version, stale) = parse_cache_header(&raw)?;
@@ -866,7 +870,7 @@ pub(crate) fn cleanup_ppr_cache(
 ) -> Result<(u64, u64)> {
     let mut cache_keys_to_delete = Vec::new();
     let mut cache_seed_hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
-    for entry in store.ppr_cache.iter(&*wtxn)? {
+    for entry in store.ppr_cache().iter(&*wtxn)? {
         let (seed_hash_key, value) = entry?;
         if seed_hash_key.len() != SEED_HASH_LEN {
             cache_keys_to_delete.push(seed_hash_key.to_vec());
@@ -892,7 +896,7 @@ pub(crate) fn cleanup_ppr_cache(
     }
 
     for key in &cache_keys_to_delete {
-        store.ppr_cache.delete(wtxn, key)?;
+        store.ppr_cache().delete(wtxn, key)?;
     }
 
     let mut seed_liveness = HashMap::<EntityId, bool>::new();
@@ -916,7 +920,7 @@ pub(crate) fn cleanup_ppr_cache(
             Err(err) => return Err(err),
         };
 
-        if store.ppr_cache.get(&*wtxn, &seed_hash)?.is_none() {
+        if store.ppr_cache().get(&*wtxn, &seed_hash)?.is_none() {
             dep_keys_to_delete.push(dep_key.to_vec());
             continue;
         }
@@ -945,7 +949,7 @@ pub(crate) fn cleanup_ppr_cache(
     }
 
     for seed_hash in &dead_seed_hashes {
-        store.ppr_cache.delete(wtxn, seed_hash)?;
+        store.ppr_cache().delete(wtxn, seed_hash)?;
     }
 
     for (dep_key, seed_hash) in surviving_dep_rows {
@@ -987,28 +991,32 @@ fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &Entity
     }
 
     for seed_hash in hashes {
-        let Some(raw) = store.ppr_cache.get(&*wtxn, &seed_hash)? else {
+        let Some(raw) = store.ppr_cache().get(&*wtxn, &seed_hash)? else {
             continue;
         };
         if raw.len() < CACHE_HEADER_LEN {
-            store.ppr_cache.delete(wtxn, &seed_hash)?;
+            store.ppr_cache().delete(wtxn, &seed_hash)?;
             continue;
         }
         let mut patched = raw.to_vec();
         patched[CACHE_STALE_OFFSET] = 1;
-        store.ppr_cache.put(wtxn, &seed_hash, &patched)?;
+        store.ppr_cache().put(wtxn, &seed_hash, &patched)?;
     }
 
     Ok(())
 }
 
-fn seed_is_live_for_ppr(store: &Store, txn: &RoTxn<'_>, entity_id: &EntityId) -> Result<bool> {
-    if store.entities.get(txn, entity_id.as_bytes())?.is_some() {
+fn seed_is_live_for_ppr(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity_id: &EntityId,
+) -> Result<bool> {
+    if store.entities().get(txn, entity_id.as_bytes())?.is_some() {
         return Ok(true);
     }
 
     if store
-        .edges_out
+        .edges_out()
         .prefix_iter(txn, entity_id.as_bytes())?
         .next()
         .transpose()?
@@ -1018,7 +1026,7 @@ fn seed_is_live_for_ppr(store: &Store, txn: &RoTxn<'_>, entity_id: &EntityId) ->
     }
 
     if store
-        .edges_in
+        .edges_in()
         .prefix_iter(txn, entity_id.as_bytes())?
         .next()
         .transpose()?
@@ -1043,7 +1051,7 @@ fn store_cache_entry(
     }
 
     let encoded = encode_cache_value_with_state(computed_at, graph_version, 0, state)?;
-    store.ppr_cache.put(wtxn, seed_hash, &encoded)?;
+    store.ppr_cache().put(wtxn, seed_hash, &encoded)?;
     delete_dep_rows_for_seed_hash(store, wtxn, seed_hash)?;
 
     for dependency in &state.dependencies {
@@ -1123,7 +1131,7 @@ struct GatedEdge {
 /// rows are always a typed error (gates never mask corruption — the row is
 /// decoded before any gate runs).
 fn gate_edge(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     key: &[u8],
     value: &[u8],
@@ -1199,11 +1207,11 @@ fn gate_edge(
 }
 
 fn entity_is_lexical_query_hint_claim(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -1475,8 +1483,8 @@ fn encode_cache_value_with_state(
     Ok(value)
 }
 
-fn read_graph_version(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta.get(txn, GRAPH_VERSION_KEY)? else {
+fn read_graph_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
+    let Some(raw) = store.hnsw_meta().get(txn, GRAPH_VERSION_KEY)? else {
         return Ok(0);
     };
     decode_u64(&raw, "ppr graph version")

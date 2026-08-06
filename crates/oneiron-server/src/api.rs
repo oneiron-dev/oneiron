@@ -96,9 +96,16 @@ mod lease;
 mod mcp_gateway;
 mod memory;
 mod openapi;
+// ONE-1437: in-process local reactive read contract. No HTTP surface by design
+// (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
+// consumers), so the non-test build sees a contract with no caller — the
+// `protocol::close_codes` posture.
+#[allow(dead_code)]
+mod reactive;
 mod resume;
 mod run_tree;
 mod search;
+mod surface_events;
 mod vad;
 
 pub(crate) use self::artifacts::*;
@@ -113,12 +120,19 @@ pub(crate) use self::lease::*;
 pub(crate) use self::mcp_gateway::*;
 pub(crate) use self::memory::*;
 pub(crate) use self::openapi::*;
+pub(crate) use self::reactive::*;
 pub(crate) use self::resume::*;
 pub(crate) use self::run_tree::*;
 pub(crate) use self::search::*;
+pub(crate) use self::surface_events::*;
 pub(crate) use self::vad::*;
 
 const API_LEVEL: &str = "v1";
+/// Capability-token prefix under which discovery advertises each MCP tool and,
+/// for tools with a closed `op` discriminator, each of its operations. The
+/// tokens are derived from `crate::mcp::McpToolName`, so the catalog and the
+/// advertisement cannot drift.
+pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
 // ONE-214 is read-only and adds no notification-specific storage. Keep resume
 // hydration bounded by returning pending notifications from a latest window.
 
@@ -146,6 +160,8 @@ const API_LEVEL: &str = "v1";
         core_run_tree,
         core_run_tree_observe,
         core_run_tree_intervene,
+        submit_core_surface_event,
+        get_core_surface_event,
         list_core_conversations,
         create_core_conversation,
         list_core_conversation_turns,
@@ -217,6 +233,16 @@ const API_LEVEL: &str = "v1";
         CoreRunTreeEvent,
         CoreRunTreeEventKind,
         CoreRunTreeRepair,
+        SurfaceEventSubmitRequest,
+        SurfaceEventSourcePayload,
+        SurfaceSourceAppPayload,
+        SurfaceEventActionPayload,
+        SurfaceInteractionKindPayload,
+        SurfaceCounterpartyPayload,
+        SurfaceEventAckResponse,
+        SurfaceEventRejectionResponse,
+        SurfaceEventStatusResponse,
+        SurfaceEventHandoffStatePayload,
         CoreTextField,
         CoreQueryRequest,
         CoreHydrateRequest,
@@ -342,6 +368,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             post(create_core_conversation_turn),
         )
         .route("/turns/annotate", post(annotate_turn_vad))
+        .route("/surface-events", post(submit_core_surface_event))
         .route_layer(middleware::from_fn_with_state(
             idempotency.clone(),
             idempotency_middleware,
@@ -374,6 +401,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .route("/turns/{turn_id}", get(get_core_turn))
         .route("/turns/annotate", get(read_turn_vad_annotation))
+        .route(
+            "/surface-events/{correlation_id}",
+            get(get_core_surface_event),
+        )
         .merge(core_mutation_routes);
     // First-party code-run `self.*` dispatch is host-side only. External
     // clients keep the plain REST verb/batch surface and bring their own runner.
