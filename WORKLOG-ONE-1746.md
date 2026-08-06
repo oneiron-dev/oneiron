@@ -188,3 +188,71 @@ assertions/fixtures or public API touched.
 Gates after: `cargo fmt --check` clean · `cargo clippy -p oneiron
 --all-features --all-targets -- -D warnings` clean · `cargo nextest run -p
 oneiron --all-features` 3828 passed / 64 skipped.
+
+## VERDICT-FIX (Opus, 2026-08-06) — 1 verdict-verified REAL P2
+
+Finder raised 6 items; 5 were rejected-with-derivation by the verdict leg (3
+banked for postmortem/GATE-2). ONE survived verification.
+
+### F1 (P2, `unresolvable-proposed-assertion`) — FIXED
+
+**The defect.** A `Proposed` `assert_distinct` wrote an Active-`Proposed`
+claim through `put_reserved_claim_in_txn`, which mints no
+`PendingGateConsentRecord` (the reserved door runs only
+`check_reserved_claim_policy`). So the parked row had NO approval door:
+`proposal_scope_target` is unarmed for `AssertDistinct`, so
+`resolve_identity_proposal` can never rule on the park, and session-bundle
+approval needs session tags the row does not carry. That contradicted the
+family contract "`Proposed` PARKS … until approved" — the park could never be
+approved by anything. Worse, the reuse predicate then skipped the `Proposed`
+row on an effective re-assert and minted a SECOND Active row for the same
+pair, so one-active-claim/idempotence held only for the all-effective flow.
+
+**The fix (ruled shape, not a redesign).** RE-ASSERTION IS THE RESOLUTION
+DOOR. In `assert_distinct_claim_in_txn` the reuse test is now bare pair
+existence; when the incoming write is effective and the live row is not, the
+row's approval is PROMOTED IN PLACE and its id returned — the effective op IS
+the ruling (`Vault::merge_session_bundle`, `gate.rs`, is the precedent for
+flipping a parked claim's `appr` and re-putting the same id).
+
+- New `promote_distinct_claim_approval_in_txn`: reads the stored row, moves
+  ONLY the approval cell, and re-puts through the same reserved door with the
+  proposer's occurred window and `learned_at` read back off the entity header
+  — value, subject, confidence and source stay verbatim. WHO ruled is recorded
+  on the ruling's own type-76 event, which is the family's authority, so
+  attribution is not lost by preserving the proposer's `src`.
+- The abusable direction stays shut: a `Proposed` write never demotes an
+  effective row, so proposing a pair first still cannot neutralize an
+  owner-ruled assertion — it can only pre-park the row that ruling promotes.
+- Source-trust still runs on the PROMOTED body, so an `Auto` ruling over an
+  untrusted source is refused exactly as on a fresh mint (`check_source_trust`
+  short-circuits for `Approved`), and refusal fails the whole op closed.
+- Documented in three places the old text asserted the false contract: the
+  module header (new RE-ASSERTION paragraph), `apply_identity_topology_op`
+  (the park's door named), and `active_distinct_claims_in_txn` (why the
+  approval axis is returned unfiltered).
+
+**Tests.** New
+`an_effective_re_assertion_promotes_the_parked_distinct_row_in_place`:
+propose → assert `resolve_identity_proposal` rejects with
+`IdentityTopologyUnarmed` (there is no other door) → effective assert in the
+REVERSED pair order → SAME claim id, approval promoted, value/subject/source/
+confidence unchanged, occurred+learned window still the propose-time
+`(200, 200, 200)`, exactly ONE Active row covering the pair, and suppression
+now live. `a_proposed_distinct_assertion_suppresses_nothing_until_it_is_effective`
+flipped its `assert_ne!` to `assert_eq!` + an approval assertion (it pinned
+the defect).
+
+**Mutation-verify (both halves).**
+- M1 — restore the pre-fix `find` predicate: both tests RED on the second
+  minted id (`assert_eq!(ruled_claim, parked_claim)`, two distinct `EntityId`s).
+- M2 — keep the widened reuse but drop the promote call: both tests RED on
+  `left: Proposed / right: Approved` (and `/ Auto`).
+
+**Gates.** `cargo fmt --check` clean · `cargo clippy -p oneiron --all-features
+--all-targets` clean · `cargo nextest run -p oneiron --all-features` **3829
+passed / 64 skipped**.
+
+Diff: `crates/oneiron/src/identity_topology.rs` +
+`crates/oneiron/src/identity_topology/tests.rs` + this worklog. No
+`Cargo.toml` / `Cargo.lock`.

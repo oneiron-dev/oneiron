@@ -4419,15 +4419,17 @@ fn a_proposed_distinct_assertion_suppresses_nothing_until_it_is_effective() {
             .expect("an unapproved assertion suppresses nothing"),
     );
 
-    // A proposal must not ABSORB an effective assertion — otherwise any
-    // producer could neutralize an owner-ruled one by proposing it first.
+    // A proposal must not ABSORB an effective assertion: the effective write
+    // RULES the park rather than being swallowed by it, so a producer who
+    // proposes the pair first cannot neutralize an owner-ruled assertion.
     let (effective, _) = expect_applied(
         vault
             .apply_identity_topology_op(&distinct_op(a, b), &write, 400)
             .expect("assert distinct"),
     );
-    let (effective_claim, _) = distinct_claim_of_event(&vault, &effective);
-    assert_ne!(effective_claim, proposed_claim);
+    let (effective_claim, effective_body) = distinct_claim_of_event(&vault, &effective);
+    assert_eq!(effective_claim, proposed_claim);
+    assert_eq!(effective_body.approval, ClaimApprovalStatus::Auto);
     assert_eq!(
         vault.distinct_claims_for_pair(&a, &b).expect("pair claims"),
         vec![effective_claim]
@@ -4440,6 +4442,93 @@ fn a_proposed_distinct_assertion_suppresses_nothing_until_it_is_effective() {
         ),
         IdentityTopologyRejection::DistinctPairSuppressed { .. }
     ));
+}
+
+/// The park's ONLY resolution door. [`proposal_scope_target`] is unarmed for
+/// this op kind, so `resolve_identity_proposal` can never rule on a parked
+/// assertion — asserting the pair effectively is the ruling, and it has to
+/// promote the parked row rather than mint a second Active one beside it.
+#[test]
+fn an_effective_re_assertion_promotes_the_parked_distinct_row_in_place() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let pair = distinct_pair_key(a, b);
+    let proposer = IdentityOpWrite::auto(ClaimSource::Inferred);
+
+    let parked = expect_parked(
+        vault
+            .apply_identity_topology_op(&distinct_op(a, b), &proposed(proposer), 200)
+            .expect("propose an assertion"),
+    );
+    let (parked_claim, parked_body) = distinct_claim_of_event(&vault, &parked);
+    assert_eq!(parked_body.approval, ClaimApprovalStatus::Proposed);
+
+    // There is no other door: the park cannot reach the resolution ramp.
+    assert!(matches!(
+        vault
+            .resolve_identity_proposal(
+                &parked,
+                ProposalRuling::Approve,
+                &IdentityOpWrite::auto(ClaimSource::UserStated),
+                300,
+            )
+            .expect_err("assert_distinct has no resolution ramp"),
+        Error::IdentityTopologyUnarmed(_)
+    ));
+
+    // Asserting the pair effectively IS the ruling — same claim id back, in
+    // either pair order, with only the approval cell moved.
+    let ruler = IdentityOpWrite {
+        approval: ClaimApprovalStatus::Approved,
+        ..IdentityOpWrite::auto(ClaimSource::UserStated)
+    };
+    let (ruled, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(&distinct_op(b, a), &ruler, 400)
+            .expect("rule the park by asserting it"),
+    );
+    let (ruled_claim, ruled_body) = distinct_claim_of_event(&vault, &ruled);
+    assert_eq!(ruled_claim, parked_claim);
+    assert_eq!(ruled_body.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(ruled_body.value, parked_body.value);
+    assert_eq!(ruled_body.subject, parked_body.subject);
+    assert_eq!(ruled_body.source, parked_body.source);
+    assert_eq!(ruled_body.confidence, parked_body.confidence);
+
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    // ONE pair, ONE Active row — the promoted one, never a second mint.
+    let covering: Vec<EntityId> = vault
+        .active_distinct_claims_in_txn(&rtxn, &pair.0)
+        .expect("active distinct rows")
+        .into_iter()
+        .filter(|row| row.pair == pair)
+        .map(|row| row.claim)
+        .collect();
+    assert_eq!(covering, vec![parked_claim]);
+    // The promotion moved consent, not the proposer's occurred/learned window.
+    let raw = vault
+        .store
+        .entities
+        .get(&rtxn, parked_claim.as_bytes())
+        .expect("read claim row")
+        .expect("claim row exists");
+    let header = EntityMetadataHeader::parse(&raw).expect("claim header");
+    assert_eq!(
+        (
+            header.occurred_start,
+            header.occurred_end,
+            header.learned_at
+        ),
+        (200, 200, 200)
+    );
+    drop(rtxn);
+
+    // And the promoted row is what §6 suppression reads.
+    assert_eq!(
+        vault.distinct_claims_for_pair(&a, &b).expect("pair claims"),
+        vec![parked_claim]
+    );
 }
 
 #[test]

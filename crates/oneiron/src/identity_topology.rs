@@ -48,6 +48,17 @@
 //! never touched, and superseding or retracting the claim lifts suppression
 //! with no shadow state to unwind.
 //!
+//! RE-ASSERTION IS THE PARKED ASSERTION'S RESOLUTION DOOR (ONE-1746). A
+//! `Proposed` assert_distinct parks on its own claim row, and unlike merge
+//! and split it can never reach [`Vault::resolve_identity_proposal`] —
+//! `proposal_scope_target` is unarmed for the kind, because the op names no
+//! entity whose registry class could scope a ramp. The door that rules it is
+//! therefore the op itself: an EFFECTIVE assert_distinct over a pair a parked
+//! row already covers PROMOTES that row's approval in place and returns its
+//! id. So the family contract holds without a second door — the park carries
+//! zero effect until ruled, the ruling is an ordinary op with its own ledger
+//! event, and one pair keeps exactly one claim across both writes.
+//!
 //! Zero-head split (r2 "gone", ONE-1744): `split(entity, heads: [])` is a
 //! legal deliberate retire-without-successor. It shells the original like
 //! any split but writes NO `split_into` edge, so it is the one topology arm
@@ -3476,11 +3487,12 @@ impl Vault {
     /// claim for the pair is adopted rather than duplicated. Unlike the
     /// topology arms, its consent axis lands ON that claim's `appr` column
     /// rather than being withheld from it — a `Proposed` assertion IS a
-    /// proposed claim, which suppresses nothing until approved and is
-    /// approved through the claim's own lifecycle. Withholding the row
-    /// instead would strand the proposal: there is no resolution door for
-    /// this op kind ([`proposal_scope_target`]), so a park could never be
-    /// ruled on.
+    /// proposed claim, which suppresses nothing until it is ruled. The
+    /// ruling door is a later EFFECTIVE assertion of the same pair, which
+    /// promotes the parked row in place and hands back its id. Withholding
+    /// the row instead would strand the proposal outright:
+    /// [`proposal_scope_target`] is unarmed for this op kind, so
+    /// [`Vault::resolve_identity_proposal`] can never reach the park.
     pub fn apply_identity_topology_op(
         &self,
         op: &IdentityTopologyOp,
@@ -3705,10 +3717,22 @@ impl Vault {
     /// the pair when there already is one, a freshly minted row otherwise.
     ///
     /// This is what makes the op IDEMPOTENT — asserting a covered pair adds a
-    /// ledger event, never a duplicate claim. The reuse test is "already at
-    /// least as effective as this write", not bare existence: a `Proposed`
-    /// row must not absorb an effective assertion, or any producer could
-    /// neutralize an owner-ruled one by proposing it first.
+    /// ledger event, never a duplicate claim. ONE pair is ONE row, whichever
+    /// order the two consent axes arrive in.
+    ///
+    /// An EFFECTIVE write over a `Proposed` row PROMOTES that row in place and
+    /// returns its id: the effective op IS the ruling on the park, because
+    /// this family has no other resolution door for the kind
+    /// ([`proposal_scope_target`] is unarmed for it). The abusable direction
+    /// stays shut — a `Proposed` write never demotes an effective row — so
+    /// proposing a pair first still cannot neutralize an owner-ruled
+    /// assertion; it can only pre-park the row that ruling promotes.
+    ///
+    /// Only the approval cell moves. The proposer's value, subject,
+    /// confidence, source and occurred window are their artifact and stay
+    /// verbatim; WHO ruled is recorded on the ruling's own type-76 event,
+    /// which is the same split [`crate::Vault::merge_session_bundle`] keeps
+    /// when it approves a parked claim.
     ///
     /// The claim rides the ENGINE claim door — same D18 structural validator,
     /// same subject-existence check, same `claim_of` wiring an agent's direct
@@ -3727,13 +3751,14 @@ impl Vault {
         pair: (EntityId, EntityId),
         now: u64,
     ) -> Result<EntityId> {
-        let reusable = self
+        let live = self
             .active_distinct_claims_in_txn(&*wtxn, &pair.0)?
             .into_iter()
-            .find(|row| {
-                row.pair == pair && (!write.is_effective() || is_effective_approval(row.approval))
-            });
-        if let Some(row) = reusable {
+            .find(|row| row.pair == pair);
+        if let Some(row) = live {
+            if write.is_effective() && !is_effective_approval(row.approval) {
+                self.promote_distinct_claim_approval_in_txn(wtxn, &row.claim, write.approval)?;
+            }
             return Ok(row.claim);
         }
 
@@ -3758,6 +3783,48 @@ impl Vault {
             now,
         )?;
         Ok(claim)
+    }
+
+    /// Rules a parked `entity.distinct_from` row effective, in place: the
+    /// approval cell takes the ruling write's axis and every other cell —
+    /// including the occurred window and `learned_at` read back off the
+    /// stored header — is rewritten exactly as the proposer left it, so the
+    /// promotion moves consent and nothing else.
+    ///
+    /// Rewriting the row rather than minting a replacement is the whole
+    /// point: the parked claim's id is what the proposer holds and what the
+    /// ledger's `AssertDistinct` action names, so a second id would strand
+    /// both, and the pair would carry two Active rows.
+    ///
+    /// The write rides the same reserved door the mint does, so the
+    /// source-trust check runs on the PROMOTED body — an `Auto` ruling over
+    /// an untrusted source is refused here exactly as it would be on a fresh
+    /// mint, and refusal fails the whole op closed.
+    fn promote_distinct_claim_approval_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim: &EntityId,
+        approval: ClaimApprovalStatus,
+    ) -> Result<()> {
+        let (mut body, occurred, learned_at) = {
+            let raw = self
+                .store
+                .entities
+                .get(wtxn, claim.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            (
+                crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+            )
+        };
+        body.approval = approval;
+        self.put_reserved_claim_in_txn(wtxn, claim, &body, occurred, learned_at)
     }
 
     /// Parked `Proposed` merge events still awaiting a ruling whose
@@ -4298,8 +4365,9 @@ impl Vault {
     ///
     /// The approval axis is returned rather than filtered here because the two
     /// callers ask different questions of it: suppression counts only
-    /// effective rows, while the idempotence test also has to see a `Proposed`
-    /// one to avoid stacking duplicate proposals on one pair.
+    /// effective rows, while the assert door has to see a `Proposed` one too —
+    /// to keep proposals from stacking on one pair, and to PROMOTE the parked
+    /// row when an effective assertion rules it.
     fn active_distinct_claims_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
