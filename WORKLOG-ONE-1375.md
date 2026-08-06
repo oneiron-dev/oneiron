@@ -174,3 +174,168 @@ names already exist in `FieldProfile::Full`; the Vault wrapper lives in
 `habit.rs`). ONE-1924's `BlockedBy` arms are untouched — none of them are in
 `batch.rs`, and the one `tests.rs` edit is ~5600 lines away from 1924's pinned
 edge tables.
+
+## VERDICT-FIX (Opus fix leg, 2026-08-07, on tip `bc9c92a`)
+
+Finder + verdict legs returned two CONFIRMED P1s and one CONFIRMED P2. Both
+P1s fixed at their chokepoint, each mutation-verified red-before / green-after.
+Nothing relitigated; nothing banked.
+
+### P1 · `replicated-counter-trust` (batch.rs) — FIXED
+
+The sync door builds its op through `replicated_put_op`, which deliberately
+skips `validate_public_raw_put` — the only place `reject_public_streak_fields`
+ran. So a peer envelope reached `apply_put` still naming `currentStreak` /
+`longestStreak`. The tail reducer visits rows whose STORED role is `Habit`, so
+a `Habit` row was in fact repaired; the hole was every other role. A peer
+shipping `{role: HabitCheckin | Task | Goal, currentStreak: 99}` had those keys
+committed verbatim and never overwritten — permanently, since
+`validate_task_checkin_immutable` then froze the check-in row. That breaks
+blueprint acceptance line 62 ("Non-Habit TASK bodies never gain streak keys;
+HabitCheckin bodies never gain streak keys") outright.
+
+Fix: `crate::habit::strip_streak_fields` DISCARDS the two keys (the brief's
+verb — rejecting a peer row would strand it and diverge the replicas), and it
+is called from `apply_put`'s single TASK arm, so it covers every door and every
+role rather than only the sync door and only `Habit`. It returns `None` when the
+body named no counter, so the common path stores the peer's bytes untouched and
+only a forged body is re-encoded. The sanitized body is rebound BEFORE short-id
+planning hashes it and before the old-record `body_changed` comparison, mirroring
+the adjacent ONE-1892 skill-escalation rebinding for the same reason.
+
+MUTATION: with the rebinding neutralized,
+`replicated_task_put_cannot_mint_streak_counters` fails
+`a peer cannot mint a counter on a Task row: left: Some(99), right: None`.
+
+### P1 · `incomplete-derived-invalidation` (batch.rs) — FIXED
+
+`habit_streak_recompute_candidates` drew only from explicit `ChildOf` edge ops
+and TASK put ids. Two ways a Habit's qualifying child set moves without either:
+
+* `vault.batch().delete(checkin)` → `deindex_entity` → `delete_related_edges`
+  tears the `ChildOf` rows down with no `DeleteEdge` op. A Habit with check-ins
+  on days 10 and 11 stayed `(2,2)` after the day-11 child was deleted.
+* A `ChildOf` edge may PRE-EXIST its child (the parent-role validator admits an
+  edge whose child does not exist yet — the ordinary sync-replay ordering). The
+  put that materializes the check-in names no edge, and the candidate is the
+  CHILD id, which the Habit-only tail skips.
+
+Both are convergent-but-wrong (every replica goes stale identically), so they
+are correctness bugs, not divergence: the stored counters stopped being a
+function of the persisted children, which is the lane's whole invariant.
+
+Fix: collection now also unions the PRE-state `ChildOf` parents of every deleted
+row and of every TASK put. Pre-state deliberately — an edge this batch removes
+is unreachable at the tail. Over-collecting costs one idempotent recompute;
+under-collecting strands a stale counter forever. The function takes the txn and
+returns `Result` accordingly.
+
+MUTATION: with the pre-state scan neutralized,
+`deleting_a_checkin_recomputes_the_habit_streak` fails `left: (2,2), right:
+(1,1)` and `checkin_materializing_under_an_existing_edge_recomputes_the_habit_streak`
+fails `left: (0,0), right: (1,1)` — exactly the verdict's derivations.
+
+### P2 · `packet-scope` (tests.rs:12179) — PACKET_AMEND REQUESTED, no revert
+
+Per the verdict's explicit disposition: this is bookkeeping, not code. The hunk
+is the minimal forced fixture-sync update to `each_role_validates` (a Habit put
+now stores derived `(0,0)`, so the old byte-exact round-trip assertion would be
+red without it). `crates/oneiron/src/tests.rs` is already lane-claimed for stack
+E1 in `L1-ENTITY/CLAIMS.md:16`, so there is no cross-lane collision; owner ruling
+R-20260807-01 covered ONE-1924's `context_pack.rs` / `code_run.rs` arms only and
+does not reach this file. **Open for orchestrator/Fable: one-line PACKET_AMEND
+adding `crates/oneiron/src/tests.rs` to ONE-1375's frozen 4-file packet.**
+Reverting was rejected — it would red a ratified test to satisfy a manifest.
+
+### New tests (all in `batch/tests.rs`, packet-internal)
+
+* `deleting_a_checkin_recomputes_the_habit_streak` — public batch delete of a
+  check-in moves `(2,2) → (1,1)`, and emptying the child set gives `(0,0)`
+  rather than a frozen high-water mark.
+* `checkin_materializing_under_an_existing_edge_recomputes_the_habit_streak` —
+  edge first (parent stays `(0,0)` while the child row does not exist), child
+  row second in its own txn carrying no edge, parent recomputes to `(1,1)`.
+* `replicated_task_put_cannot_mint_streak_counters` (`cfg(feature = "sync")`) —
+  a peer `Habit` envelope carrying `(99,99)` still yields the local `(1,1)`;
+  peer `Task` / `Goal` / `HabitCheckin` rows store NO streak key while the rest
+  of the peer's body (`title`) survives the discard byte-for-byte; the replayed
+  forged check-in still counts toward the parent's arithmetic `(2,2)`.
+
+### Gates
+
+* `cargo fmt -p oneiron` — clean.
+* `cargo clippy -p oneiron --all-features --all-targets` — clean, zero warnings.
+* `cargo test -p oneiron --all-features` (lib target, both fixes applied) —
+  **3957 passed / 2 failed**; both failures
+  (`batch::tests::authority_fold_backfills_legacy_missing_first_seen_sidecars_once`,
+  `embed::tests::partial_remote_completion_is_logged_when_local_batch_fails`)
+  are pre-existing parallel-execution flakes on paths this lane does not touch
+  (clock read + global log capture) and both pass in isolation.
+
+### ⚠ BOX BLOCKER — final `--all-features` gate could not be completed
+
+Mid-leg the MacBook stopped being able to open LMDB vaults:
+`open vault: Storage(Io(Os { code: 28, kind: StorageFull, message: "No space
+left on device" }))`, at `Vault::open`, before any test logic. It is NOT disk
+and NOT this lane:
+
+* `/System/Volumes/Data` holds 270Gi free and 290GB APFS container free, flat
+  throughout a run; the test config's `map_size` is 16 MiB.
+* Reproduces identically with `TMPDIR` pointed at `/Volumes/Cinema` (3.5Ti free).
+* Failure count grew monotonically across identical runs — 2 → 19 → 1131 → 1888
+  → 2350 — independent of what code was compiled.
+
+Root cause, measured: macOS POSIX **named-semaphore namespace exhaustion**.
+LMDB on macOS backs its reader/writer locks with `sem_open`, which returns
+`ENOSPC` (28) when the kernel namespace is full; heed surfaces that as
+`StorageFull`. A freshly compiled probe (`/tmp/semprobe.c`) can currently open
+only **1–3** named semaphores before `sem_open` fails. LMDB needs 2 per env, so
+the box now supports roughly ONE concurrent vault — which is why 2 test threads
+worked for one probe run and nothing works now. `lsof | grep PSXSEM` shows only
+48 held by live processes (`plugin_host`, `sublime_text`) — the remainder are
+leaked with no holder. Names are stored in each vault's `lock.mdb`, and those
+tempdirs are gone, so they cannot be `sem_unlink`ed.
+
+**Remedy is machine-level: reboot the MacBook.** This will red the verify leg of
+EVERY lane on this box with a misleading "No space left on device", not just
+ONE-1375. Re-run `cargo test -p oneiron --all-features` after the reboot; the
+integration target `tests/sync_convergence_props.rs` (`two_replicas_same_streak`)
+is the one leg this fix leg could not re-confirm — it fails at
+`sync_harness/mod.rs:255` on vault open, never on an assertion.
+
+`Cargo.lock` was refreshed by cargo and is deliberately NOT staged or committed.
+Diff stays inside the packet: `habit.rs`, `batch.rs`, `batch/tests.rs` (plus the
+pre-existing `tests.rs` hunk awaiting the amendment above).
+
+### Salvaged verification under the blocker
+
+With `--test-threads=1` (one vault live at a time, inside the ~3-semaphore
+budget) the whole lane-relevant set is green at tip `a24ffc0`:
+
+```
+batch::tests::checkin_immutable ... ok
+batch::tests::checkin_materializing_under_an_existing_edge_recomputes_the_habit_streak ... ok
+batch::tests::checkin_on_non_habit_rejected ... ok
+batch::tests::checkin_same_role_mutation_rejected_and_identical_reput_idempotent ... ok
+batch::tests::deleting_a_checkin_recomputes_the_habit_streak ... ok
+batch::tests::habit_streak_is_derived_from_checkin_children ... ok
+batch::tests::habit_with_checkins_cannot_change_role ... ok
+batch::tests::public_task_put_carrying_streak_fields_is_rejected ... ok
+batch::tests::replicated_task_put_cannot_mint_streak_counters ... ok
+habit::tests::streak_fields_are_rewritten_in_place_and_rejected_on_public_puts ... ok
+habit::tests::streak_from_children_deterministic ... ok
+habit::tests::task_role_from_body_bytes_rejects_malformed_bodies ... ok
+tests::each_role_validates ... ok
+test result: ok. 13 passed; 0 failed
+```
+
+`two_replicas_same_streak` is the ONE unverified leg: `vault_pair()` needs two
+live envs (4 semaphores) and the box can supply ~3, so it dies at
+`sync_harness/mod.rs:255` on vault open across three consecutive solo attempts.
+Derivation says it is unaffected — the forged peer body is now emptied of the
+two keys before storage instead of having them overwritten by the tail, and
+`rewrite_habit_streak_fields` filters-then-appends either way, so the surviving
+field order and therefore the stored bytes are identical; the candidate
+expansion only adds idempotent recomputes, symmetrically on both replicas. That
+is derivation, not evidence: **re-run it post-reboot before this lane is
+counted verified.**
