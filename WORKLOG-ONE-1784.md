@@ -201,3 +201,75 @@ cancel path). Unit tests live in `calendar/ics.rs` (7) and
   Post-pass: `cargo +1.96 check -p oneiron --all-features`, `cargo +1.96 clippy
   -p oneiron --all-features --tests -- -D warnings`, the 17-test adapter oracle,
   26 ingest unit tests, and 8 ICS unit tests are green; `git diff --check` clean.
+
+## VERDICT-FIX (finder/verdict round on the SIMPLIFY tip, K3 fix seat)
+
+The finder + verdict legs returned FIX-REQUIRED: six REAL P2s, all fixed at
+their chokepoints in commit `6e3653370`. Every fix is mutation-verified —
+each oracle was run RED against the pre-fix tree (failure mode noted) and is
+GREEN after. Rejected/banked items are not relitigated: the 304 pause-clear
+is the ratified resume semantic (blueprint line 258 304 oracle excludes
+cursor writes; reachable only after explicit re-enqueue), and the
+leased-attempt pause window is a banked P3 (bounded one-fetch lease-expiry
+probe, no storm trace). The banked blueprint-bookkeeping note stands: D1's
+deviation is ratified-worthy — the dispatch-gate premise "SECRET-02
+inject/lease merged" was false at base — and the blueprint should be amended
+so wave bookkeeping matches reality.
+
+1. **txn-held-across-fetch** (`ingest.rs` `CustodyDoorIcsFeedFetcher::fetch`)
+   — the LMDB write txn was held across the blocking HTTP call, stalling all
+   vault writes for the fetch's duration. The txn is now scoped to the
+   binding-enforced value read and drops before egress; the URL never escapes
+   and every custody invariant from D1 stands. Oracle:
+   `custody_door_never_holds_the_vault_write_lock_across_egress` (red:
+   `IcsFetch { reason: "vault write lock held across HTTP egress" }` from an
+   in-egress write-lock probe thread).
+2. **calendar-safeguard-bypass** (`UpdateExisting` + absence sweep) — the
+   superseding passport admissions routed through
+   `supersede_calendar_passport` with no `screen_then_claim`, breaking the
+   ratified "hook immediately before every admit_imported_evidence_claim"
+   ordering. `supersede_calendar_passport` keeps its ratified name and
+   scoped-replacement semantics but no longer admits: admission moved into
+   `PollAdmission::admit_superseding_passport`, which crosses the CAL-09 hook
+   and the Gate door first, then hands the admitted claim id to the scoped
+   replacement. No unscreened passport-movement path exists. Oracle:
+   `superseding_admissions_cross_the_safeguard_hook` (red: update/absence
+   runs screened 0 supersessions; cursor verdict witness read `skipped`).
+3. **parallel-poll-chain-duplication** — the bare setup key and the
+   generation-scoped `:due:<ts>` keys never deduped against each other, so a
+   redundant `enqueue_ics_feed_poll` while a generation row was pending
+   forked a second chain (unbounded parallel polls per feed).
+   `enqueue_ics_feed_poll` now adopts any live chain row (bare or
+   generation-scoped, any pending state) and returns `Existing`.
+   Oracle: `setup_enqueue_never_forks_a_parallel_poll_chain` (red: second
+   setup returned `Enqueued`, two pending rows).
+4. **semantic-update-not-applied** — `UpdateExisting` moved only the passport
+   head; drifted DTSTART/SUMMARY/TRANSP never re-minted the EVENT row or
+   `calendar.time`, leaving the hash-drift detector pointless. The branch now
+   re-mints the EVENT's structural row (occurred + name) and re-admits
+   `calendar.time` under supersession when its value moved (skip-when-equal,
+   one live claim). Oracles: `update_existing_remints_event_content` (red:
+   name stayed `standup`, transparency stayed `busy`) +
+   `calendar::ingest::tests::update_existing_rewrites_the_event_occurrence`
+   (red: header occurrence unmoved).
+5. **non-injective-feed-identity** — `ics_feed_poll_dedupe_key` concatenated
+   `system:secret_ref` with `:` while `validate()` permits `:` in both
+   fields, so `("a", "b:c")` and `("a:b", "c")` shared a cursor, ETag, pause,
+   archive, and exception identity. The one feed identity
+   (`ics_feed_identity`) now byte-length-prefixes `system`; the dedupe key,
+   cursor key, blob id, and exception ref all derive from it. Oracle:
+   `feed_identity_is_injective_over_colon_bearing_fields` (red: equal keys,
+   one deduped chain for two feeds).
+6. **superseding-claim-loses-archive-provenance** — superseding and absence
+   passports carried the bare UID as `source_record_id` while fresh
+   admissions carry `{blob}#v{N}:{uid}`. Both now cite the archived complete
+   feed that produced the head (update) or proved the omission (absence).
+   Oracle: `superseding_passport_keeps_archive_provenance` (red: live
+   passport's `source_record_id` was `uid-pr@x`, no `#v` provenance).
+
+Gates for the fix commit: adapter oracle 23/23 (17 done-means + 6
+verdict-fix), calendar unit tests green incl. the new in-crate occurrence
+oracle, `cargo +1.96 clippy -p oneiron --all-features --tests -- -D warnings`
+clean, `cargo fmt` applied, `git diff --check` clean. Diff ⊆ packet
+(`calendar/ingest.rs`, `calendar/passport.rs`,
+`tests/calendar_ics_ingest_adapter.rs`). Full suite: see below.
