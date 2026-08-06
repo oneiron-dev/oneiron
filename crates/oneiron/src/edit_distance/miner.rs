@@ -55,10 +55,14 @@ use std::collections::BTreeMap;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use super::{FinalizedProposalText, PROPOSAL_ARTIFACT_KEY_PREFIX, decode_finalized_proposal_text};
+use super::{
+    FinalizedProposalText, PROPOSAL_ARTIFACT_KEY_PREFIX, actor_class_from_token, actor_class_token,
+    decode_finalized_proposal_text,
+};
 use crate::Vault;
 use crate::actor_claims::edit_cost_scope;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
 use crate::edit_distance::attribution::{
     AmendmentJudgment, amendment_evidence, amendment_judgments,
@@ -159,13 +163,26 @@ const PREFERENCE_VALUE_KEY_TO: &str = "to";
 const PREFERENCE_VALUE_KEY_CLASS: &str = "class";
 const PREFERENCE_VALUE_KEY_RATIONALE: &str = "rationale";
 
-/// Provenance-map keys of the miner's write envelope.
+/// Provenance-map keys of the miner's write envelope. `surface` and `run` are
+/// the two `gate.rs` parses for the inbox group key; the other two are this
+/// module's own trace.
 const PROVENANCE_KEY_SURFACE: &str = "surface";
+const PROVENANCE_KEY_RUN: &str = "run";
 const PROVENANCE_KEY_SESSION: &str = "session";
 const PROVENANCE_KEY_CLUSTER: &str = "cluster";
 
-/// The surface token the miner's provenance stamps.
-const MINER_SURFACE: &str = "edit_distance.substitution_miner";
+/// Keys of the dreamer attempt payload this job rides.
+const PAYLOAD_KEY_SESSION: &str = "session";
+const PAYLOAD_KEY_RUN: &str = "run";
+const PAYLOAD_KEY_ACTOR: &str = "actor";
+const PAYLOAD_KEY_ACTOR_CLASS: &str = "actor_class";
+
+/// The gate-decision outcome token the inbox reject door writes.
+///
+/// Mirrored rather than shared: the token is a pinned LEDGER string and the door
+/// that writes it lives in another module's write path. A reader of that ledger
+/// is entitled to name what it is looking for.
+const GATE_OUTCOME_REJECTED: &str = "rejected";
 
 /// Pinned mint-mark kinds.
 const MARK_KIND_PREFERENCE: &str = "preference_claim";
@@ -371,6 +388,32 @@ struct Substitution {
     to: String,
 }
 
+/// What one miner pass is, as the caller supplies it.
+///
+/// The sitting alone is not enough to WRITE with, for two reasons the engine
+/// enforces rather than documents:
+///
+/// * The D13 matrix ([`crate::provenance::validate_actor_class`]) binds actor
+///   class to entity kind — a SESSION is not an actor entity at all — so the
+///   pass cannot mint its own write actor, and the `dreamer_runner`
+///   milestone-envelope rule says in as many words that WHICH actor a
+///   deployment trusts is policy the engine does not hold.
+/// * `gate.rs` derives a Proposed claim's INBOX GROUP KEY only from an
+///   `Agent`-class `Generated` write whose provenance names the dreamer surface
+///   AND a run id. Get that wrong and the proposal lands in a tray with no
+///   group — Proposed forever, reviewable by nobody. So the run id is a
+///   required field, not decoration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MinerRun {
+    /// The sitting whose close ran this pass: the provenance stamp and the
+    /// review-bundle session tag, so one pass's proposals surface together.
+    pub session: EntityId,
+    /// The Dreamer run this pass belongs to — the inbox group key.
+    pub run_id: String,
+    /// The DREAMER agent actor every emitted proposal is written as.
+    pub agent: WriteActor,
+}
+
 // ---------------------------------------------------------------------------
 // The K dial
 // ---------------------------------------------------------------------------
@@ -429,9 +472,8 @@ pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
 /// attempt-queue claim mechanics already give this; do not run two miner
 /// attempts concurrently).
 ///
-/// `session` is the sitting whose close triggered the pass. It is the write
-/// actor's entity ref and the review-bundle session tag, so one pass's Proposed
-/// claims surface together rather than one at a time.
+/// `run` names the sitting whose close triggered the pass and the actor its
+/// proposals are written as (see [`MinerRun`]).
 ///
 /// The returned vector holds one entry per cluster the pass RULED on. A cluster
 /// the pass declined to rule on is ABSENT rather than reported as
@@ -443,16 +485,29 @@ pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
 ///
 /// Storage errors; whatever the claim write gate rejects for a single cluster
 /// rolls that cluster's transaction back and fails the pass.
-pub fn run_substitution_miner(vault: &Vault, session: &EntityId) -> Result<Vec<MinedOutcome>> {
+pub fn run_substitution_miner(vault: &Vault, run: &MinerRun) -> Result<Vec<MinedOutcome>> {
+    // Checked HERE, before any evidence is read, because the consequence is
+    // invisible at the write: a mined preference under the wrong actor class or
+    // with no run id lands Proposed in a tray that has no group, so no surface
+    // can ever show it and no decider can ever answer it. Refusing the pass is
+    // the only outcome a caller can notice.
+    if run.agent.actor_class() != EdgeActorClass::Agent || run.run_id.trim().is_empty() {
+        return Err(invalid(
+            "a miner pass needs an Agent-class actor and a run id, or its proposals are unreviewable",
+        ));
+    }
     let judgments = amendment_judgments(vault)?;
     let watermark = miner_watermark(vault)?;
-    // The watermark is a WORK GATE: no judgment newer than the last pass means
-    // no new evidence, so there is nothing a re-cluster could conclude that the
-    // last pass did not.
+    // The watermark is a WORK GATE: nothing NEWER than the last pass means no
+    // new evidence, so there is nothing a re-cluster could conclude that the
+    // last pass did not. Strict, because clusters are recomputed from the whole
+    // ledger — a judgment stamped in the same second as the previous pass's
+    // newest is folded in by the next pass that has anything newer, so the
+    // second-granularity residual delays a proposal and can never drop one.
     let Some(high) = judgments
         .iter()
         .map(|judgment| judgment.at)
-        .filter(|at| *at >= watermark)
+        .filter(|at| *at > watermark || watermark == 0)
         .max()
     else {
         return Ok(Vec::new());
@@ -467,7 +522,7 @@ pub fn run_substitution_miner(vault: &Vault, session: &EntityId) -> Result<Vec<M
             outcomes.push(MinedOutcome::BelowThreshold);
             continue;
         }
-        if let Some(outcome) = emit_cluster(vault, session, cluster, high, now)? {
+        if let Some(outcome) = emit_cluster(vault, run, cluster, high, now)? {
             outcomes.push(outcome);
         }
     }
@@ -478,35 +533,80 @@ pub fn run_substitution_miner(vault: &Vault, session: &EntityId) -> Result<Vec<M
     Ok(outcomes)
 }
 
-/// The `DreamerAttemptPayload.input` a substitution-mine attempt carries: the
-/// ended sitting, as 16 MessagePack-binary bytes.
+/// The `DreamerAttemptPayload.input` a substitution-mine attempt carries.
 ///
 /// The shape is owned HERE rather than by the queue, so the module that defines
 /// the job also defines its payload and `dreamer_consolidation` stays a
-/// dispatcher. Binary, not hex, is the house entity-ref-in-a-payload convention
-/// (`TURN_BODY_WORLD_REF_KEY`).
+/// dispatcher. Entity refs ride as 16 MessagePack-binary bytes — the house
+/// convention (`TURN_BODY_WORLD_REF_KEY`) — and the actor class rides the same
+/// pinned storage token the proposal-artifact spans use.
 #[must_use]
-pub fn miner_attempt_input(session: &EntityId) -> Value {
-    Value::Binary(session.as_bytes().to_vec())
+pub fn miner_attempt_input(run: &MinerRun) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(PAYLOAD_KEY_SESSION),
+            Value::Binary(run.session.as_bytes().to_vec()),
+        ),
+        (
+            Value::from(PAYLOAD_KEY_RUN),
+            Value::from(run.run_id.as_str()),
+        ),
+        (
+            Value::from(PAYLOAD_KEY_ACTOR),
+            Value::Binary(run.agent.entity_ref().as_bytes().to_vec()),
+        ),
+        (
+            Value::from(PAYLOAD_KEY_ACTOR_CLASS),
+            Value::from(actor_class_token(run.agent.actor_class())),
+        ),
+    ])
 }
 
 /// Inverse of [`miner_attempt_input`].
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] when the payload does not name a sitting — a
-/// miner attempt with no session has no provenance to stamp, and inventing one
-/// would put an unattributable claim in front of the decider.
-pub fn session_from_miner_input(input: &Value) -> Result<EntityId> {
-    let Value::Binary(bytes) = input else {
-        return Err(invalid("a substitution-mine payload must name a SESSION"));
+/// [`Error::InvalidClaimBody`] when the payload does not name a sitting and a
+/// write actor. A miner attempt missing either has no provenance to stamp, and
+/// inventing one would put an unattributable claim in front of the decider.
+pub fn miner_run_from_input(input: &Value) -> Result<MinerRun> {
+    let Value::Map(entries) = input else {
+        return Err(malformed_payload());
     };
-    let bytes: [u8; 16] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| invalid("a substitution-mine payload must name a SESSION"))?;
-    EntityId::from_bytes(bytes)
-        .map_err(|_| invalid("a substitution-mine payload must name a SESSION"))
+    let field = |key: &str| {
+        entries
+            .iter()
+            .find(|(entry, _)| entry.as_str() == Some(key))
+            .map(|(_, value)| value)
+    };
+    let entity = |key: &str| -> Result<EntityId> {
+        let Some(Value::Binary(bytes)) = field(key) else {
+            return Err(malformed_payload());
+        };
+        let bytes: [u8; 16] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| malformed_payload())?;
+        EntityId::from_bytes(bytes).map_err(|_| malformed_payload())
+    };
+    let class = field(PAYLOAD_KEY_ACTOR_CLASS)
+        .and_then(Value::as_str)
+        .and_then(actor_class_from_token)
+        .ok_or_else(malformed_payload)?;
+    let run_id = field(PAYLOAD_KEY_RUN)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|run_id| !run_id.is_empty())
+        .ok_or_else(malformed_payload)?;
+    Ok(MinerRun {
+        session: entity(PAYLOAD_KEY_SESSION)?,
+        run_id: run_id.to_owned(),
+        agent: WriteActor::new(entity(PAYLOAD_KEY_ACTOR)?, class),
+    })
+}
+
+fn malformed_payload() -> Error {
+    invalid("a substitution-mine payload must name a SESSION, a run and a write actor")
 }
 
 /// Every substitution cluster the judgment ledger currently supports, in
@@ -776,16 +876,25 @@ fn line_substitutions(before: &str, after: &str) -> Vec<Substitution> {
 /// not one.
 ///
 /// The pair is the CHANGED RUN — what sits between the common prefix and the
-/// common suffix — so the substitution recurs across artifacts that share
-/// nothing but the correction. A run empty on either side is a pure insertion
-/// or deletion, which is an edit but not a substitution, and a run past
-/// [`MAX_SUBSTITUTION_TOKENS`] is a rewrite.
+/// common suffix — widened to whole TOKENS, so the substitution recurs across
+/// artifacts that share nothing but the correction. A run empty on either side
+/// is a pure insertion or deletion, which is an edit but not a substitution, and
+/// a run past [`MAX_SUBSTITUTION_TOKENS`] is a rewrite.
+///
+/// Emptiness is judged on the RAW region, before widening. Widening first would
+/// dress an insertion up as a replacement: `hello` -> `hello there` has an
+/// empty removed run, and pulling `hello` in on both sides would report the
+/// substitution `hello` -> `hello there`, which nobody performed.
 fn substitution_pair(before: &str, after: &str) -> Option<Substitution> {
     let before: Vec<char> = before.chars().collect();
     let after: Vec<char> = after.chars().collect();
     let (prefix, suffix) = common_affix(&before, &after);
-    let from = normalize_run(&before[prefix..before.len() - suffix]);
-    let to = normalize_run(&after[prefix..after.len() - suffix]);
+    if prefix == before.len() - suffix || prefix == after.len() - suffix {
+        return None;
+    }
+    let region = token_aligned(&before, &after, prefix, suffix);
+    let from = normalize_run(&before[region.start..region.before_end]);
+    let to = normalize_run(&after[region.start..region.after_end]);
     if from.is_empty() || to.is_empty() || from == to {
         return None;
     }
@@ -793,6 +902,43 @@ fn substitution_pair(before: &str, after: &str) -> Option<Substitution> {
         return None;
     }
     Some(Substitution { from, to })
+}
+
+/// The changed region of both texts, widened to whole-token boundaries.
+struct Region {
+    /// Shared start — the two texts agree left of the changed run.
+    start: usize,
+    before_end: usize,
+    after_end: usize,
+}
+
+/// Widens the changed region out to the whitespace on either side of it.
+///
+/// Without this the affix trim cuts INSIDE words: `regards` -> `cheers` shares a
+/// trailing `s`, so the raw region is `regard` -> `cheer` and the chooser is
+/// handed two words that are in no lexicon. §4 says the miner clusters TOKEN
+/// pairs, and this is what makes the extracted pair one.
+///
+/// Both ends move in lockstep, which is exactly what the affixes guarantee:
+/// `before[..prefix] == after[..prefix]`, so testing the left character on
+/// either text gives the same answer, and the two suffixes are equal, so
+/// advancing the right end by one advances both by the same character.
+fn token_aligned(before: &[char], after: &[char], prefix: usize, suffix: usize) -> Region {
+    let mut start = prefix;
+    while start > 0 && !before[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    let mut before_end = before.len() - suffix;
+    let mut after_end = after.len() - suffix;
+    while before_end < before.len() && !before[before_end].is_whitespace() {
+        before_end += 1;
+        after_end += 1;
+    }
+    Region {
+        start,
+        before_end,
+        after_end,
+    }
 }
 
 /// Token normalization: lowercase, trim, collapse whitespace. Nothing else — no
@@ -872,7 +1018,7 @@ fn trim_token(token: &str) -> &str {
 /// Rules on one at-threshold cluster, or declines.
 fn emit_cluster(
     vault: &Vault,
-    session: &EntityId,
+    run: &MinerRun,
     cluster: &SubstitutionCluster,
     watermark: u64,
     now: u64,
@@ -884,7 +1030,7 @@ fn emit_cluster(
     let class = classify_substitution(&cluster.from, &cluster.to);
     match class {
         SubstitutionClass::Lexical => Ok(Some(MinedOutcome::PreferenceClaim(
-            emit_preference_claim(vault, session, cluster, &handle, watermark)?,
+            emit_preference_claim(vault, run, cluster, &handle, watermark)?,
         ))),
         // A content correction with no skill to edit has no proposal to make.
         // No mint-mark is written, so the cluster is still eligible in a pass
@@ -918,23 +1064,45 @@ fn cluster_is_eligible(vault: &Vault, handle: &[u8; 32], now: u64) -> Result<boo
 /// Whether the preference claim a mark points at has stopped standing for its
 /// cluster.
 ///
-/// * open (`Proposed`) or landed (`Approved`/`Auto`) — the cluster has said its
-///   piece; re-proposing would be the nagging the hysteresis exists to stop;
-/// * `Rejected` — quiet until the cooldown elapses, then speak again;
-/// * gone — the claim was erased, so nothing stands and the cluster is free.
+/// The state does NOT live in the claim's `approval` field, and reading it there
+/// would make the cooldown dead code: the inbox reject door closes the tray row
+/// and appends a `rejected` gate decision, leaving the body exactly as Proposed
+/// as it was. So the answer is assembled from the three places it actually is:
+///
+/// * gone — the claim was erased; nothing stands and the cluster is free;
+/// * a PENDING gate consent — the question is still open in front of the
+///   decider, and asking again is the nagging this exists to stop;
+/// * `Approved`/`Auto` — the preference landed and is standing truth;
+/// * otherwise the row was CLOSED without accepting, so the newest `rejected`
+///   decision's own clock runs the cooldown.
+///
+/// A claim with no tray row, no acceptance and no rejection stays quiet. Its row
+/// was consumed by something this module cannot read as an answer, and "no
+/// answer I understand" is not a licence to re-propose.
 fn preference_is_stale(vault: &Vault, claim_id: &EntityId, now: u64) -> Result<bool> {
-    let Some(body) = vault.get_claim(claim_id)? else {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(body) = vault.get_claim_in_txn(&rtxn, claim_id)? else {
         return Ok(true);
     };
-    match body.approval {
-        ClaimApprovalStatus::Rejected => {
-            let rejected_at = body.valid_to.unwrap_or(0);
-            Ok(now >= rejected_at.saturating_add(MINER_REJECTION_COOLDOWN_SECS))
-        }
-        ClaimApprovalStatus::Proposed
-        | ClaimApprovalStatus::Approved
-        | ClaimApprovalStatus::Auto => Ok(false),
+    if vault
+        .store
+        .pending_gate_consent_in_txn(&rtxn, claim_id)?
+        .is_some()
+        || matches!(
+            body.approval,
+            ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+        )
+    {
+        return Ok(false);
     }
+    let rejected_at = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&rtxn, claim_id.as_bytes())?
+        .iter()
+        .filter(|decision| decision.outcome == GATE_OUTCOME_REJECTED)
+        .map(|decision| decision.created_at)
+        .max();
+    Ok(rejected_at.is_some_and(|at| now >= at.saturating_add(MINER_REJECTION_COOLDOWN_SECS)))
 }
 
 /// Lands a mined preference claim through the write gate, with its mint-mark
@@ -946,14 +1114,14 @@ fn preference_is_stale(vault: &Vault, claim_id: &EntityId, now: u64) -> Result<b
 /// structural rather than a convention.
 fn emit_preference_claim(
     vault: &Vault,
-    session: &EntityId,
+    run: &MinerRun,
     cluster: &SubstitutionCluster,
     handle: &[u8; 32],
     watermark: u64,
 ) -> Result<EntityId> {
     let claim_id = EntityId::now();
     let class = SubstitutionClass::Lexical;
-    let envelope = miner_envelope(session, handle)?;
+    let envelope = miner_envelope(run, handle)?;
     let candidate = ClaimCandidate::new(
         PREDICATE_PREFERENCE_PHRASING,
         ClaimSubject::Entity(cluster.actor),
@@ -1029,23 +1197,36 @@ fn emit_skill_edit(
     Ok(proposal_id)
 }
 
-/// The miner's write envelope: a SYSTEM actor, `Generated` source, `Proposed`
-/// ceiling, and the sitting as the review-bundle tag.
+/// The miner's write envelope: the caller's Agent actor, `Generated` source,
+/// `Proposed` ceiling.
 ///
-/// `System` because no model chose anything — the pass is a projector over a
-/// count, and stamping it `Agent` would claim a judgment it did not make. The
-/// actor's entity ref is the SITTING whose close ran the pass, which is the one
-/// durable handle the pass has for "where this came from"; the provenance map
-/// carries the rest.
-fn miner_envelope(session: &EntityId, handle: &[u8; 32]) -> Result<WriteEnvelope> {
+/// `Generated` because a mined preference is derived, never stated — which is
+/// also what makes GATE-007 refuse to let it supersede anything the owner said.
+/// The provenance is the shape `gate.rs::dreamer_run_id_from_provenance` parses
+/// (`dreamer_promotion`'s precedent, verbatim on the two keys that matter), so
+/// the pending row lands in the run's INBOX GROUP and the decider can answer it.
+/// The extra `session` and `cluster` keys are this module's trace: a landed
+/// claim resolves back to the exact bucket that earned it.
+///
+/// **No `session_tag`.** It looks like free review bundling and is in fact a
+/// trap: a `sess`-carrying body may only be written by the envelope actor that
+/// PRODUCED the session (`batch.rs`'s bound-producer rule), and the inbox accept
+/// door re-puts the reviewed body RAW — so the tag would make the mined claim
+/// impossible to accept. The run group already bundles the pass's proposals,
+/// which is the job the tag would have done.
+fn miner_envelope(run: &MinerRun, handle: &[u8; 32]) -> Result<WriteEnvelope> {
     let provenance = WriteProvenance::new(Value::Map(vec![
         (
             Value::from(PROVENANCE_KEY_SURFACE),
-            Value::from(MINER_SURFACE),
+            Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+        ),
+        (
+            Value::from(PROVENANCE_KEY_RUN),
+            Value::from(run.run_id.as_str()),
         ),
         (
             Value::from(PROVENANCE_KEY_SESSION),
-            Value::from(session.to_hex()),
+            Value::from(run.session.to_hex()),
         ),
         (
             Value::from(PROVENANCE_KEY_CLUSTER),
@@ -1053,12 +1234,11 @@ fn miner_envelope(session: &EntityId, handle: &[u8; 32]) -> Result<WriteEnvelope
         ),
     ]))?;
     Ok(WriteEnvelope::new(
-        WriteActor::new(*session, EdgeActorClass::System),
+        run.agent,
         ClaimSource::Generated,
         provenance,
         ClaimApprovalStatus::Proposed,
-    )
-    .with_session_tag(session.to_hex()))
+    ))
 }
 
 /// The claim value: the pair, the class, and the chooser's receipted rationale.

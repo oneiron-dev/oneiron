@@ -541,10 +541,10 @@ pub use crate::edit_distance::graduation::{
 };
 pub use crate::edit_distance::miner::{
     MINER_K_DEFAULT, MINER_K_SETTINGS_KEY, MINER_REJECTION_COOLDOWN_SECS, MinedOutcome,
-    MinedSkillEditProposal, PREDICATE_PREFERENCE_PHRASING, SubstitutionClass, SubstitutionCluster,
-    classify_substitution, mine_substitution_clusters, mined_skill_edit, miner_attempt_input,
-    miner_k, miner_watermark, pending_substitution_skill_edits, run_substitution_miner,
-    session_from_miner_input, set_miner_k,
+    MinedSkillEditProposal, MinerRun, PREDICATE_PREFERENCE_PHRASING, SubstitutionClass,
+    SubstitutionCluster, classify_substitution, mine_substitution_clusters, mined_skill_edit,
+    miner_attempt_input, miner_k, miner_run_from_input, miner_watermark,
+    pending_substitution_skill_edits, run_substitution_miner, set_miner_k,
 };
 pub use crate::eiri::{
     EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,

@@ -2150,10 +2150,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         // step, so it spends no units. The payload shape and the pass itself
         // are the miner's; this arm is the registration.
         if attempt.status.payload.attempt_type == DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE {
-            let session = crate::edit_distance::miner::session_from_miner_input(
-                &attempt.status.payload.input,
-            )?;
-            crate::edit_distance::miner::run_substitution_miner(ctx.vault, &session)?;
+            let mut run =
+                crate::edit_distance::miner::miner_run_from_input(&attempt.status.payload.input)?;
+            // The QUEUE's run id wins over the payload's: the mined proposals'
+            // inbox group is keyed on it, and a group that does not match the
+            // run this attempt actually belongs to is a tray nobody opens.
+            if let Some(run_id) = attempt.status.attempt.run_id.clone() {
+                run.run_id = run_id;
+            }
+            crate::edit_distance::miner::run_substitution_miner(ctx.vault, &run)?;
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
 
