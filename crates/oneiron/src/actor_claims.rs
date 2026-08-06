@@ -23,6 +23,7 @@
 //! | [`PREDICATE_ACTOR_FAILURE_MODE`] | normalized note | SET, keyed on the text |
 //! | [`PREDICATE_ACTOR_SCOPE_NOTE`] | normalized note | SET, keyed on the text |
 //! | [`PREDICATE_ACTOR_SKILL_FIT`] | fit in `0..=1` | ONE per `(actor, skill)`, superseding |
+//! | [`PREDICATE_ACTOR_EDIT_COST`] | cost in `0..=1` | ONE per `(actor, scope)`, superseding |
 //!
 //! A set row DEDUPES rather than supersedes: two different lessons are two
 //! standing facts, and re-observing one is not news. `skill_fit` is the
@@ -30,7 +31,10 @@
 //! the pair scope (`{skill}`) is the conflict-set key. Scoping fit per PAIR
 //! rather than per actor is load-bearing: an actor good at one skill and bad at
 //! another has two live rows, and the router ([`skill_fit_for`], SK-05's
-//! bandit) reads exactly the one it asked about.
+//! bandit) reads exactly the one it asked about. `edit_cost` (ED-03, ONE-1759)
+//! is the same estimate shape on a different axis — `{scope}` instead of
+//! `{skill}` — and its third evidence lane cites amendment receipts rather than
+//! attempt receipts.
 //!
 //! **Namespace, not `agent.*` (r1).** Actors are agents AND humans AND peers
 //! AND connectors; the ledger is about whoever acted. `actor.*` joins `edge.*`
@@ -83,7 +87,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     CLAIM_SCOPE_EVIDENCE_TAINT_KEY, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus,
-    ClaimSource, ClaimSubject, claim_evidence_taint,
+    ClaimSource, ClaimSubject, PREDICATE_ACTOR_EDIT_COST, claim_evidence_taint,
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
@@ -111,6 +115,16 @@ pub const PREDICATE_ACTOR_SKILL_FIT: &str = "actor.skill_fit";
 /// Scope key naming the SKILL half of a [`PREDICATE_ACTOR_SKILL_FIT`] pair.
 /// The scope IS the conflict set: two rows collide iff their skill matches.
 pub const ACTOR_SKILL_FIT_SCOPE_KEY: &str = "skill";
+
+/// Scope key naming the SCOPE half of a [`PREDICATE_ACTOR_EDIT_COST`] pair
+/// (ED-03). Same shape and same job as [`ACTOR_SKILL_FIT_SCOPE_KEY`]: two cost
+/// rows collide iff they speak about the same scope.
+pub const ACTOR_EDIT_COST_SCOPE_KEY: &str = "scope";
+
+/// Longest accepted `actor.edit_cost` scope, borrowed from the consent bound
+/// the ED lane measures every other scope axis against
+/// (`edit_distance::escalation`).
+pub const ACTOR_EDIT_COST_SCOPE_MAX_BYTES: usize = crate::consent::MAX_CONSENT_REF_LEN;
 
 /// [`CallPurpose::Other`] name for the CHAT-lane distillation tier, so session
 /// distillation is budgeted and audited as its own class instead of hiding
@@ -168,6 +182,7 @@ const KEY_AT: &str = "at";
 
 const LANE_TASK: &str = "task";
 const LANE_CHAT: &str = "chat";
+const LANE_AMENDMENT: &str = "amendment";
 
 const fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
@@ -179,10 +194,9 @@ const fn invalid(reason: &'static str) -> Error {
 
 /// One `actor.*` row, before it is a claim.
 ///
-/// Owning the four shapes in one enum is what makes [`write_actor_claim`] a
-/// chokepoint rather than a convention: a fifth row kind cannot be written
+/// Owning every shape in one enum is what makes [`write_actor_claim`] a
+/// chokepoint rather than a convention: a new row kind cannot be written
 /// without a variant here, and every variant lands through the same door.
-/// (ED-03/ONE-1759 adds its `EditCost` arm here after this stack merges.)
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ActorClaimRow {
@@ -202,6 +216,19 @@ pub enum ActorClaimRow {
         actor: EntityId,
         skill: EntityId,
         fit: f32,
+    },
+    /// Per-`(actor, scope)` amendment cost in `0..=1` (ED-03, ONE-1759). ONE
+    /// per pair, superseding — the `skill_fit` cardinality, for the same
+    /// reason: it is a current estimate, not a standing fact.
+    ///
+    /// `cost` is an AGGREGATE the judge earned, never a raw Δ:
+    /// [`crate::edit_distance::attribution::project_edit_cost_claims`] is the
+    /// only writer, and it takes judgments rather than deltas so an
+    /// unclassified edit has no path to this row.
+    EditCost {
+        actor: EntityId,
+        scope: String,
+        cost: f32,
     },
 }
 
@@ -246,6 +273,7 @@ impl ActorClaimRow {
             Self::FailureMode { .. } => PREDICATE_ACTOR_FAILURE_MODE,
             Self::ScopeNote { .. } => PREDICATE_ACTOR_SCOPE_NOTE,
             Self::SkillFit { .. } => PREDICATE_ACTOR_SKILL_FIT,
+            Self::EditCost { .. } => PREDICATE_ACTOR_EDIT_COST,
         }
     }
 
@@ -256,7 +284,8 @@ impl ActorClaimRow {
             Self::Lesson { actor, .. }
             | Self::FailureMode { actor, .. }
             | Self::ScopeNote { actor, .. }
-            | Self::SkillFit { actor, .. } => *actor,
+            | Self::SkillFit { actor, .. }
+            | Self::EditCost { actor, .. } => *actor,
         }
     }
 
@@ -272,10 +301,19 @@ impl ActorClaimRow {
             | Self::FailureMode { text, .. }
             | Self::ScopeNote { text, .. } => Ok((Value::from(normalize_note(text)?), None)),
             Self::SkillFit { skill, fit, .. } => {
-                if !valid_skill_fit(*fit) {
+                if !valid_unit_interval(*fit) {
                     return Err(invalid("actor.skill_fit must be a finite fit in 0..=1"));
                 }
                 Ok((Value::F32(*fit), Some(skill_fit_scope(skill))))
+            }
+            Self::EditCost { scope, cost, .. } => {
+                if !valid_unit_interval(*cost) {
+                    return Err(invalid("actor.edit_cost must be a finite cost in 0..=1"));
+                }
+                Ok((
+                    Value::F32(*cost),
+                    Some(edit_cost_scope(normalize_edit_cost_scope(scope)?)),
+                ))
             }
         }
     }
@@ -300,11 +338,37 @@ fn skill_fit_scope(skill: &EntityId) -> Value {
     )])
 }
 
-/// A fit is a finite estimate in the unit interval. The finiteness half is
-/// explicit: NaN fails every range comparison, so a `contains` check ALONE
-/// would silently admit it and poison every downstream ranking.
-fn valid_skill_fit(fit: f32) -> bool {
-    fit.is_finite() && (0.0..=1.0).contains(&fit)
+/// The `{scope}` pair map of an `*.edit_cost` row — the writer both the
+/// `actor.*` door and the `skill.*` door in
+/// [`crate::edit_distance::attribution`] share, so one row shape means one
+/// conflict-set key lane-wide.
+pub(crate) fn edit_cost_scope(scope: &str) -> Value {
+    Value::Map(vec![(
+        Value::from(ACTOR_EDIT_COST_SCOPE_KEY),
+        Value::from(scope),
+    )])
+}
+
+/// The trimmed scope of an `actor.edit_cost` row, or the reason it is not one.
+///
+/// Trimmed before it becomes a conflict-set key, so `"outbound"` and
+/// `" outbound "` are one pair rather than two live rows about the same thing —
+/// the note rows' normalization law, applied to the axis this row is keyed on.
+fn normalize_edit_cost_scope(scope: &str) -> Result<&str> {
+    let trimmed = scope.trim();
+    if trimmed.is_empty() || trimmed.len() > ACTOR_EDIT_COST_SCOPE_MAX_BYTES {
+        return Err(invalid(
+            "actor.edit_cost scope must be non-empty and within the consent-ref bound",
+        ));
+    }
+    Ok(trimmed)
+}
+
+/// A fit or a cost is a finite estimate in the unit interval. The finiteness
+/// half is explicit: NaN fails every range comparison, so a `contains` check
+/// ALONE would silently admit it and poison every downstream ranking.
+fn valid_unit_interval(estimate: f32) -> bool {
+    estimate.is_finite() && (0.0..=1.0).contains(&estimate)
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +389,14 @@ enum ActorClaimLane {
         session: EntityId,
         turns: Vec<EntityId>,
     },
+    /// Receipt ids whose ARCH-0056 amendment Δ a judgment rested on (ED-03).
+    ///
+    /// A third lane rather than a reuse of [`Self::Task`] because the two cite
+    /// different ledgers: a task row cites an attempt PACK receipt, an
+    /// amendment row cites the receipt ED-01 measured a Δ against, and
+    /// grounding one against the other's index would answer "no such receipt"
+    /// for a citation that is plainly readable.
+    Amendment { receipts: Vec<String> },
 }
 
 /// The trace a row rests on, plus when it was observed.
@@ -353,6 +425,21 @@ impl ActorClaimEvidence {
         })
     }
 
+    /// AMENDMENT-lane evidence: the receipts whose Δs the judgment rested on
+    /// (ED-03, ARCH-0056 §5).
+    pub fn amendment(receipts: Vec<String>, at: u64) -> Result<Self> {
+        if receipts.is_empty() {
+            return Err(invalid("an amendment-lane actor row must cite a receipt"));
+        }
+        if receipts.len() > ACTOR_CLAIM_MAX_CITED_EVIDENCE {
+            return Err(invalid("actor row cites more evidence than the bound"));
+        }
+        Ok(Self {
+            lane: ActorClaimLane::Amendment { receipts },
+            at,
+        })
+    }
+
     /// CHAT-lane evidence: the sitting and the turns distilled from it.
     pub fn chat(session: EntityId, turns: Vec<EntityId>, at: u64) -> Result<Self> {
         if turns.is_empty() {
@@ -372,17 +459,34 @@ impl ActorClaimEvidence {
     const fn lineage(&self) -> ClaimSource {
         match self.lane {
             // Attempt receipts ARE tool output; a row resting on them says so.
-            ActorClaimLane::Task { .. } => ClaimSource::ToolOutput,
+            // An amendment Δ is the same class of fact: the engine MEASURED two
+            // bodies it holds, so the row rests on machine output rather than on
+            // anything a model wrote.
+            ActorClaimLane::Task { .. } | ActorClaimLane::Amendment { .. } => {
+                ClaimSource::ToolOutput
+            }
             // A distilled note is model-written prose over turns.
             ActorClaimLane::Chat { .. } => ClaimSource::Generated,
         }
     }
 
-    fn to_value(&self) -> Value {
+    /// The evidence payload the writer stores on the row.
+    ///
+    /// Crate-visible so a projector can ask whether the head already standing
+    /// IS the row it was about to write — the comparison that keeps a replay
+    /// from minting a fresh claim entity per pass (ED-03).
+    pub(crate) fn to_value(&self) -> Value {
         let mut entries = vec![(Value::from(KEY_AT), Value::from(self.at))];
         match &self.lane {
             ActorClaimLane::Task { receipts } => {
                 entries.push((Value::from(KEY_LANE), Value::from(LANE_TASK)));
+                entries.push((
+                    Value::from(KEY_RECEIPTS),
+                    Value::Array(receipts.iter().map(|r| Value::from(r.as_str())).collect()),
+                ));
+            }
+            ActorClaimLane::Amendment { receipts } => {
+                entries.push((Value::from(KEY_LANE), Value::from(LANE_AMENDMENT)));
                 entries.push((
                     Value::from(KEY_RECEIPTS),
                     Value::Array(receipts.iter().map(|r| Value::from(r.as_str())).collect()),
@@ -473,6 +577,17 @@ fn ground_actor_claim(
                 }
             }
         }
+        ActorClaimLane::Amendment { receipts } => {
+            for receipt in receipts {
+                // The Δ side-ledger IS the resolution: a receipt with a
+                // recorded Δ is one this engine measured an amendment on. A
+                // receipt whose capture FAILED reads as absent here, which is
+                // the right answer — an unmeasured edit has no cost to charge.
+                if crate::edit_distance::delta::amendment_delta(vault, receipt)?.is_none() {
+                    return Err(invalid("actor row cites an unmeasured amendment receipt"));
+                }
+            }
+        }
         ActorClaimLane::Chat { session, turns } => {
             require_session_entity(vault, session)?;
             for turn in turns {
@@ -499,22 +614,19 @@ fn write_actor_claim_in_txn(
     let (value, pair_scope) = row.value_and_scope()?;
     let at = evidence.at;
 
-    // The SET key is the value; the fit key is the pair scope. Same lookup, two
-    // conflict definitions — which is exactly what §G.1 pins.
-    let pair = skill_fit_scope_skill(pair_scope.as_ref());
+    // The SET key is the value; a pair-scoped key is the scope entry. Same
+    // lookup, two conflict definitions — which is exactly what §G.1 pins.
+    let conflict = ConflictKey::from_scope(pair_scope.as_ref());
     let heads = active_heads_in_txn(vault, wtxn, &actor, predicate)?;
     // A head stamped LATER than this write is not this write's to close: a
     // backfill landing at=50 must not retire the estimate the ledger already
     // holds at 100 and leave the stale one sole-active.
     let (supersedable, newer): (Vec<_>, Vec<_>) = heads
         .iter()
-        .filter(|(_, head, _)| match pair {
-            None => head.value == value,
-            Some(skill) => skill_fit_scope_skill(head.scope.as_ref()) == Some(skill),
-        })
+        .filter(|(_, head, _)| conflict.collides(head, &value))
         .partition(|(_, head, start)| head_event_time(head, *start) <= at);
 
-    if pair.is_none() {
+    if conflict.is_set() {
         // SET, backfill: a note a later head already stands for is not news, so
         // this write adds no row (the value IS the key — a second row would
         // break the cardinality). It still converges the fork by folding the
@@ -538,7 +650,7 @@ fn write_actor_claim_in_txn(
     // SET, no-op: ONE standing head that already says exactly this, on evidence
     // of exactly this lineage. Two heads is a fork that must collapse even when
     // the surviving value is unchanged.
-    if pair.is_none()
+    if conflict.is_set()
         && let [(head_id, head, _)] = supersedable.as_slice()
         && actor_claim_lineage(head) == Some(meet)
     {
@@ -575,6 +687,47 @@ fn write_actor_claim_in_txn(
         vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, head_id, at.max(*head_start))?;
     }
     Ok(claim_id)
+}
+
+/// What makes two active heads of one predicate collide.
+///
+/// Derived from the row's own pair scope, so the §G.1 cardinality of every row
+/// kind is read off ONE value rather than restated at each comparison. A row
+/// with no pair scope is a SET row and dedupes on its value; a pair-scoped row
+/// supersedes whatever head shares its pair.
+enum ConflictKey<'a> {
+    /// SET rows (lesson / failure_mode / scope_note): the note IS the key.
+    Value,
+    /// [`PREDICATE_ACTOR_SKILL_FIT`]: the `(actor, skill)` pair.
+    Skill(EntityId),
+    /// [`PREDICATE_ACTOR_EDIT_COST`]: the `(actor, scope)` pair.
+    Scope(&'a str),
+}
+
+impl<'a> ConflictKey<'a> {
+    fn from_scope(scope: Option<&'a Value>) -> Self {
+        if let Some(skill) = skill_fit_scope_skill(scope) {
+            return Self::Skill(skill);
+        }
+        if let Some(name) = edit_cost_scope_name(scope) {
+            return Self::Scope(name);
+        }
+        Self::Value
+    }
+
+    /// Whether `head` is in the conflict set of a row valued `value`.
+    fn collides(&self, head: &ClaimBody, value: &Value) -> bool {
+        match self {
+            Self::Value => head.value == *value,
+            Self::Skill(skill) => skill_fit_scope_skill(head.scope.as_ref()) == Some(*skill),
+            Self::Scope(scope) => edit_cost_scope_name(head.scope.as_ref()) == Some(*scope),
+        }
+    }
+
+    /// Whether this key dedupes (SET) rather than supersedes.
+    const fn is_set(&self) -> bool {
+        matches!(self, Self::Value)
+    }
 }
 
 /// When a head says its fact happened. `valid_from` is what this door stamps;
@@ -653,7 +806,11 @@ fn active_heads_in_txn(
 /// PERSON covers humans and agent identities, AGENT_DEF is a defined agent,
 /// MACHINE is a system actor). Claiming a lesson against a TURN or an ORG is a
 /// routing bug, and a ledger that accepts it is unreadable by the router.
-fn require_actor_entity(vault: &Vault, actor: &EntityId) -> Result<()> {
+///
+/// Crate-visible so an inlet that FEEDS this door can refuse the same shape at
+/// the point of observation: an evidence row this check would reject is a
+/// projection pass that fails after durable state has already landed (ED-03).
+pub(crate) fn require_actor_entity(vault: &Vault, actor: &EntityId) -> Result<()> {
     match vault.get_entity_type(actor)? {
         Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_AGENT_DEF | ENTITY_TYPE_MACHINE) => Ok(()),
         Some(_) => Err(invalid("actor.* subject must be an actor entity")),
@@ -1168,7 +1325,7 @@ fn distill_job_key(session: &EntityId) -> Vec<u8> {
 // Structural validator (the claim.rs predicate-aware branch)
 // ---------------------------------------------------------------------------
 
-/// Whether `predicate` is one of the four §G.1 `actor.*` rows this module owns.
+/// Whether `predicate` is one of the §G.1 `actor.*` rows this module owns.
 ///
 /// `actor.confidence_prior` is deliberately NOT here: it is
 /// [`crate::provider_confidence`]'s row, with its own structural validator, and
@@ -1181,6 +1338,7 @@ pub fn is_actor_claim_predicate(predicate: &str) -> bool {
             | PREDICATE_ACTOR_FAILURE_MODE
             | PREDICATE_ACTOR_SCOPE_NOTE
             | PREDICATE_ACTOR_SKILL_FIT
+            | PREDICATE_ACTOR_EDIT_COST
     )
 }
 
@@ -1217,32 +1375,55 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
             "actor.* claim scope must carry a known lineage class",
         ));
     }
-    let fit_row = body.predicate == PREDICATE_ACTOR_SKILL_FIT;
-    if fit_row {
-        let Value::F32(fit) = body.value else {
-            return Err(invalid("actor.skill_fit value must be a fit in 0..=1"));
-        };
-        if !valid_skill_fit(fit) {
-            return Err(invalid("actor.skill_fit must be a finite fit in 0..=1"));
+    // The pair key this predicate's rows are keyed on, or `None` for the SET
+    // note rows — which is also what the scope check below is exact against.
+    let pair_key = match body.predicate.as_str() {
+        PREDICATE_ACTOR_SKILL_FIT => {
+            let Value::F32(fit) = body.value else {
+                return Err(invalid("actor.skill_fit value must be a fit in 0..=1"));
+            };
+            if !valid_unit_interval(fit) {
+                return Err(invalid("actor.skill_fit must be a finite fit in 0..=1"));
+            }
+            if skill_fit_scope_skill(body.scope.as_ref()).is_none() {
+                return Err(invalid(
+                    "actor.skill_fit must scope its (actor, skill) pair",
+                ));
+            }
+            Some(ACTOR_SKILL_FIT_SCOPE_KEY)
         }
-        if skill_fit_scope_skill(body.scope.as_ref()).is_none() {
-            return Err(invalid(
-                "actor.skill_fit must scope its (actor, skill) pair",
-            ));
+        PREDICATE_ACTOR_EDIT_COST => {
+            let Value::F32(cost) = body.value else {
+                return Err(invalid("actor.edit_cost value must be a cost in 0..=1"));
+            };
+            if !valid_unit_interval(cost) {
+                return Err(invalid("actor.edit_cost must be a finite cost in 0..=1"));
+            }
+            let Some(scope) = edit_cost_scope_name(body.scope.as_ref()) else {
+                return Err(invalid(
+                    "actor.edit_cost must scope its (actor, scope) pair",
+                ));
+            };
+            if normalize_edit_cost_scope(scope)? != scope {
+                return Err(invalid("actor.edit_cost scope must be normalized"));
+            }
+            Some(ACTOR_EDIT_COST_SCOPE_KEY)
         }
-    } else {
-        let Some(text) = body.value.as_str() else {
-            return Err(invalid("actor note value must be a string"));
-        };
-        if normalize_note(text)? != text {
-            return Err(invalid("actor note value must be normalized"));
+        _ => {
+            let Some(text) = body.value.as_str() else {
+                return Err(invalid("actor note value must be a string"));
+            };
+            if normalize_note(text)? != text {
+                return Err(invalid("actor note value must be normalized"));
+            }
+            None
         }
-    }
+    };
     // The scope map is the writer's, key for key: the lineage meet on every
-    // row and the pair key on a fit row. A row carrying anything else is
-    // scoping a conflict set this ledger does not define — including a
+    // row and the pair key on a pair-scoped row. A row carrying anything else
+    // is scoping a conflict set this ledger does not define — including a
     // sensitivity or federation stamp a peer hoped this vault would honor.
-    if !actor_scope_is_exact(body.scope.as_ref(), fit_row) {
+    if !actor_scope_is_exact(body.scope.as_ref(), pair_key) {
         return Err(invalid(
             "actor.* claim scope carries a key this ledger does not write",
         ));
@@ -1251,8 +1432,8 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
 }
 
 /// Whether a row's scope is EXACTLY the writer's keys: the lineage meet, plus
-/// the pair key on a fit row, each once.
-fn actor_scope_is_exact(scope: Option<&Value>, fit_row: bool) -> bool {
+/// `pair_key` on a pair-scoped row, each once.
+fn actor_scope_is_exact(scope: Option<&Value>, pair_key: Option<&str>) -> bool {
     let Some(Value::Map(entries)) = scope else {
         return false;
     };
@@ -1261,11 +1442,11 @@ fn actor_scope_is_exact(scope: Option<&Value>, fit_row: bool) -> bool {
     for (key, _) in entries {
         match key.as_str() {
             Some(ACTOR_CLAIM_LINEAGE_KEY) => lineage += 1,
-            Some(ACTOR_SKILL_FIT_SCOPE_KEY) => pair += 1,
+            Some(key) if Some(key) == pair_key => pair += 1,
             _ => return false,
         }
     }
-    lineage == 1 && pair == usize::from(fit_row)
+    lineage == 1 && pair == usize::from(pair_key.is_some())
 }
 
 /// The EVIDENCE MEET a stored row rests on: `ToolOutput` for a TASK-lane row
@@ -1311,6 +1492,28 @@ fn skill_fit_scope_skill(scope: Option<&Value>) -> Option<EntityId> {
         };
         let raw: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().ok()?;
         found = Some(EntityId::from_bytes(raw).ok()?);
+    }
+    found
+}
+
+/// The SCOPE an `*.edit_cost` scope map names, or `None` when it names none —
+/// [`skill_fit_scope_skill`]'s sibling, duplicated-key rule included. Shared
+/// with [`crate::edit_distance::attribution`]'s reads: a row's scope map also
+/// carries the lineage meet, so a read matches on the ONE scope entry rather
+/// than on the whole map.
+pub(crate) fn edit_cost_scope_name(scope: Option<&Value>) -> Option<&str> {
+    let Some(Value::Map(entries)) = scope else {
+        return None;
+    };
+    let mut found = None;
+    for (key, value) in entries {
+        if key.as_str() != Some(ACTOR_EDIT_COST_SCOPE_KEY) {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(value.as_str()?);
     }
     found
 }

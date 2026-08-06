@@ -131,8 +131,9 @@ pub use crate::access_grant::{
 };
 pub use crate::actor_claims::{
     ACTOR_CLAIM_LINEAGE_KEY, ACTOR_CLAIM_MAX_CITED_EVIDENCE, ACTOR_DISTILL_CALL_PURPOSE_NAME,
-    ACTOR_NOTE_MAX_BYTES, ACTOR_SKILL_FIT_SCOPE_KEY, ActorClaimEvidence, ActorClaimRow, ActorNote,
-    ActorNoteKind, LAPSE_FAILURE_MODE, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON,
+    ACTOR_EDIT_COST_SCOPE_KEY, ACTOR_EDIT_COST_SCOPE_MAX_BYTES, ACTOR_NOTE_MAX_BYTES,
+    ACTOR_SKILL_FIT_SCOPE_KEY, ActorClaimEvidence, ActorClaimRow, ActorNote, ActorNoteKind,
+    LAPSE_FAILURE_MODE, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON,
     PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT, SessionActorDistiller,
     SessionDistillBrief, SessionDistillTurn, actor_claim_lineage, actor_distill_call_purpose,
     is_actor_claim_predicate, pending_session_actor_distills, project_actor_claims_from_judgments,
@@ -276,8 +277,9 @@ pub use crate::channel_identity_provider::{
 };
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
-    ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
-    RESERVED_PREDICATE_NAMESPACE, SessionClaimBundle, SessionClaimBundleClaim, predicate_root,
+    ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_ACTOR_EDIT_COST, PREDICATE_CONFLICT_OPEN,
+    PREDICATE_CONFLICT_RESOLVED, PREDICATE_SKILL_EDIT_COST, RESERVED_PREDICATE_NAMESPACE,
+    SessionClaimBundle, SessionClaimBundleClaim, predicate_root,
 };
 pub use crate::cluster::{
     CLUSTER_COHESION_THRESHOLD, CLUSTER_ID_DOMAIN, ClaimCohort, ClusterAssignments, ClusterClaim,
@@ -515,6 +517,13 @@ pub use crate::dreamer_wake::{
 pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EdgeProvenanceFlags, EdgeValueLayout,
+};
+pub use crate::edit_distance::attribution::{
+    AmendmentAuditFixture, AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment,
+    PreferenceProposal, amendment_evidence, amendment_judgments, classify_amendment, edit_cost_for,
+    held_out_amendment_fixtures, judge_amendment, judge_amendment_with, judge_audit_reports,
+    pending_preference_proposals, project_edit_cost_claims, record_amendment_evidence,
+    run_judge_audit, run_judge_audit_with_judge,
 };
 pub use crate::edit_distance::escalation::{
     DEFAULT_ESCALATION_STANDING_N, ESCALATION_LAST_RULINGS_BOUND, ESCALATION_STANDING_N_KEY,

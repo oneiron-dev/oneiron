@@ -81,9 +81,18 @@ const fn invalid(reason: &'static str) -> Error {
 // Verdict taxonomy (ARCH-0053 §4 — EmbodiSkill's)
 // ---------------------------------------------------------------------------
 
-/// How an attempt's outcome is attributed.
+/// How an attempt's outcome — or an amendment — is attributed.
 ///
 /// The taxonomy lives in ARCH-0053/0056 prose; this is its first code home.
+///
+/// **One enum, two inlets.** The first three arms are the ATTEMPT lane's
+/// (ARCH-0053 §4): an attempt failed, and the question is who to charge. The
+/// last two are the AMENDMENT lane's (ARCH-0056 §5, ED-03/ONE-1759), where an
+/// approval carries an edit and the extra question is whether anything was
+/// WRONG at all. They share this enum rather than forking a parallel taxonomy
+/// because the wrong-on-its-own-terms case routes through the very same
+/// skill/actor ladder — [`crate::edit_distance::attribution`] pre-filters the
+/// two amendment-only causes and delegates the rest to [`AttributionJudge`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AttributionVerdict {
@@ -96,6 +105,17 @@ pub enum AttributionVerdict {
     /// The skill was missing content the attempt needed. Deliberately NOT a
     /// claim on anything (§4): it becomes a skill EDIT PROPOSAL.
     Discovery,
+    /// AMENDMENT lane only: the proposal was right when it was made, and an
+    /// external fact moved under it. Blames nobody, and deliberately so —
+    /// there is no ENVIRONMENT entity to carry a claim, and minting one would
+    /// turn "nothing to attribute" into an attribution.
+    Environment,
+    /// AMENDMENT lane only: the proposal was not wrong; the decider wanted it
+    /// otherwise. Routes to a PREFERENCE proposal
+    /// ([`crate::edit_distance::attribution::pending_preference_proposals`]),
+    /// never to an edit-cost claim — taste is a fact about the decider, not a
+    /// defect in anyone's work.
+    PreferenceShift,
 }
 
 impl AttributionVerdict {
@@ -106,6 +126,8 @@ impl AttributionVerdict {
             Self::SkillDefect => "skill_defect",
             Self::ExecutionLapse => "execution_lapse",
             Self::Discovery => "discovery",
+            Self::Environment => "environment",
+            Self::PreferenceShift => "preference_shift",
         }
     }
 
@@ -116,6 +138,8 @@ impl AttributionVerdict {
             "skill_defect" => Some(Self::SkillDefect),
             "execution_lapse" => Some(Self::ExecutionLapse),
             "discovery" => Some(Self::Discovery),
+            "environment" => Some(Self::Environment),
+            "preference_shift" => Some(Self::PreferenceShift),
             _ => None,
         }
     }
@@ -336,10 +360,18 @@ impl AttributionJudge for RuleAttributionJudge {
 }
 
 /// The entity a verdict routes to, or `None` when the evidence cannot carry it.
+///
+/// The two AMENDMENT-lane arms route to nothing HERE on purpose. This ledger
+/// is the attempt lane's, and neither class names an attempt subject: an
+/// environment verdict blames no entity at all, and a preference shift is
+/// [`crate::edit_distance::attribution`]'s to turn into a proposal. A judge
+/// that returns one anyway leaves no judgment row rather than charging the
+/// nearest actor.
 fn verdict_subject(verdict: AttributionVerdict, evidence: &OutcomeEvidence) -> Option<EntityId> {
     match verdict {
         AttributionVerdict::ExecutionLapse => Some(evidence.actor),
         AttributionVerdict::SkillDefect | AttributionVerdict::Discovery => evidence.skill,
+        AttributionVerdict::Environment | AttributionVerdict::PreferenceShift => None,
     }
 }
 

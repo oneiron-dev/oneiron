@@ -752,6 +752,25 @@ pub(crate) const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
 /// registry admits only public `core.*`/`companion.*`/`eiri.*` predicates.
 pub const PREDICATE_ACTOR_PEER_BINDING: &str = "actor.peer_binding";
 
+/// Per-`(actor, scope)` amendment cost: how much a decider had to edit this
+/// actor's proposals in one scope (ARCH-0003 §G.1, ARCH-0056 §5, ED-03).
+///
+/// Engine-reserved by its `actor.*` namespace, exactly like
+/// [`PREDICATE_ACTOR_PEER_BINDING`], and written only through
+/// [`crate::actor_claims::write_actor_claim`]'s chokepoint. Never in
+/// [`CLAIM_PREDICATE_REGISTRY`]: the registry admits only public
+/// `core.*`/`companion.*`/`eiri.*` predicates, and its landed test rejects a
+/// reserved namespace outright.
+pub const PREDICATE_ACTOR_EDIT_COST: &str = "actor.edit_cost";
+
+/// Per-`(skill, scope)` amendment cost: how much a decider had to edit
+/// proposals that rode this skill (ARCH-0003 §G.1, ARCH-0056 §5, ED-03).
+///
+/// The `skill.*` sibling of [`PREDICATE_ACTOR_EDIT_COST`], on the reserved
+/// namespace `skill_hub` and `skill_reliability` already author through
+/// `put_reserved_claim_in_txn`. Registry-exempt for the same reason.
+pub const PREDICATE_SKILL_EDIT_COST: &str = "skill.edit_cost";
+
 /// Length of an EdgeRef subject encoding: source 16 ‖ kind u8 ‖ target 16.
 pub(crate) const EDGE_REF_LEN: usize = 33;
 
