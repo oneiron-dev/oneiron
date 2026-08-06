@@ -25,8 +25,8 @@ use oneiron::campaign::enrollment::{
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentEvent,
     CampaignEnrollmentRunner, CampaignHomeNodeAdmission, CampaignHomeNodeCandidate,
     CampaignHomeNodeClass, CampaignProgram, CampaignProgramOutbound, CampaignProgramStep,
-    DetectEnrollment, EnrollmentDetection, EnrollmentExecution, campaign_enrollment_event,
-    campaign_home_node_designation, derive_enrollment_outbound_request,
+    DetectEnrollment, EnrollmentDetection, EnrollmentExecution, accept_enrollment_baseline,
+    campaign_enrollment_event, campaign_home_node_designation, derive_enrollment_outbound_request,
     elect_campaign_home_node_designation, encode_enrollment_attempt_payload, enrollment_dedupe_key,
     put_campaign_program, put_campaign_program_step, require_campaign_home_node,
 };
@@ -264,12 +264,24 @@ fn detect(
     grants: &QueryScope,
     now: u64,
 ) -> CampaignEnrollmentEvent {
-    let grants_ref = grants;
-    let evaluator = evaluator(vault, grants_ref);
+    detect_entity(vault, fixture, fixture.person, grants, now)
+}
+
+fn detect_entity(
+    vault: &Vault,
+    fixture: &Fixture,
+    entity_ref: EntityId,
+    grants: &QueryScope,
+    now: u64,
+) -> CampaignEnrollmentEvent {
+    let evaluator = evaluator(vault, grants);
     match block_on(oneiron::campaign::enrollment::detect_enrollment(
         &evaluator,
         fixture.owner,
-        &fixture.detect(now),
+        &DetectEnrollment {
+            entity_ref,
+            ..fixture.detect(now)
+        },
     ))
     .unwrap()
     {
@@ -679,6 +691,10 @@ fn scope_and_definition_changes_require_review_not_auto_write() -> Result<()> {
         }
     );
 
+    // The owner rules on the definition move, so the next detection compares
+    // against IT rather than reporting the same move again.
+    accept_enrollment_baseline(&vault, &definition_move)?;
+
     // The OWNER'S REACH moves; the person still matches. Same answer.
     let widened = QueryScope {
         worlds: vec![home_world, test_id(0x3A)],
@@ -708,6 +724,74 @@ fn scope_and_definition_changes_require_review_not_auto_write() -> Result<()> {
     assert_eq!(
         live_member_heads(&vault, fixture.person, fixture.query.query_ref),
         vec![("enrolled".to_owned(), 1, vec![CHANNEL.to_owned()])]
+    );
+    Ok(())
+}
+
+/// The cause baseline is the derivation state the OWNER last accepted for the
+/// query, not the state the last detection happened to run under, and it is
+/// held per query rather than per entity. Both differences are load-bearing:
+/// advancing it at detection would let a definition move launder itself into
+/// ordinary data movement on its second sighting, and holding it per entity
+/// would leave the entities the move SWEPT IN with no row at all — and an
+/// absent row can only read as data movement.
+#[test]
+fn a_definition_move_cannot_launder_itself_into_data_change() -> Result<()> {
+    let (_dir, vault) = oracle_vault();
+    let fixture = install_fixture(&vault);
+    let grants = QueryScope::default();
+
+    let before = detect(&vault, &fixture, &grants, 100);
+    assert_eq!(before.cause, MembershipCause::DataChange);
+
+    update_saved_query(
+        &vault,
+        fixture.owner,
+        fixture.query.query_ref,
+        &UpdateSavedQueryRequest {
+            expected_definition_version: fixture.query.definition.definition_version,
+            scope: QueryScope::default(),
+            filter: seniority_is("vp"),
+            matcher: MatcherSpec::Hard {
+                expression: FilterAst::All {
+                    terms: vec![seniority_is("vp")],
+                },
+            },
+            eval: fixture.query.definition.eval,
+        },
+        200,
+    )?;
+
+    let first_sighting = detect(&vault, &fixture, &grants, 201);
+    assert_eq!(first_sighting.cause, MembershipCause::DefinitionChange);
+
+    // Nothing has been reviewed, so the SECOND sighting is not suddenly
+    // ordinary data movement.
+    let second_sighting = detect(&vault, &fixture, &grants, 202);
+    assert_eq!(
+        second_sighting.cause,
+        MembershipCause::DefinitionChange,
+        "an unreviewed definition move stays a definition move"
+    );
+
+    // An entity the moved definition sweeps in for the FIRST time has no
+    // per-entity history to compare against at all.
+    let newcomer = test_id(0x40);
+    put_person(&vault, newcomer);
+    put_claim(&vault, test_id(0x41), newcomer, SENIORITY, "vp");
+    assert_eq!(
+        detect_entity(&vault, &fixture, newcomer, &grants, 203).cause,
+        MembershipCause::DefinitionChange,
+        "the entities a widened definition swept in are exactly the ones review is for"
+    );
+
+    // The owner rules on the move. Its derivation state becomes the query's
+    // new normal and ordinary data movement is automatic again — the routing
+    // rule is a dial, not a wall.
+    accept_enrollment_baseline(&vault, &second_sighting)?;
+    assert_eq!(
+        detect_entity(&vault, &fixture, newcomer, &grants, 204).cause,
+        MembershipCause::DataChange
     );
     Ok(())
 }

@@ -70,7 +70,7 @@ pub const CAMPAIGN_ENROLLMENT_SCHEMA_VERSION: u32 = 1;
 /// `dreamer:home_node_macro:v1`.
 const CAMPAIGN_HOME_NODE_META_KEY: &[u8] = b"campaign:home_node_macro:v1";
 const ENROLLMENT_EVENT_PREFIX: &[u8] = b"campaign:enrollment_event:v1:";
-const ENROLLMENT_CONTEXT_PREFIX: &[u8] = b"campaign:enrollment_context:v1:";
+const ENROLLMENT_BASELINE_PREFIX: &[u8] = b"campaign:enrollment_baseline:v1:";
 const CAMPAIGN_PROGRAM_PREFIX: &[u8] = b"campaign:program:v1:";
 const CAMPAIGN_PROGRAM_STEP_PREFIX: &[u8] = b"campaign:program_step:v1:";
 
@@ -356,10 +356,11 @@ fn select_campaign_home_node(
 /// no caller and no queue replay can present a different cause, epoch, or
 /// evidence hash to the write path.
 ///
-/// `definition_version` and `scope_digest` are the derivation CONTEXT the next
-/// detection compares against: they are what makes "the definition moved" and
-/// "the owner's reach moved" decidable without re-deriving ONE-1773's evidence
-/// machinery here.
+/// `definition_version` and `scope_digest` are the derivation state this
+/// detection ran under. They are what makes "the definition moved" and "the
+/// owner's reach moved" decidable without re-deriving ONE-1773's evidence
+/// machinery here, and they are what an owner ruling on this event promotes to
+/// the query's new baseline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CampaignEnrollmentEvent {
     /// Durable identity of this row; the attempt payload's only membership ref.
@@ -472,13 +473,7 @@ pub async fn detect_enrollment(
         read_saved_query(vault, owner_actor, input.query_ref)?.ok_or(Error::EntityNotFound)?;
     let scope_digest = effective_scope_digest(&record.definition.scope, evaluator.owner_grants);
     let definition_version = record.definition.definition_version;
-    let cause = derive_cause(
-        vault,
-        input.query_ref,
-        input.entity_ref,
-        definition_version,
-        &scope_digest,
-    )?;
+    let cause = derive_cause(vault, input.query_ref, definition_version, &scope_digest)?;
     let outcome = evaluator
         .evaluate_entity(&EvaluationRequest {
             query_ref: input.query_ref,
@@ -520,7 +515,7 @@ pub async fn detect_enrollment(
         definition_version,
         scope_digest,
     };
-    put_event_with_context(vault, &event)?;
+    put_event(vault, &event)?;
     Ok(EnrollmentDetection::Recorded(Box::new(event)))
 }
 
@@ -528,25 +523,62 @@ pub async fn detect_enrollment(
 ///
 /// Precedence is definition > scope > data, because a definition move can also
 /// move the effective scope and the more specific explanation is the honest
-/// one. With no prior context the only mover that can be evidenced is the
-/// entity's own data.
+/// one.
+///
+/// The comparison is against the query's ACCEPTED baseline, and two things
+/// about that are the whole point of the routing dial:
+///
+/// * it is what the owner last accepted, not what the last detection ran
+///   under. A baseline that advanced at detection would let a definition move
+///   launder itself — the first detection reports `DefinitionChange`, and every
+///   later one under the same unreviewed definition reports `DataChange` and
+///   auto-enrolls the very change that was routed for review;
+/// * it is held per QUERY, not per entity. A per-entity row is absent for
+///   exactly the entities a widened definition swept in, and an absent row can
+///   only mean `DataChange` — so the population review exists for would be the
+///   population that skips it.
+///
+/// A query with no baseline yet has no prior definition or scope that could
+/// have moved, so the first detection pins one and reads as data movement.
 fn derive_cause(
     vault: &Vault,
     query_ref: EntityId,
-    entity_ref: EntityId,
     definition_version: u64,
     scope_digest: &[u8; 32],
 ) -> Result<MembershipCause> {
-    let Some(prior) = read_context(vault, query_ref, entity_ref)? else {
+    let Some(baseline) = read_baseline(vault, query_ref)? else {
+        put_baseline(vault, query_ref, definition_version, scope_digest)?;
         return Ok(MembershipCause::DataChange);
     };
-    Ok(if prior.definition_version != definition_version {
+    Ok(if baseline.definition_version != definition_version {
         MembershipCause::DefinitionChange
-    } else if &prior.scope_digest != scope_digest {
+    } else if &baseline.scope_digest != scope_digest {
         MembershipCause::ScopeChange
     } else {
         MembershipCause::DataChange
     })
+}
+
+/// Records the owner's ruling on a reviewed bulk move: the derivation state
+/// `event` was detected under becomes the query's baseline, so detections under
+/// it route as ordinary data movement again.
+///
+/// This is the engine half of [`EnrollmentExecution::ReviewRequired`]. Without
+/// it the routing rule would be a wall rather than a dial — every detection
+/// under a moved definition would report the move forever and the owner's
+/// ruling would have nowhere to land. Presenting the review is later surface
+/// work; the durable effect of ruling on it is here.
+///
+/// # Errors
+///
+/// Storage errors propagate.
+pub fn accept_enrollment_baseline(vault: &Vault, event: &CampaignEnrollmentEvent) -> Result<()> {
+    put_baseline(
+        vault,
+        event.query_ref,
+        event.definition_version,
+        &event.scope_digest,
+    )
 }
 
 /// Digest of the scope the query will ACTUALLY run under: declared ∩ granted.
@@ -1298,7 +1330,7 @@ struct EventRow {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ContextRow {
+struct BaselineRow {
     schema_version: u32,
     definition_version: u64,
     scope_digest: String,
@@ -1330,7 +1362,7 @@ struct ProgramOutboundRow {
     idempotency_supported: bool,
 }
 
-struct EnrollmentContext {
+struct EnrollmentBaseline {
     definition_version: u64,
     scope_digest: [u8; 32],
 }
@@ -1359,11 +1391,8 @@ fn decode_designation(raw: &[u8]) -> Result<CampaignHomeNodeDesignation> {
     })
 }
 
-/// Writes the event and the derivation context it establishes in ONE txn: a
-/// context row without its event would misroute the next cause, and an event
-/// without its context would re-derive `data_change` forever.
-fn put_event_with_context(vault: &Vault, event: &CampaignEnrollmentEvent) -> Result<()> {
-    let event_bytes = to_row(&EventRow {
+fn put_event(vault: &Vault, event: &CampaignEnrollmentEvent) -> Result<()> {
+    let bytes = to_row(&EventRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         query_ref: event.query_ref.to_hex(),
         campaign_ref: event.campaign_ref.to_hex(),
@@ -1378,21 +1407,11 @@ fn put_event_with_context(vault: &Vault, event: &CampaignEnrollmentEvent) -> Res
         definition_version: event.definition_version,
         scope_digest: bytes_to_hex_lower(&event.scope_digest),
     })?;
-    let context_bytes = to_row(&ContextRow {
-        schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
-        definition_version: event.definition_version,
-        scope_digest: bytes_to_hex_lower(&event.scope_digest),
-    })?;
-    let event_key = keyed(ENROLLMENT_EVENT_PREFIX, &[event.event_ref.as_bytes()]);
-    let context_key = context_key(event.query_ref, event.entity_ref);
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &event_key, &event_bytes)?;
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &context_key, &context_bytes)?;
-        Ok(())
-    })
+    put_meta(
+        vault,
+        &keyed(ENROLLMENT_EVENT_PREFIX, &[event.event_ref.as_bytes()]),
+        &bytes,
+    )
 }
 
 fn decode_event(event_ref: EntityId, raw: &[u8]) -> Result<CampaignEnrollmentEvent> {
@@ -1417,21 +1436,31 @@ fn decode_event(event_ref: EntityId, raw: &[u8]) -> Result<CampaignEnrollmentEve
     })
 }
 
-fn read_context(
-    vault: &Vault,
-    query_ref: EntityId,
-    entity_ref: EntityId,
-) -> Result<Option<EnrollmentContext>> {
-    const CONTEXT: &str = "campaign enrollment context";
-    let Some(raw) = read_meta(vault, &context_key(query_ref, entity_ref))? else {
+fn read_baseline(vault: &Vault, query_ref: EntityId) -> Result<Option<EnrollmentBaseline>> {
+    const CONTEXT: &str = "campaign enrollment baseline";
+    let Some(raw) = read_meta(vault, &baseline_key(query_ref))? else {
         return Ok(None);
     };
-    let row: ContextRow = from_row(&raw, CONTEXT)?;
+    let row: BaselineRow = from_row(&raw, CONTEXT)?;
     pin_schema(row.schema_version, CONTEXT)?;
-    Ok(Some(EnrollmentContext {
+    Ok(Some(EnrollmentBaseline {
         definition_version: row.definition_version,
         scope_digest: hash_from_hex(&row.scope_digest, CONTEXT)?,
     }))
+}
+
+fn put_baseline(
+    vault: &Vault,
+    query_ref: EntityId,
+    definition_version: u64,
+    scope_digest: &[u8; 32],
+) -> Result<()> {
+    let bytes = to_row(&BaselineRow {
+        schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
+        definition_version,
+        scope_digest: bytes_to_hex_lower(scope_digest),
+    })?;
+    put_meta(vault, &baseline_key(query_ref), &bytes)
 }
 
 fn encode_program(program: &CampaignProgram) -> Result<Vec<u8>> {
@@ -1504,11 +1533,8 @@ fn program_step_key(program_ref: EntityId, step_ref: EntityId) -> Vec<u8> {
     )
 }
 
-fn context_key(query_ref: EntityId, entity_ref: EntityId) -> Vec<u8> {
-    keyed(
-        ENROLLMENT_CONTEXT_PREFIX,
-        &[query_ref.as_bytes(), entity_ref.as_bytes()],
-    )
+fn baseline_key(query_ref: EntityId) -> Vec<u8> {
+    keyed(ENROLLMENT_BASELINE_PREFIX, &[query_ref.as_bytes()])
 }
 
 fn keyed(prefix: &[u8], parts: &[&[u8]]) -> Vec<u8> {
@@ -1754,7 +1780,7 @@ mod tests {
             definition_version: 1,
             scope_digest: [0x22; 32],
         };
-        put_event_with_context(vault, &event).expect("event row");
+        put_event(vault, &event).expect("event row");
         put_campaign_program(
             vault,
             &CampaignProgram {
