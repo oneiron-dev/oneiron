@@ -179,3 +179,31 @@ exit status was `tail`'s, not cargo's. Re-run unpiped with the status captured d
 `pub mod proposal_text;`. 1759 appends `pub mod attribution;` to the same list;
 alphabetically it lands above `delta`, so a textual conflict is unlikely and the
 merge-in law resolves it either way.
+
+## Simplify pass (K3, 2026-08-06)
+
+Deletion-biased pass over the impl leg's tip. No public API, test assertion, or
+fixture touched; one private helper added only to delete four identical
+write-txn bodies.
+
+- Deleted the hand-rolled `decode_entity_id` hex parser (-11 lines) — pure
+  duplication of the existing `EntityId::from_hex`, with identical acceptance
+  semantics (case-insensitive fixed-length hex).
+- Encode side now uses `EntityId::to_hex()` instead of the spelled-out
+  `bytes_to_hex_lower(as_bytes())` it wraps (2 sites).
+- Added private `put_meta` and collapsed the four identical
+  `with_write_txn { vault_meta.put }` bodies (`emit_issue_signature`,
+  `write_dial_key`, `put_send_state`, `put_interview`) onto it.
+- Added `interview_corrupt()` mirroring the existing `corrupt()` helper;
+  collapsed the four repeated `"interview session record"` literals in
+  `interview_session`'s decode path.
+- Kept: the four `ALL`/`as_str`/`parse` triples (a macro would add structure,
+  not remove it), the redundant-looking `.map_err(Error::from)?` on read txns
+  in `PublisherResult`-returning doors (load-bearing: `heed::Error` reaches
+  `PublisherError` only through crate `Error`), `SignatureRow` as a separate
+  on-disk type (documented anti-deserialization-door choice).
+
+Net: -23 lines in `publisher.rs`. Gates after the pass: `cargo fmt --check`
+clean · `cargo clippy -p oneiron --all-features --all-targets -- -D warnings`
+clean · `cargo nextest run -p oneiron --all-features edit_distance::publisher`
+13/13 pass.

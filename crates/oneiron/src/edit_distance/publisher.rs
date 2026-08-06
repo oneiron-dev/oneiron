@@ -398,11 +398,18 @@ fn send_state_key(id: EntityId) -> Vec<u8> {
     key
 }
 
+fn put_meta(vault: &Vault, key: &[u8], value: &[u8]) -> Result<()> {
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, key, value)?;
+        Ok(())
+    })
+}
+
 fn encode_signature(sig: &IssueSignature) -> Result<Vec<u8>> {
     let row = SignatureRow {
         schema_version: SIGNATURE_SCHEMA_VERSION,
         category: sig.category.as_str().to_owned(),
-        artifact: crate::entity_id::bytes_to_hex_lower(sig.artifact.as_bytes()),
+        artifact: sig.artifact.to_hex(),
         version: sig.version,
         model_id: sig.model_id.as_str().to_owned(),
         counts: sig
@@ -430,24 +437,12 @@ fn decode_signature(bytes: &[u8]) -> Result<IssueSignature> {
     }
     Ok(IssueSignature {
         category: IssueCategory::parse(&row.category).ok_or_else(corrupt)?,
-        artifact: decode_entity_id(&row.artifact)?,
+        artifact: EntityId::from_hex(&row.artifact).map_err(|_| corrupt())?,
         version: row.version,
         model_id: row.model_id.parse().map_err(|_| corrupt())?,
         counts,
         content_hash: row.content_hash,
     })
-}
-
-fn decode_entity_id(hex: &str) -> Result<EntityId> {
-    let mut bytes = [0_u8; 16];
-    if hex.len() != bytes.len() * 2 {
-        return Err(corrupt());
-    }
-    for (slot, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        let pair = std::str::from_utf8(pair).map_err(|_| corrupt())?;
-        *slot = u8::from_str_radix(pair, 16).map_err(|_| corrupt())?;
-    }
-    EntityId::from_bytes(bytes).map_err(|_| corrupt())
 }
 
 /// Stores a signature and returns the id it landed under.
@@ -457,12 +452,8 @@ fn decode_entity_id(hex: &str) -> Result<EntityId> {
 /// Storage errors.
 pub fn emit_issue_signature(vault: &Vault, sig: IssueSignature) -> PublisherResult<EntityId> {
     let id = EntityId::now();
-    let key = signature_key(id);
     let value = encode_signature(&sig)?;
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &value)?;
-        Ok(())
-    })?;
+    put_meta(vault, &signature_key(id), &value)?;
     Ok(id)
 }
 
@@ -521,10 +512,7 @@ fn read_dial_key(vault: &Vault, key: &[u8]) -> Result<Option<bool>> {
 
 fn write_dial_key(vault: &Vault, key: &[u8], enabled: bool) -> Result<()> {
     let token = if enabled { DIAL_ENABLED } else { DIAL_DISABLED };
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, key, token.as_bytes())?;
-        Ok(())
-    })
+    put_meta(vault, key, token.as_bytes())
 }
 
 /// Resolves the effective publisher dial.
@@ -654,14 +642,7 @@ pub fn signature_send_state(vault: &Vault, id: EntityId) -> PublisherResult<Sign
 }
 
 fn put_send_state(vault: &Vault, id: EntityId, state: SignatureSendState) -> Result<()> {
-    let key = send_state_key(id);
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &key, state.as_str().as_bytes())?;
-        Ok(())
-    })
+    put_meta(vault, &send_state_key(id), state.as_str().as_bytes())
 }
 
 fn require_signature(vault: &Vault, id: EntityId) -> PublisherResult<()> {
@@ -796,6 +777,10 @@ struct InterviewRow {
 
 const INTERVIEW_SCHEMA_VERSION: u8 = 1;
 
+fn interview_corrupt() -> Error {
+    Error::CorruptedIndex("interview session record")
+}
+
 fn interview_key(digest_artifact: EntityId) -> Vec<u8> {
     let mut key = INTERVIEW_KEY_PREFIX.to_vec();
     key.extend_from_slice(digest_artifact.as_bytes());
@@ -805,16 +790,12 @@ fn interview_key(digest_artifact: EntityId) -> Vec<u8> {
 fn put_interview(vault: &Vault, session: InterviewSession) -> Result<()> {
     let row = InterviewRow {
         schema_version: INTERVIEW_SCHEMA_VERSION,
-        topic_ref: crate::entity_id::bytes_to_hex_lower(session.topic_ref.as_bytes()),
+        topic_ref: session.topic_ref.to_hex(),
         state: session.state.as_str().to_owned(),
     };
     let value = crate::llm::canonical_json_bytes(&row)
         .map_err(|_| Error::InvariantViolation("interview session encode"))?;
-    let key = interview_key(session.digest_artifact);
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &value)?;
-        Ok(())
-    })
+    put_meta(vault, &interview_key(session.digest_artifact), &value)
 }
 
 /// Reads the session recorded against `digest_artifact`.
@@ -835,17 +816,14 @@ pub fn interview_session(
     else {
         return Ok(None);
     };
-    let row: InterviewRow = serde_json::from_slice(&raw)
-        .map_err(|_| Error::CorruptedIndex("interview session record"))?;
+    let row: InterviewRow = serde_json::from_slice(&raw).map_err(|_| interview_corrupt())?;
     if row.schema_version != INTERVIEW_SCHEMA_VERSION {
-        return Err(Error::CorruptedIndex("interview session record").into());
+        return Err(interview_corrupt().into());
     }
     Ok(Some(InterviewSession {
-        topic_ref: decode_entity_id(&row.topic_ref)
-            .map_err(|_| Error::CorruptedIndex("interview session record"))?,
+        topic_ref: EntityId::from_hex(&row.topic_ref).map_err(|_| interview_corrupt())?,
         digest_artifact,
-        state: InterviewState::parse(&row.state)
-            .ok_or(Error::CorruptedIndex("interview session record"))?,
+        state: InterviewState::parse(&row.state).ok_or_else(interview_corrupt)?,
     }))
 }
 
