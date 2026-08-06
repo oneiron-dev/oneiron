@@ -551,10 +551,10 @@ pub use crate::edit_distance::publisher::{
 #[cfg(feature = "sync")]
 pub use crate::edit_distance::publisher::{open_interview, settle_interview_digest};
 pub use crate::edit_distance::reservoir::{
-    ExportManifest, FIELD_EXPORT_CONTENT_HASH, FIELD_EXPORT_PAIRS, FIELD_EXPORT_SINCE,
-    FIELD_EXPORT_TASK_CLASSES, RESERVOIR_DISCLOSURE_CLASS, RESERVOIR_ENVELOPE_SELECTOR,
-    RESERVOIR_EXPORT_AUDIENCE, ReservoirScope, TrainingPair, export_reservoir,
-    rebuild_reservoir_index, reservoir_candidates,
+    AMENDMENT_RECEIPT_ID_PREFIX, ExportManifest, FIELD_EXPORT_CONTENT_HASH, FIELD_EXPORT_PAIRS,
+    FIELD_EXPORT_SINCE, FIELD_EXPORT_TASK_CLASSES, RESERVOIR_DISCLOSURE_CLASS,
+    RESERVOIR_ENVELOPE_SELECTOR, RESERVOIR_EXPORT_AUDIENCE, ReservoirScope, TrainingPair,
+    amendment_receipt_id, export_reservoir, rebuild_reservoir_index,
 };
 pub use crate::edit_distance::routing::{
     RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint, rebuild_routing_projection,

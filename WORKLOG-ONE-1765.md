@@ -202,3 +202,152 @@ candidate index (blueprint-mandated CID-7 derived state), module docs (ratified 
 Gates after the pass: `cargo fmt --all` clean · `cargo clippy -p oneiron --all-features
 --all-targets -- -D warnings` exit 0 · `cargo test -p oneiron --all-features` 3895 lib passed,
 0 failed, 17 pre-existing ignored.
+
+## VERDICT-FIX (Opus, post-simplify)
+
+Finder returned 1×P1 + 4×P2; verdict adjudicated **all five REAL**, banked none, → FIX-REQUIRED.
+Every fix landed at its chokepoint and is mutation-verified (probe applied → named test RED →
+probe reverted → GREEN). No finding was relitigated.
+
+### F1 · P1 `consent-bypass` — the second door
+
+`reservoir_candidates` was `pub` and re-exported at `lib.rs`, returning the entire corpus as owned
+`String`s with no consent decision and no receipt. The doc defence ("this reads, it does not
+disclose") was wrong: for a projection whose return value IS the content, the return is the
+disclosure.
+
+**Fix:** the public door is deleted, not gated. `resolve_candidates` is a private fn taking the
+caller's snapshot; `export_reservoir` is the only `pub fn` in the module that yields a
+`TrainingPair`. The `lib.rs` re-export is gone. Tests read candidates through the private fn —
+a test helper is not a surface.
+
+**Guard:** `the_export_door_is_the_only_public_surface_yielding_pairs` counts `pub fn` lines
+mentioning `TrainingPair` (must be 0) and greps the old name — the landed
+`napi_surface_never_constructs_auto_approval` pattern, because the defect is a `pub` keyword
+rather than a behaviour.
+**Mutation:** re-added `pub fn reservoir_candidates` → RED (`left: 1, right: 0`).
+
+### F2 + F3 · P2 `candidate-eligibility` + `receipt-artifact-join` — one seam
+
+Both findings were the same defect seen from two sides: the projection had no join to the
+adjudication, and the key it did use (`artifact.entity_id().to_hex()`) is a key nothing in the
+engine writes.
+
+Ground-checked before fixing: `record_amendment_evidence` requires a Δ row under the SAME
+`receipt_id` string; both in-crate Δ writers (`project_identity_amendment_deltas`,
+`inbox`'s amend-accept) write only on an `approved_amended` outcome; both key on a NAMESPACED id
+(`proposal_outcome:<hex>`, the gate-decision receipt id). The bare artifact hex is in nobody's
+keyspace — production tags were all `None` and the tests only passed because they planted rows
+under the bare hex themselves.
+
+**Fix:**
+- `AMENDMENT_RECEIPT_ID_PREFIX` + `pub fn amendment_receipt_id(EntityId) -> String` — the ED lane's
+  spelling for a proposal-TEXT amendment, exported so the producer side and this reader share one
+  function instead of a remembered convention. Namespaced for the reason every other family is:
+  the Δ/evidence/fold ledgers are one flat string keyspace, and a bare entity hex collides.
+- **Eligibility gate:** a differing-texts artifact is a candidate only if
+  `amendment_recorded_in_txn` finds a row under that id. Differing texts alone say the body was
+  EDITED — a rejected proposal was edited and discarded, one awaiting a ruling decided nothing —
+  and only a recorded amendment says a decider kept what is in `final_text`. This is the same
+  gate ED-03 applies before it will record evidence.
+- **Tag joins** (`task_class`, `skill`) move to `amendment_evidence_in_txn` under that id.
+- **Model join** rewritten. `export_models` scanned every receipt and keyed by
+  `ReceiptRecord::receipt_id`, then looked up the ARTIFACT hex — structurally dead twice over
+  (`context_receipt_fields()` returns `None` for every non-`Outbound` kind, and no receipt id is
+  ever an artifact hex). It is deleted. The model now comes from ED-07's own run→generation
+  binding (`folded_model_version_in_txn`), keyed by the same amendment receipt id as the other two
+  ledgers: one key, three ledgers.
+- `TrainingPair::receipt_ref` keeps its ratified `EntityId` type and now documents both ends of the
+  join — the retention row lives under this id, the amendment ledgers under
+  `amendment_receipt_id` of it.
+
+**Guards:** `an_artifact_with_no_recorded_amendment_projects_no_pair` (same row, absent → present,
+across the mark) · `the_ledger_join_key_is_the_namespaced_amendment_receipt_id` (a Δ planted under
+the bare hex admits nothing) · `the_model_tag_is_the_generation_the_amendment_was_folded_under`
+(fold under v1, swap serving to v2, pair still reads v1; an unfolded pair reads `None`) — the last
+one is the honest model-tag test the verdict noted was missing.
+**Mutations:** gate disabled → 2 RED · bare-hex key → 10 RED · model read from
+`SERVING_MODEL_KEY` instead of the member row → RED (`left: stack:default-v2,
+right: stack:default-v1`).
+
+### F4 · P2 `consent-rail-integration` — the second ladder
+
+`authorize_export` hand-scanned `active_standing_consent_grants` and called `GrantBound::contains`.
+`gate.rs`'s own doctrine is explicit that a door opts in by composing a `ComposedEffect`, never by
+re-implementing the ladder.
+
+**Fix:** `export_effect()` composes the disclosure requirement with honest facts —
+`external_observers: true`, `undo_fidelity: None`, no action requirement — and `authorize_export`
+takes its verdict from `Vault::evaluate_consent_for`. Precedence, approve-once attestation and
+spending, bound-exceeded reasons and live grant loading are now the rail's. The facts are
+load-bearing: an irreversible PURE disclosure routes to the disclosure fail-safe (`Hide`), which is
+what keeps an uncovered export fail-closed instead of being waved through by invariant 1.
+`Error::ConsentGrantNotFound` is unchanged.
+
+**Guards:** `the_export_door_rides_the_disclosure_consent_rail` now asserts the evaluator's own
+verdict (`Hide` ungranted, `Auto` granted) alongside the door's behaviour ·
+`the_export_never_re_implements_the_consent_ladder` forbids `active_standing_consent_grants`,
+`evaluate_consent(`, `classify_composed_effect` in the module source and requires
+`evaluate_consent_for`.
+**Mutation:** hand-rolled scan restored → RED.
+
+### F5 · P2 `torn-snapshot`
+
+Artifact + fence reads shared one txn, `export_models` opened a later one, and every
+`amendment_evidence` call opened its own — so one JSONL body could combine rows that never
+coexisted while the receipt attested a point-in-time `content_hash`.
+
+**Fix:** `resolve_candidates(vault, rtxn, scope)` takes the snapshot as an argument and every read
+behind a body rides it — artifacts, `off_record_fence_active`, `amendment_recorded_in_txn`,
+`amendment_evidence_in_txn`, `folded_model_version_in_txn`. `export_reservoir` opens exactly one;
+`rebuild_reservoir_index` opens one covering BOTH the projection and the index it diffs for stale
+rows (previously two). The consent decision stays ahead of the snapshot on purpose: the evaluator
+spends approve-once markers, so it writes, and LMDB refuses a write txn on a thread holding a read
+one.
+
+**Guard:** `the_resolution_reads_every_ledger_on_one_snapshot` — holds a snapshot, lands a second
+candidate and a fold from another thread (writer must be off-thread, same LMDB rule), asserts the
+held snapshot's answer is byte-identical, then asserts a fresh snapshot sees all of it.
+**Mutation:** evidence read swapped back to the own-txn `amendment_evidence` → RED
+(`Storage(Mdb(BadRslot))` — the off-snapshot read is not merely wrong, it is unreachable).
+
+### PACKET_AMEND — 3 additive read-only helpers in merged ED-lane files
+
+The blueprint's packet is `reservoir.rs` + tests + `edit_distance.rs` + `lib.rs`. F5's
+single-snapshot fix and F3's model join need transaction-composable readers that were
+module-private. All three are read-only, additive, and in already-merged ED lanes (ED-01 #618,
+ED-03 #618, ED-07 #622) — no live-lane collision. Same shape as the `FIELD_MODEL` visibility lift
+the blueprint itself sanctioned.
+
+- `edit_distance/attribution.rs` — `amendment_evidence_in_txn` `fn` → `pub(crate) fn` (+doc). One
+  word.
+- `edit_distance/delta.rs` — new `pub(crate) fn amendment_recorded_in_txn`, the named predicate
+  behind the eligibility gate (both row shapes answer `true`: measured Δ and uncaptured marker
+  differ on whether the MEASUREMENT succeeded, not on whether the amendment happened).
+- `edit_distance/routing.rs` — new `pub(crate) fn folded_model_version_in_txn`, the run→generation
+  binding read back on the caller's snapshot.
+
+No behaviour in those files changed; no existing signature changed. `receipt.rs` stayed
+consume-only (the model join no longer touches it at all), `settings.rs` untouched,
+`Cargo.toml`/`Cargo.lock` untouched.
+
+### BANK-3 (`resolve_with_routing_hint` live consumer)
+
+Not in scope here and not improvised. This lane consumes ED-07 through
+`folded_model_version_in_txn` — the historical binding a training pair needs — whereas
+`resolve_with_routing_hint` answers "which model should serve NEXT", which is a serving-path
+question a corpus projection must not ask. Wiring it here would put the model serving now onto a
+pair it never produced, which is exactly what F3's fix removed. Left for a serving-path lane.
+
+### Gates
+
+`cargo fmt --all -- --check` clean · `cargo clippy -p oneiron --all-features --all-targets --
+-D warnings` exit 0 · `cargo test -p oneiron --all-features` green. Diff ⊆ packet + the 3 amended
+helpers + tests.
+
+**Flake guard:** one full-suite run showed `embed::tests::partial_remote_completion_is_logged_when_local_batch_fails`
+red. Quarantined, charged to no lane: the test asserts over a `tracing::subscriber::with_default`
+capture, which is THREAD-LOCAL, so an event emitted off-thread lands on the global subscriber and
+the capture reads empty. Nondeterministic in both directions — it passed on this tree 3/3 under the
+`embed::` filter and passed on the re-run full suite (3901 lib passed, 0 failed). No edit_distance
+surface touches `embed`.

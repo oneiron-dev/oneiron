@@ -4,17 +4,43 @@
 //!
 //! # The pair
 //!
-//! ED-00 retains both ends of a proposal's edit window ([`FinalizedProposalText`]:
-//! `proposed_text` as drafted, `final_text` as the decider left it). Those two
-//! strings ARE the preference pair — `rejected` and `chosen` — and they exist
-//! nowhere else, which is why ED-00's retention is a contract rather than a
-//! convenience. An artifact whose two texts are EQUAL projects no pair: an
-//! untouched approval amended nothing, and a rejection finalized nothing, so
-//! there is no preference to learn. That filter is exact, not heuristic.
+//! ED-00 retains both ends of a proposal's edit window
+//! ([`FinalizedProposalText`](super::FinalizedProposalText): `proposed_text` as
+//! drafted, `final_text` as the decider left it). Those two strings ARE the
+//! preference pair — `rejected` and `chosen` — and they exist nowhere else,
+//! which is why ED-00's retention is a contract rather than a convenience.
+//!
+//! Retention is NOT eligibility. `finalize` persists every artifact it closes,
+//! including the ones nobody has ruled on yet and the ones a decider rejected,
+//! so two ends that merely DIFFER are not a preference: a rejected draft was
+//! edited and then thrown away, and exporting it as `chosen` would teach the
+//! opposite of what happened. A pair is projected only where the engine
+//! durably recorded an AMENDMENT — an approved-and-changed outcome — against
+//! the artifact, which is [`amendment_recorded_in_txn`]'s question and the
+//! same one [`record_amendment_evidence`](super::attribution::record_amendment_evidence)
+//! asks before it will record anything. Texts that are equal are dropped too,
+//! and that filter is exact rather than heuristic: an untouched approval
+//! amended nothing.
 //!
 //! SFT and DPO are two views of one pair — `chosen` alone is the supervised
 //! target, the pair is the preference sample — so this module ships ONE schema
 //! and no second exporter.
+//!
+//! # One receipt id joins all three ledgers
+//!
+//! An amendment's Δ (ED-01), its evidence (ED-03) and the generation that
+//! folded it (ED-07) are three `vault_meta` ledgers keyed by one STRING: the
+//! receipt the amendment was recorded against. For a proposal-TEXT amendment
+//! that string is [`amendment_receipt_id`] — the artifact's id under a pinned
+//! namespace, exactly as an identity-op amendment's is `proposal_outcome:<id>`
+//! and a settle's is `artifact_settle:<id>:<ref>`.
+//!
+//! The namespace is not decoration. Those ledgers share one flat keyspace, so
+//! a BARE entity hex is a key any other family keying by entity hex would
+//! collide with, and a collision there silently mislabels a training pair.
+//! [`amendment_receipt_id`] is exported so the producer side spells the id the
+//! same way the reservoir reads it — one function, not a convention two modules
+//! remember separately.
 //!
 //! # Off-record exclusion is CONSTRUCTIVE, and the assert is the backstop
 //!
@@ -25,8 +51,9 @@
 //! here to disable and no flag to flip.
 //!
 //! What IS here is a belt-and-suspenders tripwire. Every artifact the scan
-//! enumerates carries a persisted [`FinalizedProposalText::source_turn_ref`],
-//! and each one is probed against the SAME durable per-entity fence
+//! enumerates carries a persisted
+//! [`source_turn_ref`](super::FinalizedProposalText::source_turn_ref), and each
+//! one is probed against the SAME durable per-entity fence
 //! (`off_record_fence_active`) the retrieval filter consults. A hit means an
 //! upstream inertness bug put a fenced turn's work into the pipeline, so the
 //! export ABORTS with a typed error — loudly, never as a silent skip, because a
@@ -45,12 +72,17 @@
 //!
 //! # The door
 //!
-//! [`export_reservoir`] is a DOOR, never a cron: nothing schedules it, and an
-//! export is content leaving the vault, so it rides the house disclosure
-//! consent rail ([`crate::consent`]) exactly as any other outbound hop does —
-//! a standing `audience × class × envelope` grant must cover
-//! [`RESERVOIR_EXPORT_AUDIENCE`] before a byte is resolved, and revocation is
-//! immediate because the grant set is read live.
+//! [`export_reservoir`] is the ONLY door, and it is a door rather than a cron:
+//! nothing schedules it, and no second surface hands a caller pair bodies
+//! without it. An export is content leaving the vault, so it composes a
+//! [`ComposedEffect`] and takes its verdict from the ONE unified consent
+//! evaluator ([`Vault::evaluate_consent_for`]) exactly as any other outbound
+//! door does — the ladder's precedence, its approve-once spending and its
+//! reason codes are the rail's, and re-deriving any of them here would let the
+//! reservoir drift from the decision every other door is held to. The effect
+//! is a pure disclosure requiring [`RESERVOIR_EXPORT_AUDIENCE`], so an
+//! uncovered export HIDES (the disclosure fail-safe) rather than asking, and
+//! revocation is immediate because the evaluator loads the grants live.
 //!
 //! It is TWO-PHASE. Phase 1 takes the consent decision, enumerates, runs the
 //! fence tripwire, resolves every pair and serializes the whole corpus into
@@ -58,6 +90,14 @@
 //! A caller therefore never sees a partially-written export that failed on
 //! CONTENT: past the first byte the only remaining failure is the sink's own
 //! I/O.
+//!
+//! Phase 1's reads all ride ONE read transaction. A manifest is receipted with
+//! a `content_hash` that attests a point in time, so a body assembled from two
+//! snapshots — an early artifact's old scope beside a later artifact's new one
+//! — would be a corpus that never existed being certified as one that did.
+//! Candidates, fence probes, amendment marks, evidence and model bindings are
+//! therefore read on a single snapshot boundary, and the same holds for the
+//! rebuild that shares this path.
 //!
 //! # Rebuildable index, snapshot artifact
 //!
@@ -71,16 +111,19 @@ use std::io;
 
 use serde::{Deserialize, Serialize};
 
-use super::{FinalizedProposalText, PROPOSAL_ARTIFACT_KEY_PREFIX, decode_finalized_proposal_text};
+use super::{PROPOSAL_ARTIFACT_KEY_PREFIX, decode_finalized_proposal_text};
 use crate::Vault;
 use crate::consent::{
-    AudienceBound, DisclosureClass, DisclosureEnvelope, GrantBound, MAX_CONSENT_REF_LEN,
+    AudienceBound, ComposedEffect, ConsentDecision, DisclosureClass, DisclosureEnvelope,
+    EffectFacts, GrantBound, MAX_CONSENT_REF_LEN, UndoFidelity,
 };
-use crate::edit_distance::attribution::amendment_evidence;
+use crate::edit_distance::attribution::amendment_evidence_in_txn;
+use crate::edit_distance::delta::amendment_recorded_in_txn;
+use crate::edit_distance::routing::folded_model_version_in_txn;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::off_record::off_record_fence_active;
-use crate::receipt::{MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 
 // ---------------------------------------------------------------------------
 // Keyspace + pinned strings
@@ -96,6 +139,16 @@ const EXPORT_RECEIPT_KEY_PREFIX: &[u8] = b"edit_distance/reservoir_export/v1\0";
 
 /// `receipt_id` namespace of an export receipt.
 const EXPORT_RECEIPT_ID_PREFIX: &str = "reservoir_export:";
+
+/// `receipt_id` namespace of a proposal-TEXT amendment — the ED-01/ED-03/ED-07
+/// ledgers' key for an amendment made inside an ED-00 artifact's edit window.
+///
+/// Namespaced like every other receipt id in this engine (`proposal_outcome:`,
+/// `artifact_settle:`, `reservoir_export:`) because those ledgers are one flat
+/// string keyspace: a bare entity hex would collide with any other family that
+/// keys by entity hex, and a collision mislabels a training pair rather than
+/// failing.
+pub const AMENDMENT_RECEIPT_ID_PREFIX: &str = "proposal_text_amendment:";
 
 /// Only accepted schema version for any row this module stores.
 const ROW_VERSION: u8 = 1;
@@ -119,6 +172,11 @@ pub const RESERVOIR_DISCLOSURE_CLASS: &str = "training_corpus";
 
 /// The envelope selector naming the reservoir itself.
 pub const RESERVOIR_ENVELOPE_SELECTOR: &str = "reservoir:training_pairs";
+
+/// The operation an export composes for the consent evaluator, and the policy
+/// trace its receipt records. One string, because the op the rail ruled on and
+/// the op the receipt names must be the same op.
+const EXPORT_OPERATION_KIND: &str = "edit_distance.reservoir.export";
 
 /// Receipt field: how many pairs the export wrote.
 pub const FIELD_EXPORT_PAIRS: &str = "reservoir_pairs";
@@ -158,13 +216,30 @@ pub struct TrainingPair {
     /// The skill the amended proposal rode, when it rode one.
     #[serde(serialize_with = "serialize_opt_entity_hex")]
     pub skill: Option<EntityId>,
-    /// The model recorded on the pair's own receipt — never the model serving
-    /// NOW, which would be a guess about history.
+    /// The generation ED-07 bound to this pair's own amendment receipt — never
+    /// the model serving NOW, which would be a guess about history.
     pub model_id: Option<String>,
-    /// The proposal artifact's durable handle: the id ED-00 mints, the key its
-    /// retention row lives under, and the id the tag ledgers join on.
+    /// The amendment this pair came from, as the id ED-00 mints for the
+    /// artifact that carried it.
+    ///
+    /// One value names both ends of the join: the retention row holding the two
+    /// texts lives under this id, and the amendment ledgers live under
+    /// [`amendment_receipt_id`] of it. A consumer that wants the Δ, the
+    /// evidence or the fold reads that spelling; a consumer that wants the
+    /// artifact reads this one.
     #[serde(serialize_with = "serialize_entity_hex")]
     pub receipt_ref: EntityId,
+}
+
+/// The `receipt_id` an ED-00 artifact's amendment ledgers key on.
+///
+/// The one place this spelling exists. Producers (ED-01's Δ, ED-03's evidence,
+/// ED-07's fold) and this projection call it rather than formatting the id
+/// twice, because two spellings of one key is a join that silently returns
+/// nothing.
+#[must_use]
+pub fn amendment_receipt_id(artifact: EntityId) -> String {
+    format!("{AMENDMENT_RECEIPT_ID_PREFIX}{}", artifact.to_hex())
 }
 
 /// Ids cross the wire as lower hex, the one spelling every other receipt field
@@ -228,8 +303,8 @@ pub struct ExportManifest {
 ///
 /// # Errors
 ///
-/// * [`Error::ConsentGrantNotFound`] when no standing disclosure grant covers
-///   the reservoir audience — fail-closed, and revocation is immediate.
+/// * [`Error::ConsentGrantNotFound`] when the consent evaluator does not clear
+///   the export — fail-closed, and revocation is immediate.
 /// * [`Error::InvariantViolation`] when a candidate's `source_turn_ref` is
 ///   off-record fenced. That is an upstream inertness bug, and it aborts the
 ///   export rather than skipping the row.
@@ -243,8 +318,15 @@ pub fn export_reservoir(
     let scope = normalized_scope(scope)?;
 
     // ── phase 1: decide, resolve, serialize. Nothing is written. ──────────
+    //
+    // The decision comes FIRST and on its own transaction: the evaluator spends
+    // an approve-once marker, so it writes, and a read snapshot held across it
+    // would be a read txn wrapping a write txn on one thread.
     authorize_export(vault)?;
-    let pairs = resolve_candidates(vault, &scope)?;
+    let pairs = {
+        let rtxn = vault.store.env.read_txn()?;
+        resolve_candidates(vault, &rtxn, &scope)?
+    };
     let mut body = Vec::new();
     for pair in &pairs {
         serde_json::to_writer(&mut body, pair)
@@ -273,33 +355,37 @@ pub fn export_reservoir(
 /// what a candidate is.
 ///
 /// Stale rows are deleted rather than left: an artifact whose two texts stopped
-/// differing, or that no longer resolves, is not a candidate, and an index that
-/// remembered it would answer for a pair the export does not carry.
+/// differing, whose amendment is no longer on the ledger, or that no longer
+/// resolves, is not a candidate — and an index that remembered it would answer
+/// for a pair the export does not carry.
 ///
 /// # Errors
 ///
 /// Storage errors; the same tripwire and decode errors as [`export_reservoir`].
 pub fn rebuild_reservoir_index(vault: &Vault) -> Result<()> {
-    let pairs = resolve_candidates(vault, &ReservoirScope::default())?;
-    let rebuilt = pairs
-        .iter()
-        .map(|pair| Ok((candidate_key(pair.receipt_ref), encode_candidate(pair)?)))
-        .collect::<Result<BTreeMap<Vec<u8>, Vec<u8>>>>()?;
-
-    // Errors are collected BEFORE the staleness filter, never through it: a
-    // filter over `Result`s drops the `Err` arm as "not stale" and swallows the
-    // storage failure that produced it.
-    let stale = {
+    // One snapshot for the projection AND for the index it is diffed against,
+    // so a row cannot be judged stale against candidates read a moment earlier.
+    let (rebuilt, stale) = {
         let rtxn = vault.store.env.read_txn()?;
+        let rebuilt = resolve_candidates(vault, &rtxn, &ReservoirScope::default())?
+            .iter()
+            .map(|pair| Ok((candidate_key(pair.receipt_ref), encode_candidate(pair)?)))
+            .collect::<Result<BTreeMap<Vec<u8>, Vec<u8>>>>()?;
+
+        // Errors are collected BEFORE the staleness filter, never through it: a
+        // filter over `Result`s drops the `Err` arm as "not stale" and swallows
+        // the storage failure that produced it.
         let keys = vault
             .store
             .vault_meta
             .prefix_iter(&rtxn, CANDIDATE_KEY_PREFIX)?
             .map(|entry| Ok(entry?.0.to_vec()))
             .collect::<Result<Vec<_>>>()?;
-        keys.into_iter()
+        let stale = keys
+            .into_iter()
             .filter(|key| !rebuilt.contains_key(key))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        (rebuilt, stale)
     };
 
     vault.with_write_txn(|wtxn| {
@@ -313,100 +399,85 @@ pub fn rebuild_reservoir_index(vault: &Vault) -> Result<()> {
     })
 }
 
-/// The candidate pairs `scope` selects, in artifact-id order.
-///
-/// The read door behind both [`export_reservoir`] and
-/// [`rebuild_reservoir_index`], public so a caller can inspect what an export
-/// WOULD carry without producing an artifact.
-///
-/// # Errors
-///
-/// As [`export_reservoir`], minus the consent decision — this reads, it does
-/// not disclose.
-pub fn reservoir_candidates(vault: &Vault, scope: ReservoirScope) -> Result<Vec<TrainingPair>> {
-    let scope = normalized_scope(scope)?;
-    resolve_candidates(vault, &scope)
-}
-
 // ---------------------------------------------------------------------------
 // Resolution
 // ---------------------------------------------------------------------------
 
-/// Enumerates, tripwires, tags and filters — the one candidate path.
+/// Enumerates, tripwires, gates, tags and filters — the one candidate path,
+/// entirely on the caller's snapshot.
 ///
 /// Ordering is the artifact keyspace's own, which is entity-id order, so two
 /// exports of one scope over unchanged rows serialize identically. That is what
 /// makes [`ExportManifest::content_hash`] a stable identity rather than a
 /// coincidence.
-fn resolve_candidates(vault: &Vault, scope: &ReservoirScope) -> Result<Vec<TrainingPair>> {
-    let mut records = Vec::new();
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        for entry in vault
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, PROPOSAL_ARTIFACT_KEY_PREFIX)?
-        {
-            let (_key, raw) = entry?;
-            let record = decode_finalized_proposal_text(&raw)?;
-
-            // THE TRIPWIRE, at the enumeration source and ahead of every
-            // filter. Probing before the pair and scope filters is deliberate:
-            // a filter that ran first could hide an inertness bug behind a
-            // narrow scope, and a fence violation is not a row to skip — it is
-            // an export to refuse.
-            if let Some(turn) = record.source_turn_ref
-                && off_record_fence_active(&vault.store, &rtxn, &turn)?
-            {
-                return Err(Error::InvariantViolation(
-                    "reservoir candidate is sourced from an off-record fenced turn; \
-                     fenced turns are pipeline-inert and must produce no derived rows",
-                ));
-            }
-            records.push(record);
-        }
-    }
-
-    let models = export_models(vault)?;
+///
+/// It is deliberately NOT a public door. Its return IS the corpus — every
+/// rejected and chosen body as owned strings — so a caller holding it has the
+/// export without having passed [`export_reservoir`]'s consent decision or
+/// leaving its receipt. A second way to obtain the bytes is a second door, and
+/// the door that is optional is the one that stops being the authority.
+fn resolve_candidates(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    scope: &ReservoirScope,
+) -> Result<Vec<TrainingPair>> {
     let mut pairs = Vec::new();
-    for record in records {
-        // An untouched approval and a rejection both leave the two ends equal:
-        // no amendment, so no preference to learn.
+    for entry in vault
+        .store
+        .vault_meta
+        .prefix_iter(rtxn, PROPOSAL_ARTIFACT_KEY_PREFIX)?
+    {
+        let (_key, raw) = entry?;
+        let record = decode_finalized_proposal_text(&raw)?;
+
+        // THE TRIPWIRE, at the enumeration source and ahead of every filter.
+        // Probing before the eligibility, pair and scope filters is deliberate:
+        // a filter that ran first could hide an inertness bug behind a narrow
+        // scope, and a fence violation is not a row to skip — it is an export
+        // to refuse.
+        if let Some(turn) = record.source_turn_ref
+            && off_record_fence_active(&vault.store, rtxn, &turn)?
+        {
+            return Err(Error::InvariantViolation(
+                "reservoir candidate is sourced from an off-record fenced turn; \
+                 fenced turns are pipeline-inert and must produce no derived rows",
+            ));
+        }
+
+        // An untouched approval leaves the two ends equal: nothing was changed,
+        // so there is no preference to learn.
         if record.proposed_text == record.final_text {
             continue;
         }
-        let (pair, observed_at) = tagged_pair(vault, &record, &models)?;
-        if selects(scope, &pair, observed_at) {
+        // ELIGIBILITY. Differing texts alone say an artifact was EDITED, not
+        // that the edit was kept — a rejected proposal is edited and discarded,
+        // and one still awaiting a ruling has been edited and decided nothing.
+        // Only a recorded amendment says a decider approved what is in
+        // `final_text`, and that is what makes `chosen` an honest label.
+        let receipt_id = amendment_receipt_id(record.artifact_ref.entity_id());
+        if !amendment_recorded_in_txn(vault, rtxn, &receipt_id)? {
+            continue;
+        }
+
+        // The tag ledgers, all under the amendment's one receipt id. A miss is
+        // not a failure — it leaves that tag `None`, which is the Notes
+        // contract (absence explicit, never guessed).
+        let evidence = amendment_evidence_in_txn(vault, rtxn, &receipt_id)?;
+        let pair = TrainingPair {
+            rejected: record.proposed_text,
+            chosen: record.final_text,
+            task_class: evidence.as_ref().map(|row| row.scope.clone()),
+            skill: evidence.as_ref().and_then(|row| row.skill),
+            model_id: folded_model_version_in_txn(vault, rtxn, &receipt_id)?,
+            receipt_ref: record.artifact_ref.entity_id(),
+        };
+        // `observed_at` is the `since` axis: a tag fact rather than a pair
+        // fact, so it filters here and never rides [`TrainingPair`].
+        if selects(scope, &pair, evidence.map(|row| row.at)) {
             pairs.push(pair);
         }
     }
     Ok(pairs)
-}
-
-/// Joins the tag ledgers onto one artifact, with the instant the amendment was
-/// observed (the `since` axis, which is a tag fact rather than a pair fact and
-/// so never rides [`TrainingPair`]).
-///
-/// The join key is the artifact's ref hex: it is the only durable id ED-00
-/// mints, so it is the id an ED-00-sourced amendment's evidence is recorded
-/// under. A miss is not a failure — it yields a pair with every tag `None`,
-/// which is the Notes contract (absence explicit, never guessed).
-fn tagged_pair(
-    vault: &Vault,
-    record: &FinalizedProposalText,
-    models: &BTreeMap<String, String>,
-) -> Result<(TrainingPair, Option<u64>)> {
-    let artifact = record.artifact_ref.entity_id();
-    let evidence = amendment_evidence(vault, &artifact.to_hex())?;
-    let pair = TrainingPair {
-        rejected: record.proposed_text.clone(),
-        chosen: record.final_text.clone(),
-        task_class: evidence.as_ref().map(|row| row.scope.clone()),
-        skill: evidence.as_ref().and_then(|row| row.skill),
-        model_id: models.get(&artifact.to_hex()).cloned(),
-        receipt_ref: artifact,
-    };
-    Ok((pair, evidence.map(|row| row.at)))
 }
 
 /// Whether `scope` keeps this pair.
@@ -435,26 +506,6 @@ fn selects(scope: &ReservoirScope, pair: &TrainingPair, observed_at: Option<u64>
     true
 }
 
-/// `receipt_id → model` for every receipt that recorded one.
-///
-/// ONE bounded receipt query serves the whole export rather than one lookup per
-/// candidate — the join is a map build, not a fan-out. The model is read from
-/// the receipt's OWN recorded field, never recomputed from the model serving
-/// now: which generation drafted a two-year-old proposal is history, and
-/// history is recorded or it is absent.
-fn export_models(vault: &Vault) -> Result<BTreeMap<String, String>> {
-    let mut models = BTreeMap::new();
-    for receipt in vault.receipts(ReceiptQuery::new(MAX_RECEIPT_QUERY_SCAN))? {
-        if let Some(model) = receipt
-            .context_receipt_fields()
-            .and_then(|fields| fields.model)
-        {
-            models.insert(receipt.receipt_id, model);
-        }
-    }
-    Ok(models)
-}
-
 // ---------------------------------------------------------------------------
 // The consent rail
 // ---------------------------------------------------------------------------
@@ -469,18 +520,40 @@ fn export_grant_bound() -> Result<GrantBound> {
     )
 }
 
-/// Clears the export against the house disclosure rail.
+/// The export as the evaluator sees it: a PURE disclosure that cannot be taken
+/// back.
 ///
-/// This re-implements nothing: it builds the required bound and asks the SAME
-/// standing-grant set every other outbound hop is checked against. Only ACTIVE
-/// rows are returned, so a revoked grant stops authorizing the instant it is
-/// revoked. Fails closed — no covering grant, no export.
+/// The facts are the honest ones rather than the convenient ones. A corpus that
+/// has left the vault is observed by parties this vault does not own
+/// (`external_observers`) and no undo reaches it ([`UndoFidelity::None`]), so
+/// the classifier calls the effect irreversible — which is what routes an
+/// uncovered export to the disclosure fail-safe (HIDE) instead of letting
+/// invariant 1's "undo is the net" wave it through. No action requirement:
+/// the export writes only its own receipt, and claiming otherwise would send a
+/// pure disclosure down the ask lane.
+fn export_effect() -> Result<ComposedEffect> {
+    ComposedEffect::new(
+        EffectFacts::new(EXPORT_OPERATION_KIND)?
+            .with_external_observers(true)
+            .with_undo_fidelity(UndoFidelity::None),
+    )
+    .with_disclosure_requirement(export_grant_bound()?)
+}
+
+/// Clears the export through the ONE consent evaluator.
+///
+/// This composes an effect and asks [`Vault::evaluate_consent_for`] — the door
+/// every unified-consent write path opts in through. It re-implements no rung
+/// of the ladder: catastrophe precedence, approve-once attestation and
+/// spending, bound-exceeded reasons and live grant loading are all the rail's,
+/// so this export cannot answer differently from the decision the rail would
+/// have given. Fails closed: anything but [`ConsentDecision::Auto`] is no
+/// export.
 fn authorize_export(vault: &Vault) -> Result<()> {
-    let required = export_grant_bound()?;
     if vault
-        .active_standing_consent_grants()?
-        .iter()
-        .any(|grant| grant.bound().contains(&required))
+        .evaluate_consent_for(&export_effect()?, None)?
+        .decision
+        == ConsentDecision::Auto
     {
         return Ok(());
     }
@@ -588,7 +661,7 @@ fn export_receipt_record(id: &EntityId, row: &StoredExport) -> ReceiptRecord {
         outcome: "exported".to_owned(),
         job_ref: None,
         trigger_ref: None,
-        policy_trace: vec!["edit_distance.reservoir.export".to_owned()],
+        policy_trace: vec![EXPORT_OPERATION_KIND.to_owned()],
         fields,
     }
 }

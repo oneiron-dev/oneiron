@@ -10,16 +10,28 @@ use rmpv::Value as RmpValue;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::config::VaultConfig;
 use crate::consent::AuthenticatedOwner;
-use crate::edit_distance::attribution::{AmendmentEvidence, record_amendment_evidence};
+use crate::edit_distance::attribution::{
+    AmendmentCause, AmendmentEvidence, judge_amendment, record_amendment_evidence,
+};
 use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
+use crate::edit_distance::routing::{
+    record_judged_amendment, serving_model_version, set_serving_model,
+};
 use crate::edit_distance::{
     FinalizedProposalText, LoroOpRef, ProposalArtifactRef, put_finalized_proposal_text,
 };
+use crate::llm::ModelId;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
+
+/// The two compiled generations of the drafting role's stack — registered
+/// models, so the fold binds a real `stack:` token rather than the
+/// unregistered fallback.
+const STACK_V2_MODEL: &str = "oneiron/orchestrator-default@2026-07-06";
+const STACK_V1_MODEL: &str = "oneiron/orchestrator-default@2026-06-01";
 
 // ─── fixtures ───────────────────────────────────────────────────────────
 
@@ -134,8 +146,24 @@ fn put_artifact(
     Ok(artifact_ref)
 }
 
-/// Records the tag row an artifact's pair joins on: a real ED-01 Δ, then the
-/// ED-03 evidence keyed by the artifact's own ref hex.
+/// Marks an artifact AMENDED the way ED-01 does: a real Δ recorded against the
+/// amendment's receipt id. This is the ELIGIBILITY mark — an artifact without
+/// one was edited, but nothing says a decider kept the edit.
+fn mark_amended(vault: &Vault, artifact: ProposalArtifactRef) -> Result<()> {
+    let delta = delta_from_reconstructed("before", "after");
+    vault.with_write_txn(|wtxn| {
+        put_amendment_delta_in_txn(
+            vault,
+            wtxn,
+            &amendment_receipt_id(artifact.entity_id()),
+            &delta,
+        )?;
+        Ok(())
+    })
+}
+
+/// [`mark_amended`] plus the ED-03 evidence row the tags join from — both under
+/// the amendment's one receipt id, through their own doors.
 fn tag_artifact(
     vault: &Vault,
     artifact: ProposalArtifactRef,
@@ -143,17 +171,35 @@ fn tag_artifact(
     at: u64,
     skill: Option<EntityId>,
 ) -> Result<()> {
-    let receipt_id = artifact.entity_id().to_hex();
-    let delta = delta_from_reconstructed("before", "after");
-    vault.with_write_txn(|wtxn| {
-        put_amendment_delta_in_txn(vault, wtxn, &receipt_id, &delta)?;
-        Ok(())
-    })?;
-    let mut evidence = AmendmentEvidence::new(&receipt_id, put_actor(vault)?, task_class).at(at);
+    mark_amended(vault, artifact)?;
+    let mut evidence = AmendmentEvidence::new(
+        amendment_receipt_id(artifact.entity_id()),
+        put_actor(vault)?,
+        task_class,
+    )
+    .at(at)
+    .with_cause(AmendmentCause::DeciderPreference);
     if let Some(skill) = skill {
         evidence = evidence.with_skill(skill);
     }
     record_amendment_evidence(vault, &evidence)
+}
+
+/// Runs the ED-03 judgment and ED-07's fold for a tagged artifact, so the pair's
+/// model tag comes from the binding `record_judged_amendment` actually wrote.
+fn fold_under_model(vault: &Vault, artifact: ProposalArtifactRef, model: &str) -> Result<()> {
+    let receipt_id = amendment_receipt_id(artifact.entity_id());
+    judge_amendment(vault, &receipt_id)?.expect("a caused, measured amendment judges");
+    set_serving_model(vault, &ModelId::new(model).expect("fixture model id"))?;
+    record_judged_amendment(vault, &receipt_id)
+}
+
+/// What an export WOULD carry, read through the module's own resolution rather
+/// than a door — there is no public candidate surface, by design.
+fn candidates(vault: &Vault, scope: ReservoirScope) -> Result<Vec<TrainingPair>> {
+    let scope = normalized_scope(scope)?;
+    let rtxn = vault.store.env.read_txn()?;
+    resolve_candidates(vault, &rtxn, &scope)
 }
 
 fn export_to_vec(vault: &Vault, scope: ReservoirScope) -> Result<(ExportManifest, String)> {
@@ -165,16 +211,18 @@ fn export_to_vec(vault: &Vault, scope: ReservoirScope) -> Result<(ExportManifest
 // ─── the pair projection ────────────────────────────────────────────────
 
 /// An amendment projects `rejected = proposed` / `chosen = final`. An untouched
-/// approval and a rejection both leave the two ends EQUAL, and neither is a
-/// preference — so neither projects a pair.
+/// approval leaves the two ends EQUAL, which is not a preference — so it
+/// projects no pair.
 #[test]
 fn an_amendment_projects_a_pair_and_an_unamended_outcome_projects_none() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let amended = put_artifact(&vault, "draft text", "decider's text", None)?;
-    // approved_untouched / rejected: the window closed with nothing changed.
-    put_artifact(&vault, "untouched", "untouched", None)?;
+    mark_amended(&vault, amended)?;
+    // approved_untouched: the window closed with nothing changed.
+    let untouched = put_artifact(&vault, "untouched", "untouched", None)?;
+    mark_amended(&vault, untouched)?;
 
-    let pairs = reservoir_candidates(&vault, ReservoirScope::default())?;
+    let pairs = candidates(&vault, ReservoirScope::default())?;
     assert_eq!(pairs.len(), 1, "only the amended artifact is a candidate");
     assert_eq!(pairs[0].rejected, "draft text");
     assert_eq!(pairs[0].chosen, "decider's text");
@@ -182,17 +230,109 @@ fn an_amendment_projects_a_pair_and_an_unamended_outcome_projects_none() -> Resu
     Ok(())
 }
 
-/// Tags join from the evidence row. An artifact with no tag row still projects
-/// its pair, with every tag explicitly absent — never a guess, never a drop.
+/// ELIGIBILITY. `finalize` persists every artifact it closes, so a retention
+/// row with two DIFFERING texts says only that the body was edited — a rejected
+/// proposal was edited and thrown away, and one still awaiting a ruling was
+/// edited and decided nothing. Neither is a `chosen` side. Only an artifact the
+/// engine recorded an AMENDMENT against projects a pair.
+#[test]
+fn an_artifact_with_no_recorded_amendment_projects_no_pair() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // Edited, and nothing says the edit was kept.
+    let unadjudicated = put_artifact(&vault, "draft", "edited then rejected", None)?;
+    assert!(
+        candidates(&vault, ReservoirScope::default())?.is_empty(),
+        "an unadjudicated artifact is not a training pair"
+    );
+
+    // The SAME row, once the amendment is on the ledger.
+    mark_amended(&vault, unadjudicated)?;
+    let pairs = candidates(&vault, ReservoirScope::default())?;
+    assert_eq!(pairs.len(), 1, "the recorded amendment is what admits it");
+    assert_eq!(pairs[0].receipt_ref, unadjudicated.entity_id());
+    Ok(())
+}
+
+/// The amendment ledgers are keyed by a NAMESPACED receipt id, not the bare
+/// artifact hex: rows written under the bare hex are invisible to the join, and
+/// the exported pair says so by carrying no tags.
+#[test]
+fn the_ledger_join_key_is_the_namespaced_amendment_receipt_id() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let artifact = put_artifact(&vault, "a", "b", None)?;
+    let bare_hex = artifact.entity_id().to_hex();
+    assert_eq!(
+        amendment_receipt_id(artifact.entity_id()),
+        format!("{AMENDMENT_RECEIPT_ID_PREFIX}{bare_hex}"),
+    );
+
+    // A Δ under the bare hex is a row for some other family's key.
+    let delta = delta_from_reconstructed("before", "after");
+    vault.with_write_txn(|wtxn| {
+        put_amendment_delta_in_txn(&vault, wtxn, &bare_hex, &delta)?;
+        Ok(())
+    })?;
+    assert!(
+        candidates(&vault, ReservoirScope::default())?.is_empty(),
+        "a bare-hex row does not admit the artifact"
+    );
+
+    mark_amended(&vault, artifact)?;
+    assert_eq!(candidates(&vault, ReservoirScope::default())?.len(), 1);
+    Ok(())
+}
+
+/// The model tag is the generation ED-07 BOUND to this amendment, read back
+/// from the fold — not the model serving now. Swapping the serving model after
+/// the fold leaves the pair on the generation that produced it.
+#[test]
+fn the_model_tag_is_the_generation_the_amendment_was_folded_under() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let folded = put_artifact(&vault, "p0", "p1", None)?;
+    tag_artifact(&vault, folded, "prose", 10, None)?;
+    let unfolded = put_artifact(&vault, "u0", "u1", None)?;
+    tag_artifact(&vault, unfolded, "prose", 10, None)?;
+
+    fold_under_model(&vault, folded, STACK_V1_MODEL)?;
+    let bound = serving_model_version(&vault)?;
+    // The vault moves on; the folded amendment does not.
+    set_serving_model(
+        &vault,
+        &ModelId::new(STACK_V2_MODEL).expect("fixture model id"),
+    )?;
+    assert_ne!(serving_model_version(&vault)?, bound, "the fixture swapped");
+
+    let pairs = candidates(&vault, ReservoirScope::default())?;
+    let tagged = pairs
+        .iter()
+        .find(|pair| pair.receipt_ref == folded.entity_id())
+        .expect("the folded pair");
+    assert_eq!(
+        tagged.model_id.as_deref(),
+        Some(bound.as_str()),
+        "history, never the model serving now"
+    );
+    let untagged = pairs
+        .iter()
+        .find(|pair| pair.receipt_ref == unfolded.entity_id())
+        .expect("the unfolded pair");
+    assert_eq!(untagged.model_id, None, "absence stays explicit");
+    Ok(())
+}
+
+/// Tags join from the evidence row. An amended artifact with no evidence row
+/// still projects its pair, with every tag explicitly absent — never a guess,
+/// never a drop.
 #[test]
 fn tags_join_from_the_evidence_row_and_absence_stays_explicit() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let skill = put_skill(&vault)?;
     let tagged = put_artifact(&vault, "a", "b", None)?;
     tag_artifact(&vault, tagged, "outbound", 500, Some(skill))?;
-    put_artifact(&vault, "c", "d", None)?;
+    let bare = put_artifact(&vault, "c", "d", None)?;
+    mark_amended(&vault, bare)?;
 
-    let pairs = reservoir_candidates(&vault, ReservoirScope::default())?;
+    let pairs = candidates(&vault, ReservoirScope::default())?;
     assert_eq!(pairs.len(), 2);
     let joined = pairs
         .iter()
@@ -220,9 +360,10 @@ fn a_narrowed_scope_excludes_pairs_it_cannot_place() -> Result<()> {
     tag_artifact(&vault, prose, "prose", 100, None)?;
     let calendar = put_artifact(&vault, "c0", "c1", None)?;
     tag_artifact(&vault, calendar, "calendar", 900, None)?;
-    put_artifact(&vault, "u0", "u1", None)?;
+    let bare = put_artifact(&vault, "u0", "u1", None)?;
+    mark_amended(&vault, bare)?;
 
-    let by_class = reservoir_candidates(
+    let by_class = candidates(
         &vault,
         ReservoirScope {
             task_classes: Some(vec!["prose".to_owned()]),
@@ -232,7 +373,7 @@ fn a_narrowed_scope_excludes_pairs_it_cannot_place() -> Result<()> {
     assert_eq!(by_class.len(), 1);
     assert_eq!(by_class[0].receipt_ref, prose.entity_id());
 
-    let by_time = reservoir_candidates(
+    let by_time = candidates(
         &vault,
         ReservoirScope {
             task_classes: None,
@@ -248,7 +389,7 @@ fn a_narrowed_scope_excludes_pairs_it_cannot_place() -> Result<()> {
 
     // An empty class list is not "everything" — `None` is how that is said.
     assert!(
-        reservoir_candidates(
+        candidates(
             &vault,
             ReservoirScope {
                 task_classes: Some(Vec::new()),
@@ -276,7 +417,7 @@ fn a_fenced_session_contributes_no_candidates_at_all() -> Result<()> {
 
     // The room produced work, and none of it left a retention row.
     assert!(
-        reservoir_candidates(&vault, ReservoirScope::default())?.is_empty(),
+        candidates(&vault, ReservoirScope::default())?.is_empty(),
         "a fenced session's work never enters the candidate stream"
     );
     Ok(())
@@ -290,7 +431,8 @@ fn a_fenced_source_turn_aborts_the_export_before_the_first_byte() -> Result<()> 
     let (_tmp, vault) = temp_vault();
     grant_export(&vault);
     // A healthy pair, so the abort is not merely an empty export.
-    put_artifact(&vault, "healthy", "healthy amended", None)?;
+    let healthy = put_artifact(&vault, "healthy", "healthy amended", None)?;
+    mark_amended(&vault, healthy)?;
 
     let turn = crate::test_util::entity(0x52);
     vault.put_entity(&turn, ENTITY_TYPE_TURN, t(3), 3, b"ed09 fenced turn")?;
@@ -312,7 +454,7 @@ fn a_fenced_source_turn_aborts_the_export_before_the_first_byte() -> Result<()> 
     );
 
     // Loud, never a silent skip: the healthy pair does not ship either.
-    assert!(reservoir_candidates(&vault, ReservoirScope::default()).is_err());
+    assert!(candidates(&vault, ReservoirScope::default()).is_err());
     Ok(())
 }
 
@@ -322,7 +464,8 @@ fn a_fenced_source_turn_aborts_the_export_before_the_first_byte() -> Result<()> 
 fn a_pair_with_no_source_turn_passes_the_tripwire() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     grant_export(&vault);
-    put_artifact(&vault, "no turn", "no turn amended", None)?;
+    let artifact = put_artifact(&vault, "no turn", "no turn amended", None)?;
+    mark_amended(&vault, artifact)?;
     let (manifest, _) = export_to_vec(&vault, ReservoirScope::default())?;
     assert_eq!(manifest.pairs, 1);
     Ok(())
@@ -336,12 +479,60 @@ fn an_unfenced_source_turn_exports_normally() -> Result<()> {
     grant_export(&vault);
     let turn = crate::test_util::entity(0x43);
     vault.put_entity(&turn, ENTITY_TYPE_TURN, t(3), 3, b"ed09 open turn")?;
-    put_artifact(&vault, "open draft", "open final", Some(turn))?;
+    let artifact = put_artifact(&vault, "open draft", "open final", Some(turn))?;
+    mark_amended(&vault, artifact)?;
 
     let (manifest, jsonl) = export_to_vec(&vault, ReservoirScope::default())?;
     assert_eq!(manifest.pairs, 1);
     assert!(jsonl.contains("open final"));
     Ok(())
+}
+
+/// ONE DOOR. The pair bodies are the whole corpus, so a public surface that
+/// returns them is an export that skipped the consent decision and the export
+/// receipt. `export_reservoir` is the only `pub fn` in this module that yields
+/// a [`TrainingPair`], and the guard is spelled against the source because the
+/// defect it catches is a `pub` keyword, not a behaviour.
+#[test]
+fn the_export_door_is_the_only_public_surface_yielding_pairs() {
+    let source = include_str!("../reservoir.rs");
+    let public_pair_yielding = source
+        .lines()
+        .filter(|line| line.starts_with("pub fn ") && line.contains("TrainingPair"))
+        .count();
+    assert_eq!(
+        public_pair_yielding, 0,
+        "no public door but `export_reservoir` may hand back pair bodies"
+    );
+    assert!(
+        !source.contains("pub fn reservoir_candidates"),
+        "the candidate reader is not a door: it bypasses consent and the receipt"
+    );
+}
+
+/// The door OPTS INTO the consent ladder; it does not carry a second copy of
+/// it. A hand-rolled grant scan is the defect this guards: it would answer
+/// without the evaluator's precedence, approve-once spending or reason codes,
+/// and so could diverge from the decision every rail-integrated door is held
+/// to. The scan is a source shape, so the guard is spelled against the source.
+#[test]
+fn the_export_never_re_implements_the_consent_ladder() {
+    let source = include_str!("../reservoir.rs");
+    for needle in [
+        "active_standing_consent_grants",
+        "evaluate_consent(",
+        "classify_composed_effect",
+    ] {
+        assert!(
+            !source.contains(needle),
+            "the export composes an effect and asks the evaluator; it must not \
+             reach for `{needle}`"
+        );
+    }
+    assert!(
+        source.contains("evaluate_consent_for"),
+        "the export takes its verdict from the unified evaluator"
+    );
 }
 
 /// NO OVERRIDE API. Two guards, because either alone is escapable: the scope
@@ -390,10 +581,24 @@ fn no_override_api_on_the_export_surface() {
 
 /// An export is content leaving the vault, so it rides the house disclosure
 /// rail: fail-closed with no covering grant, and revocation is immediate.
+///
+/// The verdict comes from the unified evaluator, which the assertions read
+/// through rather than around — the same `evaluate_consent_for` every other
+/// door composes into, given this door's own effect.
 #[test]
 fn the_export_door_rides_the_disclosure_consent_rail() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_artifact(&vault, "x", "y", None)?;
+    let artifact = put_artifact(&vault, "x", "y", None)?;
+    mark_amended(&vault, artifact)?;
+
+    // A pure disclosure with no covering grant HIDES — it does not ask, and it
+    // does not ride invariant 1's "undo is the net" past the requirement.
+    assert_eq!(
+        vault
+            .evaluate_consent_for(&export_effect()?, None)?
+            .decision,
+        ConsentDecision::Hide,
+    );
 
     let mut sink = CountingSink::default();
     let err = export_reservoir(&vault, ReservoirScope::default(), &mut sink)
@@ -403,6 +608,13 @@ fn the_export_door_rides_the_disclosure_consent_rail() -> Result<()> {
 
     let owner = owner(&vault);
     let receipt = vault.create_standing_grant(&owner, export_grant_bound()?)?;
+    assert_eq!(
+        vault
+            .evaluate_consent_for(&export_effect()?, None)?
+            .decision,
+        ConsentDecision::Auto,
+        "the covering grant clears it through the evaluator, not a local scan"
+    );
     assert_eq!(export_to_vec(&vault, ReservoirScope::default())?.0.pairs, 1);
 
     let grant_ref = receipt.grant_ref().expect("the standing grant's row ref");
@@ -430,7 +642,8 @@ fn the_export_is_one_json_object_per_line() -> Result<()> {
     grant_export(&vault);
     let first = put_artifact(&vault, "draft one", "final one", None)?;
     tag_artifact(&vault, first, "prose", 10, None)?;
-    put_artifact(&vault, "draft two", "final two", None)?;
+    let second = put_artifact(&vault, "draft two", "final two", None)?;
+    mark_amended(&vault, second)?;
 
     let (manifest, jsonl) = export_to_vec(&vault, ReservoirScope::default())?;
     let lines: Vec<&str> = jsonl.lines().collect();
@@ -553,6 +766,61 @@ fn the_export_receipt_records_scope_count_and_hash() -> Result<()> {
     Ok(())
 }
 
+/// ONE SNAPSHOT. The manifest is receipted with a `content_hash` that attests a
+/// point in time, so every read behind a body — artifacts, fence, amendment
+/// marks, evidence, model bindings — must come from one boundary. A read that
+/// opened its own transaction would see writes the rest of the body did not,
+/// producing a corpus that never existed.
+///
+/// Held snapshot, concurrent writer, same answer: the resolution sees the world
+/// as of its transaction and nothing later.
+#[test]
+fn the_resolution_reads_every_ledger_on_one_snapshot() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let early = put_artifact(&vault, "e0", "e1", None)?;
+    tag_artifact(&vault, early, "prose", 10, None)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let before = resolve_candidates(&vault, &rtxn, &ReservoirScope::default())?;
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].task_class.as_deref(), Some("prose"));
+
+    // The world moves while the snapshot is held: a second candidate lands, and
+    // the first one's amendment is folded under a model. The writer runs on its
+    // own thread because LMDB refuses a write transaction on a thread already
+    // holding a read one — which is also why the resolution takes its snapshot
+    // as an argument instead of opening txns as it goes.
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| -> Result<()> {
+                let late = put_artifact(&vault, "l0", "l1", None)?;
+                tag_artifact(&vault, late, "calendar", 20, None)?;
+                fold_under_model(&vault, early, STACK_V1_MODEL)
+            })
+            .join()
+            .expect("the concurrent writer")
+    })?;
+
+    let after = resolve_candidates(&vault, &rtxn, &ReservoirScope::default())?;
+    assert_eq!(
+        after, before,
+        "the held snapshot answers for the world as of itself"
+    );
+    drop(rtxn);
+
+    // A fresh snapshot sees all of it — the isolation is the transaction's, not
+    // a cache.
+    let fresh = candidates(&vault, ReservoirScope::default())?;
+    assert_eq!(fresh.len(), 2);
+    assert!(
+        fresh
+            .iter()
+            .any(|pair| pair.receipt_ref == early.entity_id() && pair.model_id.is_some()),
+        "the fold is visible to a later reader"
+    );
+    Ok(())
+}
+
 // ─── the rebuildable index (CID-7) ──────────────────────────────────────
 
 /// The index is derived state: rebuilding it twice is an identity, it carries
@@ -570,10 +838,10 @@ fn rebuilding_the_index_is_an_identity_and_drops_stale_rows() -> Result<()> {
     rebuild_reservoir_index(&vault)?;
     assert_eq!(first, index_rows(&vault)?, "the rebuild is an identity");
 
-    let candidates = reservoir_candidates(&vault, ReservoirScope::default())?;
+    let projected = candidates(&vault, ReservoirScope::default())?;
     assert_eq!(
         first.len(),
-        candidates.len(),
+        projected.len(),
         "the index holds exactly the candidates"
     );
     assert!(
