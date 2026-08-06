@@ -776,15 +776,18 @@ fn runner_derives_cause_and_outbound_request_from_persisted_state() -> Result<()
     let payload = fixture.payload(event.event_ref);
     let record = enqueue(&vault, &payload, 100);
 
-    let request = derive_enrollment_outbound_request(&vault, &record, &payload, &event, 1_000)?
+    let request = derive_enrollment_outbound_request(&vault, &payload, &event, 1_000)?
         .expect("the step declares an outward leg");
-    assert_eq!(request.attempt_id, record.id);
     assert_eq!(request.call_seq, 7);
+    // The ledger identity is the CONSEQUENCE's, not the queue row's. Deriving
+    // it from the attempt id would make the send identity a function of how
+    // many times the work was enqueued.
+    assert_ne!(request.attempt_id, record.id);
 
     // Move the PERSISTED program step; the derived request moves with it.
     put_step(&vault, fixture.program, fixture.step, 9);
     assert_eq!(
-        derive_enrollment_outbound_request(&vault, &record, &payload, &event, 1_000)?
+        derive_enrollment_outbound_request(&vault, &payload, &event, 1_000)?
             .expect("the step declares an outward leg")
             .call_seq,
         9
@@ -804,7 +807,6 @@ fn runner_derives_cause_and_outbound_request_from_persisted_state() -> Result<()
     assert!(matches!(
         derive_enrollment_outbound_request(
             &vault,
-            &record,
             &CampaignEnrollmentAttemptPayload {
                 campaign_program_ref: foreign,
                 ..payload

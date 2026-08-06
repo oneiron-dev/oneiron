@@ -977,7 +977,7 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             ),
             event: membership_event,
         };
-        let outbound_intent = enrollment_intent_id(record.id, &step)?;
+        let outbound_intent = enrollment_intent_id(&event, &step)?;
         Ok(match commit_membership_plan(self.vault, &plan, now)? {
             MembershipCommitOutcome::Applied => EnrollmentExecution::Applied { outbound_intent },
             MembershipCommitOutcome::AlreadyApplied => {
@@ -1043,17 +1043,49 @@ fn resolve_program_step(
         .ok_or(Error::EntityNotFound)
 }
 
-/// The stable outward-leg identity for this attempt, derived exactly the way
-/// ONE-1691 will derive it at dispatch.
+/// The durable identity of ONE enrollment consequence, standing where ONE-1691
+/// expects a queue attempt id.
+///
+/// The ledger derives an intent from `(attempt_id, call_seq, server, tool,
+/// payload_hash)` and dedupes sends by that intent, so whatever is handed in as
+/// `attempt_id` is the definition of "the same send". The queue row id is the
+/// wrong definition here: this module treats duplicate attempts for one
+/// transition as tolerable BY DESIGN — the dedupe key is advisory — and an
+/// `AlreadyApplied` membership still owes its outward leg. Two rows for one
+/// transition would therefore freeze two intents and send the same enrollment
+/// twice, putting the advisory key back on the correctness path it was
+/// deliberately kept off.
+///
+/// So the identity is the consequence itself: the `(query, entity, epoch)` the
+/// watermark already treats as the unit of membership, the campaign it lands
+/// in, and the program step that carries it. Duplicate rows converge on one
+/// ledger intent; two genuinely different consequences still diverge.
+fn enrollment_consequence_id(
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+) -> Result<AttemptId> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"oneiron.campaign.enrollment.consequence.v1");
+    hasher.update(event.query_ref.as_bytes());
+    hasher.update(event.entity_ref.as_bytes());
+    hasher.update(event.epoch.to_be_bytes());
+    hasher.update(event.campaign_ref.as_bytes());
+    hasher.update(step.program_ref.as_bytes());
+    hasher.update(step.step_ref.as_bytes());
+    AttemptId::from_bytes(&hasher.finalize()[..16])
+}
+
+/// The stable outward-leg identity for this consequence, derived exactly the
+/// way ONE-1691 will derive it at dispatch.
 fn enrollment_intent_id(
-    attempt_id: AttemptId,
+    event: &CampaignEnrollmentEvent,
     step: &CampaignProgramStep,
 ) -> Result<Option<IntentId>> {
     let Some(outbound) = step.outbound.as_ref() else {
         return Ok(None);
     };
     derive_intent_id(
-        attempt_id,
+        enrollment_consequence_id(event, step)?,
         outbound.call_seq,
         &step.channel,
         &outbound.verb,
@@ -1064,7 +1096,8 @@ fn enrollment_intent_id(
 }
 
 /// Derives the outward call from PERSISTED program state plus the durable
-/// attempt id. No caller supplies any of it.
+/// consequence identity. No caller supplies any of it — and nothing about the
+/// queue row that happens to be carrying the work reaches the derivation.
 ///
 /// # Errors
 ///
@@ -1072,17 +1105,20 @@ fn enrollment_intent_id(
 /// [`Error::EntityNotFound`] when they do not resolve.
 pub fn derive_enrollment_outbound_request(
     vault: &Vault,
-    record: &AttemptRecord,
     payload: &CampaignEnrollmentAttemptPayload,
     event: &CampaignEnrollmentEvent,
     now_ms: u64,
 ) -> Result<Option<OutboundCallRequest>> {
     let step = resolve_program_step(vault, payload, event)?;
-    Ok(step.outbound.map(|outbound| {
+    let consequence_id = enrollment_consequence_id(event, &step)?;
+    let CampaignProgramStep {
+        channel, outbound, ..
+    } = step;
+    Ok(outbound.map(|outbound| {
         OutboundCallRequest::new(
-            record.id,
+            consequence_id,
             outbound.call_seq,
-            step.channel,
+            channel,
             outbound.verb,
             outbound.payload,
             now_ms,
@@ -1160,7 +1196,7 @@ pub(crate) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         return Ok(EnrollmentOutboundLeg::NoOutboundStep);
     };
     let prepared = PreparedEffect {
-        attempt_id: attempt.id,
+        attempt_id: enrollment_consequence_id(&event, &step)?,
         call_seq: outbound.call_seq,
         server: step.channel.clone(),
         tool: outbound.verb.clone(),
@@ -1977,27 +2013,34 @@ mod tests {
         assert!(!dispatch.replayed);
         let records = intent_ledger_records(&vault).expect("ledger");
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].attempt_id, attempt.id);
+        assert_eq!(
+            records[0].attempt_id,
+            enrollment_consequence_id(
+                &fixture.event,
+                &resolve_program_step(&vault, &fixture.payload, &fixture.event)?
+            )?
+        );
         assert_eq!(records[0].call_seq, 7);
         assert_eq!(transport.sent_intents, vec![records[0].id]);
         Ok(())
     }
 
     #[test]
-    fn outward_intent_uses_durable_attempt_and_call_sequence() -> Result<()> {
+    fn outward_intent_uses_durable_consequence_and_call_sequence() -> Result<()> {
         let (_dir, vault) = vault_fixture();
         let fixture = install_fixture(&vault, Some(outbound_step()));
         let attempt = queued_attempt(&vault, &fixture);
 
         let step = resolve_program_step(&vault, &fixture.payload, &fixture.event)?;
-        let derived = enrollment_intent_id(attempt.id, &step)?.expect("an outward leg exists");
+        let consequence = enrollment_consequence_id(&fixture.event, &step)?;
+        let derived = enrollment_intent_id(&fixture.event, &step)?.expect("an outward leg exists");
 
         // Clock-free and process-free: recomputing from the same durable inputs
         // reproduces the identity a restarted process would use.
         assert_eq!(
             derived,
             derive_intent_id(
-                attempt.id,
+                consequence,
                 7,
                 CHANNEL,
                 VERB,
@@ -2011,15 +2054,14 @@ mod tests {
         let dispatch = dispatch_leg(&vault, &authority, &attempt, &mut transport, 50);
         assert_eq!(dispatch.intent_id, Some(derived));
 
-        let request = derive_enrollment_outbound_request(
-            &vault,
-            &attempt,
-            &fixture.payload,
-            &fixture.event,
-            50,
-        )?
-        .expect("an outward leg exists");
-        assert_eq!(request.attempt_id, attempt.id);
+        let request =
+            derive_enrollment_outbound_request(&vault, &fixture.payload, &fixture.event, 50)?
+                .expect("an outward leg exists");
+        assert_eq!(request.attempt_id, consequence);
+        assert_ne!(
+            request.attempt_id, attempt.id,
+            "the ledger identity belongs to the consequence, not the queue row"
+        );
         assert_eq!(request.call_seq, 7);
         Ok(())
     }
@@ -2106,6 +2148,54 @@ mod tests {
         assert!(
             intent_ledger_records(&vault).expect("ledger").is_empty(),
             "a refused effect leaves no frozen intent behind"
+        );
+        Ok(())
+    }
+
+    /// The advisory dedupe key is allowed to fail — that is the whole design.
+    /// When it does, one transition reaches the queue as two attempts, and both
+    /// owe an outward leg (an `AlreadyApplied` membership still has a send to
+    /// recover). If the ledger identity were a function of the QUEUE ROW, those
+    /// two attempts would freeze two intents and send the enrollment twice.
+    #[test]
+    fn duplicate_attempts_for_one_transition_send_once() -> Result<()> {
+        let (_dir, vault) = vault_fixture();
+        let fixture = install_fixture(&vault, Some(outbound_step()));
+        let authority = OutboundBindingAuthority::for_vault(&vault)?;
+
+        let queue = AttemptQueue::new(&vault);
+        let mut attempts = Vec::new();
+        for now in [10, 11] {
+            match queue.enqueue(EnqueueAttempt {
+                kind: CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND.to_owned(),
+                payload: encode_enrollment_attempt_payload(&fixture.payload)?,
+                dedupe_key: None,
+                run_id: None,
+                now,
+            })? {
+                EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record) => {
+                    attempts.push(record);
+                }
+            }
+        }
+        assert_ne!(attempts[0].id, attempts[1].id, "two real queue rows");
+
+        let mut first = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
+        let one = dispatch_leg(&vault, &authority, &attempts[0], &mut first, 50);
+        let mut second = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
+        let two = dispatch_leg(&vault, &authority, &attempts[1], &mut second, 60);
+
+        assert_eq!(one.intent_id, two.intent_id);
+        assert!(two.replayed);
+        assert_eq!(first.sent_intents.len(), 1);
+        assert!(
+            second.sent_intents.is_empty(),
+            "the duplicate attempt reaches no connector"
+        );
+        assert_eq!(
+            intent_ledger_records(&vault).expect("ledger").len(),
+            1,
+            "one transition, one frozen intent"
         );
         Ok(())
     }
