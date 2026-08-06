@@ -157,3 +157,25 @@ no internal edits (rider 3 satisfied more strictly than the packet allows).
 - [x] No screen/UI code; only existing comm.rs doors called.
 - [x] Gates: fmt · clippy -D warnings (`--all-targets --all-features`) · test -p oneiron
       --all-features · default-features build.
+
+## Gate evidence
+
+- `cargo fmt -p oneiron` — clean.
+- `cargo clippy -p oneiron --all-features --all-targets -- -D warnings` — clean.
+- `cargo test -p oneiron --all-features` — **cargo exit 0**, lib `3822 passed; 0 failed;
+  17 ignored`, every integration suite `ok`, doctests `ok`. All 13 publisher tests ran
+  inside that suite.
+- `cargo check -p oneiron` (default features, no `sync`) — compiles. The single
+  `dead_code` warning (`batch.rs::facet_of_endpoints_provably_off_table`) is
+  **pre-existing on the base**: present at `9daac87f4`, charged to no lane.
+
+Note on exit-code masking: the first full-suite run was piped through `tail`, so its
+exit status was `tail`'s, not cargo's. Re-run unpiped with the status captured directly
+— the numbers above are from that run.
+
+## Seam note for ED-03 (1759)
+
+`edit_distance.rs` gains exactly one line (`pub mod publisher;`) appended after
+`pub mod proposal_text;`. 1759 appends `pub mod attribution;` to the same list;
+alphabetically it lands above `delta`, so a textual conflict is unlikely and the
+merge-in law resolves it either way.
