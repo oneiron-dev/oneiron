@@ -27,9 +27,9 @@ use crate::connector_key::{
 };
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_index_key,
-    counterparty_contacts_by_party_channel, counterparty_contacts_by_party_full_scan,
-    decode_counterparty_contact_index_value, normalize_channel_class,
-    read_counterparty_contact_in_txn,
+    counterparty_contact_matches_channel_class, counterparty_contacts_by_party_channel,
+    counterparty_contacts_by_party_full_scan, decode_counterparty_contact_index_value,
+    normalize_channel_class, read_counterparty_contact_in_txn,
 };
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
@@ -3835,8 +3835,8 @@ fn hydrate_external_effect_contact(
 
 /// Every contact record that participates in this send's restrictive aggregate.
 ///
-/// Three sources, de-duplicated by contact ref and ordered by it so the folded
-/// first-touch and receipt reason are deterministic:
+/// Three CANDIDATE sources, de-duplicated by contact ref and ordered by it so
+/// the folded first-touch and receipt reason are deterministic:
 ///
 /// 1. the identity-independent `(party_ref, channel_class)` index;
 /// 2. the legacy identity+counterparty index, when an identity is known — it may
@@ -3844,6 +3844,15 @@ fn hydrate_external_effect_contact(
 /// 3. an unbounded type-132 scan, which is MANDATORY: the party-channel index
 ///    cannot prove its own completeness at HEAD, and a bounded fallback that
 ///    missed one opted-out row would answer a false "no".
+///
+/// Channel scope is then applied ONCE, here, to the merged set. Sources find
+/// rows for the party; this predicate decides which are in scope for the class.
+/// Keeping it at the single fold point is what makes `channel_identity_ref`
+/// enrichment rather than a verdict input: source 2 is keyed by identity alone,
+/// so a stale or explicitly-pinned cross-class identity would otherwise drag a
+/// foreign-channel opt-out into the aggregate and let enrichment move the
+/// verdict. A per-source predicate is one forgotten call from that bug; this is
+/// zero.
 fn counterparty_contacts_for_send(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -3860,15 +3869,19 @@ fn counterparty_contacts_for_send(
         candidates.push(hit);
     }
     candidates.extend(counterparty_contacts_by_party_full_scan(
-        store,
-        txn,
-        party_ref,
-        channel_class,
+        store, txn, party_ref,
     )?);
 
     candidates.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
     candidates.dedup_by(|(left, _), (right, _)| left == right);
-    Ok(candidates.into_iter().map(|(_, record)| record).collect())
+
+    let mut records = Vec::with_capacity(candidates.len());
+    for (_, record) in candidates {
+        if counterparty_contact_matches_channel_class(store, txn, &record, channel_class)? {
+            records.push(record);
+        }
+    }
+    Ok(records)
 }
 
 /// Legacy identity+counterparty index hit, when a channel identity is known.

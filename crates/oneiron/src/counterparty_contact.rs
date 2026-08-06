@@ -661,12 +661,14 @@ pub(crate) fn counterparty_contact_matches_channel_class(
         .is_none_or(|stored| stored == normalize_channel_class(channel_class)))
 }
 
-/// Every contact record the party-channel index names for this pair.
+/// The contact records the party-channel index names for this party/class pair.
 ///
-/// The index is a CANDIDATE source, never a verdict source: each hit is
-/// re-validated against the same party/class predicate the full scan applies,
-/// so an entry left behind by a record that later changed identity is filtered
-/// rather than mis-attributed.
+/// The index is a CANDIDATE source, never a verdict source: a hit is re-validated
+/// against the party, so an entry left behind by a record that later changed
+/// identity is filtered rather than mis-attributed. Channel scope is NOT applied
+/// here — every candidate source funnels through the single class predicate in
+/// `gate::counterparty_contacts_for_send`, so no source can ship a row into the
+/// aggregate that skipped it.
 pub(crate) fn counterparty_contacts_by_party_channel(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -684,16 +686,14 @@ pub(crate) fn counterparty_contacts_by_party_channel(
                 "counterparty contact party/channel index entity row",
             ));
         };
-        if record.matches_party(party_ref)
-            && counterparty_contact_matches_channel_class(store, txn, &record, channel_class)?
-        {
+        if record.matches_party(party_ref) {
             records.push((id, record));
         }
     }
     Ok(records)
 }
 
-/// Every contact record for this pair, found by scanning ALL type-132 rows.
+/// Every contact record for this party, found by scanning ALL type-132 rows.
 ///
 /// Unbounded and mandatory: the party-channel index cannot prove its own
 /// completeness at HEAD (rows written before it existed are absent, and so is
@@ -704,7 +704,6 @@ pub(crate) fn counterparty_contacts_by_party_full_scan(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     party_ref: &str,
-    channel_class: &str,
 ) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
     let mut records = Vec::new();
     for entry in store
@@ -716,9 +715,7 @@ pub(crate) fn counterparty_contacts_by_party_full_scan(
         let Some(record) = read_counterparty_contact_in_txn(store, txn, &id)? else {
             return Err(Error::CorruptedIndex("counterparty contact entity row"));
         };
-        if record.matches_party(party_ref)
-            && counterparty_contact_matches_channel_class(store, txn, &record, channel_class)?
-        {
+        if record.matches_party(party_ref) {
             records.push((id, record));
         }
     }

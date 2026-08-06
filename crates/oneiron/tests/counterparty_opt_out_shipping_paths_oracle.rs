@@ -224,12 +224,26 @@ fn dispatch(
     intent_ref: &str,
     sink: &mut RecordingSink,
 ) -> OutboundDispatchResult {
+    dispatch_with_identity(vault, actor, channel, intent_ref, None, sink)
+}
+
+/// The same send with a caller-pinned `channel_identity_ref`, which explicit
+/// callers may set to anything they hold — including a stale or foreign-class
+/// identity. Enrichment must never move the verdict either way.
+fn dispatch_with_identity(
+    vault: &Vault,
+    actor: EntityId,
+    channel: &str,
+    intent_ref: &str,
+    channel_identity_ref: Option<EntityId>,
+    sink: &mut RecordingSink,
+) -> OutboundDispatchResult {
     let intent = OutboundIntent::from_trigger(
         OutboundIntentDraft::new(actor.to_hex(), VERB, channel, COUNTERPARTY)
             .content_ref("content:opt-out-oracle"),
         OutboundIntentTrigger::agent_immediate("session:opt-out-oracle"),
     );
-    let request = OutboundDispatchRequest::new(
+    let mut request = OutboundDispatchRequest::new(
         format!("outbound:{intent_ref}"),
         intent_ref,
         intent,
@@ -239,6 +253,9 @@ fn dispatch(
         OutboundDeliveryWindowDecision::DeliverNow,
     )
     .counterparty_ref(COUNTERPARTY);
+    if let Some(identity_ref) = channel_identity_ref {
+        request = request.channel_identity_ref(identity_ref);
+    }
     vault.dispatch_outbound_intent(request, sink).unwrap()
 }
 
@@ -552,6 +569,46 @@ fn party_channel_scope_does_not_bleed() {
         "an email opt-out must not suppress another channel class: {:?}",
         other_channel.gate_reason_codes
     );
+    assert_eq!(sink.calls, 0, "the control is still fail-closed pending");
+}
+
+#[test]
+fn explicit_cross_channel_identity_never_changes_the_verdict() {
+    let (_dir, vault, actor) = oracle_vault();
+    let mut sink = RecordingSink::default();
+
+    // The opt-out row was recorded through an EMAIL identity.
+    recorded_opt_out(&vault, actor);
+
+    // A caller pins that email identity onto a TELEGRAM send — stale, explicit,
+    // or simply held over between transactions. Identity is enrichment, so the
+    // pinned send and its identity-absent twin must land on the same verdict:
+    // folding the foreign-class row would make enrichment the deny source of
+    // truth and cross the channel scope the aggregate is keyed by.
+    let absent = dispatch(
+        &vault,
+        actor,
+        OTHER_CHANNEL,
+        "intent:telegram-bare",
+        &mut sink,
+    );
+    let pinned = dispatch_with_identity(
+        &vault,
+        actor,
+        OTHER_CHANNEL,
+        "intent:telegram-pinned",
+        Some(test_id(IDENTITY_SEED)),
+        &mut sink,
+    );
+
+    assert!(
+        !denies(&pinned.gate_reason_codes),
+        "an email opt-out must not suppress telegram merely because an email \
+         identity rode along: {:?}",
+        pinned.gate_reason_codes
+    );
+    assert_eq!(pinned.gate_outcome, absent.gate_outcome);
+    assert_eq!(pinned.gate_reason_codes, absent.gate_reason_codes);
     assert_eq!(sink.calls, 0, "the control is still fail-closed pending");
 }
 
