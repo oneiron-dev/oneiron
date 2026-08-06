@@ -268,3 +268,34 @@ rather than trimmed, per the ratified shape.
   it is a `crm.stage` carrying only the ledger REFERENCE.
 - No new entity/type byte, registry row, timer, recurrence primitive, attempt
   kind, scheduler, or approval gate.
+
+## SIMPLIFY pass (K3, 2026-08-07)
+
+One bounded deletion-biased pass over the impl tip. Verdict: the impl leg was
+already tight — no dead code, no speculative generality, no defensive branches
+beyond the two declared chokepoint guards (empty-evidence at the projector
+door, kept: it is THE single `crm.stage` write door, not a call-site), and the
+doctrinal doc comments carry the ratified laws, so they stand.
+
+One edit, duplication removal only:
+
+- `stage_position()` helper extracted: the three projector callers
+  (`promote_from_reply`, `promote_on_held`, `apply_external_stage_evidence`)
+  each repeated the same two-step read of the live head — `live_stage_head`
+  then split into `(previous_stage_claim_ref, from)`. That triple must stay in
+  sync by construction, so it now has one home. Net: +14 / −9 lines, no public
+  API, no test, no behavior change.
+
+Explicitly NOT done (with reasons):
+
+- Test file untouched per fixture-sync law (no assertion/fixture edits).
+- `elapsed` / `at` / `declares` one-liners kept: they compress and name intent
+  at their call sites; deleting them would trade clarity for line count.
+- The `require_owner_attestable` undeclared-stage branch kept: unreachable
+  after `validate_ladder`, but removing it would need an `expect` in non-test
+  code — worse than the guard.
+- The projector's empty-evidence guard kept (chokepoint, see above).
+
+Gates re-run after the edit: `cargo fmt` clean, `cargo clippy -p oneiron
+--all-features --all-targets` zero warnings, `cargo test -p oneiron --test
+campaign_stage_ladder_oracle` 17/17 passed.

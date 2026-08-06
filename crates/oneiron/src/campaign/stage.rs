@@ -697,8 +697,8 @@ fn promote_from_reply(
     stage: &StageKey,
     mode: PromotionMode,
 ) -> Result<StageProjectResult> {
-    let head = live_stage_head(vault, &reply.party_ref, &reply.campaign_ref)?;
-    let from = head.as_ref().map(|(_, value)| value.stage.clone());
+    let (previous_stage_claim_ref, from) =
+        stage_position(vault, &reply.party_ref, &reply.campaign_ref)?;
     let Some(rule) = transition_rule(definition, from.as_ref(), stage) else {
         return Ok(StageProjectResult::NoChange);
     };
@@ -706,7 +706,7 @@ fn promote_from_reply(
         vault,
         &StageProjectorInput {
             party_ref: reply.party_ref,
-            previous_stage_claim_ref: head.map(|(id, _)| id),
+            previous_stage_claim_ref,
             value: CrmStageValue {
                 campaign_ref: reply.campaign_ref,
                 stage: stage.clone(),
@@ -811,8 +811,7 @@ fn promote_on_held(
     let Some(outcome_claim_ref) = live_event_outcome_claim(vault, event_ref)? else {
         return Ok(StageProjectResult::NoChange);
     };
-    let head = live_stage_head(vault, party_ref, campaign_ref)?;
-    let from = head.as_ref().map(|(_, value)| value.stage.clone());
+    let (previous_stage_claim_ref, from) = stage_position(vault, party_ref, campaign_ref)?;
     let Some(rule) = evidence_class_rule(
         definition,
         from.as_ref(),
@@ -824,7 +823,7 @@ fn promote_on_held(
         vault,
         &StageProjectorInput {
             party_ref: *party_ref,
-            previous_stage_claim_ref: head.map(|(id, _)| id),
+            previous_stage_claim_ref,
             value: CrmStageValue {
                 campaign_ref: *campaign_ref,
                 stage: rule.to.clone(),
@@ -969,8 +968,8 @@ pub fn apply_external_stage_evidence(
     if hook.evidence.evidence_refs.is_empty() {
         return Err(invalid("external stage evidence requires evidence refs"));
     }
-    let head = live_stage_head(vault, &hook.party_ref, &hook.campaign_ref)?;
-    let from = head.as_ref().map(|(_, value)| value.stage.clone());
+    let (previous_stage_claim_ref, from) =
+        stage_position(vault, &hook.party_ref, &hook.campaign_ref)?;
     let Some(rule) = transition_rule(definition, from.as_ref(), &hook.target_stage) else {
         return Ok(StageProjectResult::NoChange);
     };
@@ -986,7 +985,7 @@ pub fn apply_external_stage_evidence(
         vault,
         &StageProjectorInput {
             party_ref: hook.party_ref,
-            previous_stage_claim_ref: head.map(|(id, _)| id),
+            previous_stage_claim_ref,
             value: CrmStageValue {
                 campaign_ref: hook.campaign_ref,
                 stage: hook.target_stage.clone(),
@@ -1169,6 +1168,20 @@ fn live_event_outcome_claim(vault: &Vault, event_ref: &EntityId) -> Result<Optio
         heads.push((body.valid_from.unwrap_or_default(), id));
     }
     Ok(heads.into_iter().max().map(|(_, id)| id))
+}
+
+/// The live head as a transition needs it: the claim the projector will
+/// supersede, and the stage the transition leaves. `(None, None)` means no live
+/// head yet — `campaign.member` is not a stage.
+fn stage_position(
+    vault: &Vault,
+    party_ref: &EntityId,
+    campaign_ref: &EntityId,
+) -> Result<(Option<EntityId>, Option<StageKey>)> {
+    let Some((id, value)) = live_stage_head(vault, party_ref, campaign_ref)? else {
+        return Ok((None, None));
+    };
+    Ok((Some(id), Some(value.stage)))
 }
 
 fn declares(definition: &StageLadderDefinition, key: &StageKey) -> bool {
