@@ -394,6 +394,22 @@ fn dial_on_sends_through_the_comm_doors_and_the_projector_shows_the_thread() {
     );
 }
 
+/// An empty batch is a no-op that mints nothing — a caller with nothing to
+/// send must not leave a counterparty behind.
+#[test]
+fn empty_batch_resolves_no_counterparty() {
+    let (_tmp, vault) = open_vault();
+    set_publisher_enabled(&vault, true).expect("dial on");
+    assert_eq!(
+        send_signatures_if_enabled(&vault, &[]).expect("empty batch"),
+        SendOutcome::default()
+    );
+    assert_eq!(
+        count_contact_record_claim_entries(&vault, PUBLISHER_PARTY_KEY).expect("contact view"),
+        0
+    );
+}
+
 /// The send door will not receipt a signature that does not exist — an id with
 /// no row behind it is a caller bug, not an empty send.
 #[test]

@@ -698,6 +698,12 @@ pub fn send_signatures_if_enabled(
     vault: &Vault,
     sigs: &[EntityId],
 ) -> PublisherResult<SendOutcome> {
+    // An empty batch resolves nothing: minting the counterparty for a send that
+    // carries no signatures would leave a PERSON row behind for a caller that
+    // asked for no work.
+    if sigs.is_empty() {
+        return Ok(SendOutcome::default());
+    }
     for id in sigs {
         require_signature(vault, *id)?;
     }
@@ -903,6 +909,10 @@ pub fn open_interview(
 /// [`finalized_proposal_text`](super::finalized_proposal_text) yields it. No
 /// edit distance is computed here; that is ED-01's job and reusing it is the
 /// point of rung 3.
+///
+/// The FINALIZED artifact's own ref keys the settled row — the session records
+/// what was actually frozen, not what the caller believed it was holding. In
+/// every flow through [`open_interview`] the two are the same value.
 ///
 /// # Errors
 ///
