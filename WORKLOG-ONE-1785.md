@@ -164,3 +164,37 @@ a one-line fix from whoever owns that file — flagging, not taking.
 - Packet check: `git status --porcelain` = `M calendar/mod.rs`, `?? calendar/series.rs`,
   `?? WORKLOG-ONE-1785.md`. `Cargo.lock` is dirty from the `rrule` resolve and is never
   staged.
+
+## SIMPLIFY pass (K3) — verdict: NO EDIT WARRANTED
+
+Deletion-biased review of the impl leg at 6e5686e22, against the doctrine checklist:
+
+- **Layers** — five private helpers, one job each: `wall_clock` (2 uses), `wall_clock_at`
+  (3 uses), `invalid_rule` (4 uses), `parse_rule`, `wall_clock_of`. The two single-use
+  helpers earn their names: `parse_rule` keeps the UNTIL-border translation out of the
+  main walk, and `wall_clock_of` is the named inverse conversion the fold arm reads
+  through. Nothing to collapse.
+- **Duplication** — none; `wall_clock_at` exists precisely because the seed/window-bound
+  conversion was written three times.
+- **Defensive branches** — every error arm is a ratified typed verdict (gap, fold,
+  inverted window, never-fire rule, step budget), each pinned by a named test. The
+  `wall_clock(...).ok_or(TimestampOutOfRange)` arm is one line of invariant insurance
+  naming the correct owner-enum error; deleting it would restructure, not simplify.
+- **Speculative generality** — none: the public surface is exactly the blueprint's six
+  names plus the two blueprint-minted `From` impls. `RRuleSet::limit()` is load-bearing
+  (enables validation limits for the direct-Iterator path this module uses), not
+  vestigial. `sort_unstable` + `dedup` were already probed by the implementer (F2) and
+  are the door's normalization postcondition, kept.
+- **Guard reachability** — the `start >= window.start` push guard looks redundant under
+  `wall_to_utc` monotonicity but is reachable exactly at a fold when `window.start`
+  stands on the later leg; it is the symmetric twin of the D4 termination rule and stays.
+- **Comment density** — matches the module's established voice (cf. `tz.rs`); prose is
+  not structure and was left alone.
+
+Public API, test assertions and fixtures untouched by construction (zero code edits).
+
+Gate receipt at handoff: `cargo check -p oneiron --all-features` clean; `cargo clippy
+-p oneiron --all-features --lib` clean; `cargo fmt -p oneiron --check` clean;
+`cargo test -p oneiron --all-features --lib calendar::` — 56 passed, 0 failed (base-red
+`approx: false` patch applied for the run, reverted; `git status --porcelain` =
+`M Cargo.lock` only, unstaged per law).
