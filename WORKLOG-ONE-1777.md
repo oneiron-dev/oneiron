@@ -236,3 +236,21 @@ Neither is required for this ticket to be correct.
   16 inline compliance tests + 4 oracle tests are new.
 - `Cargo.lock` is modified in the worktree by cargo resolving the landed CAL
   dependency append; it is NOT staged and NOT committed.
+
+## SIMPLIFY pass (K3, post-impl)
+
+Two deletion-biased edits in `compliance.rs`, both behavior-preserving; no
+test assertions, fixtures, or public API touched:
+
+1. `matching_rows` sorted with `sort_unstable_by_key` over an owned
+   `(String, String, _)` key, allocating twice per comparison. Now
+   `sort_unstable_by` over the borrowed `row.key()` — the same total order,
+   zero allocation.
+2. `confidence_millis` clamped the scaled value to `u16::MAX`, an unreachable
+   defensive branch (the input is already range-checked to `[0, 1]`, so the
+   scaled value cannot exceed 1000). The clamp is deleted.
+
+Everything else was read and left: the hydration/evidence machinery is
+load-bearing fail-closed code, the `comm.party.v1:` mirror is a declared
+PACKET_AMEND candidate, and the remaining helpers earn their names. Re-ran
+fmt, clippy, the 16 inline tests, and the 4 oracle tests — all green.

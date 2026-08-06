@@ -619,7 +619,7 @@ fn matching_rows<'a>(
         .filter(|row| chain.contains(&row.jurisdiction))
         .filter(|row| row.channel == CHANNEL_WILDCARD || row.channel == channel)
         .collect();
-    rows.sort_unstable_by_key(|row| (row.jurisdiction.clone(), row.channel.clone(), row.rule_kind));
+    rows.sort_unstable_by(|left, right| left.key().cmp(&right.key()));
     rows
 }
 
@@ -827,8 +827,7 @@ fn confidence_millis(confidence: f32) -> Option<u16> {
     if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
         return None;
     }
-    let millis = (confidence * CONFIDENCE_MILLIS_SCALE).round();
-    Some(millis.clamp(0.0, f32::from(u16::MAX)) as u16)
+    Some((confidence * CONFIDENCE_MILLIS_SCALE).round() as u16)
 }
 
 #[derive(Debug, Default)]
