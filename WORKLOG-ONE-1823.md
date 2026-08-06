@@ -103,14 +103,10 @@ the read, the attribute becomes unfulfilled and the compiler orders its deletion
 
 ## Known holes (recorded, not fixed)
 
-1. **`gate::default_policy_manifest()` has no `booking.` rule.** It has a
-   `calendar.` one, so every booking-family claim falls to the manifest's
-   `critical` default and is gate-pending on write. The fix is one rule in
-   `crates/oneiron/src/gate.rs` — a **lane-wide BK non-claim** (CLAIMS.md
-   "GATE-lane wall; no BK edit"). Pinned rather than fixed by
-   `booking_claims_are_gate_pending_under_the_default_policy_manifest`; the
-   configuration oracles run on `Vault::open_unseeded_for_test`, exactly as
-   `tests/calendar_outcome.rs` does for the same gap on `calendar.`.
+1. ~~**`gate::default_policy_manifest()` has no `booking.` rule.**~~ **CLOSED by
+   the VERDICT-FIX round (F4) under a PACKET_AMEND — see below.** The one
+   `booking.` prefix rule now lives beside CAL's `calendar.` one, the pinned hole
+   test is the positive form, and `unseeded_vault()` is gone.
 2. **`CalendarSel.system` is inert until CAL-02 (ONE-1784) lands passports.** The
    solver calls `freebusy` separately per host with that host's selector binding
    — the ratified call shape — but on this baseline every host receives the same
@@ -129,10 +125,17 @@ the read, the attribute becomes unfulfilled and the compiler orders its deletion
 
 ## PACKET_AMEND candidates
 
-None. Every changed path is in the PACKET; `booking/disclosure_rung.rs` was
-claimed and needed no diff (above). `booking/constraint.rs` and
-`booking/agent_front.rs` were consumed, never edited. `Cargo.toml` and
-`Cargo.lock` untouched; no `registry.rs` diff; no entity or type byte allocated.
+**One, raised in the VERDICT-FIX round (F4):
+`/Volumes/Cinema/w5-lt/bk/crates/oneiron/src/gate.rs`** — the single `booking.`
+policy-manifest prefix rule that unblocks the production configuration write
+path. Rationale, blast radius, and the CAL precedent are in the VERDICT-FIX
+section below. This is a deviation-board item.
+
+Otherwise none. Every other changed path is in the PACKET;
+`booking/disclosure_rung.rs` was claimed and needed no diff (above).
+`booking/constraint.rs` and `booking/agent_front.rs` were consumed, never edited.
+`Cargo.toml` and `Cargo.lock` untouched; no `registry.rs` diff; no entity or type
+byte allocated.
 
 ## Done-means evidence
 
@@ -160,7 +163,9 @@ claimed and needed no diff (above). `booking/constraint.rs` and
 - `slot_mask_contains_no_calendar_or_event_detail` /
   `public_rung_cannot_exceed_slots` / `booking_seam_has_one_definition_home` /
   `booking_source_carries_no_third_party_time_type` /
-  `booking_claims_are_gate_pending_under_the_default_policy_manifest`.
+  `booking_claims_are_gate_pending_under_the_default_policy_manifest` (renamed to
+  the positive form and joined by four more oracles in the VERDICT-FIX round —
+  the suite is 15/15 at the tip).
 
 Inline unit oracles in `config.rs` (6) and `solver.rs` (13) cover the defect
 table, the claim codec round trip, descriptor rows, civil-date round trips, the
@@ -211,3 +216,137 @@ Gates after the pass: `cargo fmt -p oneiron` clean; `cargo clippy -p oneiron
 --all-features --all-targets` clean; `--test booking_solver` 11/11 and
 `--lib booking::` 50/50 green; full `cargo test -p oneiron --all-features`
 green.
+
+## VERDICT-FIX (post-simplify)
+
+The finder returned seven items; the verdict adjudicated four REAL, one
+rejected-by-blueprint, and two banked. Each REAL finding was fixed at its
+chokepoint and mutation-verified — the witness test was run RED on the tip
+before the fix and GREEN after — in one commit per finding.
+
+### F3 — `unbounded-window-work` (P1) → `ec1273ef3`
+
+The caller's `SolveRequest::window` drove the freebusy query, the hold read, and
+stage 1's per-local-day walk across every host, while the booking horizon clipped
+only the OUTPUT, at stage 4. A visitor could ask for centuries against a page
+that opens for a fortnight and force CAL recurrence expansion plus per-host day
+iteration across all of it; `EventTypeConfig` also placed no upper bound on
+`booking_window_secs`, so the horizon itself was unbounded.
+
+Chokepoint, not call site: stage 4's rule moved into one `bookable_extent()`
+home, and `SlotOracle::solve` applies it once BEFORE any read. `freebusy`, the
+`ActiveHoldSource` read, and `load_booking_counts` all now see the extent rather
+than the request; a request that cannot reach the horizon returns empty without
+reading at all. `enforce_notice_and_window` calls the same function, so the rule
+has one definition and stage 4 stays the pure stage that owns it (the second
+application is idempotent by construction).
+
+Two collateral corrections the fix required:
+
+- The freebusy query is PADDED by `buffer_pad()` — a busy interval just outside
+  the horizon still casts its buffer inside it, and a bare-horizon query would
+  silently drop exactly those blockers. `buffer_pad` is now the one home for the
+  `pre + post` gap, shared with `apply_buffers`.
+- `booking_window_secs` is bounded by `MAX_BOOKING_WINDOW_SECS` (366 days,
+  re-exported through `booking/mod.rs` and `lib.rs`). The clamp bounds the walk
+  relative to the horizon; this is what bounds the horizon.
+
+Mutation evidence: `solve_work_is_bounded_by_the_horizon_not_the_request` records
+the window a `RecordingHolds` source is asked for. RED on the tip
+(`left: (1772409600, 1806969601)` — the caller's 400 days), GREEN after
+(`(NOW + min_notice, NOW + booking_window)`). `configuration_defects_are_named_by_one_table`
+gained an `"unbounded window"` row, RED before the bound existed.
+`a_busy_interval_at_the_horizon_edge_still_buffers_the_last_candidate` guards the
+pad and was itself mutation-checked: replacing `buffer_pad(&config)` with `0`
+turns it RED.
+
+### F1 — `claim-read-admission` (P2) → `a07f27592`
+
+`live_config_in_txn` checked predicate, subject, and `lifecycle == Active` only,
+skipping the canonical `claim_surfaceable` gate every sibling reader uses
+(`saved_query.rs:1590`, `calendar/outcome.rs:408`). Approval, lifecycle, and
+staleness are independent axes, so an Active **Proposed** or **Rejected**
+`booking.event_type` claim — or an Active stale one — could drive a page's public
+availability without ever having cleared read admission.
+
+Fix: the liveness test routes through `crate::claim::claim_surfaceable`. Doc
+comments that said "active" now say "surfaceable".
+
+Mutation evidence: `only_surfaceable_configuration_claims_configure_a_solve`
+writes a Proposed configuration at the lexicographically smallest claim id — so
+the deterministic winner scan reaches it first — and asserts the page reads as
+unconfigured, then that an approved claim written afterwards is what is served.
+RED on the tip (the Proposed claim configured the solve), GREEN after.
+
+### F4 — `claim-write-path-blocked` (P2) → `02b3f8abf` — **PACKET_AMEND**
+
+`gate::default_policy_manifest()` carried a `calendar.` prefix rule but no
+`booking.` one, so every booking-family claim fell to the manifest's `critical`
+default and was gate-pending on write. The production page-editor path for a
+`booking.event_type` configuration was dead, and the claim-backed solve was
+reachable only from `Vault::open_unseeded_for_test`. Worklog "Known holes" item 1
+recorded this; the verdict ruled it a fix, not a hole.
+
+**PACKET_AMEND: `/Volumes/Cinema/w5-lt/bk/crates/oneiron/src/gate.rs`** — one
+prefix rule (`criticality: normal`, `sensitivity: normal`), byte-for-byte the
+shape CAL landed for `calendar.`, appended beside it. `gate.rs` is a lane-wide BK
+non-claim in CLAIMS.md ("GATE-lane wall; no BK edit"); this is the amendment, for
+the deviation board. No other line of `gate.rs` is touched, and the GATE lane's
+137 `gate::` unit tests stay green.
+
+Consequences inside the packet: the pinned hole test became
+`booking_claims_resolve_normal_criticality_under_the_default_policy_manifest`
+(the positive form `tests/calendar_surface_oracle.rs` uses), and the
+`unseeded_vault()` fixture that existed only to route around the hole is deleted
+— every configuration oracle now runs against the real write gate on a stock
+vault.
+
+Mutation evidence: the flipped test is RED on the tip with
+`GateWriteRejected { outcome: "pending", reason_codes: ["gate.pending.criticality_floor"] }`,
+GREEN after; `booking_event_type_index_uses_canonical_prefix` goes RED→GREEN with
+it, which is the proof the fixture was load-bearing.
+
+### F7 — `empty-selector-broadening` (P2) → `3a42e647a`
+
+`BookingSolver::busy_by_host` errored on a MISSING host binding but passed a
+present-but-empty selector slice straight to `freebusy`, which — as this lane's
+own oracle at `tests/booking_solver.rs` proves — returns the unfiltered
+all-calendar union. A host whose selector resolution produced nothing became busy
+with every event in the vault: the same wiring-defect class, handled
+asymmetrically, and in the more dangerous direction (silent suppression rather
+than a visible error).
+
+Fix: one `.filter(|selectors| !selectors.is_empty())` before the existing
+`ok_or_else`, so both shapes of unbound host raise the same typed
+`BookingError::InvalidConfig`.
+
+Mutation evidence: `an_empty_calendar_selector_binding_is_a_wiring_defect` proves
+`freebusy(&vault, &[], monday())` is non-empty, then asserts missing and empty
+bindings are both typed while a real binding solves. RED on the tip, GREEN after.
+
+### Not relitigated
+
+- **F2 `cap-source-stub`** — rejected by the verdict as blueprint-verbatim
+  ratified layer-1 scaffolding; ONE-1813 fills `load_booking_counts` under the
+  frozen signature per the `#[expect]` handoff note. Untouched, except that the
+  function now receives the bookable extent rather than the raw request window
+  (F3), which its doc comment records for layer 2.
+- **F5 `self-hold-exclusion-dropped`** — banked as an ONE-1813 dispatch note:
+  `solve()` is the public-mask path where ALL live holds must subtract, so
+  `exclude_session_key: None` is correct there.
+- **F6 `node-local-cache-divergence`** — banked as a P3 doc nit on the
+  `load_event_type_config` comment. Deliberately left as banked; the adjacent
+  "active"→"surfaceable" wording changes above are F1's, not F6's.
+
+### Packet
+
+Diff is `booking/config.rs` + `booking/solver.rs` + `booking/mod.rs` (re-export
+line only) + `lib.rs` (re-export line only) + `tests/booking_solver.rs`, all
+claimed — plus the one amended `gate.rs` rule above. `claim.rs` unchanged by this
+round and still carries exactly one exact-predicate hook after the CAL arm.
+`booking/constraint.rs` and `booking/agent_front.rs` untouched. No `Cargo.toml`
+or `Cargo.lock` diff; no `registry.rs` diff; no entity or type byte allocated.
+
+Gates: `cargo fmt -p oneiron` clean; `cargo clippy -p oneiron --all-features
+--all-targets` clean at every commit; `--test booking_solver` 15/15 and
+`--lib booking::` 50/50 green; full `cargo test -p oneiron --all-features` green.
