@@ -17,23 +17,20 @@
 //!    capability it returns the ordinary unsupported-capability error and
 //!    schedules nothing.
 //!
-//! ## Known hole pinned here (NOT owned by CAL-09)
+//! ## The surface is live on a default vault
 //!
 //! `gate::default_policy_manifest()` resolves criticality from an allow-list of
-//! predicate prefixes (`profile.`, `affect.vad`, `skill.*`, …) and defaults
-//! everything else to `critical`. `calendar.*` is absent, so under the shipped
-//! default policy every calendar claim is gate-pending and lands `proposed` —
-//! which means the read surface is correctly, but completely, empty on a
-//! default vault. CAL-09 cannot fix that: `crates/oneiron/src/gate.rs` is a
-//! lane-wide CAL non-claim. The fix is one `calendar.` rule
-//! (`criticality: normal`, `sensitivity: normal`) in the default manifest,
-//! owned by the GATE lane or by CAL-02 (ONE-1784) when it wires ICS ingest.
+//! predicate prefixes and defaults everything else to `critical`. `calendar.`
+//! carries its own prefix rule (`criticality: normal`, `sensitivity: normal`),
+//! so an approved calendar write clears the criticality floor and the read
+//! surface projects it on a stock vault — no manifest edit required.
 //!
-//! [`calendar_claims_are_gate_pending_under_the_default_policy_manifest`] pins
-//! that state deliberately: when the rule lands, this oracle fails loudly and
-//! its positive-projection arm can be enabled. The projection itself is covered
-//! by the `calendar::query` / `calendar::freebusy` unit tests, which run on a
-//! manifest-cleared vault.
+//! [`calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest`]
+//! pins that: it drives an approved `calendar.*` write through the real gate and
+//! then reads it back through the public surface. The tier-scoping property —
+//! that a claim which did NOT clear admission stays invisible on every verb —
+//! is what [`calendar_surface_scopes_read_search_and_freebusy`] pins, using a
+//! deliberately `proposed` fixture rather than a manifest hole.
 
 mod common;
 
@@ -124,8 +121,7 @@ fn envelope(actor: EntityId, approval: ClaimApprovalStatus) -> WriteEnvelope {
 }
 
 /// Stores one calendar EVENT and its family through the ordinary claim
-/// candidate door at the admission tier the default policy manifest actually
-/// permits (`proposed`).
+/// candidate door at `approval`, against the REAL default policy manifest.
 fn store_calendar_event(
     vault: &Vault,
     actor: EntityId,
@@ -133,6 +129,7 @@ fn store_calendar_event(
     name: &str,
     occurred: TimeRange,
     transparency: &str,
+    approval: ClaimApprovalStatus,
 ) -> EntityId {
     let id = test_id(seed);
     vault
@@ -145,7 +142,7 @@ fn store_calendar_event(
         )
         .expect("put event");
 
-    let envelope = envelope(actor, ClaimApprovalStatus::Proposed);
+    let envelope = envelope(actor, approval);
     for (index, (predicate, value)) in calendar_family(transparency).into_iter().enumerate() {
         vault
             .batch()
@@ -178,84 +175,14 @@ fn window() -> TimeRange {
 }
 
 #[test]
-fn calendar_claims_are_gate_pending_under_the_default_policy_manifest() {
-    let (_dir, vault) = temp_vault();
-    let (actor, _facade) = actor_facade(&vault);
-    let id = test_id(BUSY_SEED);
-    vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_EVENT,
-            TimeRange {
-                start: 1_000,
-                end: 1_099,
-            },
-            1,
-            &event_body(SECRET_NAME, SECRET_DESCRIPTION),
-        )
-        .expect("put event");
-
-    let (predicate, value) = calendar_family("busy")
-        .into_iter()
-        .nth(1)
-        .expect("time kind");
-    let rejected = vault
-        .batch()
-        .claim_candidate(
-            &claim_id(BUSY_SEED, 1),
-            ClaimCandidate::new(predicate, ClaimSubject::Entity(id), value, 1.0),
-            &envelope(actor, ClaimApprovalStatus::Approved),
-            at(1),
-            1,
-        )
-        .commit()
-        .expect_err("no `calendar.` rule exists in the default policy manifest");
-
-    // The default manifest resolves criticality from a prefix allow-list and
-    // defaults the rest to `critical`; `calendar.*` is absent, so an approved
-    // calendar write cannot clear the floor and the read surface is correctly
-    // — but completely — empty on a default vault. gate.rs is a lane-wide CAL
-    // non-claim, so the fix (one `calendar.` rule, criticality/sensitivity
-    // `normal`) belongs to the GATE lane or CAL-02 (ONE-1784). When it lands,
-    // this assertion fails loudly and the positive projection arm can be
-    // enabled here.
-    match rejected {
-        oneiron::Error::GateWriteRejected {
-            outcome,
-            reason_codes,
-        } => {
-            assert_eq!(outcome, "pending");
-            assert_eq!(reason_codes.as_slice(), &["gate.pending.criticality_floor"]);
-        }
-        other => panic!("expected a gate criticality-floor pending, got {other:?}"),
-    }
-
-    // The tier the door does admit is `proposed`, which is not surfaceable.
-    store_calendar_event(
-        &vault,
-        actor,
-        FREE_SEED,
-        "Travel buffer",
-        TimeRange {
-            start: 2_000,
-            end: 2_099,
-        },
-        "busy",
-    );
-    let stored = vault
-        .get_claim(&claim_id(FREE_SEED, 1))
-        .expect("claim row")
-        .expect("the claim-candidate door stored a row");
-    assert_eq!(stored.predicate, "calendar.time_kind");
-    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
-    assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
-}
-
-#[test]
-fn calendar_surface_scopes_read_search_and_freebusy() {
+fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest() {
     let (_dir, vault) = temp_vault();
     let (actor, facade) = actor_facade(&vault);
 
+    // The `calendar.` prefix rule resolves criticality `normal`, so the
+    // criticality floor does not pend an approved calendar write: the claim is
+    // admitted at the tier the writer asked for, on a stock vault with no
+    // manifest edit.
     let busy = store_calendar_event(
         &vault,
         actor,
@@ -266,6 +193,51 @@ fn calendar_surface_scopes_read_search_and_freebusy() {
             end: 1_099,
         },
         "busy",
+        ClaimApprovalStatus::Approved,
+    );
+    let stored = vault
+        .get_claim(&claim_id(BUSY_SEED, 1))
+        .expect("claim row")
+        .expect("the claim-candidate door stored a row");
+    assert_eq!(stored.predicate, "calendar.time_kind");
+    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+
+    // …and admitted claims project: the read surface is live on a default
+    // vault, not inert. `blocks_time` comes from the admitted
+    // `calendar.time_kind` claim rather than the EVENT header, so a true here
+    // proves the gate let the claim through to the projector.
+    let view = facade
+        .calendar_read(&CalendarReadRequest {
+            event_ref: busy.to_hex(),
+        })
+        .expect("read")
+        .expect("an admitted calendar claim projects on a default vault");
+    assert_eq!(view.event_ref, busy.to_hex());
+    assert!(view.blocks_time);
+    assert_eq!(view.start_utc, Some(1_000));
+    assert_eq!(view.end_utc, Some(1_099));
+}
+
+#[test]
+fn calendar_surface_scopes_read_search_and_freebusy() {
+    let (_dir, vault) = temp_vault();
+    let (actor, facade) = actor_facade(&vault);
+
+    // Written `proposed` on purpose: this oracle scopes the verbs against a
+    // claim that did not clear admission, and `proposed` is the tier that says
+    // so at the door itself rather than through a manifest gap.
+    let busy = store_calendar_event(
+        &vault,
+        actor,
+        BUSY_SEED,
+        SECRET_NAME,
+        TimeRange {
+            start: 1_000,
+            end: 1_099,
+        },
+        "busy",
+        ClaimApprovalStatus::Proposed,
     );
     store_calendar_event(
         &vault,
@@ -277,6 +249,7 @@ fn calendar_surface_scopes_read_search_and_freebusy() {
             end: 2_099,
         },
         "free",
+        ClaimApprovalStatus::Proposed,
     );
 
     // One admission rule, three verbs: the claims exist but did not clear write
