@@ -547,18 +547,10 @@ pub fn routing_data_bar(vault: &Vault) -> Result<Vec<RoutingScopeStats>> {
         totals.1 += aggregate.runs;
     }
 
-    let mut rungs: BTreeMap<String, RolloutRung> = BTreeMap::new();
     let mut out = Vec::new();
     for (key, aggregate) in rows {
-        let rung = match rungs.get(&key.task_class) {
-            Some(rung) => *rung,
-            None => {
-                let rung_key = meta_key(RUNG_KEY_PREFIX, key.task_class.as_bytes());
-                let rung = rung_in_txn(vault, &rtxn, &rung_key)?;
-                rungs.insert(key.task_class.clone(), rung);
-                rung
-            }
-        };
+        let rung_key = meta_key(RUNG_KEY_PREFIX, key.task_class.as_bytes());
+        let rung = rung_in_txn(vault, &rtxn, &rung_key)?;
         if rung == RolloutRung::Shadow {
             continue;
         }

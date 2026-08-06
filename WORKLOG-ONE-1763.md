@@ -211,6 +211,27 @@ tip and spend the debugging budget on someone else's defect.
 - `08ee389d6` worklog
 - `6aef17807` merge `origin/main` (`6fb57ca44`) into the lane — first parent `08ee389d6`
 
+## SIMPLIFY pass (K3, on the merged tip)
+
+One edit, deletion-only: `routing_data_bar` dropped its per-task-class rung memo cache
+(`BTreeMap<String, RolloutRung>` + entry-match, 11 lines) for a straight per-row
+`rung_in_txn` read (2 lines). The cache memoized at most one read per task class in a
+loop whose per-class row count is the number of model generations ever serving (≤ a
+handful) — speculative optimization on a bounded-tiny scan, and the stored task class
+is already normalized at write, so the direct read builds the identical key. Behavior
+unchanged; no public API, no test, no assertion touched. Goodhart guard, rung ladder,
+and the swap hard-reset untouched.
+
+Everything else read as already at simplify-pass quality — no dead helpers, no
+duplicated layers, no defensive branches without a reachable case (the
+`peer_mean > 0.0` guard in `hint_of` covers the real all-zero-edit-mass class, not a
+theoretical one). NO further edit warranted.
+
+Gates after the pass: `cargo fmt --all -- --check` clean ·
+`cargo clippy -p oneiron --all-features --all-targets -- -D warnings` clean ·
+`cargo test -p oneiron --all-features edit_distance::routing` 18/18 green.
+`Cargo.lock` still modified in the worktree, never staged.
+
 Gates re-run green on the MERGED tree: fmt clean, clippy `-D warnings` clean,
 `cargo test -p oneiron --all-features` **47/47 binaries, 3880 lib tests, 0 failed**.
 
