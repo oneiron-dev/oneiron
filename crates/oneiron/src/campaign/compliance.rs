@@ -252,11 +252,22 @@ impl CompliancePack {
             .map(|binding| binding.evidence)
     }
 
+    /// A row is trustworthy only inside the window that OPENS when a human
+    /// verified it and closes one dial-width later.
+    ///
+    /// The forward half of that test is load-bearing, not decoration: nothing
+    /// verifies a row after now, and `verified_at` widens the effective trust
+    /// window exactly as [`Self::verified_at_max_age_secs`] does — but moving
+    /// it is provenance, so the amendment classifier reads it as a metadata
+    /// refresh and auto-activates. Without this half, one forward-dated field
+    /// (a millisecond mistype is enough) saturates the window open forever and
+    /// disables the stale-row wall with no owner stamp anywhere.
     fn is_stale(&self, row: &ComplianceRuleRow, now_utc: u64) -> bool {
-        now_utc
-            > row
-                .verified_at
-                .saturating_add(self.verified_at_max_age_secs)
+        row.verified_at > now_utc
+            || now_utc
+                > row
+                    .verified_at
+                    .saturating_add(self.verified_at_max_age_secs)
     }
 }
 
@@ -1861,6 +1872,36 @@ mod tests {
         assert_eq!(
             evaluate_dispatch_compliance(&pack, &fresh),
             ComplianceVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn campaign_compliance_future_verified_at_is_not_verification() {
+        let base = pack();
+        let mut future = base.clone();
+        future.pack_version = 2;
+        for row in &mut future.rows {
+            row.verified_at = u64::MAX;
+        }
+
+        // Nothing verifies a row after now. A row dated forward — a unit
+        // mistype, or a proposal reaching for an immortal row — is refused,
+        // not trusted until the end of time.
+        assert_eq!(
+            reason(&evaluate_dispatch_compliance(
+                &future,
+                &facts(Some("US"), "email")
+            )),
+            Some(ComplianceBlockReason::StaleRule),
+            "a forward-dated row must not outlive the verification-age dial"
+        );
+
+        // This is the evaluator's wall to hold because the classifier cannot:
+        // verified_at is provenance, so moving it is a metadata refresh, and a
+        // metadata refresh auto-activates.
+        assert_eq!(
+            classify_compliance_amendment(&base, &future).expect("classified"),
+            ComplianceAmendmentClass::MetadataRefresh
         );
     }
 
