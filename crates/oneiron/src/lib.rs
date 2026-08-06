@@ -503,6 +503,13 @@ pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EdgeProvenanceFlags, EdgeValueLayout,
 };
+pub use crate::edit_distance::graduation::{
+    DEFAULT_POSTERIOR_GUARD, OfferAnswer, OfferAnswerOutcome, SnoozeState, ThresholdRow,
+    TrustTableRow, WILDCARD_PATTERN, answer_graduation_offer, clear_graduation_policy,
+    exact_pattern, graduation_policy_for, graduation_policy_rows, guard_evidence,
+    is_graduation_answer_receipt, posterior_lower_bound, set_graduation_policy, snooze_state,
+    trust_table, unpin_scope,
+};
 pub use crate::eiri::{
     EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
     EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
