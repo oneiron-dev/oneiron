@@ -65,6 +65,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
+use crate::ScoredEntity;
 use crate::Vault;
 use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
@@ -183,10 +184,14 @@ pub(super) struct OffRecordSessionEntryState {
     pub(super) receipt_log: Option<SessionLocalReceiptLog>,
     pub(super) overlay_closed: bool,
     pub(super) gone: bool,
-    /// The room's conversation shell, allocated on the first witness and
-    /// reused for every later turn so a session reads as ONE conversation.
-    /// In-memory only: it evaporates with the process, like the room.
-    pub(super) overlay_shell: Option<EntityId>,
+    /// The room's conversation shell, created at SESSION ENTRY and reused for
+    /// every later turn so a session reads as ONE conversation (ONE-1729,
+    /// owner ruling R-20260807-02 rider 1: the shell is session-owned, one per
+    /// live session enforced HERE — never minted per executor run, per verb,
+    /// or per bind). Non-optional because entry is the only place it is set:
+    /// a reader cannot observe a live room without one. In-memory only, so it
+    /// evaporates with the process exactly as the room does.
+    pub(super) overlay_shell: EntityId,
     /// Whether the overlay shell's own `Put` has been staged. Allocating the
     /// id and staging its row are separate moments — the id is minted before
     /// the write transaction opens — so a second witness must not re-put the
@@ -253,7 +258,11 @@ impl OffRecordSessionRegistry {
                 receipt_log: Some(SessionLocalReceiptLog::off_record(session_ref)),
                 overlay_closed: false,
                 gone: false,
-                overlay_shell: None,
+                // R-20260807-02 rider 1: the room's shell is born WITH the
+                // room. Allocating it lazily made "one shell per live
+                // session" a property of whoever touched it first; allocating
+                // it here makes it a property of entry.
+                overlay_shell: EntityId::now(),
                 overlay_shell_staged: false,
                 continuation_shell: None,
             }),
@@ -548,6 +557,39 @@ impl<'vault> OffRecordSessionVault<'vault> {
         })
     }
 
+    /// Acquires a handle on an ALREADY-LIVE session (ONE-1729).
+    ///
+    /// The host binds `off_record_session_ref` once and downstream code
+    /// receives this typed handle rather than an unchecked string or a second
+    /// [`Vault`] clone. Acquisition is a pure lookup: it creates no overlay,
+    /// does not re-enter, does not mutate mode, and writes no base row — so a
+    /// refused bind leaves no registry entry, overlay, replay row, raw
+    /// output, turn, or gate decision behind.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::OffRecordSessionNotFound`] for an unknown ref and
+    /// [`Error::OffRecordSessionClosing`] for one whose close pass has begun
+    /// or finished — the same typed refusals every other session mutator
+    /// raises, so a binder cannot tell a closing room from a live one by
+    /// error shape alone.
+    pub fn bind(&self, session_ref: &str) -> Result<OffRecordSession<'vault>> {
+        vet_off_record_session_ref(session_ref)?;
+        let entry = live_session_entry(&self.vault.store, session_ref)?;
+        let state = session_entry_state(&entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: session_ref.to_owned(),
+            });
+        }
+        drop(state);
+        Ok(OffRecordSession {
+            vault: self.vault,
+            session_ref: session_ref.to_owned(),
+            entry,
+        })
+    }
+
     /// Explicit budget override used by bounded hosts and the byte-exact
     /// overlay budget contract.
     pub fn enter_with_budget(
@@ -617,20 +659,20 @@ impl OffRecordSession<'_> {
         SessionWriteRoute::mint(&self.entry.overlay, target)
     }
 
-    /// The room's conversation shell, allocated on first use.
+    /// The room's conversation shell, created at session ENTRY.
     ///
     /// One shell per room, so an in-session reader sees one conversation
     /// rather than a turn-per-conversation shred. The id lives only on the
     /// in-memory record — no durable session row — so it evaporates with the
     /// process exactly as the room does.
     pub(crate) fn overlay_conversation_shell(&self) -> Result<EntityId> {
-        let mut state = session_entry_state(&self.entry)?;
+        let state = session_entry_state(&self.entry)?;
         if state.record.closing || state.gone {
             return Err(Error::OffRecordSessionClosing {
                 session_ref: self.session_ref.clone(),
             });
         }
-        Ok(*state.overlay_shell.get_or_insert_with(EntityId::now))
+        Ok(state.overlay_shell)
     }
 
     /// Reserves the right to STAGE the overlay shell's `Put`, exactly once per
@@ -710,12 +752,12 @@ impl OffRecordSession<'_> {
     /// overlay, so a walk that built a view per step could see a torn union
     /// if a concurrent stage landed between them; scoring and registration
     /// therefore share this one.
-    #[allow(
-        dead_code,
-        reason = "ONE-1728 drives it from the branch-store oracle; the host-facing caller is \
-                  ONE-1729's session retrieval binding"
-    )]
-    pub(crate) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<EntityId>> {
+    ///
+    /// Scores ride out with the ids (ONE-1729): the canonical sibling returns
+    /// [`ScoredEntity`] and the executor's `self.memory.search` outcome
+    /// carries per-hit scores, so projecting them away here would have forced
+    /// a second scoring body on the session path.
+    pub(crate) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
         let route = self.write_route()?;
         let view = self.read_view()?;
         let search = self.vault.search_text_scored(
@@ -759,7 +801,7 @@ impl OffRecordSession<'_> {
             RouteTarget::Base => self.vault.store.record_retrieval_run(&record)?,
         }
 
-        Ok(search.scores.into_iter().map(|scored| scored.id).collect())
+        Ok(search.scores)
     }
 
     /// Mode-aware VaultMeta write (ONE-1728 K10): the overlay keyspace while
@@ -774,7 +816,23 @@ impl OffRecordSession<'_> {
         reason = "ONE-1730 inherits the route-carrying VaultMeta pair (pinned by the P4a blueprint)"
     )]
     pub(crate) fn vault_meta_put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let route = self.write_route()?;
+        self.vault_meta_put_routed(&self.write_route()?, key, value)
+    }
+
+    /// The same write against a route the CALLER captured.
+    ///
+    /// Long-lived writers (ONE-1729's executor run) capture one route at run
+    /// entry and apply everything through it, so a mid-run flip is caught by
+    /// that route's own `revalidate` instead of being papered over by a fresh
+    /// mint per call. [`Self::vault_meta_put`] is the one-shot sibling for
+    /// callers with no run to bind to; both share this body, so the two
+    /// cannot drift in keyspace or ordering.
+    pub(crate) fn vault_meta_put_routed(
+        &self,
+        route: &SessionWriteRoute,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<()> {
         route.revalidate()?;
         match route.target() {
             RouteTarget::Overlay => {
@@ -807,6 +865,18 @@ impl OffRecordSession<'_> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
         view.vault_meta_get_in_txn(&rtxn, key)
+    }
+
+    /// Identity of the store this session belongs to, as a bare pointer.
+    ///
+    /// The executor binding compares its storage's owning store against its
+    /// dispatcher's before it reads or writes anything, and equal
+    /// `session_ref`s across two different vaults must not read as the same
+    /// binding. A POINTER is the whole answer that question needs, so this
+    /// projects one rather than lending out the [`Store`] — nothing
+    /// dereferenceable escapes.
+    pub(crate) fn store_identity(&self) -> *const Store {
+        std::ptr::from_ref(&self.vault.store)
     }
 
     pub fn flip_on_record(&self) -> Result<()> {
@@ -845,6 +915,245 @@ impl OffRecordSession<'_> {
         self.vault.close_off_record_session(
             &self.session_ref,
             SessionLocalReceiptLog::off_record(&self.session_ref),
+        )
+    }
+}
+
+/// What one executor turn is (ONE-1729, K-EXEC).
+///
+/// A LABEL, not a schema. The turn's shape — conversation identity, container
+/// resolution, role tags, session routing — belongs to the facade witness
+/// door; this only says which of the three utterances the door is forming, so
+/// the executor never grows a transcript surface of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutorUtterance {
+    /// Addressed to the user.
+    Speak,
+    /// Reasoning the run kept for itself.
+    Think,
+    /// Non-verbal expression accompanying a turn.
+    Express,
+}
+
+impl ExecutorUtterance {
+    /// Message-type string carried into the witness door.
+    #[must_use]
+    pub const fn as_message_type(self) -> &'static str {
+        match self {
+            Self::Speak => "executor.speak",
+            Self::Think => "executor.think",
+            Self::Express => "executor.express",
+        }
+    }
+}
+
+/// Session-bound EXECUTOR surfaces (ONE-1729/P4b).
+///
+/// Everything a session-bound code run needs that is not already an ordinary
+/// session accessor, gathered where the private `&Vault` borrow lives. The
+/// executor holds a typed session handle and nothing else: no vault getter,
+/// no raw store, no second [`Vault`] clone. Post-flip writes are ORDINARY
+/// base writes — the room is on record — so they run the same trap functions
+/// a canonical run runs, reached through [`Self::base_write_vault`], which
+/// never leaves this module.
+impl OffRecordSession<'_> {
+    /// Witnesses ONE executor turn through ONE-1728's facade door.
+    ///
+    /// Guest-supplied turn identity meets a TYPED PRE-CONSTRUCTION REFUSAL
+    /// (owner ruling R-20260807-02): `turn_ref` `Some(_)` returns
+    /// [`Error::OffRecordGuestTurnRefRejected`] before a `WitnessTurn` is
+    /// formed — zero overlay/base delta, zero gate decisions — and the rule
+    /// holds in BOTH modes, because a room that flipped on record is still
+    /// not a place where a guest names turns. `None` is the only passing
+    /// value; a host caller that wants guest transcript ingress must widen
+    /// this surface, which is a visible API change.
+    ///
+    /// `route` is the caller's RUN-ENTRY route, revalidated here so a mid-run
+    /// flip refuses the turn outright rather than letting the door mint a
+    /// fresh route and publish across the flip.
+    ///
+    /// The shell is the session's own (rider 1); the door re-resolves it from
+    /// the session on both arms, so `container` cannot redirect the turn — it
+    /// states, at the call site, the identity the door will use.
+    pub(crate) fn witness_executor_turn(
+        &self,
+        container: &EntityId,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        turn_ref: Option<&EntityId>,
+        route: &SessionWriteRoute,
+        actor: crate::WriteActor,
+    ) -> Result<crate::facade::WitnessReceipt> {
+        if turn_ref.is_some() {
+            return Err(Error::OffRecordGuestTurnRefRejected {
+                session_ref: self.session_ref.clone(),
+            });
+        }
+        route.revalidate()?;
+        self.vault
+            .memory_facade(actor.entity_ref(), actor.actor_class())
+            .witness_into_session(
+                self,
+                &crate::facade::WitnessTurn {
+                    conversation_ref: container.to_hex(),
+                    turn_ref: None,
+                    messages: vec![crate::facade::WitnessMessage {
+                        id: None,
+                        author: crate::facade::WitnessAuthor::Companion,
+                        message_type: kind.as_message_type().to_owned(),
+                        content: text.to_owned(),
+                        metadata: None,
+                        is_visible: matches!(kind, ExecutorUtterance::Speak),
+                        order: 0,
+                    }],
+                    occurred_at,
+                },
+                None,
+            )
+            // The door reports a code+message `FacadeError`. Every refusal
+            // this entry OWNS is raised as a typed error above, and the turn
+            // is built here from executor-controlled parts, so anything the
+            // door still rejects means an executor-side invariant broke.
+            .map_err(|_| {
+                Error::InvariantViolation("executor witness door rejected the session turn")
+            })
+    }
+
+    /// The conversation shell this run's turns ride, for `route`'s mode.
+    ///
+    /// Off record it is the ROOM's shell, created at session entry (rider 1);
+    /// on record it is the session's continuation shell, deliberately a
+    /// different conversation so a base row never references an overlay
+    /// member. Either way the session machinery owns it — the executor reads
+    /// it, never mints it.
+    pub(crate) fn routed_conversation_shell(
+        &self,
+        route: &SessionWriteRoute,
+    ) -> Result<EntityId> {
+        match route.target() {
+            RouteTarget::Overlay => self.overlay_conversation_shell(),
+            RouteTarget::Base => self.on_record_continuation_shell(),
+        }
+    }
+
+    /// The owning vault for a write the route says is ORDINARY.
+    ///
+    /// MODULE-PRIVATE on purpose: it is the one place a `&Vault` is produced
+    /// from a session handle, and it produces one only under a revalidated
+    /// `Base` route — the sole evidence the room went on record. An `Overlay`
+    /// route means the caller reached a durable write while off record, which
+    /// the effect policy is supposed to have refused first.
+    fn base_write_vault(&self, route: &SessionWriteRoute) -> Result<&Vault> {
+        route.revalidate()?;
+        match route.target() {
+            RouteTarget::Base => Ok(self.vault),
+            RouteTarget::Overlay => Err(Error::OffRecordTalkOnly {
+                session_ref: self.session_ref.clone(),
+            }),
+        }
+    }
+
+    /// Write-path gate check for a session-bound code run's durable write.
+    pub(crate) fn executor_check_write_gate(
+        &self,
+        route: &SessionWriteRoute,
+        id: EntityId,
+        body: &crate::ClaimBody,
+        envelope: &crate::WriteEnvelope,
+        can_resolve_pending_consent: bool,
+    ) -> Result<()> {
+        let vault = self.base_write_vault(route)?;
+        crate::code_run::check_write_gate_against_vault(
+            vault,
+            id,
+            body,
+            envelope,
+            can_resolve_pending_consent,
+        )
+    }
+
+    /// `self.memory.write_fixture` on a session-bound run.
+    pub(crate) fn executor_batch_claim_candidate(
+        &self,
+        route: &SessionWriteRoute,
+        id: &EntityId,
+        candidate: crate::ClaimCandidate,
+        envelope: &crate::WriteEnvelope,
+        occurred: crate::TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.base_write_vault(route)?
+            .batch()
+            .claim_candidate(id, candidate, envelope, occurred, learned_at)
+            .commit()
+    }
+
+    /// `self.memory.put_claim` on a session-bound run.
+    pub(crate) fn executor_put_claim_candidate(
+        &self,
+        route: &SessionWriteRoute,
+        id: &EntityId,
+        candidate: crate::ClaimCandidate,
+        envelope: &crate::WriteEnvelope,
+        occurred: crate::TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.base_write_vault(route)?
+            .put_claim_candidate_without_lexical_query_reconcile(
+                id, candidate, envelope, occurred, learned_at,
+            )
+    }
+
+    /// `self.memory.supersede_claim` on a session-bound run. ONE-1936's
+    /// stale-target guard lives INSIDE this trap and stays authoritative
+    /// there; this only chooses the route.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors the canonical supersede trap arity exactly"
+    )]
+    pub(crate) fn executor_supersede_claim(
+        &self,
+        route: &SessionWriteRoute,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        envelope: &crate::WriteEnvelope,
+        claim_gate_id: EntityId,
+        claim_gate_body: &crate::ClaimBody,
+        edge_gate_id: EntityId,
+        edge_gate_body: &crate::ClaimBody,
+    ) -> Result<()> {
+        self.base_write_vault(route)?.supersede_claim_for_code_run_trap(
+            new_id,
+            old_id,
+            now,
+            envelope,
+            claim_gate_id,
+            claim_gate_body,
+            edge_gate_id,
+            edge_gate_body,
+        )
+    }
+
+    /// `self.memory.put_edge` on a session-bound run.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors the canonical put-edge trap arity exactly"
+    )]
+    pub(crate) fn executor_put_edge(
+        &self,
+        route: &SessionWriteRoute,
+        src: &EntityId,
+        kind: crate::EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        envelope: &crate::WriteEnvelope,
+        gate_id: EntityId,
+        gate_body: &crate::ClaimBody,
+    ) -> Result<()> {
+        self.base_write_vault(route)?.put_edge_for_code_run_trap(
+            src, kind, tgt, weight, envelope, gate_id, gate_body,
         )
     }
 }

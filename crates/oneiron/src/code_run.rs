@@ -16,6 +16,8 @@ use crate::{
     ClaimSubject, EdgeActorClass, EdgeKind, EntityId, Error, Result, ScoredEntity, TimeRange,
     Vault, WriteActor, WriteEnvelope, WriteProvenance,
     error::{GateDenialOutcome, GateDenialReason},
+    off_record::{OffRecordMode, OffRecordSession, SessionWriteRoute},
+    store::Store,
 };
 
 const SELF_SURFACE_NAME: &str = "self.*";
@@ -1363,13 +1365,200 @@ pub trait SelfDispatcher {
     fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome>;
 }
 
+/// The session half of an executor binding (ONE-1729/P4b).
+///
+/// ONE-1728's typed session handle, the run's ONE [`SessionWriteRoute`], and
+/// the session-owned conversation shell its turns ride — captured together at
+/// RUN ENTRY and never re-minted (owner ruling R-20260807-02 rider 2). Route
+/// and handle live in the same value because "one route per run" has to be a
+/// type fact: a per-dispatch mint is not something this shape can express.
+pub(crate) struct SessionBinding<'a> {
+    session: &'a OffRecordSession<'a>,
+    route: SessionWriteRoute,
+    container: EntityId,
+}
+
+/// Where one code run's storage lives: the canonical vault, or a live
+/// off-record session.
+///
+/// EXHAUSTIVE by design, and deliberately narrow: neither arm hands out a
+/// [`Store`] or a base [`Vault`]. The session arm delegates every read and
+/// write to ONE-1728's session handle, whose own accessors route by mode —
+/// overlay while `OffRecord`, ordinary base after the room flips `OnRecord`.
+/// Adding a method here is adding a way for the executor to reach storage, so
+/// the set below is closed: identity, policy, search, and the four
+/// replay/raw-output accessors. The memory-write verbs are NOT here; they
+/// route inside their own dispatch bodies.
+pub(crate) enum ExecutorStorage<'a> {
+    Canonical(&'a Vault),
+    Session(SessionBinding<'a>),
+}
+
+impl<'a> ExecutorStorage<'a> {
+    /// Binds a run to a live session, capturing its route and shell ONCE.
+    pub(crate) fn for_session(session: &'a OffRecordSession<'a>) -> Result<Self> {
+        let route = session.write_route()?;
+        let container = session.routed_conversation_shell(&route)?;
+        Ok(Self::Session(SessionBinding {
+            session,
+            route,
+            container,
+        }))
+    }
+
+    pub(crate) fn session_ref(&self) -> Option<&str> {
+        match self {
+            Self::Canonical(_) => None,
+            Self::Session(binding) => Some(binding.session.session_ref()),
+        }
+    }
+
+    /// The session-owned conversation shell this run's turns ride.
+    pub(crate) fn session_container_id(&self) -> Option<&EntityId> {
+        match self {
+            Self::Canonical(_) => None,
+            Self::Session(binding) => Some(&binding.container),
+        }
+    }
+
+    /// Whether the off-record effect policy applies to THIS dispatch.
+    ///
+    /// Reads the room's LIVE mode, not the captured route: the policy is
+    /// mode-scoped, so a room that has gone on record runs the ordinary verb
+    /// path again. The captured route is what refuses the write afterwards if
+    /// the flip happened mid-run.
+    pub(crate) fn off_record_policy_active(&self) -> Result<bool> {
+        match self {
+            Self::Canonical(_) => Ok(false),
+            Self::Session(binding) => {
+                Ok(binding.session.mode()? == OffRecordMode::OffRecord)
+            }
+        }
+    }
+
+    /// Identity-only projection of the owning store. Nothing dereferenceable
+    /// escapes; the executor compares it and never reads through it.
+    pub(crate) fn store_identity(&self) -> *const Store {
+        match self {
+            Self::Canonical(vault) => std::ptr::from_ref(&vault.store),
+            Self::Session(binding) => binding.session.store_identity(),
+        }
+    }
+
+    pub(crate) fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
+        match self {
+            Self::Canonical(vault) => vault.search_text(query, limit),
+            Self::Session(binding) => binding.session.search_text(query, limit),
+        }
+    }
+
+    pub(crate) fn get_code_run_replay_record(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<CodeRunReplayRecord>> {
+        match self {
+            Self::Canonical(vault) => vault.get_code_run_replay_record(run_id),
+            Self::Session(binding) => binding
+                .session
+                .vault_meta_get(&code_run_replay_record_key(run_id))?
+                .map(|raw| decode_code_run_replay_record(&raw))
+                .transpose(),
+        }
+    }
+
+    /// Compare-and-set against the SAME composed view this will update.
+    ///
+    /// A failed comparison writes neither overlay nor base: the refusal
+    /// returns before the put. `expected` is the replay record's own
+    /// generation protocol (ONE-1727) — a separate concern from the mode-flip
+    /// route, which protects this write from landing in the wrong store.
+    pub(crate) fn put_code_run_replay_record_if_generation(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+    ) -> Result<CodeRunReplayGeneration> {
+        let binding = match self {
+            Self::Canonical(vault) => {
+                return vault.put_code_run_replay_record_if_generation(record, expected);
+            }
+            Self::Session(binding) => binding,
+        };
+        let encoded = encode_code_run_replay_record(record)?;
+        let next_generation = record.generation()?;
+        let key = code_run_replay_record_key(&record.run_id);
+        let current_generation = binding
+            .session
+            .vault_meta_get(&key)?
+            .map(|raw| decode_code_run_replay_record(&raw))
+            .transpose()?
+            .as_ref()
+            .map(CodeRunReplayRecord::generation)
+            .transpose()?;
+        if current_generation != expected {
+            return Err(Error::ConcurrentWrite(
+                "code-run replay record changed; retry executor",
+            ));
+        }
+        binding
+            .session
+            .vault_meta_put_routed(&binding.route, &key, &encoded)?;
+        Ok(next_generation)
+    }
+
+    pub(crate) fn put_code_run_raw_output(
+        &self,
+        output: &CodeRunRawOutput,
+        raw: &[u8],
+    ) -> Result<()> {
+        match self {
+            Self::Canonical(vault) => vault.put_code_run_raw_output(output, raw),
+            Self::Session(binding) => {
+                if CodeRunRawOutput::from_bytes(output.path.clone(), raw)? != *output {
+                    return Err(invalid_code_run_replay(
+                        "raw output metadata does not match bytes",
+                    ));
+                }
+                binding.session.vault_meta_put_routed(
+                    &binding.route,
+                    &code_run_raw_output_key(output),
+                    raw,
+                )
+            }
+        }
+    }
+
+    pub(crate) fn get_code_run_raw_output(
+        &self,
+        output: &CodeRunRawOutput,
+    ) -> Result<Option<Vec<u8>>> {
+        match self {
+            Self::Canonical(vault) => vault.get_code_run_raw_output(output),
+            Self::Session(binding) => {
+                validate_raw_output(output)?;
+                let Some(raw) = binding
+                    .session
+                    .vault_meta_get(&code_run_raw_output_key(output))?
+                else {
+                    return Ok(None);
+                };
+                if CodeRunRawOutput::from_bytes(output.path.clone(), &raw)? != *output {
+                    return Err(invalid_code_run_replay(
+                        "stored raw output bytes drifted from metadata",
+                    ));
+                }
+                Ok(Some(raw))
+            }
+        }
+    }
+}
+
 /// Host-bound dispatcher for one first-party code run.
 ///
 /// The actor and source are bound at construction time by the host. Individual
 /// [`SelfCall`] values carry only operation arguments, so guest-authored code
 /// cannot spoof actor, source, or approval fields through this skeleton.
 pub struct HostSelfDispatcher<'a> {
-    vault: &'a Vault,
+    storage: ExecutorStorage<'a>,
     actor: WriteActor,
     run_ref: String,
 }
@@ -1388,6 +1577,37 @@ impl<'a> HostSelfDispatcher<'a> {
     ///
     /// Returns [`crate::Error::InvalidClaimBody`] when `run_ref` is blank.
     pub fn new(vault: &'a Vault, actor: WriteActor, run_ref: impl Into<String>) -> Result<Self> {
+        Self::bound(ExecutorStorage::Canonical(vault), actor, run_ref)
+    }
+
+    /// Creates a dispatcher bound to an already-acquired live off-record
+    /// session (ONE-1729/P4b).
+    ///
+    /// This is RUN ENTRY for the session path: the run's one
+    /// [`SessionWriteRoute`] and its conversation shell are captured here,
+    /// before any read or write, and every later apply goes through them.
+    /// The host binds `off_record_session_ref` once, upstream; what arrives
+    /// here is the typed handle, never an unchecked string and never a second
+    /// [`Vault`] clone.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the session's own typed refusals when the room is closing
+    /// or gone, plus [`crate::Error::InvalidClaimBody`] for a blank
+    /// `run_ref`.
+    pub fn for_off_record_session(
+        session: &'a OffRecordSession<'a>,
+        actor: WriteActor,
+        run_ref: impl Into<String>,
+    ) -> Result<Self> {
+        Self::bound(ExecutorStorage::for_session(session)?, actor, run_ref)
+    }
+
+    fn bound(
+        storage: ExecutorStorage<'a>,
+        actor: WriteActor,
+        run_ref: impl Into<String>,
+    ) -> Result<Self> {
         let run_ref = run_ref.into();
         if run_ref.trim().is_empty() {
             return Err(crate::Error::InvalidClaimBody(
@@ -1396,10 +1616,76 @@ impl<'a> HostSelfDispatcher<'a> {
         }
 
         Ok(Self {
-            vault,
+            storage,
             actor,
             run_ref,
         })
+    }
+
+    /// The bound session ref, or `None` for a canonical run.
+    pub(crate) fn session_ref(&self) -> Option<&str> {
+        self.storage.session_ref()
+    }
+
+    /// Identity-only projection of the store this dispatcher writes into.
+    pub(crate) fn store_identity(&self) -> *const Store {
+        self.storage.store_identity()
+    }
+
+    /// The session-owned conversation container for K-EXEC turns, created by
+    /// the session machinery at session ENTRY (one shell per live session,
+    /// enforced there — R-20260807-02 rider 1) and read from the session's
+    /// in-memory registry entry. Never minted per bind; never `session_ref`.
+    pub(crate) fn session_container_id(&self) -> Option<&EntityId> {
+        self.storage.session_container_id()
+    }
+
+    /// The session binding, when this run has one.
+    pub(crate) fn session_binding(&self) -> Option<&SessionBinding<'a>> {
+        match &self.storage {
+            ExecutorStorage::Canonical(_) => None,
+            ExecutorStorage::Session(binding) => Some(binding),
+        }
+    }
+
+    /// Effect-level off-record policy — the FIRST check on the session path.
+    ///
+    /// While the bound room is off record, the four durable memory-write
+    /// verbs are refused before `write_envelope`, policy/gate evaluation,
+    /// transaction acquisition, decision append, ONE-1936's stale-target
+    /// guard, or any overlay/base mutation. Off-record is TALK-ONLY: a
+    /// durable write is not made acceptable by being made ephemeral, so the
+    /// answer is refusal, not redirection.
+    ///
+    /// The rejection is mode-scoped POLICY, never inferred from where a row
+    /// would route: after the same live session flips `OnRecord` the ordinary
+    /// verb path is available again to a run that binds after the flip. A run
+    /// that was already in flight keeps its run-entry route, whose
+    /// `revalidate` refuses the write instead of splitting the record across
+    /// the flip.
+    ///
+    /// The match is exhaustive so a new effect cannot default into either
+    /// answer — it has to be ruled on here.
+    fn enforce_off_record_effect_policy(&self, effect: SelfEffect) -> Result<()> {
+        if !self.storage.off_record_policy_active()? {
+            return Ok(());
+        }
+        match effect {
+            SelfEffect::MemoryPutClaim
+            | SelfEffect::MemorySupersedeClaim
+            | SelfEffect::MemoryPutEdge
+            | SelfEffect::MemoryWriteFixture => Err(Error::OffRecordTalkOnly {
+                session_ref: self
+                    .storage
+                    .session_ref()
+                    .unwrap_or_default()
+                    .to_owned(),
+            }),
+            SelfEffect::MemorySearch
+            | SelfEffect::AskHuman
+            | SelfEffect::DestructiveFixture
+            | SelfEffect::OutboundFixture => Ok(()),
+        }
     }
 
     /// Host-stamped actor for writes from this dispatcher.
@@ -1444,7 +1730,7 @@ impl<'a> HostSelfDispatcher<'a> {
 
     fn dispatch_memory_search(&self, call: SelfMemorySearchCall) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
-        let results = self.vault.search_text(&call.query, limit)?;
+        let results = self.storage.search_text(&call.query, limit)?;
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
             query: call.query,
             results,
@@ -1456,16 +1742,28 @@ impl<'a> HostSelfDispatcher<'a> {
         call: SelfMemoryWriteFixtureCall,
     ) -> Result<SelfDispatchOutcome> {
         let envelope = self.write_envelope(SelfEffect::MemoryWriteFixture)?;
-        self.vault
-            .batch()
-            .claim_candidate(
-                &call.id,
-                *call.candidate,
-                &envelope,
-                call.occurred,
-                call.learned_at,
-            )
-            .commit()?;
+        match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault
+                .batch()
+                .claim_candidate(
+                    &call.id,
+                    *call.candidate,
+                    &envelope,
+                    call.occurred,
+                    call.learned_at,
+                )
+                .commit()?,
+            ExecutorStorage::Session(binding) => {
+                binding.session.executor_batch_claim_candidate(
+                    &binding.route,
+                    &call.id,
+                    *call.candidate,
+                    &envelope,
+                    call.occurred,
+                    call.learned_at,
+                )?;
+            }
+        }
 
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
             id: call.id,
@@ -1479,14 +1777,24 @@ impl<'a> HostSelfDispatcher<'a> {
         let envelope = self.write_envelope(SelfEffect::MemoryPutClaim)?;
         let gate_body = (*call.candidate).clone().into_claim_body(&envelope);
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
-        self.vault
-            .put_claim_candidate_without_lexical_query_reconcile(
+        match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault
+                .put_claim_candidate_without_lexical_query_reconcile(
+                    &call.id,
+                    *call.candidate,
+                    &envelope,
+                    call.occurred,
+                    call.learned_at,
+                )?,
+            ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
+                &binding.route,
                 &call.id,
                 *call.candidate,
                 &envelope,
                 call.occurred,
                 call.learned_at,
-            )?;
+            )?,
+        }
 
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
             id: call.id,
@@ -1527,16 +1835,29 @@ impl<'a> HostSelfDispatcher<'a> {
             EdgeKind::Supersedes,
             call.old_id,
         )?;
-        self.vault.supersede_claim_for_code_run_trap(
-            &call.new_id,
-            &call.old_id,
-            call.now,
-            &envelope,
-            call.old_id,
-            &claim_gate_body,
-            edge_gate_id,
-            &edge_gate_body,
-        )?;
+        match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault.supersede_claim_for_code_run_trap(
+                &call.new_id,
+                &call.old_id,
+                call.now,
+                &envelope,
+                call.old_id,
+                &claim_gate_body,
+                edge_gate_id,
+                &edge_gate_body,
+            )?,
+            ExecutorStorage::Session(binding) => binding.session.executor_supersede_claim(
+                &binding.route,
+                &call.new_id,
+                &call.old_id,
+                call.now,
+                &envelope,
+                call.old_id,
+                &claim_gate_body,
+                edge_gate_id,
+                &edge_gate_body,
+            )?,
+        }
 
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
             id: call.new_id,
@@ -1556,15 +1877,29 @@ impl<'a> HostSelfDispatcher<'a> {
             Value::F32(call.weight),
             &envelope,
         );
-        self.vault.put_edge_for_code_run_trap(
-            &call.src,
-            call.kind,
-            &call.tgt,
-            call.weight,
-            &envelope,
-            edge_operation_gate_id(SelfEffect::MemoryPutEdge, call.src, call.kind, call.tgt)?,
-            &gate_body,
-        )?;
+        let gate_id =
+            edge_operation_gate_id(SelfEffect::MemoryPutEdge, call.src, call.kind, call.tgt)?;
+        match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault.put_edge_for_code_run_trap(
+                &call.src,
+                call.kind,
+                &call.tgt,
+                call.weight,
+                &envelope,
+                gate_id,
+                &gate_body,
+            )?,
+            ExecutorStorage::Session(binding) => binding.session.executor_put_edge(
+                &binding.route,
+                &call.src,
+                call.kind,
+                &call.tgt,
+                call.weight,
+                &envelope,
+                gate_id,
+                &gate_body,
+            )?,
+        }
 
         Ok(SelfDispatchOutcome::MemoryEdgeWrite(
             SelfMemoryEdgeWriteResult {
@@ -1597,21 +1932,19 @@ impl<'a> HostSelfDispatcher<'a> {
         body
     }
 
-    fn validate_write_actor_binding(&self, envelope: &WriteEnvelope) -> Result<()> {
-        crate::gate::validate_write_envelope(envelope)?;
-        let actor = envelope.actor();
-        let rtxn = self.vault.store.env.read_txn()?;
-        let actor_raw = self
-            .vault
-            .store
-            .entities
-            .get(&rtxn, actor.entity_ref().as_bytes())?
-            .ok_or(Error::EntityNotFound)?;
-        let actor_header = crate::batch::EntityMetadataHeader::parse(&actor_raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
-    }
-
+    /// Executor-path gate routing: DECISIONS FOLLOW THEIR CONTENT.
+    ///
+    /// `Canonical` takes the unchanged vault-store path. A session run reaches
+    /// here only after [`Self::enforce_off_record_effect_policy`] passed,
+    /// which — for the four durable memory verbs — means the room is ON
+    /// RECORD; its decision is a decision about base content and lands in
+    /// base with it.
+    ///
+    /// The `Overlay` arm is the ordering assertion made structural: an
+    /// off-record durable write must never arrive here at all, and if one
+    /// ever did, the answer would still be refusal rather than an ephemeral
+    /// decision. [`OffRecordSession::executor_check_write_gate`] routes on the
+    /// captured route and raises the talk-only refusal for `Overlay`.
     fn check_write_gate(
         &self,
         id: EntityId,
@@ -1619,26 +1952,22 @@ impl<'a> HostSelfDispatcher<'a> {
         envelope: &WriteEnvelope,
         can_resolve_pending_consent: bool,
     ) -> Result<()> {
-        self.validate_write_actor_binding(envelope)?;
-        let mut wtxn = self.vault.store.env.write_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &wtxn)?;
-        let gate_result = crate::gate::check_claim_policy_for_write(
-            &self.vault.store,
-            &mut wtxn,
-            &id,
-            body,
-            Some(envelope),
-            &policy,
-            crate::gate::GateWriteMode {
-                record_decision: true,
-                persist_pending_consent: false,
-                resolve_pending: false,
+        match &self.storage {
+            ExecutorStorage::Canonical(vault) => check_write_gate_against_vault(
+                vault,
+                id,
+                body,
+                envelope,
                 can_resolve_pending_consent,
-                include_source_in_gate_input: true,
-            },
-        );
-        wtxn.commit()?;
-        gate_result
+            ),
+            ExecutorStorage::Session(binding) => binding.session.executor_check_write_gate(
+                &binding.route,
+                id,
+                body,
+                envelope,
+                can_resolve_pending_consent,
+            ),
+        }
     }
 
     fn durable_wait(
@@ -1656,8 +1985,70 @@ impl<'a> HostSelfDispatcher<'a> {
     }
 }
 
+/// The write-path gate check both executor routes share.
+///
+/// Lives here, beside the dispatcher that decides WHICH vault runs it, so the
+/// canonical and post-flip session paths cannot drift into two gate bodies.
+/// The session side reaches it through
+/// [`OffRecordSession::executor_check_write_gate`], which owns the routing.
+pub(crate) fn check_write_gate_against_vault(
+    vault: &Vault,
+    id: EntityId,
+    body: &ClaimBody,
+    envelope: &WriteEnvelope,
+    can_resolve_pending_consent: bool,
+) -> Result<()> {
+    validate_write_actor_binding(vault, envelope)?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+    let gate_result = crate::gate::check_claim_policy_for_write(
+        &vault.store,
+        &mut wtxn,
+        &id,
+        body,
+        Some(envelope),
+        &policy,
+        crate::gate::GateWriteMode {
+            record_decision: true,
+            persist_pending_consent: false,
+            resolve_pending: false,
+            can_resolve_pending_consent,
+            include_source_in_gate_input: true,
+        },
+    );
+    wtxn.commit()?;
+    gate_result
+}
+
+fn validate_write_actor_binding(vault: &Vault, envelope: &WriteEnvelope) -> Result<()> {
+    crate::gate::validate_write_envelope(envelope)?;
+    let actor = envelope.actor();
+    let rtxn = vault.store.env.read_txn()?;
+    let actor_raw = vault
+        .store
+        .entities
+        .get(&rtxn, actor.entity_ref().as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let actor_header = crate::batch::EntityMetadataHeader::parse(&actor_raw)
+        .ok_or(Error::CorruptedIndex("entity header"))?;
+    crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
+}
+
 impl SelfDispatcher for HostSelfDispatcher<'_> {
+    /// Dispatch ordering on the session-bound path (ARCH-0052 §D6):
+    ///
+    /// 0. the run's [`SessionWriteRoute`] was captured at RUN ENTRY, in
+    ///    [`HostSelfDispatcher::for_off_record_session`] — not here, and never
+    ///    per dispatch;
+    /// 1. mode-scoped effect policy, below, before anything else;
+    /// 2. host envelope, then the write gate;
+    /// 3. for on-record supersede only, ONE-1936's stale-target guard inside
+    ///    its own transaction;
+    /// 4. the apply, through the STORED route, which revalidates itself.
+    ///
+    /// Canonical dispatch keeps its existing path and captures no route.
     fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
+        self.enforce_off_record_effect_policy(call.effect())?;
         match call {
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),

@@ -4,8 +4,8 @@ mod lifecycle;
 mod promote;
 
 pub use lifecycle::{
-    OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordSession,
-    OffRecordSessionRecord, OffRecordSessionVault,
+    ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode,
+    OffRecordSession, OffRecordSessionRecord, OffRecordSessionVault,
 };
 pub use promote::OffRecordPromoteReceipt;
 
