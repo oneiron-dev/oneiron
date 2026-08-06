@@ -49,6 +49,7 @@ use rmpv::Value;
 /// EVENT seeds. All outside `PINNED_ID_BYTES`.
 const EVENT_SEED: u8 = 0x61;
 const SECOND_EVENT_SEED: u8 = 0x62;
+const THIRD_EVENT_SEED: u8 = 0x65;
 const PERSON_SEED: u8 = 0x63;
 const EVIDENCE_SEED: u8 = 0x64;
 const ACTOR_SEED: u8 = 0x71;
@@ -117,16 +118,59 @@ fn put_raw_claim(
     predicate: &str,
     subject: ClaimSubject,
     value: Value,
+    approval: ClaimApprovalStatus,
 ) -> Result<(), Error> {
     let body = ClaimBody::new(
         predicate,
         subject,
         value,
         1.0,
-        ClaimApprovalStatus::Approved,
+        approval,
         ClaimLifecycleStatus::Active,
     );
     vault.put_claim(&claim_id, &body, at(EVENT_START), EVENT_START)
+}
+
+/// Writes CAL-00's `calendar.status` head — the other home of cancellation,
+/// which CAL-07 reads but never writes.
+fn put_status(vault: &Vault, claim_id: EntityId, event_ref: EntityId, status: &str) {
+    put_raw_claim(
+        vault,
+        claim_id,
+        "calendar.status",
+        ClaimSubject::Entity(event_ref),
+        Value::Map(vec![
+            (Value::from("status"), Value::from(status)),
+            // Cancellation arrives by feed absence; a standing EVENT is
+            // owner-confirmed.
+            (
+                Value::from("basis"),
+                Value::from(if status == "cancelled" {
+                    "imported_absence"
+                } else {
+                    "owner"
+                }),
+            ),
+            (Value::from("recorded_at"), Value::from(EVENT_START)),
+        ]),
+        ClaimApprovalStatus::Approved,
+    )
+    .expect("status claim");
+}
+
+/// How many `calendar.event_outcome` claims on `event_ref` are still live,
+/// whatever their approval state. Never two, by this layer's contract.
+fn active_outcome_claims(vault: &Vault, event_ref: EntityId) -> usize {
+    vault
+        .claims_for_subject(&event_ref)
+        .expect("claims")
+        .into_iter()
+        .filter_map(|id| vault.get_claim(&id).expect("claim"))
+        .filter(|body| {
+            body.predicate == PREDICATE_CALENDAR_EVENT_OUTCOME
+                && body.lifecycle == ClaimLifecycleStatus::Active
+        })
+        .count()
 }
 
 /// Claim ids are keyed `(0xB7, seed, index)` so no fixture claim aliases a
@@ -256,6 +300,7 @@ fn event_outcome_validator_rejects_unknown_fields_and_non_event_subjects() {
         PREDICATE_CALENDAR_EVENT_OUTCOME,
         ClaimSubject::Entity(event_ref),
         wire_value("held", "machine", EVENT_END),
+        ClaimApprovalStatus::Approved,
     )
     .expect("canonical outcome claim");
     assert_eq!(
@@ -279,6 +324,7 @@ fn event_outcome_validator_rejects_unknown_fields_and_non_event_subjects() {
             PREDICATE_CALENDAR_EVENT_OUTCOME,
             ClaimSubject::Entity(event_ref),
             extra,
+            ClaimApprovalStatus::Approved,
         ),
         Err(Error::InvalidClaimBody(_))
     ));
@@ -305,6 +351,7 @@ fn event_outcome_validator_rejects_unknown_fields_and_non_event_subjects() {
                     PREDICATE_CALENDAR_EVENT_OUTCOME,
                     ClaimSubject::Entity(event_ref),
                     value.clone(),
+                    ClaimApprovalStatus::Approved,
                 ),
                 Err(Error::InvalidClaimBody(_))
             ),
@@ -381,17 +428,7 @@ fn event_outcome_supersedes_prior_live_claim_without_deleting_history() {
     assert_eq!(prior.valid_to, Some(EVENT_END + 60));
     assert_eq!(prior.predicate, PREDICATE_CALENDAR_EVENT_OUTCOME);
 
-    let live = vault
-        .claims_for_subject(&event_ref)
-        .expect("claims")
-        .into_iter()
-        .filter_map(|id| vault.get_claim(&id).expect("claim"))
-        .filter(|body| {
-            body.predicate == PREDICATE_CALENDAR_EVENT_OUTCOME
-                && body.lifecycle == ClaimLifecycleStatus::Active
-        })
-        .count();
-    assert_eq!(live, 1);
+    assert_eq!(active_outcome_claims(&vault, event_ref), 1);
 
     // Evidence observed DURING the meeting can be ingested after the answer:
     // the late head still wins, and closing the one it replaces never writes an
@@ -519,18 +556,7 @@ fn feed_absence_uses_calendar_status_never_event_outcome() {
     let event_ref = event(&vault, EVENT_SEED);
 
     // The multi-source absence verdict is a `calendar.status` claim.
-    put_raw_claim(
-        &vault,
-        claim_id(EVENT_SEED, 0),
-        "calendar.status",
-        ClaimSubject::Entity(event_ref),
-        Value::Map(vec![
-            (Value::from("status"), Value::from("cancelled")),
-            (Value::from("basis"), Value::from("imported_absence")),
-            (Value::from("recorded_at"), Value::from(EVENT_START)),
-        ]),
-    )
-    .expect("status claim");
+    put_status(&vault, claim_id(EVENT_SEED, 0), event_ref, "cancelled");
 
     // It never becomes an outcome, and the outcome predicate is a distinct
     // member of the family table.
@@ -542,6 +568,168 @@ fn feed_absence_uses_calendar_status_never_event_outcome() {
     assert!(CALENDAR_CLAIM_PREDICATES.contains(&"calendar.status"));
     assert!(CALENDAR_CLAIM_PREDICATES.contains(&PREDICATE_CALENDAR_EVENT_OUTCOME));
     assert_ne!(PREDICATE_CALENDAR_EVENT_OUTCOME, "calendar.status");
+}
+
+#[test]
+fn cancelled_status_suppresses_the_post_end_check_in() {
+    let (_dir, vault) = temp_vault();
+    let cancelled = event(&vault, EVENT_SEED);
+    let confirmed = event(&vault, SECOND_EVENT_SEED);
+
+    // Cancellation's other home. The outcome predicate stays silent by law, so
+    // a recheck that consulted only `calendar.event_outcome` would ask the owner
+    // how a meeting went that the feed already said was called off.
+    put_status(&vault, claim_id(EVENT_SEED, 0), cancelled, "cancelled");
+    put_status(
+        &vault,
+        claim_id(SECOND_EVENT_SEED, 0),
+        confirmed,
+        "confirmed",
+    );
+    assert_eq!(read_event_outcome(&vault, cancelled).expect("read"), None);
+
+    let rows = vault
+        .inbox_meeting_outcome_check_ins(&[
+            due(cancelled, "wake-cancelled", meeting()),
+            due(confirmed, "wake-confirmed", meeting()),
+        ])
+        .expect("project");
+    // Only the EVENT that still stands is asked about.
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].event_ref, confirmed.to_hex());
+
+    // Suppressing the card mints no outcome: cancelled-by-feed stays `unknown`
+    // here, exactly as the two-homes law requires.
+    assert_eq!(
+        project_event_outcome(read_event_outcome(&vault, cancelled).expect("read")),
+        EventOutcome::Unknown
+    );
+}
+
+#[test]
+fn gate_pending_outcome_head_is_superseded_not_left_beside_its_replacement() {
+    let (_dir, vault) = temp_vault();
+    let event_ref = event(&vault, EVENT_SEED);
+
+    // A `Proposed` outcome: invisible to readers, still a live head. On a
+    // default-seeded vault this is the ORDINARY state of a calendar claim write
+    // (no `calendar.` rule in the policy manifest — see the module note), not an
+    // exotic one.
+    put_raw_claim(
+        &vault,
+        claim_id(EVENT_SEED, 0),
+        PREDICATE_CALENDAR_EVENT_OUTCOME,
+        ClaimSubject::Entity(event_ref),
+        wire_value("no_show", "owner_attested", EVENT_END),
+        ClaimApprovalStatus::Proposed,
+    )
+    .expect("proposed outcome claim");
+    assert_eq!(read_event_outcome(&vault, event_ref).expect("read"), None);
+    assert_eq!(active_outcome_claims(&vault, event_ref), 1);
+
+    record_event_outcome(
+        &vault,
+        event_ref,
+        &EventOutcomeClaimValue {
+            outcome: EventOutcome::Held,
+            basis: EventOutcomeBasis::Machine,
+            recorded_at: EVENT_END + 120,
+        },
+        ClaimSource::Observed,
+    )
+    .expect("record");
+
+    // Never two live outcomes. Were the proposal left open, a later consent
+    // approval would resurrect it beside the claim that replaced it.
+    assert_eq!(active_outcome_claims(&vault, event_ref), 1);
+    let proposal = vault
+        .get_claim(&claim_id(EVENT_SEED, 0))
+        .expect("read proposal")
+        .expect("present");
+    assert_eq!(proposal.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(proposal.valid_to, Some(EVENT_END + 120));
+    assert_eq!(
+        project_event_outcome(read_event_outcome(&vault, event_ref).expect("read")),
+        EventOutcome::Held
+    );
+}
+
+#[test]
+fn forked_outcome_heads_resolve_to_the_later_evidence() {
+    let (_dir, vault) = temp_vault();
+    let ascending = event(&vault, EVENT_SEED);
+    let descending = event(&vault, SECOND_EVENT_SEED);
+
+    // A post-sync fork: two replicas each recorded an outcome and neither
+    // supersession crossed the wire. Claim ids are time-ordered UUIDv7 PER
+    // WRITER, so across the fork id order is not evidence order — both id
+    // arrangements must resolve to the same later evidence.
+    let fork = |event_ref: EntityId, seed: u8, low: (&str, u64), high: (&str, u64)| {
+        put_raw_claim(
+            &vault,
+            claim_id(seed, 0),
+            PREDICATE_CALENDAR_EVENT_OUTCOME,
+            ClaimSubject::Entity(event_ref),
+            wire_value(low.0, "machine", low.1),
+            ClaimApprovalStatus::Approved,
+        )
+        .expect("low-id head");
+        put_raw_claim(
+            &vault,
+            claim_id(seed, 1),
+            PREDICATE_CALENDAR_EVENT_OUTCOME,
+            ClaimSubject::Entity(event_ref),
+            wire_value(high.0, "machine", high.1),
+            ClaimApprovalStatus::Approved,
+        )
+        .expect("high-id head");
+        assert_eq!(active_outcome_claims(&vault, event_ref), 2);
+    };
+
+    // Lower id carries the older evidence.
+    fork(
+        ascending,
+        EVENT_SEED,
+        ("no_show", EVENT_END),
+        ("held", EVENT_END + 600),
+    );
+    // ...and the reverse, which is what pins `recorded_at` rather than id as
+    // the ordering key.
+    fork(
+        descending,
+        SECOND_EVENT_SEED,
+        ("held", EVENT_END + 600),
+        ("no_show", EVENT_END),
+    );
+
+    assert_eq!(
+        read_event_outcome(&vault, ascending)
+            .expect("read")
+            .map(|value| value.recorded_at),
+        Some(EVENT_END + 600)
+    );
+    assert_eq!(
+        project_event_outcome(read_event_outcome(&vault, ascending).expect("read")),
+        EventOutcome::Held
+    );
+    assert_eq!(
+        project_event_outcome(read_event_outcome(&vault, descending).expect("read")),
+        EventOutcome::Held
+    );
+
+    // Same instant on both sides: the id breaks the tie, so the contest stays
+    // total and two replicas reading the same fork agree.
+    let tied = event(&vault, THIRD_EVENT_SEED);
+    fork(
+        tied,
+        THIRD_EVENT_SEED,
+        ("no_show", EVENT_END),
+        ("held", EVENT_END),
+    );
+    assert_eq!(
+        project_event_outcome(read_event_outcome(&vault, tied).expect("read")),
+        EventOutcome::Held
+    );
 }
 
 #[test]

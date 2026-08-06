@@ -153,3 +153,109 @@ inherited gate hole — content, not ceremony), `CheckInResolution::recorded_val
 Gates after: `cargo fmt --all -- --check` clean; `cargo clippy -p oneiron
 --all-features --all-targets` zero warnings; `cargo test -p oneiron --all-features
 --test calendar_outcome` 18/18 green.
+
+## VERDICT-FIX (Opus fix round, 2026-08-06)
+
+Finder returned 6 items; the verdict adjudicated 3 REAL P2s (all inside
+`calendar/outcome.rs`), 2 rejected-with-derivation and banked, 1 P3 packet
+mechanical. Every REAL fix below is mutation-verified: the oracle was written
+first and observed RED on the pre-fix tip, then GREEN after.
+
+### F1 — `cancelled-checkin-suppression` (P2, outcome.rs)
+
+`check_in_is_still_due` asked only whether a `calendar.event_outcome` head
+existed. Cancellation's ratified home for imported cancel / feed absence is
+CAL-00's `calendar.status` (never this predicate, by the two-homes law), so a
+meeting the feed had already called off still surfaced a check-in card asking
+the owner how it went — against blueprint note 255's intent.
+
+Fix at the recheck chokepoint, not the call site: `check_in_is_still_due` now
+opens ONE read txn and consults both heads — the outcome head and the
+`calendar.status` head via CAL-00's existing `decode_status_value` — and returns
+false when status is `cancelled`. Suppressing the card mints nothing: a
+feed-cancelled EVENT's outcome stays `unknown`, exactly as the two-homes law
+requires (asserted).
+
+- RED before: `cancelled_status_suppresses_the_post_end_check_in` — 2 rows, expected 1.
+- GREEN after. The confirmed-status EVENT in the same oracle still surfaces, so
+  the fix suppresses cancellation rather than any status claim.
+
+### F2 — `active-head-supersession` (P2, outcome.rs)
+
+`record_event_outcome` found the heads to supersede through `claim_surfaceable`,
+which excludes `Proposed`. Under the default policy manifest — no `calendar.`
+rule, the inherited hole this module documents — gate-pending `Proposed` is the
+ORDINARY state of a calendar claim write, so the common case left the prior head
+open: two live heads, and a later consent approval resurrected the stale
+proposal beside its own replacement, contradicting the function's own "never two
+live outcomes" contract.
+
+Fix: the head scan (`live_outcome_heads_in`) now selects on lifecycle-active
+alone and carries `surfaceable` as a per-head flag. Supersession closes every
+live head whatever its approval state; the read path filters on the flag, so the
+consent gate on reads is unchanged.
+
+- RED before: `gate_pending_outcome_head_is_superseded_not_left_beside_its_replacement`
+  — 2 live outcome claims, expected 1.
+- GREEN after; the proposal is `Superseded` with `valid_to` set, i.e. closed
+  history, not deleted.
+
+### F3 — `replica-head-convergence` (P2, outcome.rs)
+
+The read sorted live heads ascending by claim id and took the first, so the
+OLDEST won. `EntityId::now` is UUIDv7 — time-ordered PER WRITER — so across a
+post-sync fork (two replicas each recorded an outcome, neither supersession
+crossed the wire) the lower id is not the earlier evidence, and the read
+resolved opposite this layer's own later-evidence-supersedes rule, which can
+drive the wrong CA-04 transition.
+
+Fix: the read picks `max_by_key((recorded_at, claim_id))` among surfaceable live
+heads — later evidence wins, id breaks the tie so the contest stays total and
+both replicas converge. The same rule now governs the `calendar.status` read.
+The old doc justified id-order by consistency with "CAL-09's EVENT projection";
+that was vacuous and is gone — grep-verified that `calendar/query.rs`,
+`freebusy.rs`, and `safeguard.rs` never project `event_outcome`.
+
+- RED before: `forked_outcome_heads_resolve_to_the_later_evidence` — returned
+  `recorded_at` 1754403600 (older, low-id) instead of 1754404200.
+- GREEN after, in all three arms: lower-id-older, lower-id-newer (which is what
+  pins `recorded_at` rather than id as the key), and an equal-instant tie.
+
+### Rejected + banked (verdict, not relitigated here)
+
+- Item 1 `calendar-subject-integrity` — the EVENT-only rule is enforced at every
+  sanctioned writer via `require_event_subject`; the byte-level door's
+  subject-type blindness is the ratified CAL-00/`comm.rs` pattern shared by all
+  13 calendar predicates. Family-wide posture question, banked for postmortem.
+- Item 5 `recording-upload-persistence` — by design: the ratified keystone
+  skeleton pins `accept_check_in_recording` taking `BlobArtifactBody` (metadata,
+  no content bytes); the open-then-append contract is documented and the named
+  oracle appends through the public chain. Widening the signature would be a
+  skeleton deviation.
+
+### PACKET_AMEND (item 6, P3 mechanical)
+
+`WORKLOG-ONE-1789.md` is committed at the repo root and is not one of the five
+claimed packet paths, so a literal `git diff --name-only ⊆ packet` check fails.
+No collision: no other lane claims this path, and the file is inert to the build.
+Requested as a one-line amendment — add per-lane `WORKLOG-ONE-<ticket>.md` to the
+ONE-1789 packet — or strip the file before publish. Not a code gate; no source
+file moved.
+
+### Gates
+
+- `cargo fmt --all -- --check` clean.
+- `cargo clippy -p oneiron --all-features --all-targets` zero warnings.
+- `cargo test -p oneiron --all-features --test calendar_outcome` 21/21 green
+  (18 prior oracles + 3 new).
+- `cargo test -p oneiron --all-features` full: 3509 lib + every integration bin,
+  0 failed.
+- Diff still ⊆ packet: only `crates/oneiron/src/calendar/outcome.rs` and
+  `crates/oneiron/tests/calendar_outcome.rs` changed in this round. `gate.rs` and
+  `tests/calendar_surface_oracle.rs` (concurrent cal-gate leg) untouched;
+  no `Cargo.toml` / `Cargo.lock` edit.
+
+One base-inherited warning, charged to no lane: `dead_code` on
+`batch::facet_of_endpoints_provably_off_table` under default features (used only
+from `sync/selector.rs`). `crates/oneiron/src/batch.rs` is not in this lane's
+diff — the recipe defect class, not this ticket.

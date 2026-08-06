@@ -13,15 +13,17 @@
 //! * **Cancellation has two homes.** Imported cancellation and feed absence are
 //!   CAL-00's `calendar.status` under the all-live-inbound-passports law and
 //!   never touch this predicate. Only an explicit lifecycle cancellation
-//!   established BEFORE the start records `cancelled_pre_start` here.
+//!   established BEFORE the start records `cancelled_pre_start` here. This layer
+//!   writes one home and READS both: a check-in that consulted only its own
+//!   predicate would ask about a meeting the feed already called off.
 //! * **The card has two independent doors.** An answer records an
 //!   owner-attested outcome; a recording drop stores a blob and infers nothing.
 //!   CAL-08 may later turn that blob into machine evidence.
 //!
 //! The engine owns no timer: [`plan_outcome_check_in`] returns an exact wake for
-//! the host to deliver, and [`check_in_is_still_due`] rechecks meeting class and
-//! current evidence when the host says it fired — a card is never surfaced from
-//! the plan alone.
+//! the host to deliver, and [`check_in_is_still_due`] rechecks meeting class,
+//! current evidence, and current status when the host says it fired — a card is
+//! never surfaced from the plan alone.
 //!
 //! Inherited hole, not owned here: `gate::default_policy_manifest()` carries no
 //! `calendar.` rule, so on a default-seeded vault every calendar claim write —
@@ -34,7 +36,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::claims::{
-    decode_event_outcome_value, encode_event_outcome_value, require_event_subject,
+    CalendarStatus, CalendarStatusValue, PREDICATE_CALENDAR_STATUS, decode_event_outcome_value,
+    decode_status_value, encode_event_outcome_value, require_event_subject,
 };
 use crate::blob_artifact::BlobArtifactBody;
 use crate::claim::{
@@ -248,6 +251,11 @@ pub fn project_event_outcome(claim: Option<EventOutcomeClaimValue>) -> EventOutc
 /// never be left with two live outcomes. Superseded claims stay fully readable:
 /// this is claim history, not a delete.
 ///
+/// Every lifecycle-active prior head is closed, whatever its approval state — a
+/// gate-pending `Proposed` outcome is invisible to readers but is still a head,
+/// and leaving it open would let a later consent approval resurrect it beside
+/// the claim that replaced it.
+///
 /// The claim lands `Auto` — an engine-recorded fact, the `comm.rs` stance for a
 /// family projector — and carries the caller's [`ClaimSource`], which the shared
 /// rules then rule on: source-trust decides whether that source may ride `Auto`
@@ -288,13 +296,13 @@ pub fn record_event_outcome(
     vault.with_write_txn(|wtxn| {
         let prior = live_outcome_heads_in(vault, wtxn, &event_ref)?;
         vault.put_claim_in_txn(wtxn, &new_id, &body, occurred, value.recorded_at)?;
-        for (old_id, old_value) in prior {
+        for head in prior {
             // Evidence can arrive out of order — CAL-08 will supersede an owner
             // answer with a transcript observed during the meeting. The head it
             // replaces still stops being current no earlier than it started, so
             // the closure never writes an inverted validity window.
-            let closed_at = value.recorded_at.max(old_value.recorded_at);
-            vault.supersede_claim_in_txn(wtxn, &new_id, &old_id, closed_at)?;
+            let closed_at = value.recorded_at.max(head.value.recorded_at);
+            vault.supersede_claim_in_txn(wtxn, &new_id, &head.claim_id, closed_at)?;
         }
         Ok(())
     })?;
@@ -304,9 +312,7 @@ pub fn record_event_outcome(
 /// Reads the EVENT's live outcome claim.
 ///
 /// Absence of a live claim returns `None`; projection maps `None` to `Unknown`
-/// and never to `Held` or `NoShow`. Should two live heads ever coexist, the
-/// lowest claim id wins — the same single-cardinality contest CAL-09's EVENT
-/// projection uses, so both surfaces resolve a torn state identically.
+/// and never to `Held` or `NoShow`.
 ///
 /// # Errors
 ///
@@ -317,18 +323,84 @@ pub fn read_event_outcome(
     event_ref: EntityId,
 ) -> Result<Option<EventOutcomeClaimValue>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(live_outcome_heads_in(vault, &rtxn, &event_ref)?
-        .into_iter()
-        .next()
-        .map(|(_, value)| value))
+    current_outcome_in(vault, &rtxn, &event_ref)
 }
 
-/// Live `calendar.event_outcome` heads on `event_ref`, lowest claim id first.
+/// The EVENT's current readable outcome: the latest evidence among the heads a
+/// reader may see.
+///
+/// One EVENT normally has one live head — [`record_event_outcome`] closes the
+/// previous one in the same transaction. Two coexist only across a sync fork,
+/// where two replicas each recorded an outcome and neither supersession crossed
+/// the wire. That contest resolves on `(recorded_at, claim id)`, never on claim
+/// id alone: ids are time-ordered UUIDv7 *per writer*, so across a fork the
+/// lower id is not the earlier evidence, and picking it would invert this
+/// layer's own rule that later evidence supersedes earlier. The id is the
+/// tie-break, so the contest stays total and both replicas pick the same head.
+fn current_outcome_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Option<EventOutcomeClaimValue>> {
+    Ok(live_outcome_heads_in(vault, rtxn, event_ref)?
+        .into_iter()
+        .filter(|head| head.surfaceable)
+        .max_by_key(|head| (head.value.recorded_at, head.claim_id))
+        .map(|head| head.value))
+}
+
+/// One live `calendar.event_outcome` claim on an EVENT.
+struct OutcomeHead {
+    claim_id: EntityId,
+    value: EventOutcomeClaimValue,
+    /// Whether a reader may see it ([`claim_surfaceable`]).
+    surfaceable: bool,
+}
+
+/// Every lifecycle-active `calendar.event_outcome` head on `event_ref`.
+///
+/// Live means lifecycle-active, deliberately wider than [`claim_surfaceable`]:
+/// a gate-pending `Proposed` head is invisible to readers but is still a head,
+/// and only the writer that supersedes it stops a later approval resurrecting it
+/// beside its own replacement. On a default-seeded vault that is the ORDINARY
+/// state of a calendar claim write, not an exotic one — see the module note on
+/// the missing `calendar.` policy rule. `surfaceable` carries the read path's
+/// consent gate forward unchanged.
 fn live_outcome_heads_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
-) -> Result<Vec<(EntityId, EventOutcomeClaimValue)>> {
+) -> Result<Vec<OutcomeHead>> {
+    let mut heads = Vec::new();
+    for claim_id in vault.claims_for_subject_in_txn(rtxn, event_ref)? {
+        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
+            continue;
+        };
+        if body.predicate != PREDICATE_CALENDAR_EVENT_OUTCOME
+            || body.lifecycle != ClaimLifecycleStatus::Active
+        {
+            continue;
+        }
+        heads.push(OutcomeHead {
+            claim_id,
+            value: decode_event_outcome_value(&body.value)?,
+            surfaceable: claim_surfaceable(&body),
+        });
+    }
+    Ok(heads)
+}
+
+/// The EVENT's current `calendar.status`, under the same latest-evidence rule
+/// as [`current_outcome_in`].
+///
+/// CAL-00 owns this predicate; CAL-07 only reads it, and has to: cancellation
+/// has two homes by law, and the home this module never writes is exactly the
+/// one a check-in must not ignore.
+fn current_status_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Option<CalendarStatusValue>> {
     let mut heads = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(rtxn, event_ref)? {
         let Some(body) = vault
@@ -337,13 +409,15 @@ fn live_outcome_heads_in(
         else {
             continue;
         };
-        if body.predicate != PREDICATE_CALENDAR_EVENT_OUTCOME {
+        if body.predicate != PREDICATE_CALENDAR_STATUS {
             continue;
         }
-        heads.push((claim_id, decode_event_outcome_value(&body.value)?));
+        heads.push((claim_id, decode_status_value(&body.value)?));
     }
-    heads.sort_by_key(|(claim_id, _)| *claim_id);
-    Ok(heads)
+    Ok(heads
+        .into_iter()
+        .max_by_key(|(claim_id, value)| (value.recorded_at, *claim_id))
+        .map(|(_, value)| value))
 }
 
 /// One exact host wake: the three fields of the supervisor wake contract.
@@ -398,21 +472,37 @@ pub struct DueOutcomeCheckIn {
     pub signals: MeetingClassSignals,
 }
 
-/// Rechecks meeting class and current evidence for one due wake.
+/// Rechecks meeting class and current state for one due wake.
 ///
-/// A due wake is not a card: an outcome may have arrived during the grace
-/// window, and the EVENT may have stopped being meeting-class since it was
-/// planned. Both halves are rechecked here, so nothing surfaces on the strength
-/// of a plan made half an hour earlier.
+/// A due wake is not a card. Three things can have changed in the half hour
+/// since it was planned, and all three are re-read here rather than trusted:
+///
+/// * the EVENT may have stopped being meeting-class;
+/// * an outcome may have arrived during the grace window — the card would ask a
+///   question already answered;
+/// * the EVENT may have been CANCELLED. That one never reaches this module's own
+///   predicate: imported cancellation and feed absence are `calendar.status` by
+///   law, so a recheck reading only `calendar.event_outcome` would ask the owner
+///   how a meeting went that the feed already said was called off.
+///
+/// Suppressing the card mints nothing. A cancelled EVENT's outcome stays
+/// `unknown` unless separate evidence establishes one — only a lifecycle
+/// cancellation seen BEFORE the start earns `cancelled_pre_start`, and that goes
+/// through [`outcome_from_machine_evidence`].
 ///
 /// # Errors
 ///
-/// Storage errors, and claim-body errors from reading the outcome head.
+/// Storage errors, and claim-body errors from reading either head.
 pub fn check_in_is_still_due(vault: &Vault, due: &DueOutcomeCheckIn) -> Result<bool> {
     if !is_meeting_class(due.signals) {
         return Ok(false);
     }
-    Ok(read_event_outcome(vault, due.event_ref)?.is_none())
+    let rtxn = vault.store.env.read_txn()?;
+    if current_outcome_in(vault, &rtxn, &due.event_ref)?.is_some() {
+        return Ok(false);
+    }
+    Ok(current_status_in(vault, &rtxn, &due.event_ref)?
+        .is_none_or(|status| status.status != CalendarStatus::Cancelled))
 }
 
 /// The owner's answer to a check-in card.
