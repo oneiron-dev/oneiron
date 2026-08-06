@@ -15,6 +15,20 @@
 //! fails RED instead of vacuously passing. MS-01 surfaces (merge/split
 //! apply, lifecycle reads, ledger events) are exercised through the REAL
 //! public API.
+//!
+//! # Recorded polarity flips
+//!
+//! A flip is the ONE edit arming discipline permits beyond removing an
+//! ignore: a `[NEG]` contract that asserts a slot is RESERVED must invert
+//! when the ticket that reserved it says so, or the reservation could never
+//! be consumed. Each is pre-declared in the owning lane's CLAIMS §6 before
+//! it happens, and inverts only the reservation assert — every other
+//! assertion in the test carries over unweakened.
+//!
+//! * **ONE-1757 (ED-01) flips ONE-1747's `ms05_delta_field_is_reserved_…`**
+//!   into `ms05_amendment_body_stays_opaque_while_ed01_fills_the_reserved_delta_slot`
+//!   (MS/CLAIMS §6 edge #1). The six ARCH-0056 §2 Δ names are now projected;
+//!   the inherited byte-exact `amended_body` round-trip is asserted intact.
 
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityId, FacetOp, FacetSpec, HnswConfig,
@@ -520,13 +534,48 @@ mod seam {
         oneiron::proposal_outcome_amended_body(&super::outcome_receipt(vault, receipt))
     }
 
-    /// Field names the receipt projects (for the reserved-not-built probe).
+    /// Field names the receipt projects.
     pub(crate) fn receipt_field_names(vault: &Vault, receipt: EntityId) -> Vec<String> {
         super::outcome_receipt(vault, receipt)
             .fields
             .keys()
             .cloned()
             .collect()
+    }
+
+    // ---- ONE-1757 (ED-01): the built ARCH-0056 Δ in the reserved slot ----
+    // ARMED: every stub below is the real engine API.
+
+    /// Parks a merge proposal folding `sources` into `survivor` — the
+    /// multi-source shape an amendment can NARROW.
+    pub(crate) fn submit_merge_proposal_of(
+        vault: &Vault,
+        sources: Vec<EntityId>,
+        survivor: EntityId,
+    ) -> EntityId {
+        let outcome = vault
+            .apply_identity_topology_op(
+                &super::merge_op(sources, survivor),
+                &super::proposed_write(),
+                super::PROPOSAL_AT,
+            )
+            .expect("park proposal");
+        let IdentityOpOutcome::Parked { event, .. } = outcome else {
+            panic!("a Proposed merge must park, got {outcome:?}");
+        };
+        event
+    }
+
+    /// Runs ED-01's receipt-projection pass, returning how many Δs it wrote.
+    pub(crate) fn project_amendment_deltas(vault: &Vault) -> usize {
+        oneiron::edit_distance::delta::project_identity_amendment_deltas(vault)
+            .expect("project amendment deltas")
+    }
+
+    /// The RESERVED ARCH-0056 Δ slot — distinct from the producer artifact
+    /// [`receipt_delta_payload`] reads.
+    pub(crate) fn receipt_amendment_delta(vault: &Vault, receipt: EntityId) -> Option<Vec<u8>> {
+        oneiron::proposal_outcome_delta(&super::outcome_receipt(vault, receipt))
     }
 
     // ---- ONE-1748 (MS-06): consent-graduation ramp ----
@@ -1002,32 +1051,52 @@ fn ms05_amended_receipt_carries_delta_others_do_not() {
     assert_eq!(seam::receipt_delta_payload(&vault, rejected_receipt), None);
 }
 
-/// [NEG] r7 + ARCH-0056 boundary: the delta field is a RESERVED
-/// forward-compatible slot, not the built Δ schema. It round-trips an
-/// opaque payload byte-exact (a shaped struct cannot), and the receipt
-/// does NOT project the six eventual ARCH-0056 §2 field names — building
-/// them here would over-build the ED-epic's surface (ONE-1757 consumes).
+/// r7 + ARCH-0056 boundary — POLARITY FLIPPED BY ONE-1757 (ED-01), the
+/// pre-declared seam artifact for §6 edge #1.
+///
+/// At ONE-1747 this read `[NEG] …_is_reserved_opaque_not_built`: the delta
+/// field was a reserved forward-compatible slot and the receipt must NOT
+/// project the six ARCH-0056 §2 names, because building them there would
+/// over-build the ED epic's surface. ED-01 built that surface, so the same
+/// boundary now reads the other way — the reserved slot carries a Δ
+/// projecting all six names.
+///
+/// What did NOT change, and is asserted here exactly as before: the PRODUCER
+/// artifact (`amended_body`) still round-trips opaque bytes byte-for-byte. It
+/// is the input the Δ is measured FROM, never overwritten by it — two slots,
+/// two meanings.
 #[test]
-fn ms05_delta_field_is_reserved_opaque_not_built() {
+fn ms05_amendment_body_stays_opaque_while_ed01_fills_the_reserved_delta_slot() {
     let (_dir, vault) = open_vault();
     let a = put_person(&vault, 0x21);
     let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
 
     // The payload is carried as OPAQUE bytes: raw binary (embedded id bytes
     // make it non-UTF-8), stored verbatim and handed back byte-for-byte
-    // rather than reshaped into a struct the engine understands.
+    // rather than reshaped into a struct the engine understands. The
+    // amendment NARROWS the proposal (c is dropped), so the Δ has something
+    // real to measure.
     let opaque = amendment_body(vec![b], a);
     assert!(
         std::str::from_utf8(&opaque).is_err(),
         "fixture must be genuinely binary, else byte-exactness proves nothing"
     );
-    let proposal = seam::submit_merge_proposal(&vault, &a, &b);
+    let proposal = seam::submit_merge_proposal_of(&vault, vec![b, c], a);
     let (_, receipt) =
         seam::resolve_proposal(&vault, proposal, ProposalRuling::AmendThenApprove(&opaque));
     assert_eq!(seam::receipt_delta_payload(&vault, receipt), Some(opaque));
 
-    let fields = seam::receipt_field_names(&vault, receipt);
-    for reserved in [
+    // The producer never writes the reserved slot: it is ED-01's projection
+    // pass that fills it, which is what keeps ONE-1747's files untouched.
+    assert_eq!(seam::receipt_amendment_delta(&vault, receipt), None);
+    assert_eq!(seam::project_amendment_deltas(&vault), 1);
+
+    let payload = seam::receipt_amendment_delta(&vault, receipt)
+        .expect("the reserved slot now carries the built Δ");
+    let projected: serde_json::Value =
+        serde_json::from_slice(&payload).expect("Δ decodes as canonical json");
+    for built in [
         "proposed_ref",
         "final_ref",
         "source",
@@ -1036,10 +1105,51 @@ fn ms05_delta_field_is_reserved_opaque_not_built() {
         "engine_ver",
     ] {
         assert!(
-            !fields.iter().any(|field| field.as_str() == reserved),
-            "receipt must not project the ARCH-0056 Δ field {reserved:?} yet"
+            projected.get(built).is_some(),
+            "receipt must now project the ARCH-0056 Δ field {built:?}"
         );
     }
+    assert_eq!(projected["source"], "field_diff");
+    let d_norm = projected["d_norm"].as_f64().expect("d_norm is a number");
+    assert!(
+        d_norm > 0.0 && d_norm <= 1.0,
+        "a narrowing amendment measures a real distance, got {d_norm}"
+    );
+
+    // The producer artifact survives the projection byte-for-byte.
+    assert_eq!(
+        seam::receipt_delta_payload(&vault, receipt),
+        Some(amendment_body(vec![b], a))
+    );
+
+    // Idempotent: a re-run measures nothing new. A Δ describes a window that
+    // is already closed.
+    assert_eq!(seam::project_amendment_deltas(&vault), 0);
+}
+
+/// The Δ slot follows the PRODUCER artifact exactly: outcomes that amended
+/// nothing carry neither, even after the projection pass runs over them.
+#[test]
+fn ms05_unamended_outcomes_carry_no_delta_after_the_projection_pass() {
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x21);
+    let b = put_person(&vault, 0x22);
+    let c = put_person(&vault, 0x23);
+
+    let untouched = seam::submit_merge_proposal(&vault, &a, &b);
+    let (_, untouched_receipt) = seam::resolve_proposal(&vault, untouched, ProposalRuling::Approve);
+    let rejected = seam::submit_merge_proposal(&vault, &a, &c);
+    let (_, rejected_receipt) = seam::resolve_proposal(&vault, rejected, ProposalRuling::Reject);
+
+    assert_eq!(seam::project_amendment_deltas(&vault), 0);
+    assert_eq!(
+        seam::receipt_amendment_delta(&vault, untouched_receipt),
+        None
+    );
+    assert_eq!(
+        seam::receipt_amendment_delta(&vault, rejected_receipt),
+        None
+    );
 }
 
 // ===== ONE-1748 (MS-06) — consent-graduation ramp =====

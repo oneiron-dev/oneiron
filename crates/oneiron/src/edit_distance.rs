@@ -41,6 +41,7 @@
 //! `edit_distance` — textual edit distance over proposal artifacts. They are
 //! unrelated.
 
+pub mod delta;
 #[cfg(feature = "sync")]
 pub mod proposal_text;
 
