@@ -3111,6 +3111,11 @@ fn append_access_grant_scope_fields(
             fields.insert("person_ref".to_owned(), person_ref.to_hex());
             fields.insert("persona_ref".to_owned(), persona_ref.to_hex());
         }
+        AccessGrantScope::Calendar { calendar_ref, rung } => {
+            fields.insert("scope".to_owned(), "calendar".to_owned());
+            fields.insert("calendar_ref".to_owned(), calendar_ref.to_hex());
+            fields.insert("rung".to_owned(), rung.as_str().to_owned());
+        }
     }
 }
 

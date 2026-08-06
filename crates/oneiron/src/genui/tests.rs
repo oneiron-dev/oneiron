@@ -493,3 +493,77 @@ fn consent_actor_identity_pin_is_not_a_free_text_claim() {
         } if actor_ref == "owner"
     ));
 }
+
+// ---------------------------------------------------------------------------
+// ONE-1812 [BK-01] — the calendar grant-mint seam
+// ---------------------------------------------------------------------------
+
+#[test]
+fn grant_mint_intent_calendar_sentence_is_bounded() {
+    // "share my work calendar fully with Yura", already resolved upstream.
+    let intent = calendar_grant_mint_intent(
+        "person:yura",
+        "consent-ask:calendar-share",
+        "share_calendar",
+        Some("gate:abc"),
+        "calendar:work",
+        DisclosureRung::Full,
+    )
+    .expect("one sentence mints one intent");
+
+    assert_eq!(intent.principal_ref, "person:yura");
+    assert_eq!(
+        intent.scope,
+        GrantMintIntentScope::Calendar {
+            calendar_ref: "calendar:work".to_owned(),
+            rung: DisclosureRung::Full,
+        }
+    );
+
+    // Exactly one (calendar_ref, audience, rung) triple on the wire, and no
+    // settings grid: the scope object carries three keys and nothing else.
+    let json = serde_json::to_value(&intent).expect("serialize intent");
+    let scope = json
+        .get("scope")
+        .expect("scope")
+        .as_object()
+        .expect("object");
+    let mut keys: Vec<&str> = scope.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["calendar_ref", "rung", "scope"]);
+    assert_eq!(scope.get("scope").and_then(Value::as_str), Some("calendar"));
+    assert_eq!(scope.get("rung").and_then(Value::as_str), Some("full"));
+
+    // Blank refs are rejected rather than minting an unbounded grant.
+    for (principal, component, action, calendar) in [
+        ("", "c", "a", "calendar:work"),
+        ("person:yura", "  ", "a", "calendar:work"),
+        ("person:yura", "c", "", "calendar:work"),
+        ("person:yura", "c", "a", ""),
+    ] {
+        assert!(
+            calendar_grant_mint_intent(
+                principal,
+                component,
+                action,
+                None,
+                calendar,
+                DisclosureRung::Busy
+            )
+            .is_err(),
+            "blank ref must not mint a grant intent"
+        );
+    }
+}
+
+#[test]
+fn calendar_scope_is_not_an_outbound_grant_scope() {
+    use crate::outbound_grant::StandingOutboundGrantScope;
+
+    // A read grant must never become a standing permission to send.
+    let scope = GrantMintIntentScope::Calendar {
+        calendar_ref: "calendar:work".to_owned(),
+        rung: DisclosureRung::Slots,
+    };
+    assert!(StandingOutboundGrantScope::from_grant_mint_scope(&scope).is_err());
+}
