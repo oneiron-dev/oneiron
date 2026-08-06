@@ -25,6 +25,11 @@ use crate::registry::{
 /// `comm.jurisdiction` predicates.
 pub mod claims;
 
+/// CA-03's leader-only enrollment consequence writer: home-node designation,
+/// the `campaign.enrollment.macro` attempt kind, and the membership/outbound
+/// legs that turn a detected SAVED_QUERY transition into durable effects.
+pub mod enrollment;
+
 /// Stable short-id namespace for CAMPAIGN entities.
 ///
 /// Two lowercase ASCII letters per the short-id convention; it names CAMPAIGN,
