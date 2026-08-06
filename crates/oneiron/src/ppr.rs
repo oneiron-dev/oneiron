@@ -100,9 +100,10 @@ impl SeedWeighting {
 /// LITERAL `edgeKinds.lambda` column of the pinned contract module
 /// (`oneiron-docs` `site/src/data/oneiron-contracts.ts`):
 ///
-/// - `None` — the kind is NEVER traversed by PPR (`child_of`, `assigned_to`;
-///   contract `lambda: null`, "Not traversed."). Tree queries go through the
-///   dedicated `subtree` / `ancestors` read APIs instead.
+/// - `None` — the kind is NEVER traversed by PPR (`child_of`, `assigned_to`,
+///   `blocked_by`; contract `lambda: null`, "Not traversed."). Tree queries go
+///   through the dedicated `subtree` / `ancestors` read APIs instead, and
+///   TASK readiness is computed at read time over `blocked_by`.
 /// - `Some(0.0)` — `opposes` blocks propagation at the KIND level regardless
 ///   of the stored per-edge weight byte (contradiction isolation).
 /// - The five world-model kinds carry pinned ARCH-0039 budgets that
@@ -120,6 +121,7 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
         EdgeKind::ClaimOf => Some(1.0),
         EdgeKind::ChildOf => None,
         EdgeKind::AssignedTo => None,
+        EdgeKind::BlockedBy => None,
         EdgeKind::DerivedFrom => Some(0.2),
         EdgeKind::Mentions => Some(0.6),
         EdgeKind::About => Some(0.5),

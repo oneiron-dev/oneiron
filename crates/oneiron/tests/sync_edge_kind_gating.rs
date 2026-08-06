@@ -49,17 +49,19 @@ fn edge_info(edges: &[EdgeInfo], kind: EdgeKind, target: &EntityId) -> EdgeInfo 
         .unwrap_or_else(|| panic!("edge {kind:?} -> {} missing", target.to_hex()))
 }
 
-/// Seam-7 pin (ONE-1122 AC5): an entity with `Mentions` + `ChildOf` +
-/// `AssignedTo` + retracted-provenanced (26 B) edges
-/// 1. `reverse_rematerialize` puts ALL four keys into the CRDT edges map
+/// Seam-7 pin (ONE-1122 AC5, extended by ONE-1924). An entity carrying
+/// `Mentions` + `ChildOf` + `AssignedTo` + `BlockedBy` + retracted-provenanced
+/// (26 B) edges proves:
+///
+/// 1. `reverse_rematerialize` puts ALL five keys into the CRDT edges map
 ///    byte-identical to `encode_edge_value` output (ARCH-0034 layout
 ///    literals: 12 B structural, 24 B semantic-bare, 26 B
 ///    semantic-provenanced with `confirmation_status` at offset 24 and
 ///    `actor_class` at offset 25);
-/// 2. `forward_rematerialize` into a fresh vault materializes all four;
+/// 2. `forward_rematerialize` into a fresh vault materializes all five;
 /// 3. a context-pack walk from the same seed does NOT neighbor-expand the
-///    `ChildOf` / `AssignedTo` / retracted targets while still expanding the
-///    `Mentions` target.
+///    `ChildOf` / `AssignedTo` / `BlockedBy` / retracted targets while still
+///    expanding the `Mentions` target.
 #[test]
 fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     let temp_a = tempfile::tempdir().unwrap();
@@ -76,6 +78,7 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     let mentions_tgt = EntityId::now();
     let child_tgt = EntityId::now();
     let assigned_tgt = EntityId::now();
+    let blocked_by_tgt = EntityId::now();
     let retracted_tgt = EntityId::now();
     let actor = EntityId::now();
 
@@ -84,6 +87,7 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         (&mentions_tgt, b"mentions-target"),
         (&child_tgt, b"child-target"),
         (&assigned_tgt, b"assigned-target"),
+        (&blocked_by_tgt, b"blocked-by-target"),
         (&retracted_tgt, b"retracted-target"),
     ] {
         vault_a
@@ -102,6 +106,9 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         .unwrap();
     vault_a
         .put_edge(&seed, EdgeKind::AssignedTo, &assigned_tgt, 1.0)
+        .unwrap();
+    vault_a
+        .put_edge(&seed, EdgeKind::BlockedBy, &blocked_by_tgt, 1.0)
         .unwrap();
     vault_a
         .put_edge(&seed, EdgeKind::Supports, &retracted_tgt, 0.9)
@@ -127,10 +134,11 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         .unwrap();
 
     let edges_out = vault_a.edges_out(&seed).unwrap();
-    assert_eq!(edges_out.len(), 4);
+    assert_eq!(edges_out.len(), 5);
     let mentions = edge_info(&edges_out, EdgeKind::Mentions, &mentions_tgt);
     let child = edge_info(&edges_out, EdgeKind::ChildOf, &child_tgt);
     let assigned = edge_info(&edges_out, EdgeKind::AssignedTo, &assigned_tgt);
+    let blocked_by = edge_info(&edges_out, EdgeKind::BlockedBy, &blocked_by_tgt);
     let retracted = edge_info(&edges_out, EdgeKind::Supports, &retracted_tgt);
     assert_eq!(
         retracted.provenance,
@@ -140,12 +148,12 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         })
     );
 
-    // 1. Reverse re-materialization mirrors ALL four kinds, byte-identical
+    // 1. Reverse re-materialization mirrors ALL five kinds, byte-identical
     //    to the ARCH-0034 encoder output — sync is kind-agnostic.
     let window_key = WindowKey::new("2026-03");
     let doc = create_window_doc("test-user", &window_key);
     let mirrored = window::reverse_rematerialize(&vault_a, &doc, &window_key).unwrap();
-    assert_eq!(mirrored, 5, "seed + four targets mirror into the window");
+    assert_eq!(mirrored, 6, "seed + five targets mirror into the window");
 
     let edges_map = doc.get_map("edges");
     let map_bytes = |kind: EdgeKind, tgt: &EntityId| -> Vec<u8> {
@@ -175,8 +183,9 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         .unwrap()
     );
 
-    // ChildOf / AssignedTo: 12 B structural — shipped even though ARCH-0004
-    // pins them `lambda: null` ("Not traversed."), which is retrieval-only.
+    // ChildOf / AssignedTo / BlockedBy: 12 B structural — shipped even though
+    // ARCH-0004 pins them `lambda: null` ("Not traversed."), which is
+    // retrieval-only.
     let child_bytes = map_bytes(EdgeKind::ChildOf, &child_tgt);
     assert_eq!(child_bytes.len(), 12);
     assert_eq!(child_bytes[0..4], 1.0f32.to_le_bytes());
@@ -193,6 +202,18 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     assert_eq!(
         assigned_bytes,
         encode_edge_value_for_crdt(EdgeKind::AssignedTo, 1.0, assigned.created_at, None, None)
+            .unwrap()
+    );
+
+    // ONE-1924: the newly minted u8-23 `blocked_by` kind crosses sync on the
+    // same kind-agnostic path — 12 B structural, byte-identical, no VAD.
+    let blocked_by_bytes = map_bytes(EdgeKind::BlockedBy, &blocked_by_tgt);
+    assert_eq!(blocked_by_bytes.len(), 12);
+    assert_eq!(blocked_by_bytes[0..4], 1.0f32.to_le_bytes());
+    assert_eq!(blocked_by_bytes[4..12], blocked_by.created_at.to_le_bytes());
+    assert_eq!(
+        blocked_by_bytes,
+        encode_edge_value_for_crdt(EdgeKind::BlockedBy, 1.0, blocked_by.created_at, None, None)
             .unwrap()
     );
 
@@ -219,7 +240,7 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
         .unwrap()
     );
 
-    // 2. Forward re-materialization into a FRESH vault lands all four kinds.
+    // 2. Forward re-materialization into a FRESH vault lands all five kinds.
     let temp_b = tempfile::tempdir().unwrap();
     let vault_b = Arc::new(Vault::open(temp_b.path(), test_config()).unwrap());
     let materializer = Arc::new(Materializer::new());
@@ -228,7 +249,7 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     let doc_b = LoroDoc::from_snapshot(&snapshot).unwrap();
     let restored =
         window::forward_rematerialize(&vault_b, &doc_b, &materializer, &window_key).unwrap();
-    assert_eq!(restored, 9, "five entities + four edges");
+    assert_eq!(restored, 11, "six entities + five edges");
 
     assert!(
         vault_b
@@ -247,13 +268,18 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     );
     assert!(
         vault_b
+            .edge_exists(&seed, EdgeKind::BlockedBy, &blocked_by_tgt)
+            .unwrap()
+    );
+    assert!(
+        vault_b
             .edge_exists(&seed, EdgeKind::Supports, &retracted_tgt)
             .unwrap()
     );
 
     // The 26 B provenance hot flags survived the round trip.
     let b_edges = vault_b.edges_out(&seed).unwrap();
-    assert_eq!(b_edges.len(), 4);
+    assert_eq!(b_edges.len(), 5);
     let b_retracted = edge_info(&b_edges, EdgeKind::Supports, &retracted_tgt);
     assert_eq!(
         b_retracted.provenance,
@@ -293,6 +319,10 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     assert!(
         !neighbor_ids.contains(&assigned_tgt),
         "assigned_to must contribute no neighbor (lambda null is retrieval-only)"
+    );
+    assert!(
+        !neighbor_ids.contains(&blocked_by_tgt),
+        "blocked_by must contribute no neighbor (lambda null is retrieval-only)"
     );
     assert!(
         !neighbor_ids.contains(&retracted_tgt),
