@@ -349,7 +349,10 @@ pub fn set_serving_model(vault: &Vault, model: &ModelId) -> Result<()> {
 /// [`Error::InvalidClaimBody`] on an unusable task class; storage errors;
 /// [`Error::CorruptedIndex`] on an undecodable row.
 pub fn rollout_rung(vault: &Vault, task_class: &str) -> Result<RolloutRung> {
-    let key = meta_key(RUNG_KEY_PREFIX, normalized_task_class(task_class)?.as_bytes());
+    let key = meta_key(
+        RUNG_KEY_PREFIX,
+        normalized_task_class(task_class)?.as_bytes(),
+    );
     let rtxn = vault.store.env.read_txn()?;
     rung_in_txn(vault, &rtxn, &key)
 }
@@ -363,7 +366,10 @@ pub fn rollout_rung(vault: &Vault, task_class: &str) -> Result<RolloutRung> {
 ///
 /// [`Error::InvalidClaimBody`] on an unusable task class; storage errors.
 pub fn set_rollout_rung(vault: &Vault, task_class: &str, rung: RolloutRung) -> Result<()> {
-    let key = meta_key(RUNG_KEY_PREFIX, normalized_task_class(task_class)?.as_bytes());
+    let key = meta_key(
+        RUNG_KEY_PREFIX,
+        normalized_task_class(task_class)?.as_bytes(),
+    );
     let encoded = encode_row(
         &StoredRung {
             v: ROW_VERSION,
@@ -465,7 +471,9 @@ struct Fold {
 fn fold_of(judgment: &AmendmentJudgment) -> Result<Fold> {
     let d_norm = f64::from(judgment.d_norm);
     if !d_norm.is_finite() || d_norm < 0.0 {
-        return Err(invalid("a routing fold needs a finite non-negative edit mass"));
+        return Err(invalid(
+            "a routing fold needs a finite non-negative edit mass",
+        ));
     }
     Ok(Fold {
         d_norm,
@@ -660,7 +668,11 @@ pub fn rebuild_routing_projection(vault: &Vault) -> Result<()> {
     let mut stale_aggregates = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for entry in vault.store.vault_meta.prefix_iter(&rtxn, MEMBER_KEY_PREFIX)? {
+        for entry in vault
+            .store
+            .vault_meta
+            .prefix_iter(&rtxn, MEMBER_KEY_PREFIX)?
+        {
             let (key, raw) = entry?;
             let receipt_id = key_tail(&key, MEMBER_KEY_PREFIX, MEMBER_ROW_LABEL)?;
             let Some(judgment) = judged.get(&receipt_id) else {
